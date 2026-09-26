@@ -1,11 +1,5 @@
 /* rail.js — the SIM rail drawer: on phone widths the HUD rail collapses to a handle so
- * the 3D stage stays visible. Pure presentation.
- *
- * Lived inline in `sim.html` until 2026-09-04; moved out for `script-src 'self'` (see
- * `sim/web/_headers`).
- */
-/* Rail drawer — on phone-width screens the rail collapses to a handle so the
- * 3D stage stays visible; the handle toggles it. Pure presentation. */
+ * the 3D stage stays visible; the handle toggles it. Pure presentation. */
 (function () {
   "use strict";
   var hud = document.getElementById("hud");

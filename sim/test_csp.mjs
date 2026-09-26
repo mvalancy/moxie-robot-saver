@@ -1,44 +1,22 @@
 /* test_csp.mjs — the security headers we SHIP, exercised by the browser that has to obey them.
  *
- * THE HOLE THIS FILE CLOSES. `sim/web/_headers` is only ever sent by Cloudflare Pages.
- * Every browser suite in this repo serves the site from a plain static server that sends
- * NO headers at all — so until now nothing could tell the difference between a policy that
- * is safe and a policy that blanks the page. That is not a theoretical worry: a CSP that
- * refuses an inline `<script>` does not degrade, it stops the page dead, and the failure
- * would first be seen by a visitor on the live domain.
- *
- * So this suite parses the REAL `_headers` (never a restated copy of the policy — a
- * hard-coded string could pass while the shipped header said something else), serves every
- * page with it, and asserts each one still WORKS: the modules ran, the inline blocks ran,
- * and nothing was refused.
- *
- * IT HAS TEETH. Block 3 injects a script tag from another origin into the loaded page and
- * requires the policy to REFUSE it. Without that, a green run would be equally consistent
- * with "the policy is correct" and "no policy arrived at all".
- *
- * 2026-09-04 — `'unsafe-inline'` IS NOW ASSERTED GONE, and that changed what this file has
- * to do. Blocks 1–4 answered "can a script from ELSEWHERE run?". Blocks 5–8 answer "can a
- * script written INTO this page run?", which is the other half of XSS and the half that was
- * open until 2026-09-04. Three things are new and load-bearing:
- *
- *   · block 6 recomputes every SHA-256 in `script-src` from the pages ON DISK. It is a
- *     second, independent implementation of `sim/tools/build_csp_hashes.py` — deliberately
- *     in another language — so the generator cannot satisfy its own guard. A hash that
- *     drifts BLANKS THE PAGE, in production, where nothing local would see it;
- *   · block 7 INJECTS an inline `<script>` and an inline `onerror=` and requires both to be
- *     refused. Under the old policy both ran;
- *   · block 8 DRIVES each page rather than looking at it — the docs explorer searches, the
- *     SIM takes a typed turn and makes a QR code, the setup page encodes one — with a
- *     `securitypolicyviolation` listener installed before any page script runs. Thirteen
- *     inline blocks became thirteen `<script src>` tags in this pass, and a page whose glue
- *     failed to load still paints its markup and its CSS. "It looked fine" is not evidence.
+ * `sim/web/_headers` is only ever sent by Cloudflare Pages, and a CSP that refuses a page's
+ * own script does not degrade — it blanks the page in production. So this parses the REAL
+ * `_headers` (never a restated copy), serves every page with it, and asserts each one still
+ * WORKS. With TEETH: off-origin and inline scripts injected into the page must be REFUSED,
+ * so green cannot mean "no policy arrived".
+ *   · block 6 recomputes every script-src SHA-256 from the pages on disk, independently of
+ *     `sim/tools/build_csp_hashes.py`, so the generator cannot satisfy its own guard;
+ *   · block 7 injects an inline `<script>` and an inline `onerror=` and requires refusal;
+ *   · block 8 DRIVES each page (search, typed turn, QR) with a `securitypolicyviolation`
+ *     listener installed before any page script runs.
  *
  *   node sim/test_csp.mjs
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { requireBrowser, serveWeb, serveStatic, pagesHeaders, makeChecks, finish, web } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, serveStatic, pagesHeaders, makeChecks, finish, web, launchBrowser } from "./browser_harness.mjs";
 
 const LABEL = "CSP + security-headers test";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
@@ -53,29 +31,15 @@ const TURNSTILE = "https://challenges.cloudflare.com";
 const site = await serveWeb({ headers: true });
 const H = pagesHeaders();
 
-/* Served under a NON-local hostname, mapped to the loopback server. That is not cosmetic:
- * `_headers` is a Cloudflare Pages artifact and Pages serves a public hostname, so this is
- * the configuration the policy actually ships into. On a LOCAL host `env.js` additionally
- * probes the optional :8081/:8082 sidecars — which this same policy refuses, correctly and
- * only under `wrangler pages dev` (headers + localhost at once). Loading from 127.0.0.1
- * would fold that dev-only quirk into every assertion below and hide real refusals behind
- * an allowance. */
+/* Served under a NON-local hostname mapped to loopback — the configuration Pages ships
+ * into. On a local host env.js also probes the :8081/:8082 sidecars, a dev-only refusal
+ * that would hide real ones behind an allowance. */
 const HOST = `http://moxie.hosted.test:${site.port}`;
 
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-         `--host-resolver-rules=MAP moxie.hosted.test 127.0.0.1:${site.port}`],
-});
+const browser = await launchBrowser(puppeteer, chrome, { hosts: { "moxie.hosted.test": site.port } });
 
-/* ONE known, pre-existing refusal, named exactly rather than matched loosely.
- *
- * The repo's own `README.md` is bundled into the docs explorer and embeds an image hosted
- * on github.com (`user-attachments/…`). `img-src 'self' data: blob:` predates this pass and
- * refuses it — correctly: this project's standing rule is that everything is vendored and
- * links are assumed to die, so an off-site image in a doc is the defect, not the policy.
- * It is listed here so the guard stays STRICT for everything else and so the exemption
- * cannot be inherited silently — fixing the README removes this constant. */
+/* ONE known off-site image refusal, named exactly so the guard stays strict for everything
+ * else (an off-site image in a doc is the defect, not the policy). */
 const KNOWN_REFUSALS = [/user-attachments.*violates.*img-src/i];
 
 /** What the real `static.cloudflareinsights.com` sends, and what a module fetch needs. */
@@ -88,52 +52,19 @@ const isKnown = (e) => KNOWN_REFUSALS.some((k) => k.test(e));
 const cspErrors = (errs) => errs.filter((e) => POLICY_LINE.test(e) && !isKnown(e));
 
 /* ---------------------------------------------------------------------------
- * WAITING — AND THE THIRD OUTCOME THAT USED TO BE COMPARED AGAINST A VERDICT.
- *
- * Every script injection in this file used to resolve through a THREE-way race: `onload`,
- * `onerror`, and `setTimeout(…, 3000)`. The third arm's value was handed straight to
- * `eq()` against "loaded" or "refused". Those two are statements about what the browser's
- * CSP DID. "timeout" is a statement about US — we stopped waiting. Comparing them is how
- * a starved renderer gets reported as a policy decision, and CSP is the mechanism
- * protecting the public sim, so that conflation is not a cosmetic one.
- *
- * IT WAS NEVER A NETWORK WAIT, which is the detail that settles the mechanism. Both hosts
- * in block 4 and both in block 9 are route-intercepted a few lines above their injection
- * and answered locally with `r.respond({ status: 200, … })`; measured 2026-09-06, the
- * whole interception path for all 30 requests `sim.html` makes cost 254–485 ms in total.
- * So a 3000 ms expiry could only ever have meant "the renderer had not dispatched the
- * event yet" — a fact about the machine, never about the policy.
- *
- * MEASURED, in-page `performance.now()` from `appendChild` to the event, with the
- * renderer throttled over CDP the way `sim/tools/page_teeth_check.py --slow N` does it
- * (node's own timers keep full speed; the page does not):
- *
- *     throttle   in-page busy loop    static. onload   bare onerror   frame violation
- *      1x             26.6 ms            2799 ms           0 ms          2065 ms
- *      6x             45.5 ms            1836 ms        1055 ms          3355 ms
- *     20x            319.7 ms            3471 ms           0 ms          6692 ms
- *
- * Two things follow and the SECOND was not expected. The 3000 ms script budget is blown
- * at 20x — that is the reported failure, and `--slow 6` reproduces it against bytes on
- * disk that were never touched. But the iframe half's 1200 ms budget was already blown AT
- * FULL SPEED, 2065 ms, on a box under ordinary load. These were not "green except on a
- * very loaded runner": they were marginal in the normal case and passing on luck.
- *
- * So nothing below races a clock against an event. A wait ends when the EVENT arrives.
- * `CEILING` exists only so a hung renderer cannot hang the suite, and when it expires the
- * result is a SENTENCE naming what never arrived — a value that can never be equal to
- * "loaded", to "refused" or to `null`, and so can never be silently read as a verdict.
+ * WAITING. Nothing here races a clock against an event: every injection resolves on the
+ * browser's own `load`/`error`/violation event. Interception is local and fast, so a timer
+ * expiring only ever meant "the renderer had not dispatched yet" (under CDP throttling a
+ * frame violation took 2-7 s). `CEILING` only stops a hung renderer from hanging the suite,
+ * and an expiry yields a SENTENCE naming what never arrived — never comparable to
+ * "loaded", "refused" or `null`, so it cannot be read as a verdict.
  * ------------------------------------------------------------------------- */
 
-/** The give-up ceiling. NOT a budget — no assertion in this file is about being fast, and
- *  on a healthy run every wait below returns in milliseconds, so raising it costs nothing
- *  that a green run pays. It is the deadlock stop, sized far past the slowest thing ever
- *  measured here (6692 ms at 20x throttle), and every expiry is reported loudly. */
+/** The give-up ceiling — a deadlock stop, not a budget; far past the slowest wait measured
+ *  (~6.7 s at 20x throttle). Every expiry is reported loudly. */
 const CEILING = 30000;
 
-/** Poll a NODE-side predicate. The console/`errs` arrays are filled by puppeteer's own
- *  listeners in this process and cannot be seen from inside the page, so the presence of
- *  a logged refusal has to be waited for here rather than in the renderer. */
+/** Poll a NODE-side predicate (puppeteer's console/`errs` arrays live in this process). */
 const until = async (pred, ms = CEILING, step = 50) => {
   const t0 = Date.now();
   for (;;) {
@@ -143,11 +74,9 @@ const until = async (pred, ms = CEILING, step = 50) => {
   }
 };
 
-/** Poll an IN-PAGE predicate; hand back the first truthy value it returns, or `null` if
- *  the ceiling expires. `waitForFunction` THROWS on expiry and this whole suite runs
- *  inside one `try`, so an uncaught expiry would abort every later block and surface as a
- *  single "threw:" line — the opposite of failing distinguishably. Caught here, turned
- *  into `null`, and NAMED by each caller. */
+/** Poll an IN-PAGE predicate; the first truthy value, or `null` on expiry. Caught rather
+ *  than thrown (`waitForFunction` throws), so one expiry cannot abort every later block;
+ *  each caller NAMES what it waited for. */
 const untilPage = async (page, fn, arg = null, ms = CEILING) => {
   try {
     const h = await page.waitForFunction(fn, { polling: 100, timeout: ms }, arg);
@@ -156,16 +85,11 @@ const untilPage = async (page, fn, arg = null, ms = CEILING) => {
 };
 
 let injectN = 0;
-/** Add a `<script src>` the way Pages injects the beacon, and report WHAT THE BROWSER
- *  DECIDED — "loaded" (its `load` event) or "refused" (its `error` event), waited for
- *  rather than guessed at. If neither ever fires the return value is a sentence about the
- *  renderer, not a third verdict about the policy.
- *
- *  `module: true` mirrors the tag Pages actually injects (`type="module"
- *  crossorigin="anonymous"`, which is why the interceptors have to send CORS). For BOTH
- *  kinds the `load` event fires only after the script has been EVALUATED, so `"loaded"`
- *  is already the proof that the body ran — the `window.__…` probes next to each call are
- *  the independent second witness, not the wait. */
+/** Add a `<script src>` the way Pages injects the beacon and report WHAT THE BROWSER
+ *  DECIDED: "loaded" (`load`, which fires only after evaluation) or "refused" (`error`).
+ *  If neither fires the result is a sentence about the renderer, not a third verdict.
+ *  `module: true` mirrors Pages' `type="module" crossorigin="anonymous"` tag (hence CORS
+ *  in the interceptors). */
 const injectTag = async (page, src, { module = false } = {}) => {
   const tag = `i${++injectN}`;
   await page.evaluate((u, t, mod) => {
@@ -182,18 +106,15 @@ const injectTag = async (page, src, { module = false } = {}) => {
     "a starved renderer, NOT a policy verdict; do not read this as one";
 };
 
-/* Each page, and the runtime fact that proves its scripts really ran under the policy.
- * A page that loads but whose inline block was refused looks fine to the naked eye and to
- * every structural check — the probe is what separates the two. */
+/* Each page, and the runtime fact that proves its scripts really ran under the policy. */
 const PAGES = [
   ["index.html", () => !!document.getElementById("bg-canvas")],
   ["setup.html", () => !!document.getElementById("bg-canvas") && !!window.moxieQR],
   ["cloud.html", () => !!document.getElementById("bg-canvas")],
   ["docs.html", () => !!document.getElementById("tree") &&
                       document.querySelectorAll("#tree a, #tree button, #tree li").length > 0],
-  // `window.moxie` is the load-bearing one: it only exists if the ES MODULE resolved
-  // through sim.html's inline `<script type="importmap">` and three.js loaded from
-  // ./vendor. That is the single most CSP-fragile thing on the site.
+  // `window.moxie` exists only if the ES module graph resolved through sim.html's hashed
+  // importmap and three.js loaded from ./vendor — the most CSP-fragile thing on the site.
   ["sim.html", () => !!window.moxie && !!window.moxieBridge && !!window.moxieAudio &&
                      !!window.moxieMode && !!window.moxieTypedTurn && !!window.moxieStub],
 ];
@@ -201,9 +122,8 @@ const PAGES = [
 async function load(path) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
-  /* The violation EVENT, not its console rendering, and installed before a single page
-   * script runs. A console line is a sentence to regex; `securitypolicyviolation` carries
-   * the directive and the blocked URI, and it fires for refusals that log nothing at all. */
+  /* The violation EVENT (directive + blocked URI; fires even when nothing is logged),
+   * installed before any page script runs. */
   await page.evaluateOnNewDocument(() => {
     window.__cspViolations = [];
     document.addEventListener("securitypolicyviolation", (e) => {
@@ -221,20 +141,9 @@ async function load(path) {
   // instead of forgiven on the strength of its text (see the loop below).
   page.on("response", (r) => { if (r.status() === 404) notFound.push(r.url()); });
   const res = await page.goto(`${HOST}/${path}`, { waitUntil: "domcontentloaded", timeout: 20000 });
-  /* THE CONDITION FIRST; THE DURATION AFTER IT STAYS, AND IS HONESTLY A DURATION.
-   *
-   * `domcontentloaded` returns before the module graph, the stylesheets, the fonts and
-   * the images are in, so a bare `sleep(2500)` was betting that 2500 ms covered the whole
-   * of that. The `load` event is the condition the bet was standing in for, so wait for
-   * it. (`untilPage` never throws: an expiry falls through to the assertions below, which
-   * is exactly where a page that never finished loading should be reported.)
-   *
-   * The fixed window after it is NOT converted, deliberately. What consumes it in block 2
-   * is `eq(cspErrors(errs).length, 0, …)` — an assertion that NOTHING was refused. An
-   * absence has no event to wait for; it is a window, and a window is honestly a
-   * duration. The change that matters is that it now starts at the load event instead of
-   * at DOMContentLoaded, so it is a quiet period AFTER the page finished rather than a
-   * slice of the page still loading. */
+  /* Wait for the `load` condition (untilPage never throws; an expiry falls through to the
+   * assertions). The fixed window AFTER it stays: it backs an assertion that NOTHING was
+   * refused, and an absence has no event to wait for. */
   await untilPage(page, () => document.readyState === "complete" || null, null, 20000);
   await new Promise((r) => setTimeout(r, 2500));
   return { page, errs, headers: res.headers(), notFound };
@@ -248,22 +157,15 @@ try {
     const csp = H["Content-Security-Policy"] || "";
     ok(/(^|;\s*)script-src\s+'self'/.test(csp),
        `_headers must pin script-src to 'self' (got ${JSON.stringify(csp)})`);
-    /* `connect-src` IS THE ONE WITH A MEASURED KILL ON THIS SITE — it is what refused the
-     * port-8081 fetch that made the typed turn a dead control, and it is the exfiltration
-     * half of an XSS payload. It used to be asserted as EXACTLY `'self'`. It is now
-     * `'self'` plus ONE named host, because Turnstile's widget talks to its own origin
-     * (`sim/web/_headers`, 2026-09-05); the assertion is written as an exhaustive list
-     * rather than a loosened regex so that widening it again is a diff to this line. */
+    /* connect-src: `'self'` plus exactly Turnstile's host — the exfiltration half of XSS, and
+     * the directive that refused the port-8081 fetch. Exhaustive list, so any widening is a
+     * diff to this line. */
     const connectSrc = (csp.split(";").find((d) => d.trim().startsWith("connect-src")) || "").trim();
     deep(connectSrc.split(/\s+/).slice(1), ["'self'", TURNSTILE],
        "connect-src is 'self' plus EXACTLY the Turnstile host — nothing else may exfiltrate");
 
-    /* THE OFF-ORIGIN SCRIPT HOSTS, asserted by name and exhaustively. Cloudflare Pages
-     * injects its Web Analytics beacon into every HTML response and we cannot edit that
-     * tag, so the policy has to allow the host or log a violation on every single page
-     * load; Turnstile's `api.js` cannot be self-hosted at all (the challenge is only valid
-     * served from Cloudflare's own host). `_headers` carries the full reasoning for both;
-     * this pins them so neither can be "tidied" away silently and no THIRD can arrive
+    /* The off-origin SCRIPT hosts, exhaustively: the Pages-injected analytics beacon and
+     * Turnstile's api.js (neither can be self-hosted; `_headers` has the reasoning). No third
      * without editing this line. */
     ok(/(^|;\s*)script-src\s[^;]*\bhttps:\/\/static\.cloudflareinsights\.com\b/.test(csp),
        "script-src allows Cloudflare's injected analytics beacon host");
@@ -275,11 +177,8 @@ try {
        "…and script-src names EXACTLY those two off-origin hosts, no other");
     ok(!/cloudflareinsights/.test(connectSrc),
        "connect-src does NOT name the beacon: it reports to a SAME-ORIGIN /cdn-cgi/rum (see _headers)");
-    /* `frame-src` WAS `'none'` AND IS NOW EXACTLY ONE HOST. Turnstile draws its challenge
-     * in an iframe, and with `'none'` the script loads, reports nothing a page can see and
-     * simply never produces a token — the silent failure this assertion exists to notice
-     * if the host is ever removed, and the widening this assertion bounds if another is
-     * ever added. No page on this site frames anything else. */
+    /* frame-src is exactly Turnstile's host: with `'none'` the widget silently never produces a
+     * token. No page frames anything else. */
     const frameSrc = (csp.split(";").find((d) => d.trim().startsWith("frame-src")) || "").trim();
     deep(frameSrc.split(/\s+/).slice(1), [TURNSTILE],
        "frame-src is EXACTLY the Turnstile host — nothing else on this site may be framed");
@@ -303,16 +202,9 @@ try {
        `${path}: NOTHING was refused by the policy — ${cspErrors(errs).slice(0, 3).join(" | ")}`);
     ok(await page.evaluate(probe),
        `${path}: its scripts actually ran under the policy (the inline blocks were not refused)`);
-    /* Anything else on the console is a page fault, not a policy one, and is worth knowing.
-     *
-     * ONE 404 IS EXPECTED AND ONLY ONE: this harness is a static server, so `mode.js`'s
-     * `GET /api/health` capability probe misses — that is the honest behaviour of a fork
-     * with no Functions, and the site is built to be byte-identical when it happens. The
-     * filter used to drop EVERY "status of 404" line, which meant any missing asset on any
-     * shipped page slipped past the strictest console assertion this suite has. It is now
-     * correlated with the 404 RESPONSES actually observed, and forgiven one for one, so a
-     * genuinely missing file still fails. (`test_env_hosted.mjs` already worked this way;
-     * this file did not.) */
+    /* Anything else on the console is a page fault. The one expected 404 (mode.js's
+     * `/api/health` probe on a static server) is forgiven one-for-one against observed 404
+     * responses, so a genuinely missing asset still fails. */
     const expected404 = notFound.every((u) => /\/api\/health\b/.test(u));
     let budget = expected404 ? notFound.length : 0;
     const other = errs.filter((e) => {
@@ -337,10 +229,7 @@ try {
     const loaded = await injectTag(page, "https://cdn.invalid.test/evil.js");
     eq(loaded, "refused",
        "teeth: a script from another origin is REFUSED — without script-src it would have run");
-    /* THE CONSOLE LINE, WAITED FOR RATHER THAN SLEPT AT. `errs` is filled by puppeteer's
-     * `console` listener in NODE, so this is a node-side poll and cannot see the page's
-     * clock at all. A fixed 400 ms here was a bet that CDP had already delivered the
-     * message; the bet's losing side is a RED on a policy that is working. */
+    /* The console line is waited for node-side, not slept for. */
     await until(() => cspErrors(errs).length > before);
     ok(cspErrors(errs).length > before,
        "teeth: …and the browser logged the refusal, so the policy really is the one in force");
@@ -353,20 +242,9 @@ try {
 
   /* =====================================================================
    * 4. THE BEACON HOST — allowed by name, and by name ONLY.
-   *
-   * Cloudflare Pages injects `<script src="https://static.cloudflareinsights.com/…">` into
-   * every HTML response. `script-src 'self'` refused it, and that refusal was on the live
-   * console of every page load — a permanent error that drowns the next real one. So the
-   * host is allowed. This block proves BOTH halves of that sentence, because an allowance
-   * nobody checks is how a policy quietly becomes a wildcard:
-   *
-   *   · a script from `static.cloudflareinsights.com` RUNS, and
-   *   · a script from the BARE `cloudflareinsights.com` — the beacon's own report host, one
-   *     label away — is still REFUSED.
-   *
-   * Both are answered at the browser, so this suite still touches no network: a CSP refusal
-   * happens BEFORE the request is issued, so a script that reaches the interceptor at all
-   * is a script the policy permitted.
+   * A script from `static.cloudflareinsights.com` RUNS, and one from the BARE
+   * `cloudflareinsights.com` (one label away) is still REFUSED. Answered at the browser: a
+   * CSP refusal happens before the request, so reaching the interceptor means permitted.
    * =================================================================== */
   {
     const page = await browser.newPage();
@@ -378,10 +256,7 @@ try {
     page.on("request", (r) => {
       if (r.isInterceptResolutionHandled()) return;
       const u = r.url();
-      // The real host sends CORS, and it must: Pages injects the tag with
-      // `crossorigin="anonymous"` and `type="module"`, both of which make the fetch a CORS
-      // fetch. A stub without the header would fail for a reason that has nothing to do
-      // with the policy under test.
+      // CORS required: Pages' tag is `crossorigin="anonymous"` + `type="module"`.
       if (/^https:\/\/static\.cloudflareinsights\.com\//.test(u))
         return r.respond({ status: 200, contentType: "text/javascript", headers: CORS,
                            body: "window.__beacon = 'ran';" });
@@ -391,16 +266,10 @@ try {
       return r.continue();
     });
     await page.goto(`${HOST}/sim.html`, { waitUntil: "domcontentloaded", timeout: 20000 });
-    /* WAIT FOR THE SIM TO BE UP, which is the condition 1500 ms was standing in for. This
-     * block injects into `sim.html`, and an injection is only a fair test of the policy
-     * once the page's own module graph has stopped competing for the main thread —
-     * `window.moxie` exists only when that graph resolved (block 2 asserts precisely
-     * that), so it is the condition, not a guess about how long it takes. */
+    /* Wait for `window.moxie`: inject only once sim.html's own module graph has resolved. */
     await untilPage(page, () => !!window.moxie || null);
 
-    /* `injectTag` (top of this file) waits for the browser's own verdict and cannot return
-     * a third value comparable to one. `module: true` because that is the tag Pages
-     * injects, and it is why the interceptor above has to send CORS. */
+    /* `injectTag` returns the browser's verdict, never a third comparable value. */
     const beacon = await injectTag(page,
       "https://static.cloudflareinsights.com/beacon.min.js/vTESTONLY", { module: true });
     eq(beacon, "loaded",
@@ -411,32 +280,21 @@ try {
       "https://cloudflareinsights.com/beacon.min.js/vTESTONLY", { module: true });
     eq(sibling, "refused",
        "…while the BARE cloudflareinsights.com is still refused: the allowance is host-exact");
-    /* THE ABSENCE, ANCHORED TO AN EVENT. `__sibling === null` on its own is satisfied by a
-     * script CSP refused and equally by a script that simply has not run YET, so it is
-     * only worth something read at a moment when the browser has already decided — which
-     * is what waiting for `onerror` above buys. The `sibling === "refused"` guard folds
-     * that in: if the injection never settled, this check goes red WITH its sibling
-     * instead of passing vacuously on the strength of nothing having happened. */
+    /* `__sibling === null` alone is satisfied by a script that has not run YET; the
+     * `sibling === "refused"` guard anchors the absence to the browser's decision. */
     const siblingRan = await page.evaluate(() => window.__sibling || null);
     eq(sibling === "refused" ? siblingRan : sibling, null, "…and never ran");
-    // Match the URL the browser NAMES as refused, not the line: every such line also
-    // quotes the policy back, which now contains the word `static.` itself. Waited for on
-    // the node side, for the reason given in block 3.
+    // Match the URL the browser NAMES as refused (the line also quotes the policy back).
     const logged = () => cspErrors(errs).some((e) => /'https:\/\/cloudflareinsights\.com\//.test(e));
     await until(logged);
     ok(logged(), "…with the refusal logged, so the policy really is the one in force");
 
-    /* The connect-src half of the same question, checked rather than assumed. The beacon
-     * reports through `navigator.sendBeacon` to the RELATIVE `/cdn-cgi/rum?…` (it only uses
-     * the absolute `https://cloudflareinsights.com/cdn-cgi/rum` when the injected tag
-     * carries no `version`, and ours carries one), so `connect-src 'self'` covers it and
-     * does not have to be widened. `sendBeacon` returns false when CSP refuses it. */
+    /* The beacon reports via `sendBeacon` to the RELATIVE `/cdn-cgi/rum` (our tag carries a
+     * `version`), so `connect-src 'self'` covers it. `sendBeacon` returns false on refusal. */
     eq(await page.evaluate(() => navigator.sendBeacon("/cdn-cgi/rum?test", "x")), true,
        "the beacon's SAME-ORIGIN report path is permitted by connect-src 'self' as it stands");
-    // ...and the off-origin one is still refused. Asserted with `fetch`, not `sendBeacon`:
-    // Chrome queues a beacon and returns `true` before the policy check resolves, so
-    // sendBeacon's return value is not a reliable witness for a REFUSAL (it is for the
-    // permission above, where `true` is what a queued request means).
+    // ...and the off-origin one is still refused — asserted with `fetch`, because Chrome's
+    // sendBeacon returns `true` before the policy check resolves.
     eq(await page.evaluate(() =>
          fetch("https://cloudflareinsights.com/cdn-cgi/rum", { method: "POST", body: "x" })
            .then(() => "sent").catch(() => "blocked")), "blocked",
@@ -444,27 +302,19 @@ try {
     await page.close();
   }
   /* =====================================================================
-   * 5. THE POLICY HAS NO INLINE ESCAPE HATCH LEFT.
-   *
-   * `'unsafe-inline'` in `script-src` is the whole XSS loader problem: with it, any markup
-   * an attacker lands on the page executes. It stood in this policy from 2026-09-03 to
-   * 2026-09-04 and `_headers` called it "the honest gap". Read off the shipped file.
+   * 5. THE POLICY HAS NO INLINE ESCAPE HATCH LEFT: no `'unsafe-inline'` in script-src.
    * =================================================================== */
   {
     const csp = H["Content-Security-Policy"] || "";
     const scriptSrc = (csp.split(";").find((d) => d.trim().startsWith("script-src")) || "").trim();
     ok(!/'unsafe-inline'/.test(scriptSrc),
        `script-src must NOT carry 'unsafe-inline' (got ${JSON.stringify(scriptSrc)})`);
-    /* `'unsafe-hashes'` is the OTHER hatch, and it is not needed here: it exists only to
-     * let hashes cover inline event-handler ATTRIBUTES, and this bundle has none (block 6
-     * proves that from the files rather than trusting this line). It is asserted anyway
-     * because it is the obvious thing a future pass would reach for. */
+    /* `'unsafe-hashes'` is not needed (no inline handler attributes; block 6 proves it), and is
+     * the obvious thing a future pass would reach for. */
     ok(!/'unsafe-hashes'/.test(csp), "the CSP must NOT carry 'unsafe-hashes' anywhere");
     ok(!/'unsafe-eval'/.test(csp), "…nor 'unsafe-eval'");
-    /* The ONLY quoted sources permitted in script-src: 'self' and SHA-256 hashes. Anything
-     * else quoted is a keyword, and every script-src keyword other than 'self' is a
-     * widening. `'strict-dynamic'` in particular would make the host allowance below
-     * meaningless, which is exactly the kind of change that reads as tightening. */
+    /* Only 'self' and SHA-256 hashes may be quoted in script-src; any other keyword is a
+     * widening (`'strict-dynamic'` would void the host allowance). */
     const quoted = scriptSrc.split(/\s+/).filter((t) => t.startsWith("'"));
     const stray = quoted.filter((t) => t !== "'self'" && !/^'sha256-[A-Za-z0-9+/]+={0,2}'$/.test(t));
     eq(JSON.stringify(stray), "[]",
@@ -472,14 +322,8 @@ try {
   }
 
   /* =====================================================================
-   * 6. THE HASHES MATCH THE PAGES ON DISK — the blank-page guard.
-   *
-   * THIS IS THE ASSERTION THE WHOLE SLICE HANGS ON. A hash that drifts from the block it
-   * covers does not degrade: the browser refuses the block and the page goes BLANK, in
-   * production, because a static `_headers` is only ever sent by Pages. `sim/tools/
-   * build_csp_hashes.py` generates the header; this recomputes it INDEPENDENTLY, in a
-   * different language, from the same files — so a bug in the generator cannot satisfy its
-   * own guard. `sim/tests/test_csp_hashes.py` is the fast, browser-free version of this.
+   * 6. THE HASHES MATCH THE PAGES ON DISK — the blank-page guard, recomputed independently
+   *    of `sim/tools/build_csp_hashes.py` (`sim/tests/test_csp_hashes.py` is the fast twin).
    * =================================================================== */
   {
     const INLINE = /<script(?![^>]*\ssrc\s*=)([^>]*)>([\s\S]*?)<\/script>/g;
@@ -493,12 +337,9 @@ try {
       for (const m of src.matchAll(INLINE))
         blocks.push({ name, attrs: (m[1] || "").trim(), body: m[2],
                       line: src.slice(0, m.index).split("\n").length });
-      /* The inline event-handler ATTRIBUTE — `<button onclick="f()">` — is the one thing no
-       * hash in this policy can rescue, and its failure mode is the nastiest on the page:
-       * it does not throw, it simply never fires. NOTE WHAT THIS DOES NOT MATCH, because
-       * `_headers` was wrong about it until 2026-09-04 and counted ten of these: an
-       * `el.onclick = function(){}` in a .js file assigns a function OBJECT and is not an
-       * inline script at all. Only markup is scanned here, which is the whole distinction. */
+      /* An inline handler ATTRIBUTE (`onclick="…"`) cannot be rescued by any hash and fails
+       * silently — it never fires. Only markup is scanned: `el.onclick = fn` in a .js file is a
+       * function object, not an inline script. */
       for (const m of src.matchAll(/<[^>!][^>]*?\son[a-z]+\s*=\s*["'][^"']*["'][^>]*>/gi))
         handlers.push(`${name}:${src.slice(0, m.index).split("\n").length}`);
       for (const m of src.matchAll(/(?:href|src|action|formaction)\s*=\s*["']\s*javascript:/gi))
@@ -509,11 +350,8 @@ try {
        `they need 'unsafe-hashes', which this policy does not grant, and they fail SILENTLY ` +
        `(found: ${handlers.join(", ")})`);
 
-    /* The surface, pinned by name. Thirteen of the original fourteen inline blocks were
-     * moved into files rather than hashed — a file cannot drift. The one that remains
-     * cannot be a file in any browser: `<script type="importmap" src>` was dropped from the
-     * spec. If this count ever grows, the fix is almost always another file, not another
-     * hash, and this is where that decision gets forced into the open. */
+    /* The inline surface, pinned by name: only sim.html's importmap remains (importmaps cannot
+     * be external). If this grows, the fix is almost always another file, not another hash. */
     eq(blocks.length, 1,
        `exactly ONE inline <script> should remain on the whole site — ` +
        `${blocks.map((b) => `${b.name}:${b.line}`).join(", ")}`);
@@ -531,13 +369,8 @@ try {
   }
 
   /* =====================================================================
-   * 7. TEETH FOR THE NEW HALF — an inline <script> is REFUSED.
-   *
-   * Block 3 proves an off-ORIGIN script cannot load. That was already true before this
-   * pass. What was NOT true is this: until 2026-09-04 an attacker who could land markup on
-   * the page — a reflected parameter, a poisoned doc, a compromised fixture — got
-   * execution for free, because `'unsafe-inline'` ran whatever was written. This is the
-   * assertion that goes red the moment that keyword comes back.
+   * 7. TEETH FOR THE INLINE HALF — an inline <script> is REFUSED, so markup an attacker lands
+   *    on the page cannot execute. Goes red the moment 'unsafe-inline' comes back.
    * =================================================================== */
   {
     const { page, errs } = await load("sim.html");
@@ -552,18 +385,9 @@ try {
     eq(ran, null,
        "inline teeth: an injected inline <script> does NOT execute — with 'unsafe-inline' it would have");
 
-    /* The same thing by the route an XSS payload actually takes. `innerHTML` never runs a
-     * plain <script>, so this uses the classic `<img onerror>`, which DOES fire — and which
-     * `'unsafe-hashes'` would have re-enabled. Two different doors, one lock. */
-    /* 600 ms USED TO BE THE WHOLE ASSERTION HERE, and this one failed OPEN — the worse
-     * direction, and the reason it is fixed in the same pass as block 4's. `__handlerRan
-     * === null` is satisfied by a handler the policy REFUSED and equally by a handler
-     * whose `error` event had not been dispatched yet, so on a renderer slower than the
-     * guess this check reported "the policy held" about a page where nothing had happened
-     * at all. An absence is only evidence once the thing it is an absence OF has had its
-     * chance, so this needs a barrier: a witness that the event really was dispatched.
-     * `addEventListener` is not an inline handler, so `script-src` does not police it —
-     * the same event, watched through the door the policy deliberately leaves open. */
+    /* The route an XSS payload actually takes: `<img onerror>` via innerHTML. The absence of
+     * `__handlerRan` is only evidence once the `error` event has been dispatched, so an
+     * `addEventListener` witness (not policed by script-src) provides the barrier. */
     await page.evaluate(() => {
       window.__handlerRan = null;
       window.__imgErrored = null;
@@ -585,39 +409,20 @@ try {
     ok(cspErrors(errs).length >= 1,
        "inline teeth: …and the browser logged the refusals, so the policy really is in force");
 
-    /* THE OTHER HALF OF THE SAME QUESTION, and the reason this is not just a tightening
-     * nobody checked: the ONE block that IS hashed still runs. `window.moxie` exists only
-     * if the ES module graph resolved through sim.html's importmap — so if that hash were
-     * wrong, this page would be the blank one. */
+    /* And the ONE hashed block still runs: `window.moxie` needs sim.html's importmap. */
     ok(await page.evaluate(() => !!window.moxie),
        "…while the HASHED importmap still resolved: three.js loaded and the SIM booted");
     await page.close();
   }
 
   /* =====================================================================
-   * 8. EVERY PAGE STILL *WORKS*, not merely renders — under the new policy.
-   *
-   * A CSP that blanks a page is worse than `'unsafe-inline'`, and "it looked fine" is not
-   * evidence: thirteen inline blocks became thirteen `<script src>` tags, and a page whose
-   * glue silently failed to load still paints its markup, its CSS and its background. So
-   * each page is DRIVEN here — the docs explorer searches, the SIM takes a typed turn and
-   * makes a QR code, the setup page encodes one, the console renders its fixture — with a
-   * `securitypolicyviolation` listener installed BEFORE any page script runs.
-   *
-   * That listener is the strict part. Block 2 reads the CONSOLE, which is a rendering of
-   * the violation; this reads the EVENT, which is the violation itself, and carries the
-   * directive and blocked URI rather than a sentence to regex.
+   * 8. EVERY PAGE STILL *WORKS*, not merely renders — under the policy.
+   * A page whose glue failed to load still paints its markup and CSS, so each page is DRIVEN
+   * (docs search, SIM typed turn + QR, setup QR, console fixture) with a
+   * `securitypolicyviolation` EVENT listener installed before any page script runs.
    * =================================================================== */
   {
-    /* Violations the page recorded — ALL of them.
-     *
-     * This used to filter out `/user-attachments/`, "the one pre-existing img-src refusal":
-     * `README.md` embedded its hero shot from GitHub's CDN, `img-src 'self' data: blob:`
-     * refused it, correctly, on every load of docs.html, and the exemption meant the suite
-     * could not see it. A carve-out for a known violation is a carve-out for the next one
-     * too — it matched a substring, not a specific finding. The image is vendored as of
-     * 2026-09-04 (`sim/web/img/sim-hero.png`), so the exemption is gone and this is now
-     * what it always claimed to be: ZERO. */
+    /* Violations the page recorded — ALL of them, with no carve-outs: ZERO. */
     const violations = (p) => p.evaluate(() => window.__cspViolations || []);
     const show = (vs) => vs.map((v) => `${v.directive} ⟵ ${v.blocked}${v.sample ? " «" + v.sample + "»" : ""}`).join(" | ");
 
@@ -637,14 +442,8 @@ try {
         const c = document.getElementById("qr-canvas");
         const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
         let dark = 0;
-        /* OPAQUE **and** dark. `d[i] < 128` on its own counts a canvas NOBODY EVER DREW
-         * ON: an untouched 2-D canvas is `rgba(0,0,0,0)` everywhere, so its red channel
-         * is 0 and every pixel reads as "dark". Measured 2026-09-06 by
-         * `sim/tools/page_teeth_check.py` with `sim/web/qr.js` DELETED and again with it
-         * served 200 OK but inert — `hud.js` bails at `!window.moxieQR`, so the card
-         * cannot draw at all, and both runs returned exactly **45000 dark px**: the whole
-         * 300x150 default canvas, comfortably past the `> 500` bar. The alpha term is what
-         * makes this a measurement of INK rather than of the canvas's existence. */
+        /* OPAQUE **and** dark: an untouched canvas is rgba(0,0,0,0), so red < 128 alone counts
+         * all 45000 px of a canvas nobody drew on. The alpha term measures INK. */
         for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i] < 128) dark++;
         return { dark, status: (document.getElementById("qr-status") || {}).textContent || "" };
       });
@@ -658,18 +457,9 @@ try {
     /* --- docs.html: search, then open a hit ----------------------------------- */
     {
       const { page } = await load("docs.html");
-      /* The home document is README.md, and its hero is the image that produced the one
-       * violation this policy actually caught in production. Assert the PIXELS, not the
-       * markup: a 404 still gives you an `<img>` element, and a CSP refusal gives you one
-       * too — both with `naturalWidth === 0`. Checked BEFORE the search below navigates
-       * away from the README.
-       *
-       * A THIRD thing gives you `naturalWidth === 0`: an image still loading. This sample
-       * is the same one that reddened `test_docs_explorer.mjs` on CI run 34021460344 for
-       * that reason, and the only thing standing between this copy and the same red is the
-       * fixed 2.5 s sleep in `load()` above — a bet on the runner, not an assertion. Wait
-       * on `complete` instead, which flips true on load AND on error and so cannot launder
-       * a real refusal into a pass; `naturalWidth > 0` still has to separate those. */
+      /* The README hero image: assert PIXELS, not markup (a 404 or refusal still yields an
+       * `<img>`). Waited on `complete`, which flips on load AND error, so `naturalWidth > 0` still
+       * separates the two. Checked before the search navigates away. */
       await page.waitForFunction(() => {
         const i = document.querySelector("article img");
         return !!i && i.complete;
@@ -678,38 +468,16 @@ try {
         const i = document.querySelector("article img");
         return i ? { src: i.getAttribute("src"), complete: i.complete, w: i.naturalWidth, h: i.naturalHeight } : null;
       });
-      /* `complete` IS PART OF THE ASSERTION, not merely of the wait above. The wait
-       * `.catch(() => {})`s, so when it expires the check runs anyway — and a PNG that is
-       * still arriving does NOT have `naturalWidth === 0`, which is what the comment above
-       * assumed. Chrome fills the dimensions in from the IHDR header long before the
-       * pixels land. Measured 2026-09-06 with the 612 KB hero padded to 24 MB behind a
-       * 1 MB/s throttle: `{"complete":false,"w":1424,"h":1251}` — green, on an image the
-       * page had not decoded. Asserting `complete` turns the expired wait from failing
-       * OPEN into failing loud, and costs no teeth: `complete` flips true on error too, so
-       * a 404 or a refusal still has to get past `naturalWidth > 0`, which it cannot. */
+      /* `complete` is part of the assertion: Chrome fills `naturalWidth` from the PNG header long
+       * before decode, so an expired wait must fail loud rather than pass on a half-loaded image. */
       ok(hero && hero.complete && hero.w > 0 && hero.h > 0,
          `docs.html: the README hero image actually DECODED (${JSON.stringify(hero)})`);
       ok(hero && /^img\//.test(hero.src || ""),
          `docs.html: …from this origin, the repo-relative src remapped onto the site root (${hero && hero.src})`);
-      /* MEASURED 2026-09-06, and it is not a theory: with the browser throttled to
-       * 400 KB/s — a cold cache on a slow link, which is the CI runner's normal condition —
-       * this check read `0 hits` and the suite went red. `docs.js` does not fetch the
-       * full-text corpus until the first keystroke, and `sim/web/docs-search.json` is
-       * **3.27 MB**, queued behind `mermaid.min.js` (another 3.3 MB) on the same pipe.
-       * Instrumented on the real page at that throughput: typed at t=12.0 s, the filtered
-       * tree appeared at **t=24.5 s** — the shipped assertion looked at t=13.2 s. Nothing
-       * about the policy under test had changed; the number 1200 was the whole assertion.
-       *
-       * THE OBVIOUS WAIT IS ALSO WRONG, which is why the count before typing is captured.
-       * `#tree a > 0` is satisfied INSTANTLY: `buildTree("")` has already rendered all 46
-       * docs, so the naive condition returns before a single keystroke is processed. The
-       * same instrumented run shows the sequence — 46 links, then 0 while the title-only
-       * pass finds no match for a body-only term, then 13 when the corpus lands. So the
-       * condition is the CLAIM: the tree has been filtered (fewer) and is not empty.
-       *
-       * It is not circular. `.catch(() => {})` lets an expired wait fall through to the
-       * assertion, so a search that genuinely matches nothing still fails — with a message
-       * that now means what it says. */
+      /* The search corpus (docs-search.json, ~3 MB) is fetched on the first keystroke, so on a
+       * slow link the filtered tree can take >10 s. `#tree a > 0` is true instantly (the unfiltered
+       * tree), so the condition is the CLAIM: filtered (fewer than before) and not empty. An
+       * expired wait falls through, so a search that matches nothing still fails. */
       const allDocs = await page.evaluate(() => document.querySelectorAll("#tree a").length);
       await page.type("#q", "projectorfanpid");        // a body-only term: search must have run
       await page.waitForFunction(
@@ -743,14 +511,8 @@ try {
         const c = document.getElementById("cv-wifi");
         const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
         let dark = 0;
-        /* OPAQUE **and** dark. `d[i] < 128` on its own counts a canvas NOBODY EVER DREW
-         * ON: an untouched 2-D canvas is `rgba(0,0,0,0)` everywhere, so its red channel
-         * is 0 and every pixel reads as "dark". Measured 2026-09-06 by
-         * `sim/tools/page_teeth_check.py` with `sim/web/qr.js` DELETED and again with it
-         * served 200 OK but inert — `hud.js` bails at `!window.moxieQR`, so the card
-         * cannot draw at all, and both runs returned exactly **45000 dark px**: the whole
-         * 300x150 default canvas, comfortably past the `> 500` bar. The alpha term is what
-         * makes this a measurement of INK rather than of the canvas's existence. */
+        /* OPAQUE **and** dark: an untouched canvas is rgba(0,0,0,0), so red < 128 alone counts
+         * all 45000 px of a canvas nobody drew on. The alpha term measures INK. */
         for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i] < 128) dark++;
         return { dark, payload: (document.getElementById("pl-wifi") || {}).textContent || "" };
       });
@@ -787,45 +549,17 @@ try {
 
   /* =====================================================================
    * 9. THE TURNSTILE HOST — allowed in three directives, and by name ONLY.
-   *
-   * The same shape as block 4's beacon proof, for the same reason: an allowance nobody
-   * checks is how a policy quietly becomes a wildcard. Three things are proven here and
-   * each maps to one way the widget fails SILENTLY if the policy is wrong:
-   *
-   *   · a SCRIPT from `challenges.cloudflare.com` runs — without it `api.js` never loads,
-   *     no widget renders, and every send answers "try again";
-   *   · an IFRAME from that host is allowed — `frame-src 'none'` let the script load and
-   *     then produced no token at all, which is the nastiest of the three;
-   *   · a script and an iframe from the BARE `cloudflare.com`, one label away, are still
-   *     REFUSED. The allowance is host-exact.
-   *
-   * Answered at the browser, so this suite still touches no network: a CSP refusal happens
-   * BEFORE the request is issued, so a load that reaches the interceptor at all is a load
-   * the policy permitted.
-   *
-   * It ALSO asserts the `_headers` cache entry for `turnstile.js`, which is a different
-   * class of trap in the same file: the app-script no-cache list is the whole mechanism,
-   * and a client script missing from it is served with Pages' default caching — so a
-   * redeploy can leave a visitor running yesterday's token minter against today's route.
+   *   · a SCRIPT from `challenges.cloudflare.com` runs (else no widget, every send fails);
+   *   · an IFRAME from it is allowed (else the script loads and silently never mints a token);
+   *   · the BARE `cloudflare.com` is still REFUSED for both — host-exact.
+   * Answered at the browser, no network. Also asserts the `_headers` no-cache entries: a
+   * stale client script could mint tokens for yesterday's route.
    * =================================================================== */
   {
     /* ---- TRAP B, ENUMERATED RATHER THAN SPOT-CHECKED ----------------------- *
-     * The app-script no-cache list is THE WHOLE MECHANISM (`_headers` says so in
-     * capitals): a client script missing from it is served with Pages' default caching, so
-     * a redeploy can leave a visitor running yesterday's file against today's HTML — or,
-     * for `turnstile.js` specifically, yesterday's token minter against today's route.
-     *
-     * IT USED TO NAME ONE FILE, AND THAT WAS THE GAP. A guard that asserts
-     * `/turnstile.js` proves only that THIS slice remembered; the next new client script
-     * gets nothing. Demonstrated on an isolated export of this tree: a `zz-probe.js` added
-     * to `sim.html` with NO entry in `_headers` left every guard in the repo green —
-     * `build_csp_hashes.py --check`, `test_csp_hashes.py`, `test_csp.mjs` and
-     * `test_turnstile.mjs` alike. So the property is asserted as a CLASS: every `.js` this
-     * bundle ships has its own entry, whoever added it and whenever.
-     *
-     * (`sim/test_turnstile.mjs` §10 asserts the same thing from the same file, because
-     * that suite runs in the fast tier where there is no Chrome at all. Two copies of one
-     * cheap enumeration is the right price for it being checked in both tiers.) */
+     * The app-script no-cache list is the whole mechanism, so EVERY `.js` this bundle ships must
+     * have its own entry — asserted as a class, not for one remembered file.
+     * (`sim/test_turnstile.mjs` §10 repeats this in the browser-free tier.) */
     const headerText = readFileSync(join(web, "_headers"), "utf8");
     const listed = new Set();
     for (const m of headerText.matchAll(/^\/([A-Za-z0-9._-]+\.js)\n\s+Cache-Control:\s*no-cache$/gm)) {
@@ -839,6 +573,15 @@ try {
        `EVERY script in sim/web has its own no-cache entry — unlisted: ${JSON.stringify(unlisted)}`);
     ok(listed.has("turnstile.js"),
        "…including turnstile.js, whose staleness would mint tokens for the wrong action");
+    // App-script SUBDIRECTORIES (the split ES modules of moxie.js) are covered by one
+    // directory rule each, so a new module file cannot be forgotten either.
+    for (const dir of readdirSync(web, { withFileTypes: true })) {
+      if (!dir.isDirectory() || dir.name === "vendor") continue;
+      const js = readdirSync(join(web, dir.name)).filter((f) => f.endsWith(".js"));
+      if (!js.length) continue;
+      ok(new RegExp(`^/${dir.name}/\\*\\n\\s+Cache-Control:\\s*no-cache$`, "m").test(headerText),
+         `sim/web/${dir.name}/ ships ${js.length} scripts and has a /${dir.name}/* no-cache rule`);
+    }
 
     const page = await browser.newPage();
     await page.setViewport({ width: 1440, height: 900 });
@@ -874,19 +617,10 @@ try {
     const bareRan = await page.evaluate(() => window.__bareCloudflare || null);
     eq(bareScript === "refused" ? bareRan : bareScript, null, "…and never ran");
 
-    /* The iframe half. `frame-src` refusals do not fire `onerror` on an `<iframe>` at all,
-     * so the witness is the `securitypolicyviolation` EVENT — which carries the directive
-     * and the blocked URI rather than a sentence to regex. The listener is installed here
-     * rather than relying on `load()`'s, because this block builds its own page.
-     *
-     * IT USED TO BE A 1200 ms WINDOW, AND BOTH CHECKS BELOW WERE WRONG BECAUSE OF IT.
-     * Measured on this box the frame-src violation arrives at 2065 ms with NOTHING
-     * throttled (6692 ms at 20x), so the presence check was passing on luck — and the
-     * ABSENCE check next to it was then passing on an EMPTY ARRAY, a vacuous green on the
-     * assertion that the widget still works at all. Both are now anchored to one barrier:
-     * wait until the refusal we REQUIRE has actually been observed, and only then ask
-     * whether the host we ALLOW is in the same set. If the barrier never arrives, both go
-     * red — neither can be satisfied by nothing having happened. */
+    /* The iframe half: `frame-src` refusals never fire `onerror`, so the witness is the
+     * violation EVENT. Both checks are anchored to one barrier — the refusal we REQUIRE has been
+     * observed — before asking whether the ALLOWED host is absent from the same set; if the
+     * barrier never arrives, both go red. */
     await page.evaluate((allowed, refused) => {
       window.__frameV = [];
       document.addEventListener("securitypolicyviolation", (e) => {
@@ -902,12 +636,8 @@ try {
     const barrier = await untilPage(page, () =>
       (window.__frameV || []).some((x) => /frame/.test(x.d || "") &&
         /^https:\/\/cloudflare\.com/.test(x.u || "")) ? window.__frameV : null);
-    /* A DURATION THAT IS HONESTLY A DURATION, AND IS NOT CONVERTED. The barrier above
-     * proves the refusal channel is live and delivering; the first check below is an
-     * ABSENCE — that the ALLOWED host produced no violation — and an absence has no event
-     * to wait for. The allowed iframe is appended FIRST, so a refusal of it would have
-     * been queued ahead of the one just observed; this window is the margin on that
-     * ordering argument, not a stand-in for a condition. */
+    /* An honest duration: the allowed iframe was appended FIRST, so its refusal would have
+     * queued ahead of the one just observed; this window is margin on that ordering. */
     if (barrier) await new Promise((r) => setTimeout(r, 400));
     const framed = barrier ? await page.evaluate(() => window.__frameV) : null;
     const gaveUp = `GAVE UP: no frame-src violation for the bare host within ${CEILING} ms — ` +
@@ -917,9 +647,8 @@ try {
     ok(framed && framed.some((v) => /frame/.test(v.d || "") && /^https:\/\/cloudflare\.com/.test(v.u || "")),
        `…while an iframe from the bare cloudflare.com is REFUSED (${framed ? JSON.stringify(framed) : gaveUp})`);
 
-    /* And `connect-src`'s one host, both directions. The widened directive must permit the
-     * widget's own origin and must still refuse everybody else — the port-8081 kill this
-     * directive is famous for on this site has to survive the widening. */
+    /* connect-src's one host, both directions: the widget origin is allowed, everyone else
+     * still refused. */
     eq(await page.evaluate(() =>
          fetch("https://challenges.cloudflare.com/turnstile/v0/ping", { mode: "cors" })
            .then(() => "sent").catch(() => "blocked")), "sent",
@@ -943,10 +672,8 @@ try {
     deep(styleSrc.split(/\s+/).slice(1), ["'self'", "'unsafe-inline'"],
          `style-src is 'self' plus 'unsafe-inline' and nothing else (got ${JSON.stringify(styleSrc)})`);
 
-    /* THE CANDIDATE POLICY, DERIVED FROM THE SHIPPED ONE rather than retyped — delete the
-     * keyword and change nothing else. A hand-written "strict" string here could pass while
-     * being a policy we would never actually ship, which is the same class of mistake as a
-     * suite that hard-codes the CSP instead of parsing `_headers`. */
+    /* The strict candidate is DERIVED from the shipped policy (the keyword deleted, nothing
+     * retyped), so it is a policy we would actually ship. */
     const STRICT = csp.replace(styleSrc, "style-src 'self'");
     ok(STRICT.includes("style-src 'self';") && !/style-src[^;]*unsafe-inline/.test(STRICT),
        `the derived strict policy is malformed: ${JSON.stringify(STRICT)}`);
@@ -969,32 +696,13 @@ try {
         const styleV = () => v.filter((x) => /style-src/.test(x.d || "")).length;
         const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 
-        /* --- (a) THE CLAIM THIS BLOCK EXISTS TO REFUTE -----------------------------
-         * `_headers` used to say `'unsafe-inline'` had to stay because the JS animates
-         * `el.style.transform` on a rAF loop, "which no hash can cover". No hash is needed:
-         * `style-src` governs `<style>` ELEMENTS, `<link rel=stylesheet>` and the `style`
-         * ATTRIBUTE. A CSSOM property write is none of the three. */
+        /* --- (a) CSSOM writes (`el.style.transform = …`) are not policed by style-src, which
+         * governs <style>, <link rel=stylesheet> and the `style` ATTRIBUTE only. */
         const box = document.createElement("div");
         document.body.appendChild(box);
-        /* QUIESCE BEFORE THE FIRST SAMPLE — the page under this probe is still WORKING.
-         *
-         * `a0` and the second `styleV()` twenty frames later are two LIVE samples of a
-         * counter this probe does not own: `v` collects every style-src refusal on the
-         * page, and this page is `docs.html` under the strict policy, where `docs.js` is
-         * still rendering mermaid — which is precisely the producer part (c) below measures
-         * on purpose. Anything mermaid emits inside the rAF window is charged to
-         * `el.style.transform`, and the check's message then names the wrong cause.
-         *
-         * Measured 2026-09-06 with the renderer throttled 20x
-         * (`sim/tools/page_teeth_check.py --slow 20`): `{"violations":239}` where a full
-         * speed run reads 0 — the transform, the opacity and the custom property all still
-         * applied, so nothing about the CSSOM claim had changed. The `setTimeout(1500)`
-         * above was doing the work of a condition, and 1500 ms is not a condition.
-         *
-         * So: wait until the page has STOPPED producing style-src refusals (250 ms of
-         * quiet), and only then start counting. `styleV()` and not `v.length` because the
-         * page also probes the optional :8081 sidecar, which `connect-src` refuses on its
-         * own schedule and would keep the quiet from ever arriving. */
+        /* Quiesce first: under the strict policy docs.js is still rendering mermaid, whose refusals
+         * would be charged to the transform. Wait for 250 ms with no NEW style-src refusal (`styleV()`,
+         * not `v.length` — the :8081 connect-src probe has its own schedule), then count. */
         let last = -1, stable = 0;
         for (let i = 0; i < 400 && stable < 5; i++) {
           await settle(50);
@@ -1018,9 +726,7 @@ try {
           custom: getComputedStyle(box).getPropertyValue("--csp-probe").trim(),
         };
 
-        /* --- (b) NEGATIVE CONTROL — the policy must be seen REFUSING something ------
-         * All three shapes `style-src` really does police, in one go. A policy never
-         * observed refusing anything is not a policy. */
+        /* --- (b) NEGATIVE CONTROL — all three shapes style-src polices must be REFUSED. */
         const b0 = styleV();
         const st = document.createElement("style");
         st.textContent = "#csp-neg{outline:9px solid rgb(0,255,0)}";
@@ -1039,11 +745,8 @@ try {
           setAttributeColor: getComputedStyle(neg).color,
         };
 
-        /* --- (c) THE ACTUAL BLOCKER ------------------------------------------------
-         * mermaid builds its theme AT RUNTIME: `render()` returns an SVG string carrying a
-         * `<style>` element and a fistful of `style=` attributes, which `docs.js` assigns
-         * through `innerHTML`. Nothing here is ours to move into a .css file, and no hash
-         * can cover it — the bytes differ per diagram, and the docs ship 63 of them. */
+        /* --- (c) THE ACTUAL BLOCKER: mermaid emits a runtime <style> and `style=` attributes per
+         * diagram, assigned via innerHTML — no hash can cover per-diagram bytes. */
         const c0 = styleV();
         let mm;
         try {
@@ -1089,13 +792,9 @@ try {
       ok(m.refused.setAttributeColor !== "rgb(4, 5, 6)",
          `…nor did setAttribute("style") (got ${m.refused.setAttributeColor})`);
 
-      /* ---- (c) THE INVERTING GUARD -------------------------------------------- *
-       * This is the only assertion in this file that WANTS a violation. It is what makes
-       * the hole in `style-src` a measured fact with an owner rather than a paragraph of
-       * prose that nothing checks. The day mermaid stops emitting runtime styles — a
-       * re-vendor, a config, a replacement renderer — this reddens, and the fix is not to
-       * relax it: it is to drop `'unsafe-inline'` from `style-src` in `sim/web/_headers`
-       * and delete this assertion. */
+      /* ---- (c) THE INVERTING GUARD — the only assertion here that WANTS a violation. The day
+       * mermaid stops emitting runtime styles this reddens; the fix is to drop 'unsafe-inline'
+       * from style-src in `sim/web/_headers` and delete this assertion. */
       ok(!m.mermaid.error, `the mermaid probe must run at all (${m.mermaid.error || "ok"})`);
       ok(m.mermaid.styleEls > 0 || m.mermaid.styleAttrs > 0,
          `mermaid still emits runtime styles into its SVG (${JSON.stringify(m.mermaid)})`);

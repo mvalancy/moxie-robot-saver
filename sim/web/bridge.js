@@ -1,24 +1,14 @@
 /* bridge.js — live MQTT bus → window.moxie.
  *
- * Connects the 3D Moxie (moxie.js) to the same MQTT topics a real robot sees,
- * over WebSocket (broker `listener 9001 / protocol websockets`). It watches the
- * server's replies on `/devices/+/commands/remote_chat`, speaks the text, and
- * animates the avatar from the behavior markup — the exact `<mark cmd:…>` verbs
- * documented in docs/reverse-engineering/behavior-markup.md.
+ * Connects the 3D Moxie to the topics a real robot sees, over WebSocket. Replies on
+ * `/devices/+/commands/remote_chat` are spoken and animated from their behavior markup
+ * (docs/reverse-engineering/behavior-markup.md); `commands/tts` carries the SERVER VOICE
+ * (CloudTTSResponse) that audio.js plays, and the local voice stands down when it lands.
  *
- * It also consumes the SERVER VOICE on `/devices/+/commands/tts`: a
- * `CloudTTSResponse` (AI seam ③) whose base64 PCM audio.js decodes and plays,
- * lip-syncing the face from `marks[]`. When real audio arrives the local
- * browser/Piper voice stands down, so Moxie never speaks the line twice.
- *
- * It is a robot in BOTH directions. Cloud → robot: it acts on `response_actions`
- * (`launch` / `exit` / `sleep` / `enable_qr` / `execute` + `event_subscription`), the
- * contract's way for a brain to drive navigation rather than only speak
- * (docs/architecture/ai-seam.md §2, mqtt-and-conversation.md §4.1). Robot → cloud: it
- * publishes `events/client-service-activity-log` — the schedule/history pull, the
- * `mentor_behavior` report and the telehealth state — in the same envelope the headless
- * SIL robot `sim/virtual_moxie.py` publishes, so the two SIM clients are interchangeable
- * upstream as well as down (docs/architecture/sim-as-a-client.md).
+ * A robot in BOTH directions: it acts on `response_actions` (launch/exit/sleep/enable_qr/
+ * execute + event_subscription; ai-seam.md §2) and publishes
+ * `events/client-service-activity-log` in the same envelopes as `sim/virtual_moxie.py`,
+ * so the two SIM clients are interchangeable (docs/architecture/sim-as-a-client.md).
  *
  * Classic script (uses the global `mqtt` from mqtt.js). No build step.
  */
@@ -44,15 +34,13 @@
   const C = 16384, MAX = 32767;      // motor rest / range (MOTOR_MAX_POS)
 
   // ---- this robot's identity on the bus ----
-  // The browser SIM has always PUBLISHED as `d_sim` (see `faceEvent` / `sendUserTurn`);
-  // naming it once lets the robot→cloud channels below share the same device id, and
-  // `FIRMWARE` is the analyzed build `sim/virtual_moxie.py:40` reports in `/state`.
+  // `FIRMWARE` is the analyzed build `sim/virtual_moxie.py` reports in `/state`.
   const DEVICE_ID = "d_sim";
   const FIRMWARE = "24.10.803";
   const MODULE_NAME = "sim-web";     // which client this is (the SIL says "virtual-moxie")
   const dev = (name) => `/devices/${DEVICE_ID}/${name}`;
 
-  // Motor indices: 0 L-shoulder, 1 L-elbow, 2 R-shoulder, 3 R-elbow, 4 head, 5 body-yaw, 6 body-lean.
+  // Motor indices: 0/2 L/R shoulder up-down, 1/3 L/R shoulder in-out, 4 head, 5 body-yaw, 6 body-lean.
   const set = (i, v) => window.moxie && window.moxie.setMotor(i, Math.max(0, Math.min(MAX, v)));
   const armsHome = () => { for (const i of [0, 1, 2, 3]) set(i, C); };
   const home = () => { for (let i = 0; i < 7; i++) set(i, C); };
@@ -130,10 +118,8 @@
       case "Bht_Idle_Listening":                 // attentive lean-in + head tilt
         set(6, 20000); set(4, 20000); setTimeout(home, 1600); break;
       case "Bht_Idle_Near_Focused":              // held gaze: lean in, head level, hold
-        // INFERRED, like every other case here: no hardware has ever played our markup,
-        // and the name is what we have. The behavior planner uses this tree as its
-        // "hold the gaze" handle (there is no gaze verb in the 24 recovered commands),
-        // so it must read as steadier and longer than Idle_Listening's tilt.
+        // INFERRED (no hardware has played our markup): the planner's "hold the gaze" handle,
+        // so it must read steadier and longer than Idle_Listening's tilt.
         set(6, 22000); set(4, 16384); setTimeout(home, 2400); break;
       case "Bht_Talking_With_Gestures":
       case "Bht_Talking_Poses":
@@ -184,27 +170,12 @@
   }
 
   // ---- 🎬 response_actions: the cloud drives navigation, not just speech --------
-  //
-  // A `RemoteChatResponse` may carry `response_actions` — `RemoteChatAction` records the
-  // brain uses to move the robot through its own experience: launch a module, exit one,
-  // go to sleep, turn QR scanning on, call a named on-robot function
-  // (`mqtt/moxie_sdk/wire.py::build_chat_response`, `moxie_sdk/types.py::ActionType`,
-  // docs/architecture/ai-seam.md §2). Until now NOTHING in either SIM client read them:
-  // `sim/tests/test_e2e_actions_to_robot.py` proved they ARRIVE and said so in its own
-  // docstring ("this deliberately does not claim the robot acts on what it received").
-  // This is the client half of that contract.
-  //
-  // Every entry is `{output_type, action, module_id, content_id}` — plus, on an `execute`,
-  // the `function_id` / `function_args` / `action_args` that say WHAT to run and with
-  // what (see `applyAction`) — and the FIRST entry may
-  // instead/also carry `event_subscription:{active[], clear}` — the brain asking the robot
-  // to push it perception events. An action-less entry is legal and means exactly that,
-  // so "no `action` key" is not an error. A legacy singular `response_action` mirrors
-  // `response_actions[0]` (mqtt-and-conversation.md §4.1), so it is read only when the
-  // plural is absent — otherwise the same action would fire twice.
-  //
-  // NOTHING here throws. An action type we do not know is counted and skipped: a future
-  // server teaching a robot a new verb must not be able to break an old client's turn.
+  // Each entry is `{output_type, action, module_id, content_id}` (+ `function_id` /
+  // `function_args` / `action_args` on an `execute`); the FIRST may also/instead carry
+  // `event_subscription:{active[], clear}`, so an action-less entry is legal. The legacy
+  // singular `response_action` mirrors `[0]` and is read only when the plural is absent.
+  // NOTHING here throws: an unknown action type is counted and skipped, so a newer server
+  // cannot break an older client's turn.
   const ACTION_KINDS = ["launch", "exit", "sleep", "enable_qr", "execute"];
   const actionState = {
     applied: [],            // [{action, module_id, content_id, function, args, t}] bounded
@@ -216,15 +187,10 @@
     last: "",
   };
 
-  // `RemoteChatAction.action_args` — proto field 10, `repeated ActionArgsEntry{key, value}`
-  // — as the `{key: value}` mapping it encodes. `null` when the field is absent or
-  // unreadable, so the caller falls through to its NEXT spelling rather than recording an
-  // empty object as if the brain had sent one. The exact mirror of
-  // `sim/virtual_moxie.py::VirtualMoxie._action_args`, entry-rejection included: a
-  // non-list is not args at all, and an entry that is not an object — or carries no
-  // `key` — is dropped rather than turned into an `undefined` key. A missing `value`
-  // records `null`, which is what the SIL robot's `e.get("value")` yields, so the two
-  // clients' decoded args survive a JSON round-trip as the same document.
+  // `action_args` (proto field 10, `repeated ActionArgsEntry{key, value}`) as a `{key: value}`
+  // map, or `null` when absent/unreadable so the caller falls through to the next spelling.
+  // Mirrors `virtual_moxie.py::VirtualMoxie._action_args` exactly (entries without `key`
+  // dropped, missing `value` -> null), so both clients' args round-trip as one document.
   function actionArgs(entries) {
     if (!Array.isArray(entries)) return null;
     const out = {};
@@ -242,20 +208,10 @@
     const m = window.moxie;
     const kind = String(entry.action || "").toLowerCase();
     const moduleId = entry.module_id || "", contentId = entry.content_id || "";
-    // 🎬 WHAT AN `execute` IS CALLED, AND WITH WHAT.
-    // `RemoteChat.proto`:255-281 names the fields `function_id` (7), `function_args`
-    // (8, `repeated string`) and `action_args` (10, `repeated ActionArgsEntry{key,value}`),
-    // and since 2026-09-04 `mqtt/moxie_sdk/wire.py::encode_action` emits them: a LIST of
-    // args rides `function_args`, a MAPPING rides `action_args`, the home chosen by type
-    // and never guessed. Until 2026-09-04 this function read `entry.function` alone and no
-    // args at all, so every named `execute` our own server sent rendered here as
-    // `(unnamed)` while `sim/virtual_moxie.py` named it — two clients disagreeing about
-    // the one verb that had just gained a payload, which is exactly what DoD criterion 4
-    // forbids. All four spellings are read, in the SAME order the SIL robot reads them
-    // (`virtual_moxie.py::_apply_action`), so neither client can start preferring a
-    // different spelling of the same action. `undefined`/`null` — not falsiness — is what
-    // makes an args field fall through, because `function_args: []` and `action_args: []`
-    // are things a server can legitimately put on the wire and are not the same as absence.
+    // 🎬 What an `execute` is called, and with what: `function_id` (7), `function_args`
+    // (8, list) and `action_args` (10, mapping), read in the SAME order as
+    // `virtual_moxie.py::_apply_action` so the two clients never prefer different spellings.
+    // Only `undefined`/`null` falls through — `[]` is a legitimate value, not absence.
     const fn = entry.function_id || entry.function || "";
     let args = entry.function_args;
     if (args === undefined || args === null) args = actionArgs(entry.action_args);
@@ -296,13 +252,8 @@
         status("🎬 QR scanning on");
         break;
       case "execute":
-        // A named on-robot function. We cannot invent a body for it, so it is RECORDED
-        // and shown, never guessed at — an honest no-op beats a wrong animation. This
-        // keeps the SIL robot's discipline exactly: nothing is called, no module starts,
-        // and no `RemoteChatRequest.execute_returns[]` is published — that would mean
-        // inventing a return value for a function this client does not have. The status
-        // line is the SIL robot's line character for character, so an operator reading
-        // either client sees the same sentence.
+        // A named on-robot function: RECORDED and shown, never guessed at — nothing is called
+        // and no `execute_returns[]` is invented. The status line matches the SIL robot's.
         status(`🎬 execute ${fn || "(unnamed)"}`);
         break;
       default: break;
@@ -337,18 +288,14 @@
   }
 
   // --- voice arbitration -----------------------------------------------------
-  // A live backend sends the reply text first and the rendered audio
-  // (CloudTTSResponse) a beat later. Speak locally only while we have no server
-  // voice: hold the local voice for a short grace window on a live link, and drop
-  // it the moment real audio lands. Off the bus (static site / stub brain) there
-  // is no server voice at all, so speak immediately as before.
+  // On a live link the reply text arrives a beat before its CloudTTSResponse: hold the local
+  // voice for a short grace window and drop it the moment real audio lands. Off the bus
+  // there is no server voice, so speak immediately.
   const TTS_GRACE_MS = 900;
   let cloudVoice = false, pendingSpeak = 0, pendingText = "";
 
-  // A streamed answer arrives as several chunks of one event_id, so the grace timer must
-  // ACCUMULATE them rather than let each chunk clobber the last (which used to mean only
-  // the final sentence was ever spoken locally). Chunks that land inside one grace window
-  // are spoken as one line; a later chunk starts a new one.
+  // A streamed answer is several chunks of one event_id: the grace timer ACCUMULATES them,
+  // so chunks inside one window are spoken as one line.
   function speakLocally(text) {
     if (!window.moxieAudio || cloudVoice) return;
     if (!(client && client.connected)) { window.moxieAudio.speak(text); return; }
@@ -372,12 +319,9 @@
     window.moxieAudio.playCloudTTS(msg);     // resolves when playback ends
   }
 
-  // One turn can answer with SEVERAL responses sharing an event_id: a filler while the
-  // brain thinks, then the answer streamed a sentence at a time (result=REPLY_PENDING +
-  // chunk_num, closed by consistency_control.is_completed — see
-  // docs/architecture/mqtt-and-conversation.md §4.5). Audio ordering is audio.js's job
-  // (it queues CloudTTSResponses by chunk_num); here we keep the transcript and the
-  // speech bubble reading as ONE turn instead of one row per sentence.
+  // One turn can answer with several responses sharing an event_id (filler, then the answer
+  // streamed per sentence; mqtt-and-conversation.md §4.5). Audio ordering is audio.js's job;
+  // here the transcript and bubble read as ONE turn.
   let chatEvent = null, chatSaid = "";
 
   function handleRemoteChat(payload) {
@@ -412,18 +356,10 @@
   }
 
   // ---- 🎭 telehealth ("Be Moxie"): the operator drives the body ------------------
-  // The recovered TeleHealth protocol (docs/reverse-engineering/protocol/telehealth.md)
-  // is a peer of the chat channel, not a special case: a remote human's line arrives as a
-  // `TelehealthRobotCommand` — `{command, message:{action, output:{text, markup}}}` — and
-  // `Output.markup` is *the same behavior language* a brain reply carries (:16-17, :89-91).
-  // So PLAY_OUTPUT routes straight into `handleRemoteChat`'s rendering path (setSpeech →
-  // applyMarkup → gesture/tree/face) and the avatar cannot tell the two apart, which is
-  // exactly what makes the SIM a faithful double for this channel.
-  //
-  // INTERRUPT is the one verb with no equivalent on the chat side: barge-in from the
-  // operator, cutting a line already in the air. What a REAL robot does physically has
-  // never been observed (backlog/telehealth.md B2); here it stops the voice and clears the
-  // bubble, which is the reading our own protocol page gives it.
+  // A `TelehealthRobotCommand` carries the same Output markup a brain reply does
+  // (protocol/telehealth.md), so PLAY_OUTPUT routes through handleRemoteChat's rendering and
+  // the avatar cannot tell them apart. INTERRUPT (operator barge-in) stops the voice and
+  // clears the bubble — our protocol page's reading; real-robot behavior is unobserved.
   var telehealth = { lines: [], interrupts: 0, session_id: "", last_action: "" };
 
   function handleTelehealth(payload) {
@@ -463,13 +399,9 @@
   }
 
   // ---- presence: the robot's own eyes -----------------------------------------
-  // The stock robot runs vision ON-DEVICE and sends only semantic events — no pixels, no
-  // bounding boxes (docs/architecture/vision.md §1.1). A subscribed event is delivered to
-  // the brain as the `speech` of an ordinary RemoteChatRequest ("instead of ... something
-  // the user said, it receives a special event string like `eb-found-face`"), so the SIM
-  // emits it on exactly the topic and envelope a child's utterance uses. Everything the
-  // page RECORDS about it lives in `presence` and is read back by tests — never sampled
-  // live from an animation.
+  // Vision runs on-device and sends only semantic events (vision.md §1.1), delivered as the
+  // `speech` of an ordinary RemoteChatRequest — so the SIM emits them on the topic and
+  // envelope a child's utterance uses. State lives in `presence` for tests to read.
   const FOUND = "eb-found-face", LOST = "eb-lost-target";
   const VISION_EVENTS = [FOUND, LOST, "eb-lost-face", "eb-qr-event", "eb-dr-event", "eb-br-event"];
   const presence = {
@@ -487,23 +419,10 @@
     const state = presence.present === null ? "unknown" : (presence.present ? "here" : "away");
     if (el && el.setAttribute) el.setAttribute("data-presence", state);
     if (label) label.textContent = state.toUpperCase();
-    /* HIDDEN UNTIL IT KNOWS SOMETHING (2026-09-06, owner-reported from a phone).
-     *
-     * `presence` is what the ROBOT'S OWN CAMERA has reported over MQTT. On the hosted site
-     * there is no robot and there are no vision events, so `presence.present` is `null`
-     * forever and this badge sat in the corner of every visitor's screen reading
-     * "PRESENCE UNKNOWN" — a field that cannot ever say anything else, occupying real
-     * estate on a 390 px phone, and reading to a visitor as though something were broken.
-     *
-     * "Unknown" is honest but it is not INFORMATION, and a readout with exactly one
-     * reachable value is furniture. So the badge now appears the moment a face event
-     * actually arrives and stays out of the way until then — which means that when it IS
-     * on screen it always means something. The `data-presence` attribute is still written
-     * in every state, so `sim/test_presence_bridge.mjs` still observes the whole machine
-     * including the `unknown` start; only the VISIBILITY is conditional.
-     *
-     * `hidden` rather than a style or a class, matching `#liveness-hold`: visibility is a
-     * property, not a thing two files have to keep in sync. */
+    /* HIDDEN UNTIL IT KNOWS SOMETHING. On the hosted site no vision event ever arrives, so a
+     * permanent "PRESENCE UNKNOWN" is furniture that reads as broken. The badge appears on the
+     * first face event; `data-presence` is still written in every state (including the
+     * `unknown` start) for test_presence_bridge.mjs. `hidden`, like #liveness-hold. */
     if (el) el.hidden = (state === "unknown");
     const btn = document.getElementById("presence-toggle");
     if (btn) btn.textContent = presence.present ? "Walk away" : "Walk in";
@@ -541,33 +460,19 @@
   }
 
   // ---- 📒 robot → cloud: the activity log ---------------------------------------
-  //
-  // `/devices/{id}/events/client-service-activity-log` is the robot's own UPSTREAM
-  // channel, multiplexed by `subtopic` (docs/architecture/mqtt-and-conversation.md §3.3,
-  // cited to docs/reverse-engineering/cloud-protocol.md:172):
-  //
-  //   subtopic:"query"        pull the day plan / history / a license key. The robot does
-  //                           this at the start of every session (§3.8) and the cloud
-  //                           answers a `CloudQueryResponse` on `commands/query_result`.
-  //   (no subtopic)           a `mentor_behavior` REPORT — what the child just finished.
-  //   subtopic:"telehealth"   a `TelehealthRobotEvent`: the robot's own session state.
-  //
-  // The headless SIL robot has published all three since it was written
-  // (`sim/virtual_moxie.py::send_query` :193-201, `::report_mentor_behavior` :204-210,
-  // `::report_telehealth_state` :373-381). The browser SIM published NONE of them, so it
-  // could not ask the cloud anything and reported no robot state — the two clients were
-  // interchangeable downstream only. Same topic, same envelopes, same subtopic values as
-  // that client; the values that legitimately differ are identity (`module_name`, the
-  // device id in `auid`, `request_id`, `timestamp`) and are listed in
-  // docs/architecture/sim-as-a-client.md. Parity is pinned by the golden
-  // `sim/tests/goldens/robot_to_cloud_activity.json`, asserted from BOTH ends.
+  // `/devices/{id}/events/client-service-activity-log`, multiplexed by `subtopic`
+  // (mqtt-and-conversation.md §3.3):
+  //   subtopic:"query"        pull the day plan / history / a license key (start of every
+  //                           session); answered by a CloudQueryResponse on commands/query_result
+  //   (no subtopic)           a `mentor_behavior` REPORT — what the child just finished
+  //   subtopic:"telehealth"   a `TelehealthRobotEvent`: the robot's own session state
+  // Same topic, envelopes and subtopics as `sim/virtual_moxie.py`; only identity fields differ
+  // (sim-as-a-client.md). Parity is pinned by `sim/tests/goldens/robot_to_cloud_activity.json`.
   const ACTIVITY_TOPIC = dev("events/client-service-activity-log");
 
-  // The CloudQueryResponse field each answer is keyed under — the same table the SIL robot
-  // keeps (`virtual_moxie.py::QUERY_FIELD`), recovered from
-  // docs/reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto:310-352.
-  // Duplicated on purpose: a SIM client decodes the wire itself and never imports the
-  // server SDK it exists to test, exactly like firmware.
+  // The CloudQueryResponse field each answer is keyed under (Cloud.proto:310-352), the same
+  // table as `virtual_moxie.py::QUERY_FIELD` — duplicated on purpose: a client decodes the
+  // wire itself and never imports the SDK it exists to test.
   const QUERY_FIELD = {
     idf: "idf_values", license: "license_values", schedule: "schedule",
     contexts: "contexts", context_store: "versioned_contexts",
@@ -751,21 +656,11 @@
     addTranscript("user", speech);
     if (!window.moxieAudio) return;
     window.moxieAudio.sfx("listen");
-    /* ...and let the child be HEARD, not only read.
-     *
-     * This one handler carries every child utterance the page ever shows: the scripted
-     * lines of `sessions/demo.json`, `mic.js`'s degraded scripted line, and whatever a
-     * visitor typed into the Talk box or said into the microphone. `speakClipOnly` is the
-     * entry point that can tell them apart WITHOUT a flag: it plays a clip this site
-     * shipped for that exact sentence and otherwise makes no sound, with no route to
-     * Piper, to speechSynthesis or to the tone generator. So the two demo lines speak,
-     * `mic.js`'s scripted line speaks, and a visitor's own words stay silent instead of
-     * being read back at them in a stranger's voice.
-     *
-     * NOT gated on `replaying`, on purpose: that would mute `mic.js`'s scripted-child
-     * fallback, which runs outside a replay and is exactly where the child SHOULD be
-     * audible. The full reasoning, and the ordering rule that keeps the two voices off
-     * each other, is in the block comment on `speakClipOnly` in audio.js. */
+    /* ...and let the child be HEARD. `speakClipOnly` plays a clip this site shipped for that
+     * exact sentence and otherwise stays silent, so the scripted demo lines and mic.js's
+     * scripted fallback speak while a visitor's own words are never read back at them.
+     * Deliberately NOT gated on `replaying` (that would mute mic.js's fallback); see
+     * `speakClipOnly` in audio.js for the ordering rule. */
     if (window.moxieAudio.speakClipOnly) window.moxieAudio.speakClipOnly(speech, "child");
   }
 
@@ -774,39 +669,17 @@
   /* ======================================================================== *
    * THE ALIVENESS LAYER — reactions and thinking, as the loading bar
    * ======================================================================== *
-   *
-   * THE PROBLEM, owner-reported: "reduce the amount of time where Moxie is idle or what
-   * she is doing is unclear." Between pressing the button and hearing an answer there were
-   * two dead gaps — the microphone recording, and the ~1.2-4 s gateway round trip — and in
-   * both of them the only feedback was a line of grey text. A robot with a face and arms
-   * that does nothing while you talk to it does not read as listening; it reads as broken.
-   *
-   * The model is a person you have just asked a question: they look up, they go "hmm",
-   * they think visibly. THAT is the loading bar. The rules that keep it from becoming
-   * annoying are as important as the feature:
-   *
-   *   · SUBTLE. `Gesture_Think_Subtle` and small head moves, never `Gesture_Celebrate`.
-   *     A big arm movement every time somebody taps a button is exhausting by turn three.
-   *   · NEVER THE SAME TWICE RUNNING. `pickDifferent` holds the last choice per channel,
-   *     the same rule `mqtt/moxie_sdk/filler.py::pick_filler` uses on the robot path
-   *     ("a stuck line reads as a broken robot rather than a thinking one").
-   *   · LATE, NOT INSTANT, for thinking. Nothing at all for the first `THINK_DELAY_MS`,
-   *     because most turns answer inside it and a thinking pose that flashes for 200 ms is
-   *     noise. A person does not say "hmm" to a question they already know the answer to.
-   *   · IT NEVER SPEAKS. Every cue here is face, arms and LED — no audio, no bubble text.
-   *     Speaking a filler would need either a gateway call (money, and slower than the
-   *     thing it covers) or a pre-rendered clip per line, and `audio/index.json` has none
-   *     for these. Saying words she has not been given is the one shortcut worth refusing.
-   *   · IT YIELDS. `settled()` is called on every path that ends a wait, and the real
-   *     answer's own markup then drives the face — so this can only ever fill a gap, never
-   *     fight the reply that lands after it.
+   * Between the button and the answer (recording, then a ~1-4 s round trip) she reacts the
+   * way a person asked a question does. The rules that keep it from being annoying:
+   *   · SUBTLE — `Gesture_Think_Subtle` and small head moves, never a celebration.
+   *   · NEVER THE SAME TWICE RUNNING — `pickDifferent`, like `filler.py::pick_filler`.
+   *   · LATE — nothing for `THINK_DELAY_MS`, since most turns answer inside it.
+   *   · IT YIELDS — `settled()` ends every wait and the real reply's markup takes over.
    */
   var THINK_DELAY_MS = 900;
-  /* THE FILLER LINES — the eight `mqtt/moxie_sdk/filler.py` has always had, now pre-rendered
-   * so the browser can actually say one. Text must match the manifest key CHARACTER FOR
-   * CHARACTER (em dashes, ellipsis, the four m's in "Hmmmm") or the clip lookup misses and
-   * she is silent, which is why they are copied rather than retyped —
-   * `sim/test_ambient.mjs`'s sibling check pins the pair. */
+  /* THE FILLER LINES — `mqtt/moxie_sdk/filler.py`'s eight, pre-rendered. Text must match the
+   * manifest key CHARACTER FOR CHARACTER or the clip lookup misses (sim/test_ambient.mjs
+   * pins the pair). */
   var FILLERS = [
     "Hmm, let me think about that one.",
     "Ooh, good question! Give me a second.",
@@ -817,10 +690,8 @@
     "Hmmmm. Almost got it.",
     "Thinking, thinking… nearly there."
   ];
-  /* SPOKEN ONLY WHEN THE WAIT EARNS IT. 900 ms gets a thinking FACE; a filler is a whole
-   * spoken sentence and interrupting it two words in is worse than never starting. 1800 ms
-   * is past the median turn, so a quick answer is never talked over by a robot saying it is
-   * thinking about the thing it has already finished thinking about. */
+  /* A thinking FACE at 900 ms; a spoken filler only past 1800 ms (beyond the median turn),
+   * so a quick answer is never talked over. */
   var SPEAK_FILLER_AFTER_MS = 1800;
   var thinkTimer = null, thinkStage = 0;
   var lastPick = {};
@@ -868,15 +739,9 @@
             window.moxie.setFace(pickDifferent("thinkFace", ["thinking", "curious"]));
             gesture("Gesture_Think_Subtle");
           } else if (thinkStage === 2) {
-            /* SHE SAYS IT OUT LOUD. Played through the "ambient" group on purpose: that is
-             * the one group `audio.js::heldBy` lets a REPLY take the floor from, so when
-             * the real answer lands it cuts the filler off mid-word — which is exactly
-             * right, and is what a person does when they finish thinking. Any other group
-             * would make her queue the answer behind her own "hmm".
-             *
-             * A missing clip is silence, not an error: `speak()` looks the text up in the
-             * manifest and does nothing if it is absent, so a deployment that never ran
-             * the pre-render degrades to the face-only cue this replaced. */
+            /* Played in the "ambient" group: the one group `audio.js::heldBy` lets a reply cut
+             * off mid-word, which is what a person does when they finish thinking. A missing clip is
+             * silence, so an un-pre-rendered deployment degrades to the face-only cue. */
             var line = pickDifferent("filler", FILLERS);
             gesture(pickDifferent("thinkAgain", ["Gesture_Think", "Gesture_Think_Subtle"]));
             try {
@@ -946,19 +811,11 @@
     // true once a CloudTTSResponse has arrived — the server voice has taken over
     hasCloudVoice: function () { return cloudVoice; },
 
-    /* 🎬 What the cloud's `response_actions` actually DID to this robot, recorded as it
-     * happened: {applied:[{action,module_id,content_id,function,args}], unknown, module_id,
-     * content_id, launches, exits, asleep, qr_enabled, subscribed[], last}. `unknown`
-     * counts action types this client does not implement — they are skipped, never
-     * thrown. Tests assert this, never a live sample.
-     *
-     * `args` is here because this projection is the SECOND place the payload could be
-     * dropped, and on 2026-09-04 it was: `applyAction` had been taught to read
-     * `function_args`/`action_args` and this map still copied four keys, so every caller
-     * saw an armed `execute` with no arguments and nothing said otherwise. The reader's
-     * shape is as much of the contract as the writer's — the keys here are exactly
-     * `cloud_to_robot_actions.json`'s `applied_keys`, which is what
-     * `sim/virtual_moxie.py::action_stats()` returns too. */
+    /* 🎬 What `response_actions` actually DID, recorded as it happened: {applied:[{action,
+     * module_id,content_id,function,args}], unknown, module_id, content_id, launches, exits,
+     * asleep, qr_enabled, subscribed[], last}. `applied` keys are exactly
+     * `cloud_to_robot_actions.json`'s `applied_keys` (= `virtual_moxie.py::action_stats()`).
+     * Tests assert this, never a live sample. */
     actionStats: function () {
       return { applied: actionState.applied.map((a) => ({ action: a.action,
                  module_id: a.module_id, content_id: a.content_id, function: a.function,

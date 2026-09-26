@@ -1,13 +1,8 @@
-/* QR parity tests — the browser encoder (sim/web/qr.js) must emit BYTE-IDENTICAL
- * payloads to the two Python generators it shadows: `moxie_toolkit.qr_codec`
- * (tools/robot-toolkit) for the revival codes the robot's own setup parser reads,
- * and `moxie_sdk.launch_cards` (mqtt/) for the launch cards OUR cloud reads back.
- *
- * This matters: the browser encoder is what lets someone revive a robot from a
- * phone with nothing installed (static deploy). If it drifts from the toolkit,
- * one of the two is producing codes the robot won't accept — and the failure is
- * silent (a QR that just doesn't scan). Grammar:
- * docs/reverse-engineering/qr-commands.md (firmware v24.10.803).
+/* QR parity tests — the browser encoder (sim/web/qr.js) must emit BYTE-IDENTICAL payloads
+ * to the Python generators it shadows: `moxie_toolkit.qr_codec` (revival codes the robot's
+ * setup parser reads) and `moxie_sdk.launch_cards` (launch cards our cloud reads back).
+ * A drift fails silently as a QR that just doesn't scan.
+ * Grammar: docs/reverse-engineering/qr-commands.md (firmware v24.10.803).
  *
  * Run: node sim/test_qr.mjs
  */
@@ -103,11 +98,7 @@ ok(/src="qr\.js(\?[^"]*)?"/.test(html), "sim.html must load qr.js");
 ok(html.includes("setup.html"), "sim HUD should link to the full static setup page");
 
 // ---- 5. the standalone parent-app "basics" page is wired ---------------------
-// setup.html is the phone-first, server-free revival page — the parent-app basics
-// hosted statically. It must reuse qr.js (not reimplement the encoders) so it can
-// never drift from the byte-parity guarantee above.
-/* Page + its own scripts: the form glue moved from an inline block to `setup.js`
- * on 2026-09-04 (see `sim/web/_headers`). */
+// setup.html must reuse qr.js (via setup.js), never reimplement the encoders.
 const setup = pageSource("setup.html");
 ok(setup.includes("vendor/qrcode.js") && setup.includes('src="qr.js"'),
    "setup.html must load the vendored qrcode.js + qr.js");
@@ -122,23 +113,13 @@ for (const band of ["ANY", "ONLY_24G", "ONLY_50G"])
   ok(setup.includes(`"${band}"`), `setup.html missing band value ${band}`);
 
 // ---- 6. launch cards: browser↔Python byte parity (T12) -----------------------
-// A launch card is NOT one of the seven payloads above. Those feed the robot's setup
-// scanner; a card feeds its runtime reader and is answered by OUR cloud
-// (`mqtt/moxie_sdk/launch_cards.py`). So it gets its own parity leg, its own python
-// process (the SDK, not the toolkit) and — because a card is an unauthenticated input
-// a stranger can print — its own refusal leg. The refusals are asserted ACROSS the
-// boundary: the string is built in the browser and refused by the real Python decoder,
-// not merely refused inside Python by a string Python also wrote.
-//
-// Ceiling, unchanged by any of this: **no physical Moxie has ever sent us an
-// `eb-qr-event`**. This proves two generators agree, and nothing about a camera.
+// A card feeds the robot's RUNTIME reader and is answered by our cloud, so it gets its own
+// parity leg against the SDK and — being unauthenticated stranger input — a refusal leg
+// ACROSS the boundary: built in the browser, refused by the real Python decoder.
+// Ceiling: no physical Moxie has ever sent us an `eb-qr-event`.
 
-// `PYTHONDONTWRITEBYTECODE` is load-bearing, not hygiene. A `.pyc` is revalidated
-// against its source's (mtime-in-whole-seconds, size), so a run that edits
-// `launch_cards.py` without changing its length — which is exactly what a one-character
-// mutation does — can be served the PREVIOUS module out of `mqtt/moxie_sdk/__pycache__`.
-// That silently under-reports a mutation run by ~49 assertions; it did, here, before this
-// line existed. Writing no bytecode means the collision can never be set up.
+// `PYTHONDONTWRITEBYTECODE` is load-bearing: a same-length one-character mutation of
+// launch_cards.py can otherwise be served the stale .pyc (mtime is whole seconds).
 function pyJSON(cwd, script, payload) {
   return JSON.parse(execFileSync("python3", ["-c", script],
     { cwd: cwd, input: JSON.stringify(payload), encoding: "utf8",
@@ -161,9 +142,8 @@ const CARD_SCRIPT = [
 ].join("\n");
 
 // --- the browser half, provable with no python at all -------------------------
-// `encodeCard` throws by design, so every call goes through this: a refusal must be
-// reported as the named assertion it breaks, never as an uncaught exception that stops
-// the file before the parity leg below has run.
+// `encodeCard` throws by design: a refusal is reported as its named assertion, never as an
+// uncaught exception that stops the file.
 const card = (id, cid) => {
   try { return Q.encodeCard(id, cid); } catch (e) { return "<refused: " + e.message + ">"; }
 };
@@ -247,34 +227,13 @@ if (cards) {
 }
 
 // ---- 7. the printed sheet: modules on paper, read back and decoded (P0-c) ----
-// Section 6 pins two encoders against each other at the level of the PAYLOAD STRING.
-// This one goes a layer down, to the black squares `mqtt/moxie_sdk/launch_sheet.py`
-// actually draws — the thing a robot's camera sees and no string comparison can reach.
-//
-// The move is the same one this file was built for, pointed at a different pair. The
-// browser's own QR encoder (`sim/web/vendor/qrcode.js`, Kazuhiko Arase's, MIT) builds the
-// module matrix for every card at the sheet's pinned version and error level; that matrix
-// crosses into Python, where `sim/tests/helpers_qr_matrix.py` walks it the way a scanner
-// does — format information, un-mask, zig-zag, de-interleave, byte segment — and the
-// string that comes out goes to the real `launch_cards.decode`.
-//
-// WHAT IS DELIBERATELY *NOT* ASSERTED HERE, and why. The two encoders' matrices are NOT
-// byte-identical, and requiring them to be would be wrong. Measured 2026-09-06 on all 24
-// cards: same version, same error level, same mask, and the first fifteen data codewords
-// identical — segno then emits one extra 0x00 before the 0xEC/0x11 pad run where
-// qrcode.js starts padding immediately. Both are valid symbols carrying the same payload
-// (a decoder reads 0x00 as the terminator mode indicator), so terminator/pad placement is
-// implementation freedom the standard allows and neither side is wrong. The invariant
-// that MUST hold is therefore semantic — what the modules say — and that is what is
-// asserted. A byte-for-byte matrix guard here would be a false alarm waiting to happen.
-//
-// Ceiling, unchanged: this proves the ink, not the optics. No physical Moxie has read one.
-// One skip is legitimate here and exactly one: `segno` is the SDK's `cards` extra, so a
-// python with no QR encoder cannot draw a symbol. It is reported BY NAME from inside the
-// script; every other failure is a red assertion, never a skip. That split is the point —
-// a missing package that turns a guard into a silent pass is the trap this repo has hit
-// four times, and CI installs `sim/tests/requirements-hermetic.txt` (which declares segno
-// through `server/requirements.txt`) in this same job before this file runs.
+// One layer below section 6: the browser's qrcode.js builds each card's module matrix at
+// the sheet's pinned version/EC level, and `sim/tests/helpers_qr_matrix.py` decodes it the
+// way a scanner does before the real `launch_cards.decode`. The matrices are deliberately
+// NOT compared byte for byte: segno and qrcode.js legitimately differ in terminator/pad
+// placement, so the invariant is semantic. Ceiling: the ink, not the optics.
+// Exactly one legitimate skip — no `segno` (the SDK's `cards` extra), reported BY NAME;
+// every other failure is red.
 const SHEET_SCRIPT = [
   "import sys, json",
   "sys.path[:0] = ['mqtt', 'sim/tests']",
@@ -311,10 +270,8 @@ const READ_SCRIPT = [
 let sheetInfo = null;
 let sheetSkip = cards ? "" : "moxie_sdk not importable";
 if (cards) {
-  // `cards` above already proved the SDK imports under this python, so anything that goes
-  // wrong from here is a defect and is recorded as one. A crashing generator must not be
-  // able to report itself as a skip — that is how the EC-level mutation of this file's
-  // own geometry passed the node lane while the pytest lane went red.
+  // The SDK imported above, so anything failing from here is a defect: a crashing generator
+  // must not report itself as a skip.
   try {
     const got = pyJSON(repo, SHEET_SCRIPT, {});
     if (got.skip) sheetSkip = got.skip;

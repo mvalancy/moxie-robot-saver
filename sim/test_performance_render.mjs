@@ -1,85 +1,29 @@
 /* The behavior planner, seen from the only renderer we can assert against.
  *
- * No hardware has ever played our markup: everything we believe about how a robot
- * performs a `<mark cmd:…>` is inferred from the recovered generators
- * (docs/reverse-engineering/runtime/behavior-markup.md). The browser SIM is the one place
- * that inference is executable, so this drives the planner's TWENTY-TWO dialog-act
- * goldens — one line per `RemoteDialog.DialogAct` — through the REAL sim/web/bridge.js
- * and asserts the avatar actually performs each of them differently.
+ * No hardware has played our markup; the browser SIM is where the inference is executable.
+ * This drives the planner's 22 dialog-act goldens (one per `RemoteDialog.DialogAct`,
+ * written by sim/tools/build_performance_goldens.py and pinned by sim/tests/test_performance.py)
+ * through the REAL bridge.js as the ordinary `commands/remote_chat` that
+ * `MoxieRuntime.preview` publishes, and asserts each act performs differently —
+ * backlog/expressiveness.md §2.7 P1 (d). An id the SIM does not animate fails here.
  *
- * This is acceptance criterion (d) of backlog/expressiveness.md §2.7 P1: the preview hook
- * renders ≥10 lines on the SIM, with a contact sheet as an artifact. The messages it
- * plays are exactly what `MoxieRuntime.preview` publishes — an ordinary
- * `commands/remote_chat` — because the preview hook deliberately has no SIM-specific API
- * (docs/architecture/sim-as-a-client.md).
- *
- * The goldens file is written by the Python side (sim/tools/build_performance_goldens.py,
- * pinned byte for byte by sim/tests/test_performance.py), so this is a genuine
- * cross-language contract check: if the planner stages an id the SIM does not animate,
- * this fails rather than the robot silently doing nothing.
- *
- * The contact sheet it writes (`sim/artifacts/performance-contact-sheet.html`, or
- * `--out <path>`) is one cell per act showing the face the avatar reached, which motors
- * moved and how far, the whole-body tree, and the beats behind it — an author's-eye view
- * of the whole taxonomy on one page, and the artifact a CI run attaches.
+ * Writes a contact sheet (`sim/artifacts/performance-contact-sheet.html`, or `--out`): per
+ * act, the face reached, motors moved, the tree and its beats.
  *
  * No browser, no network. Run: node sim/test_performance_render.mjs
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { here, loadBridge, readGolden } from "./bridge_harness.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, "web", "bridge.js"), "utf8");
-const goldens = JSON.parse(
-  readFileSync(join(here, "tests", "goldens", "performance.json"), "utf8"));
+const goldens = readGolden("performance.json");
 
 const outArg = process.argv.indexOf("--out");
 const OUT = outArg > -1 && process.argv[outArg + 1]
   ? process.argv[outArg + 1]
   : join(here, "artifacts", "performance-contact-sheet.html");
 
-// ---- stubs: the same minimal window/document/mqtt shims test_bridge.mjs uses ----
-let calls = { setFace: [], setSpeech: [], setMotor: [], showIcons: [], clearIcons: [] };
-const reset = () => { calls = { setFace: [], setSpeech: [], setMotor: [], showIcons: [], clearIcons: [] }; };
-const moxie = {
-  setFace: (f) => calls.setFace.push(f),
-  setSpeech: (t) => calls.setSpeech.push(t),
-  setMotor: (i, v) => calls.setMotor.push([i, v]),
-  getMotor: () => 16384,
-  showIcons: (n) => calls.showIcons.push(n),
-  clearIcons: () => calls.clearIcons.push(true),
-  setHeartLED: () => {},
-};
-const clickHandlers = {}, mqttClientRef = { c: null }, els = {};
-const fakeEl = (id) => ({
-  id, value: "", textContent: "", innerHTML: "", className: "", scrollTop: 0, scrollHeight: 0,
-  addEventListener: (e, cb) => { if (e === "click" && id) clickHandlers[id] = cb; },
-  appendChild: () => {},
-  querySelector: () => ({ set textContent(v) {}, get textContent() { return ""; } }),
-});
-globalThis.window = { moxie, addEventListener: () => {} };
-globalThis.location = { hostname: "127.0.0.1" };
-globalThis.document = {
-  getElementById: (id) => (els[id] ||= fakeEl(id)),
-  createElement: () => fakeEl(),
-};
-globalThis.mqtt = {
-  connect: () => {
-    const h = {};
-    mqttClientRef.c = {
-      on: (e, cb) => { h[e] = cb; }, subscribe: () => {}, end: () => {},
-      _emit: (e, ...a) => h[e] && h[e](...a),
-    };
-    return mqttClientRef.c;
-  },
-};
-
-(0, eval)(src);
-clickHandlers["bus-connect"]();
-const client = mqttClientRef.c;
-if (!client) throw new Error("bridge did not connect over mqtt");
-client._emit("connect");
+const { calls, reset, client } = loadBridge();
 
 /* Exactly the message `MoxieRuntime.preview` publishes — an ordinary remote_chat. */
 const play = (markup, text) => {
@@ -91,10 +35,8 @@ const play = (markup, text) => {
     })));
 };
 
-/* The face each act must reach, and why. The faces come from bridge.js's MOOD_TO_FACE,
- * which maps the authoritative ePlaybackMood 1:1 onto the 11 Bht_Eyeseme_* expressions.
- * `motors:false` is not an omission — it is the assertion that an act performs by NOT
- * moving the arms, which is the whole point of backchannelling and pos_answer. */
+/* The face each act must reach (bridge.js MOOD_TO_FACE). `motors:false` asserts the act
+ * performs by NOT moving the arms (backchannelling, pos_answer). */
 const EXPECT = {
   abandon:               { face: "shy",       motors: true,  why: "a dropped line goes Shy and the eyes go searching (Bht_Search)" },
   apology:               { face: "sad",       motors: true,  why: "'I am sorry' -> Sad (mood 2, 8x in shipped content) + Gesture_Self" },

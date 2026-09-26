@@ -1,244 +1,37 @@
 # ---------------------------------------------------------------------------
-# Security headers (spec: docs/architecture/backlog/live-sim-demo.md §4.7).
+# Security + cache headers for the STATIC pages (Cloudflare Pages).
+# Spec: docs/architecture/backlog/live-sim-demo.md §4.7. `_headers` does NOT apply to
+# Pages *Function* responses (settled by a real deploy) — /api/* headers live in
+# functions/api/_lib/envelope.js. Later rules win, so cache rules are ordered below.
 #
-# This file used to be pure cache policy. A page with no credentialed endpoint can shrug
-# at that; a page that can SPEND MONEY through a same-origin /api/* route cannot. These
-# rules set no Cache-Control at all, so they cannot disturb the cache ordering the rest
-# of the file relies on (later rules win — see the note at the bottom).
-#
-# `connect-src 'self'` is the strongest control here and the reason the CSP earns its
-# place: no script on this page can ship anything to a third-party host. It costs nothing
-# real — every dependency is vendored locally, and the MQTT Link panel already cannot work
-# from an https:// page (bridge.js hardcodes ws://, which a secure page may not open), so
-# a self-hoster's broker was never reachable from a Pages deployment anyway.
-#
-# WHAT IS DELIBERATELY *NOT* HERE, and this is not an oversight. §4.7 sketches
-# `default-src 'self'`, and that is now what ships for scripts. `style-src` still carries
-# `'unsafe-inline'` — the last hole in this policy, and the paragraph dated 2026-09-05 at
-# the bottom of this header is the MEASURED reason it is still open. It is a far smaller
-# hole than the script one was: a `style-src` gap cannot load or run code, only restyle
-# what is already on the page. The rest of the policy is the subset that is verifiably
-# safe for this bundle: no page uses <base>, <object>/<embed> or any iframe, and no page
-# loads a subresource from another origin (only anchor hrefs and the canonical links
-# point off-site).
-#
-# 2026-09-03 — WHAT THAT PASS ADDED.
-#
-# ADDED `script-src 'self' 'unsafe-inline'` (and `default-src 'self'` behind it). The
-# policy above had NO `script-src` and NO `default-src`, so script execution was entirely
-# unrestricted: an injected `<script src="https://evil/x.js">` would have run. It cannot
-# now — combined with `connect-src 'self'` (which already has a measured kill on this site:
-# it is what refused the port-8081 fetch), the loader AND the exfiltration halves of the
-# usual XSS payload are both closed. It left `'unsafe-inline'` standing, and called that
-# the honest gap. The paragraph below is what closing it actually took.
-#
-# 2026-09-04 — `'unsafe-inline'` IS GONE FROM `script-src`. Counted, not estimated.
-#
-# The count that blocked this was FOURTEEN inline `<script>` blocks across five pages
-# (sim.html 4, index/setup/cloud 3 each, docs.html 1 — four of them `type="importmap"`).
-# THIRTEEN WERE DELETED RATHER THAN HASHED, because a file that does not exist cannot
-# drift:
-#
-#   · the seven ordinary blocks became seven files — `sw-reset.js`, `hud.js`, `rail.js`
-#     (sim.html), `home.js` (index), `setup.js`, `cloud.js`, `docs.js`. Each `<script src>`
-#     sits in the exact document position its inline block held and carries no
-#     defer/async, so execution order is unchanged;
-#   · the three `<script type="module">` wire-background blocks differed only in an opacity
-#     number, so the number moved to `data-opacity` on the `#wire-bg` element (markup, which
-#     CSP does not police) and the three blocks became one `wire-bg.js`;
-#   · THREE OF THE FOUR IMPORTMAPS WERE DELETED OUTRIGHT. index/setup/cloud carried one
-#     solely to resolve the bare specifier in `moxie-wire.js`'s `import … from "three"`.
-#     That import now names `./vendor/three/three.module.js` and the maps are gone.
-#
-# ONE inline block remains and it is HASHED: `sim.html`'s `<script type="importmap">`.
-# It cannot become a file — `<script type="importmap" src>` was dropped from the spec and
-# no browser ships it — and sim.html genuinely needs a map where the other four pages did
-# not, because `moxie.js` imports `three/addons/…` and the two VENDORED addon files import
-# bare `"three"` themselves. Patching those two vendored files would have taken the count
-# to zero; it was rejected, because a future re-vendor of three.js would quietly restore
-# the bare specifier and the trap would simply have moved somewhere with no guard on it.
-#
-# `'unsafe-hashes'` IS NOT HERE AND IS NOT NEEDED, and the earlier note in this file was
-# WRONG about why. It claimed TEN inline event-handler attributes (docs.html 9,
-# cloud.html 1). There are ZERO. All ten hits are `el.onclick = function(){…}` — a function
-# OBJECT assigned to a DOM property from inside an already-running script, which is not an
-# inline script and which CSP has no opinion about. What CSP does refuse is the ATTRIBUTE
-# form `<button onclick="f()">`, `setAttribute("onclick", …)` and `javascript:` URLs; this
-# bundle has none of the three, and `build_csp_hashes.py` fails the build if one appears —
-# because such a handler would not error, it would simply never fire.
-#
-# THE HASH IS GENERATED, NEVER TYPED. `sim/tools/build_csp_hashes.py` rewrites the
-# `script-src` above from the pages on disk; `--check` proves the committed header still
-# matches them, and `sim/tests/test_csp_hashes.py` runs that check in CI on every push.
-# This is not ceremony: a hash that drifts from its block does not degrade, it BLANKS THE
-# PAGE, and it blanks it in production — until 2026-09-03 no suite in this repo served
-# `_headers` at all, so nothing local would have seen it. `sim/test_csp.mjs` now loads all
-# five pages under this exact policy, asserts ZERO `securitypolicyviolation` events, and
-# drives the docs search, a typed SIM turn and the QR card to prove the pages still WORK
-# rather than merely render.
-#
-# 2026-09-03 (SECOND PASS) — `script-src` ALSO ALLOWS `https://static.cloudflareinsights.com`.
-#
-# Cloudflare Pages INJECTS its Web Analytics beacon into every HTML response: a
-# `<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/…">` with
-# an SRI hash and a real `data-cf-beacon` token. We do not write that tag and cannot edit
-# it — the platform adds it after our HTML has left this repo. The policy as first shipped
-# refused it, so https://moxie.mattvalancy.com/sim logged
-#
-#     Loading the script '…/beacon.min.js/…' violates the following Content Security Policy
-#     directive: "script-src 'self' 'unsafe-inline'". The action has been blocked.
-#
-# on EVERY page load (measured in Chrome against production, 2026-09-03). Functionally
-# harmless — the site works, the analytics simply never reported — but a permanent console
-# error drowns the next real one, and a quiet console is exactly what found the port-8081
-# bug this policy was written for.
-#
-# The alternative was turning the injection off in the Pages project. Rejected: that edits
-# the owner's ACCOUNT SETTINGS rather than our code, and silently removes analytics they may
-# want. Allowing one first-party Cloudflare host on a Cloudflare-hosted site is a smaller
-# and more legible widening. **DO NOT "TIDY" THIS ENTRY AWAY.** The tag it exists for is not
-# in this repo, so nothing here will look broken when it goes — the console will simply
-# start shouting again on production, where nobody is watching.
-#
-# `connect-src` IS DELIBERATELY UNCHANGED, and that was CHECKED, not assumed. The beacon
-# reports through `navigator.sendBeacon`, and `beacon.min.js` chooses its endpoint as
-# `send.to || (version === undefined ? "https://cloudflareinsights.com/cdn-cgi/rum" : null)`
-# and then falls back to the RELATIVE `/cdn-cgi/rum?…`. The injected tag carries
-# `"version":"2024.11.0"` and no `send.to`, so the report goes SAME-ORIGIN — which
-# `connect-src 'self'` already allows — and the live page loaded with the widened script-src
-# produced no connect-src refusal in 9 s of observation. Note the trap should that ever
-# change: the REPORT host is the bare `cloudflareinsights.com`, NOT the `static.` one, so
-# allowing the script host does not cover it. `sim/test_csp.mjs` block 4 pins both halves —
-# the beacon host runs, and the bare sibling host is still refused.
-#
-# ADDED `Strict-Transport-Security`. NOTE THE TRAP already recorded in this repo (§10
-# assumption 27, proven false the hard way in PR #72): `_headers` does NOT apply to Pages
-# *Function* responses, so everything in this file covers the STATIC PAGES ONLY.
-#
-# The `/api/*` half is DONE, and it is not done here: PR #115 sets it in code, as the frozen
-# `API_SECURITY_HEADERS` in `functions/api/_lib/envelope.js` — HSTS byte-identical to the
-# one above, a JSON-appropriate `default-src 'none'; frame-ancestors 'none'; base-uri 'none'`
-# and `Cross-Origin-Resource-Policy: same-origin`. That file is where those headers live and
-# where they must be changed.
-#
-# **DO NOT add HSTS, CSP or CORP to the `/api/*` block at the bottom of this file to "fix"
-# the asymmetry.** Every such line would be INERT — see that block's own note, settled by a
-# real deploy. Inert lines that look live are the original trap: it is precisely how the two
-# spending routes went months appearing to carry a security policy that never applied to
-# them. A header that protects an `/api/*` response has to be written in `envelope.js`.
-#
-# 2026-09-05 — `https://challenges.cloudflare.com` IN THREE DIRECTIVES, FOR THE BOT CONTROL.
-#
-# Cloudflare Turnstile now guards `POST /api/chat` (`functions/api/_lib/turnstile.js`, and
-# `sim/web/turnstile.js` is the browser half). The widget is a third-party script that
-# draws inside a third-party iframe and talks to its own origin, so it needs THREE
-# allowances and each one fails differently if it is missing:
-#
-#   · `script-src`  — without it `api.js` never loads. The failure is SILENT in the worst
-#     way: no widget renders, `getToken()` resolves `null`, and every send answers "try
-#     again" while the console carries one refusal nobody is watching.
-#   · `frame-src`   — was `'none'`, and is now EXACTLY this host. Turnstile renders its
-#     challenge in an iframe; with `'none'` the script loads, reports no error a page can
-#     see, and simply never produces a token. This is the one directive in the policy that
-#     had to be LOOSENED rather than extended, and the loosening is one host: no site but
-#     this one may be framed, and nothing on this site frames anything else (the paragraph
-#     above still holds — no page uses `<object>`/`<embed>`).
-#   · `connect-src` — the widget posts its own telemetry and fetches challenge material
-#     from its origin. THIS IS THE DIRECTIVE TO BE CAREFUL WITH: `connect-src 'self'` has
-#     a MEASURED kill on this site — it is what refused the port-8081 fetch that made the
-#     typed turn a dead control — and it is the half of an XSS payload that stops
-#     exfiltration. So it is widened by EXACTLY ONE HOST and nothing else, and
-#     `sim/test_csp.mjs` block 3 still proves an arbitrary off-origin `fetch` is refused.
-#
-# WHY NOT self-host the widget script. Because it cannot be self-hosted: Turnstile's
-# script must be served from `challenges.cloudflare.com` for the challenge to be valid,
-# which is the same "the tag is not in this repo" situation as the analytics beacon above.
-#
-# HOST-EXACT, LIKE THE BEACON. Note the near-neighbour trap the beacon entry already
-# records, because this host has one too: the ALLOWED host is
-# `challenges.cloudflare.com`, and a bare `cloudflare.com` or a `challenges.` on any other
-# domain is NOT allowed and must not be added "for symmetry". `sim/test_csp.mjs` block 9
-# pins all three directives by name and proves a sibling host is still refused.
-#
-# 2026-09-05 (SECOND PASS) — `style-src`: THE STATED BLOCKER WAS WRONG, THE REAL ONE IS
-# MERMAID. Measured in Chrome, not reasoned about.
-#
-# This file used to justify `'unsafe-inline'` in `style-src` with three clauses: every page
-# has a `<style>` block, pages carry inline `style=` attributes, and "the JS animates
-# `el.style.transform` on a rAF loop, WHICH NO HASH CAN COVER". **The third clause was
-# false, and it was the same mistake this file already made once about scripts** — the
-# `'unsafe-hashes'` paragraph above records ten inline event handlers that turned out to be
-# zero, because `el.onclick = fn` is a DOM property write and not an inline script.
-#
-# `el.style.transform = "…"` is that error's exact twin. `style-src` governs `<style>`
-# ELEMENTS, `<link rel=stylesheet>`, and the `style` ATTRIBUTE. A CSSOM property write is
-# none of the three, and CSP has no opinion about it. Served under `style-src 'self'` with
-# no `'unsafe-inline'`, a rAF loop writing `el.style.transform`, `el.style.opacity` and
-# `el.style.setProperty("--x", …)` produced **ZERO `securitypolicyviolation` events**, and
-# every write TOOK EFFECT (`matrix(0.87462, 0.48481, -0.48481, 0.87462, 29, 0)` read back
-# off `getComputedStyle`). `el.style.cssText` — which `bg.js` and `moxie-wire.js` use — is
-# the same: CSSOM, unpoliced. So the fourteen `el.style.*` writes and two `setProperty`
-# calls in this bundle are NOT a reason for anything, and this file should stop saying they
-# are. Note the sharp edge, because it is not intuitive: `setAttribute("style", …)` IS
-# refused (it writes the ATTRIBUTE), while `el.style.color = …` is not. This bundle has
-# zero of the former.
-#
-# WHAT ACTUALLY BLOCKS IT IS `docs.html`'s DIAGRAM RENDERER, and nothing in this repo can
-# move it. `vendor/mermaid.min.js` builds its theme AT RUNTIME: `mermaid.render()` returns
-# an SVG **string** that carries a `<style>` element and a fistful of `style=` attributes,
-# and `docs.js` assigns it through `innerHTML`. Measured on one two-node diagram under
-# `style-src 'self'`: **23 refusals — 2 `style-src-elem` and 21 `style-src-attr`** — after
-# which the diagram still had its nodes but rendered UNSTYLED (`fill: rgb(0, 0, 0)`, black
-# boxes on a black card). The docs ship **63 diagrams across 46 files**, so this is not an
-# edge case, it is the docs explorer's headline feature drawn wrong on every page.
-#
-# WHY NO HASH RESCUES IT. A hash covers exact bytes. Mermaid's bytes differ per diagram —
-# the probe alone produced seven distinct SHA-256s — and the diagrams are documentation
-# content that changes with every doc edit. A hash list would need one entry per diagram
-# per revision, regenerated by a tool that would have to RUN A BROWSER to know them, and a
-# drifted style hash fails the way a drifted script hash does: silently, in production.
-# `'unsafe-hashes'` does not help either — it widens attribute coverage, but the attributes
-# are still per-diagram bytes.
-#
-# WHAT WAS CONSIDERED AND REJECTED:
-#
-#   · **Move OUR inline styles out anyway** (four `<style>` blocks → four `.css` files, 19
-#     `style=` attributes → classes, nine more `style=` attributes generated by `cloud.js`
-#     and `docs.js` through `innerHTML`, and the `<style>` element `turnstile.js` injects
-#     for `#turnstile-holder`). All of it is doable and follows the 2026-09-04 precedent —
-#     but it buys NOTHING while `'unsafe-inline'` is still in the directive for mermaid's
-#     sake, and it is a large diff whose only effect would be to make a future one-line
-#     change easier. It is the right FIRST step of the next pass, not this one.
-#   · **A per-path CSP** — strict on the four pages that could take it, relaxed on
-#     `/docs.html` — which is the shape that would actually ship a win. REJECTED HERE
-#     because it rests on an UNVERIFIED Cloudflare behaviour: whether a second matching
-#     `_headers` rule REPLACES a `Content-Security-Policy` or sends a second one (two CSP
-#     headers are both enforced, i.e. intersected). This file has already been burned once
-#     by assuming Pages semantics — §10 assumption 27, proven false the hard way in PR #72
-#     — and there is no way to settle it without a real deploy. Worse, a second CSP line
-#     would sit OUTSIDE `build_csp_hashes.py`, which rewrites only the FIRST match: the
-#     second copy's script hash would drift silently and BLANK THE PAGE in production. If a
-#     future pass wants this, it must teach the generator about every CSP line FIRST, then
-#     settle the merge question on a preview deploy.
-#
-# SO THE HOLE STAYS, AND IT IS NOW GUARDED RATHER THAN MERELY DESCRIBED. `sim/test_csp.mjs`
-# block 10 derives the strict policy from the line below by deleting the keyword (never
-# retyping it), serves the site under it, and asserts all three findings: the CSSOM writes
-# fire zero violations and still apply; the strict policy DOES refuse an injected `<style>`,
-# an `innerHTML` `style=` attribute and `setAttribute("style")`, none of which take effect;
-# and mermaid still emits runtime styles that the strict policy refuses. **THAT LAST ONE IS
-# AN INVERTING GUARD — the only assertion in that file that wants a violation.** The day
-# mermaid stops needing this (a re-vendor, a config, a different renderer, or pre-rendering
-# diagrams in `build_docs_bundle.py`) the suite REDDENS, and the fix is not to relax it: it
-# is to delete `'unsafe-inline'` from `style-src` below and delete the assertion.
-#
-# AND THE SITEKEY IS NOT IN THIS REPO. The widget's public sitekey arrives from the
-# deployment at runtime, on `/api/health`'s envelope (`functions/api/_lib/env.js::
-# publicTurnstile` argues why). A sitekey written into `sim/web/sim.html` would be THIS
-# deployment's sitekey in a public repo, and every fork and every branch preview would
-# render a widget bound to a domain list they are not on — which is also why a preview
-# enforces nothing: `*.pages.dev` is not an authorized hostname for this widget, so a
-# challenge there could never pass and the Turnstile variables are deliberately unset.
+# CSP, directive by directive:
+#  · connect-src 'self' is the strongest control: no script can ship data off-site (it
+#    has a measured kill — it refused the port-8081 fetch). Widened by exactly one host,
+#    challenges.cloudflare.com, for Turnstile telemetry. sim/test_csp.mjs proves an
+#    arbitrary off-origin fetch is still refused.
+#  · script-src has no 'unsafe-inline': every inline block became a file except sim.html's
+#    importmap (importmaps cannot be external; sim.html needs it because the vendored
+#    three.js addons import bare "three"). Its hash is GENERATED by
+#    sim/tools/build_csp_hashes.py (never typed; --check runs in CI) — a drifted hash
+#    blanks the page in production. No inline handler attributes exist either;
+#    `el.onclick = fn` is a DOM property write, which CSP does not police.
+#  · static.cloudflareinsights.com: Pages INJECTS its analytics beacon into every HTML
+#    response. Refusing it logs a CSP error on every production load. Its reports go
+#    same-origin (/cdn-cgi/rum), so connect-src needs nothing. DO NOT tidy this away —
+#    the tag is not in this repo, so nothing local breaks when it goes.
+#  · challenges.cloudflare.com in script-src, frame-src and connect-src: the Turnstile
+#    widget (sim/web/turnstile.js) must be served from that host, renders in its iframe,
+#    and each missing directive fails SILENTLY (no token). Host-exact: never widen to
+#    cloudflare.com "for symmetry". The sitekey arrives at runtime from /api/health, never
+#    from this repo.
+#  · style-src keeps 'unsafe-inline' ONLY for docs.html's Mermaid, which emits per-diagram
+#    runtime <style> + style= attributes (no hash can cover them; strict CSP draws the
+#    diagrams unstyled). CSSOM writes (el.style.x = …) are not policed and are not a
+#    reason. test_csp.mjs block 10 is an INVERTING guard: the day Mermaid stops needing
+#    this it reddens, and the fix is to delete 'unsafe-inline' here. A per-path CSP was
+#    rejected: Pages' merge semantics for two matching CSP rules are unverified and the
+#    hash generator rewrites only the first CSP line.
+# ---------------------------------------------------------------------------
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
@@ -252,12 +45,10 @@
 /*.html
   Cache-Control: no-cache
 
-# App scripts — change often; must revalidate (the /*.js glob is unreliable on
-# Pages, so each app script is listed explicitly. THE LIST IS THE WHOLE MECHANISM: an app
-# script missing from it is served with Pages' default caching, so a redeploy can leave a
-# visitor running yesterday's file against today's HTML. The eight files below marked NEW
-# 2026-09-04 are the inline blocks this bundle used to carry — see the note at the top —
-# and `life.js`/`cloud-transport.js` had simply been missed when they were added.)
+# App scripts must revalidate. THE LIST IS THE WHOLE MECHANISM (the /*.js glob is
+# unreliable on Pages): an unlisted script gets default caching, so a redeploy can leave a
+# visitor running yesterday's file against today's HTML. sim/test_csp.mjs enumerates
+# sim/web/*.js (and each script subdirectory's rule) and fails on any omission.
 /moxie.js
   Cache-Control: no-cache
 /bridge.js
@@ -302,12 +93,11 @@
   Cache-Control: no-cache
 /wire-bg.js
   Cache-Control: no-cache
-# NEW 2026-09-05 — the browser half of the Turnstile bot control. THE LIST IS THE WHOLE
-# MECHANISM (see the note above this block): a script missing from it is served with
-# Pages' default caching, so a redeploy could leave a visitor running yesterday's
-# `turnstile.js` — one that mints a token for the wrong `action`, or none at all —
-# against today's `/api/chat`. `sim/test_csp.mjs` block 9 asserts this entry exists.
 /turnstile.js
+  Cache-Control: no-cache
+/moxie/*
+  Cache-Control: no-cache
+/css/*
   Cache-Control: no-cache
 
 # Rendered imagery + docs bundle — short cache so overwrites propagate fast.
@@ -334,19 +124,9 @@
 /vendor/*
   Cache-Control: public, max-age=31536000, immutable
 
-# The Pages Functions (functions/api/*). SETTLED BY A REAL DEPLOY (2026-09-03): this block
-# is INERT — `_headers` does not apply to a Pages Function response at all. The preview
-# served `/sim.html` with the `/*` block's `Referrer-Policy` (so `_headers` demonstrably
-# works on the deployment) and served `/api/health` with NO `Referrer-Policy` whatsoever,
-# while `Cache-Control: no-store` and `X-Content-Type-Options: nosniff` were present —
-# and those two are exactly the ones `functions/api/_lib/envelope.js` sets in code. The
-# "belt and braces" turned out to be the only belt.
-#
-# It is kept here as documentation of intent, and because a future Pages change that DID
-# start applying it would set the same values. But treat it as having no effect: every
-# header an /api/* response needs must be set in `envelope.js`, which is where
-# `Referrer-Policy: same-origin` now lives. `sim/tests/test_demo_proxy.mjs` holds the two
-# in agreement so this block cannot quietly drift away from the code that is real.
+# /api/* (Pages Functions): INERT here — see the header note. Kept as documentation of
+# intent; test_demo_proxy.mjs holds it in agreement with envelope.js, where the real
+# headers are set.
 /api/*
   Cache-Control: no-store
   X-Content-Type-Options: nosniff
