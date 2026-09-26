@@ -150,11 +150,6 @@ body::after {
   color: var(--text);
   white-space: nowrap;
 }
-#topbar h1 .sep {
-  color: var(--cyan);
-  padding: 0 5px;
-  font-weight: 400;
-}
 #topbar .tag {
   font-family: var(--font-mono);
   font-size: 10px;
