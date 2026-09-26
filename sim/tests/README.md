@@ -20,9 +20,12 @@ browser at all and carry the hermetic suite CI actually runs.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -q -r sim/tests/requirements.txt
-.venv/bin/python -m pytest sim/tests -q -k "not test_sil and not test_docs" \
+.venv/bin/python -m pytest sim/tests -q -k "not test_sil and not test_docs and not test_live" \
   --ignore=sim/tests/test_live_gateway.py      # the hermetic suite
 ```
+
+`not test_live` matters locally: the `test_live_*` suites skip without a key, but a key in
+`mqtt/.env` (or the environment) makes them spend real gateway money.
 
 ## The two requirements files — and why there are exactly two
 
