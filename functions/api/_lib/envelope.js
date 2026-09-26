@@ -1,62 +1,29 @@
-/* functions/api/_lib/envelope.js — the one response shape, and the status +
- * `Retry-After` mapping that goes with it.
+/* functions/api/_lib/envelope.js — the one response shape, and its status + `Retry-After`
+ * mapping.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §3.2 (the envelope), §4.2 (what the
- * browser is allowed to know), §4.5 (the status table), §7 (the capacity signal).
+ * Spec: docs/architecture/backlog/live-sim-demo.md §3.2 (envelope), §4.2 (what the browser
+ * may know), §4.5 (status table), §7 (capacity signal).
  *
- * Why one envelope: the client gets ONE branch. Success or failure, 200 or 503, the body
- * has the same keys, so `mode.js` and the transport never have to guess whether a reply
- * is an error shape or a data shape.
- *
- * The constraint that bites here, restated (§4.2, C1):
- *   THE BROWSER MAY NEVER SEE the gateway base URL, the gateway key in any form, a model
- *   id, an upstream status code or an upstream error body. Upstream errors can echo model
- *   names, org identifiers and key prefixes, so this module builds every response from a
- *   FIXED KEY ALLOWLIST (`PUBLIC_KEYS`) rather than by spreading a caller's object. An
- *   unknown key cannot ride along, because nothing copies unknown keys. `message` — the
- *   one free-text field — is additionally scrubbed of URLs and key-shaped tokens.
- *
- * Never a bare 500. Never a 200 with an empty string (§4.5): the dead-air failure mode
- * that exists today is exactly what this contract exists to prevent.
+ * One envelope, so the client has ONE branch: success or failure, every body has the same
+ * keys. THE BROWSER MAY NEVER SEE the gateway base URL, the key, a model id, an upstream
+ * status or an upstream body (they echo org ids and key prefixes), so every response is
+ * built from a FIXED KEY ALLOWLIST (`PUBLIC_KEYS`) — unknown keys are never copied — and
+ * the one free-text field, `message`, is also scrubbed. Never a bare 500; never a 200 with
+ * an empty string.
  */
 
-/** The closed reason set (§3.2), plus ONE addition P0-b makes and the reason for it.
+/**
+ * The closed reason set (§3.2). Adding one is a CONTRACT CHANGE made in two places: here
+ * and `sim/web/mode.js`, which coerces an unknown reason to `null` (a healthy turn).
  *
- * `gateway_unreachable_or_gated` is not in §3.2's list. It exists because the gateway is
- * expected to sit behind a **Cloudflare Tunnel**, and a tunnel protected by **Cloudflare
- * Access** answers an unauthenticated server-side `fetch` with an **HTML login page and a
- * 200 status**. Folding that into `upstream_down` would be technically true and
- * operationally useless: the two have completely different fixes (restart the gateway vs.
- * configure `DEMO_GATEWAY_ACCESS_CLIENT_ID`/`_SECRET`, see `./env.js::ACCESS_VARS`), and
- * from a bare 502 they are indistinguishable. So it gets its own reason, with the same
- * 503 status and the same visitor-facing copy as `upstream_down` — the visitor's
- * experience is identical, and only the operator learns anything new.
- *
- * Adding a reason is a CONTRACT CHANGE, so it is made in exactly two places and nowhere
- * else: here, and `sim/web/mode.js`'s matching list — where an unknown reason is coerced
- * to `null` and would therefore be misread as a HEALTHY turn. That is why the client half
- * is not optional.
- *
- * THE TWO TURNSTILE REASONS ARE TWO AND NOT ONE FOR THE SAME KIND OF REASON
- * `gateway_unreachable_or_gated` exists (`./turnstile.js`'s header argues it in full):
- *
- *   `turnstile_failed`        — the VISITOR's token is bad. Missing, expired (they are
- *                               single-use and live 300 s), replayed, or minted by a
- *                               widget with another action. The page answers this one
- *                               turn from the stub and the mode does NOT change: a
- *                               visitor whose token went stale is not a broken
- *                               deployment. Status 403 rather than 400, because nothing
- *                               is wrong with what they TYPED.
- *   `turnstile_misconfigured` — OUR configuration is bad: the secret Cloudflare received
- *                               is not the widget's, our request was malformed, or the
- *                               solved hostname is not one this deployment allows. It
- *                               fails identically for EVERY visitor until someone fixes
- *                               it, so it degrades the page like `upstream_down` — 503,
- *                               `Retry-After: 60`, SCRIPTED badge. **This is how the
- *                               secret gets validated in production without anyone
- *                               printing it:** deploy, type one sentence, read the
- *                               reason. Nothing from Cloudflare's reply is forwarded to
- *                               produce it — no `error-codes`, no hostname, no timestamp.
+ * `gateway_unreachable_or_gated` — an HTML/non-JSON upstream reply, typically a Cloudflare
+ *   Access login page served at 200. Same status and visitor copy as `upstream_down`, but a
+ *   different operator fix (configure `./env.js::ACCESS_VARS`).
+ * `turnstile_failed` (403) — the VISITOR's token is bad; the page answers that one turn
+ *   from the stub and stays live.
+ * `turnstile_misconfigured` (503, Retry-After 60) — OUR config is bad; fails every visitor
+ *   identically, so it degrades the page. How an operator validates the secret without
+ *   printing it. Nothing from Cloudflare's reply is forwarded to produce it.
  */
 export const REASONS = Object.freeze([
   "rate_limited",
@@ -86,12 +53,9 @@ export const PUBLIC_KEYS = Object.freeze([
   "mode",
   "load",
   "limits",
-  // The PUBLIC Turnstile sitekey, or `""` when the bot control is not enforced
-  // (`./env.js::publicTurnstile`, which argues why it is published here rather than
-  // written into the HTML). It is on the ENVELOPE and not inside `limits` because
-  // `limits` is `PUBLIC_LIMIT_KEYS` — a closed set of CAPS the browser must obey — and a
-  // sitekey is not a cap. It rides every response for the same reason `mode` does: the
-  // page must be able to learn it from the probe it already makes.
+  // The public Turnstile sitekey, or `""` when not enforced (`./env.js::publicTurnstile`).
+  // On the envelope, not in `limits`: `limits` is a closed set of caps, and a sitekey is
+  // not a cap.
   "turnstile",
   "messages",
   "speech",
@@ -99,34 +63,14 @@ export const PUBLIC_KEYS = Object.freeze([
   "transcript",
   "voice",
   "ears",
-  /* A mermaid diagram Moxie drew, as SOURCE TEXT, or `""` on every other response.
-   *
-   * On the ENVELOPE rather than inside the robot wire's `output`, deliberately: `output`
-   * is `build_chat_response`'s shape and has to stay byte-compatible with what the real
-   * device expects (`mqtt/moxie_sdk/wire.py`), while this envelope is OUR API and is the
-   * right place for something only the browser SIM can do. It is also why the field is
-   * `""` and not absent when there is none — every key in `PUBLIC_KEYS` is always present,
-   * which is what makes the allowlist a security control rather than a suggestion.
-   *
-   * IT IS UNVALIDATED SOURCE and the renderer treats it as untrusted: `sim/web/diagram.js`
-   * hands it to a vendored, same-origin mermaid and inserts the result as SVG under the
-   * page's own CSP (`script-src 'self'`), which is what stops a diagram becoming a script
-   * delivery mechanism. `chat.js::splitDiagram` has already taken it OUT of the spoken
-   * line, so nothing here is ever read aloud. */
+  /* A mermaid diagram Moxie drew, as SOURCE TEXT, or `""`. On the envelope rather than the
+   * robot wire's `output`, which must stay byte-compatible with `mqtt/moxie_sdk/wire.py`.
+   * Untrusted: `sim/web/diagram.js` renders it with a vendored mermaid under the page CSP.
+   * `chat.js::splitDiagram` has already removed it from the spoken line. */
   "diagram",
-  /* The DOCUMENT she answered from, as `"<title>|<path>"`, or `""` when she looked nothing
-   * up. Two jobs, and both are the point rather than debug scaffolding:
-   *
-   *   · A ROBOT THAT CITES ITS SOURCE. She is answering from a public corpus this site
-   *     already serves; showing which document lets a visitor go and read it, and makes
-   *     "she looked it up" checkable instead of a claim.
-   *   · IT MAKES THE FEATURE OBSERVABLE FROM OUTSIDE. Retrieval runs server-side, so
-   *     whether it fired was previously invisible: a lookup that silently never happened
-   *     and a model that ignored the excerpt produce the identical bad answer. It cost a
-   *     live measurement to notice, and this is what stops the next one costing another.
-   *
-   * The title and path are OURS — index metadata for files we committed — so this leaks
-   * nothing a visitor could not already fetch from `/docs-index.json`. */
+  /* The document she answered from, as `"<title>|<path>"`, or `""`. Lets a visitor read
+   * the source and makes server-side retrieval observable from outside. Our own index
+   * metadata, already public in `/docs-index.json`. */
   "cited",
 ]);
 
@@ -147,11 +91,9 @@ export const STATUS_FOR = Object.freeze({
   // nothing (§4.1). The client answers from the scripted repertoire.
   blocked: 200,
   forbidden_origin: 403,
-  // 403, not 400: a refused bot check is not a complaint about the visitor's SENTENCE,
-  // and `mode.js` must not treat it as an input error the page should explain as one.
+  // 403, not 400: a refused bot check is not a complaint about the visitor's sentence.
   turnstile_failed: 403,
-  // 503 with the same shape as `upstream_down`: a wrong secret refuses every visitor
-  // identically, so the honest thing is a degraded page rather than a per-turn hiccup.
+  // A wrong secret refuses every visitor identically: degrade like `upstream_down`.
   turnstile_misconfigured: 503,
 });
 
@@ -171,102 +113,35 @@ export const RETRY_AFTER_FOR = Object.freeze({
   bad_ticket: null,
   blocked: null,
   forbidden_origin: null,
-  // No header: a fresh token is a click away, and telling a visitor to wait 60 s for one
-  // would be false. The page mints a new one on the next send.
+  // No header: the page mints a fresh token on the next send.
   turnstile_failed: null,
-  // 60 s, matching `upstream_down`: the fix is a deployment change, so re-asking sooner
-  // than that cannot help and only costs requests.
+  // The fix is a deployment change; re-asking sooner cannot help.
   turnstile_misconfigured: 60,
 });
 
-/* ============================================================================ *
- * THE HARDENING HEADER SET FOR /api/* — and, just as load-bearing, the headers
- * deliberately LEFT OFF it, each with the reason it was left off.
- * ============================================================================ *
+/*
+ * THE HARDENING HEADER SET FOR /api/*. It lives in code because `sim/web/_headers` is NOT
+ * applied to a Pages Function response (settled by a preview deploy, §10 assumption 27):
+ * this object is the only thing that ships on a route response.
  *
- * WHY THIS LIVES IN CODE AND NOT IN `sim/web/_headers`. Settled by a real preview deploy
- * (2026-09-03, §10 assumption 27, first proven the hard way in PR #72): `_headers` is NOT
- * applied to a Pages *Function* response. The same preview served `/sim.html` with the
- * `/*` block's `Referrer-Policy` and served `/api/health` with none at all. So the `/api/*`
- * block in that file is documentation of intent and nothing more; THIS OBJECT is the only
- * thing that actually ships on a route response.
+ * `X-Content-Type-Options: nosniff` — a cross-origin `<script src=/api/…>` fails the strict
+ *   MIME check instead of executing JSON.
+ * `Referrer-Policy: same-origin` — a route URL can carry a ticket.
+ * `Strict-Transport-Security` — byte-identical to the pages' `/*` value so the origin
+ *   speaks with one voice (`sim/test_api_headers.mjs` asserts equality). Ignored over plain
+ *   http, so it cannot trap `wrangler pages dev`. No `preload`: that is the owner's call.
+ * `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'` —
+ *   NOT the page policy: a JSON body loads nothing, so this is a lockdown for the case where
+ *   a browser treats the response as a document. Every fetch directive falls back to
+ *   `default-src`; `frame-ancestors` and `base-uri` do not, so they are named. Cost: a
+ *   browser JSON viewer may show raw text.
+ * `Cross-Origin-Resource-Policy: same-origin` — closes `no-cors` loads (`<img>`, `<audio>`,
+ *   opaque fetch) from other sites, which the origin pin and absent ACAO do not. Only
+ *   consulted cross-origin, so the page's own same-origin fetches are unaffected;
+ *   `sim/test_api_headers.mjs` proves both in a real browser.
  *
- * The measurement that motivated this pass, taken against the live deployment on
- * 2026-09-03 (the host is deployment CONFIG and is deliberately not named here, C3):
- *
- *   GET <deployment>/api/health
- *   present: content-type, cache-control: no-store, x-content-type-options: nosniff,
- *            referrer-policy: same-origin, x-moxie-mode
- *   absent:  strict-transport-security, content-security-policy, cross-origin-*
- *
- * The pages had just gained a real header set (HSTS + a CSP with `script-src`); the routes
- * that can SPEND MONEY had almost none of it.
- *
- * -------- WHAT IS HERE, AND WHY EACH ONE EARNS ITS BYTES -------------------------------
- *
- * `X-Content-Type-Options: nosniff` — pre-existing. With `Content-Type: application/json`
- *   it is what makes a cross-origin `<script src="…/api/health">` fail the strict MIME
- *   check instead of executing a JSON body as script.
- *
- * `Referrer-Policy: same-origin` — pre-existing, and the header the preview proved was
- *   missing. A route URL can carry a ticket; it must not travel off-origin in a Referer.
- *
- * `Strict-Transport-Security: max-age=31536000; includeSubDomains` — ADDED. The exact
- *   value `sim/web/_headers`' `/*` block sends, deliberately, so the ORIGIN speaks with one
- *   voice: a visitor who only ever touched `/api/health` (a bookmarked probe, a curl, a
- *   fetch from a pinned page) should be pinned to https just as firmly as one who loaded a
- *   page. `sim/test_api_headers.mjs` asserts the two strings are byte-identical rather than
- *   merely both present, because "both set HSTS, with different max-ages" is the drift that
- *   would otherwise go unnoticed. NOT a localhost trap: a browser ignores HSTS received
- *   over plain http, so `wrangler pages dev` on http://localhost cannot be locked to https
- *   by this line. No `preload` token — preload is an origin-wide, hard-to-reverse
- *   submission and is the site owner's decision, not a header this file may make for them.
- *
- * `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'`
- *   — ADDED, and it is NOT the page policy. Copying the page's CSP here would be
- *   cargo-culting: `script-src 'self' 'unsafe-inline'`, `connect-src 'self'`, `img-src` and
- *   friends govern what a DOCUMENT may load, and a JSON body loads nothing. The useful
- *   form for a JSON response is the lockdown above, and it is worth having for exactly one
- *   class of bug: a browser that ends up treating the response AS a document — a direct
- *   navigation to the route, an inherited-CSP context, an old sniffing quirk, a future
- *   content-type slip. In that case `default-src 'none'` means the document may fetch,
- *   frame, script or connect to nothing at all.
- *
- *   Why only three directives: every FETCHING directive falls back to `default-src`, so
- *   `script-src`, `object-src`, `connect-src`, `img-src`, `style-src`, `font-src`,
- *   `media-src`, `worker-src` and `frame-src` are all already `'none'` and naming them
- *   would be noise. The three that do NOT fall back are `frame-ancestors`, `base-uri` and
- *   `form-action`; the first two are named explicitly, and `form-action` is omitted because
- *   a JSON body contains no form to submit — see the rejection list for the same reasoning
- *   applied to a whole header.
- *
- *   The one observable cost, stated honestly: a browser's built-in JSON viewer is a
- *   document, so a direct navigation to `/api/health` may render as raw text rather than a
- *   pretty tree in some browsers. The body is unchanged and `curl` is unaffected.
- *
- * `Cross-Origin-Resource-Policy: same-origin` — ADDED. These routes are already
- *   origin-pinned (`_lib/limits.js::checkOrigin` refuses anything whose `Sec-Fetch-Site` is
- *   not `same-origin`) and NO `Access-Control-Allow-Origin` is ever sent (§4.3), so a
- *   cross-origin reader was already impossible. What CORP closes is the half neither of
- *   those covers: a `no-cors` load from another site — `fetch(url, {mode:"no-cors"})`,
- *   `<img>`, `<audio>`, `<link rel=preload>` — which succeeds opaquely today and hands the
- *   other site a timing and cacheability oracle on a route it must not touch. With
- *   `same-origin` the browser refuses the load outright.
- *
- *   VERIFIED IT CANNOT BREAK THE PAGE'S OWN FETCH, and not by reasoning alone: CORP is only
- *   consulted for a CROSS-origin response, and every fetch this site makes to these routes
- *   is same-origin by construction — the origin pin would already have refused anything
- *   else. `sim/test_api_headers.mjs` loads the real `index.html` in Chrome under the real
- *   `_headers` page CSP and requires an in-page `fetch("/api/health")` to succeed with the
- *   header present, then requires a cross-origin `no-cors` fetch of the same URL to FAIL.
- *   A header set with no proof of teeth and no proof of harmlessness is a guess.
- *
- * -------- WHAT IS DELIBERATELY NOT HERE ------------------------------------------------
- * See `REJECTED_SECURITY_HEADERS` below. Every entry there is machine-checked: the guard in
- * `sim/test_demo_proxy.mjs` requires that a security header the PAGES ship is either in the
- * set above or carries a written reason below, and that a rejected header is genuinely
- * absent from a real response. That is the fix for how the page CSP ended up with no
- * `script-src` for months — a header list nobody can explain.
+ * What is deliberately NOT here is `REJECTED_SECURITY_HEADERS`, machine-checked by
+ * `sim/test_demo_proxy.mjs` (each needs a written reason and must be absent from a reply).
  */
 export const API_SECURITY_HEADERS = Object.freeze({
   "X-Content-Type-Options": "nosniff",
@@ -276,36 +151,24 @@ export const API_SECURITY_HEADERS = Object.freeze({
   "Cross-Origin-Resource-Policy": "same-origin",
 });
 
-/** Headers considered for `/api/*` and REJECTED, each with the reason. A rejection is a
- *  decision on the merits, and the merits are written down; `sim/test_demo_proxy.mjs`
- *  fails if any of these ever appears on a real response, so a "let us add it back for
- *  symmetry" edit has to change this map and read the reason first. */
+/** Headers considered for `/api/*` and REJECTED, each with its reason (checked: each must
+ *  be absent from a real response). */
 export const REJECTED_SECURITY_HEADERS = Object.freeze({
   "X-Frame-Options":
-    "Redundant and weaker. `frame-ancestors 'none'` in the CSP above says the same thing " +
-    "and is honoured by every browser that would honour the CSP at all; where the two " +
-    "disagree the spec says frame-ancestors wins. It is also aimed at clickjacking, and a " +
-    "JSON body has no UI to clickjack. `sim/web/_headers` made the same call for the pages.",
+    "Redundant and weaker: `frame-ancestors 'none'` in the CSP says the same and wins where " +
+    "they disagree; a JSON body has no UI to clickjack.",
   "Permissions-Policy":
-    "Inert on this response. It governs which powerful features a DOCUMENT and its iframes " +
-    "may use; an API response is never a document that uses a feature, and it embeds " +
-    "nothing. Copying the pages' `microphone=(self), camera=(), geolocation=()` here would " +
-    "add ~50 bytes to a route the page polls every 30 s and change nothing a browser does. " +
-    "The header that matters for the mic is the one on the PAGE, which already ships.",
+    "Inert: it governs which features a DOCUMENT may use, and an API response is never one. " +
+    "The mic's policy is the one on the page, which already ships.",
   "Cross-Origin-Opener-Policy":
-    "Only meaningful on a top-level DOCUMENT response — it severs the opener relationship " +
-    "of a browsing context. An /api/* response never becomes one (and if a navigation " +
-    "somehow rendered it, there is nothing in a JSON body for an opener to reach).",
+    "Only meaningful on a top-level DOCUMENT response (it severs the opener relationship); " +
+    "an /api/* response never becomes one.",
   "Cross-Origin-Embedder-Policy":
-    "Governs what a document is allowed to EMBED, which is a statement about a page, not " +
-    "about an API reply that embeds nothing. `require-corp` here would constrain nobody; " +
-    "if this origin ever wants cross-origin isolation, that is a decision for the pages' " +
-    "`_headers`, taken together with COOP, and it would need every subresource re-checked.",
+    "Governs what a document may EMBED; an API reply embeds nothing. Cross-origin isolation, " +
+    "if ever wanted, is a decision for the pages' `_headers` together with COOP.",
   "Access-Control-Allow-Origin":
-    "NEVER, in any form — a standing rule (§4.3), listed here so it cannot be added by " +
-    "someone tidying the header set. The wildcard in sim/tts/server.py is the pattern this " +
-    "must not repeat: with no ACAO a cross-origin caller cannot read a reply even if it " +
-    "somehow got past the origin pin, and that belt stays on.",
+    "NEVER, in any form (§4.3): with no ACAO a cross-origin caller cannot read a reply even " +
+    "if it got past the origin pin. Listed so nobody adds it while tidying.",
 });
 
 const MAX_MESSAGE_CHARS = 200;
@@ -348,8 +211,7 @@ function plainObject(v) {
 
 function wireList(v) {
   if (!Array.isArray(v)) return [];
-  // Only the two fields `route()` needs (bridge.js:366-376), as strings. A stray field
-  // on a message object cannot carry anything out of here.
+  // Only the two fields `bridge.js::route()` needs, as strings.
   return v.map((m) => ({ topic: String((m && m.topic) || ""), payload: String((m && m.payload) || "") }));
 }
 
@@ -380,34 +242,21 @@ export function envelope(partial) {
     mode: p.mode === "live" ? "live" : "degraded",
     load: normalizeLoad(p.load),
     limits: plainObject(p.limits),
-    // A STRING, never null, and `""` is "not enforced" — the envelope has no nullable
-    // string field anywhere else (`context`, `transcript` and `message` all use `""` for
-    // absent), and one field with a different absence convention is a field a client
-    // reads wrongly. `sim/web/turnstile.js` renders a widget only for a non-empty value,
-    // which makes the two conventions behave identically at the only place it matters.
+    // String fields use `""` for absent, never null — one convention for the client.
     turnstile: typeof p.turnstile === "string" ? p.turnstile : "",
     messages: wireList(p.messages),
     speech: speechList(p.speech),
     context: typeof p.context === "string" ? p.context : "",
-    // P1's ears (`/api/transcribe`). It is a FIELD ON THE ONE ENVELOPE rather than the
-    // bare `DeepgramResponse` §3.2 sketched, and that is a deliberate deviation recorded
-    // at `functions/api/transcribe.js`'s header: a Deepgram body carries no `reason`, no
-    // `mode` and no `retry_after_s`, so a rate-limited visitor would be indistinguishable
-    // from a deployment with no ears at all and `mic.js` could not degrade honestly. The
-    // Deepgram shape is still what `mic.js` parses from the LOCAL sidecar, unchanged.
+    // `/api/transcribe`'s result — on the envelope rather than a bare Deepgram body so a
+    // refusal still carries `reason`/`mode`/`retry_after_s` (see transcribe.js).
     transcript: typeof p.transcript === "string" ? p.transcript : "",
     voice: !!p.voice,
     ears: !!p.ears,
-    /* A STRING, never null, `""` when she drew nothing — the same absence convention as
-     * `context`, `transcript` and `message`. It is coerced and CAPPED here rather than
-     * trusted from the caller, because this is the last place the body is assembled and a
-     * length bound belongs where the shape is guaranteed, not where it happens to be set.
-     * `chat.js::splitDiagram` has already removed it from the spoken line. */
+    // Capped here, where the shape is guaranteed, rather than trusted from the caller.
     diagram: typeof p.diagram === "string" ? p.diagram.slice(0, 1200) : "",
     cited: typeof p.cited === "string" ? p.cited.slice(0, 300) : "",
   };
-  // Reassemble in PUBLIC_KEYS order so the wire shape is stable and the allowlist is the
-  // literal construction, not a filter applied after the fact.
+  // Built in PUBLIC_KEYS order: the allowlist is the construction, not a filter.
   const out = {};
   for (const k of PUBLIC_KEYS) out[k] = body[k];
   return out;
@@ -433,15 +282,9 @@ export function retryAfterFor(body) {
 /**
  * Turn a partial envelope into a `Response`.
  *
- * `Cache-Control: no-store` on every reply (§3.2) — a cached mode or a cached refusal is
- * a lie with a TTL. No `Access-Control-Allow-Origin` header is ever sent (§4.3): the
- * wildcard in sim/tts/server.py is the pattern this must NOT repeat.
- *
- * `API_SECURITY_HEADERS` is applied to EVERY reply this function builds — the success, the
- * `forbidden_origin` 403, the `rate_limited` 429, the `upstream_down` 503, all of them.
- * That is not tidiness: a refusal is exactly the response an attacker is most likely to be
- * looking at, and a header set that only applies when things go well is not a header set.
- * It is applied LAST so `opts.headers` cannot weaken it.
+ * `Cache-Control: no-store` on every reply (a cached refusal is a lie with a TTL); never
+ * `Access-Control-Allow-Origin` (§4.3). `API_SECURITY_HEADERS` goes on EVERY reply,
+ * refusals included, and is applied LAST so `opts.headers` cannot weaken it.
  *
  * @param {object} partial   the envelope fields
  * @param {object} [opts]    {status, rateLimit:{limit,remaining,reset}, headers}
@@ -452,8 +295,7 @@ export function respond(partial, opts) {
   const headers = new Headers({
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
-    // Rides every response, not just the rejections, so the page can pace itself
-    // *before* it is refused (§4.5).
+    // On every response so the page can pace itself before it is refused (§4.5).
     "X-Moxie-Mode": body.mode,
   });
   const retry = retryAfterFor(body);
@@ -465,10 +307,7 @@ export function respond(partial, opts) {
     if (Number.isFinite(Number(rl.reset))) headers.set("X-RateLimit-Reset", String(rl.reset));
   }
   if (opts && opts.headers) for (const [k, v] of Object.entries(opts.headers)) headers.set(k, String(v));
-  // LAST, so `opts.headers` cannot weaken them. Nothing passes `opts.headers` today, but
-  // the hatch exists, and a hardening set a caller can quietly turn off is not a hardening
-  // set. Values come from the frozen `API_SECURITY_HEADERS` above — never from the request,
-  // so no request header can be echoed back through this loop (§4.2, C1).
+  // LAST, from the frozen set — never from the request, so nothing is echoed back.
   for (const [k, v] of Object.entries(API_SECURITY_HEADERS)) headers.set(k, v);
   return new Response(JSON.stringify(body), { status, headers });
 }
