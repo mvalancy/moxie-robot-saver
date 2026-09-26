@@ -25,7 +25,7 @@ export const DEFAULTS = Object.freeze({
   DEMO_MAX_INPUT_CHARS: 500,
   DEMO_MAX_TTS_CHARS: 300,
   // The byte cap is the real history bound: `hmac.js` drops oldest-first until it fits,
-  // so it must be large enough for DEMO_MAX_HISTORY_TURNS. `limits.js::maxJsonBodyBytes`
+  // so it must be large enough for DEMO_MAX_HISTORY_TURNS. `body.js::maxJsonBodyBytes`
   // derives the accepted body size from it.
   DEMO_MAX_CONTEXT_CHARS: 4000,
   // Matches the robot path (`mqtt/moxie_sdk/apps/llm_app.py` max_history); the byte cap
@@ -370,7 +370,7 @@ export function readConfig(env) {
     // `DEMO_TRUST_XFF` — OFF, AND IT MUST STAY OFF IN PRODUCTION. `X-Forwarded-For` is
     // caller-typed, so falling back to it hands out unlimited rate-limit buckets. Without
     // it an absent `CF-Connecting-IP` keys as one shared `unknown` bucket
-    // (`limits.js::clientIp`). For local `wrangler pages dev` only.
+    // (`clientip.js::clientIp`). For local `wrangler pages dev` only.
     trustXff: bool(e, "DEMO_TRUST_XFF", false),
     maxTokens: int(e, "DEMO_MAX_TOKENS", 1, 4096, notes),
     maxInputChars: int(e, "DEMO_MAX_INPUT_CHARS", 1, 20000, notes),

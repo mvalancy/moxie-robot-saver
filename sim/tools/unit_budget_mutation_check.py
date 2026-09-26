@@ -41,7 +41,7 @@ So the rows come in two families and the second is the point:
   · **U2, U3, U4, U5, U6, U9, U10, U12, U16, U18, U19** and **W1, W2, W3, W6, D1, D2, D4,
     D7, D8, D9** — the counter counts something TWICE, keeps a charge it should have dropped, or
     refuses where it should have fallen open. Every one of these is an OVERCOUNT or a
-    fail-CLOSED, which is the direction `_lib/limits.js::sharedBudgetVerdict` says this
+    fail-CLOSED, which is the direction `_lib/sharedtier.js::sharedBudgetVerdict` says this
     tier may never fail in. (U14 predates the two lists and belongs in the first; it is
     left unlisted rather than quietly reclassified by somebody who did not write it.)
 
