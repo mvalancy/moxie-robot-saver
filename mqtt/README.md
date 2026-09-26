@@ -86,10 +86,10 @@ per-child pick cannot overrule it; set `MOXIE_APP=any` to hand the choice to the
 gaps: [`brain-picker.md`](../docs/architecture/backlog/brain-picker.md).
 
 ## Status
-✅ Broker, supervisor, config push, and LLM conversation (with history) are working and were verified
-with a simulated robot. 🔨 Next: wire **faster-whisper STT** (`supervisor/moxie_runtime/voice.py:handle_zmq`)
-so real voice turns work, and drop in OpenMoxie's `automarkup` for expressive delivery. See
-[`../ROADMAP.md`](../ROADMAP.md).
+✅ Broker, supervisor, config push, LLM/content conversation (with memory), server voice (TTS),
+ears (STT via `MOXIE_STT`), automarkup, safety gate, telemetry, schedule and content packs all run
+end-to-end against the simulated robot (`../sim/run_smoke.sh`, `../sim/run_scenarios.sh`).
+Physical-robot proof is still pending. See [`../ROADMAP.md`](../ROADMAP.md).
 
 ---
 📖 [Back to top](../README.md) · [Moxie as a platform →](../docs/architecture/moxie-as-a-platform.md)
