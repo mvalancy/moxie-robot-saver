@@ -1,18 +1,15 @@
 """
 Schedule builder — the day plan a Moxie pulls at the start of every session.
 
-Why it matters: the robot asks the cloud for a schedule before it will enter a session
-at all. Answer with nothing and none of its on-board activities ever run
-(`docs/architecture/openmoxie-feature-audit.md` §4.1 row 1). This module builds the
-*content* of that answer; `wire.py::build_activity_response` puts it on the wire and
-`supervisor/moxie_runtime.py::_on_activity` publishes it.
+The robot will not enter a session without a schedule; answer with nothing and none of
+its on-board activities run (`docs/architecture/openmoxie-feature-audit.md` §4.1 row 1).
+This module builds the *content*; `wire.py::build_activity_response` encodes it and the
+supervisor's `_on_activity` publishes it.
 
-### The shape (recovered protos, not guessed)
+### The shape (recovered protos)
 
-`CloudQueryResponse.schedule` is field **6**, an `embodied.robotbrain.ContentSchedule`
-(`docs/reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto`:343;
-catalogued in `proto-catalog.md`:466). `ContentSchedule` itself is
-`recovered-proto/embodied/robotbrain/ContentSchedule.proto`:
+`CloudQueryResponse.schedule` (field 6) is an `embodied.robotbrain.ContentSchedule`
+(`recovered-proto/embodied/robotbrain/ContentSchedule.proto`; `proto-catalog.md`:466):
 
     restricted_modules=1 (ContentModule[])   tags=2 (TagList)
     provided_schedule=3  (Recommendation[])  config=4 (ScheduleConfig)
@@ -21,83 +18,55 @@ catalogued in `proto-catalog.md`:466). `ContentSchedule` itself is
     mission_config=10    (MissionConfig)     hub_config=11 (HubConfig)
     alarm_module=12      (Recommendation)
 
-and a `Recommendation` (`recovered-proto/embodied/robotbrain/RemoteChat.proto`:26-34,
-`RecommendationContext.Recommendation`) is
-`{module_id, content_id, entry_line, module_name, module_description, seen, skip_hub}`.
-
-`provided_schedule` is the ordered list of activities for the session — that ordered
-list *is* the day plan.
+A `Recommendation` (`RemoteChat.proto`:26-34) is `{module_id, content_id, entry_line,
+module_name, module_description, seen, skip_hub}`. `provided_schedule`, in order, *is*
+the day plan.
 
 ### What it does
 
-Deterministic, given (template, history, config, clock):
-
-1. start from a **template** — a content module's `schedules[]` entry
-   (`docs/architecture/content-module-contract.md` §`schedules[]`) or `DEFAULT_TEMPLATE`;
-2. drop first-time-user modules the child has already finished, so **FTUE ends**;
-3. fill the rest of the day from the **on-board activity catalog** with a *scored*
-   recommender (below) rather than a blind rotation;
-4. interleave chat activities between them;
-5. emit **only** `ContentSchedule` fields (the `generate` block and any other authoring
-   key is stripped — it is server-side, not wire), plus a parallel list of
-   **explanations** that never touches the wire.
+Deterministic, given (template, history, config, clock): start from a **template** (a
+content module's `schedules[]` entry or `DEFAULT_TEMPLATE`); drop onboarding (FTUE)
+modules the child has finished; fill the rest from the **on-board catalog** with a
+*scored* recommender; interleave chats; emit **only** `ContentSchedule` fields (authoring
+keys like `generate` are stripped), plus parallel **explanations** that never hit the wire.
 
 ### The recommender (audit §4.2 BEYOND #7)
 
-`plan_inputs()` gathers the signals, `plan_day()` scores and orders them. Two of the
-inputs are *constraints* and the rest are *weights*:
+`plan_inputs()` gathers signals, `plan_day()` scores and orders them.
 
-**Constraints** (applied before scoring)
+**Constraints**: **bedtime** — no slot is planned inside the robot's bedtime window (the
+day is truncated; the spine still goes out). **Category variety** — a candidate matching
+the previous pick's `ModuleCategory` is skipped unless nothing else is left.
 
-* **bedtime** — a slot whose clock time falls inside the robot's configured bedtime
-  window (`RobotCloudConfig.weekday_bedtime_*` / `weekend_bedtime_*`, see
-  `cloud_config.build_robot_cloud_config`) is never planned into. The day is truncated
-  there; the pinned spine still goes out so the robot always has something to run.
-* **category variety** — a candidate whose `ModuleCategory` matches the previous pick is
-  filtered out unless nothing else is left. Same semantics as the pre-recommender
-  rotation (and as OpenMoxie's `ransac_select` goal), just enforced rather than sampled.
-
-**Weights** (summed; the numbers are the constants below, chosen so each band dominates
-the one under it and every factor is separately testable)
+**Weights** (summed; each band dominates the one below, each factor testable alone):
 
 | factor | weight | signal |
 |---|---|---|
-| parent request | `W_PARENT_REQUEST` 4000 | `SchedulePreferences.parent_requests[]` due today, pinned to the slot nearest its `scheduled_at` — and **held out of the scored fill until that slot**, so no earlier slot can spend it (see `plan_day`) |
-| FTUE still running | `W_FTUE` 2000 | an onboarding module the child has not finished |
-| coverage / repeat | `-W_TIER` 1000 × times seen | the "nothing repeats until the catalog is exhausted" invariant, now a weight |
+| parent request | `W_PARENT_REQUEST` 4000 | `SchedulePreferences.parent_requests[]` due today, pinned to the slot nearest `scheduled_at` and held out of earlier slots |
+| FTUE still running | `W_FTUE` 2000 | an unfinished onboarding module |
+| coverage / repeat | `-W_TIER` 1000 × times seen | nothing repeats until the catalog is exhausted |
 | recency | `RECENCY_SAME_DAY` -300 / `RECENCY_3_DAY` -100 | do not re-offer yesterday's activity |
-| completion affinity | `AFFINITY_FLOOR` 10 … `AFFINITY_MAX` 200 | `COMPLETED` ÷ (`COMPLETED` + `QUIT`/`REFUSED`). A repeatedly-abandoned module is demoted **to the floor, never to zero** — variety matters more than a losing streak |
-| time-of-day fit | `TIME_FIT` -60 … +120 | the slot's clock time vs. the module's category energy (table below) |
-| category spread | `-CATEGORY_REPEAT_PENALTY` 90 × prior uses | a second/third activity from a category already used today is cheaper than a fresh one |
-| tiebreak | 0…31 | `blake2b(device_id|day|module_id)` — stable for a whole day, different tomorrow |
+| completion affinity | `AFFINITY_FLOOR` 10 … `AFFINITY_MAX` 200 | COMPLETED ÷ (COMPLETED + QUIT/REFUSED); demoted to the floor, never zero |
+| time-of-day fit | `TIME_FIT` -60 … +120 | slot time vs. category energy |
+| category spread | `-CATEGORY_REPEAT_PENALTY` 90 × prior uses | prefer a fresh category |
+| tiebreak | 0…31 | `blake2b(device_id|day|module_id)` — stable per day |
 
-**Time-of-day mapping.** Buckets are `morning` 05:00-11:59, `afternoon` 12:00-16:59,
-`evening` 17:00-20:59, `night` 21:00-04:59. Each catalog category is classified by
-*energy* — the mapping is derived from the recovered `ModuleDetail.ModuleCategory` enum
-(`recovered-proto/embodied/robotbrain/ContentModule.proto`:46-60 · `proto-catalog.md`:1675),
-not invented per module: `MOVEMENT`/`PLAYFUL_GAME` = energetic, `CREATIVITY`/`FUN_TIDBIT`/
-`PUZZLE_GAME` = neutral, `REGULATION`/`LISTENING`/`READING` = calm. Energetic scores
-highest in the morning, calm highest in the evening and at night. See `TIME_FIT`.
+**Time of day.** Buckets: morning 05-12, afternoon 12-17, evening 17-21, night 21-05.
+Energy is assigned per recovered `ModuleCategory` (`ContentModule.proto`:46-60), not per
+module: MOVEMENT/PLAYFUL_GAME energetic; CREATIVITY/FUN_TIDBIT/PUZZLE_GAME neutral;
+REGULATION/LISTENING/READING calm.
 
-**What telemetry actually contributes.** The recovered telemetry envelope is
-`embodied.logging.Packet{model, version, recorded_at, moxie_id, moxie_session_id,
-user_id, event_name, event_data}` (`device-config-and-telemetry.md` §"The telemetry
-envelope"). `event_name` is a **free string** and `event_data` is opaque serialized
-bytes — our RE corpus recovers **no module-scoped event vocabulary**, so there is no
-"module launched" / "module exited" event to count. Completion-vs-abandonment therefore
-comes from `mentor_behaviors` alone (`MentorAction.COMPLETED` vs `QUIT`/`REFUSED`).
-Telemetry contributes only what the envelope really carries: a packet count and a
-`recorded_at` histogram of when this robot is active, reported in the inputs summary as
-context for the parent. `inputs["telemetry"]["carries_module_signal"]` says so out loud.
+**Telemetry.** `Packet.event_name` is a free string and `event_data` opaque bytes; no
+module-scoped event vocabulary is recovered, so completion comes from `mentor_behaviors`
+alone. Telemetry only contributes context (counts, an activity-time histogram), and
+`inputs["telemetry"]["carries_module_signal"]` is False.
 
-Not here (deliberately): an LLM-planned day. That is a later BEYOND item
-(`openmoxie-feature-audit.md` §4.2 row 7); this stays a pure function.
+Not here: an LLM-planned day (a later BEYOND item); this stays a pure function.
 
-*Credit:* the shape of the problem — a `generate` block, FTUE pruning, chats distributed
-between activities, avoiding two same-category activities back to back — is OpenMoxie's
-(MIT; `site/hive/mqtt/scheduler.py`, `expand_schedule`/`ftue_remove`/`ransac_select`/
-`distribute_elements`). The idea is theirs; this implementation is ours and deterministic
-where theirs samples at random. See `ATTRIBUTION.md`.
+*Credit:* the problem's shape — a `generate` block, FTUE pruning, chats between
+activities, no same-category back-to-back — is OpenMoxie's (MIT;
+`site/hive/mqtt/scheduler.py`). This implementation is ours and deterministic where
+theirs samples at random. See `ATTRIBUTION.md`.
 """
 from __future__ import annotations
 
@@ -115,12 +84,9 @@ RECOMMENDATION_FIELDS = ("module_id", "content_id", "entry_line", "module_name",
 # Which ContentSchedule fields hold a Recommendation (normalized on the way out).
 _RECOMMENDATION_FIELDS_IN_SCHEDULE = ("chat_request", "wake_module", "alarm_module")
 
-# The on-board activity catalog — modules baked into the robot's firmware that the cloud
-# can only *schedule* by id. Transcribed from our own protocol notes,
-# `docs/architecture/mqtt-and-conversation.md`:526 ("the ~23 in `content/data.py`
-# `RECOMMENDABLE_MODULES`"), with the categories used there. `DM` (Daily Missions) is
-# listed separately in that same note and is carried in DEFAULT_TEMPLATE, not the
-# rotation, because it is a daily fixture rather than a variety pick.
+# The on-board activity catalog — firmware modules the cloud can only *schedule* by id
+# (`docs/architecture/mqtt-and-conversation.md`:526). `DM` (Daily Missions) is a daily
+# fixture carried in DEFAULT_TEMPLATE, not the rotation.
 ONBOARD_MODULES = (
     {"module_id": "AFFIRM", "category": "REGULATION"},
     {"module_id": "AB", "category": "REGULATION"},
@@ -147,30 +113,21 @@ ONBOARD_MODULES = (
     {"module_id": "WHIMSY", "category": "FUN_TIDBIT"},
 )
 
-# First-time-user experience: the onboarding modules, and how many COMPLETED reports mean
-# "done". WELCOME goes away as soon as the child completes anything.
-#
-# HONEST NOTE: our RE docs name the FTUE modules (`openmoxie-feature-audit.md` §1.4) but
-# do **not** establish the per-module content-id counts. The robot walks TNT/SYSTEMSCHECK
-# content ids in order and then starts repeating them at random, so the cloud has to stop
-# scheduling them itself. The thresholds below are OpenMoxie's field-proven constants
-# (`site/hive/content/data.py`: `TNT_CIDS = 9`, `SYSTEMSCHECK_CIDS = 4`) — adopted because
-# a field-proven number beats a guess, and flagged here because it is not ours.
+# First-time-user experience: onboarding modules and how many COMPLETED reports mean
+# "done" (WELCOME retires on any completion). The counts are OpenMoxie's field-proven
+# constants (`site/hive/content/data.py`: TNT_CIDS=9, SYSTEMSCHECK_CIDS=4), not ours: our
+# RE names the modules but not the counts, and the robot repeats them at random once done.
 FTUE_COMPLETION_COUNTS = {"WELCOME": 1, "TNT": 9, "SYSTEMSCHECK": 4}
 
-# The action that means "the child actually finished this"
-# (`embodied.robotbrain.MentorAction.COMPLETED`, MentorBehavior.proto:8).
+# "The child finished this" (`MentorAction.COMPLETED`, MentorBehavior.proto:8).
 COMPLETED = "COMPLETED"
 
-# The actions that mean "the child bailed out" — `MentorAction` again (MentorBehavior.proto
-# :8, enum QUIT/REFUSED). Everything else (PRESENTED / SCHEDULED / SUGGESTED / REQUESTED /
-# UNKNOWN) is "offered", which counts for coverage but not for affinity either way.
+# "The child bailed out". Any other action is "offered": counts for coverage, not affinity.
 ABANDONED = ("QUIT", "REFUSED")
 
 
 # ---------------------------------------------------------------- the recommender ----
-# Every number the planner uses lives here, in one place, so a factor can be isolated in a
-# test by zeroing its neighbours. See the module docstring's table for what each is for.
+# Every planner number lives here so a test can isolate one factor (see the docstring table).
 
 W_PARENT_REQUEST = 4000        # a parent asked for this, today
 W_FTUE = 2000                  # onboarding that is not finished yet
@@ -185,20 +142,16 @@ AFFINITY_NEUTRAL = 100         # no history either way
 CATEGORY_REPEAT_PENALTY = 90   # × times this category is already in today's plan
 TIEBREAK_RANGE = 32            # < the smallest real factor step, so it only breaks ties
 
-# How long one activity notionally occupies. `CSData.module_started_ts` exists precisely so
-# the robot can time-box an activity (`offline-and-brain-state.md`:78 "for time-in-activity
-# limits") but our corpus does not recover the limit itself, so this is OURS: a round ten
-# minutes, used to give each slot in the plan a clock time (for time-of-day fit, bedtime
-# truncation, and landing a parent request at the hour they asked for).
+# How long one activity notionally occupies — OURS (the robot's own time-box limit is not
+# recovered). Gives each slot a clock time for time-of-day fit, bedtime and parent requests.
 SLOT_MINUTES = 10
 
 # Time-of-day buckets (local wall clock). `night` wraps midnight.
 TIME_BUCKETS = (("morning", 5, 12), ("afternoon", 12, 17), ("evening", 17, 21),
                 ("night", 21, 5))
 
-# `ModuleDetail.ModuleCategory` (ContentModule.proto:46-60 · proto-catalog.md:1675) → the
-# energy a category asks of a child. This is the only judgement call in the mapping and it
-# is made per *category*, not per module, so it stays as small and auditable as the enum.
+# `ModuleDetail.ModuleCategory` (ContentModule.proto:46-60) → the energy it asks of a child.
+# The one judgement call, made per category so it stays as small as the enum.
 CATEGORY_ENERGY = {
     "MOVEMENT": "energetic", "PLAYFUL_GAME": "energetic",
     "CREATIVITY": "neutral", "FUN_TIDBIT": "neutral", "PUZZLE_GAME": "neutral",
@@ -207,8 +160,7 @@ CATEGORY_ENERGY = {
 }
 DEFAULT_ENERGY = "neutral"     # UNASSIGNED / UTILITY / OTHER / an authored `USER` category
 
-# Energetic early, calm late. Nothing is ever forbidden by time of day — a child who wants
-# to dance at 8 pm still can, it is just no longer the top pick.
+# Energetic early, calm late. Nothing is forbidden by time of day, only re-ranked.
 TIME_FIT = {
     "morning":   {"energetic": 120, "neutral": 60,  "calm": 0},
     "afternoon": {"energetic": 60,  "neutral": 120, "calm": 60},
@@ -216,10 +168,8 @@ TIME_FIT = {
     "night":     {"energetic": -60, "neutral": 0,   "calm": 120},
 }
 
-# Plain-English labels for the explanation lines. Only ids that are unambiguously an
-# English word or phrase are mapped; anything else keeps its id verbatim rather than have
-# us invent an Embodied product name. A `Recommendation.module_name` on the template
-# always wins over this table.
+# Parent-readable labels. Only unambiguous ids are mapped (others show verbatim rather than
+# an invented product name); a template's `Recommendation.module_name` always wins.
 MODULE_LABELS = {
     "AFFIRM": "Affirmations", "ANIMALEXERCISE": "Animal exercise",
     "AUDMED": "Guided meditation", "BODYSCAN": "Body scan",
@@ -232,13 +182,11 @@ MODULE_LABELS = {
     "SYSTEMSCHECK": "Systems Check", "WELCOME": "Welcome", "WHIMSY": "Whimsy",
 }
 
-# The default when the caller does not tell us the child's name (the planner is pure and
-# has no access to the ChildProfile).
+# Used when the caller does not pass the child's name (the planner has no ChildProfile).
 DEFAULT_CHILD_NAME = "Your child"
 
-# Our default day: onboarding first, then Daily Missions, then a generated rotation.
-# `generate` is an authoring key (content-module-contract.md §schedules[]), consumed and
-# stripped here — it never goes on the wire.
+# Default day: onboarding, Daily Missions, then a generated rotation. `generate` is an
+# authoring key (content-module-contract.md §schedules[]) and never goes on the wire.
 DEFAULT_TEMPLATE = {
     "provided_schedule": [
         {"module_id": "WELCOME"},
@@ -419,12 +367,8 @@ def _tiebreak(device_id: str, day: str, module_id: str) -> int:
 
 def module_history(mentor_behaviors) -> dict:
     """`{module_id: {seen, completed, abandoned, last_ts, last_action}}` from a robot's
-    stored MentorBehavior records — the one signal our RE corpus really carries about
-    what a child finishes vs. walks out of (MentorBehavior.proto `MentorAction`).
-
-    `last_ts` is whatever the robot stamped (`MentorBehavior.timestamp`); device clocks
-    lie, so the planner only ever asks "how many days ago" and tolerates None.
-    """
+    MentorBehavior records — the only recovered signal of finished vs. abandoned.
+    `last_ts` is the robot's own stamp; the planner only asks "how many days ago"."""
     out: dict = {}
     for mbh in mentor_behaviors or ():
         if not isinstance(mbh, dict):
@@ -449,10 +393,9 @@ def module_history(mentor_behaviors) -> dict:
 
 
 def _age_days(last_ts, now) -> float | None:
-    """How long ago `MentorBehavior.timestamp` was, in days. The field is a `uint64` with
-    no stated unit in the recovered proto, and both our runtime tests and OpenMoxie's
-    robots stamp it in **milliseconds**, so a value that is plainly milliseconds is
-    divided down (same rule as `cloud_config._scheduled_at`). None when unstamped."""
+    """How long ago `MentorBehavior.timestamp` was, in days (None when unstamped). The
+    unit is unstated in the proto and robots stamp milliseconds, so a value that is
+    plainly milliseconds is divided down (same rule as `cloud_config._scheduled_at`)."""
     if last_ts is None:
         return None
     try:
@@ -465,14 +408,8 @@ def _age_days(last_ts, now) -> float | None:
 
 
 def bedtime_window(effective_config, now) -> dict:
-    """The bedtime this robot is under right now, from the effective config overrides
-    (`weekday_bedtime` / `weekend_bedtime` = `["HH:MM","HH:MM"]`, the parent-facing
-    spelling `cloud_config.sanitize_config_overrides` produces; the builder turns them
-    into `RobotCloudConfig.{weekday,weekend}_bedtime_starts_at/ends_at`).
-
-    Mon-Fri uses `weekday_bedtime`, Sat/Sun `weekend_bedtime`. Returns
-    `{"enabled": False}` when the parent has not set one.
-    """
+    """Today's bedtime window from the effective config (`weekday_bedtime` Mon-Fri,
+    `weekend_bedtime` Sat/Sun, each `["HH:MM","HH:MM"]`), or `{"enabled": False}`."""
     cfg = effective_config if isinstance(effective_config, dict) else {}
     kind = "weekday" if now.weekday() < 5 else "weekend"
     value = cfg.get(f"{kind}_bedtime")
@@ -510,16 +447,9 @@ def in_bedtime(dt, window) -> bool:
 
 def parent_requests_due(effective_config, now, *, slot_count, first_slot_index=0,
                         window=None) -> list:
-    """The parent's `SchedulePreferences.parent_requests[]` that fall on *today*, each
-    resolved to the plan slot nearest the time they asked for.
-
-    Shape (`cloud_config.normalize_schedule_preferences`):
-    `{"parent_requests": [{"module_id": …, "scheduled_at": <epoch seconds>}]}`.
-    A request earlier than "now" lands in the first slot; one later than the plan lands
-    in the last; one that falls inside bedtime is clamped back to the last slot before
-    bedtime (bedtime is absolute — see the module docstring). Two requests never share a
-    slot: the earlier `scheduled_at` keeps it.
-    """
+    """Today's `SchedulePreferences.parent_requests[]`, each resolved to the plan slot
+    nearest its `scheduled_at` (epoch seconds). Clamped into the plan, and back out of
+    bedtime; two requests never share a slot (the earlier keeps it)."""
     cfg = effective_config if isinstance(effective_config, dict) else {}
     prefs = cfg.get("schedule_preferences") or {}
     items = prefs.get("parent_requests") if isinstance(prefs, dict) else None
@@ -557,16 +487,9 @@ def parent_requests_due(effective_config, now, *, slot_count, first_slot_index=0
 
 
 def telemetry_signals(telemetry_summary, packets=()) -> dict:
-    """What the recovered telemetry envelope can honestly tell a planner.
-
-    `Packet{model, version, recorded_at, moxie_id, moxie_session_id, user_id, event_name,
-    event_data}` (device-config-and-telemetry.md §"The telemetry envelope"). `event_name`
-    is a free string and `event_data` opaque bytes: **our RE corpus recovers no
-    module-scoped event vocabulary**, so nothing here says "the child launched STORY and
-    quit after 40 s". `carries_module_signal` is therefore False and completion affinity
-    comes from `mentor_behaviors`. What is real: how many packets, which event names, and
-    a `recorded_at` histogram of when this robot is awake — reported for the parent.
-    """
+    """What the recovered telemetry envelope can honestly tell a planner: packet count,
+    event names, sessions, and a `recorded_at` histogram — never a module signal (see the
+    module docstring), so `carries_module_signal` is False."""
     summary = telemetry_summary if isinstance(telemetry_summary, dict) else {}
     by_event = summary.get("by_event") if isinstance(summary.get("by_event"), dict) else {}
     items = [p for p in (packets or ()) if isinstance(p, dict)]
@@ -634,12 +557,8 @@ def plan_inputs(device_id, now=None, *, mentor_behaviors=(), telemetry_summary=N
                 effective_config=None, content_schedules=None, catalog=None,
                 template=None, day: str = "", child_name: str = "",
                 telemetry_packets=()) -> dict:
-    """Gather every signal `plan_day` is allowed to see, as a JSON-safe dict.
-
-    Pure: no store, no clock of its own (pass `now`), no MQTT. The returned object is
-    exactly what `GET /schedule` shows a parent as the "inputs summary", so it doubles as
-    the audit trail for a plan.
-    """
+    """Every signal `plan_day` may see, as a JSON-safe dict — also the "inputs summary"
+    `GET /schedule` shows a parent. Pure: pass `now`; no store, no MQTT."""
     now = _parse_iso(now) if now is not None else datetime.datetime.now()
     day = day or now.date().isoformat()
     bucket = time_bucket(now)
@@ -902,17 +821,9 @@ def plan_day(inputs: dict) -> tuple:
                 score += W_PARENT_REQUEST
                 codes = ["parent_request"] + [c for c in codes if c != "parent_request"]
             else:
-                # A module the parent pinned to a LATER slot is held back for it. Without
-                # this the free choice can score that very module top in an earlier slot,
-                # take it out of the pool, and the pin then silently evaporates: at its own
-                # slot `pin["module_id"] in pool` is False, the branch above never runs, and
-                # the day ships with the requested activity at the wrong time and with no
-                # `parent_request` in its reason codes — the parent is shown an audit trail
-                # that never mentions their request. Which slot wins the race was decided by
-                # the `time_of_day` factor, i.e. by the hour the planner happened to run at
-                # (a calm READING module tops the afternoon board but not the morning one),
-                # so the pin held or vanished depending on the wall clock. Bedtime is
-                # absolute and a parent request is theirs: neither is a scoring suggestion.
+                # A module pinned to a LATER slot is held back for it; otherwise an
+                # earlier slot could score it top, consume it, and the parent's pin would
+                # silently vanish (depending on the hour the planner ran).
                 held = {r["module_id"] for at_slot, r in pinned.items()
                         if at_slot > slot}
                 free = [m for m in pool.values() if m["module_id"] not in held]
@@ -995,18 +906,9 @@ def build_schedule(template: dict | None = None, *, mentor_behaviors=(),
                    telemetry_packets=(), catalog=None, child_name: str = "") -> dict:
     """Build one session's `ContentSchedule` (the value of `CloudQueryResponse.schedule`).
 
-    `template` — a `schedules[]`-style dict; `None` uses `DEFAULT_TEMPLATE`.
-    `mentor_behaviors` — this robot's stored MentorBehavior records (what it has done).
-    `device_id` + `day` — the deterministic seed. `day` defaults to `now`'s date, so the
-    plan is stable for a whole day and different tomorrow; pass it explicitly to pin it.
-    `now` — the clock the plan is laid out against (slot times, time-of-day fit, bedtime,
-    "is this parent request due today"); defaults to the local wall clock.
-    `effective_config` — the robot's merged config, for `schedule_preferences` and the
-    bedtime windows. `telemetry_summary` — `telemetry.summarize_events` output.
-
-    Returns a dict containing only `ContentSchedule` fields, with a non-empty
-    `provided_schedule` whenever the template or the catalog can supply one. Use `plan()`
-    when the explanations are wanted too.
+    `device_id` + `day` seed the plan (stable for a day); `now` lays out slot times
+    (defaults to the wall clock); `effective_config` supplies parent requests and bedtime.
+    Use `plan()` when the explanations are wanted too.
     """
     sched, _, _ = plan(device_id, template=template, mentor_behaviors=mentor_behaviors,
                        day=day, now=now, effective_config=effective_config,

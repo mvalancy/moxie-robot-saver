@@ -115,117 +115,58 @@ def summarize_events(packets, limit: int = 20) -> dict:
 # ---------------------------------------------------------------------------
 # Durable, bounded telemetry — the history behind the parent console's 📈 card
 # ---------------------------------------------------------------------------
-# Until this slice an ingested Packet lived only in `RobotContext.extra["telemetry"]`:
-# a list in the supervisor's RAM, capped at 50, erased by a restart. So the 📈 Insights
-# card was an event log over one process's lifetime, and "what did Moxie do last week"
-# had no answer at all — the gap `openmoxie-feature-audit.md` §4.4 ranks #2 and the one
-# `implementation-plan.md`'s DoD criterion 3 deducts for.
+# Two records, because a parent asks two questions (openmoxie-feature-audit.md §4.4 #2):
 #
-# The fix is deliberately **two records, not one**, because a parent asks two different
-# questions and only one of them needs the packets:
+#   * `telemetry_packets.json` — a rolling ring of the newest envelopes ("what just
+#     happened");
+#   * `telemetry_daily.json`   — one small row per calendar day ("what has been
+#     happening"), which a ring could only answer by keeping every packet forever.
 #
-#   * `telemetry_packets.json` — a rolling ring of the newest Packet envelopes, for
-#     *"what just happened"* (the event list and the by-event roll-up the card shows);
-#   * `telemetry_daily.json`   — one small row per calendar day (a count plus counts by
-#     event name), for *"what has been happening"*, which a ring can only answer by
-#     keeping every packet forever.
+# Pure: shapes, caps, the policy filter and day arithmetic. The runtime does the disk I/O
+# via `JsonStore`. Field names and the privacy gate: `embodied/logging/Cloud.proto`
+# (`Packet`) and `config-and-telemetry-contract.md` §③.
 #
-# Everything here is pure: shapes, the caps, the policy filter and the day arithmetic.
-# The runtime (`mqtt/supervisor/moxie_runtime.py`) is the only thing that touches disk,
-# through `JsonStore.append`/`write`, so this module unit-tests on plain dicts.
-#
-# Field names and the privacy gate come from our own corpus:
-# `embodied/logging/Cloud.proto` (message `Packet`) and
-# `docs/architecture/config-and-telemetry-contract.md` §③ (`LoggingPolicy`). No
-# upstream code was consulted for any of it.
-
-# **The two records are a log and a view over it, not two independent counters.**
-# (Added 2026-09-05, after a `sil` red on PR #164 whose diff could not reach this code.)
-#
-# They used to be two independent counters: the runtime appended to the ring, then wrote
-# a separately-advanced roll-up, and nothing ever compared them again. Two files, two
-# `os.replace` calls, and a window in between where the ring holds a packet the roll-up
-# has never counted. Anything landing in that window sees a disagreement — the SIL
-# fixture, whose leading edge is the ring file, did; a parent refreshing the console
-# would; and a supervisor **killed** in it made the disagreement permanent, because the
-# roll-up was only ever advanced forwards and never reconciled.
-#
-# That is the shape `orchestration-plan.md` rule 23 calls *a cached belief about a moving
-# thing*, and it is the most common bug this project has produced. The fix is to stop the
-# roll-up being a belief:
+# **The two records are a log and a view over it, not two independent counters.** Two
+# separate writes leave a window where the ring holds a packet the roll-up never counted,
+# and a supervisor killed in it made the gap permanent. So:
 #
 #   * every stored envelope carries a monotonic **`seq`** (`SEQ_FIELD`), stamped by the
-#     server after the privacy gate — a robot cannot forge one, because `storable_packet`
-#     keeps only `_PACKET_FIELDS`;
+#     server after the privacy gate (a robot cannot forge one);
 #   * the roll-up carries **`through_seq`**, the highest `seq` it has folded;
-#   * so *"has this envelope been counted?"* is a **fact on disk**, and
-#     `reconcile_rollup` can rebuild whatever the roll-up is missing from the ring.
+#   * `reconcile_rollup` replays whatever the roll-up is missing from the ring.
 #
-# The ring is therefore the durable log for its window and the roll-up is a materialized
-# view over it plus a carry (`total`, which is lifetime and outlives the window). A lost
-# roll-up write is recoverable; a lost ring write loses an envelope from a record that is
-# explicitly a ring and not an archive.
-#
-# What was rejected, and why:
-#
-#  * **One file holding both.** Genuinely atomic, and it throws away everything the split
-#    buys: `erase_telemetry`'s three-record contract, two independent caps (500 envelopes
-#    vs 35 day rows), and the reason the roll-up can answer "last week" at all without
-#    keeping every packet forever. An atomicity fix that costs the design is not a fix.
-#  * **Ordering alone (roll-up first, ring second).** It is *half* the fix and it ships
-#    below — with the exact record written before the lossy one, no observer whose
-#    leading edge is the ring can ever see an under-count. But a `store.write` that is
-#    **refused** (another process holding the record past `lock_timeout_s` returns False,
-#    it does not raise) still leaves the ring ahead, and ordering has no answer for that:
-#    it makes the window small, not absent. "Small enough" is what the pre-fix code
-#    already was.
-#  * **Recomputing the roll-up from the ring on every read.** Correct only while the ring
-#    still holds everything, which it never does past `MAX_PACKETS` — it would silently
-#    reset `total` to at most 500 the first time a busy robot wrapped, turning a fix for
-#    under-reporting into a much larger one.
-#  * **Widening the SIL fixture's wait.** Would have made the red go away and left the
-#    restart-shaped data loss shipping.
+# Rejected: one combined file (loses the independent caps and three-record erase);
+# ordering alone (a refused write still leaves the ring ahead — the runtime does write the
+# roll-up first as a half-measure); recomputing from the ring on read (the ring is capped,
+# so the lifetime `total` would reset).
 
 #: Collections under the robot's data dir (`robots/<device>/<collection>.json`).
 PACKETS_COLLECTION = "telemetry_packets"
 DAILY_COLLECTION = "telemetry_daily"
 
-#: The monotonic per-robot sequence number a **stored** envelope carries. Deliberately not
-#: in `_PACKET_FIELDS`: it is the server's bookkeeping, not part of the robot's wire
-#: envelope, so `storable_packet` drops any `seq` a robot sends and the runtime stamps its
-#: own afterwards (`with_seq`).
+#: The monotonic per-robot sequence number a **stored** envelope carries. Not in
+#: `_PACKET_FIELDS` (server bookkeeping): a robot's own `seq` is dropped by the gate.
 SEQ_FIELD = "seq"
 
-#: `LoggingPolicy` values, by value rather than by import, so the caps and the filter
-#: stay usable from anything (`cloud_config` is imported above for `should_upload`, but
-#: nothing below needs the enum).
+#: `LoggingPolicy` values, by value (nothing below needs the enum).
 POLICY_NO_DATA = 0
 POLICY_NO_MEDIA = 1
 POLICY_FULL = 2
 
 # --- the caps ---------------------------------------------------------------------
-# This is an appliance in a child's bedroom, not a warehouse, and `JsonStore` rewrites
-# the whole file on every append — so the cap is also the write cost.
+# `JsonStore` rewrites the whole file on every append, so each cap is also a write cost.
 #
-#: Raw Packet envelopes kept per robot. 500 envelopes is ~60 KB of JSON: a rewrite still
-#: costs well under a millisecond, and at the handful-of-events-per-conversation rate our
-#: own SIM produces it covers days of ordinary use. It is a ring, not an archive — the
-#: daily roll-up is what answers "last week", which is why this number can stay small.
-#: (No physical robot has been on our broker for a week, so there is no measured rate to
-#: size this against; it is sized against the write cost, honestly.)
+#: Raw envelopes kept per robot (~60 KB; sized against write cost, not a measured robot
+#: rate). A ring, not an archive — the daily roll-up answers "last week".
 MAX_PACKETS = 500
-#: Daily roll-up rows kept per robot. 35 days ≈ a month plus a week, so "last week" is
-#: still whole when a parent looks on the 1st, and a month-on-month glance works. One row
-#: is ~200 bytes, so the whole file is ~7 KB.
+#: Daily roll-up rows kept per robot (~a month plus a week; ~7 KB).
 MAX_ROLLUP_DAYS = 35
-#: Distinct `event_name`s kept in one day's row. `event_name` is a free string in the
-#: recovered proto, so a robot (or a bug) can mint unbounded names; the overflow is
-#: counted honestly under `OTHER_EVENT` rather than dropped.
+#: Distinct `event_name`s per day row (a free string on the wire); overflow is counted
+#: under `OTHER_EVENT`, not dropped.
 MAX_DAY_EVENTS = 24
 #: Where a day's overflowing event names are counted.
 OTHER_EVENT = "(other)"
-#: Base64 characters of `event_data` kept **under FULL only** (~1.5 KB of payload). One
-#: packet must not be able to blow up the ring; a longer payload is truncated and marked.
+#: Base64 characters of `event_data` kept **under FULL only**; longer is truncated + marked.
 MAX_EVENT_DATA_CHARS = 2048
 
 #: Before this, a `recorded_at` is not a real Moxie timestamp (2020-01-01 UTC).
@@ -254,16 +195,13 @@ def max_rollup_days() -> int:
 
 
 def retention() -> dict:
-    """The live caps, so the console can state the retention window it is showing
-    instead of implying the store holds more than it does."""
+    """The live caps, so the console can state the retention window it shows."""
     return {"packets": max_packets(), "days": max_rollup_days()}
 
 
 def policy_value(policy) -> Optional[int]:
-    """A `LoggingPolicy` (enum / int / name string) as its int value; None if unknown.
-
-    Deliberately strict: an unrecognised value is None, and every caller treats None as
-    "no explicit parent choice" rather than guessing a permissive one."""
+    """A `LoggingPolicy` (enum / int / name string) as its int value; None if unknown
+    (callers read None as "no explicit parent choice")."""
     if policy is None or isinstance(policy, bool):
         return None
     if isinstance(policy, int):
@@ -275,30 +213,16 @@ def policy_value(policy) -> Optional[int]:
 
 def storable_packet(pkt, policy) -> Optional[dict]:
     """One parsed Packet reduced to what this robot's `LoggingPolicy` allows **on disk**.
+    The privacy gate (contract §③ "MUST honor NO_DATA/NO_MEDIA"), failing closed:
 
-    This is the privacy gate, and it fails closed:
+    * **`NO_DATA` → `None`** — nothing written: no packet, count or day row.
+    * **`NO_MEDIA` → envelope without `event_data`**, marked `event_data_withheld`. The
+      payload is untyped `bytes`, so no blob can be proven not to be audio/video; every
+      payload is withheld.
+    * **`FULL` → the whole envelope**, `event_data` truncated at `MAX_EVENT_DATA_CHARS`.
 
-    * **`NO_DATA` (0) → `None`.** Nothing about the child is written, ever. Not the
-      packet, not a count, not a day row. The contract is not a preference:
-      *"A server (or custom firmware) MUST honor `NO_DATA`/`NO_MEDIA`"*
-      (`config-and-telemetry-contract.md` §③).
-    * **`NO_MEDIA` (1) → the envelope with `event_data` removed**, replaced by
-      `event_data_withheld: "NO_MEDIA"` so the console can say *why* a payload is not
-      there. `event_data` is declared `bytes` in `Cloud.proto` and our corpus recovers
-      **no** typed-payload vocabulary (`schedule.py::telemetry_signals` says the same of
-      `event_name`), so nothing lets us prove a given blob is not audio or video. A gate
-      that guessed would be a privacy incident, so it withholds every payload under
-      `NO_MEDIA` rather than only the ones it recognises.
-    * **`FULL` (2) → the whole envelope**, with `event_data` truncated at
-      `MAX_EVENT_DATA_CHARS` (and `event_data_truncated: true` when it was).
-
-    An unknown/absent policy is treated as `NO_MEDIA` — the same choice the safety
-    journal and long-term memory make (`moxie_runtime.SAFETY_JOURNAL_POLICY`,
-    `MEMORY_POLICY`): `RobotCloudConfig`'s own default for `data_sharing` is `NO_DATA`,
-    so defaulting to it would mean the feature never stored anything at all, while
-    defaulting to `FULL` would write opaque blobs no parent asked us to keep.
-
-    Returns a NEW dict; the caller's packet is never mutated.
+    Unknown/absent policy is treated as `NO_MEDIA`, like the safety journal and memory.
+    Returns a NEW dict.
     """
     if not isinstance(pkt, dict):
         return None
@@ -318,12 +242,8 @@ def storable_packet(pkt, policy) -> Optional[dict]:
 
 
 def packet_day(pkt, *, now=None) -> str:
-    """The local calendar day a Packet belongs to, as `YYYY-MM-DD`.
-
-    `recorded_at` is the robot's own clock and the field is optional, so a stamp that is
-    missing, unparseable, older than 2020 or more than a day in the future is not usable
-    and **arrival time** is used instead. (`summarize_events` makes the same call for the
-    same reason: "device clocks lie and the field is optional".)"""
+    """The local calendar day a Packet belongs to, as `YYYY-MM-DD`. A missing, pre-2020 or
+    >1 day-future `recorded_at` (device clocks lie) falls back to arrival time."""
     now = time.time() if now is None else float(now)
     ts = _recorded_at((pkt or {}).get("recorded_at") if isinstance(pkt, dict) else None)
     if ts is None or ts < _EPOCH_FLOOR or ts > now + 86400:
@@ -332,18 +252,14 @@ def packet_day(pkt, *, now=None) -> str:
 
 
 def new_rollup() -> dict:
-    """An empty daily roll-up record.
-
-    `through_seq` is the watermark: the highest stored-envelope `seq` this record has
-    folded in. 0 means "nothing", which is also what a roll-up written before the
-    watermark existed reads as — see `unfolded_packets` for why that is the safe end."""
+    """An empty daily roll-up record. `through_seq` is the watermark: the highest `seq`
+    folded in (0 = nothing, also what a pre-watermark record reads as)."""
     return {"days": {}, "total": 0, "dropped_days": 0, "updated_at": None,
             "through_seq": 0}
 
 
 def _count(value) -> int:
-    """A non-negative int from anything a hand-edited JSON file might hold (0 when it is
-    not a number at all). Nothing in the store is trusted to be well-typed."""
+    """A non-negative int from anything a hand-edited JSON file might hold, else 0."""
     if isinstance(value, bool) or value is None:
         return 0
     try:
@@ -387,11 +303,8 @@ def roll_up_packet(rollup, pkt, *, now=None, max_days: Optional[int] = None) -> 
          "dropped_days": 3,     # how many day rows the cap has retired
          "updated_at": 1756…}
 
-    `total` is a **lifetime** count on purpose: it is the one number that stays true
-    after the window slides, and the console labels it as such. Two caps apply — the
-    newest `max_days` day rows survive (ISO day keys sort chronologically), and one day
-    keeps at most `MAX_DAY_EVENTS` distinct event names, the rest counted under
-    `OTHER_EVENT` so the total still adds up.
+    `total` is a **lifetime** count (stays true as the window slides). The newest
+    `max_days` rows survive; a day keeps `MAX_DAY_EVENTS` names, the rest under `OTHER_EVENT`.
     """
     now = time.time() if now is None else float(now)
     cap = max_rollup_days() if max_days is None else max(0, int(max_days))
@@ -427,11 +340,7 @@ def roll_up_packet(rollup, pkt, *, now=None, max_days: Optional[int] = None) -> 
 # --- the log/view relationship: `seq`, the watermark, and the repair -----------------
 
 def packet_seq(pkt) -> Optional[int]:
-    """A stored envelope's `seq`, or None when it has none / it is not a usable one.
-
-    Strict for the same reason `policy_value` is: this number decides whether a packet
-    gets counted, so anything it cannot read as a positive integer is None, and every
-    caller treats None as *"no watermark information"* rather than guessing a number."""
+    """A stored envelope's `seq` as a positive int, else None ("no watermark info")."""
     if not isinstance(pkt, dict):
         return None
     value = pkt.get(SEQ_FIELD)
@@ -452,14 +361,9 @@ def with_seq(row, seq: int) -> dict:
 
 
 def next_seq(ring, rollup=None) -> int:
-    """The next sequence number for this robot: one past the highest either record knows.
-
-    The ring alone would be enough in the ordinary case — its newest row carries the
-    newest `seq`, and the cap only ever drops the *oldest*. The roll-up is consulted as
-    well because the two writes are separate: if the ring append is the one that is lost,
-    the roll-up's `through_seq` is momentarily ahead of anything on the ring, and reusing
-    that number would give two different packets the same identity. Monotonic beats
-    gapless — a gap costs nothing, a duplicate costs a packet."""
+    """The next sequence number: one past the highest either record knows. The roll-up is
+    consulted too because a lost ring append leaves `through_seq` ahead; reusing it would
+    duplicate an identity. Monotonic beats gapless."""
     highest = 0
     if isinstance(ring, list):
         for row in ring:
@@ -474,16 +378,8 @@ def next_seq(ring, rollup=None) -> int:
 def unfolded_packets(rollup, ring) -> list:
     """The stored envelopes the roll-up has **not** counted yet, oldest first.
 
-    Empty when the two records agree, which is the overwhelmingly common case and the
-    one this is optimised to say cheaply.
-
-    **An envelope with no `seq` counts as folded.** That is the migration rule and it is
-    the asymmetric choice on purpose: an appliance upgrading into this fix has a ring of
-    unstamped envelopes and a roll-up that already counted every one of them, so treating
-    unstamped as *unfolded* would double the lifetime total of every existing install on
-    its first read — a number that grows on refresh, which is the loudest possible way to
-    be wrong. Treating it as folded reproduces exactly the pre-fix behaviour for
-    pre-fix data and costs nothing for anything written since."""
+    **An envelope with no `seq` counts as folded** (migration rule): legacy rings were
+    already counted, so treating them as unfolded would double every install's total."""
     out = _clean_rollup(rollup)
     rows = [r for r in ring if isinstance(r, dict)] if isinstance(ring, list) else []
     missing = [(n, r) for r in rows
@@ -493,17 +389,9 @@ def unfolded_packets(rollup, ring) -> list:
 
 
 def reconcile_rollup(rollup, ring, *, now=None, max_days=None) -> dict:
-    """The roll-up with everything the ring holds and it does not, folded back in.
-
-    This is what makes a lost roll-up write recoverable rather than permanent: the ring
-    is the durable log, `through_seq` says how far the view got, and the difference is
-    replayable. Returns a normalised record even when nothing was missing, so a caller
-    can use it as the read path unconditionally (a corrupt file is repaired on the way
-    past, exactly as `_clean_rollup` already promised).
-
-    Note what it deliberately does **not** do: recompute the roll-up from the ring. The
-    ring is capped and the roll-up's `total` is a lifetime count, so a full recompute
-    would delete every packet that has aged out of the window."""
+    """The roll-up with everything the ring holds and it does not, folded back in — so a
+    lost roll-up write is recoverable. Always returns a normalised record (usable as the
+    read path). Never recomputes from scratch: the ring is capped, `total` is lifetime."""
     out = _clean_rollup(rollup)
     for row in unfolded_packets(out, ring):
         out = roll_up_packet(out, row, now=now, max_days=max_days)
@@ -518,13 +406,8 @@ def _day_before(day: str, back: int) -> str:
 
 
 def history_view(rollup, *, days: int = 7, today: Optional[str] = None) -> list:
-    """The last `days` calendar days, oldest→newest, **zero-filled**.
-
-    A day the robot said nothing on is a real answer ("nothing happened") and must not
-    be silently skipped, or a week of two active days would render as a two-day week.
-    Each row is `{day, count, by_event, top_event}`; `top_event` is the busiest name that
-    day (ties broken by name so a refresh does not jitter), or `None` on an empty day.
-    """
+    """The last `days` calendar days, oldest→newest, **zero-filled** (a quiet day is an
+    answer). Rows are `{day, count, by_event, top_event}`; ties break by name."""
     r = _clean_rollup(rollup)
     n = max(0, int(days))
     if not n:
@@ -545,9 +428,7 @@ def history_view(rollup, *, days: int = 7, today: Optional[str] = None) -> list:
 
 
 def rollup_totals(rollup) -> dict:
-    """The roll-up's own summary: the lifetime total, the window it actually holds, and
-    how many day rows the cap has retired. What the console needs to say plainly how far
-    back its history really goes."""
+    """Lifetime total, the window actually held, and day rows the cap retired."""
     r = _clean_rollup(rollup)
     keys = sorted(r["days"])
     return {"total": r["total"], "days_kept": len(keys),

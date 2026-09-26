@@ -2,41 +2,31 @@
 Child safety — the `InputSafety` contract, enforced.
 
 `RemoteChatInput.InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}` is the one
-moderation hook the recovered protocol gives us
-(`docs/reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto`
-:180-186 — the message; :198 `RemoteChatInput.safety` field 12; :335
-`RemoteChatResponse.input` field 17). `docs/architecture/ai-seam.md` §2 specifies it and
-says a kid-facing backend SHOULD populate it. This module is that classifier, and the
-runtime enforces its verdict on **both** sides of a turn:
+moderation hook the recovered protocol gives us (`RemoteChat.proto`:180-186; carried in
+`RemoteChatInput.safety` field 12 and `RemoteChatResponse.input` field 17).
+`docs/architecture/ai-seam.md` §2 says a kid-facing backend SHOULD populate it. The
+runtime enforces this classifier's verdict on **both** sides of a turn:
 
   * **pre-inference** — the child's utterance is assessed BEFORE the brain is called, so a
-    hard-blocked turn never reaches a model at all;
-  * **post-inference** — every chunk the brain produces is assessed BEFORE it is
-    published, because streaming puts a sentence on the wire while the rest of the answer
-    does not exist yet.
+    hard-blocked turn never reaches a model;
+  * **post-inference** — every chunk is assessed BEFORE it is published (streaming puts a
+    sentence on the wire before the rest exists).
 
-**What v1 is, honestly.** A transparent rule engine: word-boundary word lists, a handful of
-phrase regexes, and per-category false-positive guards, all in `safety_rules.json` — a file
-a parent can open and read. It runs locally, in-process, with no cloud call and no model.
+**v1** is a transparent rule engine — word lists, phrase regexes and false-positive guards
+in `safety_rules.json`, a file a parent can read — running locally with no model.
 
-**What it is not.** A rule engine is a *floor*, not a filter. It cannot understand context,
-sarcasm, or a harmful idea expressed in gentle words; it will miss novel phrasings and
-every language its tables are not written in; and it will occasionally flag something
-innocent. It is one layer under the model's own alignment and the persona's safety
-instructions, not a replacement for either — and not a substitute for a parent.
+**It is a floor, not a filter**: it misses context, sarcasm, gentle phrasings and other
+languages, and occasionally flags something innocent. It sits under the model's own
+alignment and the persona's instructions, and is no substitute for a parent.
 
-**The drop-in seam.** `Classifier` is a protocol exactly like `moxie_sdk.stt.Transcriber` /
-`moxie_sdk.tts.Synthesizer`: one method, `assess(text, role) -> InputSafety`. A local model
-classifier drops in behind it without touching the runtime
-(`MoxieRuntime(app, safety=MyClassifier())`).
+**The seam.** `Classifier` has one method, `assess(text, role) -> InputSafety`, like
+`Transcriber`/`Synthesizer`; a model classifier drops in via
+`MoxieRuntime(app, safety=MyClassifier())`.
 
-Idea credit: OpenMoxie Fork A's `site/hive/mqtt/conversation_log.py` checks regex safety
-categories *before* inference and gives a parent an acknowledge-reviewed queue, and is
-honest in its own UI that keyword flags are a review aid rather than a filter
-(`docs/architecture/openmoxie-feature-audit.md` §2.1, and BEYOND #2 which calls that "a
-good floor"). The idea of pre-inference keyword flags + a parent review queue is theirs;
-these categories, the role-aware block/flag policy, the post-inference per-chunk stage,
-the wire mapping and this code are ours.
+Credit: pre-inference keyword flags plus a parent review queue is OpenMoxie Fork A's idea
+(`site/hive/mqtt/conversation_log.py`; `openmoxie-feature-audit.md` §2.1, BEYOND #2).
+The categories, role-aware policy, per-chunk post-inference stage, wire mapping and code
+are ours.
 """
 from __future__ import annotations
 
@@ -65,14 +55,10 @@ CHILD, MOXIE = "child", "moxie"
 class InputSafety:
     """One safety verdict — `RemoteChatInput.InputSafety` plus what a parent needs.
 
-    The first four fields are the wire contract, in proto field order (RemoteChat.proto
-    :181-186). `to_wire()` emits **only** those four.
-
-    `is_unsafe` is true exactly when something **blocked** — a merely-flagged utterance is
-    allowed through and recorded for a parent, and we do not assert on the wire that it was
-    unsafe. `blocked_by` is then always non-empty when `is_unsafe`, which is how the proto
-    pairs them ("whether the child's input was unsafe, which classifiers blocked it").
-    Flagged categories live in `flagged_by`, which never reaches the robot.
+    The first four fields are the wire contract (RemoteChat.proto:181-186); `to_wire()`
+    emits only those. `is_unsafe` is true exactly when something **blocked** (so
+    `blocked_by` is non-empty); flagged-only text passes and is recorded in `flagged_by`,
+    which never reaches the robot.
     """
 
     is_unsafe: bool = False                 # proto field 1
@@ -135,87 +121,48 @@ class Redirect:
 # Always-on cleanup: curly apostrophes onto `'`, so `don't`/`don’t` are one word.
 _ALWAYS = str.maketrans({"’": "'", "‘": "'", "ʼ": "'"})
 
-#: The four glyphless Hangul fillers. They are category **`Lo`** — letters — so the `Cf`
-#: sweep below does not reach them, but they have no glyph, which is exactly why they are
-#: the standard way to make a "blank" name in a chat client. They are placeholders for an
-#: absent jamo, they carry no meaning in the English these tables are written in, and they
-#: split a word as invisibly as a ZWSP does. (Python's NFKD folds U+3164 and U+FFA0 onto
-#: U+1160 before this set is consulted — verified, and pinned by a test — so only two of the
-#: four can actually survive to be caught here. All four are written out because a reader
-#: should not have to know that.)
+#: The four glyphless Hangul fillers: category `Lo` (so the `Cf` sweep misses them) but
+#: invisible, so they split a word like a ZWSP. (NFKD folds two of them onto U+1160 first;
+#: all four are listed for clarity.)
 _HANGUL_FILLERS = frozenset("\u115f\u1160\u3164\uffa0")
 
 
 def _is_invisible(ch: str) -> bool:
     r"""True for a character that occupies no width and so can split a word unseen.
 
-    WHY A CATEGORY AND NOT A HAND-PICKED LIST. `_ALWAYS` used to name exactly four code
-    points — U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ, U+FEFF — and every other invisible
-    formatting character walked straight into the matcher. That was not theoretical:
-    `"suicide"` blocked, and the same word with a U+00AD SOFT HYPHEN or a U+2060 WORD
-    JOINER between each letter did **not**, while rendering identically to a reader.
-    `self_harm` is the first blocking category and this floor runs **before** the brain is
-    called (module docstring, :11-13), so one pasted character defeated the entire
-    pre-inference block — on the module a self-hosted stack and a real robot run. Naming
-    code points one at a time is how that happened; `Cf` is the closed set, so the set is
-    what we strip. `functions/api/_lib/safety.js` made the same fix for the hosted demo
-    first; this is the same decision, re-derived against Python's own Unicode data.
+    By **category**, not a hand-picked list: a list of four zero-width code points let a
+    U+00AD SOFT HYPHEN or U+2060 WORD JOINER between letters defeat the pre-inference
+    block. `Cf` is the closed set of formatting characters (matches V8, incl. U+180E).
+    Marks are tested by category (`M*`), not `unicodedata.combining()`: U+034F is `Mn`
+    with combining class 0 and must go too — this is what `\p{M}` means in the JS twin
+    (`functions/api/_lib/safety.js`).
 
-    VERIFIED IN THIS RUNTIME, NOT ASSUMED. `unicodedata` (15.0.0 under CPython 3.12) reports
-    category `Cf` for all of U+00AD, U+061C, **U+180E**, U+200B–U+200F, U+202A–U+202E,
-    U+2060–U+2064, U+2066–U+2069, U+FEFF and U+FFF9–U+FFFB. U+180E is the one worth
-    naming: it was `Zs` until Unicode 6.3 and V8 reports it as `Cf` too, so on this point
-    the two engines agree — probed on both sides rather than carried across.
-
-    **AND THE ONE PLACE THEY DID NOT.** `\p{M}` on the JS side is a *category* test, but
-    `unicodedata.combining()` returns the *canonical combining class*, and the two are not
-    the same predicate. U+034F COMBINING GRAPHEME JOINER is category `Mn` with **ccc 0**,
-    so the old line above kept it and `s\u034fu\u034fi\u034fc\u034fi\u034fd\u034fe` did not block here even though
-    the identical string blocks in the Function. Testing the category closes that, and is
-    what `\p{M}` meant all along.
-
-    WHAT IS DELIBERATELY LEFT IN. The `Zs` space separators (U+00A0, U+2000–U+200A, U+202F,
-    U+205F, U+3000) are **not** stripped and must not be: Python's NFKD folds every one of
-    them onto an ordinary U+0020, and U+1680 falls to the `\s+` collapse instead (both
-    probed, both pinned by a test), so an exotic space becomes a REAL space. That is the
-    right answer — a no-break space *is* a space — and it means `"i want to\u00a0kill myself"`
-    blocks exactly like the plain sentence. It also means intra-letter *spacing* stays
-    open, which is a known limit rather than an oversight; see `_variants`.
+    `Zs` spaces are deliberately kept: NFKD folds them onto U+0020, so an exotic space
+    becomes a real one (intra-letter spacing stays a known limit; see `_variants`).
     """
     cat = unicodedata.category(ch)
     return cat == "Cf" or cat[0] == "M" or ch in _HANGUL_FILLERS
 
-# Character substitutions people use to slip past a word list (`sh1t`, `$hit`, `f@ck`).
-# Applied ONLY where the next character is a letter, so an ordinary `hi!` or `b4` is left
-# alone — substituting a trailing `!` would turn `shoot!` into `shooti` and *break* a
-# match rather than catch one.
+# Leet substitutions (`sh1t`, `$hit`, `f@ck`), applied ONLY before a letter so `shoot!`
+# does not become `shooti` and break a match.
 _LEET = {"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b",
          "9": "g", "@": "a", "$": "s", "!": "i", "|": "i", "+": "t"}
 _LEET_RE = re.compile("[%s]" % re.escape("".join(_LEET)))
 
 _RUN = re.compile(r"(.)\1{2,}")           # three or more of the same character
 
-#: A run of non-alphanumerics with a letter or digit on **both** sides, so `s.u.i.c.i.d.e`
-#: and `s-u-i-c-i-d-e` collapse onto the word they spell. Written with a lookahead and a
-#: captured left flank rather than a lookbehind, because consuming both flanks would make
-#: the alternating matches overlap and fold only every other separator.
+#: Non-alphanumerics with a letter/digit on **both** sides, so `s.u.i.c.i.d.e` folds onto
+#: the word. Lookahead on the right flank so consecutive separators all fold.
 _INWORD_PUNCT = re.compile(r"([a-z0-9])[^a-z0-9 ]+(?=[a-z0-9])")
 
 
 def normalize(text: str) -> str:
-    r"""Casefolded, accent-stripped, de-leeted text with runs of whitespace collapsed.
+    r"""Casefolded, accent-stripped, de-leeted text with whitespace runs collapsed.
 
-    `NFKD` + dropping every `\p{M}` mark means `shít` / `ｓｈｉｔ` normalize onto `shit`; the
-    leet map folds `sh1t` / `$hit`; `_is_invisible` deletes the zero-width characters used
-    to split a word so a word list cannot see it. Punctuation that carries meaning for the
-    phrase regexes (`\'`) is kept, and ordinary punctuation is left where it is so word
-    boundaries stay where the writer put them — the *intra-word* separators are folded in
-    `_variants`, on a form of their own, and for a reason spelled out there.
-
-    This is a MATCHING transform, never a display one. Deleting characters in it is safe
-    only because its output cannot reach a child, a log or a prompt: `assess()` consumes
-    `_variants()` internally and returns a verdict, and the excerpt a parent sees is
-    `redact()`\'s masking of the ORIGINAL text.
+    NFKD + dropping marks folds `shít` / `ｓｈｉｔ` onto `shit`; the leet map folds `sh1t`;
+    invisible characters are deleted. Punctuation stays so word boundaries hold
+    (intra-word separators are folded in `_variants`). A MATCHING transform only — it
+    never reaches a child, log or prompt; a parent's excerpt masks the ORIGINAL text.
     """
     if not text:
         return ""
@@ -234,42 +181,17 @@ def normalize(text: str) -> str:
 def _variants(text: str) -> tuple:
     r"""Normalized text plus its de-elongated and de-punctuated forms.
 
-    A run of 3+ identical characters is collapsed to one AND to two, because either may
-    be the real word (`fuuuuck` → `fuck`, `killlll` → `kill`). The fourth form folds the
-    separators a writer put INSIDE a word (`s.u.i.c.i.d.e`, `s-u-i-c-i-d-e`) onto the word
-    they spell. All are cheap; matching against each string costs one extra regex scan.
+    Runs of 3+ identical characters collapse to one AND two (`fuuuuck`, `killlll`); the
+    fourth form folds intra-word separators (`s.u.i.c.i.d.e`).
 
-    WHY THE NARROW `_INWORD_PUNCT` AND NOT `[^a-z0-9 ]` EVERYWHERE, which is the obvious
-    version. Stripping ALL punctuation also deletes the boundary BETWEEN SENTENCES, and the
-    phrase regexes are written across `\s+`. **Measured in Python** against a corpus of
-    innocent child-shaped sentences (`sim/tests/test_safety.py::INNOCENT`), the broad form
-    turns two of them into `self_harm` blocks:
+    Why the narrow `_INWORD_PUNCT` and not stripping all punctuation: that also deletes
+    sentence boundaries, and on the innocent corpus (`test_safety.py::INNOCENT`) turns
+    "that's what i want. To die of laughter…" into a `self_harm` block. Requiring
+    alphanumerics on both sides keeps `want. To` apart: zero false positives.
 
-        "that\'s what i want. To die of laughter would be great, honestly"
-        "i don\'t know what i want. To not be so shy would be nice"
-
-    Both fold onto `... i want to die ...` / `... i want to not be ...` and trip
-    `\bi\s+want\s+to\s+(?:die|...)\b`. A child saying either is told to go find a grown-up,
-    by a robot, for saying something completely ordinary — that is a real harm in its own
-    right, not a safe default, and it is the exact failure this module\'s docstring calls
-    out ("it will occasionally flag something innocent"). Requiring a letter or digit on
-    both sides keeps every sentence boundary intact (`want.` is followed by a SPACE, so it
-    is left alone) while still folding the intra-word separators, which is the whole
-    evasion this form exists for. Same corpus, narrow form: zero false positives. The JS
-    side reached the same two sentences; the measurement above is Python\'s own, because
-    `casefold()` and Python\'s NFKD are not `toLowerCase()` and V8\'s.
-
-    ADDING A FORM CAN ONLY ADD MATCHES. `_Category.hits` ORs across every form and stops at
-    the first hit, so a new variant can never LOSE a block the base form already had — only
-    find one more, or (the whole reason each is measured before it ships) one it should not
-    have. That asymmetry is why the false-positive corpus is the gate here and the evasion
-    table is not: a missed evasion is the floor we already had; a false positive is a new
-    harm.
-
-    KNOWN AND DELIBERATELY LEFT OPEN: intra-letter *spacing* (`s u i c i d e`). Closing it
-    means deleting spaces from every utterance, and it is a **visible** evasion identical to
-    typing real spaces — which this floor has never caught and cannot catch. Pinned as a
-    known-open test rather than half-closed for the exotic-space variant alone.
+    Forms are OR-ed, so adding one can only add matches — the false-positive corpus is
+    therefore the gate. Known open: intra-letter *spacing* (`s u i c i d e`), a visible
+    evasion this floor cannot catch without deleting every space.
     """
     base = normalize(text)
     if not base:
@@ -331,11 +253,8 @@ class _Category:
         self.allow = [re.compile(p) for p in (raw.get("allow") or [])]
 
     def hits(self, variants: tuple) -> list:
-        """The matched trigger strings in `variants`, or [] — allow-guarded.
-
-        Each guard's span is **removed** before matching, so `shoot a photo` cannot
-        trigger `violence_talk` while `shoot a photo then shoot him` still can.
-        """
+        """The matched trigger strings in `variants`, or [] — allow-guarded: each guard's
+        span is removed first (`shoot a photo` passes, `… then shoot him` still hits)."""
         found = []
         for text in variants:
             guarded = text
@@ -355,19 +274,15 @@ class _Category:
 # ---------------------------------------------------------------------------
 
 class Classifier:
-    """The safety seam — one method, exactly like `Transcriber` / `Synthesizer`.
-
-    Implement this to swap in a local model classifier (or a hybrid: rules first, model
-    on the ambiguous middle) without touching the runtime::
+    """The safety seam — one method, like `Transcriber` / `Synthesizer`::
 
         class MyClassifier(Classifier):
             name = "distil-safety"
             def assess(self, text, *, role=CHILD): ...
         MoxieRuntime(app, safety=MyClassifier())
 
-    Contract: **pure and local** (no network — this is a child's device), fast enough to
-    run per streamed chunk, and total (never raises; the runtime treats an exception as
-    "allow", so a broken classifier must not silence Moxie).
+    Contract: **pure and local** (no network), fast enough per streamed chunk, and total
+    (the runtime treats an exception as "allow" so a broken classifier cannot silence Moxie).
     """
 
     name = "classifier"
@@ -474,14 +389,9 @@ MAX_EXCERPT = 96
 
 
 def redact(text: str, triggers=(), limit: int = MAX_EXCERPT) -> str:
-    """A short excerpt for the review queue with the matched words masked.
-
-    A parent needs enough to recognize the moment ("he asked about ***") without the
-    queue becoming a searchable archive of the worst thing their child ever said — and
-    without us ever echoing the unsafe words back into a UI. Masking is done on the
-    ORIGINAL text (so the excerpt still reads naturally), matching each trigger
-    case-insensitively; anything past `limit` characters is cut on a word boundary.
-    """
+    """A short review-queue excerpt with the matched words masked — enough to recognize
+    the moment, never the unsafe words. Masks the ORIGINAL text; cut at `limit` on a word
+    boundary."""
     out = " ".join(str(text or "").split())
     trigs = sorted({t for t in triggers if t}, key=len, reverse=True)
     for trig in trigs:
@@ -508,13 +418,8 @@ def redact(text: str, triggers=(), limit: int = MAX_EXCERPT) -> str:
 # ---------------------------------------------------------------------------
 
 def _performed(text: str, mood: int, gesture: str) -> str:
-    """`<playback-mood/><behaviour-tree/> text` — the redirect, with a face and a body.
-
-    Hand-authored like `moxie_sdk/filler.py`, and deliberately NOT run through the markup
-    floor: a redirect is the one line that must stay exactly as a person wrote it. Marks
-    are minted through `moxie_sdk.vocab`, the one place a mark is built, so a redirect is
-    validated against the same frozen catalog as everything else.
-    """
+    """`<playback-mood/><behaviour-tree/> text` — the redirect, performed. Not run through
+    the markup floor (it must stay as written); marks come from `vocab`."""
     out = [vocab.mood_mark(int(mood), 1)]
     if gesture:
         out.append(vocab.tree_mark(gesture))
@@ -536,12 +441,8 @@ MAX_EVENTS = 200
 
 def event_from(verdict: InputSafety, *, keep_excerpt: bool = True,
                now: Optional[float] = None, event_id: Optional[str] = None) -> dict:
-    """One review-queue row from a verdict.
-
-    `keep_excerpt=False` (LoggingPolicy `NO_DATA`) drops the only field that carries any
-    of the child's words — the row still says *that* it happened, in which category, on
-    which side, and when.
-    """
+    """One review-queue row from a verdict. `keep_excerpt=False` (`NO_DATA`) drops the
+    only field carrying the child's words; the row still records what/when/which side."""
     import time
     import uuid
     return {

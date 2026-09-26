@@ -1,74 +1,51 @@
 """
 Durable per-robot store — plain JSON files on disk, zero dependencies.
 
-The robot cloud needs to *remember* things between restarts: what activities a child
-has finished (`mentor_behaviors`), what a conversation left behind (`memory`), why a day
-was planned (`schedule_explain`), the safety journal, the content overlay — and, since
-2026-09-02, **telemetry** (`telemetry_packets` + `telemetry_daily`, shaped by
-`moxie_sdk/telemetry.py`), which was the last collection still living in process RAM
-and dying with the supervisor.
-
-This is the smallest honest fix: one JSON file per (robot, collection), written
-atomically, under a data directory. **It is a stepping stone, not a database** — the
-audit's ADOPT #8 (`docs/architecture/openmoxie-feature-audit.md` §4.1) calls for a real
-DB, and the API here (read / write / append / delete / devices) is deliberately narrow
-so it can be re-implemented over SQLite without touching a caller.
+Holds what the robot cloud must remember across restarts: mentor behaviors, memory, the
+schedule explanation, the safety journal, the content overlay and telemetry. One JSON
+file per (robot, collection), written atomically. **A stepping stone, not a database**
+(audit ADOPT #8, `docs/architecture/openmoxie-feature-audit.md` §4.1): the API
+(read / write / append / delete / devices) is deliberately narrow so it can be
+re-implemented over SQLite without touching a caller.
 
 Layout::
 
     $MOXIE_DATA_DIR/robots/<device>/<collection>.json     # default: mqtt/data/
     $MOXIE_DATA_DIR/fleet/<collection>.json               # appliance-wide, no device
 
-Properties we actually rely on:
+Properties relied on:
   * **robust to a missing directory** — reads return the default, writes create it;
-  * **atomic-ish writes** — write a temp file in the same directory, then `os.replace`,
-    so a crash mid-write leaves the previous good file, never a truncated one — and, since
-    2026-09-03, an `fsync` of the **directory** after the rename, so the directory entry
-    pointing at the new inode is durable and not merely likely;
-  * **thread-safe** — the runtime ingests reports on a worker pool, so read-modify-write
-    (`append`) is serialized by a lock;
-  * **process-safe** — see `transaction()` below;
+  * **atomic writes** — temp file + `os.replace`, then `fsync` of the directory so the
+    rename itself is durable; a crash leaves the previous good file, never a truncated one;
+  * **thread-safe** and **process-safe** — see `transaction()`;
   * **pure** — no MQTT, no protobuf, no config import; unit-testable on a tmp dir.
 
 Cross-process writes (`docs/architecture/backlog/production-hardening.md` §3)
 ----------------------------------------------------------------------------
-An in-process `threading.RLock` is not a lock at all once a second process appears, and a
-second process is not hypothetical: `sim/run_smoke.sh` starts one on every contributor's
-box, an operator's backup or hand-edit is another, and the console's child registry is a
-third that is coming. Two `append()`s from two processes interleave read-read-write-write
-and one item vanishes **silently**.
+A second process on the data directory is normal (the SIL harness, an operator's backup
+or hand-edit), and two unlocked `append()`s interleave read-read-write-write and silently
+lose an item. The fix is an **advisory `flock` on a per-record sidecar lock file** behind
+a public `transaction(device, collection)`, with the JSON staying `cat`-able and `rm`-able
+by a parent. Not SQLite: its only real advantage here, multi-collection transactions, is
+used by no caller (§3.2).
 
-The fix is deliberately the small one: an **advisory `flock` on a per-record sidecar lock
-file**, behind a public `transaction(device, collection)`, with the JSON staying exactly
-where it is on disk. Not SQLite — the brief's §3.2 argues that at length, and the short
-version is that SQLite's only real advantage here is multi-collection transactions, which
-not one of the fourteen call sites uses. A parent can still `cat` and `rm` their child's
-data, which is the most legible privacy property this appliance has.
+Four traps, all load-bearing:
 
-Four things a plausible-looking `flock` patch gets wrong, all of them load-bearing:
+1. **Lock a sidecar, never the data file.** `os.replace()` swaps the inode, so a lock on
+   `memory.json` is a lock on an inode the next writer never opens. The lock is
+   `<path>.lock` — created once, never replaced or deleted, empty, ignored by readers.
+2. **`RLock` outside, `flock` inside, one `open()` per acquisition.** `flock` is per open
+   file description, so two `open()`s in one thread deadlock; `MemoryStore` depends on
+   reentrancy. Only the outermost acquisition opens an fd; nesting is a no-op re-entry.
+3. **Never block the MQTT loop.** Some writes run on the paho thread, so the wait is
+   `LOCK_EX | LOCK_NB` with bounded backoff + jitter, capped by
+   `MOXIE_STORE_LOCK_TIMEOUT_S` (default 2.0 s, chosen not measured — §9 A13). On
+   exhaustion the write fails, returns False, and is recorded.
+4. **`fcntl` is POSIX-only, and the fallback is loud.** Without it `transaction()` is the
+   `RLock` alone and `warn_no_locking()` prints one startup line.
 
-1. **Lock a sidecar, never the data file.** `os.replace()` swaps the *inode*, so a lock
-   held on `memory.json` is a lock on an inode the next writer will never open. The lock
-   is `<path>.lock` — created once, never replaced, never deleted (deleting it
-   re-introduces the same race), empty, and ignored by every reader.
-2. **`RLock` outside, `flock` inside, one `open()` per acquisition.** `flock` is per *open
-   file description*: two `open()`s in one thread deadlock each other where the old
-   `RLock` was reentrant, and the five `MemoryStore` sites depend on that reentrancy. So
-   the store-wide `RLock` is taken first and only the **outermost** acquisition opens an
-   fd; a nested `transaction()` on the same record is a no-op re-entry.
-3. **Never block the MQTT loop.** Some writes happen on the paho network thread, so the
-   wait is `LOCK_EX | LOCK_NB` in a bounded exponential-backoff-with-jitter loop
-   (`chat.py::call_with_backoff`'s shape, injectable `sleep`) capped by
-   `MOXIE_STORE_LOCK_TIMEOUT_S` — **default 2.0 s, chosen rather than measured** (§9 A13).
-   On exhaustion the write fails, returns False, and is *recorded*: never retried forever,
-   never silently swallowed.
-4. **`fcntl` is POSIX-only, and the fallback is loud.** Without it `transaction()` degrades
-   to exactly the old `RLock` behaviour and `warn_no_locking()` prints one startup line.
-
-What this does **not** buy: multi-collection atomicity, a query layer, schema/migrations —
-§3.4 says so plainly. `/data` on NFS or SMB is **unsupported**: `flock` there is
-best-effort at best (SQLite would be worse — WAL is flatly unsupported over NFS — so this
-is a cost of the problem, not of the choice).
+Not provided: multi-collection atomicity, a query layer, schema/migrations (§3.4).
+`/data` on NFS/SMB is unsupported (`flock` there is best-effort).
 """
 from __future__ import annotations
 
@@ -85,47 +62,36 @@ try:                                   # POSIX only; Windows degrades to the RLo
 except ImportError:                    # pragma: no cover - not reachable on Linux CI
     fcntl = None                       # type: ignore[assignment]
 
-# Default data dir: mqtt/data/ (sibling of moxie_sdk/). Git-ignored — it is runtime
-# state, not source. Override with MOXIE_DATA_DIR (e.g. a volume in the compose stack).
+# The item model lives in memory_items.py; re-exported here for existing callers.
+from .memory_items import (  # noqa: F401
+    MEMORY_COLLECTION, POLICY_NO_DATA, MAX_MEMORY_NAMESPACES, MAX_MEMORY_ITEMS,
+    MAX_MEMORY_ITEM_CHARS, MAX_MEMORY_BYTES, MEMORY_ID_BYTES, MEMORY_MAX_AGE_DAYS,
+    ITEM_PROVENANCE_KEYS, memory_max_age_days, item_id, item_text, _unique_id,
+    item_provenance, make_item, normalize_items, normalize_block, item_clock,
+    prune_stale, _policy_value, json_safe)
+
+# Default data dir: mqtt/data/ (git-ignored runtime state). Override with MOXIE_DATA_DIR.
 _DEFAULT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "data")
 
 _SAFE = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
 
-#: Suffix of a record's advisory lock file. Never the data file itself — see the module
-#: docstring, trap #1.
+#: Suffix of a record's advisory lock file (trap #1).
 LOCK_SUFFIX = ".lock"
 
-#: How long a writer may wait for another process's lock before giving up, in seconds.
-#: **Chosen, not measured** (production-hardening.md §9 A13) — which is exactly why it is
-#: an env var: a week of real contention on an appliance is what settles it. `config.py`
-#: refuses to start when it is not strictly less than `MOXIE_BRAIN_BUDGET_S`, because a
-#: lock wait is a slice of a turn rather than a claim on it.
+#: Seconds a writer waits for another process's lock. Chosen, not measured (§9 A13), hence
+#: an env var. `config.py` requires it to be strictly less than `MOXIE_BRAIN_BUDGET_S`.
 DEFAULT_LOCK_TIMEOUT_S = 2.0
 
-#: Backoff shape, mirroring `moxie_sdk/chat.py::call_with_backoff`: exponential from
-#: `base`, capped at `cap`, plus uniform jitter.
-#:
-#: These two are **measured, not chosen** — unlike the timeout (A13). `flock` has no
-#: queue: a `LOCK_NB` waiter takes whatever gap the holder leaves, so a process appending
-#: in a tight loop *starves* a coarse poller. Measured on 2026-09-03, two processes ×
-#: 500 `append`s on one collection, three cadences × two runs:
-#:
-#:   base 10 ms / cap 200 ms → 2-3 timeouts per writer, ~5 of 1 000 appends refused
-#:   base 0.5 ms / cap  10 ms → 0-2 timeouts,           ~2 of 1 000 refused
-#:   base 0.5 ms / cap   2 ms → 0 timeouts,              0 of 1 000 refused
-#:
-#: The contended case is another process finishing a ~1 ms write, so the poll interval has
-#: to be on the order of that write rather than of an HTTP retry. It is still a *poll*:
-#: fairness is not guaranteed and a starved waiter eventually times out — which is the
-#: bounded, recorded failure §3.2 point 4 accepts, not a silent one.
+#: Backoff: exponential from `base`, capped at `cap`, plus uniform jitter. Measured, not
+#: chosen: `flock` has no queue, so a coarse poller is starved by a writer in a tight loop.
+#: Two processes x 500 appends: 10 ms/200 ms refused ~5 of 1 000, 0.5 ms/2 ms refused 0.
+#: The poll must be on the order of a ~1 ms write, not of an HTTP retry.
 LOCK_BACKOFF_BASE_S = 0.0005
 LOCK_BACKOFF_CAP_S = 0.002
-#: Largest exponent the backoff will compute. `2 ** attempt` is an arbitrary-precision
-#: int and this loop iterates `timeout / cap` times — ~1 000 at the default 2.0 s budget
-#: and ~15 000 at 30 s — so without a clamp `LOCK_BACKOFF_BASE_S * (2 ** attempt)` raises
-#: `OverflowError` at `attempt == 1024` and takes the *caller* down rather than timing
-#: out. The cap is already reached at `attempt == 2`, so this discards nothing.
+#: Clamp on the backoff exponent. `2 ** attempt` is an int and the loop runs
+#: `timeout / cap` times, so unclamped it raises `OverflowError` at attempt 1024 (reached
+#: by any timeout above ~2 s). The cap is hit at attempt 2, so the clamp discards nothing.
 LOCK_BACKOFF_MAX_SHIFT = 32
 
 _NO_LOCKING_NOTE = (
@@ -137,29 +103,25 @@ _warned_no_locking = False
 
 
 class StoreLockTimeout(Exception):
-    """Another process held a record's lock for longer than the store was willing to wait.
+    """Another process held a record's lock longer than the store would wait.
 
     Raised only out of `JsonStore.transaction()`; the store's own writers turn it into a
-    falsy return **and a recorded failure**, because a swallowed lock failure is the same
-    class of bug as the publish whose return code nobody read.
+    falsy return **and a recorded failure** — never a silent one.
     """
 
 
-#: `refuses_on_lock`'s marker for a method whose caller expects an exception rather than a
-#: falsy value (the parent-facing memory *edit*, whose handler turns a `ValueError` into a
-#: 400 with the reason — a correction that silently did not save is worse than an error).
+#: `refuses_on_lock` marker for a method whose caller expects an exception rather than a
+#: falsy value (the parent's memory *edit*: an unsaved correction must be a 400, not silence).
 RAISE_INSTEAD = object()
 
 
 def refuses_on_lock(what: str, fallback):
-    """Turn a `StoreLockTimeout` out of one read-modify-write into that method's own
+    """Turn a `StoreLockTimeout` in one read-modify-write into that method's own
     *"nothing was stored"* answer, plus a printed line.
 
-    The five `MemoryStore` read-modify-writes each already have such an answer — `merge`
-    returns None when the policy drops a write, `erase` returns False when there was
-    nothing to erase — so a refused lock reuses it rather than inventing a new failure
-    shape a route would have to learn. What it must never do is escape into a turn as a
-    traceback, or vanish: `JsonStore.lock_timeouts` counts every one (§5.3 A11).
+    Reuses each `MemoryStore` method's existing falsy answer rather than inventing a new
+    failure shape; it must never escape into a turn as a traceback. `JsonStore.lock_timeouts`
+    counts every one (§5.3 A11).
     """
     import functools
 
@@ -185,11 +147,8 @@ def locking_note() -> str:
 
 
 def warn_no_locking() -> bool:
-    """Print `locking_note()` once per process. True if it printed.
-
-    Called from `mqtt/run.py` at startup: a silent downgrade is how somebody ships a
-    Windows appliance believing two processes are safe on one data directory.
-    """
+    """Print `locking_note()` once per process (from `mqtt/run.py`). True if it printed —
+    a silent downgrade would let a Windows appliance believe two processes are safe."""
     global _warned_no_locking
     note = locking_note()
     if not note or _warned_no_locking:
@@ -200,13 +159,8 @@ def warn_no_locking() -> bool:
 
 
 def _fsync_dir(path: str) -> None:
-    """`fsync` a directory so a rename into it is durable (A12).
-
-    `os.replace` publishes the new inode; POSIX does not promise the *directory entry*
-    survives a power cut until the directory itself is synced. ext4's `data=ordered` masks
-    this in practice, which is why nobody has been bitten — but that is the filesystem
-    being kind, not the code being correct.
-    """
+    """`fsync` a directory so a rename into it is durable (A12): POSIX does not promise the
+    directory entry survives a power cut until the directory itself is synced."""
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         os.fsync(fd)
@@ -221,11 +175,8 @@ def data_dir() -> str:
 
 def _lock_timeout(explicit: float | None = None) -> float:
     """The lock budget: an explicit argument, else `MOXIE_STORE_LOCK_TIMEOUT_S`, else 2.0.
-
-    Read here rather than imported from `config`, because this module's stated property is
-    that it imports no config — and a knob the store cannot see is a knob that does
-    nothing. `config.py` reads the same variable and is where the *guard* lives.
-    """
+    Read here (not from `config`) because this module imports no config; `config.py` owns
+    the guard on the same variable."""
     if explicit is not None:
         return float(explicit)
     try:
@@ -237,10 +188,9 @@ def _lock_timeout(explicit: float | None = None) -> float:
 def safe_name(value: str) -> str:
     """A filesystem-safe directory name for an arbitrary device id.
 
-    Robot ids are `d_<uuid>` (cloud-protocol.md), which is already safe — but the store
-    must never be a path-traversal lever for an id off the wire. Unsafe characters are
-    replaced and a short digest of the original is appended so two different ids can
-    never collide on one directory.
+    Robot ids (`d_<uuid>`) are already safe, but the store must never be a path-traversal
+    lever for an id off the wire. Unsafe characters are replaced and a short digest of the
+    original appended so two ids never collide on one directory.
     """
     value = str(value or "")
     cleaned = "".join(c if c in _SAFE else "_" for c in value).strip(".") or "_"
@@ -255,19 +205,16 @@ class JsonStore:
     def __init__(self, root: str | None = None, *, lock_timeout_s: float | None = None,
                  on_lock_timeout=None, sleep=time.sleep):
         self.root = root or data_dir()
-        #: Store-wide, reentrant, in-process. Taken FIRST, always — see trap #2.
+        #: Store-wide, reentrant, in-process. Taken FIRST, always (trap #2).
         self._lock = threading.RLock()
-        #: Per-thread nesting depth per lock path, so a nested `transaction()` on one
-        #: record re-enters instead of opening a second file description of the same lock
-        #: file (which would block on itself forever).
+        #: Per-thread nesting depth per lock path, so a nested `transaction()` re-enters
+        #: instead of opening a second description of the same lock file.
         self._held = threading.local()
         self.lock_timeout_s = _lock_timeout(lock_timeout_s)
-        #: `on_lock_timeout(lock_path, waited_s)` — the host's recorder. The runtime
-        #: installs one that writes the runtime's `recent` ring, so a refused write is
-        #: visible to an operator instead of being a number nobody reads.
+        #: `on_lock_timeout(lock_path, waited_s)` — the host's recorder (the runtime's
+        #: `recent` ring), so a refused write is visible to an operator.
         self.on_lock_timeout = on_lock_timeout
         self._sleep = sleep
-        #: Observability for the failure this design newly makes possible (§5.3 A11).
         self.lock_timeouts = 0
         self.last_lock_error = ""
 
@@ -276,28 +223,21 @@ class JsonStore:
         return os.path.join(self.root, "robots", safe_name(device_id))
 
     def lock_path(self, path: str) -> str:
-        """The advisory lock **sidecar** for a record path.
-
-        A sidecar rather than the data file itself because `os.replace` swaps the inode
-        (trap #1): a lock on `memory.json` is a lock on something the next writer will
-        never open, so it looks correct and serializes nothing.
-        """
+        """The advisory lock **sidecar** for a record path (trap #1)."""
         return path + LOCK_SUFFIX
 
     def path(self, device_id: str, collection: str) -> str:
         return os.path.join(self.device_dir(device_id), f"{safe_name(collection)}.json")
 
     def shared_path(self, collection: str) -> str:
-        """Path of a **fleet-wide** record — one appliance, several robots, one place to
-        set house rules (`fleet/<collection>.json`). Never under `robots/`, so it can
-        never collide with a device id."""
+        """Path of a **fleet-wide** record (`fleet/<collection>.json`). Never under
+        `robots/`, so it can never collide with a device id."""
         return os.path.join(self.root, "fleet", f"{safe_name(collection)}.json")
 
     # ---- reads ----
     def _read_path(self, path: str, default=None):
-        """Read one JSON file, or `default` when it is missing/unreadable/corrupt — a
-        store that raises on a bad file would take the robot's whole session down for one
-        damaged record."""
+        """Read one JSON file, or `default` when missing/unreadable/corrupt — one damaged
+        record must not take a robot's session down."""
         try:
             with open(path) as fh:
                 return json.load(fh)
@@ -324,20 +264,15 @@ class JsonStore:
 
     # ---- the cross-process lock ----
     def _depths(self) -> dict:
-        """This thread's `{lock_path: depth}` — see trap #2."""
+        """This thread's `{lock_path: depth}` (trap #2)."""
         depths = getattr(self._held, "depths", None)
         if depths is None:
             depths = self._held.depths = {}
         return depths
 
     def _acquire_flock(self, fd) -> bool:
-        """One non-blocking `LOCK_EX` attempt. True when we got it.
-
-        Non-blocking on purpose: some store writes happen on the paho network thread, and
-        a blocking `flock` there stalls every robot on the appliance until whoever is
-        wedged lets go. A seam of its own so a test can make the lock unobtainable
-        without needing a second process.
-        """
+        """One non-blocking `LOCK_EX` attempt (trap #3). A seam so a test can make the
+        lock unobtainable without a second process."""
         if fcntl is None:
             return True
         try:
@@ -349,10 +284,8 @@ class JsonStore:
     def _wait_flock(self, fd, lock_path: str) -> float | None:
         """Retry `_acquire_flock` with backoff until `lock_timeout_s` is spent.
 
-        Returns None once it is held, else the seconds waited. The budget is counted in
-        *requested* sleep — not in wall clock — so an injected `sleep` (the
-        `test_clock_dependence.py` ratchet: a test never reads a clock) terminates exactly
-        the way the real one does.
+        None once held, else the seconds waited. The budget counts *requested* sleep, not
+        wall clock, so an injected `sleep` terminates exactly like the real one.
         """
         if self._acquire_flock(fd):
             return None
@@ -360,25 +293,8 @@ class JsonStore:
         asked = 0.0
         attempt = 0
         while asked < self.lock_timeout_s:
-            # `2 ** attempt` is an arbitrary-precision **int**, and this loop runs until
-            # the budget is spent — roughly `timeout / LOCK_BACKOFF_CAP_S` times. At
-            # `attempt == 1024` the product overflows a float and raises
-            # `OverflowError: int too large to convert to float`, straight out of
-            # `transaction()`, past `append`'s `except StoreLockTimeout`, into the caller.
-            #
-            # The default budget hides it by 24 polls: 2.0 s / 2 ms = ~1000. **Any** larger
-            # value crosses the cliff — 5 s is ~2 500 polls, 30 s is ~15 000 — and
-            # `config.py` positively invites larger ones, since the only bound it enforces
-            # is `< MOXIE_BRAIN_BUDGET_S`. So a contended writer under a raised timeout
-            # crashed instead of waiting, and did it rarely enough to read as a flake:
-            # found 2026-09-03 as a 1-in-12 failure of `test_t1` (which uses 30 s
-            # deliberately) under load, and it is very likely the unexplained lost append
-            # in the handed-down "999 of 1 000 at 30 s" measurement.
-            #
-            # The clamp costs nothing: the cap is reached at `attempt == 2`
-            # (0.0005 × 4 = 0.002), so every exponent past a handful is already discarded
-            # by the `min`. It is 32 rather than 3 only so the shape stays recognisably
-            # "exponential, capped" to the next reader.
+            # The exponent clamp prevents OverflowError past ~1024 polls (see
+            # LOCK_BACKOFF_MAX_SHIFT); it discards nothing since the cap is hit at 2.
             delay = min(LOCK_BACKOFF_CAP_S,
                         LOCK_BACKOFF_BASE_S * (2 ** min(attempt, LOCK_BACKOFF_MAX_SHIFT)))
             delay += random.uniform(0, LOCK_BACKOFF_BASE_S)
@@ -444,36 +360,27 @@ class JsonStore:
     def transaction(self, device_id: str, collection: str):
         """Hold one record against every other writer, in this process and outside it.
 
-        The public seam the five `MemoryStore` read-modify-writes use instead of reaching
-        into `self.store._lock`. Reentrant on the same `(device, collection)` from the
-        same thread; raises `StoreLockTimeout` when another **process** has held the
-        record for longer than `lock_timeout_s`::
+        Reentrant on the same `(device, collection)` from the same thread; raises
+        `StoreLockTimeout` when another **process** holds it past `lock_timeout_s`::
 
             with store.transaction(device_id, "memory"):
                 data = store.read(device_id, "memory", {})
                 data["quiz"] = ...
                 store.write(device_id, "memory", data)
 
-        Readers need no transaction: `os.replace` already gives them a whole old or a
-        whole new record.
+        Readers need no transaction: `os.replace` gives them a whole old or whole new record.
         """
         return self._transaction_path(self.path(device_id, collection))
 
     def transaction_shared(self, collection: str):
-        """`transaction()` for the fleet tier (`fleet/<collection>.json`).
-
-        The tier two processes are likeliest to fight over — `config`, `permits`, `voice`,
-        the content overlay — because it is not partitioned by device.
-        """
+        """`transaction()` for the fleet tier (`fleet/<collection>.json`) — the tier two
+        processes are likeliest to fight over, since it is not partitioned by device."""
         return self._transaction_path(self.shared_path(collection))
 
     # ---- writes ----
     def write(self, device_id: str, collection: str, value) -> bool:
-        """Store `value` (any JSON-serializable object). Returns True on success.
-
-        False also means *"another process held this record and would not let go"* — a
-        refused write, recorded in `lock_timeouts` / `last_lock_error`, never a partial one.
-        """
+        """Store `value` (any JSON-serializable object). True on success; False also means
+        another process would not release the record (recorded, never partial)."""
         return self._locked_write(self.path(device_id, collection), value)
 
     def write_shared(self, collection: str, value) -> bool:
@@ -511,38 +418,20 @@ class JsonStore:
             return True
 
     def append(self, device_id: str, collection: str, item, *, cap: int | None = None):
-        """Append one item to a stored list and return the new list, or **None** when
-        another process would not release the record.
-
-        `cap` keeps only the newest `cap` items (the store is a rolling history, not an
-        archive). Read-modify-write inside `transaction()`, which is what makes it safe
-        across processes — before that fix two appenders lost one item per collision, with
-        no error anywhere.
-        """
+        """Append one item to a stored list; return the new list, or **None** when the
+        write was refused or failed. `cap` keeps only the newest `cap` items."""
         return self._append_path(self.path(device_id, collection), item, cap=cap)
 
     def append_shared(self, collection: str, item, *, cap: int | None = None):
-        """`append()` for the fleet tier (`fleet/<collection>.json`).
-
-        The tier the appliance's own history lives in — the connection ring
-        (`conn_telemetry.py`) is appliance-wide because there is one socket, not one per
-        robot, and two supervisors on one data directory must not lose each other's rows
-        for exactly the reason §3 gives about `safety_events`.
-        """
+        """`append()` for the fleet tier (e.g. the appliance-wide connection ring)."""
         return self._append_path(self.shared_path(collection), item, cap=cap)
 
     def _append_path(self, path: str, item, *, cap: int | None = None):
-        """Append over an already-resolved record path. None = refused or not written.
+        """Append over a resolved record path. None = refused or not written.
 
-        **The write's return value is checked**, and that is a fix rather than a tidy-up.
-        This method used to call `write()` and return `items` regardless, so an `OSError`
-        — a full disk, a read-only `/data`, a permission change — produced a *successful*
-        append of an item that reached no file. That is the same disease as the eight
-        publishes whose `info.rc` nobody read (§4.1 C5) and the CONNACK that logged
-        "connected" for a refusal (C3): a comfortable lie at the one boundary that knows
-        the truth. It also breaks the identity the soak's contention probe is built on —
-        `attempted == on_disk + refused` — which is what makes a *silent* loss
-        distinguishable from a *recorded* refusal at all (§5.3 A5 vs A11).
+        The write's return value is checked: a full disk or read-only `/data` must not
+        report a successful append of an item that reached no file. The soak's contention
+        probe relies on `attempted == on_disk + refused` (§5.3 A5 vs A11).
         """
         try:
             with self._transaction_path(path):
@@ -574,9 +463,8 @@ class JsonStore:
             return False
 
     def _delete_path(self, path: str) -> bool:
-        """Remove the record. The `.lock` sidecar is deliberately left behind: deleting it
-        re-introduces the inode race it exists to prevent (two processes each create their
-        own and lock different inodes). It is an empty file."""
+        """Remove the record. The `.lock` sidecar is deliberately kept: deleting it
+        re-opens the inode race (trap #1)."""
         with self._lock:
             try:
                 os.unlink(path)
@@ -588,282 +476,28 @@ class JsonStore:
 # ---------------------------------------------------------------------------
 # Long-term memory — `persist_data` (content-module-contract.md → volley/session API)
 # ---------------------------------------------------------------------------
-# The contract lists `volley.persist_data` as "cross-session storage" next to the
-# per-turn `volley.local_data`. This is that store: one `memory.json` per robot, a
-# dict of **namespaces** (one per content module), each holding the durable facts a
-# later conversation may use plus the provenance of how they got there.
+# One `memory.json` per robot: a dict of **namespaces** (one per content module), each
+# holding durable facts plus the provenance of how they got there. Non-negotiable on a
+# child's device: **bounded** (caps on namespaces, items, bytes), **erasable** (`erase()`,
+# exposed as `DELETE /memory`), and **policy-gated** (`LoggingPolicy.NO_DATA` = nothing
+# written; reads still work so a parent can inspect and erase). NO_DATA is compared by
+# value (0) to keep this module free of a config import.
 #
-# Three properties are not negotiable on a child's device:
-#   * **bounded** — a memory that grows without limit becomes both a prompt-cost bug
-#     and a privacy problem. Caps on namespaces, items per list, and total bytes.
-#   * **erasable** — `erase()` removes one namespace or everything, and the runtime
-#     exposes it to a parent (`DELETE /memory`).
-#   * **policy-gated** — `LoggingPolicy.NO_DATA` (the child-privacy gate, enums.proto
-#     via cloud_config.py) means **no memory is written**. Reads still work, so a
-#     parent can inspect and erase what was stored before the switch was flipped.
-#
-# NO_DATA is compared **by value** (0) rather than by importing `cloud_config`, so
-# this module keeps the "no config import" purity its docstring promises.
-#
-# Pattern credit: OpenMoxie (MIT) ships `content_modules/MemoryChat.json`, whose
-# `complete_handler` summarizes a finished chat into `volley.persist_data`. The idea
-# of module-namespaced durable facts is theirs. Provenance on every remembered item
-# (and a namespace a parent can read and erase) is from OpenMoxie Fork A's
-# `conversation_memory.py`, which stamps `source_event_id`/module/timestamp/speaker on
-# stored history and quarantines anything it cannot attribute
-# (docs/architecture/openmoxie-feature-audit.md §3.2, §4.2 BEYOND #4). This code,
+# Credit: module-namespaced durable facts are OpenMoxie's (MIT) `MemoryChat.json`
+# `complete_handler`; per-item provenance is from OpenMoxie Fork A's
+# `conversation_memory.py` (openmoxie-feature-audit.md §3.2, §4.2 BEYOND #4). This code,
 # the caps, the policy gate and the JSON shape are ours.
-
-#: Collection (file) name under the robot's data dir: `robots/<id>/memory.json`.
-MEMORY_COLLECTION = "memory"
-
-#: `LoggingPolicy.NO_DATA` — nothing may be stored about the child (enums.proto).
-POLICY_NO_DATA = 0
-
-#: Caps. Deliberately small: this is a handful of durable facts, not a transcript.
-MAX_MEMORY_NAMESPACES = 32
-MAX_MEMORY_ITEMS = 25            # items in any one list (facts, preferences, …)
-MAX_MEMORY_ITEM_CHARS = 240      # one fact is a sentence, not a paragraph
-# The whole memory.json, serialized. Raised 16 KB → 64 KB when every item grew from a
-# bare string to `{id, text, _provenance, use_count, …}`: the byte cap drops *whole
-# trailing namespaces*, so leaving it at 16 KB would have silently halved how many
-# activities a robot can remember the day per-item ids landed. Still small enough that a
-# runaway module cannot blow up a prompt or the disk.
-MAX_MEMORY_BYTES = 65536
-
-#: Bytes of blake2b in an item id → 8 hex characters. Short enough to put in a URL and
-#: click, wide enough that a collision inside one (namespace, kind) is a curiosity.
-MEMORY_ID_BYTES = 4
-
-#: How long an unused item survives, in days (`MOXIE_MEMORY_MAX_AGE_DAYS`, 0 = off).
-#: 90 days ≈ a school term: long enough that a summer holiday does not wipe the term's
-#: memory, short enough that a fact nothing has used since last year stops being fed
-#: back into every prompt.
-MEMORY_MAX_AGE_DAYS = 90
-
-#: The per-item provenance we keep **on the item** — the six fields the parent console
-#: renders. The namespace-level `_provenance` log keeps the full record (conversation
-#: id, source), so nothing is lost and the item stays about 110 bytes.
-ITEM_PROVENANCE_KEYS = ("at", "date", "module_id", "content_id", "turns", "reason")
-
-
-def memory_max_age_days() -> int:
-    """`MOXIE_MEMORY_MAX_AGE_DAYS` as a non-negative int (0 = decay off)."""
-    raw = os.environ.get("MOXIE_MEMORY_MAX_AGE_DAYS", "").strip()
-    if not raw:
-        return MEMORY_MAX_AGE_DAYS
-    try:
-        return max(0, int(float(raw)))
-    except ValueError:
-        return MEMORY_MAX_AGE_DAYS
-
-
-# ---------------------------------------------------------------------------
-# Items — a stable id, per-item provenance, and a use clock on every fact
-# ---------------------------------------------------------------------------
-# A remembered thing used to be a bare string in a list. A parent who can only erase a
-# whole activity is one wrong pronoun away from losing everything Moxie learned, so each
-# item is now a small self-describing record instead::
-#
-#     {"id": "9f3ac1d0", "text": "Sam has a beagle named Pepper",
-#      "_provenance": {"at": …, "date": "2026-09-02", "module_id": "MEMORY_CHAT",
-#                      "content_id": "default", "turns": 4, "reason": "exit"},
-#      "use_count": 3, "last_used_at": 1788352646.0, "pinned": true}
-#
-# `id` is `blake2b(namespace \0 kind \0 text)` taken at **creation** and then carried —
-# an edit keeps the id, so a console link survives a correction. Because it is derived,
-# a `memory.json` written before ids existed migrates to exactly the ids it would have
-# had (`normalize_items` on read; written back on the next merge). Defaults are omitted
-# from the file, so an item nobody has used or pinned costs id + text + provenance.
-
-def item_id(namespace: str, kind: str, text: str) -> str:
-    """The stable id of one remembered item — 8 hex of blake2b(namespace|kind|text)."""
-    raw = f"{namespace}\x00{kind}\x00{text}".encode("utf-8", "replace")
-    return hashlib.blake2b(raw, digest_size=MEMORY_ID_BYTES).hexdigest()
-
-
-def item_text(value):
-    """The sentence a stored value carries, or None when it is not a memory item.
-
-    Both shapes are items: a bare string (pre-ids, or written straight by a module) and
-    the record above. Anything else — a number, a module's own dict — is left alone."""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict) and isinstance(value.get("text"), str):
-        return value["text"]
-    return None
-
-
-def _unique_id(candidate: str, taken: set) -> str:
-    """`candidate`, widened until it is free. Two items with the same text under one kind
-    never survive the merge dedup, so this only fires on a real hash collision."""
-    if candidate not in taken:
-        return candidate
-    n = 1
-    while f"{candidate}{n:x}" in taken:
-        n += 1
-    return f"{candidate}{n:x}"
-
-
-def item_provenance(prov) -> dict:
-    """The subset of a merge's provenance that is worth carrying on every item."""
-    p = prov if isinstance(prov, dict) else {}
-    return {k: p[k] for k in ITEM_PROVENANCE_KEYS if p.get(k) not in (None, "")}
-
-
-def make_item(namespace: str, kind: str, text: str, *, provenance=None,
-              taken: set | None = None) -> dict:
-    """A fresh item record for `text` under `namespace`/`kind`."""
-    item = {"id": _unique_id(item_id(namespace, kind, text), taken or set()),
-            "text": text}
-    prov = item_provenance(provenance)
-    if prov:
-        item["_provenance"] = prov
-    return item
-
-
-def normalize_items(namespace: str, kind: str, values, *, provenance=None) -> list:
-    """One stored list → items with ids (migrating bare strings and id-less dicts).
-
-    Pure and idempotent: run twice and nothing changes, which is what makes "ids are
-    stable across reads" true for a file written before ids existed."""
-    out, taken = [], set()
-    for value in list(values or []):
-        text = item_text(value)
-        if text is None:
-            out.append(value)                  # not a memory item — never rewritten
-            continue
-        if isinstance(value, dict):
-            item = dict(value)
-            got = item.get("id")
-            item["id"] = _unique_id(
-                got if isinstance(got, str) and got else item_id(namespace, kind, text),
-                taken)
-            if provenance and not isinstance(item.get("_provenance"), dict):
-                prov = item_provenance(provenance)
-                if prov:
-                    item["_provenance"] = prov
-        else:
-            item = make_item(namespace, kind, text, provenance=provenance, taken=taken)
-        taken.add(item["id"])
-        out.append(item)
-    return out
-
-
-def normalize_block(namespace: str, block, *, provenance=None) -> dict:
-    """One stored namespace with every list migrated to items. `_`-keys are untouched."""
-    if not isinstance(block, dict):
-        return block
-    out = {}
-    for key, value in block.items():
-        if not str(key).startswith("_") and isinstance(value, list):
-            out[key] = normalize_items(namespace, str(key), value,
-                                       provenance=provenance)
-        else:
-            out[key] = value
-    return out
-
-
-def item_clock(item) -> float | None:
-    """When this item was last worth having — the last prompt that rendered it, else the
-    day it was learned. **None** when neither is known: an item we cannot date is one we
-    must never age out, because "undated" and "unused since 2019" look identical."""
-    if not isinstance(item, dict):
-        return None
-    used = item.get("last_used_at")
-    if isinstance(used, (int, float)) and not isinstance(used, bool) and used > 0:
-        return float(used)
-    prov = item.get("_provenance")
-    born = prov.get("at") if isinstance(prov, dict) else None
-    if isinstance(born, (int, float)) and not isinstance(born, bool) and born > 0:
-        return float(born)
-    return None
-
-
-def prune_stale(data: dict, *, max_age_days: int, now: float) -> tuple:
-    """Drop unpinned items nothing has used for `max_age_days`. → `(data, removed)`.
-
-    Deliberately dumb, and that is the honest part: this can only see *whether* an item
-    was rendered into a prompt, never whether it was true, useful, or hurtful. It cannot
-    judge that "Sam's grandad died" matters more than "Sam liked the blue crayon". It
-    only stops a stale fact being re-injected forever. A parent's edit pins an item and
-    takes it out of decay entirely — a human decision outranks a clock."""
-    removed = 0
-    if not isinstance(data, dict) or not max_age_days:
-        return data, 0
-    horizon = float(now) - (float(max_age_days) * 86400.0)
-    for ns, block in list(data.items()):
-        if str(ns).startswith("_") or not isinstance(block, dict):
-            continue
-        for key, values in list(block.items()):
-            if str(key).startswith("_") or not isinstance(values, list):
-                continue
-            kept = []
-            for value in values:
-                clock = item_clock(value)
-                pinned = isinstance(value, dict) and bool(value.get("pinned"))
-                if clock is not None and not pinned and clock < horizon:
-                    removed += 1
-                    continue
-                kept.append(value)
-            block[key] = kept
-    return data, removed
-
-
-def _policy_value(policy) -> int | None:
-    """A LoggingPolicy (enum / int / name string) as its int value; None if unknown."""
-    if policy is None:
-        return None
-    if isinstance(policy, bool):
-        return None
-    if isinstance(policy, int):
-        return int(policy)
-    name = str(policy).strip().upper()
-    return {"NO_DATA": 0, "NO_MEDIA": 1, "FULL": 2}.get(name)
-
-
-def json_safe(value, *, _depth: int = 0):
-    """`value` reduced to something `json.dump` will accept, or None if it can't be.
-
-    Content-module code and an LLM summary both reach the store as arbitrary Python;
-    a store that raises on one bad value would lose the whole memory file."""
-    if _depth > 6:
-        return None
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    if isinstance(value, str):
-        return value[:MAX_MEMORY_ITEM_CHARS]
-    if isinstance(value, dict):
-        out = {}
-        for k, v in value.items():
-            if not isinstance(k, str):
-                continue
-            sv = json_safe(v, _depth=_depth + 1)
-            if sv is not None or v is None:
-                out[k] = sv
-        return out
-    if isinstance(value, (list, tuple, set)):
-        items = []
-        for v in list(value)[:MAX_MEMORY_ITEMS]:
-            sv = json_safe(v, _depth=_depth + 1)
-            if sv is not None:
-                items.append(sv)
-        return items
-    return None                      # objects/callables/bytes are simply not memory
-
 
 class MemoryStore:
     """Durable, namespaced, bounded `persist_data` for one robot fleet.
 
     ``load`` / ``save`` move the whole per-robot dict; ``merge`` folds one namespace's
-    new values in with provenance; ``view`` is what a parent reads; ``erase`` is what a
-    parent deletes. Every write goes through the same caps and the same policy gate.
+    new values in with provenance; ``view`` is what a parent reads; ``erase`` what a
+    parent deletes. Every write goes through the same caps and policy gate.
 
-    ``policy`` is an optional ``policy(device_id) -> LoggingPolicy | int | str`` the
-    host installs (the runtime passes its own per-device config override). Absent, or
-    returning None, means "writes allowed" — a memory feature that defaulted to the
-    RobotCloudConfig's own `NO_DATA` default would never store anything at all, so the
-    gate is an explicit parent choice, exactly like the safety journal's.
+    ``policy`` is an optional ``policy(device_id) -> LoggingPolicy | int | str``. Absent
+    or None means "writes allowed" — defaulting to RobotCloudConfig's own `NO_DATA` would
+    store nothing, so the gate is an explicit parent choice.
     """
 
     def __init__(self, store: "JsonStore | None" = None, *, policy=None,
@@ -880,13 +514,7 @@ class MemoryStore:
 
     # ---- the record lock ----
     def _record(self, device_id: str):
-        """Hold this robot's memory record for a read-modify-write.
-
-        Was `with self.store._lock:` — an in-process `RLock` reached into from outside the
-        class, which serialized nothing against a second process. Now the store's public
-        `transaction()`, which is why that method exists at all
-        (production-hardening.md §2.1: *"any fix must be reachable from here"*).
-        """
+        """Hold this robot's memory record for a read-modify-write (across processes)."""
         return self.store.transaction(device_id, self.collection)
 
     # ---- the privacy gate ----
@@ -912,12 +540,9 @@ class MemoryStore:
     def view(self, device_id: str) -> dict:
         """What Moxie remembers, by namespace, with provenance — the parent's read.
 
-        Every item comes out as its full record (`id`, `text`, per-item `_provenance`,
-        `use_count`, `pinned`), migrating a file written before ids existed on the way
-        past — so a parent reading an old robot still gets something they can erase or
-        correct one line at a time. `meta` carries the module's own bookkeeping that a
-        parent *does* need to see (`summarized_through`: how far through the transcript
-        was written down); the rest of the `_`-prefixed engine keys stay out of `data`."""
+        Items come out as full records (migrating old files on the way past). `meta`
+        carries the module bookkeeping a parent does need (`summarized_through`); other
+        `_`-prefixed keys stay out of `data`."""
         data = self.load(device_id)
         out = {}
         for ns in sorted(data):
@@ -948,8 +573,7 @@ class MemoryStore:
                 for k, v in list(block.items()):
                     if isinstance(v, list) and len(v) > self.max_items:
                         block[k] = v[: self.max_items]   # newest-first lists keep the head
-        # Total size last: drop whole trailing namespaces until it fits, so a runaway
-        # module can never crowd out the file (or blow up a prompt).
+        # Total size last: drop whole trailing namespaces until it fits.
         while len(json.dumps(safe)) > self.max_bytes and safe:
             safe.pop(list(safe)[-1])
         return safe
@@ -966,28 +590,21 @@ class MemoryStore:
               prepend_lists: bool = True, now=None) -> dict | None:
         """Fold `values` into one namespace and record where they came from.
 
-        List values become **items** (`{id, text, _provenance, …}`), are **prepended**
-        (newest first) and de-duplicated case-insensitively, so a second conversation adds
-        to what the first learned instead of replacing it; scalars overwrite. `provenance`
-        (conversation id, module, date, how many turns) is appended to the namespace's
-        `_provenance` log *and* stamped on each item it created — Fork A's idea that a
-        remembered thing must carry how it was learned, taken down to the line. `meta` is a
-        module's own bookkeeping (e.g. how far through a transcript it has summarized);
-        like `_provenance` it is `_`-prefixed and stays out of the parent-facing `data`.
+        List values become items, are **prepended** (newest first) and de-duplicated
+        case-insensitively, so later conversations add to what earlier ones learned;
+        scalars overwrite. `provenance` is appended to the namespace's `_provenance` log
+        *and* stamped on each new item. `meta` is module bookkeeping (`_`-prefixed, out of
+        the parent-facing `data`).
 
-        Merge is also the file's maintenance window: every namespace is migrated to items
-        (so a `memory.json` written before ids existed gains them here, exactly the ids it
-        already reads back with) and stale items are pruned (see `prune_stale`). Returns
-        the merged namespace, or **None** when the policy dropped the write (nothing is
-        stored, and the caller can say so).
+        Merge is also the maintenance window: every namespace is migrated to items and
+        stale items pruned (`prune_stale`). Returns the merged namespace, or **None**
+        when the policy dropped the write.
         """
         if not self.writes_allowed(device_id):
             return None
         ns = str(namespace or "default")
         with self._record(device_id):                     # read-modify-write, across processes
             data = self.load(device_id)
-            # Write-back of the id migration: whatever shape the file was in, from here on
-            # every list in it is a list of items.
             data = {k: normalize_block(str(k), v) for k, v in data.items()}
             block = data.get(ns)
             if not isinstance(block, dict):
@@ -1000,9 +617,8 @@ class MemoryStore:
                     continue
                 if isinstance(safe, list):
                     old = block.get(key) if isinstance(block.get(key), list) else []
-                    # Index what is already on disk by its text, so the parent's decisions
-                    # about an item (its id, its pin, its use clock) survive re-learning it
-                    # whichever way round the two lists are concatenated.
+                    # Index what is on disk by text, so an item's id, pin and use clock
+                    # survive re-learning it.
                     old = normalize_items(ns, str(key), old)
                     prior = {}
                     for item in old:
@@ -1020,8 +636,8 @@ class MemoryStore:
                         seen.add(key_of)
                         was = prior.get(key_of)
                         if isinstance(item, dict) and isinstance(was, dict) and was is not item:
-                            # Re-learning something already remembered must not reset it:
-                            # keep the newest provenance and position, inherit the rest.
+                            # Re-learning must not reset it: keep the newest provenance
+                            # and position, inherit the rest.
                             if was.get("id"):
                                 item["id"] = was["id"]
                             if was.get("pinned"):
@@ -1034,9 +650,6 @@ class MemoryStore:
                 else:
                     block[key] = safe
             if meta:
-                # Bookkeeping the module needs but a parent should not have to read
-                # (e.g. how far through the transcript we have already summarized).
-                # `_`-prefixed keys are ours: `view()` keeps them out of `data`.
                 current = block.get("_meta") if isinstance(block.get("_meta"), dict) else {}
                 current.update(json_safe(meta) or {})
                 block["_meta"] = current
@@ -1055,10 +668,8 @@ class MemoryStore:
             return self.load(device_id).get(ns, {})
 
     # ---- per-item: what a parent does about one wrong line -------------------------
-    # BEYOND #4's other half. Erasing a whole activity because one pronoun is wrong costs
-    # everything Moxie learned about a child in that activity, so both of these work on a
-    # single `id` and leave the rest of the namespace (and its `_meta.summarized_through`,
-    # which is what stops the same transcript being re-summarized) exactly as it was.
+    # Both work on a single `id` and leave the rest of the namespace (incl.
+    # `_meta.summarized_through`) untouched (BEYOND #4).
 
     def find_item(self, device_id: str, namespace: str, item_id: str) -> tuple:
         """`(kind, index, item)` for one id in one namespace, or `(None, -1, None)`."""
@@ -1097,15 +708,12 @@ class MemoryStore:
     @refuses_on_lock("edit_item", RAISE_INSTEAD)
     def edit_item(self, device_id: str, namespace: str, item_id: str, text: str, *,
                   history=(), check=None, now=None) -> dict:
-        """Correct one remembered item, keeping its id, and **pin** it.
+        """Correct one remembered item, keeping its id, and **pin** it (out of decay).
 
-        A parent correcting a fact is the most trustworthy write this store ever takes —
-        so it is never policy-gated (a `NO_DATA` robot can still have a wrong line fixed
-        rather than only deleted) and the result is pinned, which takes it out of decay
-        for good. It is *not* unchecked: the new text goes through the same two rules a
-        model's summary does — the safety classifier must not BLOCK it, and it must not
-        be a long span of the child's own words — because a text box that writes straight
-        into every future prompt is exactly the hole those rules exist to close.
+        Never policy-gated (a `NO_DATA` robot can still have a wrong line fixed), but not
+        unchecked: the text passes the same rules as a model summary — not BLOCKed by the
+        safety classifier, not a long span of the child's own words — since it flows into
+        every future prompt.
 
         Raises `ValueError` when the item does not exist or the text is refused."""
         new_text = str(text or "").strip()[:MAX_MEMORY_ITEM_CHARS]
@@ -1142,12 +750,8 @@ class MemoryStore:
     def note_used(self, device_id: str, rendered: str, *, now=None) -> int:
         """Mark the items that appear in a rendered prompt as used. → how many.
 
-        This is decay's whole clock. It is a **substring** test against the prompt the
-        module actually rendered, which is honest but blunt: an item the prompt truncated,
-        reworded, or handed to the model some other way is not counted, and an item that
-        appears is not necessarily one the model used. Gated like every other write, so a
-        `NO_DATA` robot's clocks simply stop (and nothing is pruned either, since pruning
-        happens on merge, which is also gated)."""
+        Decay's whole clock: a blunt **substring** test against the rendered prompt (a
+        reworded or truncated item is not counted). Policy-gated like every write."""
         text = rendered if isinstance(rendered, str) else ""
         if not text or not device_id or not self.writes_allowed(device_id):
             return 0
@@ -1176,9 +780,8 @@ class MemoryStore:
 
     @refuses_on_lock("erase", False)
     def erase(self, device_id: str, namespace: str | None = None) -> bool:
-        """Forget one namespace, or (namespace None/"all") everything for this robot.
-
-        Erasure is **never** policy-gated: a parent must always be able to delete."""
+        """Forget one namespace, or (None/"all") everything for this robot.
+        **Never** policy-gated: a parent must always be able to delete."""
         with self._record(device_id):
             if namespace in (None, "", "all", "*"):
                 data = self.load(device_id)

@@ -1,23 +1,15 @@
 """
 Frozen behavior-markup vocabularies — every asset id our server is allowed to emit.
 
-Why a frozen catalog
---------------------
-`behavior-markup.md` is explicit that the generators on the robot accept **any** id the
-loaded content bundle defines (docs/reverse-engineering/runtime/behavior-markup.md:161-163,
-:228-230), so the lists below are the **app-hardcoded subset** we recovered — not the
-exhaustive animation catalog of a given robot. Two consequences we live with:
+The robot accepts **any** id its loaded content bundle defines (behavior-markup.md
+:161-163, :228-230), so these lists are the **app-hardcoded subset** we recovered, not a
+robot's full catalog. The catalog catches our typos and invented ids; it cannot prove a
+bundle has an id, and whether a robot ignores or faults on an unknown mark is unknown. So
+generators stick to these ids and `validate_markup()` is the gate every line passes.
 
-  * this catalog catches **our** typos and invented ids; it can never prove a particular
-    robot's bundle has an id, and whether a robot ignores an unknown mark or faults is
-    **unknown** (no hardware has ever played our markup);
-  * so the markup floor sticks to app-hardcoded ids only, and `validate_markup()` is the
-    one gate every generated line passes.
+Everything is cited to our own reverse-engineering notes (never the vendor app).
 
-Everything here is cited to the recovered page and line it came from. Nothing was read
-from the vendor app: these are our own reverse-engineering notes.
-
-Sources (repo-relative, line numbers as of this commit)
+Sources (repo-relative)
 -------------------------------------------------------
 * `docs/reverse-engineering/runtime/behavior-markup.md`
     :16-27    the mark grammar — `<mark name="cmd:VERB,data:{…}"/>`, JSON with `+` for `"`
@@ -43,10 +35,8 @@ Sources (repo-relative, line numbers as of this commit)
                    **there is no gaze verb**, so the only cloud handle is choosing a
                    look-bearing tree — see `GAZE_TREES`.
 
-Corroboration: OpenMoxie (MIT, (c) Justin Beghtol) ships the same `ePlaybackMood` ids 0-10
-in the same order in `site/hive/automarkup/markup_types/markup_mood.py`. Two independent
-recoveries agreeing is the strongest evidence we have for any enum in this project. Their
-code and data tables are **not** copied here.
+Corroboration: OpenMoxie (MIT) independently ships the same `ePlaybackMood` ids 0-10 in
+the same order (`markup_types/markup_mood.py`); nothing of theirs is copied here.
 """
 from __future__ import annotations
 
@@ -75,11 +65,8 @@ MOOD_IDS = frozenset(MOODS.values())
 MOOD_NAME_BY_ID = {v: k for k, v in MOODS.items()}
 MAX_INTENSITY = 2       # behavior-markup.md:107 — `int intensity=0 (maxIntensity=2)`
 
-#: Free-text mood labels a brain (or an older prompt) may hand us -> `ePlaybackMood`.
-#: The canonical names above always win; these are the aliases we accept as *hints*.
-#: The emotion-word column mirrors `RemoteDialog.EmotionState`
-#: (remote-chat-protocol.md:123) and the ordinary words a model reaches for. An alias
-#: that is not here is **dropped**, never passed through (see `automarkup.annotate`).
+#: Free-text mood labels accepted as *hints* -> `ePlaybackMood` (incl. the
+#: `RemoteDialog.EmotionState` words). Anything else is **dropped**, never passed through.
 MOOD_ALIASES: Dict[str, int] = {
     # our own older LLM prompt menu (mqtt/moxie_sdk/apps/llm_app.py, pre-floor)
     "positive": 1, "negative": 2, "oops": 4,
@@ -103,9 +90,7 @@ GESTURES: Tuple[str, ...] = (
 )
 GESTURE_SET = frozenset(GESTURES)
 
-#: Short names a brain may write -> a real `Gesture_*`. Deliberately does NOT contain
-#: OpenMoxie's `AUTO_GESTURE_ME` / `AUTO_GESTURE_YOU` / `Gesture_We` / `Gesture_Small` /
-#: `Gesture_Discard`: those are *their* ids and are not in our recovered catalog.
+#: Short names a brain may write -> a real `Gesture_*` (OpenMoxie-only ids excluded).
 GESTURE_ALIASES: Dict[str, str] = {
     "none": "Gesture_None", "talk": "Gesture_Talk", "think": "Gesture_Think",
     "thinking": "Gesture_Think", "subtle": "Gesture_Think_Subtle",
@@ -127,10 +112,8 @@ EYESEME_TREES: Tuple[str, ...] = tuple(
         "Afraid", "Angry", "Concerned", "Confused", "Curious", "Embarrassed",
         "Happy", "Neutral", "Sad", "Shy", "Surprised"))
 
-#: The named trees from behavior-tree-engine.md:103-115 ("the 45 named behavior trees"),
-#: transcribed group by group. Honest note: the page's table enumerates 43 distinct ids —
-#: its "Vocal_Gestures (`Vg_`)" cell names a *family* rather than one id, which is where
-#: the headline count of 45 comes from. We list only ids we can name.
+#: The named trees from behavior-tree-engine.md:103-115 ("the 45"), group by group. Only
+#: ids we can name are listed (the `Vg_` cell is a family, not one id).
 NAMED_TREES: Tuple[str, ...] = EYESEME_TREES + tuple("Bht_" + n for n in (
     # Idle / attention — :110
     "Idle_Curious", "Idle_Listening", "Idle_Near_Focused", "Idle_Near_UnFocused",
@@ -161,12 +144,9 @@ APP_TREES: Tuple[str, ...] = (
 TREES: Tuple[str, ...] = tuple(dict.fromkeys(NAMED_TREES + APP_TREES))
 TREE_SET = frozenset(TREES)
 
-#: **There is no gaze verb.** Gaze lives on the robot: weighted interest points ->
-#: `AttentionTarget` -> IK look-at (gaze-and-attention.md:13-15,:48-53), driven from trees
-#: by `RobotBT_GazeControl*` nodes (behavior-nodes.md). The only cloud-side handle on where
-#: Moxie looks is choosing a **look-bearing tree**, so "gaze" is this closed 4-value set —
-#: not a direction. Widening it needs a markup verb we have not found, or the robot-side
-#: `LookAtMeRequest` IPC (perception-pipeline.md). Recorded, not papered over.
+#: **There is no gaze verb** — gaze lives on the robot (gaze-and-attention.md:13-15,
+#: :48-53). The only cloud handle is choosing a **look-bearing tree**, so "gaze" is this
+#: closed set, not a direction.
 GAZE_TREES: Tuple[str, ...] = (
     "Bht_Search", "Bht_Idle_Curious", "Bht_Idle_Listening", "Bht_Idle_Near_Focused",
 )
@@ -197,9 +177,8 @@ SPURT_SET = frozenset(SPURTS)
 # --------------------------------------------------------------------------- #
 # Screen icons — `cmd:icons-v2` (behavior-markup.md:139-159)
 # --------------------------------------------------------------------------- #
-#: The only icon `value`s we have actually seen in shipped content (:156-157). The set is
-#: bundle-defined, so this is a floor, not a ceiling — and every one of the four is a
-#: **calendar/event** cue, which is why icons are off by default in the markup floor.
+#: The only icon `value`s seen in shipped content (:156-157). All four are calendar/event
+#: cues, which is why icons are off by default.
 ICON_VALUES: Tuple[str, ...] = (
     "School", "Birthday", "Medical", "Learning_About_Family_03_Heart_Family",
 )
@@ -213,11 +192,8 @@ ICON_SLOTS = 4                          # icon0..icon3 — :149
 CHANNEL_FX, CHANNEL_BACKGROUND, CHANNEL_STINGER, CHANNEL_VOCALGESTURE = 0, 1, 2, 3
 SCOPE_ALL, SCOPE_CHANNEL = 0, 1
 
-#: **Exactly two** confirmed `SoundToPlay` asset ids (:97-98). This is the thinnest
-#: catalog on the page by a wide margin, and the honest reason `sfx=True` is off by
-#: default: one of the two is a stinger (usable from a spoken line), the other is a
-#: looping music bed for a cast segment (not something chat should start). Widening this
-#: needs the robot's asset-bundle manifest, which we do not have.
+#: **Exactly two** confirmed `SoundToPlay` ids (:97-98): a stinger and a looping music bed
+#: (not for chat) — hence `sfx` is off by default.
 SFX_STINGER = "sfx_twinkly_upbeat_stinger_1"
 SFX_MUSIC_LOOP = "moxie_mu_cast_zarcona_theme_loop_v2"
 SFX_IDS: Tuple[str, ...] = (SFX_STINGER, SFX_MUSIC_LOOP)
@@ -228,8 +204,7 @@ SFX_SET = frozenset(SFX_IDS)
 # --------------------------------------------------------------------------- #
 USEL_GENRES: Tuple[str, ...] = ("none", "question", "motivational", "intimate", "excited")
 USEL_GENRE_SET = frozenset(USEL_GENRES)
-#: `variant` is 0-8 (a recorded take). We pin 0: we have no evidence about which take
-#: suits which line, so choosing one would be invention.
+#: `variant` is 0-8 (a recorded take); pinned to 0 — no evidence which take suits a line.
 USEL_VARIANT = "0"
 SAY_AS_VALUES: Tuple[str, ...] = (
     "characters", "cardinal", "ordinal", "digits", "fraction", "unit", "date", "time",
@@ -248,9 +223,6 @@ VERBS: Tuple[str, ...] = (
     "start-systemunpair",
 )
 VERB_SET = frozenset(VERBS)
-
-#: The verbs the markup **floor** may mint. Anything else is the planner's business.
-FLOOR_VERBS = frozenset({"playback-mood", "behaviour-tree", "icons-v2", "playaudio"})
 
 #: `RemoteDialog.DialogAct` (22) — remote-chat-protocol.md:119-122.
 DIALOG_ACTS: Tuple[str, ...] = (
@@ -273,10 +245,8 @@ SIGNALS: Tuple[str, ...] = (
 # --------------------------------------------------------------------------- #
 # The ONE place a mark is minted
 # --------------------------------------------------------------------------- #
-# The `data:{…}` object is JSON with `+` standing in for `"`, because the mark lives
-# inside an XML attribute (behavior-markup.md:16-27). Every generator in the tree —
-# the markup floor, the filler lines, the LLM app — mints its marks here, so validation
-# is total and there is exactly one string format to get right.
+# `data:{…}` is JSON with `+` for `"` (the mark lives in an XML attribute,
+# behavior-markup.md:16-27). Every generator mints its marks here.
 
 def mark(verb: str, data: Optional[dict] = None) -> str:
     """One `<mark name="cmd:VERB,data:{…}"/>` tag. `verb` must be a recovered verb."""
@@ -365,14 +335,9 @@ def _decode(body: str):
 def validate_markup(markup: str) -> List[str]:
     """Every asset id in `markup` that is **not** in the frozen catalog above.
 
-    Returns a list of `"<slot>=<id>"` strings — empty means the line only references ids
-    we have actually recovered. Cheap enough for a debug assert on the hot path (it is a
-    handful of regex scans over a line of speech), and it is what the corpus tests assert
-    is empty across every app path.
-
-    What it checks: the `cmd:` verb, `playback-mood` `mood`/`intensity`,
-    `behaviour-tree` `eventName`/`behaviour`, `icons-v2` icon `value`s, `playaudio`
-    `SoundToPlay`, `<usel genre>` and `<spurt spurt_id>`.
+    Returns `"<slot>=<id>"` strings (empty = only recovered ids). Checks the verb, mood/
+    intensity, tree `eventName`/`behaviour`, icon values, `SoundToPlay`, `<usel genre>`
+    and `<spurt spurt_id>`. Cheap enough for the hot path.
     """
     bad: List[str] = []
     if not markup:
