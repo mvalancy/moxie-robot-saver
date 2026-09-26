@@ -30,7 +30,10 @@ TESTS = ["sim/tests/test_brains.py", "sim/tests/test_brain_runtime.py"]
 B = "mqtt/moxie_sdk/brains.py"
 C = "mqtt/config.py"
 CC = "mqtt/moxie_sdk/cloud_config.py"
-R = "mqtt/supervisor/moxie_runtime.py"
+R_BRAIN = "mqtt/supervisor/moxie_runtime/brain.py"
+R_CONTENT = "mqtt/supervisor/moxie_runtime/content.py"
+R_LIFECYCLE = "mqtt/supervisor/moxie_runtime/lifecycle.py"
+R_TURNS = "mqtt/supervisor/moxie_runtime/turns.py"
 
 MUTATIONS = [
     ("M1  unknown name resolves to the default again", B,
@@ -72,31 +75,31 @@ MUTATIONS = [
     ("M13 the server-only key travels to the robot", CC,
      "    return {k: v for k, v in cfg.items() if k not in SERVER_ONLY_KEYS}",
      "    return dict(cfg)"),
-    ("M14 app_for always answers with the appliance's own brain", R,
+    ("M14 app_for always answers with the appliance's own brain", R_BRAIN,
      "        name = self.brain_for(device_id)[\"brain\"]",
      "        name = getattr(self.app, 'name', '')"),
-    ("M15 a failed build kills the turn instead of keeping the brain", R,
+    ("M15 a failed build kills the turn instead of keeping the brain", R_BRAIN,
      "                return self.app\n            self._wire_memory_policy(app)",
      "                raise RuntimeError(note)\n            self._wire_memory_policy(app)"),
-    ("M16 the failed-build note is repeated every turn", R,
+    ("M16 the failed-build note is repeated every turn", R_BRAIN,
      "                if self._brain_failed.get(name) != note:",
      "                if True:"),
-    ("M17 the turn re-resolves the brain instead of carrying it", R,
+    ("M17 the turn re-resolves the brain instead of carrying it", R_TURNS,
      "            reply = app.respond(turn)",
      "            reply = self.app_for(device_id).respond(turn)"),
-    ("M18 lifecycle hooks go to the appliance's own brain", R,
+    ("M18 lifecycle hooks go to the appliance's own brain", R_TURNS,
      "            self.app_for(device_id).on_event(robot, name, data)",
      "            self.app.on_event(robot, name, data)"),
-    ("M19 a built brain misses the memory privacy gate", R,
+    ("M19 a built brain misses the memory privacy gate", R_BRAIN,
      "            self._wire_memory_policy(app)",
      "            pass"),
-    ("M20 reload_content only swaps the appliance's own brain", R,
+    ("M20 reload_content only swaps the appliance's own brain", R_CONTENT,
      "        for app in self._content_apps():\n            if getattr(app, \"module\", None) is not None:",
      "        for app in [self.app]:\n            if getattr(app, \"module\", None) is not None:"),
-    ("M21 the snapshot reports the appliance brain for every robot", R,
+    ("M21 the snapshot reports the appliance brain for every robot", R_LIFECYCLE,
      '                "brain": self.brain_for(r.device_id)["brain"],',
      '                "brain": getattr(self.app, "name", ""),'),
-    ("M22 brain_update stores a refused pick anyway", R,
+    ("M22 brain_update stores a refused pick anyway", R_BRAIN,
      "        except ValueError as e:\n            return {\"ok\": False, \"error\": str(e), \"reason\": str(e)}",
      "        except ValueError as e:\n            name = None"),
 ]

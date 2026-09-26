@@ -1,31 +1,27 @@
 """
 📦 Content packs — the pure engine (`moxie_sdk/content/packs.py`).
 
-Tests 1-9 of `docs/architecture/backlog/content-packs.md` §3. Everything here is stdlib
-and hermetic: no store, no HTTP, no gateway, no clock (`now=` is injected everywhere), so
-the whole file runs in the fast-tier venv with nothing installed but pytest.
+Tests 1-9 of `docs/architecture/backlog/content-packs.md` §3. Stdlib and hermetic: no
+store, HTTP, gateway or clock (`now=` is injected everywhere).
 
-The three that carry the design, and would be worth writing even if the others were
-dropped:
+The three that carry the design:
 
-* `test_the_allowlist_is_pinned_to_the_dataclass_fields` — risk R6. A field added to
-  `Conversation` fails HERE, before it starts shipping in everybody's packs.
-* `test_nothing_private_leaves_in_an_exported_pack` — the §2.2 guarantee, asserted against
-  the serialized bytes with sentinels for every record a pack must never carry.
-* `test_re_importing_after_a_local_edit_never_clobbers_it` — the clobber test (§3 row 5),
-  which is the whole reason our review is a 2×2 and upstream's is two integers.
+* `test_the_allowlist_is_pinned_to_the_dataclass_fields` — risk R6: a field added to
+  `Conversation` fails HERE before it ships in everybody's packs.
+* `test_nothing_private_leaves_in_an_exported_pack` — §2.2, asserted on the serialized
+  bytes with sentinels for every record a pack must never carry.
+* `test_re_importing_after_a_local_edit_never_clobbers_it` — §3 row 5, the reason our
+  review is a 2×2 rather than two integers.
 """
 from __future__ import annotations
 
 import dataclasses
 import json
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.content import packs as P           # noqa: E402
 from moxie_sdk.content.module import (Conversation, Global,  # noqa: E402
@@ -127,18 +123,13 @@ def test_an_exported_pack_loads_as_a_content_module():
 
 
 def test_a_clean_appliance_that_imports_a_pack_re_exports_the_same_file():
-    """**The circle closed** — acceptance criterion 2, proved in both directions.
-
-    Every other round-trip test above checks one leg: a pack survives its serializer, or
-    installed items become a module. Neither would catch a field that the *store* drops
-    on the way in, because the exporter and the parser would still agree with each other
-    about the shape they never saw. This one runs the whole loop —
+    """Acceptance criterion 2, the full loop:
 
         export → serialize → parse → apply into an empty appliance → export again
 
-    — and demands the same bytes. A field lost in `apply_pack`'s provenance stamping, a
-    `source_version` that reverted to the default, a float coerced to an int: each shows
-    up here as a byte difference and nowhere else."""
+    must produce the same bytes. Catches what one-leg round-trips cannot: a field the
+    STORE drops (provenance stamping, a reverted `source_version`, a float coerced to int).
+    """
     original = P.dumps_pack(make_pack())
     parsed, meta = P.parse_pack(original)
     assert meta["digest"] == "ok"

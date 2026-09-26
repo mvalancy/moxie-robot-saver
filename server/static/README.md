@@ -14,26 +14,24 @@ dependencies** (works fully offline). Served at `/` by the FastAPI server.
   the gateway's models discovered live, the local Piper voices and whisper sizes installed on the
   box, and the built-ins; see the [TTS guide](../../docs/guides/litellm-tts-setup.md) and the
   [STT guide](../../docs/guides/litellm-stt-setup.md)).
-- `app.js` — talks to the server's `/local/*` and `/api/*` endpoints.
+- [`js/`](js/) — the scripts, one per group of cards, loaded in order (no bundler); they talk
+  to the server's `/local/*` and `/api/*` endpoints.
 - `style.css` — mobile-first, light/dark aware.
 
 The QR image itself is rendered server-side (`/local/pairing/qr.png`) so the client stays tiny.
 
 ## What is actually tested in a browser
 
-Almost none of it, and that is worth knowing before you trust a card here. Every other headless
-suite in this repo drives [`sim/web`](../../sim/web/) — the public simulator — so until 2026-09-04
-**no browser had ever loaded this folder**, and each card was asserted only by Python *route* tests
-that can prove what the server answers and nothing about whether a button wires itself up.
+[`sim/test_console_insights.mjs`](../../sim/test_console_insights.mjs) serves this folder
+statically, answers every `/local/*` call at the browser (no fastapi, no supervisor), and sweeps
+all six render paths of 📈 Insights — including the two-click **Erase history**, asserted on the
+intercepted `DELETE`; its teeth mutate [`js/insights.js`](js/insights.js).
 
-[`sim/test_console_insights.mjs`](../../sim/test_console_insights.mjs) closes that for **📈 Insights**:
-it serves this folder statically, answers every `/local/*` call at the browser (so it needs neither
-fastapi nor a supervisor), and sweeps all six render paths of `refreshInsights` — including the
-two-click **Erase history** button, asserted on the intercepted `DELETE` rather than on its label.
-
-Still uncovered by any browser: 🔐 Robot access, ⚙️ Settings, 🛡️ Safety, 🎨 Moxie's look, 🎭 Be Moxie,
-📅 Today's plan, 🧠 What Moxie remembers, 🎚️ Voice, 📦 Content, 🧠 Brain and the live-state list —
-plus the returning-parent entry path (a stored `moxie_token` auto-enters the app on load).
+Every other card is asserted by Python route tests and source pins
+([`test_console_roundtrip.py`](../../sim/tests/test_console_roundtrip.py)), which prove what the
+server answers but not that a button wires itself up. Still uncovered by any browser suite: 🔐
+Robot access, ⚙️ Settings, 🛡️ Safety, 🎨 Moxie's look, 🎭 Be Moxie, 📅 Today's plan, 🧠 memory,
+🎚️ Voice, 📦 Content, 🧠 Brain, and the returning-parent entry path.
 
 ---
 📖 [Back to top](../../README.md) · [Server README →](../README.md)

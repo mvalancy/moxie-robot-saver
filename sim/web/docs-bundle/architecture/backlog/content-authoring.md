@@ -5,14 +5,14 @@
 > *This page carried **no status marker at all** until 2026-09-06, while its title still read "the verb
 > packs did not ship" and §1 below still opens "Why this is 🟠 today". Both were true when filed and
 > neither is true now.* Re-verified against the code:
-> [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):1177 routes `POST /content/item` to
+> [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):1177 routes `POST /content/item` to
 > `content_save_item` and its own comment names this brief — *"✍️ Rung 4 … the one authoring verb that
 > writes, and the one that owns `validate_item` — deliberately HERE and not in the console proxy, so a
 > direct `curl` at this port cannot skip it (brief R6)"*. The R6 mitigation is restated at
 > [`server/moxie_server/main.py`](../../../server/moxie_server/main.py):1153; the editor panel is
 > [`server/static/index.html`](../../../server/static/index.html):404 (*"✍️ The editor
 > (docs/architecture/backlog/content-authoring.md §4.1)"*) driving
-> [`server/static/app.js`](../../../server/static/app.js):1588 and :1862
+> [`server/static/app.js`](../../../server/static/js/):1588 and :1862
 > (`fetch('/local/content/item', {method:'POST'…})`); the validator it must call is
 > [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py):272. Guarded by
 > [`sim/tests/test_content_authoring.py`](../../../sim/tests/test_content_authoring.py).

@@ -1,43 +1,33 @@
 """
 Which voice speaks and which ears listen — the record behind the console's two dropdowns.
 
-`audio_models.py` answers *"of the ids this gateway serves, which are voices and which
-are ears"*. This module answers the next two questions a parent's console actually asks:
+`audio_models.py` classifies a gateway's ids into voices and ears. This module answers:
 
-  1. **What can this appliance use right now?** The gateway's audio models, the local
-     Piper voices installed on the box, local whisper, and the two built-ins (`tone`,
-     `off`). One flat, ordered, grouped list per dropdown.
-  2. **Which one is in force?** A stored choice when a parent made one, otherwise the
-     default computed *at read time* from that same availability — so a voice the gateway
-     starts serving tomorrow becomes selectable with no migration and no restart.
+  1. **What can this appliance use right now?** Gateway audio models, installed local
+     Piper voices, local whisper, and the built-ins (`tone`, `off`) — one ordered,
+     grouped list per dropdown.
+  2. **Which one is in force?** A stored parent choice, else a default computed *at read
+     time* from availability (a newly served voice needs no migration or restart).
 
-Three rules are load-bearing and each is pinned by a test:
+Load-bearing rules, each pinned by a test:
 
-  * **`piper-amy` when possible.** Moxie's own voice, whenever the gateway lists it;
-    `stt-whisper` for the ears (`audio_models.DEFAULT_*_MODEL`).
-  * **Local engines are first class**, from both directions. A local *pick* wins even
-    when a gateway is fully configured; and an explicit `MOXIE_TTS=piper` /
-    `MOXIE_STT=whisper` **pins the engine**, so no pick can quietly move a deployment off
-    it (`pin_for_env` and the section it heads). A home appliance that keeps a child's
-    voice inside the house is a supported deployment, not a degraded one — and an
-    operator who said so in the environment is not overruled by a dropdown.
+  * **`piper-amy` when possible** (and `stt-whisper` for ears).
+  * **Local engines are first class.** A local pick wins even with a gateway configured,
+    and an explicit `MOXIE_TTS=piper` / `MOXIE_STT=whisper` **pins the engine** so no
+    dropdown pick can move the deployment off it (`pin_for_env`).
   * **An outage never blanks the card.** A stored choice is honoured on READ even when
-    discovery cannot currently confirm it (the gateway is down); only a *write* is
-    checked against what is available, because that is the moment a parent can be told.
+    discovery cannot confirm it; only a *write* is checked against availability.
 
-Deliberately dependency-free: no HTTP, no `openai`, no MQTT, no `config` import. The one
-concession to the real world is `GatewayCatalog`, which caches a listing behind a
-`list_models()` callable — a seam, so every test in `sim/tests/test_voice_settings.py`
-runs with a fake and spends no request.
+Dependency-free (no HTTP, `openai`, MQTT or `config`). `GatewayCatalog` caches a listing
+behind a `list_models()` callable seam, so tests use a fake.
 
-The persisted record (`fleet/voice.json` via `moxie_sdk.store.JsonStore`)::
+The persisted record (`fleet/voice.json`)::
 
     {"speech":    {"engine": "gateway", "model": "piper-amy"},
      "listening": {"engine": "gateway", "model": "stt-whisper"},
      "updated_at": 1788400000}
 
-A missing side means "use the default", which is why the file stays valid across a
-gateway that gains or loses models. See `docs/architecture/backlog/voice-picker.md`.
+A missing side means "use the default". See `docs/architecture/backlog/voice-picker.md`.
 """
 from __future__ import annotations
 
@@ -58,9 +48,8 @@ KINDS = (SPEECH, LISTENING)
 #: `JsonStore` collection for the fleet-level record (`fleet/voice.json`).
 COLLECTION = "voice"
 
-#: How long a gateway listing is trusted before a background refresh is kicked off.
-#: Five minutes: long enough that a busy console costs one request per window, short
-#: enough that a model added to the gateway shows up in the dropdown the same session.
+#: How long a gateway listing is trusted before a background refresh (one request per
+#: window; new models still appear within a session).
 DEFAULT_TTL_S = 300.0
 
 #: Engines each side accepts. `tone` and `off` are the built-ins that always exist.
@@ -83,17 +72,10 @@ BUILTIN_ENGINE = {SPEECH: "tone", LISTENING: "off"}
 #: The environment variable that can PIN each side's engine (`mqtt/config.py`).
 ENV_VAR = {SPEECH: "MOXIE_TTS", LISTENING: "MOXIE_STT"}
 
-#: Which engine each explicit env value names, aliases included. A value that is absent
-#: from this table (`""`, `auto`, a typo) pins nothing and leaves the picker in charge.
-#:
-#: **`MOXIE_TTS=tone` is deliberately NOT here**, and the reason matters: in
-#: `config.build_synthesizer` `tone` is a PERMISSION, not a selection — it opts the
-#: built-in beep in as the *last rung* under a gateway and under Piper, exactly as
-#: `.env.example` describes it ("the built-in zero-dependency placeholder voice"). It is
-#: also what **both compose files default to** (`MOXIE_TTS: ${MOXIE_TTS:-tone}`), so
-#: treating it as a pin would silently reduce every `docker compose up` deployment's
-#: Speech dropdown to one entry. `piper`/`local`, `gateway`/`openai` and `off` are the
-#: values that really do select, and they are the ones that pin.
+#: Which engine each explicit env value names. Absent values (`""`, `auto`, typos) pin
+#: nothing. **`MOXIE_TTS=tone` is deliberately absent**: in `config.build_synthesizer` it
+#: is a *permission* (the beep as last rung), and it is both compose files' default, so
+#: pinning on it would reduce every compose deployment's Speech dropdown to one entry.
 ENV_PIN = {
     SPEECH: {"piper": "piper", "local": "piper", "gateway": "gateway",
              "openai": "gateway", "off": "off"},
@@ -121,9 +103,8 @@ def choice_id(choice) -> str:
 
 
 def parse_choice(value) -> Optional[dict]:
-    """A choice from either shape the console may send: the `id` string
-    (`"gateway:piper-amy"`) or the dict (`{"engine": …, "model": …}`). None when the
-    value is neither."""
+    """A choice from an `id` string (`"gateway:piper-amy"`) or an `{engine, model}` dict;
+    None otherwise."""
     if isinstance(value, dict):
         return make_choice(value.get("engine"), value.get("model"))
     if isinstance(value, str):
@@ -138,13 +119,9 @@ def as_choice(value) -> Optional[dict]:
 
 
 def sanitize_choice(kind: str, value) -> Optional[dict]:
-    """A well-formed choice for `kind`, or None.
-
-    **Well-formed, not available**: this is the READ-side check. A stored
-    `gateway:piper-amy` stays the current choice while the gateway is unreachable — the
-    console keeps rendering it instead of silently reverting the parent's pick. Writes go
-    through `normalize_voice_settings`, which *does* demand availability.
-    """
+    """A well-formed choice for `kind`, or None. **Well-formed, not available** — the
+    READ-side check, so a stored pick survives a gateway outage. Writes go through
+    `normalize_voice_settings`, which demands availability."""
     c = parse_choice(value)
     if not c or c["engine"] not in ENGINES.get(kind, ()):
         return None
@@ -160,8 +137,7 @@ def sanitize_choice(kind: str, value) -> Optional[dict]:
 _NOISE = frozenset({"piper", "tts", "stt", "graphling", "moxie", "voice", "model"})
 #: Piper's quality suffix (`en_US-amy-medium`), likewise not part of the voice's name.
 _QUALITY = frozenset({"low", "medium", "high", "x_low", "xlow"})
-#: A leading locale segment: `en`, `en_US`, `en_GB`. Two letters + an optional region, so
-#: a three-letter voice name (`amy`, `ryan`) can never be mistaken for one.
+#: A leading locale segment (`en`, `en_US`): two letters, so `amy` is never one.
 _LOCALE = re.compile(r"^[a-z]{2}(_[A-Za-z]{2,3})?$")
 
 
@@ -169,8 +145,7 @@ def voice_title(model: str) -> str:
     """The human name inside a model id — `piper-amy` → `Amy`, `en_US-amy-medium` →
     `Amy`, `graphling-tts-narrator` → `Narrator`, `stt-whisper-base` → `Whisper base`.
 
-    A best-effort *label*, never an identifier: when every segment is plumbing
-    (`graphling-stt`) the raw id is returned rather than an invented word.
+    A best-effort label: when every segment is plumbing the raw id is returned.
     """
     raw = (model or "").strip()
     if not raw:
@@ -188,10 +163,8 @@ def describe_choice(choice) -> str:
     """What the dropdown shows: `Amy (gateway, piper-amy)` · `Amy (local Piper)` ·
     `base.en (local whisper)` · `Tone (built-in)` · `Off (built-in)`.
 
-    The gateway form repeats the model id on purpose — two gateways can both serve an
-    "Amy" and a parent choosing between them deserves to see which one they are picking.
-    A local whisper size is left verbatim: `base.en` is the thing to recognise, and
-    title-casing it into "Base.en" would only obscure it.
+    The gateway form repeats the model id (two gateways may both serve an "Amy"); a
+    whisper size stays verbatim.
     """
     c = as_choice(choice)
     if not c or not c["engine"]:
@@ -214,8 +187,7 @@ def boot_line(kind: str, choice, *, chosen: bool, note: str = "") -> str:
     """The supervisor's startup line — `speech: piper-amy (gateway, chosen)`, or
     `speech: tone (built-in, default — gateway unreachable)`.
 
-    Says *what* is installed and *why* it is, because "no voice" and "not the voice you
-    picked" are the two boot outcomes a parent needs to be able to read off the log.
+    Says *what* is installed and *why*.
     """
     c = as_choice(choice) or make_choice(BUILTIN_ENGINE.get(kind, "off"))
     what = c["model"] or c["engine"]
@@ -237,8 +209,7 @@ def speech_options(gateway_models: Sequence[str] = (),
                    piper_voices: Sequence[str] = ()) -> List[dict]:
     """Gateway voices, then installed local Piper voices, then the built-in tone.
 
-    Input order is preserved inside each group (`classify_audio_models` guarantees it for
-    the gateway half) — a picker whose entries shuffle between page loads is a bug report.
+    Input order is preserved inside each group, so entries never shuffle between loads.
     """
     opts = [option("gateway", m) for m in gateway_models or ()]
     opts += [option("piper", v) for v in piper_voices or ()]
@@ -258,9 +229,8 @@ def listening_options(gateway_models: Sequence[str] = (),
 def build_available(gateway_ids: Sequence[str] = (), *,
                     piper_voices: Sequence[str] = (),
                     whisper_models: Sequence[str] = ()) -> Dict[str, List[dict]]:
-    """`{"speech": [...], "listening": [...]}` from one gateway listing plus what is
-    installed locally. The gateway half is classified by name — the listing itself never
-    says which id is a voice and which is a pair of ears (`audio_models`)."""
+    """`{"speech": [...], "listening": [...]}` from one gateway listing (classified by
+    name, `audio_models`) plus what is installed locally."""
     audio = classify_audio_models(gateway_ids or ())
     return {SPEECH: speech_options(audio["tts"], piper_voices),
             LISTENING: listening_options(audio["stt"], whisper_models)}
@@ -292,31 +262,17 @@ def mark_defaults(available: dict, defaults: dict) -> dict:
 
 
 # --------------------------------------------------- the environment's pin --
-# `MOXIE_TTS=piper` and `MOXIE_STT=whisper` are the owner's standing rule written into an
-# environment: *local engines stay first-class, one env line away even with a gateway fully
-# configured*. They are an OPERATOR'S statement about this deployment, and a dropdown must
-# not be able to talk them out of it — a picker that silently overrides an explicit engine
-# is a bug, not a convenience.
+# An explicit `MOXIE_TTS` / `MOXIE_STT` is the operator's statement about this deployment
+# (local engines stay first-class), so it PINS THE ENGINE, in three places:
 #
-# So an explicit value PINS THE ENGINE, and the pin does three things, in three places:
+#   * `config.build_synthesizer` / `build_transcriber` ignore a pick on another engine;
+#   * `config.VoiceEngines.available()` offers only the pinned engine's entries;
+#   * `voice_update` refuses a stale cross-engine pick, appending `pin_note` (the why).
 #
-#   * `config.build_synthesizer` / `build_transcriber` ignore a pick that names a
-#     different engine (the pin wins, and the boot line says so);
-#   * `config.VoiceEngines.available()` offers only the pinned engine's entries, so the
-#     dropdown never shows a choice this box would refuse to install;
-#   * `voice_update` therefore refuses a stale page's cross-engine pick through the
-#     ordinary "not one of this appliance's options" path, with `pin_note` appended so the
-#     parent reads *why* rather than just *no*.
-#
-# What the pin does NOT do is take the model away: `MOXIE_TTS=gateway` still lets the
-# console pick which gateway voice, and `MOXIE_TTS=piper` still lets it pick which
-# installed Piper voice. The operator chose the ENGINE; the parent chooses the voice.
+# The pin does not take the model away: the operator chose the ENGINE, the parent the voice.
 def pin_for_env(kind: str, value) -> str:
-    """The engine `MOXIE_TTS` / `MOXIE_STT` pins for `kind`, or `""` for none.
-
-    `""`, `auto` and anything unrecognised pin nothing — exactly the values that mean
-    "decide for me", which is what the picker is for.
-    """
+    """The engine `MOXIE_TTS` / `MOXIE_STT` pins for `kind`, or `""` for none
+    (`""`, `auto` and anything unrecognised mean "decide for me")."""
     return ENV_PIN.get(kind, {}).get(str(value or "").strip().lower(), "")
 
 
@@ -329,10 +285,7 @@ def honours_pin(kind: str, choice, pin: str) -> bool:
 
 
 def pin_note(kind: str, value) -> str:
-    """The one sentence the console prints when the environment has pinned a side.
-
-    Empty when nothing is pinned, so the caller can render it unconditionally.
-    """
+    """The sentence the console prints when the environment pinned a side ("" if not)."""
     pin = pin_for_env(kind, value)
     if not pin:
         return ""
@@ -346,13 +299,8 @@ def pin_note(kind: str, value) -> str:
 
 
 def filter_available(available: dict, pins) -> dict:
-    """`available` reduced to each side's pinned engine (untouched where nothing is pinned).
-
-    An empty side is the honest answer when the pinned engine has nothing installed — but
-    it is barely reachable in a running appliance, because every such configuration
-    (`MOXIE_TTS=piper` with no `.onnx`, `MOXIE_STT=whisper` with no faster-whisper,
-    `MOXIE_TTS=gateway` with no URL) already exits at boot rather than starting mute.
-    """
+    """`available` reduced to each side's pinned engine (untouched where nothing is
+    pinned). An empty side is honest but rare: such configs already exit at boot."""
     out = {}
     for kind in KINDS:
         entries = list((available or {}).get(kind) or [])
@@ -386,8 +334,7 @@ def resolve_defaults(available: dict) -> Dict[str, dict]:
     local Piper Amy → else any local Piper voice → else `tone`.
     Listening: `stt-whisper` → first gateway ears → local whisper → `off`.
 
-    Computed at read time rather than frozen into the record, so a gateway that starts
-    serving `piper-amy` tomorrow becomes the default with no migration.
+    Computed at read time, never frozen into the record.
     """
     available = available or {}
     return {
@@ -406,14 +353,10 @@ def normalize_voice_settings(patch, available: dict, *, current=None,
                              now: Optional[float] = None) -> dict:
     """Merge a console patch into the stored record, or raise `ValueError` saying why not.
 
-    `patch` is `{"speech": <choice-or-id>, "listening": <choice-or-id>}`; either side may
-    be omitted (left alone) or `None` (cleared back to the computed default). A value that
-    is not one of `available[kind]`'s ids is **refused with a sentence the console shows** —
-    a dropdown can only be wrong when the page is stale or someone is hand-posting, and in
-    both cases silently installing something else is worse than an error.
-
-    Raising rather than returning `{"ok": False}` matches `telehealth.validate_mood`: the
-    caller (the runtime) owns the HTTP shape, this module owns the rule.
+    `patch` is `{"speech": <choice-or-id>, "listening": <choice-or-id>}`; a side may be
+    omitted (left alone) or `None` (back to the default). A value not in
+    `available[kind]` is **refused with a sentence the console shows** (stale page or
+    hand-post) rather than silently replaced. The caller owns the HTTP shape.
     """
     if patch is None:
         patch = {}
@@ -454,9 +397,7 @@ def normalize_voice_settings(patch, available: dict, *, current=None,
 def resolve_settings(stored, available: dict) -> dict:
     """`{"current", "defaults", "chosen"}` — what is in force and how we got there.
 
-    `chosen[kind]` is True when a parent's stored pick is what is in force (as opposed to
-    the computed default), which is exactly what the boot log and the card's "Default"
-    marker need to say.
+    `chosen[kind]` is True when a parent's stored pick (not the default) is in force.
     """
     defaults = resolve_defaults(available)
     current, chosen = {}, {}
@@ -470,11 +411,8 @@ def resolve_settings(stored, available: dict) -> dict:
 
 # ------------------------------------------------------------- persistence --
 def read_settings(store) -> dict:
-    """The stored record from `fleet/voice.json` — `{}` when there is none.
-
-    Sanitizing on read means a hand-edited or half-written file degrades to "use the
-    defaults" instead of installing an engine nobody named.
-    """
+    """The stored record from `fleet/voice.json` (`{}` when none), sanitized so a bad file
+    degrades to the defaults."""
     raw = {}
     try:
         raw = store.read_shared(COLLECTION, {}) or {}
@@ -514,11 +452,8 @@ def piper_voices(model_path: str = "", voices_dir: str = "") -> List[str]:
     """Local Piper voice names, best first: whatever `MOXIE_PIPER_MODEL` points at, then
     every `*.onnx` in `voices_dir`, de-duplicated.
 
-    File presence only — whether the `piper` package is importable is
-    `PiperSynthesizer.available()`'s question, and the caller must ask both (a voice file
-    with no runtime cannot speak, and a runtime with no voice file has nothing to say it
-    with). The voices are git-ignored (63 MB each), so an empty list is the normal state
-    of a fresh clone, not an error.
+    File presence only; the caller must also check `PiperSynthesizer.available()`. Voices
+    are git-ignored, so an empty list is normal on a fresh clone.
     """
     names: List[str] = []
     seen = set()
@@ -543,8 +478,7 @@ def piper_voices(model_path: str = "", voices_dir: str = "") -> List[str]:
 def piper_voice_path(name: str, model_path: str = "", voices_dir: str = "") -> str:
     """The `.onnx` file behind a voice name, or "" when it cannot be found.
 
-    `MOXIE_PIPER_MODEL` wins when it names the same voice, so an operator who pointed at a
-    file outside the voices directory keeps that exact file.
+    `MOXIE_PIPER_MODEL` wins when it names the same voice.
     """
     name = (name or "").strip()
     if not name:
@@ -567,23 +501,14 @@ def _thread_submit(fn: Callable[[], None]) -> None:
 class GatewayCatalog:
     """A cached `GET /v1/models`, refreshed in the background, that never blocks a turn.
 
-    Listing a gateway's models is a network call to someone else's box, and the console
-    asks for it on every page load. So: the answer is cached for `ttl_s`, a stale cache is
-    refreshed **off the calling thread**, and the caller always gets an immediate answer —
-    the last good list, or an empty one plus `discovering: True` on the very first ask.
+    Cached for `ttl_s`; a stale cache is refreshed **off the calling thread**, so the
+    caller always gets an immediate answer (the last good list, or empty plus
+    `discovering: True` on the first ask). A failure keeps the last good list and reports
+    the exception class in `gateway_error`.
 
-    A failure keeps the previous good list and reports the exception's class name in
-    `gateway_error`, because a card that empties itself the moment a proxy hiccups is
-    worse than a card that says "gateway unreachable" beside the options it already had.
-
-    `list_models` is the only seam: any `() -> [ids]` callable, so every test here runs
-    with a fake and spends no request. `submit=lambda fn: fn()` makes it synchronous,
-    which is how the TTL is asserted with a fake clock.
-
-    `snapshot(settle_s=…)` is the one place a caller may WAIT — bounded, and only for the
-    very first listing. A console *write* has to be validated against a real list (a cold
-    supervisor would otherwise refuse a perfectly good pick with "choose one of: tone"),
-    and a write is never on a turn's path. Reads always pass `0`.
+    `list_models` is the seam (any `() -> [ids]`); `submit=lambda fn: fn()` makes it
+    synchronous for tests. `snapshot(settle_s=…)` is the one bounded WAIT, for the first
+    listing only — used by console writes (validated against a real list), never reads.
     """
 
     def __init__(self, list_models: Optional[Callable[[], Sequence[str]]] = None, *,
@@ -608,11 +533,7 @@ class GatewayCatalog:
 
     def snapshot(self, *, refresh: bool = False, settle_s: float = 0.0) -> dict:
         """`{ids, gateway_error, discovering, fetched_at}` — immediately, always.
-
-        `settle_s > 0` waits up to that many seconds for the FIRST listing to land (and
-        only the first: a stale-cache refresh never blocks anyone, because the last good
-        list is already an answer). Pass it from a console write, never from a read.
-        """
+        `settle_s > 0` waits for the FIRST listing only (console writes, never reads)."""
         self._maybe_start(refresh)
         if settle_s > 0 and self._list is not None and not self._ever:
             self._settled.wait(settle_s)

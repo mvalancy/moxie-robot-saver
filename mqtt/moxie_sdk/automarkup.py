@@ -1,33 +1,16 @@
 """
 The markup floor — one spoken line in, behavior markup out. Pure, deterministic, stdlib.
 
-Why
----
-Moxie's voice is synthesized **on the robot**, from markup (docs/architecture/
-mqtt-and-conversation.md §5.3). There is no TTS for a cloud to improve, so "better
-speech" is literally "better markup": it is the only lever a server has on how alive the
-robot feels. Before this module every app except `LLMApp` handed the runtime plain text
-and the robot read it out like a speaker.
+Moxie's voice is synthesized **on the robot** from markup (mqtt-and-conversation.md
+§5.3), so better speech is literally better markup — the server's only lever on how alive
+the robot feels. `annotate()` is the floor under every reply: a mood, a `<usel>` delivery,
+arm gestures on the words that carry the thought, pauses at internal sentence boundaries,
+and a closing `Gesture_None`. Every id is checked against the frozen catalog in `vocab.py`.
 
-`annotate()` is the floor under every reply: a mood for the line, a `<usel>` delivery for
-a question or an exclamation, an arm gesture on the words that carry the thought, a pause
-at an internal sentence boundary, and a `Gesture_None` at the end so the body comes back
-to rest. Everything it emits is checked against the frozen catalog in `vocab.py`, so a
-line can never carry an asset id we have not actually recovered.
-
-Prior art, credited
--------------------
-The *behaviors* are ported from OpenMoxie's `site/hive/automarkup/` (MIT, (c) Justin
-Beghtol) — gesture-per-sentence, word classes that carry a gesture, gesture spacing in
-words, a probability so it is not mechanical, a `<break>` after an internal sentence end
-but **never** after the final word (which would delay the robot's turn hand-back), and
-`<usel genre>` from terminal punctuation. **No code and no data table was copied.** Their
-engine is non-deterministic by design (`random.randint` spacing, an 80 % gesture roll)
-and several of its gesture ids (`AUTO_GESTURE_ME`, `Gesture_We`, `Gesture_Small`,
-`Gesture_Discard`) are theirs, not in our recovered catalog. Here the dice become a
-blake2b digest of `(turn_key, chunk_index, sentence, word)` — same "not mechanical" feel,
-byte-for-byte reproducible, so a golden test can pin it. Never Python's `hash()`: it is
-salted per process and would differ across workers.
+Prior art: the *behaviors* are ported from OpenMoxie's `site/hive/automarkup/` (MIT);
+no code or data table was copied. Their dice rolls become a blake2b digest of
+`(turn_key, chunk_index, sentence, word)` — not mechanical, but byte-reproducible (never
+`hash()`, which is salted per process). Their ids missing from our catalog are not used.
 
 The rules, in one place
 -----------------------
@@ -95,9 +78,7 @@ TALK_PROBABILITY = 0.8      # OpenMoxie's 80 % roll, as a stable digest instead 
 MAX_GESTURES_PER_SENTENCE = 3
 MAX_GESTURES_PER_LINE = 6
 
-#: Counts asset ids we refused to emit (an unknown hint, a cue that resolved to an id not
-#: in the catalog). The corpus tests assert this stays 0 — a non-zero value means some
-#: caller is feeding us vocabulary we cannot justify from our own evidence.
+#: Counts asset ids we refused to emit; the corpus tests assert it stays 0.
 _DROPPED = 0
 
 
@@ -219,11 +200,8 @@ def _bare(word: str) -> str:
 
 
 def _stem(word: str) -> str:
-    """`_bare`, with a contraction reduced to its subject: `"I'm"` -> `"i"`.
-
-    Kids' speech is mostly contractions, and without this the self/you word classes miss
-    "I'm", "I've", "you're", "we'll" — which is most of the lines that should gesture.
-    """
+    """`_bare`, with a contraction reduced to its subject (`"I'm"` -> `"i"`), so the
+    self/you word classes catch contractions."""
     bare = _bare(word)
     for apostrophe in ("'", "\u2019"):
         if apostrophe in bare:
@@ -294,33 +272,16 @@ def annotate(text: str, *, mood_hint: Optional[str] = None,
              icons: bool = False, sfx: bool = False, trees: bool = True) -> str:
     """One spoken line -> behavior markup. Pure: same inputs, same bytes, every time.
 
-    `mood_hint` / `gesture_hint` are what the *model* chose, when the app knows (LLMApp's
-    expressive JSON). A hint wins over the rules; an **unknown** hint is dropped and
-    counted, never passed through to the wire.
-
-    `intensity` overrides the punctuation-derived strength from `_score_mood` — it is what
-    a *human* chose, when there is one at the keyboard (the 🎭 telehealth card's
-    gentle/normal/strong). `None` means "let the text decide", which is what every caller
-    that predates it passes, so the goldens are byte-identical. Out-of-range clamps to
-    `vocab.MAX_INTENSITY` (`maxIntensity=2`, behavior-markup.md:107); a non-number is
-    dropped and counted like any other bad hint.
-
-    `look` names a look-bearing tree from `vocab.GAZE_TREES` — the only cloud-side handle
-    on where Moxie looks, because there is no gaze verb.
-
-    `turn_key` (the `event_id`) and `chunk_index` are the chunk bookkeeping that keeps a
-    streamed answer stable: the mood is emitted on chunk 0 only, so an answer never flips
-    its face mid-sentence, and gesture spacing restarts per chunk.
-
-    `icons` / `sfx` are off by default — see the honest limits in the module docstring and
-    in `vocab.ICON_VALUES` / `vocab.SFX_IDS`. `trees=False` suppresses the whole-body
-    `Bht_*` cue for a caller that authored its own tree (the filler lines do).
+    `mood_hint` / `gesture_hint` are the model's choice; they win over the rules, and an
+    unknown hint is dropped and counted. `intensity` is a human's choice (telehealth);
+    `None` lets the text decide, out-of-range clamps to `vocab.MAX_INTENSITY`. `look`
+    names a `vocab.GAZE_TREES` tree. `turn_key` + `chunk_index` keep a streamed answer
+    stable (mood on chunk 0 only). `icons` / `sfx` are off by default; `trees=False`
+    suppresses the whole-body cue for a caller with its own tree.
     """
     if not text or not text.strip():
         return text
-    # S1: never annotate anything that already carries markup — and, defensively, never
-    # touch a line with an angle bracket in it, because a stray `<` would change how
-    # `tts.strip_markup` tokenizes the result and could eat a spoken word.
+    # S1: never annotate markup; a stray `<` would also change `tts.strip_markup`'s tokens.
     if "<" in text or ">" in text:
         return text
 
@@ -383,8 +344,7 @@ def annotate(text: str, *, mood_hint: Optional[str] = None,
         # S3: exactly one mood mark per streamed answer, on the first chunk.
         tokens.append(("m", vocab.mood_mark(mood, strength)))
     if sfx and mood == 1 and _PRAISE.search(text):
-        # The only one of our two confirmed asset ids a spoken line should ever start:
-        # the other is a looping music bed for a cast segment.
+        # The only confirmed sfx a spoken line should start (the other is a music bed).
         tokens.append(("m", vocab.audio_mark(vocab.SFX_STINGER,
                                              channel=vocab.CHANNEL_STINGER)))
 
@@ -420,9 +380,7 @@ def annotate(text: str, *, mood_hint: Optional[str] = None,
 
         # -- talking gestures: one every TALK_EVERY words, never near the closing pose --
         if not has_tree and len(words) >= TALK_MIN_WORDS:
-            # Spacing restarts after the last carrying gesture, so the arm never fires
-            # twice in a breath. With TALK_TAIL=2 the effective floor for a talking
-            # gesture is an 8-word sentence.
+            # Spacing restarts after the last carrying gesture (effective floor: 8 words).
             anchor = max(at) if at else 0
             pos = anchor + TALK_EVERY
             limit = len(words) - TALK_TAIL
@@ -455,8 +413,7 @@ def annotate(text: str, *, mood_hint: Optional[str] = None,
                 tokens.append(("m", mark))
         if wrapped:
             tokens.append(("c", "</usel>"))
-            # A gesture may not be minted inside a span (that is how badly-nested tag
-            # documents happen); a wrapped sentence plays its gestures right after it.
+            # Never mint a gesture inside a span; a wrapped sentence gestures after it.
             for i in sorted(at):
                 tokens.append(("m", vocab.tree_mark(at[i])))
         if has_tree:

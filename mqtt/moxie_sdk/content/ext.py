@@ -2,50 +2,29 @@
 Sandboxed content extensions — a total, JSON-AST expression language a stranger's
 content pack may carry (docs/architecture/backlog/sandboxed-extensions.md, BEYOND #6).
 
-**What this module is.** A declarative rule list over a closed operator table,
-interpreted by pure-stdlib Python. There is no `exec`, no `eval`, no parser (the program
-*is* JSON), no loop construct, no user-defined function, no recursion, and **no name that
-resolves to a host object**. Values are JSON scalars, lists and string-keyed maps; there
-is no operator that takes an object, so attribute-walking has nothing to walk to.
+A declarative rule list over a closed operator table, interpreted by pure-stdlib Python:
+no `exec`/`eval`, no parser (the program *is* JSON), no loop, no user function, no
+recursion, and no name that resolves to a host object. Values are JSON scalars, lists and
+string-keyed maps. OpenMoxie's executable modules (MIT, read as prior art only — see
+ATTRIBUTION.md) use none of those constructs, so this covers what people actually write
+while keeping zero escape surface and an English rendering a parent can read.
 
-**Why that shape.** The whole of the upstream state of the art — OpenMoxie's four
-executable content modules, nine hook functions, six `code` strings (MIT,
-© Justin Beghtol; read as prior art and cited, never copied; see ATTRIBUTION.md) — uses
-no loop, no user function and no recursion. A language with none of those covers 100% of
-what anybody has actually written, and it is the only one of the four candidate designs
-(brief §3) with structurally zero escape surface *and* a rendering back into English a
-parent can read.
+The four safety properties, each pinned in `sim/tests/test_ext_escapes.py`:
 
-**The four things that make it safe**, each pinned by a test in
-`sim/tests/test_ext_escapes.py`:
+1. *The fact base is plain JSON built by the host* (X2).
+2. *Every op is total*: division by zero is the error **value**, a missing key is null
+   (§4.6), so the evaluator always returns.
+3. *Clock and entropy are injected*: this module imports no `time`, `random`, `os`,
+   `datetime`, `secrets` or `subprocess` (X7, asserted over this source), so a turn is
+   replayable.
+4. *Capabilities are checked at load in both directions*: an undeclared use and an unused
+   declaration are both refused (X10), so the parent's grant list equals what the program
+   can do.
 
-1. *The fact base is plain JSON, built by the host.* `evaluate()` is handed a dict of
-   `str/int/float/bool/None/list/dict` and walks that and nothing else (X2).
-2. *Every op is total.* Division by zero is the error **value**, a missing key is null, an
-   out-of-range index is null. There is no input for which an op raises, so there is no
-   state in which the evaluator does not return (§4.6).
-3. *Clock and entropy are injected.* This module imports neither `time`, `random`, `os`,
-   `datetime`, `secrets` nor `subprocess` — asserted over its own source (X7). Two
-   `clock.ms` calls in one program return the same number, and the PRNG is a pure integer
-   function of a host-supplied seed, so a turn is replayable.
-4. *Capabilities are checked at load, in both directions.* An AST that uses something its
-   `capabilities[]` does not declare is refused; a `capabilities[]` entry the AST does not
-   use is **also** refused (X10). So the sentence a parent reads is provably equal to what
-   the program can do.
-
-**Failure is boring and total.** On any breach — steps, wall clock, a value cap, an error
-value reaching an effect — `evaluate()` returns `ExtResult(ok=False, …)` and the effect
-list is discarded **whole**. Nothing is half-applied, and the caller
-(`content_app.ContentApp`) carries on exactly as it does with no extension at all: a
-`global` falls through to the conversation, a `turn.before` is skipped and the model runs.
-The child never hears an error string — that is upstream's one bad instinct (brief U6) and
-we do not port it.
-
-**`code` is still never executed.** A pack's `code` field remains inert data forever
-(`packs.py`, content-module-contract.md). This is a *different* field, `extension`, and
-compiling one into the other is explicitly out of scope (brief §7.4): a Python-to-AST
-compiler is a parser for a Turing-complete language living in the trusted half of the
-system, which is the audit surface this design exists to delete.
+On any breach `evaluate()` returns `ExtResult(ok=False, …)` and discards the whole effect
+list; the caller carries on as if there were no extension. The child never hears an error.
+A pack's `code` field stays inert data forever; `extension` is a separate field and is
+never compiled from `code` (brief §7.4).
 """
 from __future__ import annotations
 
@@ -54,14 +33,11 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-# NOTE (X7): the import list above is the security boundary of this module. `time`,
-# `random`, `os`, `datetime`, `secrets` and `subprocess` are absent **on purpose** — the
-# clock and the PRNG seed are values the host injects into `evaluate()`. A test parses
-# this file with `ast` and fails if any of them appears, so the rule cannot rot.
+# X7: the import list above is this module's security boundary (asserted by a test). The
+# clock and the PRNG seed are injected into `evaluate()`; never import them here.
 
 EXT_FORMAT = 1
-"""The only `ext_format` this evaluator accepts. A future format bump is a new number,
-never a silently-widened grammar."""
+"""The only `ext_format` accepted; a format bump is a new number, never a wider grammar."""
 
 
 # --------------------------------------------------------------------------- #
@@ -69,15 +45,11 @@ never a silently-widened grammar."""
 # --------------------------------------------------------------------------- #
 
 class _Error:
-    """The distinguished, falsy, propagating error value (§4.6).
+    """The distinguished, falsy, propagating error value (§4.6) — not an exception.
 
-    Produced by `/` and `%` by zero, `int("banana")`, `sort` over mixed types, and any op
-    whose own argument is already an error. It is **not** an exception: a total language
-    has no exceptions to leak, and an author who wants to handle a bad capture group can
-    test for it with `{"has": [expr]}` or branch on it with `if` (it is falsy).
-
-    If an error reaches a `say`, `remember`, `act` or `markup` it **fails the extension**
-    (§6.4) rather than being spoken — the child must never hear the word "error".
+    Produced by `/` and `%` by zero, `int("banana")`, mixed-type `sort`, and any op given
+    an error. Testable with `{"has": [expr]}`; reaching a `say`/`remember`/`act`/`markup`
+    fails the extension (§6.4) rather than being spoken.
     """
     __slots__ = ()
 
@@ -99,33 +71,28 @@ def is_error(v) -> bool:
 # Identifiers — capability and op names, normalized before they are matched
 # --------------------------------------------------------------------------- #
 
-#: A capability or op name, after NFKC normalization. Deliberately narrow: lowercase
-#: ASCII letters, digits, `_` and `.`. Anything else is refused rather than folded.
+#: A capability or op name: lowercase ASCII, digits, `_`, `.`; anything else is refused.
 _IDENT = re.compile(r"^[a-z0-9_.]+$")
 
-#: A `{"var": …}` path. Dotted; a segment may not begin with `_`, which is what makes
-#: `__class__`, `__init__` and `_meta` *invalid programs* rather than blocked ones (X1).
+#: A `{"var": …}` path. No segment may begin with `_`, so `__class__`/`_meta` are
+#: invalid programs rather than blocked ones (X1).
 _PATH = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$", re.I)
 
-#: A `remember` / `forget` / `scratch` key. Dot-segmented, no empty segment (so no `..`),
-#: no `/` (so no path traversal), and no `_`-leading segment (so a program cannot write
-#: `_meta` or `_provenance`, which belong to `MemoryStore`, not to a pack).
+#: A `remember`/`forget`/`scratch` key: dot-segmented, no empty segment, no `/`, and no
+#: `_`-leading segment (`_meta`/`_provenance` belong to `MemoryStore`).
 _KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9][A-Za-z0-9_-]*)*$")
 
-#: A `format` spec. Explicit and bounded — never a bare float repr — so output is
-#: byte-stable across the Python evaluator and (P1) the JS one. A width beyond five
-#: digits is refused at load, so `{"format": ["1000000000d", 1]}` never reaches an op.
+#: A `format` spec: explicit and bounded (width ≤ 5 digits) so output is byte-stable
+#: across the Python and (P1) JS evaluators.
 _FMT = re.compile(r"^(?P<zero>0?)(?P<width>\d{0,5})(?:\.(?P<prec>\d{1,3}))?(?P<kind>[dfs])$")
 
 
 def normal_name(raw) -> str:
-    """The NFKC-normalized name, or `""` if `raw` is not a plain lowercase ASCII name.
+    """`raw` if it is already NFKC-normal and matches `_IDENT`, else `""`.
 
-    **Normalization is a check, not a repair** (X8). `"ｍemory.write"` NFKC-folds *to*
-    `"memory.write"`, so folding-then-matching would silently grant a capability whose
-    written form is not the one the parent's review rendered. So the name must already be
-    in normal form **and** match `_IDENT`: a homoglyph, a dotless `ı`, a zero-width space,
-    an RTL override and `"MEMORY.WRITE"` are each refused outright.
+    Normalization is a check, not a repair (X8): folding `"ｍemory.write"` would grant a
+    capability whose written form differs from what the parent's review rendered, so
+    homoglyphs, zero-width and RTL characters and upper case are refused outright.
     """
     if not isinstance(raw, str) or not raw:
         return ""
@@ -138,10 +105,8 @@ def normal_name(raw) -> str:
 # The capability table (§5) — parent-facing words are generated from a fixed table
 # --------------------------------------------------------------------------- #
 
-#: `{capability: the sentence a parent reads}`. Never author-supplied text — a pack that
-#: could write its own grant sentence could write a reassuring lie. `T13` asserts this
-#: table covers every capability the validator will accept, so a new capability cannot
-#: ship without parent-facing words.
+#: `{capability: the sentence a parent reads}`. Never author-supplied (a pack could write
+#: a reassuring lie). T13 asserts every accepted capability has words here.
 CAPABILITY_WORDS = {
     "say": "Can speak to your child",
     "handled": "Can answer on its own, without asking the AI",
@@ -159,96 +124,48 @@ CAPABILITY_WORDS = {
     "schedule.request": "Can ask to be offered in the day's plan",
 }
 
-#: `act.<name>` is granted per *name*, not per category: "can set a timer" and "can turn
-#: on the camera" are not the same sentence to a parent. The words are built from this
-#: table, and an action nobody has written words for cannot be declared at all.
-#:
-#: **This table is also the closed allowlist of `function_id`s a pack may put on the
-#: wire.** `content_app.execution_actions_of` maps a name through these keys and refuses
-#: anything else, so the set of nameable robot functions is bounded by the set of things
-#: somebody wrote a parent-facing sentence for — one table, not two that can drift. The
-#: reasoning is transplanted from docs/architecture/backlog/qr-launch-cards.md §P0-b:
-#: *"The catalog is a closed allowlist, and this is a safety property, not tidiness."* A
-#: printed card is an input any stranger can leave on a table in front of a child; so is a
-#: pack a stranger authored. Either may name one of a few reviewed things, and may name
-#: nothing else.
+#: `act.<name>` is granted per *name*: an action with no parent-facing words cannot be
+#: declared. This table is also the closed allowlist of `function_id`s a pack may put on
+#: the wire (`content_app.execution_actions_of`) — one table, so the two cannot drift. A
+#: stranger's pack, like a printed QR card, may name only reviewed things
+#: (qr-launch-cards.md §P0-b).
 ACTION_WORDS = {
     "eb_timer_request": "Can ask Moxie to set or cancel a timer",
     "eb_enable_qr": "Can turn Moxie's QR scanner on",
     "eb_wake": "Can wake Moxie up",
 }
 
-#: The closed event vocabulary a `subscribe` statement may name — the twin of
-#: `ACTION_WORDS` on the *inbound* side, and the same argument: an event nobody has
-#: recovered from the robot's own catalog cannot be declared, cannot be granted and
-#: cannot be put on the wire in an `EventSubscription.active[]` list.
-#:
-#: **These six strings are a TRANSCRIPTION of `moxie_sdk.presence.VISION_EVENTS`, not an
-#: import of it, and that is deliberate.** X7 makes this module's import list a security
-#: boundary — `ext.py` imports `math`, `re`, `unicodedata` and nothing else, asserted by
-#: parsing its own source — so reaching into `presence` (which imports `os` for its
-#: hysteresis knobs) to borrow a tuple would trade a real invariant for a saved line.
-#: The duplication is held honest from the other direction instead, by
-#: `test_ext_subscribe.py::test_the_subscribable_events_are_exactly_the_recovered_vision_catalog`,
-#: which fails the moment the two lists disagree. Two tables plus an equality test is
-#: strictly better here than one table plus a widened import boundary.
-#:
-#: Recovered catalog: docs/architecture/vision.md §1.1-1.2 (`eb-lost-face` is the alias
-#: RemoteModuleAPI lists for `eb-lost-target`, which is why both appear).
+#: The closed event vocabulary a `subscribe` statement may name — `ACTION_WORDS`'s inbound
+#: twin (vision.md §1.1-1.2; `eb-lost-face` is RemoteModuleAPI's alias of
+#: `eb-lost-target`). A transcription of `presence.VISION_EVENTS`, not an import, because
+#: X7 bounds this module's imports; `test_ext_subscribe.py` asserts the two stay equal.
 SUBSCRIBE_EVENTS = ("eb-found-face", "eb-lost-target", "eb-lost-face",
                     "eb-qr-event", "eb-dr-event", "eb-br-event")
 
-#: Granted with no parent action at all (§5.1's "granted" column, and acceptance
-#: criterion 5). Everything else needs an explicit grant, which at P0 means a caller
-#: passing a wider `grants` set — there is deliberately no env var and no console control,
-#: because the parent-facing grant flow is P1.
+#: Granted with no parent action (§5.1). Anything else needs a caller to pass a wider
+#: `grants` set; deliberately no env var or console control until the P1 grant flow.
 DEFAULT_GRANTS = frozenset({"say", "handled", "session", "child.nickname"})
 
-#: Declared, rendered in the review, and **still refused at load**. Not because the
-#: grammar cannot express them, but because each is a capability that cannot yet do
-#: anything, and shipping one of those would be worse than refusing it out loud.
-#:
-#: `act.<name>` **left this set on 2026-09-04** and is now honoured: `volley
-#: .execution_actions` reaches `RemoteChatAction` through `content_app
-#: .execution_actions_of` → `Reply.actions` → `wire.encode_action`, which since #119
-#: carries `function_id` / `function_args` (RemoteChat.proto:255-281). Brief S5 — *"the
-#: single most important scoping fact in this brief"* — is therefore closed for `act`.
-#:
-#: `subscribe` **left this set on 2026-09-05** and is now honoured: a `subscribe` effect
-#: reaches `volley.subscriptions` (merging, never replacing), `content_app
-#: .subscriptions_of` bounds it by `SUBSCRIBE_EVENTS` and turns it into `Reply.subscribe`,
-#: and `moxie_runtime._publish_chat` **merges** it into the supervisor's own vision
-#: subscription before `wire.build_chat_response(subscribe_events=…)` puts it in
-#: `RemoteChatAction.EventSubscription.active[]`. The direction of that merge is the
-#: safety property: a pack may add an event it wants to perceive and can never remove one
-#: the runtime's presence/greeting behaviour depends on.
-#:
-#: What is left, and why each is still refused:
-#:   * `brain` — needs the one-call-per-turn budget of brief §5.1 before a pack may
-#:     spend money and latency inside the 6 s turn.
+#: Declared and rendered in the review, but still refused at load because nothing can
+#: honour them yet (better refused out loud than silently inert):
+#:   * `brain` — needs the one-call-per-turn budget (brief §5.1) first.
 #:   * `schedule.request` — needs the recommender's parent-request channel (P2).
+#: (`act.<name>` and `subscribe` are honoured end to end; a pack's `subscribe` is merged
+#: into, never replaces, the runtime's own vision subscription.)
 P1_CAPABILITIES = frozenset({"brain", "schedule.request"})
 
 def _is_p1(cap: str) -> bool:
-    """True for a capability this appliance declares, renders and **refuses**. One
-    predicate, so the §8 conformance generator has exactly one thing to lift each time a
-    capability becomes real.
-
-    `act.<name>` is deliberately *not* here any more: an `act` capability is bounded by
-    `ACTION_WORDS`, granted per name, and plumbed to the wire — so the only thing standing
-    between a pack and an action is whether the host granted it, which is a decision and
-    not a gap.
-    """
+    """True for a capability this appliance declares, renders and **refuses** — one
+    predicate for the §8 conformance generator to lift when a capability becomes real."""
     return cap in P1_CAPABILITIES
 
 
-#: Hook points. `turn.after` and `session.end` are P1 — the first needs the output-safety
-#: ordering settled, the second overlaps the already-shipped declarative `memory` block.
+#: Hook points. `turn.after` (output-safety ordering) and `session.end` (overlaps the
+#: declarative `memory` block) are P1.
 HOOKS = ("global", "turn.before")
 
-#: The roots `{"var": "…"}` may name, and the capability each one costs. `None` = free.
-#: This mapping plus `OPS` is the **complete** set of strings that resolve to anything at
-#: all (§5.2's invariant) — both are finite and enumerated here, in our own source.
+#: The roots `{"var": "…"}` may name and the capability each costs (`None` = free). With
+#: `OPS` this is the complete set of strings that resolve to anything (§5.2).
 FACT_ROOTS = {
     "speech": None,
     "entities": None,
@@ -270,11 +187,10 @@ def _path_capability(path: str) -> str | None:
 
 
 # --------------------------------------------------------------------------- #
-# Limits (§6.2). Defaults live here; `mqtt/config.py` reads the env and overrides.
+# Limits (§6.2). `mqtt/config.py` overrides these from the env.
 # --------------------------------------------------------------------------- #
 
 MAX_DEPTH = 32                 # expression nesting; the evaluator is depth-counted
-MAX_NODES_PER_EXPR = 512
 MAX_STATEMENTS_PER_RULE = 32
 MAX_RULES = 64
 MAX_NODES = 4096               # whole extension; a giant AST is refused at import
@@ -353,8 +269,8 @@ def _size(v) -> int:
 
 
 def _num(v):
-    """A number, or ERROR. `bool` is deliberately **not** a number here: `true + 1` is a
-    type confusion in every language that allows it, and this one has no need of it."""
+    """A number, or ERROR. `bool` is deliberately not a number (`true + 1` is a type
+    confusion no author needs)."""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return ERROR
     if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
@@ -363,13 +279,8 @@ def _num(v):
 
 
 def _text(v) -> str:
-    """`str` semantics — one fixed rule, host-independent (§6.1).
-
-    No language's default float repr ever reaches output: a float renders through six
-    decimal places with the trailing zeros trimmed, which is a rule a JS port can follow
-    exactly. Booleans render as `true`/`false` (JSON's spelling, not Python's) and null
-    renders as the empty string.
-    """
+    """`str` semantics, host-independent (§6.1): floats to six places with trailing
+    zeros trimmed (a JS port can match it), booleans as `true`/`false`, null as `""`."""
     if v is None:
         return ""
     if v is True:
@@ -459,13 +370,9 @@ def _plural(word, count):
 
 
 class _Prng:
-    """A pure-integer PRNG (mulberry32) over a host-supplied 32-bit seed.
-
-    Not for secrecy — for **determinism** (§6.1). An extension with real entropy cannot be
-    replayed, and replay is how the conformance goldens work. The algorithm is integer-only
-    on purpose: the P1 JavaScript evaluator must reproduce the same stream bit for bit, and
-    it cannot if either side reaches for its own `random`.
-    """
+    """A pure-integer PRNG (mulberry32) over a host-supplied 32-bit seed — for
+    determinism, not secrecy (§6.1): the conformance goldens replay turns, and the P1 JS
+    evaluator must reproduce the stream bit for bit."""
     __slots__ = ("_s",)
 
     def __init__(self, seed: int):
@@ -482,12 +389,10 @@ class _Prng:
         return self.next_u32() % n if n > 0 else 0
 
 
-#: `{op: (min_args, max_args, capability_or_None)}`. **This table is closed**, it is
-#: frozen as a literal in `test_ext_escapes.py::X1`, and adding to it therefore requires a
-#: test edit and a reviewer (risk R1). Deliberately absent, and not addable without
-#: re-opening the brief: any name-to-object resolution, attribute or index access on a
-#: non-JSON value, regex construction, string multiplication (`repeat` is bounded
-#: instead), `eval` of any kind, and anything that returns a host handle.
+#: `{op: (min_args, max_args, capability_or_None)}`. Closed and frozen as a literal in
+#: `test_ext_escapes.py::X1`, so growing it needs a test edit and a reviewer (R1). Never
+#: add: name-to-object resolution, access on non-JSON values, regex construction, unbounded
+#: string multiplication, `eval`, or anything returning a host handle.
 OPS = {
     # arithmetic
     "+": (1, MAX_ARGS, None), "-": (1, 2, None), "*": (1, MAX_ARGS, None),
@@ -522,19 +427,13 @@ OPS = {
     "session.is_empty": (0, 0, "session"),
 }
 
-#: The eleven ops whose names are punctuation rather than words. Enumerated from `OPS`
-#: rather than written out, so the two can never disagree.
+#: The ops whose names are punctuation, derived from `OPS` so the two cannot disagree.
 SYMBOLIC_OPS = frozenset(k for k in OPS if not _IDENT.match(k))
 
 
 def normal_op(raw) -> str:
-    """`normal_name`, widened by exactly the symbolic operator names.
-
-    The NFKC-equality half of the check still applies, so a fullwidth `＋` (which folds
-    *to* `+`) and a mathematical `∗` are refused rather than folded into the real op — the
-    same reasoning as `normal_name`, and the reason this is not simply a membership test
-    against `OPS`.
-    """
+    """`normal_name`, widened by exactly the symbolic operator names. The NFKC check
+    still applies, so a fullwidth `＋` is refused rather than folded into `+`."""
     if not isinstance(raw, str) or not raw:
         return ""
     if unicodedata.normalize("NFKC", raw) != raw:
@@ -550,9 +449,8 @@ LAZY_OPS = frozenset({"and", "or", "if"})
 #: The only op that does not propagate an error argument — it is the *test* for one.
 ERROR_TRANSPARENT = frozenset({"has"})
 
-#: `{statement key: (capability_or_None)}`. Frozen as a literal in X1 and X4 alongside
-#: `OPS`: together they are the proof that no loop, no jump and no function definition
-#: exists in the grammar to begin with.
+#: `{statement key: capability_or_None}`. Frozen with `OPS` in X1/X4: together they show
+#: the grammar has no loop, jump or function definition.
 STATEMENTS = {
     "say": "say",
     "markup": "markup",
@@ -576,8 +474,7 @@ class _Validator:
         self.reasons: list[str] = []
         self.used: set[str] = set()
         self.nodes = 0
-        #: `let` names visible at this point in the rule. Ordered: a binding sees the
-        #: ones before it, and `when`/`do` see them all (§4.3).
+        #: `let` names visible so far: a binding sees earlier ones; `when`/`do` see all.
         self.binds: set[str] = set()
 
     def fail(self, msg: str) -> None:
@@ -620,8 +517,8 @@ class _Validator:
             self.expr(sub, f"{where}.{name}[{i}]", depth + 1)
 
     def _lit(self, arg, where: str) -> None:
-        """A literal is data, and must be *only* data — no nested op is evaluated inside
-        one, which is what stops `lit` becoming a second, unchecked grammar."""
+        """A literal is only data — no nested op is evaluated inside one, so `lit` cannot
+        become a second, unchecked grammar."""
         stack = [(arg, 1)]
         while stack:
             v, d = stack.pop()
@@ -646,9 +543,7 @@ class _Validator:
             return self.fail(f"{where}: {arg!r} is not a fact path")
         for seg in arg.split("."):
             if seg.startswith("_"):
-                # Not "blocked at runtime" — an *invalid program*. Combined with a fact
-                # base of plain JSON (X2) it is also pointless, which is the belt and the
-                # braces of §4.4.
+                # An invalid program, not a runtime block (§4.4).
                 return self.fail(f"{where}: a path segment may not begin with '_' "
                                  f"({arg!r})")
         root = arg.split(".")[0]
@@ -743,22 +638,12 @@ class _Validator:
         self.expr(body["prompt"], f"{where}.brain.prompt")
 
     def _st_subscribe(self, s, where):
-        """`{"subscribe": [event, …]}` — bounded by the closed vocabulary, at load.
+        """`{"subscribe": [event, …]}` — bounded by `SUBSCRIBE_EVENTS` at load, like
+        `_st_act`. `content_app.subscriptions_of` re-checks host-side (a Python handler
+        never meets this validator).
 
-        The `act` shape exactly (`_st_act` above): the name is checked against a table in
-        this file rather than at runtime, so a pack that names an event the robot's
-        recovered catalog does not have is **not a program** and never installs. The
-        second, host-side check on the same table lives in
-        `content_app.subscriptions_of`, because that is the last function before a string
-        becomes an `EventSubscription.active[]` entry addressed to a robot — and because a
-        Python global handler calling `volley.update_subscriptions` never met this
-        validator at all.
-
-        Events are compared **literally**, not through `normal_name`: these are wire
-        strings with hyphens in them (`eb-found-face`), not identifiers, so the identifier
-        grammar would reject every legal one. The homoglyph argument X8 makes for
-        capability names is answered here by the membership test itself — a
-        confusable-looking `eb‑qr‑event` (U+2011 hyphens) is simply not in the tuple.
+        Compared literally, not via `normal_name`: these are hyphenated wire strings, and
+        membership in the tuple already refuses homoglyphs (e.g. U+2011 hyphens).
         """
         events = s["subscribe"]
         if not isinstance(events, list) or not events or len(events) > MAX_SUBSCRIPTIONS:
@@ -773,21 +658,12 @@ class _Validator:
 def validate(ext, *, grants=None, allow_p1: bool = False) -> list:
     """Every reason this extension cannot be installed, as sentences. Empty ⇒ installable.
 
-    Run at **import** (`packs.validate_item`) and again at **load**
-    (`ContentApp.reload_content`), so an extension written straight into the store — or one
-    that would fail under a *newer* validator — simply stops loading rather than running
-    under old rules (T17).
+    Run at import (`packs.validate_item`) and again at every load, so a program written
+    straight into the store, or invalid under a newer validator, stops loading (T17).
 
-    `allow_p1` checks the **grammar only**, skipping the refusal of the capabilities that
-    still have no host (`brain`, `schedule.request`): it is how §8's not-yet-grantable
-    conformance ASTs are proven valid today rather than written the day their host lands.
-    `act` left that set on 2026-09-04 and `subscribe` on 2026-09-05, so `allow_p1` no
-    longer changes the verdict for either. Never pass it from a code path that then
-    evaluates.
-
-    `grants` is the host's granted capability set. When given, a declared capability the
-    host does not grant is a load refusal too: "absent, not refused, when not granted"
-    (§4.2) means the program never runs, so the turn is never at risk.
+    `allow_p1` checks grammar only, skipping the refusal of `P1_CAPABILITIES` (used to
+    prove §8's conformance ASTs); never pass it on a path that then evaluates. `grants`,
+    when given, makes an ungranted declared capability a load refusal too (§4.2).
     """
     v = _Validator()
     if not isinstance(ext, dict):
@@ -871,8 +747,7 @@ def validate(ext, *, grants=None, allow_p1: bool = False) -> list:
     if v.reasons:
         return v.reasons
 
-    # The two-directional capability rule (§5, X10). Equality — not containment — is what
-    # makes the parent's grant list provably equal to what the program can do.
+    # Two-directional capability rule (§5, X10): equality, not containment.
     missing = sorted(v.used - declared)
     if missing:
         v.fail("uses things it did not declare: " + ", ".join(missing))
@@ -905,12 +780,7 @@ def capabilities_of(ext) -> list:
 
 
 def grant_list(ext) -> list:
-    """One plain sentence per capability, from the fixed table (§5.4).
-
-    Generated from the **normalized** name, so a homoglyph cannot make a scary grant read
-    as a harmless one — and a name that does not normalize was already refused at load,
-    so it can never reach this function with a pack installed.
-    """
+    """One plain sentence per (normalized) capability, from the fixed tables (§5.4)."""
     out = []
     for name in capabilities_of(ext):
         if name.startswith("act."):
@@ -926,9 +796,8 @@ def grant_list(ext) -> list:
 # explain() — the AST as English, which matters as much as evaluate()
 # --------------------------------------------------------------------------- #
 
-#: Deliberately avoids every bare capability identifier (`say`, `clock`, `random`,
-#: `markup`, `session`, `presence`, `handled`, `brain`, `subscribe`) so a rendered
-#: sentence can never be mistaken for, or grepped as, a permission (T13).
+#: Avoids every bare capability identifier so a rendered sentence can never be mistaken
+#: for (or grepped as) a permission (T13).
 _FACT_WORDS = {
     "speech": "what your child said",
     "entities": "part of what your child said",
@@ -955,26 +824,22 @@ _OP_WORDS = {
 
 
 def _plain(text: str) -> str:
-    """Author text, made safe to drop into a sentence: braces and quotes out, one line,
-    bounded. An `explain()` line is read by a parent, so it must never come back looking
-    like JSON however hostile the string in the pack was (T13)."""
+    """Author text made safe for a parent-facing sentence: no braces or quotes, one line,
+    ≤ 80 chars — never JSON-looking, however hostile the input (T13)."""
     out = "".join(" " if c in "{}\"\n\r\t" else c for c in str(text))
     out = " ".join(out.split())
     return out[:80] + ("…" if len(out) > 80 else "")
 
 
-#: Ops that shape a value without changing what a parent would call it, so a sentence
-#: reads better describing the thing inside than the wrapper around it.
+#: Ops that shape a value without changing what a parent would call it; described by
+#: their argument.
 _TRANSPARENT_OPS = ("lower", "upper", "trim", "str", "int", "num", "abs", "floor",
                     "ceil", "round")
 
 
 def _describe(node, depth: int = 0, binds=None) -> str:
-    """One expression as a short English phrase. Never emits JSON (T13).
-
-    `binds` are the rule's `let` names, so `{"var": "line"}` reads as the *sentence it was
-    bound to* rather than as "something it can read" — an author's intermediate name is
-    bookkeeping, and a parent should not have to follow it."""
+    """One expression as a short English phrase; never JSON (T13). `binds` are the rule's
+    `let` names, described by what they were bound to."""
     binds = binds or {}
     if depth > 4:
         return "a value it works out"
@@ -1022,8 +887,7 @@ def _describe(node, depth: int = 0, binds=None) -> str:
                 f"{_describe(arg[0], depth + 1, binds)}"
                 + (f", otherwise {_describe(arg[2], depth + 1, binds)}" if len(arg) > 2 else ""))
     if key == "concat" and isinstance(arg, list):
-        # The gist, not the recipe: a parent wants "'Starting timer for …'", not a
-        # transcription of six arguments two of which are a space and a colon.
+        # The gist, not the recipe: quote the literal words only.
         lits = [a.strip() for a in arg if isinstance(a, str) and re.search("[A-Za-z]", a)]
         if lits:
             gist = " … ".join(_plain(x) for x in lits[:3])
@@ -1058,13 +922,8 @@ def _describe_stmt(s, binds=None) -> str:
 
 
 def explain(ext) -> list:
-    """One English sentence per rule, from the AST (§5.4).
-
-    The same idiom as the 📅 card's *"why this activity today"* line: a parent reads
-    sentences, and the JSON stays behind a disclosure for the one parent in a hundred who
-    wants it. A grant list tells a parent what a pack *may* do; these tell them what it
-    *will* do — which is why both appear in the pack review.
-    """
+    """One English sentence per rule (§5.4). The grant list says what a pack *may* do;
+    these say what it *will* do, and the pack review shows both."""
     if not isinstance(ext, dict) or not ext.get("rules"):
         return []
     out = []
@@ -1093,12 +952,8 @@ def explain(ext) -> list:
 # --------------------------------------------------------------------------- #
 
 class _Breach(Exception):
-    """Internal only. Caught by `evaluate`, which always returns an `ExtResult`.
-
-    A budget breach has to unwind a walk that is genuinely recursive over the AST, and an
-    exception is the honest way to do that. It never escapes this module: `evaluate`'s
-    `except` is total, and the effect list is discarded whole on the way out (§4.5).
-    """
+    """Internal: unwinds the recursive walk on a breach. Always caught by `evaluate`,
+    which discards the effect list whole (§4.5)."""
 
     def __init__(self, kind: str, reason: str):
         super().__init__(reason)
@@ -1124,9 +979,8 @@ class _Machine:
         self.steps += n
         if self.steps > self.limits.max_steps:
             raise _Breach("steps", f"more than {self.limits.max_steps} steps")
-        # Every 256 steps, against an **injected** monotonic clock: no threads and no
-        # signals, so this behaves identically in the supervisor's handler thread and in a
-        # Cloudflare Worker isolate (§6.2).
+        # Every 256 steps against an injected monotonic clock — no threads or signals, so
+        # it behaves the same in the supervisor and in a Worker isolate (§6.2).
         if self.deadline is not None and (self.steps & 0xFF) == 0:
             if self.monotonic() > self.deadline:
                 raise _Breach("budget", f"longer than {self.limits.budget_s}s")
@@ -1145,9 +999,7 @@ class _Machine:
     def eval(self, node, depth: int = 1):
         self.step()
         if depth > MAX_DEPTH:
-            # Unreachable for a validated AST (the depth cap is a load refusal), so this
-            # is the belt to that brace: the evaluator is depth-counted, and a
-            # `RecursionError` therefore cannot escape even from an unvalidated AST (X6).
+            # Unreachable once validated; keeps `RecursionError` impossible regardless (X6).
             raise _Breach("invalid", f"nested deeper than {MAX_DEPTH}")
         if node is None or isinstance(node, (bool, int, float, str)):
             return node
@@ -1326,8 +1178,7 @@ class _Machine:
                 return ERROR if (math.isnan(v) or math.isinf(v)) else math.floor(v)
             if isinstance(v, str):
                 s = v.strip()
-                # `int("banana")` is the error value, which is how a capture group that
-                # caught junk fails *loudly* instead of quietly becoming 0.
+                # `int("banana")` is ERROR, so a junk capture fails loudly rather than 0.
                 if re.match(r"^-?\d{1,15}$", s):
                     return int(s)
             return ERROR
@@ -1373,8 +1224,7 @@ class _Machine:
                         and 0 <= a[1] < len(a[0]))
             return False
         if name == "keys":
-            # Sorted, so iteration order is host-independent — a determinism requirement,
-            # not a convenience (§6.1).
+            # Sorted: iteration order must be host-independent (§6.1).
             return sorted(a[0]) if isinstance(a[0], dict) else []
         # ---- facts ----
         if name == "clock.ms":
@@ -1402,8 +1252,7 @@ class _Machine:
 
 
 def _equal(x, y) -> bool:
-    """JSON equality, with `true == 1` deliberately false — a type confusion no author
-    needs and every reviewer would misread."""
+    """JSON equality, with `true == 1` deliberately false."""
     if isinstance(x, bool) != isinstance(y, bool):
         return False
     if is_error(x) or is_error(y):
@@ -1412,8 +1261,7 @@ def _equal(x, y) -> bool:
 
 
 def _json_copy(v):
-    """A structural copy of plain JSON. Never `copy.deepcopy` — that walks objects, and
-    the point of this module is that there are none to walk."""
+    """A structural copy of plain JSON (never `copy.deepcopy`, which walks objects)."""
     if isinstance(v, dict):
         return {str(k): _json_copy(x) for k, x in v.items()}
     if isinstance(v, list):
@@ -1423,16 +1271,11 @@ def _json_copy(v):
 
 def evaluate(ext, facts, *, grants=None, now_ms: int = 0, clock_local=None,
              seed: int = 0, monotonic=None, limits: Limits | None = None) -> ExtResult:
-    """Run one validated extension over one turn's facts. **Always returns.**
+    """Run one extension over one turn's facts. **Always returns.**
 
-    `facts` is a plain-JSON dict the host built (§4.4) — the evaluator never sees a
-    `Volley`, a `Session`, a `MemoryStore` or any other live object. `now_ms` and `seed`
-    are injected, which is what makes a turn replayable (§6.1). `monotonic` is an injected
-    `() -> float`; without one the wall-clock budget is not checked and the step budget
-    alone bounds the run.
-
-    Effects are **collected, never applied**: statements append to a list the host applies
-    afterwards, so a breach mid-program leaves nothing half-written (§4.5).
+    `facts` is host-built plain JSON (§4.4). `now_ms` and `seed` are injected so a turn is
+    replayable (§6.1); without `monotonic` only the step budget bounds the run. Effects are
+    collected, never applied here, so a breach leaves nothing half-written (§4.5).
     """
     limits = limits or Limits()
     reasons = validate(ext, grants=grants)   # never `allow_p1` — this one runs it
@@ -1526,8 +1369,7 @@ def _run_stmt(m: _Machine, s: dict):
 
 
 def _over_output_caps(effects) -> str:
-    """§6.3, checked before a single effect is applied — so an over-cap program applies
-    *nothing*, rather than the prefix that happened to fit."""
+    """§6.3 output caps, checked before any effect is applied (all or nothing)."""
     says = markups = acts = subs = writes = 0
     for e in effects:
         k = e["kind"]

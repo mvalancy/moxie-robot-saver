@@ -1,28 +1,15 @@
 /* test_wav_decode.mjs — the audio contract, both halves, with no server.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §8.1 test 3, plus §3.2 (`POST
- * /api/speech`'s response), §2.2 (the gateway lies about its Content-Type).
+ * Spec: docs/architecture/backlog/live-sim-demo.md §8.1 test 3, §3.2, §2.2.
  *
- * WHY THIS ONE TEST IS WORTH MORE THAN ITS LENGTH. The hosted demo's audio path has two
- * halves written in two languages by two different rules:
- *
- *   * the SERVER half — `functions/api/_lib/wav.js` — takes whatever `/audio/speech`
- *     returned and produces raw little-endian signed 16-bit PCM plus the header's OWN rate
- *     and channels;
- *   * the BROWSER half — `sim/web/audio.js`'s `decodeCloudTTS` — takes that base64 PCM
- *     back apart into planar Float32, "exactly like robot firmware, never importing the
- *     server SDK" (`audio.js`:19-20, :260-282).
- *
- * If those two drift — endianness, the /32768 scale, the frame count, the sample rate,
- * the channel interleave — **Moxie plays noise, or nothing, and the failure is silent**:
- * the audio just sounds wrong on a machine nobody is listening to. So this file builds a
- * WAV, runs it through the real server decoder, wraps the result in a real
- * `CloudTTSResponse`, and feeds THAT to the real browser decoder — asserting equality
- * sample for sample. One test, both halves, no Cloudflare account and no browser.
- *
- * The oracle for the server half is `mqtt/moxie_sdk/tts.py::pcm_from_audio` (:110-145),
- * which `wav.js` is a transcription of. When python3 is available its output is compared
- * byte for byte; when it is not, the hand-built assertions still stand.
+ * The server half (`functions/api/_lib/wav.js`: whatever `/audio/speech` returned -> raw
+ * LE int16 PCM + the header's own rate/channels) and the browser half
+ * (`sim/web/audio.js::decodeCloudTTS`: base64 PCM -> planar Float32) are written
+ * separately. If they drift (endianness, /32768 scale, frame count, rate, interleave) Moxie
+ * plays noise or nothing, silently. So a WAV goes through the real server decoder into a
+ * real CloudTTSResponse and through the real browser decoder, compared sample for sample.
+ * The server-half oracle is `mqtt/moxie_sdk/tts.py::pcm_from_audio`, compared byte for byte
+ * when python3 is available.
  *
  *   node sim/test_wav_decode.mjs
  */
@@ -45,9 +32,8 @@ const wire = await import(join(repo, "functions", "api", "_lib", "wire.js"));
 const hmac = await import(join(repo, "functions", "api", "_lib", "hmac.js"));
 
 /* --------------------------------------------------------------------------- *
- * Load the REAL sim/web/audio.js under a fake Web Audio + DOM environment, the
- * trick sim/test_bridge.mjs:31-51 and sim/test_audio.mjs establish. Only the pure
- * `decodeCloudTTS` is exercised here, so the fakes can be minimal.
+ * Load the REAL sim/web/audio.js under a minimal fake Web Audio + DOM; only the pure
+ * `decodeCloudTTS` is exercised.
  * --------------------------------------------------------------------------- */
 const AUDIO_SRC = readFileSync(join(repo, "sim", "web", "audio.js"), "utf8");
 globalThis.window = { addEventListener() {}, moxie: null };
@@ -186,16 +172,9 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   ok(!/headers\.get\(\s*["']Content-Type/i.test(speechSrc),
      "speech.js never reads the upstream Content-Type either");
 
-  // A raw-PCM body has no header to ask, so the CONFIGURED rate is the right answer — and
-  // it is the only case where that is true.
-  //
-  // THE FORMAT IS NOW EXPLICIT, and the distinction is the thing to get right: `format` is
-  // `DEMO_TTS_FORMAT`, i.e. OUR OWN CONFIGURATION and the same string this deployment put
-  // in `response_format` on the outbound request. It is NOT read from the upstream reply,
-  // and it is not a Content-Type. So §2.2's rule is completely untouched by it — no
-  // property of the RESPONSE has become an input to the decision. What changed is that the
-  // reader is told what was ORDERED, which is the one thing byte-sniffing cannot recover:
-  // headerless PCM and an opaque error blob are the same bytes.
+  // A raw-PCM body has no header, so the CONFIGURED rate is right — only here. `format` is
+  // DEMO_TTS_FORMAT (what we ORDERED), never read from the upstream reply or its Content-Type
+  // (§2.2): headerless PCM and an opaque error blob are the same bytes.
   const pcm = makePcm(64, 1);
   const raw = wav.pcmFromAudio(pcm, { sampleRate: 16000, channels: 1, format: "pcm" });
   eq(raw.container, "raw", "under DEMO_TTS_FORMAT=pcm a non-RIFF body is the raw PCM we asked for");
@@ -203,14 +182,9 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   eq(raw.channels, 1, "…and the configured channel count");
   ok(raw.pcm.every((b, i) => b === pcm[i]), "…with the bytes untouched");
 
-  // AND THE COMPANION, which is the regression this file exists to hold from now on. The
-  // SAME bytes under the shipped `wav` default are refused, because under `wav` a
-  // non-RIFF 200 is not audio we ordered — it is a proxy's text/plain error, an SSE
-  // `data: {"error":…}` frame, or an mp3 from a gateway that ignored `response_format`.
-  // Returned as `container:"raw"` it was base64'd into `messages[0].payload.audio.buffer`
-  // and shipped at status 200 with `reason: null` — an upstream body handed to a visitor,
-  // and full-scale static in a child's ear. An ABSENT format reads the same strict way, so
-  // a future caller that forgets to say gets the safe answer rather than the leaky one.
+  // THE COMPANION: the same bytes under the shipped `wav` default are REFUSED — a non-RIFF 200
+  // there is a proxy error, an SSE frame or an mp3, and returning it as raw would ship
+  // full-scale static to a child. An ABSENT format reads the same strict way.
   for (const [label, fb] of [
     ["DEMO_TTS_FORMAT=wav", { sampleRate: 16000, channels: 1, format: "wav" }],
     ["an ABSENT format", { sampleRate: 16000, channels: 1 }],
@@ -263,11 +237,9 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   try { wav.pcmFromAudio(new Uint8Array(0), { sampleRate: 22050 }); } catch (e) { empty = e; }
   eq(empty && empty.kind, "empty", "an empty body raises kind `empty`");
 
-  // AN HTML BODY gets its own kind, because it means something completely different: the
-  // gateway is expected to sit behind a Cloudflare Tunnel, and a tunnel protected by
-  // Cloudflare Access answers an unauthenticated server-side fetch with an HTML LOGIN PAGE
-  // AT STATUS 200. HTML is not RIFF, so without this sniff it would fall through to the
-  // raw-PCM branch and a child would hear several seconds of loud static made of markup.
+  // AN HTML BODY gets its own kind: a Cloudflare Access-protected tunnel answers an
+  // unauthenticated fetch with an HTML login page AT 200, which would otherwise be played as
+  // raw PCM static.
   for (const [body, label] of [
     ["<!DOCTYPE html><html><head><title>Sign in · Cloudflare Access</title></head><body></body></html>",
      "a Cloudflare Access login page"],
@@ -286,10 +258,8 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   const ltFirst = new Uint8Array([0x3c, 0x00, 0x7f, 0x01, 0x02, 0x03]);
   eq(wav.pcmFromAudio(ltFirst, { sampleRate: 22050, format: "pcm" }).container, "raw",
      "PCM starting with 0x3c is not mistaken for HTML");
-  // Under `wav` it is refused like any other non-RIFF body — but the CLAIM ABOVE still
-  // holds, and this is how: the kind is `unreadable`, never `html`. The route maps those
-  // two onto different reasons and tells the operator to fix different things (a service
-  // token vs. a gateway), so a mis-diagnosis here would send someone the wrong way.
+  // Under `wav` it is refused like any non-RIFF body, but the kind stays `unreadable`, never
+  // `html` — the route maps them to different operator fixes.
   let ltThrew = null;
   try { wav.pcmFromAudio(ltFirst, { sampleRate: 22050 }); } catch (e) { ltThrew = e; }
   eq(ltThrew && ltThrew.kind, "unreadable", "…and under wav it is `unreadable`, NOT a false `html` diagnosis");
@@ -317,10 +287,7 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   // A LIST/INFO chunk before `data` — a very common encoder habit. A reader that assumed
   // the data started at byte 44 would return the LIST text as audio.
   {
-    // `\u0000` as an ESCAPE, not a literal NUL byte. A single raw NUL in a source file makes
-    // `grep` classify the whole file as binary and skip it silently — which is exactly how
-    // this file's 21 `pcmFromAudio` call sites stayed invisible to the sweep that was meant
-    // to find every caller before `format` was introduced. It cost a red CI run.
+    // `\u0000` as an ESCAPE: a raw NUL byte makes grep treat this file as binary and skip it.
     const list = new TextEncoder().encode("INFOISFT" + "\u0000".repeat(4) + "Lavf");
     const total = 4 + 24 + (8 + list.length) + (8 + pcm.length);
     const file = new Uint8Array(8 + total);
@@ -384,14 +351,9 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
     eq(threw && threw.kind, "unreadable", `…of kind unreadable (no ${label})`);
   }
 
-  // A RIFF that is not WAVE (an AVI, say) is not a WAV, and THIS COMMENT USED TO SAY THE
-  // WRONG THING. It said falling through to raw was "the conservative outcome: `audio.js`
-  // will decode noise-shaped garbage rather than the route crashing". Decoding noise-shaped
-  // garbage IS the failure mode — it is several seconds of full-scale static played to a
-  // child, and it is the exact harm `wav.js`'s header says the module exists to prevent.
-  // Refusing is the conservative outcome. Under the shipped `wav` default it is now refused;
-  // under `pcm` it still falls through, because there the caller really did ask for
-  // headerless bytes and an AVI header is only four unlucky bytes of them.
+  // A RIFF that is not WAVE (an AVI) is refused under the shipped `wav` default — decoding it
+  // would be full-scale static; under `pcm` it falls through, since the caller asked for
+  // headerless bytes.
   {
     const file = wav.writeWav(pcm, { sampleRate: 22050, channels: 1, bitsPerSample: 16 });
     asciiAt(file, 8, "AVI ");
@@ -486,18 +448,10 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
 /* =========================================================================== *
  * 9. HOW LONG DOES A WAV SAY IT IS? — `wavDurationMs`, the ears' duration cap
  * =========================================================================== *
- * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 (`DEMO_MAX_AUDIO_BYTES` and the
- * paragraph that says a byte cap is not a duration cap), §4.5 (`too_long`).
- *
- * THE CLAIM. §4.1 derived 500 KB from one measurement — ~32 KB/s for 16 kHz 16-bit mono —
- * and then described the cap as "≈ 15 s". **That arithmetic is true of exactly one
- * format.** STT is billed by DURATION, and every other legal WAV declares more seconds in
- * the same bytes: halve the rate and it doubles, halve the width and it doubles again.
- * The table below is the evidence, computed by the real parser at the real cap.
- *
- * The parser is a chunk walk over integers and nothing else. It NEVER decodes: a hostile
- * upload has to be measurable without being interpreted, which is the whole reason this is
- * a header read and not a decoder.
+ * Spec: live-sim-demo.md §4.1, §4.5 (`too_long`). The 500 KB byte cap is "≈ 15 s" only for
+ * 16 kHz 16-bit mono; STT bills by DURATION and lower rates/widths declare more seconds in
+ * the same bytes (the table below, computed at the real cap). The parser is a header chunk
+ * walk that NEVER decodes a hostile upload.
  */
 {
   /** A WAV of exactly `dataLen` audio bytes at an arbitrary rate/width — including widths
@@ -571,9 +525,7 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   ok(dl && dl.ms === 1000, "a LIST chunk before fmt/data is walked past, not tripped over");
 
   // ---- 9e. NO OPINION is not "short" -------------------------------------- //
-  // Every one of these must return null so the caller can tell "I measured it and it is
-  // fine" from "I could not measure it". A caller that treats null as within-cap has
-  // misread the contract, and the route does not.
+  // Each returns null, so a caller can tell "measured and fine" from "could not measure".
   eq(wav.wavDurationMs(new Uint8Array(0)), null, "an empty body is not measurable");
   eq(wav.wavDurationMs(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4, 5, 6, 7, 8])), null,
      "a webm/Matroska body is not measurable — the duration is in a bitstream, not a header");

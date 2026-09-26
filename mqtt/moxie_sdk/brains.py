@@ -1,39 +1,22 @@
 """
 Which brain answers this child — the registry behind "any AI wears the shell".
 
-`ai-seam.md` §2 says Moxie's body is a shell and everything that makes a given Moxie
-*think* enters through one seam. Until now that claim was true of the architecture and
-false of the appliance: a brain was chosen **once, globally**, by `MOXIE_APP` at import
-time, and `config.build_app()` branched on four literal strings. One box, one brain, no
-per-child anything — and an unrecognised value silently became the LLM app.
+`ai-seam.md` §2 says everything that makes a Moxie *think* enters through one seam. This
+module makes that true per child, answering the same two questions `voice_settings.py`
+answers for voice:
 
-This module is the missing half. It answers the same two questions the 🎚️ voice picker's
-`voice_settings.py` answers, in the same shape, for the brain:
+  1. **What can this appliance run?** A closed *positive list*, `BRAINS` (the codebase's
+     idiom: `content/packs.py::SPEC`, `content/ext.py::OPS`, `vocab.py`). A name outside
+     it is **refused, never guessed** — no deny-list, no silent fallback to `llm`.
+  2. **Which one is in force for THIS robot?** `defaults ⊕ fleet ⊕ per-robot`, the same
+     layering as every other parent-set value (`cloud_config.merge_config_layers`);
+     `brain` is just another key. `resolve_brain` also reports *which layer decided*.
 
-  1. **What can this appliance run?** A *positive list* — `BRAINS` — in the idiom this
-     codebase already relies on (`SPEC`/`FIELDS` in `content/packs.py`, the frozen
-     `OPS`/`STATEMENTS` in `content/ext.py`, the frozen catalog in `vocab.py`). A name in
-     the table resolves to a brain; a name that is not in it is **refused, never guessed**.
-     There is no deny-list: nothing is "everything except", so nothing can be added by
-     forgetting to exclude it.
-  2. **Which one is in force for THIS robot?** `defaults ⊕ fleet ⊕ per-robot` — the
-     layering that already exists for every other parent-set value (audit ADOPT #6,
-     `cloud_config.merge_config_layers`, `fleet/config.json`, `POST /config?scope=fleet`).
-     `brain` is simply another key in those layers, so there is exactly one layering in
-     this codebase and this is not a second one. `resolve_brain` is the scalar case of
-     that merge plus the one thing a merge cannot say: *which layer decided*, which is
-     what a console card has to render and what a boot line has to print.
+**The operator's environment wins.** An explicit `MOXIE_APP` **pins** the brain; a
+per-child pick may not overrule it (see "the environment's pin" below).
 
-**The operator's environment wins.** An explicit `MOXIE_APP` **pins** the appliance's
-brain and a per-child pick may not overrule it — the standing owner rule PR #77 wrote
-into `voice_settings.pin_for_env` for `MOXIE_TTS`/`MOXIE_STT`. See "the environment's
-pin" below for why the pin reads the *raw environment* rather than `config.MOXIE_APP`,
-and which value would otherwise have pinned every unconfigured box by accident.
-
-Deliberately dependency-free: no HTTP, no `openai`, no MQTT, no `config` import — the
-same rule `voice_settings.py` follows, so every test here runs with no gateway, no key
-and no model wheels. The *builders* live in `config.BrainEngines`, which is the only
-thing that knows what a `MOXIE_LLM_BASE_URL` is.
+Dependency-free (no HTTP, `openai`, MQTT or `config` import). The builders live in
+`config.BrainEngines`.
 """
 from __future__ import annotations
 
@@ -42,24 +25,16 @@ from typing import List, Optional, Sequence
 #: The environment variable that selects — and pins — the appliance's brain.
 ENV_VAR = "MOXIE_APP"
 
-#: The key a brain choice occupies in the ordinary config layers (`fleet/config.json`,
-#: the per-robot overrides). Named once, because `cloud_config`, the runtime and the
-#: console all have to agree about it.
+#: The key a brain choice occupies in the ordinary config layers.
 CONFIG_KEY = "brain"
 
 #: The brain a box falls back to when nothing anywhere names one. It matches
 #: `config.MOXIE_APP`'s own default, and the two are pinned together by a test.
 DEFAULT_BRAIN = "llm"
 
-#: **The positive list.** `{id: {label, group, blurb, needs}}` — closed, ordered, and
-#: frozen as a literal in `sim/tests/test_brains.py`, so adding a brain requires a test
-#: edit and a reviewer (the rule `content/ext.py::OPS` states for its own table).
-#:
-#: `needs` names the environment variables that brain cannot run without; it is what the
-#: console card shows under an option and what a refusal quotes, so an operator reads
-#: *which variable to set* rather than "could not build". It is documentation, not
-#: enforcement: the builders (`config.build_brain`) are the ones that exit, and they name
-#: the same variables, because a check in two places is a disagreement waiting to happen.
+#: **The positive list.** `{id: {label, group, blurb, needs}}` — closed, ordered, frozen as
+#: a literal in `sim/tests/test_brains.py` (adding a brain needs a test edit). `needs` is
+#: documentation of required env vars (the builders enforce them).
 BRAINS = {
     "llm": {
         "label": "Free-form companion",
@@ -104,12 +79,8 @@ def is_brain(name) -> bool:
 def sanitize_brain(value) -> str:
     """The brain `value` names, or `""` — the positive list applied.
 
-    Used on every path a name can arrive by: the environment, a hand-edited
-    `fleet/config.json`, a console POST, a stale page. `""` means "this is not a brain
-    we know", and every caller treats that as *fall through to the layer underneath* or
-    *refuse and say what is offered* — never as "assume the default", which is the
-    behaviour this module exists to remove (`config.build_app` used to return the LLM app
-    for `MOXIE_APP=gpt5`, `MOXIE_APP=Echo` and `MOXIE_APP=llm # the brain` alike).
+    `""` means "not a brain we know"; callers fall through to the layer underneath or
+    refuse — never "assume the default".
     """
     if not isinstance(value, str):
         return ""
@@ -130,10 +101,8 @@ def brain_needs(name) -> tuple:
 def describe_brain(name) -> str:
     """What the card shows: `Content modules (content)`.
 
-    The id is repeated on purpose — it is what an operator puts in `MOXIE_APP` and what
-    `POST /brain` takes, so a parent choosing between two entries can see the thing they
-    would type. Unknown names are echoed verbatim rather than translated into an invented
-    label: a card that renders `gpt5` as "Free-form companion" would be lying.
+    The id is repeated (it is what one types in `MOXIE_APP`); unknown names are echoed
+    verbatim rather than given an invented label.
     """
     key = sanitize_brain(name)
     if not key:
@@ -180,10 +149,7 @@ def find_option(entries, name) -> Optional[dict]:
 def filter_options(entries: Sequence[dict], pin: str) -> List[dict]:
     """`entries` reduced to the pinned brain (untouched when nothing is pinned).
 
-    Filtering here rather than in the browser is what makes the two halves agree by
-    construction (`config.VoiceEngines.available`'s reasoning, exactly): the card cannot
-    show an entry this appliance would then refuse to install, and a stale page that
-    posts one is refused by the ordinary availability check with the pin note saying why.
+    Done server-side so the card never shows an entry the appliance would refuse.
     """
     pinned = sanitize_brain(pin)
     if not pinned:
@@ -192,47 +158,22 @@ def filter_options(entries: Sequence[dict], pin: str) -> List[dict]:
 
 
 # --------------------------------------------------- the environment's pin --
-# `MOXIE_APP=content` is an OPERATOR'S statement about this box, and a per-child dropdown
-# must not be able to talk them out of it — the standing owner rule PR #77 enforced for
-# `MOXIE_TTS`/`MOXIE_STT`. So an explicit value PINS the appliance's brain: the pinned
-# brain is the only entry the card offers, `resolve_brain` returns it whatever the layers
-# say, and a stale page's cross-brain pick is refused with the variable NAMED.
+# An explicit `MOXIE_APP` is the OPERATOR'S statement about this box, so it PINS the brain
+# (as `MOXIE_TTS`/`MOXIE_STT` pin voice): only that entry is offered, `resolve_brain`
+# returns it, and a cross-brain pick is refused with the variable named. All four names
+# are selections, so all four pin.
 #
-# PR #77's lesson, applied honestly rather than copied: **a value that is a PERMISSION
-# rather than a SELECTION must not pin.** `MOXIE_TTS=tone` is excluded there because
-# `build_synthesizer` treats `tone` as the last *rung* under a gateway and under Piper —
-# it opts an engine in, it does not choose one — and because both compose files default
-# to it, so pinning would have silently reduced every `docker compose up` deployment's
-# dropdown to one entry.
+# The pin is computed from the RAW environment (`config.brain_pin()`), never from
+# `config.MOXIE_APP`, whose `llm` fallback would pin every unconfigured box. `""`, `any`
+# and `auto` ("decide per child") pin nothing, nor does a typo (refused at build time).
 #
-# `MOXIE_APP` has no permission-shaped value: `build_app()` branches on the four names and
-# each one returns exactly that app, so all four are selections and all four pin. What it
-# *does* have is a **fall-through**: `config.MOXIE_APP` is `os.environ.get("MOXIE_APP",
-# "llm")`, so an unset environment already reads as `llm`. Pinning that resolved value
-# would have pinned every box where nobody said anything — the same accident in a
-# different costume. So the pin is computed from the RAW environment
-# (`config.brain_pin()` passes `os.environ.get("MOXIE_APP", "")`, never `config.MOXIE_APP`),
-# and `""` pins nothing.
-#
-# `any` and `auto` are the explicit "decide per child" values — `voice_settings`' `auto`,
-# spelled for a brain. They select nothing and pin nothing, which is what a deployment
-# that wants the per-child picker sets. An unrecognised value pins nothing either, because
-# it is refused outright at build time; pinning a name we cannot build would turn a typo
-# into a locked-down appliance.
-#
-# KNOWN CONSEQUENCE, deliberate and documented: our own `docker-compose.yml` interpolates
-# `MOXIE_APP: ${MOXIE_APP:-content}`, so a `docker compose up` with nothing set arrives
-# here as an explicit `content` and pins. The compose default is *our* choice of the best
-# out-of-box brain, not the operator's, so this is the shape #77 warned about — but the
-# escape is named on the card and in one line of `.env` (`MOXIE_APP=any`), and the
-# alternative (excluding `content` from the table) would silently ignore the operator who
-# really did write `MOXIE_APP=content` themselves. Told loudly beats guessed quietly.
+# Known consequence: `docker-compose.yml` defaults `MOXIE_APP` to `content`, which pins;
+# the card and `.env` name the escape (`MOXIE_APP=any`).
 
 #: Values that pin nothing — the ones that mean "decide for me".
 NO_PIN_VALUES = ("", "any", "auto")
 
-#: `{raw value: the brain it pins}`. Every brain pins itself; nothing else is in the
-#: table, so `any`, `auto`, `""` and a typo all pin nothing.
+#: `{raw value: the brain it pins}`. Every brain pins itself; nothing else does.
 ENV_PIN = {b: b for b in BRAIN_IDS}
 
 
@@ -252,12 +193,8 @@ def honours_pin(name, pin) -> bool:
 
 
 def pin_note(value) -> str:
-    """The one sentence the card prints when the environment has pinned the brain.
-
-    Empty when nothing is pinned, so a caller can render it unconditionally. It names the
-    variable, the brain, and the value that hands the choice back — a refusal that only
-    listed the surviving option would read as "the appliance lost your brain".
-    """
+    """The sentence the card prints when the environment pinned the brain ("" if not):
+    names the variable, the brain, and the value that hands the choice back."""
     pin = pin_for_env(value)
     if not pin:
         return ""
@@ -275,16 +212,9 @@ def resolve_brain(*, default: str = DEFAULT_BRAIN, fleet=None, robot=None,
                   pin: str = "") -> dict:
     """The brain in force for one robot, and **which layer said so**.
 
-    `default ⊕ fleet ⊕ robot`, later wins — the scalar case of
-    `cloud_config.merge_config_layers`, which is where the merge itself happens; a test
-    pins the two against each other so this can never drift into a second layering. Over
-    the top of all three sits the environment's `pin`, which wins outright.
-
-    A layer naming something that is not a brain (a hand-edited `fleet/config.json`, a
-    record written by a newer version) **falls through to the layer underneath** and says
-    so in `note`, rather than blanking the appliance or installing something nobody named
-    — `voice_settings.read_settings`' rule, for the same reason: a broken file must never
-    stop a box from talking.
+    `default ⊕ fleet ⊕ robot`, later wins (the scalar case of
+    `cloud_config.merge_config_layers`; a test pins them together), with the env `pin`
+    over all. A layer naming a non-brain **falls through** and says so in `note`.
 
     Returns `{brain, source, requested, pinned, note}`:
       * `brain` — the id in force, always a member of `BRAINS`;
@@ -319,10 +249,7 @@ def resolve_brain(*, default: str = DEFAULT_BRAIN, fleet=None, robot=None,
 def normalize_brain_patch(patch, *, pin: str = "") -> Optional[str]:
     """A console pick → the brain id to store, or `None` to clear the layer.
 
-    Raises `ValueError` with the sentence the card shows when the pick is not a brain, or
-    when the environment has pinned a different one. Raising rather than returning
-    `{"ok": False}` matches `voice_settings.normalize_voice_settings` and
-    `telehealth.validate_mood`: the caller owns the HTTP shape, this module owns the rule.
+    Raises `ValueError` with the card's sentence for a non-brain or a pin conflict.
     """
     if isinstance(patch, dict):
         if CONFIG_KEY not in patch:
@@ -344,11 +271,7 @@ def normalize_brain_patch(patch, *, pin: str = "") -> Optional[str]:
 
 
 def pin_note_for_pin(pin: str) -> str:
-    """The pin sentence when all you hold is the pinned brain (not the raw env value).
-
-    `pin_note` takes what the environment said; a refusal deep in the runtime only knows
-    what it resolved to. Both name the variable, which is the part that matters.
-    """
+    """The pin sentence when all you hold is the resolved pin (not the raw env value)."""
     pinned = sanitize_brain(pin)
     if not pinned:
         return ""
@@ -360,8 +283,7 @@ def boot_line(resolved: dict, *, device_id: str = "") -> str:
     """The supervisor's one-line report — `brain: content (fleet)` /
     `brain: echo (MOXIE_APP pins it) — the llm chosen here is not installed`.
 
-    Says *what* is answering and *why* it is that one, because "the wrong brain" and "not
-    the brain I picked" are the two outcomes an operator needs to read off a log.
+    Says *what* is answering and *why*.
     """
     r = resolved or {}
     who = f"{device_id}: " if device_id else ""

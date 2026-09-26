@@ -127,9 +127,8 @@ def test_build_transcriber_auto_is_none_without_whisper():
 
 def test_assemble_builds_runtime_with_configured_app():
     c = _fresh_config({"MOXIE_APP": "echo", "MOXIE_STT": "off"})
-    import run
-    importlib.reload(run)
-    rt = run.assemble(c)
+    from helpers_runtime import load_mqtt_run
+    rt = load_mqtt_run().assemble(c)
     assert rt.app.name == "echo"
     assert rt._synth is None and rt._transcriber is None   # nothing configured → off
     assert rt.child.nickname == c.CHILD_NICKNAME

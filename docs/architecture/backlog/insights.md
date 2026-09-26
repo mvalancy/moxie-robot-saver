@@ -11,8 +11,8 @@
 > > *still-open* verdict needs evidence as much as a shipped one, so here it is: **none** of §11's P0
 > > rows 1, 2, 4, 7, 9 or 10 exist. `grep -rn 'RESERVED_EVENTS\|bucket_events\|buckets'` over
 > > [`telemetry.py`](../../../mqtt/moxie_sdk/telemetry.py),
-> > [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) and
-> > [`fleet.py`](../../../server/moxie_server/fleet.py) returns **nothing**; there is no `_mint`, no
+> > [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) and
+> > [`fleet.py`](../../../server/moxie_server/fleet/) returns **nothing**; there is no `_mint`, no
 > > `normalize_activity`, and **no `sim/tests/test_insights.py`**. What exists is the durable half this
 > > brief already credits — `roll_up_packet`:380, `reconcile_rollup`:495, `history_view`:520,
 > > `rollup_totals`:547, `summarize_events`:88 — over a **free-string** `event_name` (:105, :403), which
@@ -57,7 +57,7 @@ Three more ceilings, up front, so nobody has to find them in a risk table:
 - **Nothing on this appliance has ever *produced* a `Packet` either.** `build_packet`
   ([`telemetry.py`:45](../../../mqtt/moxie_sdk/telemetry.py)) is called by four test files and by no
   runtime path; `ingest_telemetry` is reached only from `_on_event`'s `telemetry` / `analytics` /
-  `packet*` subtopics ([`moxie_runtime.py`:2850](../../../mqtt/supervisor/moxie_runtime.py)), and our
+  `packet*` subtopics ([`moxie_runtime.py`:2850](../../../mqtt/supervisor/moxie_runtime/)), and our
   SIM publishes on none of them. So the durable store that shipped in PR #55 is, on every appliance
   running today, **empty**. It is correct, tested and unused.
 - **We have never scored a child.** The scored fields the audit hopes a mood trend could rest on
@@ -79,7 +79,7 @@ PR #55 (2026-09-02) shipped the **durable half**, and it is real:
 | Two per-robot collections — a 500-envelope ring and 35 days of daily roll-ups | [`moxie_sdk/telemetry.py`](../../../mqtt/moxie_sdk/telemetry.py) `PACKETS_COLLECTION` / `DAILY_COLLECTION` | [`test_telemetry.py`](../../../sim/tests/test_telemetry.py) — 29 collected |
 | The `LoggingPolicy` gate applied **on the way to disk**, not only on the way off the robot | `telemetry.py::storable_packet` → `moxie_runtime.py::_persist_telemetry` | [`test_telemetry_runtime.py`](../../../sim/tests/test_telemetry_runtime.py) — 21 test functions |
 | Hydration on first touch, so a restart does not erase the answer | `moxie_runtime.py::_telemetry_buffer` | [`test_sil_durable_telemetry.py`](../../../sim/tests/test_sil_durable_telemetry.py) — 8 functions, 10 collected (one 3-way `parametrize`) |
-| A 📈 card rendering a zero-filled week, its real retention window and the lifetime total | [`server/static/app.js`](../../../server/static/app.js) `weekBars` / `refreshInsights`; [`fleet.py::normalize_telemetry`](../../../server/moxie_server/fleet.py) | `test_console_roundtrip.py` |
+| A 📈 card rendering a zero-filled week, its real retention window and the lifetime total | [`server/static/app.js`](../../../server/static/js/) `weekBars` / `refreshInsights`; [`fleet.py::normalize_telemetry`](../../../server/moxie_server/fleet/) | `test_console_roundtrip.py` |
 
 What is **not** shipped is everything the row was actually about: *sessions, activity mix, mood trend,
 time-of-day patterns, "what did we talk about this week"*. And the reason is not effort. It is that
@@ -121,7 +121,7 @@ in the `event_name` — the only field that survives the gate and the only field
 
 ### 2.2 The card
 
-[`app.js::refreshInsights`](../../../server/static/app.js) already renders a zero-filled week
+[`app.js::refreshInsights`](../../../server/static/js/) already renders a zero-filled week
 (`weekBars`), the by-event table, the newest envelopes, and a footer stating the true retention
 window. Under `persisted:false` it says *"nothing is being saved"* rather than drawing an empty week
 as if it were a quiet one. That honesty is load-bearing and §4.2 extends it rather than replacing it.
@@ -135,7 +135,7 @@ defensible for an aggregate, which is the rule §6.1 makes explicit.
 
 This is the load-bearing fact of the whole brief, so it is stated as a measurement.
 
-`MoxieRuntime._stage` ([`moxie_runtime.py`:3189](../../../mqtt/supervisor/moxie_runtime.py)) is *"the
+`MoxieRuntime._stage` ([`moxie_runtime.py`:3189](../../../mqtt/supervisor/moxie_runtime/)) is *"the
 single place a published turn becomes a scored turn"*. It runs on every path that says words — the
 model reply (`:3018`), each streamed chunk (`:3251`), greetings (`:2697`, `:2766`), the safety
 redirect (`:2427`), the not-paired line (`:2158`) — and returns `(markup, scored)` where `scored`
@@ -174,7 +174,7 @@ child-side affect signal — are never populated.
 
 ### 2.4 `mentor_behaviors` — recovered, durable, and today ungated
 
-`ingest_mentor_behavior` ([`:3870`](../../../mqtt/supervisor/moxie_runtime.py)) parses an
+`ingest_mentor_behavior` ([`:3870`](../../../mqtt/supervisor/moxie_runtime/)) parses an
 `ActivityUpdate.mentor_behavior` (Cloud.proto:241) down to
 `MENTOR_BEHAVIOR_FIELDS = ("module_id", "content_id", "content_day", "timestamp", "action",
 "instance_id", "ended_reason")` ([`wire.py`:231](../../../mqtt/moxie_sdk/wire.py)) and appends it to
@@ -196,7 +196,7 @@ Two things about it a build agent must not blur:
 Both were read, not inferred. Neither is caused by this brief; both would bite the agent that builds it.
 
 - **The rolling transcript is not `LoggingPolicy`-gated.** `_save_memory`
-  ([`:324`](../../../mqtt/supervisor/moxie_runtime.py)) writes `self.history[device_id]` — the child's
+  ([`:324`](../../../mqtt/supervisor/moxie_runtime/)) writes `self.history[device_id]` — the child's
   and Moxie's actual words — to `$MOXIE_MEMORY_DIR/<device>.json` whenever `MOXIE_MEMORY_DIR` is set,
   with no policy check anywhere on the path (`_remember`:3269 and `_ingest_notify`:3857 are its only
   callers, and neither checks either). `docker-compose.yml`:103 sets it to `/data/memory` by default.
@@ -205,7 +205,7 @@ Both were read, not inferred. Neither is caused by this brief; both would bite t
   about this week": the store that question would read is the one store whose privacy gate is
   missing.**
 - **Telemetry has no erasure.** `do_DELETE` accepts exactly one path, `/memory`
-  ([`:987-995`](../../../mqtt/supervisor/moxie_runtime.py)); `POST /memory {"erase": …}` is its twin.
+  ([`:987-995`](../../../mqtt/supervisor/moxie_runtime/)); `POST /memory {"erase": …}` is its twin.
   There is no way for a parent to delete `telemetry_packets`, `telemetry_daily` or
   `mentor_behaviors`. The contract's third leg — *"never policy-gated: a parent must always be able to
   delete"* (`erase_memory`, `:407`) — has no telemetry counterpart. §6.3 adds one.
@@ -379,7 +379,7 @@ it would look convincing. That is precisely why it is the most dangerous chart i
 |---|---|---|
 | `moxie.robot.connect` | `_device_connect` | *Was the robot even on?* — separates "she didn't talk to it" from "it was unplugged" |
 | `moxie.session.start` | first `moxie.turn` after ≥ `MOXIE_SESSION_IDLE_S` of no turns | Q2 (conversations) |
-| `moxie.session.end` | `_end_conversation` ([`:462`](../../../mqtt/supervisor/moxie_runtime.py) — `exit` / `disconnect` / `module_switch`), or lazily at the next turn when the idle window elapsed | Q2, and P1's durations |
+| `moxie.session.end` | `_end_conversation` ([`:462`](../../../mqtt/supervisor/moxie_runtime/) — `exit` / `disconnect` / `module_switch`), or lazily at the next turn when the idle window elapsed | Q2, and P1's durations |
 | `moxie.turn` | once per published **answer** in `_publish_chat`, not once per streamed chunk | Q1, Q2 |
 
 Four, deliberately. `MAX_DAY_EVENTS` is 24 and overflow is first-come (`roll_up_packet`:345), so a
@@ -491,7 +491,7 @@ Not a blank card. Three things:
 
 `DELETE /telemetry?device_id=…` — deletes `telemetry_packets`, `telemetry_daily` **and**
 `mentor_behaviors` for that robot. Modelled line for line on `erase_memory`
-([`:407`](../../../mqtt/supervisor/moxie_runtime.py)) including its docstring rule — *"Never
+([`:407`](../../../mqtt/supervisor/moxie_runtime/)) including its docstring rule — *"Never
 policy-gated: a parent must always be able to delete"* — and on Fork A's `rewrite_daily_transcript`,
 which unlinks the day's file when it becomes empty rather than leaving a husk (§2.6). `JsonStore`
 already has `delete()`. Proxied as `DELETE /local/robots/{id}/telemetry`; a ✕ on the card with one
@@ -499,7 +499,7 @@ confirmation.
 
 **Its cost, stated:** erasing `mentor_behaviors` degrades the schedule planner, which reads that
 history to stop re-offering finished activities and to end FTUE
-(`plan_schedule_for`, [`:3884`](../../../mqtt/supervisor/moxie_runtime.py)). A parent who erases will
+(`plan_schedule_for`, [`:3884`](../../../mqtt/supervisor/moxie_runtime/)). A parent who erases will
 see repeats. The confirmation says so in one sentence. Deletion wins anyway.
 
 ### 6.4 Two preconditions, both small, both required before the card ships
@@ -619,13 +619,13 @@ consent surface separate from `logging_policy`.
 |--:|---|---|
 | 1 | [`mqtt/moxie_sdk/telemetry.py`](../../../mqtt/moxie_sdk/telemetry.py) | `RESERVED_EVENTS` + the four names; `roll_up_packet(…, bucket_events=…, reserved=…)`; `buckets` in the row and in `_clean_rollup`; `history_view` carries it through. Pure. ~50 LOC |
 | 2 | `sim/tests/test_telemetry.py` | T1, T3, T4, T7, T8 — **T3 red first** (the cap is first-come today) |
-| 3 | [`mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) | `_mint(event)` → `_persist_telemetry`; call sites in `_device_connect`, `_publish_chat` (once per answer, `event_id`-deduped), `_end_conversation`; session derivation cached in `RobotContext.extra`, hydrated from the **stored** ring; the reserved-prefix rename in `ingest_telemetry`; the `telemetry_policy` gate on `ingest_mentor_behavior` (**P-1**); `erase_telemetry` + `DELETE /telemetry`; the activity/session/bucket fields on `telemetry_view` |
+| 3 | [`mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) | `_mint(event)` → `_persist_telemetry`; call sites in `_device_connect`, `_publish_chat` (once per answer, `event_id`-deduped), `_end_conversation`; session derivation cached in `RobotContext.extra`, hydrated from the **stored** ring; the reserved-prefix rename in `ingest_telemetry`; the `telemetry_policy` gate on `ingest_mentor_behavior` (**P-1**); `erase_telemetry` + `DELETE /telemetry`; the activity/session/bucket fields on `telemetry_view` |
 | 4 | `sim/tests/test_insights.py` | **New.** T2, T5, T6, T9-T13 |
 | 5 | `sim/tests/test_clock_dependence.py` | Register every new clock-reading test with its justification (both-directions ratchet) |
 | 6 | `sim/ci/ci.yml` **and** `.github/workflows/*` | Wire the new test file into a tier — **template and installed copy in the same commit** |
-| 7 | [`server/moxie_server/fleet.py`](../../../server/moxie_server/fleet.py) | `normalize_telemetry` carries `buckets`, `sessions`, `turns`, `activity`, and the refusal sentence; `normalize_activity` (new, pure) folds `mentor_behaviors` into rows |
+| 7 | [`server/moxie_server/fleet.py`](../../../server/moxie_server/fleet/) | `normalize_telemetry` carries `buckets`, `sessions`, `turns`, `activity`, and the refusal sentence; `normalize_activity` (new, pure) folds `mentor_behaviors` into rows |
 | 8 | [`server/moxie_server/main.py`](../../../server/moxie_server/main.py) | `DELETE /local/robots/{id}/telemetry` proxy, same shape as the existing telemetry proxy |
-| 9 | [`server/static/app.js`](../../../server/static/app.js) | The three new rows, the empty state, the refusal sentence, the ✕ with its confirmation |
+| 9 | [`server/static/app.js`](../../../server/static/js/) | The three new rows, the empty state, the refusal sentence, the ✕ with its confirmation |
 | 10 | `sim/tests/test_console_roundtrip.py` | The card payload end to end, including T12's sentence |
 | 11 | [`docs/architecture/config-and-telemetry-contract.md`](../config-and-telemetry-contract.md) | §③: the reserved vocabulary, `buckets`, the no-payload rule, erasure |
 | 12 | [`docs/architecture/openmoxie-feature-audit.md`](../openmoxie-feature-audit.md) | Flip BEYOND #5's status in the same PR (the backlog README's house rule) |

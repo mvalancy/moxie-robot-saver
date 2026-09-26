@@ -1,25 +1,20 @@
 """
-The device allowlist / pairing gate (openmoxie-feature-audit.md §3.1, ADOPT quick win).
+The device allowlist / pairing gate (openmoxie-feature-audit.md §3.1).
 
-Our broker accepts anonymous connections — the robot's RS256 JWT is never verified, the
-same LAN model the original ran ([mqtt §3b](../../docs/architecture/mqtt-and-conversation.md)).
-Before this gate, *anything* that announced itself on `/devices/{id}/state` was pushed
-`pairing_status:"paired"` **and the child's `child_pii`**. On a home network that is a
-real exposure, so the appliance now keeps a permit list and is **closed by default**.
+The broker accepts anonymous connections (the robot's JWT is never verified — mqtt §3b), so
+without a gate anything announcing itself on `/devices/{id}/state` would get
+`pairing_status:"paired"` and the child's `child_pii`. The appliance is closed by default:
 
-What is worth a test, and all of it is here:
+  * `build_unpaired_cloud_config()` — the minimal document, never with `child_pii`;
+  * the push seam — unpermitted ⇒ minimal, permitted ⇒ full config, unchanged;
+  * the three ways the gate opens (constructor · `MOXIE_ALLOW_UNVERIFIED_BOTS` · durable
+    fleet flag) and their precedence;
+  * service refusal on the wire: a pending robot's turn never reaches the brain, its
+    schedule pull gets the empty envelope, its telemetry/audio/reports are dropped;
+  * permit → immediate full push; revoke → next push minimal;
+  * durability across a restart, and the console snapshot fields.
 
-  * `build_unpaired_cloud_config()` — the minimal document itself: never a `child_pii`;
-  * the push seam — unpermitted ⇒ minimal, permitted ⇒ the full config, unchanged;
-  * the three ways the gate opens (constructor · `MOXIE_ALLOW_UNVERIFIED_BOTS` · the
-    durable fleet flag) and their precedence;
-  * **service refusal** on the wire: a pending robot's turn never reaches the brain, its
-    schedule pull gets the empty envelope, and its telemetry/audio/reports are dropped;
-  * permit → an immediate full push; revoke → the next push is minimal again;
-  * durability across a supervisor restart, and the console-facing snapshot fields.
-
-No broker and no network: the runtime's MQTT client is `helpers_runtime.FakeClient` and
-every runtime here gets its own `tmp_path` store, so nothing touches `mqtt/data/`.
+No broker or network: `helpers_runtime.FakeClient` and a per-test `tmp_path` store.
 """
 import json
 import os
@@ -28,9 +23,7 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# `server/moxie_server/fleet.py` is deliberately dependency-free (no fastapi here), so the
+# `server/moxie_server/fleet/` is deliberately dependency-free (no fastapi here), so the
 # console's normalizer is unit-testable in the same hermetic run as the runtime.
 sys.path.insert(0, os.path.join(REPO, "server"))
 
@@ -386,7 +379,7 @@ def test_the_enforced_flag_and_the_stored_flag_are_reported_separately(tmp_path,
 
 
 def test_the_fleet_normalizer_surfaces_pending_robots():
-    """`server/moxie_server/fleet.py` is pure, so the console shape tests here."""
+    """`server/moxie_server/fleet/` is pure, so the console shape tests here."""
     from moxie_server.fleet import normalize_fleet
     out = normalize_fleet({
         "ok": True, "app": "echo", "uptime_s": 3,

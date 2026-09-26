@@ -1,27 +1,20 @@
 """
 🎴 The launch-card decoder — one scanned string in, at most one launch out.
 
-This is the file that decides what a stranger's printed QR code may do to a child's
-robot, so its interesting half is not the happy path. `decode` is handed bytes chosen by
-whoever printed the paper: **nothing below may raise, and nothing but a card from the
-closed catalog may produce an action.**
+`decode` is handed bytes chosen by whoever printed the paper: nothing may raise, and only a
+card from the closed catalog may produce an action. Each refusal has a test named for what it
+refuses, and `sim/tools/launch_card_mutation_check.py` deletes one guard at a time to prove
+each is load-bearing.
 
-Every refusal has a test *named for the thing it refuses*, so a reader of the failure
-output learns which property broke without opening the module. Every one of them is
-proven load-bearing by `sim/tools/launch_card_mutation_check.py`, which deletes one guard
-at a time and requires a red — a test that cannot fail proves nothing.
-
-Hermetic and pure: no broker, no clock, no model, no I/O.
+Hermetic and pure.
 """
 from __future__ import annotations
 
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk import launch_cards as cards                            # noqa: E402
 from moxie_sdk import schedule                                          # noqa: E402
@@ -122,13 +115,9 @@ def test_exit_is_refused_by_name_even_though_the_grammar_parses_it():
 
 
 def test_launch_if_confirmed_is_refused_by_name_and_this_is_the_subtle_one():
-    """The one refusal that CANNOT be made by inspecting the parsed action.
-
-    `actions.LAUNCH_IF_CONFIRMED_AS` maps `<launch_if_confirmed:MOD>` onto the very same
-    `ActionType.LAUNCH` a plain `<launch:MOD>` produces (actions.py:67), so "keep it only
-    if it is of type LAUNCH" would let this card straight through. The gate is on the tag
-    NAME (`actions.tag_names`), before the grammar erases the difference.
-    """
+    """The refusal that cannot be made from the parsed action: `<launch_if_confirmed:MOD>`
+    maps to the same `ActionType.LAUNCH` as `<launch:MOD>` (actions.py:67), so the gate is
+    on the tag NAME (`actions.tag_names`)."""
     assert cards.decode("GO<launch_if_confirmed:DM>") is None
     # And the reason the type check alone is not enough, stated as an assertion:
     from moxie_sdk.actions import parse_action_tags

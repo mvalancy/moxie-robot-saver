@@ -1,39 +1,24 @@
 """Behavior-markup seam — the one place a reply without its own markup gets performed.
 
-Three generations live behind one signature, chosen by `MOXIE_EXPRESSIVE`:
+`MOXIE_EXPRESSIVE` picks the generation behind one signature:
 
 | `MOXIE_EXPRESSIVE` | What answers | Scored fields |
 |---|---|---|
-| `planner` (default) | the **behavior planner** — `moxie_sdk.performance.render(validate(plan(…)))` | yes |
-| `floor` | the **markup floor** — `moxie_sdk.automarkup.annotate` | yes (scored, not rendered) |
-| `off` | v1's passthrough: Moxie reads the line out like a speaker | no |
+| `planner` (default) | the behavior planner — `moxie_sdk.performance.render(validate(plan(…)))` | yes |
+| `floor` | the markup floor — `moxie_sdk.automarkup.annotate` | yes (scored, not rendered) |
+| `off` | passthrough: Moxie reads the line out like a speaker | no |
 
-**The planner always degrades to the floor.** `plan()` returns a `Performance`, returns
-`None`, or blows its budget; in the last two the seam calls `annotate()` and the wire
-shape is *identical* — a child never notices which one answered
-(`docs/architecture/backlog/expressiveness.md` §2.6). A planner failure is a downgrade in
-expressiveness, never an error, because the floor already produces good markup. Every
-exception path is proven to land there by `sim/tests/test_performance.py`'s fault
-injection, and a repeat offender is latched off by the budget breaker below rather than
-being allowed to tax every turn.
-
-**Scoring is separate from rendering.** `plan()` is the scorer in *both* `planner` and
-`floor` mode, so `floor` is a pure rendering rollback: the wire keeps its `mood`,
-`mood_intensity`, `dialog_act`, `emotion` and `signal` while the markup goes back to the
-word-level generator. `off` is the one-variable rollback all the way to v1.
-
-The seam itself runs once per spoken chunk, on the hot path between the first token and
-the first audio, which is why everything behind it is pure, stdlib-only and deterministic.
-
-`MOXIE_AUTOMARKUP=0` still forces the passthrough (it predates `MOXIE_EXPRESSIVE` and is
-kept as an alias for `off`).
+The planner always degrades to the floor with an identical wire shape (exception, a
+declined `plan()`, or a blown budget; expressiveness.md §2.6), and a repeat budget
+offender is latched off. `plan()` scores in both `planner` and `floor` mode, so `floor`
+is a pure rendering rollback. Runs once per spoken chunk on the hot path, hence pure,
+stdlib-only and deterministic. `MOXIE_AUTOMARKUP=0` is a legacy alias for `off`.
 """
 import os
 import sys
 import time
 
-# The SDK is a sibling package of `supervisor/` in the image; the runtime already puts
-# `mqtt/` on the path, but keep the seam importable on its own for tests and tools.
+# Keep the seam importable on its own (tests, tools): put `mqtt/` on the path.
 _MQTT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _MQTT not in sys.path:
     sys.path.insert(0, _MQTT)
@@ -44,13 +29,9 @@ from moxie_sdk import performance as _perf             # noqa: E402
 MODE_OFF, MODE_FLOOR, MODE_PLANNER = "off", "floor", "planner"
 _MODES = (MODE_OFF, MODE_FLOOR, MODE_PLANNER)
 
-#: A staged line may not cost more than this on the hot path. It is a ceiling, not a
-#: target: the planner measures at ~0.1 ms/line, so anything near this is a regression or
-#: a machine under real load, and either way the floor should answer.
+#: Hot-path ceiling per staged line (the planner measures ~0.1 ms); over it, the floor answers.
 PLAN_BUDGET_MS = 8.0
-#: Over-budget lines in a row before the seam latches to the floor for the rest of the
-#: process. One slow line is noise; a run of them is a planner that must stop taxing every
-#: turn (§2.6: "when the budget blows, the floor answers").
+#: Over-budget lines in a row before the seam latches to the floor for this process.
 PLAN_BUDGET_STRIKES = 3
 
 _strikes = 0
@@ -126,7 +107,7 @@ def _floor_kwargs(kw: dict) -> dict:
 
 
 def _blew_budget(elapsed_ms: float) -> None:
-    global _strikes, _latched, _reported
+    global _strikes, _latched
     if elapsed_ms <= PLAN_BUDGET_MS:
         _strikes = 0
         return
@@ -171,8 +152,7 @@ def perform(text: str, **kw) -> Staged:
         if staged is not None:
             scored = staged.scored()
 
-    # `staged` is None whenever the breaker has latched (it is only computed above
-    # while the breaker is open), so this needs no second `_latched` check.
+    # `staged` is None whenever the breaker has latched, so no second `_latched` check.
     if mode == MODE_PLANNER and staged is not None:
         try:
             markup = _perf.render(staged)
@@ -185,7 +165,6 @@ def perform(text: str, **kw) -> Staged:
 
 
 def make_markup(text: str, **kw) -> str:
-    """One spoken line -> behavior markup. `turn_key`/`chunk_index` keep a streamed
-    answer stable; see `moxie_sdk.performance.plan` and `moxie_sdk.automarkup.annotate`
-    for the rules. Kept as the seam's original signature so every call site still works."""
+    """One spoken line -> behavior markup (the seam's original signature). `turn_key` /
+    `chunk_index` keep a streamed answer stable."""
     return perform(text, **kw).markup

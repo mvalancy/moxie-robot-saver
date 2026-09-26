@@ -9,7 +9,7 @@
  * wires itself up. PR #136 shipped the two-click-armed **Erase history** button on this
  * card and had to report, honestly, that no headless click had ever touched it.
  *
- * THE BUG THE AUTHOR POINTED AT. `server/static/app.js`:337 says, above `refreshInsights`:
+ * THE BUG THE AUTHOR POINTED AT. `server/static/js/insights.js` says, above `refreshInsights`:
  *
  *     // Wiring the 🧽 button inside `render` rather than after each call: this function
  *     // returns early from four branches, and an erase button that works in three of them
@@ -41,7 +41,7 @@
  * `page.setRequestInterception` — the idiom `test_mic_spend.mjs` and `test_ambient_guard.mjs`
  * established for `/api/*`.
  *
- * THE FIXTURES ARE BUILT BY THE REAL NORMALIZERS. `server/moxie_server/fleet.py` is
+ * THE FIXTURES ARE BUILT BY THE REAL NORMALIZERS. `server/moxie_server/fleet/` is
  * deliberately dependency-free ("Pure + dependency-free (no fastapi/network here)"), and
  * `/local/robots/{id}/telemetry` is literally `normalize_telemetry(supervisor_json)`. So
  * this suite hands SUPERVISOR payloads to the real `normalize_telemetry` /
@@ -55,7 +55,7 @@
  * from the SECOND click" is a fact about the wire and not about a label) or a DOM fact read
  * out of Chrome (`textContent`, element counts, `data-armed`, `disabled`).
  *
- * TEETH. Three mutations of `app.js` are served to the browser and the whole branch sweep
+ * TEETH. Three mutations of `js/insights.js` are served to the browser and the whole branch sweep
  * is re-run against each; a mutation that reddens nothing would mean the sweep proves
  * nothing, so each one asserts BOTH that the edit applied and that named assertions failed:
  *   · `arming`   — one click fires the DELETE (the arming removed).
@@ -80,7 +80,9 @@ const { fails, ok, eq, count } = makeChecks();
 
 const DEV = "d_console_insights_01";
 const STATIC = join(repo, "server", "static");
-const APPJS = readFileSync(join(STATIC, "app.js"), "utf8");
+/* The insights card (and armErase) live in js/insights.js — the file the teeth mutate. */
+const CARD_JS = "/js/insights.js";
+const APPJS = readFileSync(join(STATIC, CARD_JS), "utf8");
 const TELE = `/local/robots/${DEV}/telemetry`;
 /* 1×1 transparent PNG — the console asks for four QR images the fixture has no server for. */
 const PNG = Buffer.from(
@@ -91,10 +93,10 @@ const PNG = Buffer.from(
  * Inputs here are SUPERVISOR payloads (what `moxie_server` fetches); outputs are exactly
  * what the console route returns, because the same function computes them. */
 const PY = `
-import importlib.util, json, sys
+import json, sys
 repo, dev = sys.argv[1], sys.argv[2]
-spec = importlib.util.spec_from_file_location("fleet", repo + "/server/moxie_server/fleet.py")
-m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+sys.path.insert(0, repo + "/server")
+from moxie_server import fleet as m
 
 DAYS  = ["2026-08-29","2026-08-30","2026-08-31","2026-09-01","2026-09-02","2026-09-03","2026-09-04"]
 COUNT = [0, 4, 2, 0, 9, 3, 5]
@@ -158,7 +160,7 @@ let FIX;
 try {
   FIX = JSON.parse(execFileSync("python3", ["-c", PY, repo, DEV], { encoding: "utf8" }));
 } catch (e) {
-  skip("python3 could not build the fixtures from server/moxie_server/fleet.py — " + e.message);
+  skip("python3 could not build the fixtures from server/moxie_server/fleet/ — " + e.message);
 }
 /* The fixture builder must not be able to hand back a hollow shell. */
 ok(FIX.full.ok === true && FIX.full.count === 3 && FIX.full.history.length === 7,
@@ -210,7 +212,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function drive(mode, mutate) {
   const state = { deletes: [], gets: 0, erased: false };
   const page = await browser.newPage();
-  /* EVERY drive is a first visit. `app.js`:3 reads `localStorage.moxie_token` at parse
+  /* EVERY drive is a first visit. `js/core.js` reads `localStorage.moxie_token` at parse
    * time and its last line auto-enters the app when one is there — so the second drive in
    * a run would land already logged in, `#s-login` hidden and `#btn-login` collapsed to a
    * 0×0 box. All six paths share one loopback origin, so without this the sweep would be
@@ -226,7 +228,7 @@ async function drive(mode, mutate) {
     const p = new URL(r.url()).pathname;
     const J = (o, status = 200) =>
       r.respond({ status, contentType: "application/json", body: JSON.stringify(o) });
-    if (p === "/app.js" && mutate)
+    if (p === CARD_JS && mutate)
       return r.respond({ status: 200, contentType: "text/javascript; charset=utf-8",
                          body: mutate(APPJS) });
     if (/\.png$/.test(p)) return r.respond({ status: 200, contentType: "image/png", body: PNG });
@@ -414,7 +416,7 @@ async function sweepPath(C, mode, { mutate = null, deep = false } = {}) {
     /* WHAT THE BROWSER ITSELF SAID. This assertion existed before 2026-09-06 and covered
      * `pageerror` ONLY — uncaught exceptions. That leaves the console unread, and the
      * console is where a 404'd `<script src>` surfaces: no exception is raised anywhere,
-     * so `app.js` failing to load at all would have left this suite reporting only that
+     * so the console JS failing to load at all would have left this suite reporting only that
      * the card never rendered, with nothing saying why. `watchPage()` now installs both
      * listeners and `notable()` forgives, by COUNT, exactly the refusals the interceptor
      * issued above (path 2's deliberate 503, and the missing favicon on the first load).
@@ -432,7 +434,7 @@ async function sweepPath(C, mode, { mutate = null, deep = false } = {}) {
 for (const mode of Object.keys(PATHS)) await sweepPath({ ok, eq }, mode, { deep: true });
 
 /* ---- TEETH: the same sweep against a mutated console --------------------------- *
- * A suite that cannot fail proves nothing, so each mutation is applied to `app.js` on its
+ * A suite that cannot fail proves nothing, so each mutation is applied to `js/insights.js` on its
  * way to the browser and the whole sweep re-run. Both halves are asserted: that the edit
  * really landed (a no-op mutation would make the teeth vacuous — the exact failure this
  * repo has been bitten by), and that named assertions went red because of it. */
@@ -472,7 +474,7 @@ const teeth = {};
 for (const [name, mut] of Object.entries(MUTATIONS)) {
   const mutated = mut.apply(APPJS);
   ok(mutated !== APPJS,
-     `teeth/${name}: the mutation must actually change app.js — ${mut.why}`);
+     `teeth/${name}: the mutation must actually change js/insights.js — ${mut.why}`);
   const C = makeChecks();
   for (const mode of mut.modes) await sweepPath(C, mode, { mutate: mut.apply });
   teeth[name] = { red: C.fails.length, of: C.count(), modes: mut.modes.join("+") };
@@ -495,7 +497,7 @@ for (const [name, mut] of Object.entries(MUTATIONS)) {
   await sweepPath(C4, "nodata", { mutate: MUTATIONS.branch.apply });
   ok(C4.fails.length > 0,
      "teeth/branch: path 4 must REDDEN under the branch mutation — that is the defect " +
-     "the author's comment at app.js:337 predicted");
+     "the author's comment above refreshInsights predicted");
   teeth.branch.asym = `path6 ${C6.fails.length} red / path4 ${C4.fails.length} red`;
 }
 

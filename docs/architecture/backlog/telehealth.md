@@ -166,7 +166,7 @@ flowchart LR
 | Where | File | What exists today |
 |---|---|---|
 | The mode | [`moxie_sdk/cloud_config.py`](../../../mqtt/moxie_sdk/cloud_config.py) | `MoxieMode.TELEHEALTH = 1`, emitted as `"moxie_mode"` by `build_robot_cloud_config`. **Never set to anything but `DEFAULT_MODE`.** |
-| Config push | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) `update_config` / `_push_config` | per-robot overrides, deep-merged over the fleet layer, re-pushed on change — **exactly the machinery the mode toggle needs**, no new plumbing |
+| Config push | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) `update_config` / `_push_config` | per-robot overrides, deep-merged over the fleet layer, re-pushed on change — **exactly the machinery the mode toggle needs**, no new plumbing |
 | Command publish | same, `_publish_chat` / `_query_payload` / `feed_stt` | the file already publishes to `commands/remote_chat`, `commands/query_result`, `commands/tts`, `commands/zmq`. `commands/telehealth` is the one command in the recovered table with no publisher. |
 | Robot → cloud | same, `_on_activity` | parses `client-service-activity-log`, handles `query` and `mentor_behavior`; **no `subtopic == "telehealth"` branch** |
 | Markup | [`moxie_sdk/automarkup.py`](../../../mqtt/moxie_sdk/automarkup.py) `annotate` | pure, deterministic, mood/gesture hints, golden-pinned. p95 0.23 ms/line. |
@@ -174,7 +174,7 @@ flowchart LR
 | Safety | `moxie_runtime.py` `_assess` / `_record_safety` | a `MOXIE`-role classifier for text about to be spoken, plus the parent's review journal |
 | Voice | same, `_maybe_synthesize` | renders a line to a `CloudTTSResponse` on `commands/tts` — how the SIM gets a voice |
 | Transcript | same, `feed_stt` → `_note("stt", "👂 heard: …")` | the child's words already reach the supervisor as text; they land in a **global** 60-entry `recent` ring, not a per-device one |
-| Console | [`server/moxie_server/main.py`](../../../server/moxie_server/main.py) + [`fleet.py`](../../../server/moxie_server/fleet.py) + [`server/static/`](../../../server/static/) | the four-file card pattern: runtime handler → pure `normalize_*` → `/local/*` route → card + `refresh*()` |
+| Console | [`server/moxie_server/main.py`](../../../server/moxie_server/main.py) + [`fleet.py`](../../../server/moxie_server/fleet/) + [`server/static/`](../../../server/static/) | the four-file card pattern: runtime handler → pure `normalize_*` → `/local/*` route → card + `refresh*()` |
 | SIM | [`sim/web/bridge.js`](../../../sim/web/bridge.js) | subscribes `commands/remote_chat`, `commands/tts`, `events/remote-chat`, `+/config`, `commands/motor`. **Not `commands/telehealth`.** |
 
 ### Prior art — OpenMoxie's puppet page
@@ -313,7 +313,7 @@ the operator is the one failure mode that would look broken to a child, and one 
 
 A new card in the ✅ Your Moxie tab, following the `permits-card` / `memory-card` pattern exactly
 (markup in [`server/static/index.html`](../../../server/static/index.html), a `refreshTelehealth(deviceId)`
-in [`app.js`](../../../server/static/app.js) wired into `refreshLive()`'s chain):
+in [`app.js`](../../../server/static/js/) wired into `refreshLive()`'s chain):
 
 | Element | Behavior |
 |---|---|

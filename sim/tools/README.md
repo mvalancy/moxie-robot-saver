@@ -62,7 +62,7 @@
   the sharpest row in the file because every visible behaviour survives it — the pack answers, the
   child hears a line, the wire is well formed — and the only thing that notices is
   `moxie_sdk.chat.model_calls()`. **25/25 caught.** A separate table from
-  `ext_mutation_check.py` because half these guards live in `mqtt/supervisor/moxie_runtime.py`, which
+  `ext_mutation_check.py` because half these guards live in `mqtt/supervisor/moxie_runtime/`, which
   that checker's single-file runner cannot see. Two rows earn the file on their own: a merge in which a
   content pack's event list **replaces** the supervisor's fails *silently*, because
   `_vision_subscription` latches *"subscribed"* for a `(device, module)` at the moment it hands its
@@ -120,7 +120,7 @@
 - **`hardening_mutation_check.py`** — the same proof for [production
   hardening](../../docs/architecture/backlog/production-hardening.md) P0: **38 mutations** across
   `moxie_sdk/store.py`'s cross-process lock and the connection region of
-  `supervisor/moxie_runtime.py`. Two of them are deliberately the *half-done fixes* the brief warns
+  `supervisor/moxie_runtime/`. Two of them are deliberately the *half-done fixes* the brief warns
   about rather than deleted guards — `connect_async` without `retry_first_connection=True` (a no-op
   under `loop_forever`, risk R2) and the lock moved from the `.lock` sidecar onto the data file
   (looks correct, serializes nothing, because `os.replace` swaps the inode — risk R1) — because that
@@ -129,7 +129,7 @@
   neither was individually load-bearing. Run it after touching either file.
 - **`hardening_p1_mutation_check.py`** — the same proof for production hardening **P1**: **66
   mutations** across `moxie_sdk/roster.py`, `moxie_sdk/conn_telemetry.py`, `store.py::_append_path`, the
-  connection/shutdown/onboarding regions of `supervisor/moxie_runtime.py` and the console's connection
+  connection/shutdown/onboarding regions of `supervisor/moxie_runtime/` and the console's connection
   normalizer. Several are deliberately *plausible patches rather than deletions*, because that is what a
   regression looks like in review — the roster resume marking rostered robots as **connected** (a status
   field reporting a belief instead of an observation), `gap_since` returning `0.0` instead of `None` for a

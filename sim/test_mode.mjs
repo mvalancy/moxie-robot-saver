@@ -1,24 +1,12 @@
 /* test_mode.mjs — the mode machine and the honest indicator, end to end, under bare node.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §3.2 (the envelope), §4.2 (what the
- * browser may know), §4.5 (the status table), §5 (the configuration table), §6.3 (the
- * state machine), §7 (capacity signalling and the copy).
- *
- * Four things are under test here, in one file, because they are one contract:
- *
- *   1. functions/api/_lib/env.js   — every DEMO_* default, clamp and required value.
- *   2. functions/api/_lib/envelope.js — the one response shape and its status mapping.
- *   3. functions/api/health.js     — the probe. Pages Functions are ES modules that take
- *      a plain object as `context.env`, so they are imported and CALLED here: NO
- *      Cloudflare account is needed, and none may ever be required by a test.
- *   4. sim/web/mode.js and sim/web/env.js — loaded as SOURCE under a stubbed
- *      window/document/fetch/setTimeout, the trick sim/test_bridge.mjs:31-51 established.
- *
- * Everything is asserted on RECORDED state — `moxieMode.stats()`, the transition log, the
- * scheduled delays, the text a fake DOM ended up holding — never on a live sample of a
- * timer or a network call (playbook rule 11: a poll that already happened is a fact, one
- * that is about to happen is a bet). Time and timers are injected, so the whole 5-minute
- * backoff ladder is exercised in milliseconds.
+ * Spec: docs/architecture/backlog/live-sim-demo.md §3.2, §4.2, §4.5, §5, §6.3, §7.
+ * One contract, four parts: functions/api/_lib/env.js (DEMO_* defaults/clamps),
+ * _lib/envelope.js (the response shape), functions/api/health.js (imported and CALLED with a
+ * plain `context.env` — no Cloudflare account, ever), and sim/web/mode.js + env.js loaded as
+ * source under a stubbed window/document/fetch/setTimeout.
+ * Assertions are on RECORDED state (stats, transition log, scheduled delays, fake-DOM text),
+ * never a live timer sample; injected time runs the 5-minute backoff ladder in ms.
  *
  *   node sim/test_mode.mjs
  */
@@ -112,12 +100,8 @@ const FULL = {
   eq(d.maxTokens, 160, "DEMO_MAX_TOKENS default");
   eq(d.maxInputChars, 500, "DEMO_MAX_INPUT_CHARS default");
   eq(d.maxTtsChars, 300, "DEMO_MAX_TTS_CHARS default");
-  /* RAISED 2026-09-06, deliberately, and the pair moved together on purpose.
-   * Four turns is two exchanges — she forgot the beginning of any real conversation,
-   * which is the most character-breaking thing a companion can do. Twelve is what the
-   * robot path has always used. Raising the count WITHOUT the byte budget would have
-   * changed nothing: `hmac.js` drops oldest-first until the history fits, so the extra
-   * eight turns would have been trimmed away on every request. */
+  /* Raised together on purpose: four turns forgot the start of any real conversation, and
+   * more turns WITHOUT the byte budget would be trimmed oldest-first by `hmac.js` anyway. */
   eq(d.maxContextChars, 4000, "DEMO_MAX_CONTEXT_CHARS default — the real bound on history");
   eq(d.maxHistoryTurns, 12, "DEMO_MAX_HISTORY_TURNS default — twelve, as the robot path uses");
   eq(d.maxAudioBytes, 500000, "DEMO_MAX_AUDIO_BYTES default");
@@ -275,7 +259,7 @@ async function probe(env) {
 }
 
 /** The smallest thing `limits.admit()` will accept: `Sec-Fetch-Site: same-origin` is what the
- *  origin pin asks for when there is no `Origin` header (limits.js::checkOrigin), and a fixed
+ *  origin pin asks for when there is no `Origin` header (clientip.js::checkOrigin), and a fixed
  *  IP keeps every admission in ONE per-IP window so the windows are not what refuses us. */
 function admissible(url) {
   return { url: url || "https://probe.invalid.test/api/chat",
@@ -339,14 +323,9 @@ function admissible(url) {
   ok(!/\bfetch\s*\(/.test(src), "health.js must make NO gateway call, ever (a 30 s poll must cost nothing)");
 
   // ------------------------------------------------------------------------- //
-  // 3a. The probe reads the REAL counters (2026-09-03).
-  //
-  // Until this date health.js carried two LOCAL STUBS that shadowed limits.js:
-  // `budgetState()` returned `null` and `loadState()` returned a hard-coded
-  // `{inflight: 0}`. They were honest in P0-a — no spending route was deployed — and a lie
-  // from the moment chat.js and speech.js landed: `/api/health` could never answer
-  // `budget_exhausted`, so a new visitor's page painted LIVE on an over-budget deployment
-  // and §7's BUSY pill could never fire. These assertions are what stops them coming back.
+  // 3a. The probe reads the REAL counters from limits.js — local stubs once made
+  // `/api/health` unable to answer `budget_exhausted`, so an over-budget deployment painted
+  // LIVE and §7's BUSY pill never fired.
   // ------------------------------------------------------------------------- //
 
   // No stub may shadow the real implementation again, and the import must be the real one.
@@ -359,11 +338,8 @@ function admissible(url) {
   // cannot be awaiting one. Both counter reads are synchronous map lookups.
   eq(health.onRequestGet.constructor.name, "Function",
      "health.js's handler must not be async — a probe that cannot await cannot call upstream");
-  // The other half of that pair, pinned here because `limits.admit()` BECAME async on
-  // 2026-09-03 when the admission queue landed. The probe and the spending routes share
-  // `_lib/limits.js`, and the temptation on the next change is to make health await
-  // something "just like the routes do". These two assertions together say: the queue may
-  // wait, the probe may not.
+  // …and the probe must stay synchronous while `limits.admit()` is async (the queue may wait,
+  // the probe may not).
   eq(limits.admit.constructor.name, "AsyncFunction",
      "limits.admit IS async — it can wait for a concurrency slot (the bounded FIFO of §4.1)");
   ok(!/\basync\b/.test(src.split("export function onRequestGet")[1] || "async"),

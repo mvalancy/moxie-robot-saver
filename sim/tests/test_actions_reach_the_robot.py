@@ -1,29 +1,18 @@
 """
-Does the ROBOT act on `response_actions`? — the half `test_e2e_actions_to_robot.py`
-deliberately did not claim.
+Does the ROBOT act on `response_actions`? — beyond what it was handed.
 
-That file drives the real runtime and the real SIL robot over a loopback and asserts what
-the robot was *handed*: it reads `payload["response_actions"]` off the wire. It says so in
-its own docstring, because until 2026-09-03 there was nothing else to assert —
-`sim/virtual_moxie.py` ignored the field entirely (`grep -c response_actions
-sim/virtual_moxie.py` returned **0**) while `sim/web/bridge.js::applyAction` had acted on
-it since PR #52. So the SIM client every SIL test, the smoke, the scenarios and the soak
-drive on could not show that a launch DID anything, and DoD criterion 4
-("interchangeable clients") was carrying one untrue clause.
+`test_e2e_actions_to_robot.py` asserts the payload on the wire; this asserts the SIL robot
+(`sim/virtual_moxie.py`) acts on it, as `sim/web/bridge.js::applyAction` does (DoD
+criterion 4, interchangeable clients):
 
-This file asserts the other half, in two ways:
+1. A real turn: the real `MoxieRuntime` + `LLMApp` (canned completion via `client=`)
+   answers "can we draw?" with `<launch:DRAW:default>`, and the ROBOT'S OWN STATE is then
+   in DRAW.
+2. Both clients agree: `goldens/cloud_to_robot_actions.json` holds the four responses
+   `sim/test_bridge.mjs` drives the browser SIM with and the state it reaches; the SIL
+   robot must land in the same place, key for key.
 
-1. **A real turn.** The real `MoxieRuntime` with a real `LLMApp` (canned completion, the
-   `client=` seam — no network) answers `"can we draw?"` with a `<launch:DRAW:default>`
-   tag, and the assertion is on the ROBOT'S OWN STATE afterwards: it is *in* DRAW. Not
-   that a payload contained a launch — that the client that received it launched.
-
-2. **Both clients agree.** `sim/tests/goldens/cloud_to_robot_actions.json` holds the four
-   responses `sim/test_bridge.mjs` emits at the browser SIM and the state that file
-   already asserts the browser reached; the SIL robot is driven over the same four and
-   must land in the same place, key for key.
-
-Hermetic and instant: no broker, no network, no gateway, no node, no sleeps.
+Hermetic and instant: no broker, network, gateway, node or sleeps.
 """
 import json
 import os
@@ -32,10 +21,7 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(REPO, "sim"))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 
 pytest.importorskip("paho.mqtt.client", reason="the SIL robot needs paho")
 
@@ -65,11 +51,8 @@ class _CannedCompletion:
 
 
 def _real_turn(canned, speech="can we draw?"):
-    """One whole turn, robot-first, through the shipped code on both ends.
-
-    Returns the `VirtualMoxie` that lived it — `vm.action_stats()` is what the ROBOT did,
-    `vm.reply_payload` is what it was handed.
-    """
+    """One whole turn, robot-first, through shipped code on both ends. Returns the
+    `VirtualMoxie`: `vm.action_stats()` is what it did, `vm.reply_payload` what it got."""
     from moxie_sdk.apps import LLMApp
     app = LLMApp(base_url="http://127.0.0.1:1/v1", api_key="not-used", model="test",
                  client=_CannedCompletion(canned))
@@ -230,17 +213,9 @@ def test_execute_reads_the_sims_spelling_too():
 
 
 def test_what_our_own_server_sends_now_names_the_function_it_wants_run():
-    """**This test used to assert the opposite, on purpose.** Until 2026-09-04 it was
-    `…_carries_no_function_at_all`: `build_chat_response` dropped `Action.function` /
-    `Action.args`, so every `execute` this appliance could emit reached a robot unnamed —
-    filed against the wire as qr-launch-cards.md §P0-a and the blocker under
-    sandboxed-extensions.md S5. It was written to turn red the day the fix landed, and
-    this is that day, so it is flipped rather than deleted.
-
-    `wire.py::encode_action` now emits `function_id` (RemoteChat.proto:271, field 7) and,
-    for a dict, `action_args` (field 10, `repeated ActionArgsEntry{key, value}`). The
-    assertion runs the whole hop the gap broke: build the response our server would send,
-    hand it to the SIL robot, and ask the robot what it was told to run.
+    """An `execute` reaches the robot NAMED: `wire.encode_action` emits `function_id`
+    (RemoteChat.proto:271, field 7) and, for a dict, `action_args` (field 10). Built as our
+    server would send it, handed to the SIL robot, and the robot is asked what to run.
     """
     from moxie_sdk.types import Action, ActionType
     from moxie_sdk.wire import build_chat_response
@@ -257,11 +232,9 @@ def test_what_our_own_server_sends_now_names_the_function_it_wants_run():
 
 
 def test_the_briefs_own_worked_example_is_the_shape_that_goes_out():
-    """qr-launch-cards.md §P0-a prints the JSON it wants, and §5 T9 repeats it:
+    """qr-launch-cards.md §P0-a / §5 T9's exact JSON, key for key:
     `{"output_type": "GLOBAL", "action": "execute", "function_id": "eb_enable_qr",
-    "function_args": ["true"]}`. Asserted key for key, so the brief and the code cannot
-    drift apart silently. A *list* of args is `function_args` (proto field 8, `repeated
-    string`) — the positional form `volley.add_execution_action(name, args)` produces."""
+    "function_args": ["true"]}` — a list of args is `function_args` (field 8)."""
     from moxie_sdk.types import Action, ActionType
     from moxie_sdk.wire import build_chat_response
     resp = build_chat_response("e", "hi", actions=[
@@ -314,21 +287,16 @@ def test_arg_values_go_out_as_the_strings_the_proto_declares():
 
 
 def test_the_naming_defects_p0a_still_owns_are_pinned_here_not_fixed():
-    """**Deliberately asserting what is still wrong**, in the idiom of the test this file
-    flipped above: two `ActionType` values are not names in the recovered `ActionID` enum
-    (`launch`, `launch_if_confirmed`, `exit_module`, `request_next`, `abort_module`,
-    `execute`, `sleep`, `tangent` — RemoteChat.proto:256-265).
+    """Deliberately pins what is still wrong: two `ActionType` values are not in the
+    recovered `ActionID` enum (RemoteChat.proto:256-265):
 
-      * `EXIT = "exit"`; the enum spells it `exit_module`.
-      * `ENABLE_QR = "enable_qr"` is not a verb in the enum at all — the contract's way to
-        arm the scanner is `execute` + `function_id: "eb_enable_qr"`, which the wire can
-        now carry but `ActionType` still does not route through.
+      * `EXIT = "exit"` — the enum spells it `exit_module`;
+      * `ENABLE_QR = "enable_qr"` — not a verb at all; the contract arms the scanner with
+        `execute` + `function_id: "eb_enable_qr"`.
 
-    Renaming a wire value is a separate contract change with its own evidence and its own
-    blast radius (`sim/web/bridge.js::ACTION_KINDS` agrees with us, not with the proto, and
-    `test_sim_client_parity.py` holds all three vocabularies equal). It is owned by
-    qr-launch-cards.md §P0-a / §7 R3. This pins it so the fix turns a test red and has to
-    say so, exactly as this one did."""
+    Renaming a wire value is its own contract change (bridge.js `ACTION_KINDS` agrees with
+    us; `test_sim_client_parity.py` holds the vocabularies equal), owned by
+    qr-launch-cards.md §P0-a / §7 R3. The fix must turn this red."""
     from moxie_sdk.types import Action, ActionType
     from moxie_sdk.wire import build_chat_response
     resp = build_chat_response("e", "hi", actions=[Action(type=ActionType.ENABLE_QR),

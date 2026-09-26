@@ -76,7 +76,7 @@ SUP_PID=${PIDS[-1]}
 # `❌ scenario 'basic-conversation': 0/4 turns OK — no config pushed within timeout` with
 # `motion-demo` green in the same job: a startup race, which is why the first scenario is
 # the one that loses it and why no timeout here can be big enough. See `_on_subscribe` in
-# mqtt/supervisor/moxie_runtime.py, and PR #143 for the identical fix on the robot side.
+# mqtt/supervisor/moxie_runtime/connection.py, and PR #143 for the identical fix on the robot side.
 # `|| exit 1` IS THE WHOLE POINT OF THE WAIT. Until 2026-09-07 this call was
 # unguarded while the status-endpoint wait below/beside it was not: `wait_for_log`
 # printed "supervisor never logged ..." plus a log tail, returned 1, and the script

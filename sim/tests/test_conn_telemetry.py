@@ -1,38 +1,21 @@
 """
 🔌 The broker connection's own durable history — the shapes, and the runtime wiring.
 
-Build document:
-[`docs/architecture/backlog/production-hardening.md`](../../docs/architecture/backlog/production-hardening.md)
-**§8 P1** — *"a connection telemetry stream (connects, disconnects, CONNACK reason codes,
-gap durations, dropped publishes) on the existing `JsonStore` telemetry shape."*
+`production-hardening.md` §8 P1: a connection telemetry stream (connects, disconnects,
+CONNACK codes, gap durations, dropped publishes) on the `JsonStore` telemetry shape. P0's
+`/status` scalars live in one process's RAM and remember only the latest gap; this answers
+"how many times has it been down, and for how long?" across restarts.
 
-What P0 left, and why it is not enough. P0 put six fields on `/status`, and every one is a
-**scalar in one process's RAM**: `last_broker_disconnect` + `last_broker_connect` describe
-the *most recent* gap and forget every earlier one, `publish_drops` is a count with no
-trend, and a restart — usually the event you wanted to read about — erases all six. So the
-question this file's subject exists to answer is the one an operator actually has: *"it is
-up now; how many times has it not been, and for how long?"*
-
-Hermetic: no broker, no network, no sleeping. Every test that needs a store gets its own
-`tmp_path` one, because the session-wide `MOXIE_DATA_DIR` fixture is shared and a
-fleet-tier ring is exactly the kind of record that would otherwise accumulate across the
-whole suite.
-
-**No wall clock is read here** (`test_clock_dependence.py`'s ratchet): every timestamp and
-every gap is an injected number, which is also the only way to assert a gap *value* rather
-than a range.
+Hermetic: every store is its own `tmp_path` (a fleet-tier ring would otherwise accumulate
+across the suite), and every timestamp/gap is injected — no wall clock, exact gap values.
 """
 from __future__ import annotations
 
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 from helpers_runtime import make_runtime                          # noqa: E402
 from moxie_sdk import conn_telemetry as conn                      # noqa: E402
@@ -271,14 +254,9 @@ def test_a_store_lock_timeout_is_recorded_with_how_long_it_waited(tmp_path):
 
 
 def test_the_recorder_never_recurses_into_itself(tmp_path):
-    """The guard that is not paranoia: `_on_store_lock_timeout` records by **writing to
-    the store**, and a store under contention is exactly when it fires. Without the flag,
-    a refused conn-telemetry write calls the recorder that is already running.
-
-    Proved by making the store's own append fire the timeout hook every time — the shape
-    of a permanently contended record — and requiring the call to return rather than
-    recurse. Without `_recording_conn` this is an unbounded recursion, not a slow test.
-    """
+    """`_on_store_lock_timeout` records by writing to the store — exactly when the store is
+    contended. With the store's append firing the hook every time, the call must return
+    rather than recurse (without `_recording_conn` this is unbounded recursion)."""
     rt, _ = _rt(tmp_path)
     depth = {"max": 0, "now": 0}
     real_append = rt.store.append_shared

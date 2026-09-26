@@ -30,11 +30,9 @@ def child_pii_from_profile(child, face=None) -> dict:
     """A ChildDecrypted (`child_pii`) from a ChildProfile — plaintext, as the paired
     server's own config (the encryption blinds a 3rd-party cloud, not our backend).
 
-    `face` is the child's chosen appearance (audit ADOPT #9). It rides here because that
-    is where the recovered protos put it: `ChildDecrypted.face_options = 17` (a *clear*
-    field beside the sealed ones — see `moxie_sdk/faces.py` for the full citation trail).
-    With no face chosen the two extra keys are simply not emitted, so the document is
-    byte-for-byte what it was before appearance existed."""
+    `face` is the child's chosen appearance (audit ADOPT #9), carried in
+    `ChildDecrypted.face_options = 17` (see `moxie_sdk/faces.py`). With no face the two
+    extra keys are not emitted."""
     pii = {"nickname": child.nickname}
     if getattr(child, "birthday_iso", None):
         pii["birthday"] = child.birthday_iso
@@ -43,34 +41,21 @@ def child_pii_from_profile(child, face=None) -> dict:
         labels = face_options_list(validate_face(face))
         if labels:
             pii["face_options"] = labels
-            # The cache-buster. ASSUMPTION (field-proven, not capture-proven) —
-            # `faces.py`, "the cache-buster": Unity keeps a composited face record keyed
-            # on `child_pii.id`, so a face change must change the id or the robot may
-            # serve the stale texture. Deterministic, so an unchanged face re-pushes the
-            # same id and the robot is not disturbed by an idempotent config push.
+            # The cache-buster (ASSUMPTION, field-proven — see `faces.py`): the robot keys
+            # its composited face on `child_pii.id`. Deterministic, so an unchanged face
+            # re-pushes the same id.
             pii["id"] = face_child_id(labels, child_key=child.nickname)
     return pii
 
 
 # --- The pairing gate: paired vs not-yet-permitted ----------------------------------
 #
-# `pairing_status` is the string the robot's own config handler reads out of the pushed
-# RobotCloudConfig. Two values are established:
-#
-#   * **`"paired"`** — the operating value. `mqtt-and-conversation.md` §3.6 records it as
-#     "MUST stay `paired` or robot won't run": it is the wrapper that lets the robot run a
-#     session at all.
-#   * **`"unpairing"`** — the *not-paired* value. Our own RE corpus does not contain a
-#     capture of Embodied's cloud pushing a non-`paired` status (the recovered protos give
-#     `CloudStatus.UserState` — the robot's *upward* lifecycle report, `NONE`(1) = unpaired
-#     — but not the downward config string), so this one is **field-proven rather than
-#     capture-proven**: OpenMoxie (MIT) offers exactly `paired` / `unpairing` in its device
-#     form and reads the same string back as `MoxieDevice.is_paired()`
-#     (`site/hive/models.py:53-56`, `site/hive/templates/hive/moxie.html:15-16`) — a
-#     revival server that drives real robots. `ATTRIBUTION.md` credits the idea; no code
-#     was copied. **ASSUMPTION, flagged in `config-and-telemetry-contract.md`**: what a
-#     *physical* Moxie shows on screen for `"unpairing"` is not verified here — we have no
-#     robot to observe. Changing our mind is a one-line edit of this constant.
+# `pairing_status` is read by the robot's config handler:
+#   * **`"paired"`** — "MUST stay `paired` or robot won't run" (mqtt-and-conversation.md §3.6).
+#   * **`"unpairing"`** — the not-paired value. Field-proven, not capture-proven: OpenMoxie
+#     (MIT) uses exactly `paired` / `unpairing` (`site/hive/models.py:53-56`); no code was
+#     copied. ASSUMPTION (config-and-telemetry-contract.md): what a physical Moxie shows
+#     for it is unverified.
 PAIRED_PAIRING_STATUS = "paired"
 UNPAIRED_PAIRING_STATUS = "unpairing"
 
@@ -78,18 +63,10 @@ UNPAIRED_PAIRING_STATUS = "unpairing"
 def build_unpaired_cloud_config() -> dict:
     """The **minimal** RobotCloudConfig for a device this appliance has not permitted.
 
-    A home appliance must not hand the child's nickname and birthday to whatever manages
-    to reach the broker port, so a robot that is not on the permit list gets a document
-    with *no `child_pii` at all*, the not-paired `pairing_status`, and the privacy gate
-    pinned shut (`data_sharing = NO_DATA`, so nothing may be uploaded to us either). The
-    `settings` wrapper stays because the robot's config handler expects the envelope
-    (`mqtt-and-conversation.md` §3.6); its props carry nothing about the household — in
-    particular **no `stt` prop**, so the device is never told to stream its microphone to
-    us.
-
-    This is deliberately not `build_robot_cloud_config(...)` with fields removed: a
-    subtractive build is one forgotten key away from a leak, so the un-paired document is
-    written out in full, here, where it can be read in one breath.
+    No `child_pii`, the not-paired `pairing_status`, `data_sharing = NO_DATA`, and a
+    `settings` envelope with nothing about the household — notably **no `stt` prop**, so
+    the device is never told to stream its microphone to us. Written out in full rather
+    than subtracted from the paired build, which would be one forgotten key from a leak.
     """
     return {
         "pairing_status": UNPAIRED_PAIRING_STATUS,
@@ -115,16 +92,11 @@ def build_robot_cloud_config(child, *, audio_volume: float = 0.6,
                              last_updated_at: str = "", timestamp: int = 0) -> dict:
     """The RobotCloudConfig document (JSON) pushed on /devices/{id}/config.
 
-    `weekday_bedtime`/`weekend_bedtime` are optional ("HH:MM","HH:MM") start/end tuples.
-    `alarms` is a `WakeSchedule` (field 24) and `schedule_preferences` a
-    `SchedulePreferences` (field 28) — see `normalize_wake_schedule` /
-    `normalize_schedule_preferences` for the accepted parent-facing spellings; both are
-    omitted from the document when empty, exactly like the other optional fields.
-    `face` is the child's chosen appearance (audit ADOPT #9) — a `{slot: option}` selection
-    validated by `moxie_sdk.faces.validate_face`; it renders into `child_pii.face_options`
-    plus the `child_pii.id` cache-buster, and is omitted entirely when nothing is chosen.
-    `pairing_status:"paired"` + `settings` are the wrapper the robot's config handler
-    expects (kept from the working minimal config)."""
+    `weekday_bedtime`/`weekend_bedtime` are optional ("HH:MM","HH:MM") tuples. `alarms`
+    (`WakeSchedule`, field 24) and `schedule_preferences` (field 28) are normalized by
+    `normalize_wake_schedule` / `normalize_schedule_preferences` and omitted when empty.
+    `face` renders into `child_pii`. `pairing_status:"paired"` + `settings` are the
+    wrapper the robot's config handler expects."""
     cfg = {
         "pairing_status": PAIRED_PAIRING_STATUS,
         "child_pii": child_pii_from_profile(child, face),
@@ -198,18 +170,12 @@ def _bedtime(v):
 #     SchedulePreferences { repeated ParentRequest parent_requests = 1; }
 #     SchedulePreferences.ParentRequest { string module_id = 1; uint64 scheduled_at = 2; }
 #
-# ASSUMPTIONS (the protos give the *types*, not the *encodings*, and no capture of a real
-# alarms push survives in our RE corpus — flagged in config-and-telemetry-contract.md):
-#   * `days` — `repeated uint32`, so 0-6. We emit **0 = Monday … 6 = Sunday**
-#     (`datetime.weekday()`, the convention the rest of this repo dates by). One constant,
-#     `WAKE_DAY_NAMES`, defines it: flip that tuple and every producer/validator follows.
-#   * `time` — a `string` alongside the config's other wall-clock strings
-#     (`weekday_bedtime_starts_at`, …), so **"HH:MM"** local time, validated by the same
-#     `_HHMM` regex. The robot resolves it against `timezone_id` (`TimeZoneInfo` →
-#     `UserAlarmRequest`, power-and-system-events.md "Time, timezone & alarms").
-#   * `scheduled_at` — `uint64` with no stated unit. We emit **epoch seconds**, the unit
-#     this repo already renders timestamps in (`Packet.recorded_at`, telemetry). A value
-#     that is plainly milliseconds is divided down rather than silently accepted.
+# ASSUMPTIONS (the protos give types, not encodings; no capture survives — flagged in
+# config-and-telemetry-contract.md):
+#   * `days` — 0 = Monday … 6 = Sunday (`datetime.weekday()`), defined by `WAKE_DAY_NAMES`.
+#   * `time` — "HH:MM" local time like the other wall-clock strings; the robot resolves it
+#     against `timezone_id`.
+#   * `scheduled_at` — epoch **seconds**; a value plainly in milliseconds is divided down.
 
 WAKE_DAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday",
                   "saturday", "sunday")           # index == the `days` uint32 we emit
@@ -218,18 +184,9 @@ WAKE_DAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday",
 def in_bedtime(cfg, now_local) -> bool:
     """Is this *effective* config inside its bedtime window at this local wall-clock time?
 
-    Pure: `cfg` is the override layer stack (`fleet ⊕ per-robot`) and `now_local` a naive
-    local `datetime`. The window is the `["HH:MM", "HH:MM"]` pair the RobotCloudConfig
-    already carries (`weekday_bedtime` / `weekend_bedtime`); weekday vs weekend by
-    `datetime.weekday()`, the convention `WAKE_DAY_NAMES` fixes (0 = Monday). A window
-    that wraps midnight (20:30-07:00, the normal case) is handled; `start == end` is not a
-    zero-length night, it is "no window". No window configured → never bedtime.
-
-    Lives here rather than in the runtime because two callers need the same answer for
-    different reasons: the unprompted-greeting rule stays quiet inside it, and the 🎭
-    telehealth card *warns* inside it (we do not know whether a robot suppresses a puppet
-    line at bedtime — `backlog/telehealth.md` B4 — so we tell the operator instead of
-    guessing).
+    Pure: `cfg` is the override stack, `now_local` a naive local `datetime`. Uses
+    `weekday_bedtime` / `weekend_bedtime`; wraps midnight; `start == end` means no window.
+    Shared by the greeting rule (stays quiet) and the telehealth card (warns).
     """
     if not isinstance(cfg, dict):
         return False
@@ -404,19 +361,12 @@ def normalize_schedule_preferences(raw):
 def merge_config_layers(*layers) -> dict:
     """Merge override layers left→right — **later wins** — into a new dict.
 
-    The server pushes `defaults ⊕ fleet ⊕ per-robot`: the builder's own kwarg defaults,
-    then the appliance-wide config a parent set once ("house rules"), then this robot's
-    own overrides. Nested **objects** merge key-by-key, so a fleet-wide
-    `settings.props`/`alarms` survives a per-robot edit that only sets one of its keys;
-    scalars and lists (`weekday_bedtime`, `alarms.wakes`) replace wholesale, and an
-    explicit `None` clears — "no bedtime" must be expressible from the robot layer.
+    The server pushes `defaults ⊕ fleet ⊕ per-robot`. Nested **objects** merge
+    key-by-key; scalars and lists replace wholesale; an explicit `None` clears ("no
+    bedtime" must be expressible). No input is mutated.
 
-    Pure and side-effect free: no input dict is mutated (a merged sub-dict is a copy).
-
-    *Credit:* the idea of a fleet-level default config layered under per-robot overrides
-    is OpenMoxie's (MIT) — `models.py::HiveConfiguration` (`common_config`/
-    `common_settings`) merged with the device's own in `mqtt/robot_data.py::build_config`
-    via `deepmerge`. The idea is theirs; this implementation is ours. See ATTRIBUTION.md.
+    *Credit:* fleet defaults under per-robot overrides is OpenMoxie's (MIT) idea
+    (`HiveConfiguration` + `build_config`); this implementation is ours. See ATTRIBUTION.md.
     """
     out: dict = {}
     for layer in layers:
@@ -437,10 +387,8 @@ def merge_config_layers(*layers) -> dict:
 def sanitize_config_overrides(raw: dict) -> dict:
     """Parent-console config edit → clean, JSON-safe kwargs for build_robot_cloud_config.
 
-    Whitelists the parent-editable fields, coerces + validates types, and drops unknown
-    keys. Values stay JSON-serializable (float/int/str/bool/list) because they are stored
-    in `_config_overrides` and echoed in the status snapshot — never enums. Raises
-    ValueError for a known field with an invalid value (→ the endpoint returns 400)."""
+    Whitelists parent-editable fields, validates them, drops unknown keys, and keeps values
+    JSON-serializable (stored and echoed; never enums). Raises ValueError (→ 400)."""
     if not isinstance(raw, dict):
         raise ValueError("config overrides must be an object")
     out = {}
@@ -478,21 +426,13 @@ def sanitize_config_overrides(raw: dict) -> dict:
         out["schedule_preferences"] = normalize_schedule_preferences(
             raw["schedule_preferences"])
     if "face" in raw:                                    # ChildDecrypted.face_options (17)
-        # A dict, so `merge_config_layers` deep-merges it **per slot**: a fleet-default
-        # face ("all our robots are teal") survives a per-robot edit that only changes the
-        # eyes, and a robot-layer `null` on one slot clears just that layer. An explicit
-        # `face: null` from the console clears the whole selection back to the default look
-        # (and with it `face_options`/`id`, so the pushed document returns to what it was).
+        # A dict, so layers deep-merge per slot; `face: null` clears the whole selection.
         from moxie_sdk.faces import validate_face
         face = validate_face(raw["face"])
         out["face"] = face or None
     if brains.CONFIG_KEY in raw:                         # which brain answers this child
-        # A scalar, so `merge_config_layers` replaces it wholesale: a per-robot pick wins
-        # over the house rule outright, and an explicit `null` clears this layer back to
-        # the one underneath (`brains.resolve_brain`). Validated against the positive
-        # list here — the *store* never holds a name nobody can build — while the
-        # environment's pin is enforced where the environment is actually readable
-        # (`config.brain_pin` → `MoxieRuntime.brain_for`); this module imports no config.
+        # A scalar (a per-robot pick replaces the house rule; `null` clears the layer).
+        # Validated against the positive list here; the env pin is enforced by the runtime.
         value = raw[brains.CONFIG_KEY]
         if value is None or (isinstance(value, str) and not value.strip()):
             out[brains.CONFIG_KEY] = None
@@ -505,23 +445,14 @@ def sanitize_config_overrides(raw: dict) -> dict:
     return out
 
 
-#: Config keys a parent sets that are the SERVER's business and never the robot's.
-#: `brain` rides the ordinary config layers (audit ADOPT #6) because that is the one
-#: layering this codebase has — but the robot has no field for it, and
-#: `build_robot_cloud_config` would raise `TypeError` on the unexpected keyword rather
-#: than quietly shipping it. `robot_config_kwargs` is the one place that difference is
-#: written down, so a future server-side key is one tuple entry away from being safe.
+#: Config keys that ride the config layers but are the SERVER's business, never sent to
+#: the robot (`build_robot_cloud_config` would raise `TypeError` on them).
 SERVER_ONLY_KEYS = (brains.CONFIG_KEY,)
 
 
 def robot_config_kwargs(cfg) -> dict:
-    """`cfg` minus the keys that never travel to a robot (`SERVER_ONLY_KEYS`).
-
-    Subtractive by design and safe to be: the *document* is still built additively from a
-    whitelist of kwargs, so a key this function forgets to drop cannot leak into it — it
-    raises at the call instead. The un-paired document stays written out in full
-    elsewhere (`build_unpaired_cloud_config`) for exactly the opposite reason.
-    """
+    """`cfg` minus the keys that never travel to a robot (`SERVER_ONLY_KEYS`). Safe as a
+    subtraction because the document itself is built from a kwarg whitelist."""
     if not isinstance(cfg, dict):
         return {}
     return {k: v for k, v in cfg.items() if k not in SERVER_ONLY_KEYS}

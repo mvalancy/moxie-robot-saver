@@ -23,7 +23,7 @@
 > [`webhook_app.py`](../../../mqtt/moxie_sdk/apps/webhook_app.py):59 — which is the **cloud→robot**
 > direction. A scanned card arrives in the opposite direction, as
 > `input_vars['$eb_qr_value']` on a vision turn that
-> [`moxie_runtime.py::_on_vision_turn`](../../../mqtt/supervisor/moxie_runtime.py):2669-2690 answers
+> [`moxie_runtime.py::_on_vision_turn`](../../../mqtt/supervisor/moxie_runtime/):2669-2690 answers
 > **without ever consulting it**. Print the sheet alone and you have produced cards nothing acts on.
 >
 > Effort: **M** — three small pieces, not one, and one of them is an ADOPT item of its own.
@@ -99,7 +99,7 @@ The runtime reader is what surfaces to a **remote brain** as the `eb-qr-event` v
 scanned string rides `input_vars['$eb_qr_value']` ([`vision.md`](../vision.md):73-74;
 [`presence.py`](../../../mqtt/moxie_sdk/presence.py):18, :65, :75). Subscribed vision events are not a
 topic of their own — they arrive as the **`speech` of an ordinary `RemoteChatRequest`**
-([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):2612-2632, :2908-2909).
+([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):2612-2632, :2908-2909).
 
 **We already extract the value and then drop it on the floor.** `presence.value_of` folds it into the
 per-robot presence record; `sim/tests/test_presence_runtime.py`:125-128 drives a QR event carrying the
@@ -211,7 +211,7 @@ wire value the enum does not define — the same rule `actions.py` already appli
 ### P0-b — the route (`$eb_qr_value` → a launch action) · **S/M** — ✅ **shipped 2026-09-04**
 
 > **What landed.** A pure decoder, [`launch_cards.py`](../../../mqtt/moxie_sdk/launch_cards.py), and one
-> call-site change in [`_on_vision_turn`](../../../mqtt/supervisor/moxie_runtime.py). A scanned
+> call-site change in [`_on_vision_turn`](../../../mqtt/supervisor/moxie_runtime/). A scanned
 > `GO<launch:DM>` now answers that turn's own `event_id` with `SUCCESS` and exactly one
 > `RemoteChatAction{action: "launch", module_id: "DM"}`; anything else answers `NOREPLY_ACK` and carries
 > no action. `_publish_chat` already took `actions=`, so no plumbing was added.
@@ -274,9 +274,9 @@ wire value the enum does not define — the same rule `actions.py` already appli
 > built — they need the `sim/virtual_moxie.py` harness changes in §4, which stayed out of this slice.
 
 
-`_on_vision_turn` ([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):2669-2690) is the
+`_on_vision_turn` ([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):2669-2690) is the
 only place a QR value is ever in scope with a reply being built, and `_publish_chat` **already** takes
-`actions=` ([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):4367-4396). So this is a
+`actions=` ([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):4367-4396). So this is a
 pure decoder plus one call-site change. It is **not** reachable from a content module today: a vision
 event is intercepted before any brain sees it (`:2908-2909` — *"never handed to a brain, never written
 to history"*), and `MoxieApp.on_event` returns `None` and cannot shape a reply
@@ -347,7 +347,7 @@ of unnamed ids on the page is derived, not transcribed.
 **Where it does NOT live yet — the parent console.** This brief said the sheet belongs in
 `server/static/index.html` behind a `?print=1` view. It is a CLI instead, and that is a deliberate
 deferral rather than an oversight: `server/` **does not import `moxie_sdk` anywhere today** — see
-[`fleet.py`](../../../server/moxie_server/fleet.py):1104, which re-states a shape rather than importing
+[`fleet.py`](../../../server/moxie_server/fleet/):1104, which re-states a shape rather than importing
 it — so a console route would be the first crossing of that boundary, and that decision is bigger than a
 print sheet. The follow-up slice is a console card that shells the generator or a route that owns the
 import explicitly; a static page under [`sim/web/`](../../../sim/web/) driven by
@@ -447,7 +447,7 @@ built) — **one of the two turned out to be already built**, see the correction
 | Piece | Effort | Files |
 |---|:--:|---|
 | P0-a the arm | **S** | [`mqtt/moxie_sdk/wire.py`](../../../mqtt/moxie_sdk/wire.py) (`build_chat_response`, the action loop) · [`mqtt/moxie_sdk/types.py`](../../../mqtt/moxie_sdk/types.py) (`ActionType.ENABLE_QR`) |
-| P0-b the route ✅ | **S/M** | **new** [`mqtt/moxie_sdk/launch_cards.py`](../../../mqtt/moxie_sdk/launch_cards.py) · [`mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) (`_on_vision_turn` only) · [`mqtt/moxie_sdk/actions.py`](../../../mqtt/moxie_sdk/actions.py) (`tag_names`, additive — see the box) |
+| P0-b the route ✅ | **S/M** | **new** [`mqtt/moxie_sdk/launch_cards.py`](../../../mqtt/moxie_sdk/launch_cards.py) · [`mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) (`_on_vision_turn` only) · [`mqtt/moxie_sdk/actions.py`](../../../mqtt/moxie_sdk/actions.py) (`tag_names`, additive — see the box) |
 | P0-c the sheet ✅ | **S** | **new** [`mqtt/moxie_sdk/launch_sheet.py`](../../../mqtt/moxie_sdk/launch_sheet.py) (generator + `python3 -m` CLI) · [`mqtt/pyproject.toml`](../../../mqtt/pyproject.toml) (the optional `cards` extra). **Deferred:** [`server/moxie_server/main.py`](../../../server/moxie_server/main.py) + [`server/static/index.html`](../../../server/static/index.html) — a console route would be the first `server/` → `moxie_sdk` import in the tree |
 | Harness ✅ | — | [`sim/virtual_moxie.py`](../../../sim/virtual_moxie.py) — `--face-value` + `EVENT_VALUE_KEYS`/`value_vars` landed 2026-09-04; `response_actions` were already recorded (PR #116) |
 | Tests | — | `sim/tests/test_launch_cards.py`, `test_launch_cards_runtime.py`, `test_launch_cards_sil.py`, **`test_launch_sheet.py` + `helpers_qr_matrix.py`** (49 tests: the module matrix read back and decoded, a real browser's pagination and its 300-dpi raster), `sim/tools/launch_card_mutation_check.py`, `sim/test_qr.mjs` §7 |

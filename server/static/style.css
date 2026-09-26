@@ -26,6 +26,8 @@ input[type=text],input[type=email],select{width:100%;margin-top:6px;padding:12px
 .row{display:flex;gap:12px;align-items:flex-end}
 .grow{flex:1} .check{display:flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap}
 .check input{width:auto}
+/* a plain button beside a .grow input sizes to its label (width:100% crushed the input) */
+.row>button:not(.grow){width:auto;flex:0 1 auto}
 button{width:100%;padding:14px;font-size:16px;font-weight:700;border:0;border-radius:12px;
   cursor:pointer;margin-top:10px}
 .primary{background:var(--brand);color:var(--brand-ink)}
@@ -108,7 +110,7 @@ footer a{color:var(--brand)}
 .evlog{margin-top:10px;max-height:220px;overflow-y:auto;border:1px solid var(--line);
   border-radius:10px;background:var(--bg);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   font-size:12px}
-.evlog .ev{padding:6px 10px;border-bottom:1px solid var(--line);display:flex;gap:8px}
+.evlog .ev{padding:6px 10px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:8px}
 .evlog .ev:last-child{border-bottom:0}
 .evlog .ev span{color:var(--muted);white-space:nowrap}
 .evlog .ev b{font-weight:600;word-break:break-word}
@@ -290,7 +292,7 @@ button.linkish.mem-arm{opacity:1;color:#c0392b;font-weight:700}
    new custom properties; the `.ed-` prefix follows the per-card convention `.pv-*` set. */
 .packitem{display:flex;align-items:center;gap:6px}
 .packitem .packrow{flex:1;min-width:0}
-.ed-edit{padding:2px 8px;font-size:14px;line-height:1.4;flex:0 0 auto}
+.ed-edit{width:auto;margin-top:0;padding:2px 8px;font-size:14px;line-height:1.4;flex:0 0 auto}
 .ed-locked{flex:0 0 auto;font-size:13px;opacity:.6;cursor:help}
 .ed-panel{border:1px solid var(--line);border-radius:8px;padding:12px;margin:8px 0}
 .ed-hd{display:flex;gap:8px;align-items:baseline;margin-bottom:8px}

@@ -2,16 +2,10 @@
 The per-turn `volley` / `session` API a content module's code sees
 (docs/architecture/content-module-contract.md → "The volley / session API").
 
-A `Volley` is this exchange; a `Session` is the whole conversation. Module code
-(and the ContentApp) reads inbound context off the volley and calls `set_output` +
-`add_execution_action` to produce the turn's response.
-
-Two of the contract's calls are the **memory** pair:
-  * `volley.persist_data` — cross-session storage, namespaced per module, durable on
-    disk (`moxie_sdk/store.py::MemoryStore`). `volley.local_data` stays what it always
-    was: scratch for this exchange, never written anywhere.
-  * `session.summarize(...)` — ask the brain for a short structured account of the
-    conversation so far (see `memory.py` for the prompt, the parse and the filters).
+A `Volley` is one exchange (inbound context; `set_output`, `add_execution_action`,
+subscriptions out); a `Session` is the whole conversation. Memory: `volley.persist_data`
+is durable per-namespace storage (`store.MemoryStore`), `volley.local_data` is per-exchange
+scratch, and `session.summarize(...)` is in `memory.py`.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -23,11 +17,8 @@ from .memory import (FactList, summarize_history, wrap_facts,  # noqa: F401 (re-
 
 @dataclass
 class Session:
-    """The conversation across turns.
-
-    `chat` is the injected brain (`chat(messages) -> str`, the AI seam) that
-    `summarize()` uses. It is optional: a session without one simply cannot summarize,
-    and says so by returning None rather than by raising."""
+    """The conversation across turns. `chat` (the injected brain) is optional; without it
+    `summarize()` returns None."""
     history: list = field(default_factory=list)     # [{role, content}, ...]
     persist_data: dict = field(default_factory=dict)  # survives across sessions
     max_volleys: int = 40
@@ -52,16 +43,9 @@ class Session:
     def summarize(self, prompt_base: Optional[str] = None, *, chat=None,
                   append_transcript: bool = True, classifier=None, max_items: int = 5,
                   max_retries: int = 2, sleep=None) -> Optional[dict]:
-        """LLM-summarize the transcript (the contract's `session.summarize(...)`).
-
-        Returns `{"facts": [...], "preferences": [...], "open_threads": [...],
-        "summary": "..."}` — filtered so nothing the safety classifier would block and
-        nothing quoting the child survives — or **None** when the brain is unreachable
-        or had nothing worth remembering. The caller merges the result into
-        `persist_data` under its own namespace (see `ContentApp.on_session_end`).
-
-        Unlike OpenMoxie's string-returning `summarize()`, ours is structured: a parent
-        has to be able to read *and delete* one remembered item, which a blob forbids."""
+        """LLM-summarize the transcript (the contract's `session.summarize(...)`) into a
+        filtered `{"facts", "preferences", "open_threads", "summary"}` dict, or None.
+        Structured (unlike OpenMoxie's string) so a parent can delete one item."""
         return summarize_history(self.history, chat if chat is not None else self.chat,
                                  prompt_base=prompt_base,
                                  append_transcript=append_transcript,
@@ -98,27 +82,13 @@ class Volley:
         self.execution_actions.append({"name": name, "args": args or []})
 
     def update_subscriptions(self, events) -> None:
-        """Subscribe to robot input events for later turns — **replacing** the list.
-
-        The contract's own verb (`content-module-contract.md` §"What module code may do"),
-        kept as it was because a registered Python handler is *our* code and owns the whole
-        volley: it may legitimately say "these and only these".
-        """
+        """Subscribe to robot input events — **replacing** the list (the contract's verb,
+        for our own trusted handlers)."""
         self.subscriptions = list(events or [])
 
     def add_subscriptions(self, events) -> None:
-        """Ask for these events **as well as** whatever is already on this volley.
-
-        The asymmetry with `update_subscriptions` above is the point, and it is the same
-        asymmetry the runtime enforces one layer up. A sandboxed extension is a stranger's
-        program: it may *add* a perception it wants and must never be able to *remove* one
-        somebody else is relying on — not another rule's within this turn, and (in
-        `moxie_runtime._publish_chat`) not the supervisor's vision subscription either. So
-        the effect applier calls this and never the replacing form.
-
-        Order is preserved and duplicates are dropped, so two rules asking for
-        `eb-qr-event` produce one entry rather than an `active[]` list with it twice.
-        """
+        """Add events to this volley's list (order kept, duplicates dropped). The only form
+        a sandboxed extension gets: it may add a perception, never remove one."""
         for e in events or []:
             if e not in self.subscriptions:
                 self.subscriptions.append(e)

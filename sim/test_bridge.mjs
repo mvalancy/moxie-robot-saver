@@ -2,78 +2,15 @@
  * window/document/mqtt and asserts it drives window.moxie correctly from firmware
  * markup. No browser, no network. Run: node sim/test_bridge.mjs
  */
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { loadBridge, audioSpy, readGolden } from "./bridge_harness.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, "web", "bridge.js"), "utf8");
-
-// ---- spies / stubs ----
-const calls = { setFace: [], setSpeech: [], setMotor: [], showIcons: [], clearIcons: [], transcript: [] };
-const moxie = {
-  setFace: (f) => calls.setFace.push(f),
-  setSpeech: (t) => calls.setSpeech.push(t),
-  setMotor: (i, v) => calls.setMotor.push([i, v]),
-  getMotor: () => 16384,
-  showIcons: (n) => calls.showIcons.push(n),
-  clearIcons: () => calls.clearIcons.push(true),
-  setHeartLED: () => {},
-};
-const clickHandlers = {}, mqttClientRef = { c: null };
-const els = {};                                   // id-keyed elements (real DOM is stable per id)
-const fakeEl = (id) => ({
-  id, value: "", textContent: "", innerHTML: "", className: "", scrollTop: 0, scrollHeight: 0,
-  addEventListener: (e, cb) => { if (e === "click" && id) clickHandlers[id] = cb; },
-  appendChild: (child) => calls.transcript.push(child && child._text),
-  querySelector: () => ({ set textContent(v) {}, get textContent() { return ""; } }),
-});
-globalThis.window = { moxie, addEventListener: () => {} };
-/* A RECORDING audio stub. It plays nothing, but what the bridge asked for is asserted:
- * `speakClipOnly` is how a child turn becomes audible, and calling plain `speak()` for a
- * child line instead would read a visitor's own words back at them through Piper or the
- * browser voice (audio.js::speakClipOnly explains why). Both are spied so the test can
- * fail on the WRONG one being called, not only on neither. */
-const voice = { speak: [], speakClipOnly: [], sfx: [], stop: 0 };
-globalThis.window.moxieAudio = {
-  speak: (t) => voice.speak.push(t),
-  speakClipOnly: (t, who) => voice.speakClipOnly.push([t, who]),
-  stop: () => { voice.stop++; },
-  sfx: (n) => voice.sfx.push(n),
-  playCloudTTS: () => {},
-};
-globalThis.location = { hostname: "127.0.0.1" };
-globalThis.document = {
-  getElementById: (id) => (els[id] ||= fakeEl(id)),
-  createElement: () => {
-    const el = fakeEl();
-    Object.defineProperty(el, "querySelector", { value: () => ({ set textContent(v) { el._text = v; } }) });
-    return el;
-  },
-};
-// The stub client is CONNECTED and records every publish, because the bridge is a robot
-// in both directions now: what it puts on `events/...` is as much under test as what it
-// does with what it receives.
-const published = [];
-globalThis.mqtt = {
-  connect: () => {
-    const h = {};
-    mqttClientRef.c = { connected: true, on: (e, cb) => { h[e] = cb; },
-      subscribe: (t) => subscribed.push(t), end: () => {},
-      publish: (topic, payload) => published.push({ topic, payload }),
-      _emit: (e, ...a) => h[e] && h[e](...a) };
-    return mqttClientRef.c;
-  },
-};
-const subscribed = [];
-
-// ---- load bridge.js (IIFE runs; window.moxie exists → initUI wires the clicks) ----
-(0, eval)(src);
-if (!clickHandlers["bus-connect"]) throw new Error("bridge did not wire the connect button");
-clickHandlers["bus-connect"]();       // → connect() → mqtt.connect → mqttClientRef.c
-const mqttClient = mqttClientRef.c;
-if (!mqttClient) throw new Error("bridge did not connect over mqtt");
-mqttClient._emit("connect");
+/* A RECORDING audio stub: `speakClipOnly` is how a child turn becomes audible, and plain
+ * `speak()` for a child line would read a visitor's own words back at them
+ * (audio.js::speakClipOnly), so both are spied and the WRONG one can fail the test.
+ * The stub client is CONNECTED and records publishes: what the bridge puts on
+ * `events/...` is under test too. */
+const { voice, audio } = audioSpy();
+const { calls, published, subscribed, client: mqttClient } = loadBridge({ audio });
 
 // ---- drive real firmware markup through the message handler ----
 const birthdayMarkup =
@@ -173,8 +110,7 @@ mqttClient._emit("message", "/devices/d_test/commands/query_result",
     schedule: [{ module_id: "DRAW", at: "07:38" }] })));
 const log = window.moxieBridge.activityStats();
 
-const golden = JSON.parse(readFileSync(
-  join(here, "tests", "goldens", "robot_to_cloud_activity.json"), "utf8"));
+const golden = readGolden("robot_to_cloud_activity.json");
 const identity = golden.identity_keys;
 
 /* Compare one published envelope with the golden the SIL robot produced: same keys in the

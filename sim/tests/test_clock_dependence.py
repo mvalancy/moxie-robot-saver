@@ -174,7 +174,7 @@ REVIEWED: dict = {
         "artifact file it writes. Kept in the ledger rather than excluded from the scan "
         "because a glob exception is invisible and this row is not — if this file ever "
         "grows a real assertion, the reasoning above is right where somebody will read it."),
-    "sim/test_demo_proxy.mjs": (
+    "sim/tests/edge/demo_proxy/07_turn_features.mjs": (
         ("Date.now",),
         "RELATIVE — an AGE, never a date. §15k mints a context blob stamped "
         "`now - CONTEXT_TTL_S - 60` and asserts the route treats it as expired, and mints "
@@ -189,7 +189,7 @@ REVIEWED: dict = {
         "RELATIVE — a ticket is aged `Date.now()/1000 - 61` to make it one second past a "
         "60 s expiry. The subject IS the age, and 61 s from any instant is expired at "
         "every hour. (RESERVED file: owned by the live-Sim ears slice, 2026-09-03.)"),
-    "sim/test_turnstile.mjs": (
+    "sim/tests/edge/turnstile/02_fail_open.mjs": (
         ("Date.now",),
         "RELATIVE — an ELAPSED TIME, and it is the subject of the assertion rather than "
         "an input to it. §5 stubs a `siteverify` that NEVER answers and requires the "
@@ -220,18 +220,11 @@ REVIEWED: dict = {
         "timeout with a named reason."),
 
     # ---- presence --------------------------------------------------------------------
-    "sim/tests/test_presence_runtime.py::_seed_absent": (
+    "sim/tests/helpers_runtime.py::seed_absent": (
         ("time.time",),
         "RELATIVE — presence is scored as an AGE against `greet_after_s`, so the seeded "
         "state is offsets from now. A pinned epoch would make every robot absent for "
-        "years and the suite would assert nothing."),
-    "sim/tests/test_launch_cards_runtime.py::_seed_absent": (
-        ("time.time",),
-        "RELATIVE — same reason as its `test_presence_runtime.py` twin: a robot's absence "
-        "is an AGE measured against `greet_after_s`, so the seeded record is offsets from "
-        "now. The two card tests that use it assert the OPPOSITE of a greeting (a scan is "
-        "not a sighting, so no hello is due however long the robot has been away), which "
-        "a pinned epoch could not distinguish from the clock simply not mattering."),
+        "years and the suites would assert nothing."),
     "sim/tests/test_presence_runtime.py::test_a_bedtime_window_that_wraps_midnight_is_understood": (
         ("datetime.now",),
         "RELATIVE (but hour-independent) — only today's *date* is borrowed; hour and "
@@ -245,7 +238,7 @@ REVIEWED: dict = {
     "sim/tests/test_presence_runtime.py::test_bedtime_hours_suppress_the_hello": (
         ("datetime.now",),
         "RELATIVE by necessity — the subject `rt._in_bedtime` reads the real clock itself "
-        "(moxie_runtime.py:1723), so pinning the test's clock would test a different "
+        "(moxie_runtime/presence.py), so pinning the test's clock would test a different "
         "function. A now±30 min window contains now at all 1440 minutes; asserted "
         "exhaustively by `test_the_synthetic_windows_the_two_tests_above_build_hold_at_"
         "every_minute`. Both bedtime keys are written so a Fri→Sat midnight between the "
@@ -256,19 +249,6 @@ REVIEWED: dict = {
         "now at all 1440 minutes, asserted by the same exhaustive test. Its "
         "`pytest.skip(\"the synthetic window wrapped onto now\")` was removed here: it "
         "could never fire, and a skip that cannot fire is an escape hatch for a regression."),
-    "sim/tests/test_ext_subscribe.py::_seed_absent": (
-        ("time.time",),
-        "RELATIVE — a third copy of the same helper, for the same reason: the two A2 "
-        "regressions below it prove that a woken content pack which matches nothing "
-        "leaves the greeting rule exactly as it was, and the greeting is scored as an AGE "
-        "against `greet_after_s`. A pinned epoch would make the robot absent for years, "
-        "which is a state the rule answers identically to the one under test — so the "
-        "regression would pass without asserting anything."),
-    "sim/tests/test_presence_sil.py::_seed_absent": (
-        ("time.time",),
-        "RELATIVE — offsets from now, for the same reason as the runtime suite's "
-        "`_seed_absent`: the SIL robot's presence record is read as an age, so a pinned "
-        "epoch would describe a robot that left years ago."),
 
     # ---- the day plan ----------------------------------------------------------------
     "sim/tests/test_schedule_sil_e2e.py::_bedtime_body": (
@@ -548,7 +528,11 @@ def _scan() -> dict:
             scan.visit(ast.parse(fh.read(), rel))
         for scope, constructs in scan.hits.items():
             found[f"{rel}::{scope}"] = tuple(sorted(constructs))
-    for path in sorted(glob.glob(os.path.join(REPO, "sim", "*.mjs"))):
+    # `sim/tests/edge/` holds the section modules of the edge suites; a clock read moved
+    # there must not escape the ledger by leaving `sim/*.mjs`.
+    mjs = glob.glob(os.path.join(REPO, "sim", "*.mjs")) + glob.glob(
+        os.path.join(REPO, "sim", "tests", "edge", "**", "*.mjs"), recursive=True)
+    for path in sorted(mjs):
         rel = os.path.relpath(path, REPO)
         with open(path) as fh:
             constructs = js_constructs(fh.read())

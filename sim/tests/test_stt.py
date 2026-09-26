@@ -3,10 +3,8 @@ STT seam tests (M3) — the VAD accumulator + transcriber interface + response e
 Pure (no audio libs); the Whisper backend is exercised only for availability/skip.
 """
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.stt import (  # noqa: E402
     VADState, Transcriber, SttSession, WhisperTranscriber, build_stt_response,

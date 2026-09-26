@@ -24,7 +24,7 @@ flowchart LR
 | Path | What |
 |------|------|
 | `moxie_sdk/` | the SDK: `MoxieApp`, `Turn`/`Reply`/`Action`, and built-in apps (`LLMApp`, `WebhookApp`, `EchoApp`) |
-| `supervisor/moxie_runtime.py` | MQTT runtime — connect detection, config push, conversation routing, and the **device permit list** (closed by default: an unpermitted robot is *pending* and is served a minimal child-free config — [guide](../docs/guides/permitting-a-robot.md)) |
+| `supervisor/moxie_runtime/` | MQTT runtime (a package of per-concern mixins — [layout](supervisor/README.md)) — connect detection, config push, conversation routing, and the **device permit list** (closed by default: an unpermitted robot is *pending* and is served a minimal child-free config — [guide](../docs/guides/permitting-a-robot.md)) |
 | `broker/` | mosquitto config + `gen-certs.sh` (self-signed CA per appliance; keys are gitignored) |
 | `config.py` / `run.py` | configuration (env-overridable) + entrypoint |
 | `docker-compose.yml` / `Dockerfile` | run broker + supervisor together (the whole stack incl. the console: [`../docker-compose.yml`](../docker-compose.yml)) |
@@ -86,10 +86,10 @@ per-child pick cannot overrule it; set `MOXIE_APP=any` to hand the choice to the
 gaps: [`brain-picker.md`](../docs/architecture/backlog/brain-picker.md).
 
 ## Status
-✅ Broker, supervisor, config push, and LLM conversation (with history) are working and were verified
-with a simulated robot. 🔨 Next: wire **faster-whisper STT** (`supervisor/moxie_runtime.py:handle_zmq`)
-so real voice turns work, and drop in OpenMoxie's `automarkup` for expressive delivery. See
-[`../ROADMAP.md`](../ROADMAP.md).
+✅ Broker, supervisor, config push, LLM/content conversation (with memory), server voice (TTS),
+ears (STT via `MOXIE_STT`), automarkup, safety gate, telemetry, schedule and content packs all run
+end-to-end against the simulated robot (`../sim/run_smoke.sh`, `../sim/run_scenarios.sh`).
+Physical-robot proof is still pending. See [`../ROADMAP.md`](../ROADMAP.md).
 
 ---
 📖 [Back to top](../README.md) · [Moxie as a platform →](../docs/architecture/moxie-as-a-platform.md)

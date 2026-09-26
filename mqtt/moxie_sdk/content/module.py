@@ -6,21 +6,12 @@ A module is JSON with three optional sections (docs/architecture/content-module-
   globals[]       — regex-triggered commands, always on (timers, "stop", …)
   schedules[]     — the day's plan of activities
 
-Every record also carries `source_version` — the **pack author's** own counter for that
-one item (default 1). It is what makes an upgrade distinguishable from a re-import
-(`packs.py`, docs/architecture/backlog/content-packs.md §2.3); the engine itself never
-reads it.
+Every record carries `source_version`, the pack author's per-item counter (default 1),
+used only by `packs.py` to tell an upgrade from a re-import (content-packs.md §2.3).
 
-`extension` is the one field that carries *behaviour* rather than content: a small,
-total, capability-scoped program this appliance actually runs
-(`ext.py`, docs/architecture/backlog/sandboxed-extensions.md). It sits beside `code`,
-which this appliance still never runs and never will — the two are different fields with
-different meanings, and compiling one into the other is explicitly out of scope (§7.4).
-Both are plain data here; validation lives in `ext.validate` and runs at import and at
-load, never in this loader, because a pack that threw inside `load_module` would take the
-whole reload down.
-
-This module is pure (no MQTT/LLM) so it is fully unit-testable.
+`extension` is a sandboxed program this appliance runs (`ext.py`); `code` is inert data
+that is never run. Both are plain data here — validation happens at import and load, not
+in this loader, so a bad pack cannot take the reload down. Pure (no MQTT/LLM).
 """
 from __future__ import annotations
 import re
@@ -29,8 +20,7 @@ from typing import Optional
 
 
 def _source_version(d: dict) -> int:
-    """A record's author-owned version counter — 1 when it says nothing, which is what
-    every module file written before content packs existed says."""
+    """A record's author-owned version counter; 1 when absent or invalid."""
     v = (d or {}).get("source_version", 1)
     if isinstance(v, bool) or not isinstance(v, int) or v < 0:
         try:
@@ -60,16 +50,10 @@ class Conversation:
     extension: dict = field(default_factory=dict)  # a sandboxed program — see ext.py
     source_version: int = 1              # the author's counter for this item (packs.py)
 
-    # ---- long-term memory (the contract's persist_data / session.summarize) ----
-    # OpenMoxie's MemoryChat drives this from a `code` string
-    # (`complete_handler` → `session.summarize()` → `volley.persist_data`). We do not
-    # execute module `code` (sandboxing, see content_app.py), so the same behaviour is
-    # declared instead:
-    #
+    # ---- long-term memory, declared rather than scripted (OpenMoxie MemoryChat) ----
     #     "memory": {"namespace": "memory_chat", "summarize": true, "min_volleys": 2,
     #                "max_items": 5, "prompt": "<optional override instruction>"}
-    #
-    # `namespace` alone is enough to make `{{ volley.persist_data.<ns>.* }}` resolve.
+    # `namespace` alone makes `{{ volley.persist_data.<ns>.* }}` resolve.
 
     @property
     def memory_namespace(self) -> str:

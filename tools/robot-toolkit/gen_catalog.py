@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Generate docs/reverse-engineering/proto-catalog.md from the recovered protos.
+"""Generate docs/reverse-engineering/protocol/proto-catalog.md from the recovered protos.
 Run from tools/robot-toolkit:  python3 gen_catalog.py   (needs protoc + protobuf)."""
-import glob, subprocess, tempfile, os, collections
+import argparse, glob, subprocess, tempfile, os, collections
 from google.protobuf import descriptor_pb2 as dpb
 HERE=os.path.dirname(os.path.abspath(__file__)); PROTO=os.path.join(HERE,"proto")
-OUT=os.path.abspath(os.path.join(HERE,"..","..","docs","reverse-engineering","proto-catalog.md"))
+OUT=os.path.abspath(os.path.join(HERE,"..","..","docs","reverse-engineering","protocol","proto-catalog.md"))
 FW="v3.6.4-Zephyr / OTA v24.10.803"
 def main():
+    ap=argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--out",default=OUT,help="output path (default: %(default)s)")
+    out=ap.parse_args().out
     desc=os.path.join(tempfile.gettempdir(),"catalog.desc")
     protos=glob.glob(f"{PROTO}/**/*.proto",recursive=True)
     subprocess.run(["protoc",f"--proto_path={PROTO}",f"--descriptor_set_out={desc}",*protos],check=True,stderr=subprocess.DEVNULL)
@@ -35,7 +38,7 @@ def main():
       "> The browsable index of the on-robot + cloud protocol. Regenerate with `python3 tools/robot-toolkit/gen_catalog.py`.",
       "> Field/enum numbers are wire-compatible with the firmware.\n",
       f"**{st['m']} messages · {st['e']} enums · {st['f']} fields · {len(files)} files.**\n"]
-    foot=["\n\n---\n📖 [Reverse-engineering index](README.md) · [recovered-proto/](recovered-proto/) · [protoref tool](../../tools/robot-toolkit/moxie_toolkit/protoref.py)"]
-    open(OUT,"w").write("\n".join(head+body+foot))
-    print(f"wrote {OUT}: {st['m']} messages, {st['e']} enums, {st['f']} fields")
+    foot=["\n\n---\n📖 [Reverse-engineering index](../README.md) · [recovered-proto/](recovered-proto/) · [protoref tool](../../../tools/robot-toolkit/moxie_toolkit/protoref.py)"]
+    open(out,"w").write("\n".join(head+body+foot))
+    print(f"wrote {out}: {st['m']} messages, {st['e']} enums, {st['f']} fields")
 if __name__=="__main__": main()

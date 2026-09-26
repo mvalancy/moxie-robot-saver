@@ -1,33 +1,23 @@
 """
 📦 Content packs through the REAL runtime — the store, the five routes, the live swap.
 
-Tests 10 and 11 of `docs/architecture/backlog/content-packs.md` §3. Everything runs against
-a genuine `MoxieRuntime` on a scratch data dir with a fake MQTT transport
-(`helpers_runtime.make_runtime`) and its OWN status HTTP server on a free port
-(`helpers_runtime.status_server`) — so what is proved is the handler the parent console
-actually talks to, not a double of it. No broker, no gateway, no robot, no sleeps.
+Tests 10-11 of `docs/architecture/backlog/content-packs.md` §3, against a real
+`MoxieRuntime` (`helpers_runtime.make_runtime`) with its own status HTTP server
+(`helpers_runtime.status_server`). No broker, gateway, robot or sleeps.
 
-The two claims this file exists for:
-
-* **An imported pack is live on the next turn, with no restart** — `test_an_imported_pack_…`
-  drives a real turn through the runtime and reads the new prompt back out of the reply.
-* **Nothing else moves.** An import publishes nothing on the wire and never re-pushes
-  config: a P0 pack carries no `RobotCloudConfig` field, which is why face/config packs are
-  P2. Asserted, not assumed.
+* An imported pack is live on the NEXT TURN with no restart (read back from a real reply).
+* Nothing else moves: an import publishes nothing and never re-pushes config (a P0 pack
+  carries no `RobotCloudConfig` field).
 """
 from __future__ import annotations
 
 import json
 import os
-import sys
 import urllib.error
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 pytest.importorskip("paho.mqtt.client", reason="the runtime's transport")
 pytest.importorskip("jinja2", reason="content prompts are Jinja templates")
@@ -63,12 +53,8 @@ def echo_prompt(messages):
 
 def build(tmp_path, *, prompt=SHIPPED_PROMPT, version=1, chat=echo_prompt,
           defaults=None):
-    """A real runtime whose app is a real `ContentApp` over the shipped module.
-
-    Boots the way `config.build_content_app()` does — shipped defaults, then whatever
-    overlay is already in this data dir — so calling it twice against one `tmp_path` is a
-    faithful *restart*, which is how several tests below prove an import survives one.
-    """
+    """A real runtime over a real `ContentApp`, booted like `config.build_content_app()`
+    (shipped defaults, then this data dir's overlay) — two calls are a faithful restart."""
     store = JsonStore(str(tmp_path))
     shipped = P.shipped_items(shipped_module(prompt, version) if defaults is None
                               else defaults)
@@ -491,18 +477,10 @@ def test_the_whole_round_trip_over_http(served):
 
 
 def test_a_second_appliance_re_exports_the_file_the_first_one_sent_it(tmp_path):
-    """**Two appliances, one file** — the claim a pack exists to make, and the one no
-    single-runtime test can prove.
-
-    Appliance A imports a pack and exports what it now holds; appliance B, a separate
-    data dir that has never seen the pack, imports that export and exports again. The
-    two files must be byte-identical. Anything the *store* silently normalises on the
-    way through — a dropped field, a `source_version` reset to its default, a float
-    that came back as an int — is invisible to a round trip inside one process and
-    lands here as a byte difference.
-
-    `now` is pinned on both exports for the obvious reason: `created_at` is the one
-    field that legitimately differs between two exports of the same content.
+    """Two appliances, one file: A imports and exports; B (fresh data dir) imports A's export
+    and exports again; the files must be byte-identical, catching anything the STORE
+    normalises (dropped field, reset `source_version`, float→int). `now` is pinned because
+    `created_at` legitimately differs.
     """
     a, _ = build(tmp_path / "a")
     b, _ = build(tmp_path / "b")

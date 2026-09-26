@@ -1,26 +1,22 @@
 """
-ContentApp — runs a content module through the AI seam (docs/architecture/
-content-module-contract.md). This is where the pure engine (module/volley/render)
-becomes a live MoxieApp: each turn it checks `globals[]` first (always-on commands),
-otherwise runs the active `conversations[]` module — render its Jinja prompt over the
-volley, hand it to the brain, return a Reply.
+ContentApp — runs a content module through the AI seam
+(docs/architecture/content-module-contract.md). Each turn: `globals[]` first (always-on
+commands), else the active conversation — render its prompt over the volley, ask the
+injected `chat(messages) -> str` brain, return a Reply.
 
-The brain is injected as a `chat(messages) -> str` callable (the AI-seam boundary),
-so ContentApp is testable without a real LLM and works with any OpenAI-compatible
-endpoint. Global handlers are registered Python callables keyed by the global's name
-(arbitrary `code`-string execution from module JSON is deliberately NOT done here —
-a sandboxing concern deferred; built-in/registered handlers cover the safe cases).
+Global handlers are registered Python callables or sandboxed extensions (`ext.py`); a
+module's `code` string is never executed.
 
-**Memory.** The contract's `volley.persist_data` is loaded here per turn from the
-durable `MemoryStore` (one `memory.json` per robot) and rendered into the module's
-prompt; `volley.local_data` stays per-exchange scratch. When a conversation *ends*
-(`on_session_end` — the runtime calls it on `<exit>`, a module switch, or a
-disconnect), a module that declares a `memory` block gets what OpenMoxie's MemoryChat
-does from its `complete_handler`: `session.summarize()` → merge into `persist_data`
-under the module's namespace, with provenance. Since we do not execute module `code`,
-that behaviour is *declared* rather than scripted:
+**Memory.** `volley.persist_data` is loaded per turn from the durable `MemoryStore` and
+rendered into the prompt. When a conversation ends (`on_session_end`: `<exit>`, module
+switch or disconnect), a module with a declared `memory` block is summarized into its
+namespace with provenance — OpenMoxie's MemoryChat `complete_handler`, declared rather
+than scripted:
 
     "memory": {"namespace": "memory_chat", "summarize": true, "min_volleys": 2}
+
+The second half of this file is the extension *host*: the only code that builds the
+evaluator's fact base and applies its effects (sandboxed-extensions.md §4.4/§4.5).
 """
 from __future__ import annotations
 import hashlib
@@ -71,39 +67,25 @@ class ContentApp(MoxieApp):
                  safety_classifier=None, content_defaults=None,
                  ext_grants=None, ext_limits=None, clock=None, monotonic=None):
         self.module = module
-        # 📦 The SHIPPED baseline (`packs.shipped_items` of `MOXIE_CONTENT_MODULE`), kept
-        # separately from `module` because `module` is *defaults ⊕ the imported overlay*.
-        # `MoxieRuntime.reload_content()` needs the two apart: without it an `undo` could
-        # not put a shipped item back after a pack replaced it. None ⇒ nobody recorded one
-        # (see `MoxieRuntime._content_defaults` for what happens then).
+        # 📦 The shipped baseline, kept apart from `module` (= defaults ⊕ overlay) so a
+        # content `undo` can restore a shipped item. None ⇒ none recorded.
         self.content_defaults = content_defaults
         self._chat = chat
         self._persona = persona
         self._default_module_id = default_module_id
         self._handlers: dict = dict(global_handlers or {})
-        # Long-term memory (`volley.persist_data`). Built by default so the shipped
-        # config path gets it without wiring; pass one in to point it at a tmp dir, or
-        # `memory=False` to run with no durable memory at all.
+        # Long-term memory; built by default, `memory=False` disables it.
         self.memory = (MemoryStore() if memory is None
                        else (memory or None))
-        # Only used when a summary is written; the classifier decides what may never be
-        # remembered. Resolved lazily so a missing rules file is not an import error.
+        # Decides what may never be remembered; resolved lazily (see `classifier`).
         self._classifier = safety_classifier
         self._classifier_resolved = safety_classifier is not None
-        # 🧬 Sandboxed extensions (BEYOND #6). `ext_grants` is the set of capabilities
-        # this appliance will honour. It defaults to `{say, handled, session,
-        # child.nickname}` and there is deliberately **no env var and no console control**
-        # for it at P0: widening it is a code change, which is a reviewer. The
-        # parent-facing grant flow is P1.
+        # 🧬 Capabilities granted to imported extensions (default `ext.DEFAULT_GRANTS`).
+        # No env var or console control: widening it is a reviewed code change (P1).
         self._ext_grants = (frozenset(ext.DEFAULT_GRANTS) if ext_grants is None
                             else frozenset(ext_grants))
-        # 📦 Shipped-by-us extensions get a wider set, and the trust is anchored to the
-        # **bytes of the program**, not to its name. `content_defaults` is the shipped
-        # baseline (`packs.shipped_items` of `MOXIE_CONTENT_MODULE`), so an imported pack
-        # that overrides `global:What Time Is It` does NOT inherit its grants — its AST
-        # digest is different, and a different program is a different decision. A pack
-        # that copies one of ours byte for byte does get them, which is correct: it is our
-        # program, unchanged, and `explain()` renders it identically.
+        # Our shipped extensions get a wider set, trusted by the program's digest, not its
+        # name: a pack overriding a shipped global does not inherit its grants.
         self._ext_shipped_grants = (self._ext_grants | SHIPPED_EXTRA_GRANTS
                                     if ext_grants is None else self._ext_grants)
         self._ext_shipped = shipped_ext_digests(content_defaults)
@@ -111,11 +93,9 @@ class ContentApp(MoxieApp):
         # Clock and entropy are injected into the evaluator, never imported by it (X7).
         self._clock = clock or time.time
         self._monotonic = monotonic or time.monotonic
-        #: `{(device_id, extension_id): breaches}` for this session. A broken extension
-        #: may cost the child one turn's latency; it may not cost every turn's (§6.4).
+        #: `{(device_id, extension_id): breaches}` this session — quarantine counter (§6.4).
         self._ext_breaches: dict = {}
-        #: `{(device_id, extension_id, reason)}` already reported, so the parent gets one
-        #: `ext_events` entry per problem per session rather than one per turn.
+        #: Already-reported `(device_id, extension_id, reason)`: one event per problem.
         self._ext_reported: set = set()
 
     def register_global(self, name: str, handler: GlobalHandler) -> None:
@@ -175,34 +155,22 @@ class ContentApp(MoxieApp):
 
     @staticmethod
     def _reply_from_volley(v: Volley) -> Reply:
-        # Handler output goes through the same tag parse as model output, so a module
-        # can end a session by writing "<exit>" into set_output (moxie_sdk/actions.py).
+        # Same tag parse as model output, so a handler can write "<exit>" (actions.py).
         text, actions = parse_action_tags(v.output_text or "")
-        # …and `volley.execution_actions` — what a global handler or a sandboxed
-        # extension asked the robot to *run* — becomes `execute` RemoteChatActions.
-        # Brief S5's gap, closed 2026-09-04; see `execution_actions_of`.
+        # What a handler/extension asked the robot to *run* → `execute` actions.
         actions += execution_actions_of(v)
         markup = parse_action_tags(v.output_markup)[0] if v.output_markup else None
-        # A module may author its own markup — that is honoured as written. But a handler
-        # that only set `output_markup` to a plain line would bypass the runtime's markup
-        # seam (which fires on `markup is None`) and speak flat, so the markup floor runs
-        # here for that one path. `annotate` returns anything already carrying a `<mark`
-        # or `<usel` unchanged, so authored markup is never touched.
+        # Plain markup from a handler would bypass the runtime's markup seam (which fires
+        # on `markup is None`), so apply the floor here; authored tags pass unchanged.
         if markup and _automarkup_enabled():
             markup = annotate(markup)
-        # …and `volley.subscriptions` — what a handler or extension asked to *perceive*.
-        # Symmetric with the actions above: `act` is the outbound half of `MoxieGo`'s
-        # opening move and `subscribe` is the inbound half, and a scanner you cannot read
-        # from is pointless (brief §5.1). The runtime merges this into its own vision
-        # subscription; see `moxie_runtime._publish_chat`.
+        # What it asked to *perceive*; the runtime merges this into its own subscription.
         return Reply(text=text, markup=markup, actions=actions,
                      subscribe=subscriptions_of(v))
 
-
     # ---- sandboxed extensions (BEYOND #6) ----
     def _ext_limits_now(self):
-        """The budget, read from `config.py` when it is importable (the supervisor) and
-        from `ext.py`'s own defaults when it is not (a bare SDK install)."""
+        """The budget from `config.py` (supervisor) or `ext.py`'s defaults (bare SDK)."""
         if self._ext_limits is not None:
             return self._ext_limits
         try:
@@ -215,15 +183,9 @@ class ContentApp(MoxieApp):
             return ext.Limits()
 
     def _ext_breach(self, device_id: str, ext_id: str, result, *, hook: str) -> None:
-        """Record one breach: quarantine after `MOXIE_EXT_MAX_BREACHES`, and tell the
-        **parent** once — never the child (§6.4).
-
-        The child hears nothing at all: the turn proceeds exactly as it does with no
-        extension, so an `on: global` failure falls through to the conversation (S1) and an
-        `on: turn.before` failure lets the model run. No `f"Script error: {e}"` — that is
-        upstream's one bad output surface (U6), and the whole reason this design exists is
-        that a broken pack should be boring.
-        """
+        """Record one breach: quarantine after `MOXIE_EXT_MAX_BREACHES` and tell the
+        parent once, never the child — the turn proceeds as if there were no extension
+        (§6.4; unlike upstream's spoken "Script error", U6)."""
         key = (device_id, ext_id)
         self._ext_breaches[key] = self._ext_breaches.get(key, 0) + 1
         count = self._ext_breaches[key]
@@ -240,9 +202,6 @@ class ContentApp(MoxieApp):
             store.append(device_id, EXT_EVENTS_COLLECTION, {
                 "at": int(self._clock()), "extension": ext_id, "hook": hook,
                 "reason": result.breach or "invalid",
-                # The plain-language half, so the console can say "the Bedtime pack's
-                # timer stopped working, and Moxie carried on without it" without having
-                # to know what a step budget is.
                 "sentence": result.sentence,
                 "quarantined": count >= self._ext_max_breaches(),
             }, cap=EXT_EVENTS_CAP)
@@ -262,12 +221,8 @@ class ContentApp(MoxieApp):
 
     def run_extension(self, turn: Turn, volley: Volley, session: Session, *,
                       hook: str, kind: str, key: str, data: dict):
-        """Run one item's extension for this turn, or return None.
-
-        None means "nothing happened, carry on exactly as before" and is the answer for
-        every failure as well as for no-extension-here, no-rule-matched and quarantined —
-        which is what makes §6.4 true by construction rather than by care.
-        """
+        """Run one item's extension for this turn, or return None — "carry on as before",
+        the answer for every failure, no match, no extension and quarantine (§6.4)."""
         block = (data or {}).get("extension") or {}
         if not block or block.get("on") != hook:
             return None
@@ -277,9 +232,7 @@ class ContentApp(MoxieApp):
         device_id = getattr(turn.robot, "device_id", "") or ""
         if self._ext_quarantined(device_id, ext_id):
             return None                       # already broken three times this session
-        # Validation runs HERE, every turn, not only at import: an extension written
-        # straight into the store, or one that would fail under a newer validator, simply
-        # does not run (T17).
+        # Validated every turn, not only at import (T17).
         reasons = ext.validate(block, grants=grants)
         if reasons:
             self._ext_breach(device_id, ext_id,
@@ -339,21 +292,14 @@ class ContentApp(MoxieApp):
                 if handler:
                     handler(v, session)
                 else:
-                    # 🧬 The socket S1 describes, filled by a pack instead of by us. A
-                    # registered Python handler still wins — it is our own code, and a
-                    # shipped default should not be displaced by an import.
+                    # 🧬 A pack's extension fills the socket (a registered handler wins).
                     self.run_extension(turn, v, session, hook="global",
                                        kind="global", key=g.name,
                                        data={"extension": g.extension,
                                              "name": g.name})
-                # A global (OpenMoxie's timer is the canonical one) may write durable
-                # state; that is what `persist_data` is for.
                 self._save_persist_data(turn.robot.device_id, v.persist_data, before)
-                # `or v.subscriptions` for the same reason `or v.execution_actions` is
-                # here: a global whose whole job is to arm a perception has produced
-                # something, and falling through to the conversation would build a FRESH
-                # volley and drop it on the floor. That is the S5 gap in its third
-                # location, so it is closed in the same shape.
+                # An action or subscription alone is output too; falling through would
+                # rebuild the volley and drop it.
                 if (v.output_text is not None or v.execution_actions
                         or v.subscriptions):
                     return self._reply_from_volley(v)
@@ -366,10 +312,8 @@ class ContentApp(MoxieApp):
         v = self._volley(turn)
         session = self._session(turn, history=list(turn.history),
                                 persist_data=v.persist_data, conv=conv)
-        # 🧬 `on: turn.before` — upstream's `pre_process`. It runs before the prompt is
-        # rendered and may set `handled`, which suppresses the model call for this turn
-        # (the True/False return of upstream's hook). A failure here is skipped and the
-        # model runs, so the child is never left with silence.
+        # 🧬 `on: turn.before` (upstream's `pre_process`): may set `handled` to skip the
+        # model; a failure is skipped and the model runs.
         pre = self.run_extension(turn, v, session, hook="turn.before",
                                  kind="conversation",
                                  key=f"{conv.module_id}/{conv.content_id}",
@@ -378,16 +322,10 @@ class ContentApp(MoxieApp):
         if pre is not None and pre.handled and (v.output_text is not None
                                                 or v.execution_actions
                                                 or v.subscriptions):
-            # `or v.execution_actions` mirrors the globals path above: a rule that answers
-            # the turn by *doing* something — arming the QR scanner, cancelling a timer —
-            # has handled it just as much as one that spoke, and dropping the action here
-            # would be the S5 gap reopening one branch lower down.
             self._save_persist_data(turn.robot.device_id, v.persist_data,
                                     json.dumps({}, sort_keys=True))
             return self._reply_from_volley(v)
-        # `presence` — read-only: what Moxie's own eyes have told the server
-        # (moxie_sdk/presence.py, docs/architecture/vision.md). A module template can say
-        # `{% if presence.face_present %}` or drop `{{ presence.line }}` into its prompt.
+        # `presence` (read-only, vision.md) is available to the prompt template.
         system = render_prompt(conv.prompt, {"volley": v, "session": session,
                                              "presence": (turn.presence
                                                           or _presence_vars(turn.robot))})
@@ -400,26 +338,18 @@ class ContentApp(MoxieApp):
         try:
             text = (self._chat(messages) or "").strip()
         except Exception as e:
-            # Graceful degradation (ai-seam.md §2): unreachable → ERROR_OFFLINE (robot
-            # local-fallback); still rate-limited after backoff → a gentle "one moment"
-            # so the child isn't dropped; other soft error → keep them engaged.
+            # ai-seam.md §2: offline → robot local fallback; rate-limited → "one moment";
+            # anything else → keep the child engaged.
             from ..chat import is_offline_error, is_rate_limit_error
             if is_offline_error(e):
                 return Reply.offline()
             if is_rate_limit_error(e):
                 return Reply(text="Give me one tiny second to think... okay, what were you saying?")
             return Reply(text="Hmm, my brain got fuzzy — say that again?")
-        # The model may drive the robot from inside its own line (see actions.py):
-        # lift the tags out as actions, speak only the remainder.
+        # Lift action tags out of the model's line (actions.py); speak the remainder.
         text, actions = parse_action_tags(text)
-        # A `turn.before` extension that acted but did **not** handle the turn still gets
-        # its action out: the model answers the child, and the robot does the thing the
-        # pack asked for. Losing it here would mean "act" only worked when a pack also
-        # took the whole turn.
+        # A `turn.before` extension's act/subscribe still go out when the model answers.
         actions += execution_actions_of(v)
-        # Same for the subscription: `MoxieGo`'s opening move arms the scanner AND asks to
-        # be told what it sees, and neither half is conditional on the pack also taking
-        # the turn. Losing it here would mean "subscribe" only worked when a pack spoke.
         subscribe = subscriptions_of(v)
         if not text and not actions:
             return Reply(text="Tell me more!", subscribe=subscribe)
@@ -427,33 +357,14 @@ class ContentApp(MoxieApp):
 
     # ---- being woken by the robot's own eyes (vision.md §7.1, brief §8 G6) ----
     def perceive(self, turn: Turn) -> Optional[Reply]:
-        """A subscribed robot event, offered to this pack's **local evaluator only**.
+        """A subscribed robot event (`turn.speech` is its name), offered to the pack's
+        local evaluator only — never the model, so a face walking into frame can never
+        become a model call (vision.md §7.1).
 
-        `turn.speech` is the event name. Everything here is the `turn.before` half of
-        `respond` with the model removed, and the removal is the point rather than an
-        optimisation: `moxie_runtime._on_vision_turn` diverts perception away from
-        `respond` precisely so that `eb-found-face` — which fires whenever a child walks
-        back into frame — can never become a model call (vision.md §7.1). A pack's rules
-        are evaluated by `ext.evaluate`: pure, step- and byte-budgeted, no network, no
-        brain. So a pack can be *woken* by something the robot noticed without moving one
-        inch of that safety property, which is the whole reason this method is separate
-        from `respond` rather than a flag on it.
-
-        **Only `on: turn.before`, and deliberately not `global`.** A global's `pattern` is
-        matched against *what a child said*; `eb-qr-event` is not something anybody said,
-        and letting an event string fall through `match_global` would mean a pack could be
-        woken by a phrase match it never intended. `turn.before` is also the faithful
-        upstream analogue — the event reaches the module's `pre_process` — which is where
-        §8's G6 middle rule (`speech == "eb-qr-event"`) lives.
-
-        Returns a `Reply` only when a rule actually **produced** something: a line, an
-        `act`, or a `subscribe`. Note what is *not* required — `handled`. On the normal
-        turn `handled` means "answer without asking the AI", and it gates whether the
-        model runs; here there is no model to suppress, so requiring it would be asking a
-        pack to opt out of something that already cannot happen. A rule that matched and
-        wrote only to memory therefore applies its effect and still returns None, and the
-        runtime's own presence handling continues underneath it — which is the honest
-        answer for "the pack noticed, and had nothing to say".
+        Only `on: turn.before` (§8 G6), never `global`: an event is not something a child
+        said. Returns a Reply only when a rule produced a line, `act` or `subscribe`;
+        `handled` is not required (there is no model to suppress). Memory-only effects
+        apply and return None.
         """
         conv = self._active_conversation(turn)
         if conv is None or not getattr(conv, "extension", None):
@@ -482,17 +393,11 @@ class ContentApp(MoxieApp):
     def on_session_end(self, robot: RobotContext, history: list,
                        reason: str = "") -> None:
         """The contract's `complete_handler` moment: summarize the finished conversation
-        into `persist_data` under this module's namespace, with provenance.
+        into the module's `memory` namespace, with provenance.
 
-        Declared, not scripted — a conversation opts in with a `memory` block
-        (`{"namespace": …, "summarize": true, "min_volleys": 2}`); OpenMoxie's MemoryChat
-        expresses the same thing as a `complete_handler` Python string, which we do not
-        execute (sandboxing, see this module's docstring).
-
-        Nothing is written when: memory is off, the module declares no namespace, the
-        chat was too short to be worth remembering, everything new was already
-        summarized, the privacy policy is `NO_DATA`, or the brain failed. Failure is
-        always "remember nothing" — never a half-written or invented memory."""
+        Writes nothing when memory is off, no namespace is declared, the chat was too short
+        or already summarized, the policy is `NO_DATA`, or the brain failed — failure is
+        always "remember nothing"."""
         conv = self._memory_conversation(robot)
         device_id = getattr(robot, "device_id", "")
         if self.memory is None or conv is None or not conv.summarizes or not device_id:
@@ -500,8 +405,7 @@ class ContentApp(MoxieApp):
         ns = conv.memory_namespace
         cfg = conv.memory or {}
         history = list(history or [])
-        # Only the part we have not summarized yet (a module switch back and forth must
-        # not re-summarize — and re-pay for — the same transcript).
+        # Only the not-yet-summarized tail (never re-pay for the same transcript).
         block = self.memory.load(device_id).get(ns) or {}
         done = int(((block.get("_meta") or {}) if isinstance(block, dict) else {})
                    .get("summarized_through", 0) or 0)
@@ -534,25 +438,15 @@ class ContentApp(MoxieApp):
 
 
 # --------------------------------------------------------------------------- #
-# Sandboxed content extensions — the host half (BEYOND #6 P0)
+# Sandboxed content extensions — the host half (sandboxed-extensions.md §4.4/§4.5)
 #
-# `moxie_sdk/content/ext.py` is the evaluator: pure, total, and blind to this process.
-# Everything that touches the world lives here, and the split is the security argument
-# (docs/architecture/backlog/sandboxed-extensions.md §4.4/§4.5):
-#
-#   * `ext_facts()` builds a **plain-JSON** dict from primitives. The evaluator never sees
-#     a `Volley`, a `Session`, a `MemoryStore` or any other live object, so there is no
-#     object for an attribute walk to reach (X2).
-#   * `apply_ext_effects()` applies the returned effect list **after** the program ended.
-#     A breach mid-program therefore leaves nothing half-applied — the list is discarded
-#     whole by `ext.evaluate` and never gets here (X11).
-#   * Every breach is boring: the extension fails, the turn does not. A `global` falls
-#     through to the conversation exactly as a matched global with no handler does today
-#     (S1); a `turn.before` is skipped and the model runs. The child hears no error text.
+# `ext.py` is the pure evaluator; everything that touches the world lives here:
+#   * `ext_facts()` builds a plain-JSON fact base — no live object to walk (X2).
+#   * `apply_ext_effects()` applies effects only after the program ended, so a breach
+#     leaves nothing half-applied (X11).
 # --------------------------------------------------------------------------- #
 
-#: Inbound caps. `speech`, `entities` and `input_vars` are robot-supplied — untrusted data
-#: — so they are bounded before the evaluator's own byte caps ever see them.
+#: Inbound caps on robot-supplied (untrusted) values, applied before the evaluator's own.
 EXT_MAX_SPEECH = 2000
 EXT_MAX_ENTITIES = 16
 EXT_MAX_ENTITY_CHARS = 256
@@ -566,13 +460,8 @@ _EXT_VAR_KEY = re.compile(r"^[A-Za-z_$][A-Za-z0-9_.$-]{0,63}$")
 
 
 def _ext_json(value, depth: int = 0):
-    """A plain-JSON copy: `str/int/float/bool/None/list/dict` and nothing else.
-
-    Rebuilds every container, so a `FactList` (a `list` subclass `memory.wrap_facts`
-    returns) comes back a plain list, and anything that is not JSON at all comes back
-    `None`. This is the function X2 is really testing: the fact base cannot contain a host
-    object because this is the only thing that puts values into it.
-    """
+    """A plain-JSON copy (containers rebuilt, subclasses flattened, non-JSON → None) —
+    the only path into the fact base, which is what X2 tests."""
     if depth > 12:
         return None
     if value is None or isinstance(value, (bool, int, float)):
@@ -593,13 +482,8 @@ def _ext_json(value, depth: int = 0):
 
 def ext_facts(volley: Volley, session: Session, *, namespace: str = "",
               grants=(), presence: Optional[dict] = None) -> dict:
-    """The §4.4 fact base — built by the host from primitives, never by exposing objects.
-
-    `namespace` is supplied **here**, by us, from the item's identity. An extension cannot
-    name a namespace, a device, a collection or a path: the words for those do not exist in
-    the grammar, which is what makes "its own memory and nobody else's" structural rather
-    than enforced (X9).
-    """
+    """The §4.4 fact base, built from primitives. `namespace` is chosen by the host; the
+    grammar has no words for a namespace, device or path, so isolation is structural (X9)."""
     grants = set(grants or ())
     ents = [str(e)[:EXT_MAX_ENTITY_CHARS]
             for e in list(getattr(volley, "entities", None) or [])[:EXT_MAX_ENTITIES]]
@@ -643,14 +527,9 @@ def ext_facts(volley: Volley, session: Session, *, namespace: str = "",
 
 
 def ext_markup(markup: str) -> tuple:
-    """`(clean, dropped)` — behaviour markup through the frozen `vocab.py` catalogue (M3).
-
-    An unknown mark id, a malformed `cmd:` payload or an out-of-catalogue asset is
-    **dropped**, tag by tag, and counted; the surrounding text survives. Never passed
-    through unchecked, because `markup` is the one capability that reaches the robot's
-    *body* — validation is what makes a bad id harmless, and the parent's explicit grant is
-    what covers a valid id in poor taste (risk R4).
-    """
+    """`(clean, dropped)` — markup filtered tag by tag through the frozen `vocab.py`
+    catalogue (M3); invalid tags are dropped and counted, text survives. `markup` reaches
+    the robot's body, so it is never passed through unchecked (R4)."""
     if not markup:
         return "", 0
     dropped = 0
@@ -699,17 +578,11 @@ _MISSING = object()
 def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = "",
                       namespace: str = "", classifier=None, module_id: str = "",
                       content_id: str = "") -> dict:
-    """Apply one extension's effect list, in order, subject to every cap in §6.3.
+    """Apply one extension's effects in order under the §6.3 caps; returns counts
+    `{"spoke", "wrote", "dropped_markup", "blocked", "acted", "subscribed"}`.
 
-    Returns `{"spoke", "wrote", "dropped_markup", "blocked", "acted", "subscribed"}` for
-    the caller and the log.
-
-    Two things are worth reading twice. **`say` goes through the same output-side safety
-    classifier and the same `annotate` floor a model's line does** — an extension does not
-    get a private channel to a child, and a blocked verdict is replaced by a
-    `redirect_for()` line rather than refused (M2). And **`remember`/`forget` name only a
-    key**: the `(device_id, namespace)` pair is supplied here, by us, so the write cannot
-    reach another module's namespace or another child's robot (X9).
+    `say` passes the same output safety classifier as a model line (unsafe → redirect,
+    M2). `remember`/`forget` name only a key; device and namespace come from the host (X9).
     """
     spoke = wrote = dropped = acted = subscribed = 0
     blocked = False
@@ -759,12 +632,8 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
             except Exception as e:            # a broken memory file must not end a turn
                 print(f"[ext] memory write failed ({e}); continuing", flush=True)
         elif kind == "act":
-            # The pack asked the robot to run something. The name was already checked
-            # against `ext.ACTION_WORDS` at load *and* charged an `act.<name>` grant — this
-            # is the second, host-side check on the same closed table, because the value
-            # that ends up as a `function_id` on a wire to a robot in a child's room should
-            # be bounded by the code that puts it there and not only by the code that let
-            # it in (qr-launch-cards.md §P0-b).
+            # Second, host-side check on the closed `ACTION_WORDS` table (the load-time
+            # check already ran) — bounded by the code that emits it (qr-launch-cards §P0-b).
             name = str(eff.get("name") or "")
             if name not in ext.ACTION_WORDS:      # pragma: no cover - load already refused
                 print(f"[ext] {name!r} is not an action this appliance knows; "
@@ -773,69 +642,34 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
             volley.add_execution_action(name, [str(a) for a in (eff.get("args") or [])])
             acted += 1
         elif kind == "subscribe":
-            # The pack asked to *perceive* something. `add_subscriptions`, never
-            # `update_subscriptions`: an extension may add an event and may never remove
-            # one — see `Volley.add_subscriptions` for the asymmetry, and
-            # `moxie_runtime._publish_chat` for the same rule against the supervisor's own
-            # vision set one layer up. The names are bounded again in `subscriptions_of`,
-            # for the same reason `act` is bounded twice: that is the last function before
-            # a string becomes an `EventSubscription.active[]` entry on a wire to a robot
-            # in a child's room.
+            # Add, never replace: an extension may add events, never remove any. Names
+            # are bounded again in `subscriptions_of`.
             events = [str(e) for e in (eff.get("events") or [])]
             volley.add_subscriptions(events)
             subscribed += len(events)
         elif kind == "brain":
-            # Still unreachable — `brain` is refused at load (`ext.P1_CAPABILITIES` says
-            # why: it needs the one-call-per-turn budget). Kept as an explicit refusal
-            # rather than a silent drop so the day it lands, the gap is a line to fill in
-            # and not a bug to find. `subscribe` was the other half of this branch until
-            # 2026-09-05 and is now handled above.
+            # Unreachable: `brain` is refused at load (P1). An explicit refusal, not a
+            # silent drop.
             print(f"[ext] {kind} is not plumbed yet; ignored", flush=True)
     return {"spoke": spoke, "wrote": wrote, "dropped_markup": dropped, "blocked": blocked,
             "acted": acted, "subscribed": subscribed}
 
 
 def robot_functions() -> frozenset:
-    """The robot-side functions this appliance will ever name on the wire — **the keys of
-    `ext.ACTION_WORDS`, and nothing else**.
-
-    One table, so a function is nameable exactly when somebody has written the sentence a
-    parent reads before granting it: a name with no words cannot be declared, cannot be
-    granted, and cannot be emitted. Two tables could drift; this one cannot.
-
-    The bound is the safety property, not the tidiness one.
-    `docs/architecture/backlog/qr-launch-cards.md` §P0-b makes the argument for the
-    launch-card catalogue — *"a QR code is an input any stranger can print and leave on a
-    table in front of a child"* — and an authored content pack is the same kind of input by
-    a longer route. Widening this set is a code change in a file a reviewer reads, which is
-    the brake risk R1 asks for.
-    """
+    """The robot functions this appliance will ever name on the wire: exactly the keys of
+    `ext.ACTION_WORDS` (one table; a safety bound, qr-launch-cards.md §P0-b, R1)."""
     return frozenset(ext.ACTION_WORDS)
 
 
 def execution_actions_of(volley: Volley) -> list:
-    """`volley.execution_actions` → `Action`s the wire can carry. Brief S5's other half.
-
-    Every one goes out as **`execute` + `function_id`**, which is what the recovered
-    contract actually defines: `RemoteChatAction.ActionID.execute` (= 6) with `function_id`
-    (field 7) and `repeated function_args` (field 8) — RemoteChat.proto:255-281, read back
-    by `remote-chat-protocol.md`:99 as *"`execute` — run a robot-side
-    `function_id(function_args…)`"*. `wire.encode_action` spells it, and because `args` is
-    a **list** it lands in `function_args` rather than `action_args` (the type-decided
-    mapping #119 introduced; a dict would be the other one). So `eb_enable_qr` reaches a
-    robot as `qr-launch-cards.md` §P0-a's worked example spells it:
+    """`volley.execution_actions` → `execute` `Action`s
+    (`RemoteChatAction.ActionID.execute` + `function_id`/`function_args`,
+    RemoteChat.proto:255-281), e.g.
 
         {"action": "execute", "function_id": "eb_enable_qr", "function_args": ["true"]}
 
-    …and *not* as `ActionType.ENABLE_QR`, whose `"enable_qr"` is not an `ActionID` verb at
-    all. That enum member is a known naming defect, filed in §P0-a and pinned by
-    `test_actions_reach_the_robot.py`; this function simply does not use it.
-
-    **The name is checked against the closed set here too.** `ext.validate` already refuses
-    an unknown action at load and charges an `act.<name>` grant for a known one, so this is
-    the second gate on the same table — deliberately, because this is the last function
-    before a string becomes a `function_id` addressed to a robot, and a Python global
-    handler calling `add_execution_action` never passed through the validator at all.
+    Names are re-checked against `robot_functions()` because a Python handler's
+    `add_execution_action` never met the validator; unknown names are dropped loudly.
     """
     known = robot_functions()
     out = []
@@ -854,32 +688,15 @@ def execution_actions_of(volley: Volley) -> list:
 
 
 def robot_events() -> frozenset:
-    """The robot events this appliance will ever ask to be pushed — **`ext
-    .SUBSCRIBE_EVENTS`, and nothing else**. `robot_functions()`'s inbound twin.
-
-    One table again, for the same reason: the set of nameable events equals the set
-    recovered from the robot's own catalog (vision.md §1.1-1.2), so a pack cannot ask to
-    be woken by a string somebody invented. Widening it is a code change in a file a
-    reviewer reads.
-    """
+    """The robot events this appliance will ever ask for: exactly
+    `ext.SUBSCRIBE_EVENTS` (vision.md §1.1-1.2) — `robot_functions()`'s inbound twin."""
     return frozenset(ext.SUBSCRIBE_EVENTS)
 
 
 def subscriptions_of(volley: Volley) -> list:
-    """`volley.subscriptions` → the event names a `Reply` may carry.
-
-    The last function before a pack's string becomes an
-    `RemoteChatAction.EventSubscription.active[]` entry, and therefore the place the closed
-    vocabulary is checked a **second** time. `ext._st_subscribe` already refuses an unknown
-    event at load, so in a pack's path this is belt and braces — but
-    `Volley.update_subscriptions` is also the *contract's* API for a registered Python
-    global handler (`content-module-contract.md` §"What module code may do"), and that
-    caller never met the validator. `execution_actions_of` makes exactly this argument for
-    `act`; both gates exist because the value's destination is a robot in a child's room.
-
-    Order is the volley's, duplicates are dropped, and an unknown name is dropped **loudly**
-    — the same shape and the same log idiom as a refused `function_id`.
-    """
+    """`volley.subscriptions` → the event names a `Reply` may carry: order kept,
+    duplicates dropped, unknown names dropped loudly. The second vocabulary check, because
+    a Python handler's `update_subscriptions` never met the validator."""
     known = robot_events()
     out: list = []
     for raw in getattr(volley, "subscriptions", None) or []:
@@ -894,12 +711,8 @@ def subscriptions_of(volley: Volley) -> list:
 
 
 def ext_namespace(kind: str, key: str, data: dict) -> str:
-    """The memory namespace an extension owns — chosen by the host, never by the pack.
-
-    A conversation uses its declared `memory.namespace`; a global gets `ext:<kind:key>`.
-    Keyed on the pack's own `kind:key` identity rather than on `name`, because two globals
-    called "Timer" in two different packs must not share a namespace (brief A13).
-    """
+    """The memory namespace an extension owns, chosen by the host: a conversation's
+    declared `memory.namespace`, else `ext:<kind:key>` slug (A13)."""
     if kind == "conversation":
         ns = str(((data or {}).get("memory") or {}).get("namespace") or "")
         if ns:
@@ -908,49 +721,29 @@ def ext_namespace(kind: str, key: str, data: dict) -> str:
     return f"ext:{slug or 'unnamed'}"
 
 
-#: The bounded per-robot ring the console reads to say *"the Bedtime pack's timer stopped
-#: working, and Moxie carried on without it"*. Same shape as `safety_events` (M4) — one
-#: file per robot under `robots/<safe_name(device_id)>/`, newest-capped, never shared.
+#: The bounded per-robot ring of extension breaches the console reads (like
+#: `safety_events`, M4).
 EXT_EVENTS_COLLECTION = "ext_events"
 EXT_EVENTS_CAP = 50
 
 
-#: What a **shipped-by-us** extension may be granted on top of `ext.DEFAULT_GRANTS`.
-#:
-#: Not `subscribe`/`brain` (still refused at load whoever asks — see `ext.P1_CAPABILITIES`)
-#: and not `child.profile` (a birthday and free-text notes are the highest-value PII on the
-#: appliance, and no shipped activity needs them).
-#:
-#: And **not `act.<name>` either, though it is now grantable.** Since 2026-09-04 an `act`
-#: reaches the robot, so the old reason ("it is P1") has expired — but "the appliance can
-#: honour it" is not "every program we ship may do it". Nothing we ship needs one yet, and
-#: the day one does, adding that single `act.<name>` is a code change in a file a reviewer
-#: reads — which is exactly the brake acceptance criterion 5 asks for.
-#: `act.eb_timer_request` JOINED IT ON 2026-09-08, and this is the reviewer-visible code
-#: change the paragraph above asks for. The shipped `Timer` global had matched and done
-#: nothing since it was written — no handler is ever registered for it in production and it
-#: carried no extension, so `respond` fell through to free chat and a child asking for a
-#: timer got a chat reply and no timer. Making it a program needs exactly one action, and
-#: `eb_timer_request` is a RECOVERED robot function with parent-facing words already in
-#: `ext.ACTION_WORDS` — not an invented `function_id`. No other `act.<name>` is granted.
+#: What a shipped-by-us extension may be granted on top of `ext.DEFAULT_GRANTS`. Never
+#: `child.profile` (highest-value PII; nothing needs it). Each `act.<name>` is added only
+#: when a shipped program needs it — today just `eb_timer_request`, a recovered robot
+#: function, for the shipped `Timer` global.
 SHIPPED_EXTRA_GRANTS = frozenset({"clock", "random", "memory.read", "memory.write",
                                   "presence", "markup", "act.eb_timer_request"})
 
 
 def _ext_digest(block: dict) -> str:
-    """`sha256:…` over an extension's canonical bytes — the same canonicalisation a pack
-    digest uses, so "is this the program we shipped?" has one answer everywhere."""
+    """`sha256:…` over an extension's canonical bytes (same as a pack digest)."""
     from .packs import digest_of
     return digest_of(block or {})
 
 
 def shipped_ext_digests(content_defaults) -> frozenset:
-    """The digests of every extension in the shipped baseline.
-
-    Empty when nobody recorded a baseline (a bare SDK install, or a test that did not pass
-    one), which fails **closed**: no extension is trusted, so everything gets the four
-    default grants and a clock-using activity simply does not run.
-    """
+    """Digests of every extension in the shipped baseline. Empty baseline fails closed:
+    nothing is trusted beyond the default grants."""
     out = set()
     for entry in (content_defaults or {}).values():
         data = (entry or {}).get("data") if isinstance(entry, dict) else None
@@ -961,18 +754,12 @@ def shipped_ext_digests(content_defaults) -> frozenset:
 
 
 def full_key_of(kind: str, key: str) -> str:
-    """`kind:key` — the same identity packs use, so an `ext_events` row names the item a
-    parent can actually find in the console."""
+    """`kind:key` — the identity packs use, so an `ext_events` row names a findable item."""
     return f"{kind}:{key}"
 
 
 def _clock_local(now: float) -> dict:
-    """`clock.local` — the injected local-time map (§4.2).
-
-    Computed **here**, in the host, and handed to the evaluator as four plain values. That
-    is the whole reason `ext.py` can assert it imports no `time` and no `datetime`: the
-    only clock in the system is this line.
-    """
+    """`clock.local` (§4.2), computed in the host so `ext.py` imports no clock (X7)."""
     t = time.localtime(now)
     return {"hour": t.tm_hour, "minute": t.tm_min, "weekday": (t.tm_wday + 1) % 7,
             "iso": time.strftime("%Y-%m-%dT%H:%M:%S", t)}

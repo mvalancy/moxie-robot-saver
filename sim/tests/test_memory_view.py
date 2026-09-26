@@ -1,5 +1,5 @@
 """
-The parent console's memory view — `moxie_server/fleet.py::normalize_memory`.
+The parent console's memory view — `moxie_server/fleet::normalize_memory`.
 
 `test_memory.py` covers the store and the summarizer; `test_memory_runtime.py` covers the
 runtime's `/memory` endpoints. This is the third piece: the **pure** transform that turns

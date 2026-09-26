@@ -1,36 +1,18 @@
 """The dependency-free fallback must never put template syntax into a system prompt.
 
-`content-module-contract.md`:42 promises a module author that `prompt` is Jinja2-templated
-and names the block form. Half 1 of the fix (`test_render_container_deps.py`) makes that
-true in the container. This file is half 2: what happens when jinja2 is *genuinely* absent
-— a bare-metal install, or `pip install moxie-cloud-sdk` without the `content` extra.
+When jinja2 is genuinely absent (bare-metal, or `pip install moxie-cloud-sdk` without the
+`content` extra), `_minimal_render` renders prompts. Passing unknown constructs through
+verbatim would put `{% if presence.face_present %}` into the text a model takes its
+instructions from. The fence (the container ships jinja2: `test_render_container_deps.py`):
 
-The old fallback substituted `{{ dotted.path }}` and passed everything else through
-**verbatim**, measured:
+1. No template syntax, ever — a general regex over the output for every construct the
+   contract names, every jinja2 form an author might type, and every nesting of them (§1).
+2. Faithful where it claims to be — evaluated constructs are byte-identical to real jinja2,
+   so the fallback is a subset, not a dialect (§2, jinja2 required).
+3. Counted where it is not — `render.STRIPPED` (sibling of `BLOCKED`) records invisible
+   degradation (§3).
 
-    input : You are Moxie.{% if presence.face_present %} Sam is here.{% endif %} Say hi to {{ nickname }}.
-    output: You are Moxie.{% if presence.face_present %} Sam is here.{% endif %} Say hi to Sam.
-
-That string is a *system prompt*. Literal `{% if presence.face_present %}` in the place a
-model takes its instructions from is not a cosmetic glitch — it is instructions-shaped
-noise, and the model's response to it is anybody's guess.
-
-So the fence here has three parts, and the first one is deliberately **general** rather
-than a list of expected strings, because "some construct nobody thought of leaks syntax"
-is exactly the bug class:
-
-1. **No template syntax, ever** — a regex over the output, applied to every construct the
-   contract names, to every construct jinja2 offers that an author could plausibly type,
-   and to every one of those nested inside every other one (§1).
-2. **Faithful where it claims to be** — the constructs the fallback evaluates must be
-   *byte-identical* to real jinja2, so the fallback stays a subset of the real renderer
-   rather than a divergent dialect (§2, jinja2 required).
-3. **Counted where it is not** — `render.STRIPPED` is `BLOCKED`'s sibling: the degradation
-   is invisible in the output by design, so without a counter a deployment could serve
-   thinned prompts forever (§3).
-
-Everything here drives `_minimal_render` directly, so the file is meaningful in **both**
-venv shapes — with jinja2 installed and without. §2 is the only jinja2-gated section.
+Drives `_minimal_render` directly, so it is meaningful with and without jinja2 installed.
 """
 from __future__ import annotations
 
@@ -43,8 +25,6 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 from moxie_sdk.content import render as R  # noqa: E402
 
@@ -70,12 +50,9 @@ def _ctx(face: bool = True) -> dict:
 
 
 def _child_context() -> dict:
-    """The context `ContentApp` really builds, with memory populated — real `Volley`,
-    `Session` and `FactList` objects rather than the plain dicts `_ctx` uses, because
-    `{{ volley.persist_data.ns.facts }}` renders as bullet lines only through
-    `FactList.__str__` (`memory.py`). Built locally rather than imported from
-    `test_render_sandbox_parity`, which `importorskip`s jinja2 at module scope and would
-    take this whole file down in the no-jinja2 venv — the shape that matters most here."""
+    """The context `ContentApp` really builds, with memory (real `Volley`/`Session`/
+    `FactList`, since facts render as bullets only through `FactList.__str__`). Local, not
+    imported from the parity suite, which importorskips jinja2 at module scope."""
     from moxie_sdk.content.memory import wrap_facts
     from moxie_sdk.content.volley import Session, Volley
 
@@ -98,10 +75,9 @@ def _child_context() -> dict:
 
 
 # ---------------------------------------------------------------- the corpus --
-#: Every construct the contract names, plus every jinja2 form an author would reach for
-#: next. `faithful` says whether the fallback claims to reproduce jinja2 exactly (and so
-#: must not move `STRIPPED`); `keeps` is a substring the output must still contain, for
-#: the constructs that are supposed to survive.
+#: Every construct the contract names plus the jinja2 forms an author would reach for next.
+#: `faithful`: the fallback claims to match jinja2 exactly (must not move `STRIPPED`);
+#: `keeps`: a substring the output must still contain.
 CONSTRUCTS = {
     # --- what content-module-contract.md:42 explicitly promises -----------------
     "dotted_path": dict(t="Hi {{ nickname }}!", faithful=True, keeps="Sam"),
@@ -311,13 +287,10 @@ FAITHFUL = sorted(n for n, c in CONSTRUCTS.items() if c["faithful"])
 @pytest.mark.parametrize("face", [True, False], ids=["present", "absent"])
 @pytest.mark.parametrize("name", FAITHFUL)
 def test_a_faithful_construct_matches_real_jinja2_byte_for_byte(name, face):
-    """The fallback must be a *subset* of the real renderer, not a dialect. Every
-    construct it claims to evaluate — the two forms the contract documents, plus
-    `elif`/`else`/`not`/nesting/comments/whitespace-control — renders identically with
-    jinja2 and without it, so upgrading a deployment changes nothing.
-
-    This is the assertion that would catch a hand-rolled `{% if %}` getting the
-    truthiness of `0`, `[]`, `""` or a missing path subtly wrong."""
+    """Subset, not dialect: every construct the fallback evaluates (the two documented
+    forms plus `elif`/`else`/`not`/nesting/comments/whitespace control) renders identically
+    with and without jinja2 — including the truthiness of `0`, `[]`, `""` and missing paths.
+    """
     template = CONSTRUCTS[name]["t"]
     ctx = _ctx(face)
     assert R._minimal_render(template, ctx) == _real_render(template, ctx)
@@ -427,11 +400,9 @@ def test_render_prompt_takes_the_fallback_and_emits_no_syntax_without_jinja2():
 
 
 def test_a_block_using_module_reaches_the_brain_as_english(tmp_path):
-    """The end the bug was reported at: a module a parent authored or imported, driven
-    through the real `ContentApp` and the real `MoxieRuntime` with jinja2 unimportable,
-    and the assertion is on **the system message the brain received**. Creds-free.
-
-    Before this fix that message contained `{% if presence.face_present %}` verbatim."""
+    """End to end: a module through the real `ContentApp` + `MoxieRuntime` with jinja2
+    unimportable; the SYSTEM MESSAGE the brain received has no template syntax. Creds-free.
+    """
     from helpers_runtime import assert_spec_response, drive_once
     from moxie_sdk.content import ContentApp, load_modules
 

@@ -6,11 +6,9 @@ Pure: a tmp directory, no MQTT, no broker.
 """
 import json
 import os
-import sys
 import threading
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.store import JsonStore, data_dir, safe_name   # noqa: E402
 

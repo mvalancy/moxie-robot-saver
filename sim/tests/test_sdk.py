@@ -5,10 +5,8 @@ ResultCode fidelity, scored output, and action passthrough.
 See docs/architecture/ai-seam.md §2 + docs/architecture/implementation-plan.md.
 """
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.types import Reply, Action, ActionType, ResultCode  # noqa: E402
 from moxie_sdk.wire import build_chat_response, build_activity_response  # noqa: E402 (pure)

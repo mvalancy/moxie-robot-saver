@@ -1,31 +1,20 @@
 """Durable telemetry and the three honest buttons — against a REAL running supervisor.
 
-`test_telemetry.py` unit-tests the pure roll-up, `test_telemetry_runtime.py` drives a
-`MoxieRuntime` object, and `test_console_roundtrip.py` drives the console against a
-hand-written status server. All three are fixtures. Two of PR #55's claims are not
-things a fixture can establish:
+The unit/runtime/console suites are fixtures; two claims need real processes:
 
-1. **"Telemetry survives a restart."** A second `MoxieRuntime` built in the same
-   interpreter proves the hydration *code path* and nothing about durability — a
-   module-level cache, a store the first runtime kept open, or an `atexit` flush would
-   all survive it silently. So this file boots a real mosquitto, a real `mqtt/run.py`,
-   sends telemetry from a real paho robot, **kills the supervisor process**, starts a
-   new one over the same `MOXIE_DATA_DIR`, and reads the history back through the new
-   process's own status HTTP server with the robot not reconnected.
-2. **"`LoggingPolicy` is the gate and it fails closed."** Being wrong here is a privacy
-   incident, not a bug, so all three values are exercised against a *running*
-   supervisor — the policy set the way a parent sets it (`POST /config`), the packet
-   sent the way a robot sends it (`/devices/<id>/events/telemetry`), and the verdict
-   read off **disk**, not off an API that could be reporting its own intentions.
+1. "Telemetry survives a restart." A second in-process runtime would not catch a module
+   cache or an `atexit` flush, so this boots mosquitto + `mqtt/run.py`, sends telemetry from
+   a paho robot, KILLS the supervisor, starts a new one over the same `MOXIE_DATA_DIR`, and
+   reads history via the new process's status HTTP with the robot not reconnected.
+2. "`LoggingPolicy` gates it and fails closed." All three values, set via `POST /config`,
+   sent on `/devices/<id>/events/telemetry`, and judged from what is on DISK.
 
-Then the three console endpoints that used to report success for nothing, through the
-same real supervisor with the console app in-process: `wakeup` must actually publish
-(asserted by a real MQTT subscriber, not a recorded fake), `reboot` must be a 501 that
-says why, and `ota_status` must return the firmware the robot itself reported.
+Then the console's three endpoints against the same supervisor: `wakeup` must publish (seen
+by a real subscriber), `reboot` is a 501 that says why, and `ota_status` returns the
+firmware the robot reported.
 
-Named `test_sil_*` on purpose: it boots a broker, so `-k "not test_sil"` keeps it out of
-the tiers that promise to report in seconds, and the fast tier's full-suite step runs it.
-Skips cleanly with no mosquitto binary and no docker.
+Named `test_sil_*` (it boots a broker, so fast tiers deselect it). Skips cleanly with no
+mosquitto and no docker.
 """
 from __future__ import annotations
 
@@ -37,9 +26,7 @@ import time
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 sys.path.insert(0, os.path.join(REPO, "server"))
 
 mqtt = pytest.importorskip("paho.mqtt.client", reason="the SIL robot needs paho")
@@ -93,15 +80,9 @@ class Robot:
         return self
 
     def announce(self, **status):
-        """`/devices/<id>/state` — the RobotStatus that makes this robot visible and
-        carries the only OTA facts the recovered protocol gives us.
-
-        Waits for the SUBACK first. This client sends its SUBSCRIBE from the CALLING
-        thread, so today it is ahead of the announcement on the wire by construction —
-        but "safe because of packet ordering nobody asserted" is one refactor (moving the
-        subscribe into `on_connect`, where every other client has it) away from the
-        lost-config race that cost the SIL job two intermittent reds. So the wait is
-        explicit here too."""
+        """`/devices/<id>/state` — makes this robot visible and carries the only OTA facts
+        the protocol gives us. Waits for the SUBACK explicitly rather than relying on
+        packet ordering (the lost-config race)."""
         body = {"robot_firmware_version": FIRMWARE, "battery_level": 88,
                 "audio_volume": 0.5, "wifi_ssid": "Lab", "mode": "normal",
                 "ota_reboot_required": False}
@@ -128,11 +109,8 @@ class Robot:
 
 
 def _wait(predicate, timeout: float = 20.0, what: str = "condition"):
-    """Poll a real distributed system without sleeping blind. Returns the truthy value.
-
-    The `time.time()` calls are a DURATION (a deadline), not a date: nothing here reads
-    the hour, so the answer is the same at 03:00 as at 15:00. Reviewed in the ledger in
-    `test_clock_dependence.py`."""
+    """Poll a real distributed system without sleeping blind; returns the truthy value.
+    `time.time()` is used only as a deadline (duration), never as a date."""
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
@@ -205,19 +183,10 @@ EVENTS = ("module_started", "module_finished", "battery_report")
 
 @pytest.fixture(scope="module")
 def history(stack, robot):
-    """Three telemetry packets, **on disk**, for DEVICE.
-
-    This used to be the body of the first test, which made every later test in the file
-    silently depend on that one having run. It was not a theoretical dependency: running
-    `test_the_buffer_is_a_cache_hydrated_on_first_touch` on its own — the first thing
-    anyone does with a red CI line — booted a clean stack that had never been sent a
-    packet and failed **deterministically** as a bare `assert 0 == 3`, which reads exactly
-    like the durable-telemetry guarantee being broken. It cost two control runs on
-    2026-09-03 before the shape was recognised. The precondition is now established by a
-    fixture, so any subset of this file runs the same as the whole of it.
-
-    Idempotent on purpose: if the ring already holds three, it sends nothing, so ordinary
-    whole-file runs behave exactly as they always have."""
+    """Three telemetry packets ON DISK for DEVICE, as a fixture so any subset of this file
+    runs the same (run alone, a later test otherwise failed as a bare `assert 0 == 3` that
+    looked like broken durability). Idempotent: sends nothing if the ring already has three.
+    """
     if len(_packets(stack.data_dir) or []) < 3:
         for i, name in enumerate(EVENTS):
             robot.telemetry(name, PAYLOAD, session_id=f"s-{i}")
@@ -228,11 +197,8 @@ def history(stack, robot):
 
 @pytest.fixture(scope="module")
 def restarted(stack, robot, history):
-    """The robot gone and a **new `mqtt/run.py` process** over the same MOXIE_DATA_DIR.
-
-    The other half of the implicit ordering: two tests need the supervisor to have been
-    restarted, and both used to get it from whichever of them pytest happened to run
-    first. Module-scoped, so the restart still happens exactly once per file run."""
+    """The robot gone and a NEW `mqtt/run.py` over the same MOXIE_DATA_DIR — module-scoped,
+    so the restart happens once and no test depends on another having run first."""
     robot.close()                                   # nothing to re-populate RAM from
     sup = stack.restart_supervisor()
     print(f"\n[restart] new supervisor status port {sup.status_port}")
@@ -261,13 +227,9 @@ def test_the_first_supervisor_serves_the_history_it_just_stored(stack, history):
 
 
 def test_telemetry_survives_a_real_supervisor_restart(stack, restarted):
-    """**The claim.** Kill `mqtt/run.py`, disconnect the robot, start a new supervisor
-    over the same `MOXIE_DATA_DIR`, and ask it what happened last week.
-
-    The robot is deliberately NOT reconnected: a parent asking what Moxie did should get
-    an answer whether or not the robot is on the broker right now, and a "durable"
-    history that only appears once the device re-announces itself is a cache, not a
-    history.
+    """The claim: kill `mqtt/run.py`, disconnect the robot, start a new supervisor over the
+    same `MOXIE_DATA_DIR`, and ask what happened. The robot is NOT reconnected — a history
+    that appears only when the device re-announces is a cache.
     """
     sup = restarted
     snap = http_json(f"{_status_url(sup)}/status")
@@ -299,28 +261,10 @@ def test_the_buffer_is_a_cache_hydrated_on_first_touch(stack, restarted):
     try:
         r.announce()
 
-        # Wait for the row to carry the fields this test asserts, not merely to exist.
-        # `announce` puts the robot in `/status` immediately, but `firmware` is filled
-        # from its *state* message (`moxie_runtime.py`:414), which arrives a beat later —
-        # so the first row that exists can legitimately have `firmware: None`. Asserting
-        # on first sight made this test racy: it passed locally and on the next dev
-        # commit, and failed once in CI with `assert None == '24.10.803'` (run
-        # 33723272949, the PR #59 merge).
-        #
-        # THAT WAIT GUARDED THE WRONG CONDITION, and the second CI red said so. It also
-        # required `telemetry_count is not None` — but the field is
-        # `len(self._telemetry_buffer(...))` (`moxie_runtime.py`:533) and a length is
-        # never None, so the clause could not fail and a row that had hydrated *nothing*
-        # sailed through it into a bare `assert 0 == 3` below. A predicate that cannot be
-        # false is not a wait; it is a comment with a runtime cost.
-        #
-        # Hydration is also not a race to wait on. It happens on the FIRST `/status` that
-        # includes this robot — the same call that builds the row — so by the time any row
-        # exists the buffer is already whatever it is going to be. Waiting longer cannot
-        # change a 0 into a 3; it can only turn a real defect into a timeout that names
-        # nothing. So the wait covers the genuinely asynchronous part (the row, and the
-        # firmware that arrives a beat later) and hydration is ASSERTED, with the two
-        # failure modes told apart by name.
+        # Wait for the row AND its `firmware` (filled from the robot's state message a beat
+        # after `announce`), but not for hydration: the buffer is hydrated by the same
+        # `/status` call that builds the row, so waiting cannot turn 0 into 3 — it is
+        # ASSERTED below, with the two failure modes named.
         seen = {}
 
         def _populated():
@@ -422,12 +366,8 @@ def test_the_logging_policy_gate_holds_against_a_running_supervisor(stack, polic
             assert base64.b64decode(row["event_data"]) == PAYLOAD
             assert "event_data_withheld" not in row
         print(f"[policy {expected}] on-disk row: {json.dumps(row, sort_keys=True)[:220]}")
-        # The ring and the roll-up are two separate writes, so waiting for the ring (above)
-        # says nothing about the roll-up yet. Asserting it immediately failed in CI as
-        # `assert None == 1` (run 33729593409, the PR #63 merge) while passing locally —
-        # the signature of a write that had not landed, not of a wrong value. Wait for the
-        # field this asserts; a wrong total still returns and fails below, and a total that
-        # never arrives times out with a named reason.
+        # The ring and the roll-up are separate writes; wait for the roll-up field itself
+        # (a wrong total still returns and fails; a missing one times out with a reason).
         total = _wait(lambda: (_daily(stack.data_dir, device) or {}).get("total"),
                       what=f"the daily roll-up's total under {expected}")
         assert total == 1, _daily(stack.data_dir, device)
@@ -444,16 +384,9 @@ def console(stack):
     is that the other end is `mqtt/run.py` with a live broker behind it, so "wakeup
     published" can be asserted by a subscriber instead of by a recorded fake.
     """
-    pytest.importorskip("fastapi", reason="the console needs fastapi")
-    pytest.importorskip("httpx", reason="the console's TestClient needs httpx")
-    if "moxie_server.main" not in sys.modules:      # db.init() runs at import time
-        os.environ["MOXIE_DB"] = os.path.join(stack.log_dir, "console-test.db")
-    try:
-        from fastapi.testclient import TestClient
-        from moxie_server import main
-    except Exception as e:                          # pynacl/segno/... absent
-        pytest.skip(f"console app not importable: {e}")
-    main.STATUS_URL = f"{_status_url(stack.supervisor)}/status"
+    from helpers_console import console_app
+    TestClient, main = console_app(os.path.join(stack.log_dir, "console-test.db"),
+                                   f"{_status_url(stack.supervisor)}/status")
     with TestClient(main.app) as c:
         yield c
 

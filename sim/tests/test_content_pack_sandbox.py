@@ -1,37 +1,22 @@
 """A hostile pack, driven through the REAL import path, executes and reads nothing.
 
-`test_render_sandbox.py` fences the *renderer*: eight escape probes handed straight to
-`render_prompt` come back inert. That is the mechanism. This file fences the *path a pack
-actually travels* — the reason the mechanism exists:
+`test_render_sandbox.py` fences the renderer; this fences the path a pack travels:
 
     pack JSON → parse_pack → review_pack/diff_item → apply_pack → JsonStore
               → reload_content → build_module → ContentApp → render_prompt → the brain
 
-Every one of those stages handles a string somebody else wrote, and a fence that only
-covers the last one is a fence with a gate in it. Three claims are new here and provable
-nowhere else:
+* Review is a read, not an evaluation: `render.BLOCKED`/`STRIPPED` must not move across
+  parse, review, diff, inventory, scan and export (else the safe-looking step is the
+  dangerous one).
+* What the brain receives is inert: import as `POST /content/import` does, take a real
+  turn through `MoxieRuntime`, and read the system message.
+* The probes walk what a pack can actually reach: OUR objects (`volley`, `session`,
+  `presence` — `content_app.py`:200), not jinja2's globals.
 
-* **The review is a read, not an evaluation.** A parent looks at a pack *before*
-  installing it, so if reviewing a file were enough to evaluate it, the whole
-  import-with-review design would be inverted — the safe-looking step would be the
-  dangerous one. `render.BLOCKED` and `render.STRIPPED` must not move by a single count
-  across parse, review, diff, inventory, scan and export.
-* **What the brain finally receives is inert.** Not "`render_prompt` is inert when called
-  by a test", but: import the pack the way `POST /content/import` does, take one real turn
-  through `MoxieRuntime`, and read the system message the brain was handed.
-* **The probes are the ones a pack can actually reach.** `test_render_sandbox.py` uses
-  jinja2's own globals (`cycler`, `joiner`, `namespace`). A content pack is rendered over
-  `{"volley": …, "session": …, "presence": …}` (`content_app.py`:200), so the objects it
-  can walk are *ours* — a `Volley` holding the child's profile, a `Session`, a presence
-  dict. Those attribute chains are the reachable surface and they are probed here.
+Parity half: an ordinary imported pack must still personalise its prompt.
 
-And the parity half, in the same spirit as `test_render_sandbox_parity.py`: an ordinary
-imported pack must still personalise its prompt. A "fix" that neutered pack templating
-would pass every hostile assertion in this file and be an immediate revert.
-
-Corpus note: the hostile strings below are inert data. Nothing in this file writes them
-to a shipped module, and `packs.py` is pinned as pure data handling (no renderer import,
-no `eval`/`exec`/`compile`) so that stays true.
+The hostile strings are inert data; `packs.py` is pinned as pure data handling (no renderer
+import, no `eval`/`exec`/`compile`).
 """
 from __future__ import annotations
 
@@ -42,9 +27,6 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 from moxie_sdk.content import packs as P              # noqa: E402
 from moxie_sdk.content import render as R             # noqa: E402
@@ -339,25 +321,14 @@ def _no_jinja2_render(template: str, context: dict) -> str:
 
 
 def test_the_dotted_path_walk_cannot_reach_the_environment(monkeypatch):
-    """**The hole this file found, and the fence on it.**
-
-    `_minimal_render` evaluates a *bare dotted path* — that is its whole grammar — and it
-    evaluated it with `getattr` over the live context objects. A pack's `prompt` chooses
-    every segment of that path, so the grammar was an attribute-chain escape:
+    """The hole this file found: `_minimal_render` resolved dotted paths with `getattr` on
+    live objects, so
 
         {{ session.__class__.__repr__.__globals__.inspect.os.environ }}
 
-    rendered `environ({…})` — 4.9 KB of this process's environment, `MOXIE_LLM_API_KEY`
-    included — into the system prompt handed to the brain. Measured on this tree before
-    the fix, not theorised.
-
-    Reach, stated honestly: the *container* was never exposed, because
-    `mqtt/requirements.txt` ships jinja2 and `SandboxedEnvironment` already refuses
-    underscore-leading attributes. The exposed shape is an install without the `content`
-    extra — the fallback `pyproject.toml` deliberately keeps supported — where a pack a
-    parent imported could exfiltrate the appliance's own API key by asking the model to
-    repeat its instructions. `render.py::_resolve` now refuses any `_`-leading segment and
-    counts it in `BLOCKED`.
+    rendered the process environment (API key included) into the system prompt. Only
+    installs WITHOUT jinja2 were exposed (the sandbox refuses `_` attributes). `_resolve`
+    now refuses any `_`-leading segment and counts it in `BLOCKED`.
     """
     from moxie_sdk.content.volley import Session, Volley
 

@@ -2,41 +2,17 @@
 Sentence segmentation for a *streaming* brain — turn a trickle of model tokens into
 whole sentences the robot can speak as soon as each one is finished.
 
-Why this exists
----------------
-A live turn through our LLM gateway was measured at **45 s healthy / 18 s degraded**
-against the robot's **~20 s reprompt window** (docs/architecture/implementation-plan.md:138,
-docs/architecture/openmoxie-feature-audit.md:347). PR #14 stopped the silence with one
-filler line; it did not shorten the wait for real words. Streaming does: the first
-sentence of an answer is finished after a handful of tokens, so the child hears actual
-content at first-token latency instead of at whole-completion latency. Each finished
-sentence goes out as its own `RemoteChatResponse` chunk (`result=REPLY_PENDING` +
-`chunk_num`, closed by `consistency_control.is_completed` — see
-docs/architecture/mqtt-and-conversation.md §4.5).
+Each finished sentence goes out as its own REPLY_PENDING chunk, so the child hears words
+at first-token latency instead of whole-completion latency (a live gateway turn can
+exceed the robot's ~20 s reprompt window).
 
-Design
-------
-Dependency-free and **pure**: no regex engine surprises, no NLTK, no model call. Feed it
-whatever text arrives (`feed`), get back the sentences that are definitely complete;
-`flush` at the end of the stream returns the tail.
+Pure and dependency-free: `feed` returns sentences that are definitely complete, `flush`
+returns the tail. A boundary is `.`/`!`/`?` (+ closing quotes/brackets), whitespace, then
+more text — so the LAST sentence always comes out of `flush()` and can close the turn.
 
-A boundary is `.`/`!`/`?` — optionally followed by closing quotes/brackets — then
-whitespace, then **more non-space text**. Requiring real text after the whitespace is
-what makes the last sentence of an answer always come out of `flush()`, never out of
-`feed()`: at the end of a stream there is nothing after the final period, so the tail
-stays in the buffer and the caller can mark it as the closing chunk. (Without that rule a
-completion ending in "…done. " would emit its last sentence from `feed` and leave `flush`
-empty, and the streamer would have nothing left to close the sequence with.)
-
-Four things deliberately do NOT split:
-  * **decimals** — "3.5 hours" (the char after the dot is not whitespace anyway, but the
-    rule is written down because it is the classic failure);
-  * **abbreviations** — a small, cheap set (`Mr.`, `Dr.`, `e.g.`, `a.m.`, …) plus single
-    capital initials (`J. R. R.`), matched on the token that ends at the dot;
-  * **ellipses** — `...` and `…`, which an LLM writes mid-thought ("Hmmmm... okay!");
-  * **very short chunks** — a sentence shorter than `min_chars` waits for the next one, so
-    a child never hears a lone "Hi." followed by a pause. If it is the *whole* answer,
-    `flush` emits it anyway.
+Not split: decimals ("3.5"), abbreviations (`Dr.`, `e.g.`, initials), ellipses, and
+sentences shorter than `min_chars` (they wait for the next one; `flush` emits a short
+whole answer anyway).
 """
 from __future__ import annotations
 
@@ -48,9 +24,8 @@ TERMINALS = ".!?"
 #: Closers that may sit between the terminal and the space: He said "stop!" Then…
 _CLOSERS = "\"')]}”’»"
 
-#: Tokens that end in a dot without ending a sentence. Lower-cased, dot stripped.
-#: Small and cheap on purpose — a missed abbreviation merely splits a sentence early,
-#: which is a smaller sin than a whole answer arriving as one chunk.
+#: Tokens that end in a dot without ending a sentence (lower-cased, dot stripped).
+#: Small on purpose — a miss merely splits a sentence early.
 ABBREVIATIONS = frozenset({
     "mr", "mrs", "ms", "dr", "prof", "st", "sr", "jr", "vs", "etc", "approx",
     "fig", "dept", "est", "min", "max", "no",
@@ -146,8 +121,7 @@ class SentenceSegmenter:
             if not buf[j].isspace():
                 i += 1                           # "3.5", "u.s.a" — not a boundary
                 continue
-            # Require real text after the gap. That is what keeps the FINAL sentence of
-            # an answer in the buffer for flush() to close the turn with.
+            # Require real text after the gap (keeps the final sentence for flush()).
             if not buf[j:].strip():
                 return None
             if len(buf[:j].strip()) < self.min_chars:

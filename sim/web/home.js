@@ -1,9 +1,5 @@
 /* home.js — the landing page's motion: pointer/scroll parallax, sparkles, card reveal.
- * Every effect is skipped under `prefers-reduced-motion: reduce`.
- *
- * Lived inline in `index.html` until 2026-09-04; moved out for `script-src 'self'` (see
- * `sim/web/_headers`).
- */
+ * Every effect is skipped under `prefers-reduced-motion: reduce`. */
 (function(){
   "use strict";
   var reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion:reduce)").matches;

@@ -60,7 +60,9 @@ TESTS = ["sim/tests/test_ext_subscribe.py",     # the chain, the merge, the wire
 X = "mqtt/moxie_sdk/content/ext.py"
 V = "mqtt/moxie_sdk/content/volley.py"
 C = "mqtt/moxie_sdk/content/content_app.py"
-R = "mqtt/supervisor/moxie_runtime.py"
+R_CONNECTION = "mqtt/supervisor/moxie_runtime/connection.py"
+R_PRESENCE = "mqtt/supervisor/moxie_runtime/presence.py"
+R_TURNS = "mqtt/supervisor/moxie_runtime/turns.py"
 
 MUTATIONS = [
     # ---- the closed vocabulary: refused at load, and again at each boundary ----
@@ -96,33 +98,33 @@ MUTATIONS = [
     # runtime's list" rather than as a blanket `merged = []`, because that is the
     # *plausible* wrong implementation — `asked or mine` — and it leaves the
     # nothing-asked case green, so only the direction tests may redden.
-    ("S7  the merge is INVERTED: a pack's list replaces the runtime's", R,
+    ("S7  the merge is INVERTED: a pack's list replaces the runtime's", R_PRESENCE,
      "        merged = list(mine or [])",
      "        merged = [] if asked else list(mine or [])"),
-    ("S8  the merge stops de-duplicating, so an event goes out twice", R,
+    ("S8  the merge stops de-duplicating, so an event goes out twice", R_PRESENCE,
      "                    if name not in merged:\n"
      "                        merged.append(name)",
      "                    if True:\n"
      "                        merged.append(name)"),
 
     # ---- the gates that apply to a pack's request and not to the runtime's ----
-    ("S9  MOXIE_VISION=0 no longer covers a content pack's request", R,
+    ("S9  MOXIE_VISION=0 no longer covers a content pack's request", R_PRESENCE,
      "        if asked:\n"
      "            if not self.vision:",
      "        if asked:\n"
      "            if False:"),
-    ("S10 the pairing gate no longer covers a content pack's request", R,
+    ("S10 the pairing gate no longer covers a content pack's request", R_PRESENCE,
      "            elif not self.is_permitted(device_id):",
      "            elif False:"),
-    ("S11 the runtime asks for an event it could not route if it arrived", R,
+    ("S11 the runtime asks for an event it could not route if it arrived", R_PRESENCE,
      "                    if name not in presence_seam.VISION_EVENTS:",
      "                    if False:"),
 
     # ---- set-but-never-sent: the shape this repo keeps re-finding ----
-    ("S12 the merged list is computed and then not sent (the readiness-line bug)", R,
+    ("S12 the merged list is computed and then not sent (the readiness-line bug)", R_TURNS,
      "        subscribe = self._merge_subscriptions(device_id, mine, subscribe)",
      "        subscribe = mine"),
-    ("S13 the turn loop decodes `Reply.subscribe` and drops it on the floor", R,
+    ("S13 the turn loop decodes `Reply.subscribe` and drops it on the floor", R_TURNS,
      "                           subscribe=reply.subscribe)",
      "                           subscribe=None)"),
     ("S14 `_reply_from_volley` builds a Reply that forgets what it asked to perceive", C,
@@ -157,17 +159,17 @@ MUTATIONS = [
     # child walks back into frame. That turn is now step 4 of the test, with the counter
     # asserted BEFORE the reply shape so the counter is provably the guard. Measured
     # after the fix: `an unmatched perception event spent 1 model call(s)`.
-    ("S17 a perceived event is routed to `app.respond` — i.e. to a BRAIN", R,
+    ("S17 a perceived event is routed to `app.respond` — i.e. to a BRAIN", R_PRESENCE,
      "            reply = perceive(turn)",
      "            reply = app.respond(turn)"),
-    ("S18 the pack request is never recorded, so nothing can ever wake it", R,
+    ("S18 the pack request is never recorded, so nothing can ever wake it", R_PRESENCE,
      "                        self._pack_subscribed.setdefault(device_id, {})[name] = module",
      "                        pass"),
     # The subtle half of S18, and the reason the record is written where it is: an event
     # the runtime ALREADY subscribes to for its own presence work adds nothing to `merged`,
     # so recording inside that branch would leave a pack unwakeable by exactly the events
     # it is most likely to ask for.
-    ("S19 the request is recorded only when it is NEW to the merged list", R,
+    ("S19 the request is recorded only when it is NEW to the merged list", R_PRESENCE,
      "                    with self._presence_lock:\n"
      "                        self._pack_subscribed.setdefault(device_id, {})[name] = module\n"
      "                    if name not in merged:\n"
@@ -176,34 +178,34 @@ MUTATIONS = [
      "                        with self._presence_lock:\n"
      "                            self._pack_subscribed.setdefault(device_id, {})[name] = module\n"
      "                        merged.append(name)"),
-    ("S20 a pack is woken by an event it never asked for", R,
+    ("S20 a pack is woken by an event it never asked for", R_PRESENCE,
      "        if asked != module:\n"
      "            return False",
      "        if False:\n"
      "            return False"),
-    ("S21 the request stops being keyed on the module that made it", R,
+    ("S21 the request stops being keyed on the module that made it", R_PRESENCE,
      "        if asked != module:",
      "        if asked is None:"),
-    ("S22 MOXIE_VISION=0 stops covering the way back IN", R,
+    ("S22 MOXIE_VISION=0 stops covering the way back IN", R_PRESENCE,
      "        if not self.vision:\n"
      "            return False\n"
      "        if not self.is_permitted(device_id):",
      "        if False:\n"
      "            return False\n"
      "        if not self.is_permitted(device_id):"),
-    ("S23 the pairing gate stops covering the way back IN", R,
+    ("S23 the pairing gate stops covering the way back IN", R_PRESENCE,
      "        if not self.is_permitted(device_id):\n"
      "            return False\n"
      "        module = (getattr(robot, \"module_id\", None) or \"\")",
      "        if False:\n"
      "            return False\n"
      "        module = (getattr(robot, \"module_id\", None) or \"\")"),
-    ("S24 a pack that answered with NOTHING swallows the event anyway", R,
+    ("S24 a pack that answered with NOTHING swallows the event anyway", R_PRESENCE,
      "        if not text and not actions and not subscribe:\n"
      "            return False                          # answered with nothing: not an answer",
      "        if False:\n"
      "            return False                          # answered with nothing: not an answer"),
-    ("S25 a module exit forgets the vision latch but not the pack's request", R,
+    ("S25 a module exit forgets the vision latch but not the pack's request", R_CONNECTION,
      "                self._vision_subscribed.pop(device_id, None)\n"
      "                self._pack_subscribed.pop(device_id, None)",
      "                self._vision_subscribed.pop(device_id, None)"),

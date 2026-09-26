@@ -7,8 +7,8 @@ and it exists for the same reason every one of those did: each of them found a r
 several of them *two guards each hiding the other's absence*.
 
 Run it by hand after touching `moxie_sdk/{roster,conn_telemetry}.py`, the connection or
-shutdown region of `supervisor/moxie_runtime.py`, `moxie_sdk/store.py::_append_path`, or
-`server/moxie_server/fleet.py`'s connection normalizer:
+shutdown region of `supervisor/moxie_runtime/`, `moxie_sdk/store.py::_append_path`, or
+`server/moxie_server/fleet/activity.py`'s connection normalizer:
 
     python3 sim/tools/hardening_p1_mutation_check.py
 
@@ -42,8 +42,12 @@ WT = pathlib.Path(__file__).resolve().parents[2]
 STORE = WT / "mqtt/moxie_sdk/store.py"
 CONN = WT / "mqtt/moxie_sdk/conn_telemetry.py"
 ROSTER = WT / "mqtt/moxie_sdk/roster.py"
-RT = WT / "mqtt/supervisor/moxie_runtime.py"
-FLEET = WT / "server/moxie_server/fleet.py"
+RT_FLEET = WT / "mqtt/supervisor/moxie_runtime/fleet.py"
+RT_CONNECTION = WT / "mqtt/supervisor/moxie_runtime/connection.py"
+RT_LIFECYCLE = WT / "mqtt/supervisor/moxie_runtime/lifecycle.py"
+RT_MEMORY = WT / "mqtt/supervisor/moxie_runtime/memory.py"
+RT___INIT__ = WT / "mqtt/supervisor/moxie_runtime/__init__.py"
+FLEET = WT / "server/moxie_server/fleet/activity.py"
 
 T_CONN = "sim/tests/test_conn_telemetry.py"
 T_ROSTER = "sim/tests/test_roster.py"
@@ -96,11 +100,11 @@ MUTATIONS = [
      T_CONN, "cap_is_an_env_knob or ring_is_capped"),
 
     # ---- the connection history: the runtime wiring ----------------------------
-    ("C11 drop the re-entrancy guard (the recorder recurses into itself)", RT,
+    ("C11 drop the re-entrancy guard (the recorder recurses into itself)", RT_CONNECTION,
      "        if self._recording_conn:\n            return False",
      "        if False:\n            return False",
      T_CONN, "never_recurses_into_itself"),
-    ("C12 let a broken store escape into the MQTT loop", RT,
+    ("C12 let a broken store escape into the MQTT loop", RT_CONNECTION,
      "            return self.store.append_shared(conn_seam.COLLECTION, row,\n"
      "                                            cap=conn_seam.max_events()) is not None\n"
      "        except Exception:\n            return False",
@@ -108,38 +112,38 @@ MUTATIONS = [
      "                                            cap=conn_seam.max_events()) is not None\n"
      "        except ZeroDivisionError:\n            return False",
      T_CONN, "broken_store_never_costs_a_turn"),
-    ("C13 write the ring uncapped", RT,
+    ("C13 write the ring uncapped", RT_CONNECTION,
      "            return self.store.append_shared(conn_seam.COLLECTION, row,\n"
      "                                            cap=conn_seam.max_events()) is not None",
      "            return self.store.append_shared(conn_seam.COLLECTION, row) is not None",
      T_CONN, "ring_is_capped"),
-    ("C14 a CONNACK refusal records nothing", RT,
+    ("C14 a CONNACK refusal records nothing", RT_CONNECTION,
      "            self._record_conn(conn_seam.REFUSED, reason=self.last_connect_error)",
      "            pass",
      T_CONN, "connack_refusal_is_recorded"),
-    ("C15 on_connect_fail records nothing (the retry loop is invisible again)", RT,
+    ("C15 on_connect_fail records nothing (the retry loop is invisible again)", RT_CONNECTION,
      "        self._record_conn(conn_seam.CONNECT_FAIL, reason=self.last_connect_error)",
      "        pass",
      T_CONN, "connect_fail_is_its_own_kind"),
-    ("C16 a dropped publish is counted but not recorded", RT,
+    ("C16 a dropped publish is counted but not recorded", RT_CONNECTION,
      "        self._record_conn(conn_seam.PUBLISH_DROP, device_id=device_id, topic=topic,\n"
      "                          reason=reason)",
      "        pass",
      T_CONN, "dropped_publish_is_recorded"),
-    ("C17 a lock timeout is noted but its waited_s is dropped", RT,
+    ("C17 a lock timeout is noted but its waited_s is dropped", RT_CONNECTION,
      "        self._record_conn(conn_seam.LOCK_TIMEOUT, waited_s=waited,\n"
      "                          reason=os.path.basename(lock_path))",
      "        self._record_conn(conn_seam.LOCK_TIMEOUT,\n"
      "                          reason=os.path.basename(lock_path))",
      T_CONN, "lock_timeout_is_recorded_with_how_long"),
-    ("C18 the reconnect gap is measured after last_broker_connect moves", RT,
+    ("C18 the reconnect gap is measured after last_broker_connect moves", RT_CONNECTION,
      "        gap = conn_seam.gap_since(self.last_broker_disconnect, now)\n"
      "        self.broker_connected = True\n        self.last_broker_connect = now",
      "        self.broker_connected = True\n        self.last_broker_connect = now\n"
      "        gap = conn_seam.gap_since(self.last_broker_disconnect, self.last_broker_connect)\n"
      "        gap = None",
      T_CONN, "second_connect_carries_the_gap"),
-    ("C19 /status drops the connection health headline", RT,
+    ("C19 /status drops the connection health headline", RT_LIFECYCLE,
      '                "connection_health": conn_seam.health(',
      '                "connection_health_": conn_seam.health(',
      T_CONN, "status_carries_the_connection_health"),
@@ -188,7 +192,7 @@ MUTATIONS = [
      "    rows = roster.setdefault(\"devices\", {}) if isinstance(roster, dict) else {}\n"
      "    prev = rows.get(device_id) or {}",
      T_ROSTER, "never_mutates_the_roster"),
-    ("R15b _roster_seen writes outside the transaction it opened", RT,
+    ("R15b _roster_seen writes outside the transaction it opened", RT_CONNECTION,
      "            with self.store.transaction_shared(roster_seam.COLLECTION):\n"
      "                current = self.roster()\n"
      "                self.store.write_shared(roster_seam.COLLECTION,\n"
@@ -202,30 +206,30 @@ MUTATIONS = [
      '    raw = (os.environ.get("MOXIE_ROSTER_RESUME") or "1").strip().lower()',
      '    raw = "1"',
      T_ROSTER, "resume_can_be_turned_off or silent_when_it_is_turned_off"),
-    ("R9  _device_connect no longer records the robot", RT,
+    ("R9  _device_connect no longer records the robot", RT_CONNECTION,
      "        self._roster_seen(device_id)",
      "        pass",
      T_ROSTER, "every_ingress_path or roster_survives_the_process"),
-    ("R10 THE LIE: the resume marks rostered robots as connected", RT,
+    ("R10 THE LIE: the resume marks rostered robots as connected", RT_CONNECTION,
      "                self._push_config(device_id)\n                pushed.append(device_id)",
      "                self.robots.setdefault(device_id, RobotContext(\n"
      "                    device_id=device_id, child=self.child))\n"
      "                self._push_config(device_id)\n                pushed.append(device_id)",
      T_ROSTER, "not_reported_as_connected"),
-    ("R11 the reconnect-storm generation check is dropped", RT,
+    ("R11 the reconnect-storm generation check is dropped", RT_CONNECTION,
      "            if generation != self._connect_generation or self._stopping:\n                return",
      "            if False:\n                return",
      T_ROSTER, "reconnect_storm or scheduled_before_a_shutdown"),
-    ("R12 the resume timer is not a daemon (it holds a stop open)", RT,
+    ("R12 the resume timer is not a daemon (it holds a stop open)", RT_CONNECTION,
      "        timer.daemon = True                   # never hold a shutdown open for a re-push",
      "        timer.daemon = False",
      T_ROSTER, "never_holds_a_shutdown_open"),
-    ("R13 a resume that raises kills its thread", RT,
+    ("R13 a resume that raises kills its thread", RT_CONNECTION,
      "            try:\n                self.resume_roster()\n            except Exception as e:\n"
      "                print(f\"[runtime] roster resume failed: {e}\", flush=True)",
      "            self.resume_roster()",
      T_ROSTER, "resume_that_raises"),
-    ("R14 a broken store takes the robot's connection down with it", RT,
+    ("R14 a broken store takes the robot's connection down with it", RT_CONNECTION,
      "                self.store.write_shared(roster_seam.COLLECTION,\n"
      "                                        roster_seam.record_seen(current, device_id))\n"
      "            return True\n        except Exception:\n            return False",
@@ -236,7 +240,7 @@ MUTATIONS = [
     # R15's first selector was `roster_survives_the_process`, which is single-writer and
     # structurally cannot see a missing lock — it went UNCAUGHT, and the fix was a
     # two-process test, not a different mutation.
-    ("R15 the roster write is not a transaction (two supervisors lose robots)", RT,
+    ("R15 the roster write is not a transaction (two supervisors lose robots)", RT_CONNECTION,
      "            with self.store.transaction_shared(roster_seam.COLLECTION):\n"
      "                current = self.roster()\n"
      "                self.store.write_shared(roster_seam.COLLECTION,\n"
@@ -248,32 +252,32 @@ MUTATIONS = [
      T_ROSTER, "two_supervisors_on_one_data_directory"),
 
     # ---- the clean stop --------------------------------------------------------
-    ("S1  request_stop never calls disconnect()", RT,
+    ("S1  request_stop never calls disconnect()", RT_LIFECYCLE,
      "                client.disconnect()",
      "                pass",
      T_STOP, "closes_the_socket_rather_than_dropping"),
-    ("S2  request_stop is not idempotent", RT,
+    ("S2  request_stop is not idempotent", RT_LIFECYCLE,
      "        if self._stopping:\n            return False\n        self._stopping = True",
      "        if False:\n            return False\n        self._stopping = True",
      T_STOP, "idempotent"),
-    ("S3  the shutdown row is written AFTER the socket closes", RT,
+    ("S3  the shutdown row is written AFTER the socket closes", RT_LIFECYCLE,
      "        self._record_conn(conn_seam.SHUTDOWN, reason=reason)\n        client = self.client",
      "        client = self.client",
      T_STOP, "written_before_the_socket_closes"),
-    ("S4  a deliberate stop is recorded as an outage", RT,
+    ("S4  a deliberate stop is recorded as an outage", RT_CONNECTION,
      "        if self._stopping:\n            # A disconnect we asked for.",
      "        if False:\n            # A disconnect we asked for.",
      T_STOP, "not_recorded_as_an_outage"),
-    ("S5  THE PAIR: _stopping hard-wired True (every real outage vanishes)", RT,
+    ("S5  THE PAIR: _stopping hard-wired True (every real outage vanishes)", RT___INIT__,
      "        self._stopping = False",
      "        self._stopping = True",
      T_STOP, "disconnect_that_is_not_a_stop"),
-    ("S6  a stop no longer stales the in-flight turns", RT,
+    ("S6  a stop no longer stales the in-flight turns", RT_CONNECTION,
      "        for device_id in set(self._turn_seq) | set(self.robots):\n"
      "            self._turn_seq[device_id] = self._turn_seq.get(device_id, 0) + 1\n",
      "",
      T_STOP, "abandons_every_in_flight_turn"),
-    ("S7  a disconnect() that raises aborts the stop", RT,
+    ("S7  a disconnect() that raises aborts the stop", RT_LIFECYCLE,
      "            except Exception as e:\n"
      "                print(f\"[runtime] disconnect during shutdown failed: {e}\", flush=True)\n"
      "        return True",
@@ -281,15 +285,15 @@ MUTATIONS = [
      "                print(f\"[runtime] disconnect during shutdown failed: {e}\", flush=True)\n"
      "        return True",
      T_STOP, "will_not_disconnect"),
-    ("S8  no signal handlers are installed at all", RT,
+    ("S8  no signal handlers are installed at all", RT_LIFECYCLE,
      "                _signal.signal(sig, self._on_stop_signal)\n                installed.append(name)",
      "                installed.append(name) if False else None",
      T_STOP, "both_stop_signals or real_supervisor_exits"),
-    ("S9  the handler claims success off the main thread", RT,
+    ("S9  the handler claims success off the main thread", RT_LIFECYCLE,
      "            except (ValueError, OSError, RuntimeError):",
      "            except ZeroDivisionError:",
      T_STOP, "embedded_runtime"),
-    ("S10 SIGKILL added to the catchable list", RT,
+    ("S10 SIGKILL added to the catchable list", RT_LIFECYCLE,
      '    STOP_SIGNALS = ("SIGTERM", "SIGINT")',
      '    STOP_SIGNALS = ("SIGTERM", "SIGINT", "SIGKILL")',
      T_STOP, "sigkill_is_deliberately_not"),
@@ -310,59 +314,59 @@ MUTATIONS = [
      T_STORE, "t10"),
 
     # ---- the returning robot, and the vision latch (the same defect twice) ------
-    ("O1  _device_connect early-returns on membership (the roster ghost)", RT,
+    ("O1  _device_connect early-returns on membership (the roster ghost)", RT_CONNECTION,
      "        if robot is not None and device_id in self._seen_since_connect:\n"
      "            return                            # already onboarded on this connection",
      "        if robot is not None:\n            return",
      T_ROSTER, "returning_after_a_broker_restart or event_also_re_onboards"),
-    ("O2  the disconnect does not un-confirm anybody", RT,
+    ("O2  the disconnect does not un-confirm anybody", RT_CONNECTION,
      "        self._forget_robot_state()\n        if self._stopping:",
      "        if self._stopping:",
      T_ROSTER, "returning_after_a_broker_restart"),
-    ("O3  onboarding re-fires on every packet (the stampede)", RT,
+    ("O3  onboarding re-fires on every packet (the stampede)", RT_CONNECTION,
      "        if robot is not None and device_id in self._seen_since_connect:",
      "        if False:",
      T_ROSTER, "idempotent_within_one_connection"),
-    ("O4  /status claims a robot we have not heard from is present", RT,
+    ("O4  /status claims a robot we have not heard from is present", RT_LIFECYCLE,
      '                "seen_since_connect": r.device_id in self._seen_since_connect,',
      '                "seen_since_connect": True,',
      T_ROSTER, "status_labels"),
-    ("O5  the returning robot gets a fresh context (its conversation is lost)", RT,
+    ("O5  the returning robot gets a fresh context (its conversation is lost)", RT_CONNECTION,
      "        if robot is None:\n            robot = RobotContext(device_id=device_id, child=self.child)\n"
      "            self.robots[device_id] = robot",
      "        if True:\n            robot = RobotContext(device_id=device_id, child=self.child)\n"
      "            self.robots[device_id] = robot",
      T_ROSTER, "keeps_its_history"),
-    ("V1  a broker outage leaves the vision latch set (eyes go silent)", RT,
+    ("V1  a broker outage leaves the vision latch set (eyes go silent)", RT_CONNECTION,
      "        self._forget_robot_state()\n        if self._stopping:",
      "        self._seen_since_connect.clear()\n        if self._stopping:",
      T_VISION, "broker_outage_makes_the_next_reply"),
-    ("V2  a module exit leaves the vision latch set", RT,
+    ("V2  a module exit leaves the vision latch set", RT_MEMORY,
      "        self._forget_robot_state(device_id, vision_only=True)\n"
      "        robot = robot or self.robots.get(device_id)",
      "        robot = robot or self.robots.get(device_id)",
      T_VISION, "module_exit_makes_the_next_reply"),
-    ("V3  waking a robot leaves the vision latch set (openmoxie PR #59)", RT,
+    ("V3  waking a robot leaves the vision latch set (openmoxie PR #59)", RT_FLEET,
      "        self._forget_robot_state(device_id, vision_only=True)\n"
-     "        # `if self.client is None` asked whether an OBJECT existed",
-     "        # `if self.client is None` asked whether an OBJECT existed",
+     "        # Check the socket, not the client object",
+     "        # Check the socket, not the client object",
      T_VISION, "waking_a_robot"),
-    ("V4  a robot the broker says left keeps its latch", RT,
+    ("V4  a robot the broker says left keeps its latch", RT_CONNECTION,
      "        self._forget_robot_state(device_id)\n        robot = self.robots.pop(device_id, None)",
      "        robot = self.robots.pop(device_id, None)",
      T_VISION, "broker_says_left"),  # caught via `_seen_since_connect`; the
      # vision half of this line is redundant with `_end_conversation`, which is the
      # finding V4 produced on its first run.
-    ("V5  over-forgetting: the invalidation drops the conversation too", RT,
+    ("V5  over-forgetting: the invalidation drops the conversation too", RT_CONNECTION,
      "        if vision_only:\n            return",
      "        self.history.pop(device_id, None) if device_id else self.history.clear()\n"
      "        if vision_only:\n            return",
      T_VISION, "does_not_forget_the_conversation"),
-    ("V6  vision_only is ignored (a module exit un-onboards the robot)", RT,
+    ("V6  vision_only is ignored (a module exit un-onboards the robot)", RT_CONNECTION,
      "        if vision_only:\n            return",
      "        if False:\n            return",
      T_VISION, "module_exit_does_not_claim"),
-    ("V7  the two caches drift apart (only one is invalidated)", RT,
+    ("V7  the two caches drift apart (only one is invalidated)", RT_CONNECTION,
      "            if device_id is None:\n                self._vision_subscribed.clear()",
      "            if False:\n                self._vision_subscribed.clear()",
      T_VISION, "invalidated_by_one_rule"),
@@ -377,12 +381,12 @@ MUTATIONS = [
      '    "recovered": "Connected, with nothing to report",',
      T_CONSOLE, "recovered_is_not_rendered_as_healthy"),
     ("K3  a missing gap is flattened to a zero-second outage", FLEET,
-     '    if e.get("gap_s") is not None:\n        row["gap_s"] = float(_num(e.get("gap_s")) or 0.0)',
-     '    row["gap_s"] = float(_num(e.get("gap_s")) or 0.0)',
+     '        if e.get(k) is not None:\n            row[k] = float(_num(e.get(k)) or 0.0)',
+     '        row[k] = float(_num(e.get(k)) or 0.0)',
      T_CONSOLE, "without_a_gap"),
     ("K4  a row from a newer runtime raises instead of rendering", FLEET,
-     "    e = e if isinstance(e, dict) else {}",
-     "    e = e if isinstance(e, dict) else None",
+     "    e = _dict(e)\n    kind = ",
+     "    e = e if isinstance(e, dict) else None\n    kind = ",
      T_CONSOLE, "newer_runtime"),
     ("K5  every kind renders as its own wire name", FLEET,
      '           "label": CONNECTION_LABELS.get(kind, kind.replace("_", " ")),',

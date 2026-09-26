@@ -4,114 +4,36 @@
 Pure (stdlib only), JSON-safe, no I/O. The config path in `cloud_config.py` renders a
 selection into the pushed `RobotCloudConfig`; the console picks from `face_catalog()`.
 
-WHAT OUR RECOVERED DOCS ESTABLISH (and what they do not)
---------------------------------------------------------
-**The carrier.** Appearance rides down inside the child profile, not beside it:
-`RobotCloudConfig.child_pii` is a `ChildDecrypted`, and `ChildDecrypted` carries
-**`repeated string face_options = 17`**
-(`docs/reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto`:166,
-catalogued at `docs/reverse-engineering/protocol/proto-catalog.md`:334; the sealed twin
-`ChildEncrypted.face_options = 16` is Cloud.proto:144 · proto-catalog.md:313). It is a
-*list of layer labels*, so the face is composited from independent layers rather than
-picked as one whole picture. `device-config-and-telemetry.md`:53 lists `face_options`
-among the child-profile fields a server fills in, and
-`docs/architecture/mqtt-and-conversation.md`:332 names it as one of the `child_pii`
-fields "where our `server/` child profile feeds in". It is **not** one of the sealed
-fields: `device-config-and-telemetry.md`:52-54 and `crypto-and-keys.md`:506-508 both list
-`face_options` among the *clear* metadata that "sits alongside" the `*_encrypted` blobs, so
-a server fills it in directly without touching the crypto path.
+**Carrier.** `RobotCloudConfig.child_pii.face_options` — `repeated string face_options = 17`
+on `ChildDecrypted` (recovered Cloud.proto:166; proto-catalog.md:334). A list of layer
+labels, composited on the robot. It is clear metadata, not a sealed field
+(device-config-and-telemetry.md:52-54), so a server fills it in directly.
 
-**The slot vocabulary — 14 layers, cited.** `docs/reverse-engineering/runtime/
-unity-face-animation.md`:34-42 records `MoxieCustomizationType` as **"14 independent,
-swappable slots"** and names every one: `EyeColor` · `EyeDesign` · `EyeLid` · `Brows` ·
-`Mouth` · `Nose` · `Mustache` · `FaceColor` · `FaceDesign` · `Hair` · `Glasses` ·
-`Stickers` · `Extras` · `Misc`. That is the whole anatomy; `FACE_SLOTS` below is it,
-in the document's order.
+**Slots.** The 14 `MoxieCustomizationType` slots (runtime/unity-face-animation.md:34-42),
+in `SLOT_SPINE` order.
 
-**The option vocabulary — two origins, kept apart.** The catalog is *data*:
-`moxie_sdk/face_assets.json`, loaded at import by `load_face_assets()` and turned into
-slots by `build_face_slots(catalog=)` — one seam, so a test can hand in its own table.
-Every option carries an `origin`, and there are exactly two of those.
+**Options** come from `face_assets.json` (`build_face_slots(catalog=)` is the test seam),
+each tagged with one of two origins:
+  * `recovered-enum` — 12 colours with hex across EyeColor/FaceColor
+    (features/robot-lifecycle.md:280-283).
+  * `openmoxie-manifest` — 60 `MX_<nnn>_<Group>_<Detail>` asset ids from OpenMoxie (MIT,
+    commit `c8c2d380`; see ATTRIBUTION.md). Ids only; slot mapping and labels are ours,
+    and anything unmappable goes to the JSON's `unmapped` list. Upstream notes some of
+    these crashed Unity (also mqtt-and-conversation.md:824), so each carries
+    `caution: true`. The id space is open (behavior-markup.md:161-163): an owner can
+    pass their own robot's labels verbatim via `custom` (shape-checked only).
+Stickers, Extras and Misc stay empty — no source lists an id and we invent none.
 
-`origin: "recovered-enum"` — **12 options across 2 slots, from our own corpus, with hex**,
-which makes them the only ones a picker can truly *preview*:
-  * `EyeColor{green, blue, purple, brown, gold, teal}` — green `42D02B`, blue `8491EF`,
-    purple `9437DE`, brown `443319`, gold `F4BF03`, teal `38ADAE`
-  * `FaceColor{blue, yellow, green, teal, pink, purple}` — blue `BBCFE1`, yellow `F0F055`,
-    green `9BDB9B`, teal `7ED6DD`, pink `E1A2A2`, purple `C395D4`
-(`docs/features/robot-lifecycle.md`:280-283 = the `Robot.java` `EYE_COLORS`/`FACE_COLORS`
-constants; repeated at `docs/features/feature-catalog.md`:238-241, which also gives the
-Channel-1 spelling `ChildrenModel.eye-color`/`face-color` → `PUT children/{id}`, gated by
-the account flags `supports-eye-color`/`supports-face-color`, and
-`docs/reverse-engineering/phone/rest-api.md`:412 lists both keys on `ChildrenModel`.)
+**Wire spelling.** A manifest id travels verbatim (`MX_010_Eyes_Hazel`); anything else is
+joined to its slot type (`EyeColor_teal`). ASSUMPTION: that join (`face_option_label`) —
+nothing records the label format, so it is one function to fix.
 
-`origin: "openmoxie-manifest"` — **60 asset ids ingested as data** from OpenMoxie (MIT),
-`site/hive/content/data.py::MOXIE_CUSTOMIZATIONS`, commit `c8c2d380`, cited in full in the
-JSON's own `source` block and in `ATTRIBUTION.md`. These are real
-`MX_<nnn>_<Group>_<Detail>` labels harvested from a robot that project's authors could
-run — precisely the thing our corpus structurally *cannot* give us, because the
-customization art is loaded by `MoxieCustomizationAsset` / `MoxieCustomizationPreview`
-out of a **streamed** bundle (`content-delivery.md`:79, source `REMOTE_ASSETBUNDLES`), not
-the base APK, which is why the UnityPy inventory of `sharedassets1` in
-`unity-assets.md`:19-67 found none of them. We took **the id strings and nothing else** —
-no code, no comments, no function bodies. The slot mapping (each `MX_<nnn>_<Group>_`
-prefix → exactly one recovered `MoxieCustomizationType`) and every human-readable label
-are ours, and an id whose prefix does not map with confidence goes to the JSON's
-`unmapped` list rather than being guessed into a slot. All 60 mapped; `unmapped` is empty.
+**Cache-buster.** ASSUMPTION, field-proven by OpenMoxie rather than captured: Moxie-Unity
+caches a composited face keyed on `child_pii.id`. `face_child_id()` derives a
+deterministic UUIDv5 from child key + layers: same face → same id (idempotent re-push),
+new face → new id. No face → the field is not emitted.
 
-That is **72 options across 11 of the 14 slots**. `Stickers`, `Extras` and `Misc` are
-still named and empty — neither source lists a single id for them, and we invent none.
-
-**Nothing here is hardware-proven, and the manifest half carries an explicit warning.**
-Upstream's own note above that list records that some of these assets crashed Unity on a
-real Moxie, and that problem assets should be removed once found; it does not say which,
-so **every manifest-origin entry carries `caution: true`**. Our own corpus says the same
-thing independently — `mqtt-and-conversation.md`:824, "some face customization assets
-crash Unity and are excluded". And the id space is genuinely open: `behavior-markup.md`
-:161-163 records that the generators "accept **any** id the loaded bundle defines", so a
-robot whose streamed bundle differs may not carry any of these. An owner who knows their
-own robot's labels passes them verbatim through `custom`, which this module never
-rewrites; we validate a custom label's *shape* and nothing more, and the console says so.
-
-**The wire spelling depends on the origin.** A `recovered-enum` option is an enum *member*
-name, so `face_option_label()` joins it to the slot's `MoxieCustomizationType` spelling
-(the ASSUMPTION below) → `EyeColor_teal`. An `openmoxie-manifest` option is already a
-whole asset label, so it travels **verbatim** → `MX_010_Eyes_Hazel`. A value typed into
-one of the three still-empty slots is joined too, because we have nothing better to do
-with it.
-
-**ASSUMPTION — the label format.** `face_options` is `repeated string`; nothing in our
-corpus records what those strings look like. `face_option_label()` joins two *cited*
-spellings with an underscore — the `MoxieCustomizationType` slot name and the enum member
-name — e.g. `EyeColor` + `teal` → `"EyeColor_teal"`. Every character comes from a quoted
-doc; only the join is ours. It is one function, so a capture that contradicts it is a
-one-line fix, and `custom` labels bypass it entirely. (This is the same treatment
-`cloud_config.UNPAIRED_PAIRING_STATUS` and `WAKE_DAY_NAMES` get.)
-
-**ASSUMPTION — the cache-buster.** A layered face is composited into a texture, and a
-robot that has already composited one has no reason to redo the work. Our corpus does not
-record the cache key: it gives `ChildDecrypted.id = 14` (Cloud.proto:163 · proto-catalog.md
-:331) as the child's identity inside the pushed config, `SwitchUserConfig{action,
-restore_id, child_id, force, child_name}` as the config's user-switch lever (Cloud.proto
-:177-184 · proto-catalog.md:341-347), and `USER_DATA_UPDATE` as both the cloud-visible
-lifecycle state (`device-config-and-telemetry.md`:88) and the on-device disengage reason
-for "the child's data/profile is being updated" (`power-and-system-events.md`:85) — a
-profile edit is a *user-level* event on this robot, not a cosmetic one. It does **not**
-say the texture cache is keyed on `child_pii.id`.
-
-OpenMoxie's face editor does say so, from a server that drives real robots: it writes a
-fresh `uuid4` into `child_pii["id"]` with the comment that Moxie-Unity keeps a cached face
-record keyed on that field. So this is **field-proven, not capture-proven**, exactly like
-`UNPAIRED_PAIRING_STATUS`. We take the mechanism and improve it: instead of a random uuid
-(which churns the child's identity on every save, even a no-op one), `face_child_id()`
-derives a **deterministic UUIDv5** from the child key + the rendered layer list. Same face
-⇒ same id ⇒ an idempotent re-push does not disturb the robot; different face ⇒ different
-id ⇒ the stale texture record cannot match. With no face chosen the field is not emitted
-at all, so a faceless config is byte-for-byte what it was before this module existed.
-
-**Nobody has watched a physical Moxie render any of this.** We have no robot. What is
-cited is cited; what is assumed is flagged here, in
-`docs/architecture/config-and-telemetry-contract.md`, and in the two constants below.
+Nothing here has been observed on a physical Moxie.
 """
 from __future__ import annotations
 
@@ -123,17 +45,12 @@ from typing import Optional
 
 FACE_CATALOG_VERSION = 2
 
-#: Where the option table lives. It is *data*, shipped in the wheel by the
-#: `moxie_sdk = ["*.json"]` package-data glob (`sim/tests/test_package_contents.py`
-#: guards that), and it is the only place an asset id is written down.
+#: The option table — data shipped in the wheel (test_package_contents.py guards it).
 _ASSETS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "face_assets.json")
 
-#: The 14 `MoxieCustomizationType` slots, in the order unity-face-animation.md:34-42
-#: lists them. `id` is the parent-facing key we accept and store; `type` is the recovered
-#: `MoxieCustomizationType` spelling, which is half of the wire label for a
-#: `recovered-enum` option (see the ASSUMPTION above); `label`/`note` are ours. This is
-#: the anatomy and nothing else — the options come from `face_assets.json`.
+#: The 14 slots. `id` is our parent-facing key; `type` is the recovered spelling (half of
+#: a joined wire label); `label`/`note` are ours.
 SLOT_SPINE = (
     {"id": "eye_color", "type": "EyeColor", "label": "Eye colour",
      "note": "the expressive core — colour"},
@@ -165,8 +82,7 @@ SLOT_SPINE = (
      "note": "cosmetic add-on layer"},
 )
 
-#: The two `origin` values `face_assets.json` may use. Anything else is a data bug and
-#: the loader says so rather than shipping an option with unknown provenance.
+#: The two `origin` values `face_assets.json` may use (anything else is a load error).
 OPTION_ORIGINS = ("recovered-enum", "openmoxie-manifest")
 
 #: The origin whose ids are *whole asset labels* and therefore ride the wire verbatim.
@@ -174,26 +90,19 @@ VERBATIM_ORIGIN = "openmoxie-manifest"
 
 
 def face_assets_path() -> str:
-    """The table on disk. `MOXIE_FACE_ASSETS` overrides it, the same escape hatch
-    `safety.rules_path()` gives the safety table — an owner who has read their own
-    robot's bundle can point us at their own list without forking the SDK."""
+    """The table on disk; `MOXIE_FACE_ASSETS` overrides it (like `safety.rules_path()`)."""
     return os.environ.get("MOXIE_FACE_ASSETS", "").strip() or _ASSETS_PATH
 
 
 def load_face_assets(path: Optional[str] = None) -> dict:
-    """Read the option table. Loud on a missing/broken file: it ships in the wheel, so
-    its absence is a packaging bug, not a runtime condition to paper over."""
+    """Read the option table. Loud on a missing/broken file (a packaging bug)."""
     with open(path or face_assets_path(), encoding="utf-8") as fh:
         return json.load(fh)
 
 
 def build_face_slots(catalog: Optional[dict] = None) -> tuple:
-    """The 14-slot spine ⊕ the option table → `FACE_SLOTS`. The `catalog=` seam is how a
-    test substitutes its own table; production passes nothing and gets the shipped one.
-
-    A slot name the spine does not know is refused rather than silently dropped — the
-    slots are the 14 recovered `MoxieCustomizationType` names and a fifteenth would mean
-    the data and our documents disagree."""
+    """The 14-slot spine ⊕ the option table → `FACE_SLOTS` (`catalog=` is the test seam).
+    An unknown slot, duplicate id, bad origin or missing label raises."""
     data = load_face_assets() if catalog is None else catalog
     by_type = data.get("slots") or {}
     known = {s["type"] for s in SLOT_SPINE}
@@ -245,11 +154,8 @@ FACE_CACHE_NAMESPACE = uuid.UUID("6f1a3d5e-2c94-4f7b-9a10-8d5b2e0c7a31")
 
 
 def face_catalog() -> list:
-    """The catalog as plain JSON (lists, not tuples) — what the console renders and what
-    `status_snapshot` publishes. Each option keeps its `origin` (and `caution`, and `hex`
-    where we have one), so a UI can say where a choice came from. A slot with
-    `options: []` is one neither source lists an id for; `cited` says so out loud so the
-    UI never implies we have art we do not."""
+    """The catalog as plain JSON for the console / `status_snapshot`. Options keep
+    `origin`/`caution`/`hex`; `cited: False` marks a slot with no known options."""
     return [{"id": s["id"], "type": s["type"], "label": s["label"], "note": s["note"],
              "options": [dict(o) for o in s["options"]],
              "cited": bool(s["options"])}
@@ -257,14 +163,8 @@ def face_catalog() -> list:
 
 
 def face_option_label(slot_id: str, option_id: str) -> str:
-    """One `face_options` entry — see the module docstring, "the wire spelling depends on
-    the origin".
-
-    An `openmoxie-manifest` option **is** a whole asset label (`MX_010_Eyes_Hazel`), so it
-    goes down untouched. Anything else is an enum member name or a value the parent typed,
-    and gets **the assumed spelling**: the `MoxieCustomizationType` slot name
-    (unity-face-animation.md:34-42) joined to it (robot-lifecycle.md:281-282 for the
-    member names). Both halves are quoted from our docs; only the underscore is ours."""
+    """One `face_options` entry: a manifest id verbatim, anything else joined to its slot
+    type (the ASSUMED spelling — see the module docstring)."""
     slot = _SLOT_BY_ID.get(slot_id)
     if slot is None:
         raise ValueError(f"unknown face slot {slot_id!r}")
@@ -278,14 +178,10 @@ def face_option_label(slot_id: str, option_id: str) -> str:
 def validate_face(selection) -> dict:
     """Parent input → a canonical, JSON-safe face selection, or `{}` for "default look".
 
-    Accepts the selection object (`{slot: option_id, …}`, optionally with a `custom` list
-    of verbatim asset labels), a bare list of custom labels, or an empty/None value.
-    A slot mapped to `None`/`""` is *cleared* — which is what a fleet-default face needs
-    so one robot can opt a single layer back out (`merge_config_layers` deep-merges the
-    face object key-by-key, so the layers stack per slot).
-
-    Raises ValueError on an unknown slot, an option a *cited* slot does not offer, or a
-    custom label that is not a plausible asset name — the console turns that into a 400."""
+    Accepts `{slot: option_id, custom?: [labels]}`, a bare list of custom labels, or
+    empty/None. A slot mapped to `None`/`""` is cleared (so one robot can opt a layer out
+    of a fleet face). Raises ValueError on an unknown slot, an uncatalogued option for a
+    cited slot, or an implausible label (the console answers 400)."""
     if selection is None or selection is False or selection == "" or selection == []:
         return {}
     if isinstance(selection, (list, tuple)):
@@ -314,9 +210,7 @@ def validate_face(selection) -> dict:
                     f"unknown {sid} option {option_id!r} (offered: {', '.join(allowed)}"
                     f"; an id we do not catalogue goes in face.custom)")
         elif not _LABEL_RE.match(option_id):
-            # A slot neither source lists an id for (Stickers/Extras/Misc): we cannot
-            # check the value against a catalog we do not have, so we check only that it
-            # is a plausible asset label. We never invent one; the parent supplies it.
+            # Uncatalogued slot: only the label's shape can be checked.
             raise ValueError(f"bad {sid} value {option_id!r} — neither our recovered docs "
                              f"nor the ingested manifest list options for this slot, so "
                              f"it must be an asset label (letters, digits, . _ -; "
@@ -347,11 +241,8 @@ def validate_face(selection) -> dict:
 
 
 def face_options_list(selection) -> list:
-    """A validated selection → the `repeated string face_options` we put in `child_pii`.
-
-    Slot layers first, in `FACE_SLOTS` order (a stable composite order beats the order a
-    form happened to submit), then any verbatim `custom` labels. `[]` for no selection,
-    and the caller then omits the field entirely."""
+    """A selection → `child_pii.face_options`: slot layers in `FACE_SLOTS` order, then
+    `custom` labels. `[]` for none (the caller then omits the field)."""
     sel = selection if isinstance(selection, dict) else validate_face(selection)
     labels = [face_option_label(sid, sel[sid]) for sid in SLOT_IDS if sid in sel]
     labels.extend(sel.get(CUSTOM_KEY, []))
@@ -359,13 +250,8 @@ def face_options_list(selection) -> list:
 
 
 def face_child_id(labels, child_key: str = "") -> str:
-    """The cache-buster: a **deterministic** `child_pii.id` for this exact face.
-
-    See the module docstring's second ASSUMPTION. UUIDv5 over `child_key` + the rendered
-    layer list, so the value is a real RFC-4122 uuid string (what the field otherwise
-    carries), the same face always yields the same id (an idempotent re-push does not
-    disturb the robot), and any change of any layer yields a different one — which is the
-    whole job: a cached texture record keyed on the old id cannot match the new one."""
+    """The cache-buster: a deterministic UUIDv5 `child_pii.id` for this exact face (see
+    the module docstring)."""
     joined = "\x1f".join([str(child_key or "")] + [str(x) for x in (labels or [])])
     return str(uuid.uuid5(FACE_CACHE_NAMESPACE, joined))
 

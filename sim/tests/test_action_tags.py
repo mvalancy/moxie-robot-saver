@@ -6,21 +6,12 @@ Four layers, bottom-up:
   2. LLMApp.respond — a tagged model line becomes Reply.text + Reply.actions
   3. ContentApp — same, for the content engine (model path and global-handler path)
   4. the real MoxieRuntime — the action reaches the wire as `response_actions`
-
-Layer 4 deliberately re-implements the tiny fake-transport helper rather than
-importing it from test_runtime_turn.py: these files are edited independently and a
-test that shares fixtures across files fails for reasons that have nothing to do
-with the thing under test.
 """
-import json
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 
 from moxie_sdk.actions import (ACTION_TAG_PROMPT, LAUNCH_IF_CONFIRMED_AS,  # noqa: E402
                                parse_action_tags)
@@ -264,30 +255,10 @@ def test_content_app_reply_with_only_a_tag_keeps_the_action():
 
 # ---------------------------------------------------------------- 4. the wire
 
-class _FakeClient:
-    """Records publishes; no network. (Local copy — see this module's docstring.)"""
-
-    def __init__(self):
-        self.published = []
-
-    def publish(self, topic, payload):
-        self.published.append((topic, json.loads(payload)))
-
-
 def _drive(app, device_id="d_tags", speech="can we draw"):
-    import moxie_runtime
-    rt = moxie_runtime.MoxieRuntime(app=app, child=ChildProfile(nickname="Sam"))
-    rt.client = _FakeClient()
-    rt.robots[device_id] = RobotContext(device_id=device_id, child=rt.child,
-                                        module_id="CHAT", content_id="default")
-    event = json.dumps({"command": "prompt", "backend": "router",
-                        "event_id": "evt-tag", "speech": speech})
-    rt._on_remote_chat(device_id, rt.robots[device_id], event)
-    rt._pool.shutdown(wait=True)
-    topic = f"/devices/{device_id}/commands/remote_chat"
-    msgs = [p for (t, p) in rt.client.published if t == topic]
-    assert msgs, f"no remote_chat published; got {rt.client.published}"
-    return msgs[-1]
+    from helpers_runtime import drive_turn, make_runtime
+    rt, _ = make_runtime(app, device_id=device_id, module_id="CHAT")
+    return drive_turn(rt, device_id, speech, event_id="evt-tag")
 
 
 def test_a_tag_in_model_text_reaches_the_wire_as_response_actions():

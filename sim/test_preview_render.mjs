@@ -1,36 +1,18 @@
 /* The 🎬 rehearsal, replayed through the only renderer we can execute.
  *
- * `sim/test_performance_render.mjs` plays the planner's 22 dialog-act **goldens** through
- * `sim/web/bridge.js`. This plays something different and, for an integration pass, more
- * load-bearing: the bytes a REAL robot was handed by a REAL supervisor over a REAL
- * broker, captured by `sim/tests/test_sil_performance_e2e.py` at the moment
- * `MoxieRuntime.preview` published them.
- *
- * The distinction matters because everything between `render()` and the robot — the
- * `Staged` tuple, `_publish_chat`, `build_chat_response`, `json.dumps`, mosquitto, the
- * client's own JSON parse — is invisible to a golden file. A markup string that survives
- * `json.dumps` but not the SIM's `<mark …>` parser, or a payload whose `output.markup`
- * arrives under a different key, is a robot standing perfectly still while every Python
- * test in the tree stays green.
- *
- * Usage (the Python test writes the file and calls this):
+ * Unlike test_performance_render.mjs (goldens), this plays the bytes a REAL robot received
+ * from a REAL supervisor over a REAL broker, captured by sim/tests/test_sil_performance_e2e.py
+ * — so a markup string mangled anywhere between `render()` and the client's JSON parse is
+ * caught instead of leaving the robot standing still while every Python test is green.
  *
  *     node sim/test_preview_render.mjs <capture.json>
  *
- * where the capture is `{"messages": [ <remote_chat payload>, … ]}` — payloads exactly as
- * received off `/devices/<id>/commands/remote_chat`.
- *
- * Run standalone with no argument and it self-checks against the committed goldens
- * instead, so this file is never un-runnable by hand.
- *
- * No browser, no network.
+ * capture = `{"messages": [ <remote_chat payload>, … ]}` as received off
+ * `/devices/<id>/commands/remote_chat`. With no argument it self-checks against the
+ * committed goldens. No browser, no network.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, "web", "bridge.js"), "utf8");
+import { loadBridge, readGolden } from "./bridge_harness.mjs";
 
 const capturePath = process.argv[2] || "";
 let messages;
@@ -46,8 +28,7 @@ if (capturePath) {
 } else {
   /* Standalone fallback: the committed goldens, wrapped in the payload shape the
    * supervisor publishes. Same assertions, so a hand run is a real run. */
-  const goldens = JSON.parse(
-    readFileSync(join(here, "tests", "goldens", "performance.json"), "utf8"));
+  const goldens = readGolden("performance.json");
   messages = goldens.cases.map((c, i) => ({
     command: "remote_chat", result: "SUCCESS", backend: "router",
     event_id: `preview-golden-${i}`,
@@ -61,50 +42,7 @@ if (!messages.length) {
   process.exit(1);
 }
 
-// ---- stubs: the same minimal window/document/mqtt shims the sibling render test uses --
-let calls = { setFace: [], setSpeech: [], setMotor: [], showIcons: [], clearIcons: [] };
-const reset = () => {
-  calls = { setFace: [], setSpeech: [], setMotor: [], showIcons: [], clearIcons: [] };
-};
-const moxie = {
-  setFace: (f) => calls.setFace.push(f),
-  setSpeech: (t) => calls.setSpeech.push(t),
-  setMotor: (i, v) => calls.setMotor.push([i, v]),
-  getMotor: () => 16384,
-  showIcons: (n) => calls.showIcons.push(n),
-  clearIcons: () => calls.clearIcons.push(true),
-  setHeartLED: () => {},
-};
-const clickHandlers = {}, mqttClientRef = { c: null }, els = {};
-const fakeEl = (id) => ({
-  id, value: "", textContent: "", innerHTML: "", className: "", scrollTop: 0,
-  scrollHeight: 0,
-  addEventListener: (e, cb) => { if (e === "click" && id) clickHandlers[id] = cb; },
-  appendChild: () => {},
-  querySelector: () => ({ set textContent(v) {}, get textContent() { return ""; } }),
-});
-globalThis.window = { moxie, addEventListener: () => {} };
-globalThis.location = { hostname: "127.0.0.1" };
-globalThis.document = {
-  getElementById: (id) => (els[id] ||= fakeEl(id)),
-  createElement: () => fakeEl(),
-};
-globalThis.mqtt = {
-  connect: () => {
-    const h = {};
-    mqttClientRef.c = {
-      on: (e, cb) => { h[e] = cb; }, subscribe: () => {}, end: () => {},
-      _emit: (e, ...a) => h[e] && h[e](...a),
-    };
-    return mqttClientRef.c;
-  },
-};
-
-(0, eval)(src);
-clickHandlers["bus-connect"]();
-const client = mqttClientRef.c;
-if (!client) throw new Error("bridge did not connect over mqtt");
-client._emit("connect");
+const { calls, reset, client } = loadBridge();
 
 const REST = 16384;
 const fails = [];
@@ -129,11 +67,8 @@ for (const msg of messages) {
   ok(calls.setMotor.length > 0,
      `${label}: the body never moved for ${JSON.stringify(out.markup)}`);
 
-  /* Peak displacement per motor — the recorded state, never a live sample (the SIM
-   * test rule: sampling a live value on a loaded runner is how three fast-tier flakes
-   * were born). Not asserted per message: `other` is the act with nothing to perform,
-   * and its tree legitimately drives every motor straight back to rest. The batch is
-   * asserted instead, below. */
+  /* Peak displacement per motor — recorded state, never a live sample. Asserted over the
+   * batch, not per message: `other` legitimately drives every motor back to rest. */
   for (const [i, v] of calls.setMotor) {
     const d = Math.abs(v - REST);
     if (d > (peakOverall.get(i) || 0)) peakOverall.set(i, d);

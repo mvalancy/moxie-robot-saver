@@ -1,35 +1,20 @@
 """
-The **rolling transcript** on disk, through the parent's privacy switch.
+The ROLLING TRANSCRIPT on disk, through the parent's privacy switch.
 
-There are two memories in this appliance and they are not the same thing:
+Two memories: the durable facts (`MemoryStore`, see `test_memory*.py`) and the rolling
+transcript (`MoxieRuntime.history`, written to `MOXIE_MEMORY_DIR/<device>.json` by
+`_save_memory` every turn — and compose sets `MOXIE_MEMORY_DIR`). Under
+`logging_policy=NO_DATA` nothing may be written, asserted against the FILESYSTEM
+(`os.listdir` / `os.path.exists`), not a return value.
 
-  * the **durable facts** a content module keeps between conversations
-    (`moxie_sdk/store.py::MemoryStore`) — covered by `test_memory.py` and
-    `test_memory_runtime.py`, and gated on `LoggingPolicy` since it was written;
-  * the **rolling conversation transcript** — `MoxieRuntime.history`, written to
-    `MOXIE_MEMORY_DIR/<device>.json` by `_save_memory` after every turn.
-
-The second one was ungated. `docker-compose.yml` sets `MOXIE_MEMORY_DIR=/data/memory`,
-so *every* `docker compose up` deployment persisted a child's conversation verbatim —
-including on a robot whose parent had explicitly chosen `logging_policy=NO_DATA`, which
-`moxie_runtime.py`'s own comments and `docs/architecture/content-module-contract.md`
-both promise means nothing is written. This suite is that promise, asserted **against
-the filesystem** rather than against a return value: a gate that returns False and
-writes the file anyway is exactly the bug being fixed.
-
-Every assertion here is `os.listdir` / `os.path.exists` on the real memory dir.
-
-Hermetic: fake MQTT transport, fake brain, tmp storage, no sleeps, no network.
+Hermetic: fake MQTT transport, fake brain, tmp storage, no sleeps.
 """
 from __future__ import annotations
 
 import json
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 
 import pytest  # noqa: E402
 
@@ -106,12 +91,8 @@ def _no_data(rt, did):
 # ---------------------------------------------------------------------------
 
 def test_no_media_is_the_default_and_it_writes_the_transcript(memdir, tmp_path):
-    """`NO_MEDIA` is `MEMORY_POLICY`, and for a transcript it means *write it*.
-
-    A transcript is entirely text this server already holds in RAM to make conversation
-    work; there is no opaque payload to withhold, which is the only thing `NO_MEDIA`
-    strips from telemetry. So the choice is binary and it matches long-term memory's:
-    written under `NO_MEDIA`, refused under `NO_DATA`."""
+    """`NO_MEDIA` (= `MEMORY_POLICY`) writes the transcript: it is all text with no opaque
+    payload to withhold, so the choice is binary, like long-term memory's."""
     rt, did = _runtime(tmp_path)
     assert rt.memory_policy(did) == moxie_runtime.MEMORY_POLICY == LoggingPolicy.NO_MEDIA
     assert rt.transcript_persists(did) is True

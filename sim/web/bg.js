@@ -28,23 +28,10 @@
   var nodes = [], hubs = [], packets = [], pings = [], LINK = 150, t0 = performance.now();
 
   /* ---- one clock for the producers AND the consumer -------------------------
-   *
-   * `packets` and `pings` used to be filled by two setInterval()s and drained only
-   * inside step(). That is a producer/consumer mismatch with a name: a browser PAUSES
-   * requestAnimationFrame in a hidden tab but keeps timers running, so a backgrounded
-   * page piled up entries with nothing consuming them, and the whole pile came due on
-   * the frame the visitor came back to. Spawning from inside step() means the producers
-   * stop exactly when the consumer stops — there is no state that can only grow.
-   *
-   * SPAWN_CREDIT_MS caps how much elapsed time a single frame may bank, so returning
-   * after four hours (or a laptop waking from sleep) credits one frame's worth of
-   * spawning rather than four hours' worth. It is far above any real frame interval on
-   * a page anyone would call working, so the visible spawn rate is unchanged.
-   *
-   * MAX_* are the belt to that braces: a ceiling that holds whatever the scheduler
-   * does, including one nobody has thought of yet. Visible steady state is 1-2 of each
-   * (packet life ~1-2 s at 0.7 spawns/s; ping life ~2-4 s at 0.38/s), so a cap 20x that
-   * is never reached in normal operation and changes nothing about how the field looks.
+   * `packets`/`pings` are spawned from inside step(), never from timers: a hidden tab pauses
+   * rAF but not setInterval, so timer producers piled entries up with nothing draining them.
+   * SPAWN_CREDIT_MS caps the elapsed time one frame may bank (a laptop waking from sleep
+   * credits one frame, not hours). MAX_* are a hard ceiling ~20x the visible steady state.
    */
   var PACKET_MS = 900, PING_MS = 2600, SPAWN_CREDIT_MS = 250;
   var MAX_PACKETS = 48, MAX_PINGS = 24;
@@ -91,45 +78,11 @@
 
   /** Bank `ms` of elapsed time and spawn whatever that buys. Called once per frame.
    *
-   * A HIDDEN TAB BANKS NOTHING, AND THE ACCUMULATORS DO NOT CARRY ACROSS THE BOUNDARY.
-   * Moving the producers into the frame loop already stopped the original pile-up, because
-   * a real browser pauses `requestAnimationFrame` in a background tab. That is the belt,
-   * and it is what the owner's "streaking points after a day" needed. This is the braces,
-   * for two holes the belt leaves:
-   *
-   *   1. `pingAcc` SURVIVES the transition. A tab hidden with the accumulator already at
-   *      ~2 500 ms of the 2 600 ms ping interval would need one more frame — up to 250 ms —
-   *      to tip over and emit a ping nobody is there to see.
-   *
-   *      CORRECTED 2026-09-06, and left here because the correction is the useful part.
-   *      This paragraph used to claim that hole was "exactly the
-   *      `pings grew while the tab was hidden (1 -> 2 in 20s)` this file's own guard caught
-   *      in CI on 2026-09-05". It was not. The same CI failure came back on 2026-09-06 as
-   *      `packets grew while the tab was hidden (1 -> 2 in 20s)` (job 101442923492, PR #172),
-   *      WITH this guard in place — so the guard had not been what fixed it, and the
-   *      original diagnosis had been reasoned rather than measured. Measured since, by
-   *      recording every push into `packets`/`pings` with `document.hidden` at the push:
-   *      across 32 backgrounded runs, pushes while `document.hidden` was true numbered
-   *      ZERO, and the frames delivered while hidden were also zero — so hole 1 cannot
-   *      fire in that environment at all, because it needs a frame. The extra entry was
-   *      always spawned by a VISIBLE page, in the milliseconds between the moment
-   *      `sim/test_bg_perf.mjs` sampled its "before" length and the moment the tab actually
-   *      went hidden, and then charged to the hidden window because nothing retires once
-   *      rAF stops. The fix is in that file's measurement boundary; see its header.
-   *      Nothing below changes: the guard is still correct, still cheap, and still the
-   *      only defence for point 2 — it was simply never the thing under test.
-   *   2. `requestAnimationFrame` is not reliably paused everywhere this page runs. Headless
-   *      Chrome never truly backgrounds a tab, which is why the guard has to simulate
-   *      hiding at all — and a mechanism that works only because the browser stops calling
-   *      us is a mechanism we do not control. `document.hidden` is the part we do.
-   *
-   * The check lives HERE rather than at the `spawn(...)` call site because that call's
-   * shape is itself asserted: `sim/test_bg_perf.mjs` greps `step()` for it to catch a
-   * regression to `setInterval` producers. Restructuring the call site to add this guard
-   * trips that assertion — which is the guard working, and worth leaving intact.
-   *
-   * Zeroing rather than freezing is deliberate: a returning visitor gets the animation
-   * resuming from now, not a burst paying out the time they spent elsewhere. */
+   * A HIDDEN TAB BANKS NOTHING and the accumulators are zeroed across the boundary, because
+   * rAF is not reliably paused everywhere (headless Chrome never truly backgrounds a tab) and
+   * `document.hidden` is the part we control. Zeroing, not freezing: a returning visitor gets
+   * the animation from now, not a burst. The guard lives here rather than at the `spawn(...)`
+   * call site because sim/test_bg_perf.mjs greps step() for that call's shape. */
   function spawn(ms) {
     if (typeof document !== "undefined" && document.hidden) { packetAcc = 0; pingAcc = 0; return; }
     packetAcc += ms; pingAcc += ms;
@@ -184,18 +137,9 @@
 
     // --- radar pings from hubs ---
     for (var r = pings.length - 1; r >= 0; r--) {
-      /* NOT CHANGED, deliberately, and this is the reasoning. The radius advances with
-       * elapsed time (`* dt`); the alpha decays PER FRAME. So a ping lives a fixed ~113
-       * frames — 1.9 s and a 68 px ring at 60 fps, 3.8 s and a 136 px ring at 30 — and
-       * the effect is a different size on a slower machine. `Math.pow(0.972, dt)` fixes
-       * that and is bit-identical at dt === 1, which is the 60 fps the 0.972 was tuned
-       * against. It was written, measured and then REVERTED: below 60 fps it visibly
-       * shrinks and shortens the rings, and this page is the project's front door whose
-       * look is the constraint. The practical harm it would have addressed — pings
-       * draining slowest exactly when a backlog has made them most numerous — is already
-       * gone, because after this file's other change a backlog cannot form and MAX_PINGS
-       * bounds the array at 24 regardless. Left as a look the owner chose, not a bug the
-       * fix forgot. */
+      /* Alpha decays PER FRAME while the radius advances with `dt`, so rings are smaller on
+       * slow machines. `Math.pow(0.972, dt)` was tried and REVERTED: it visibly shrank the rings
+       * below 60 fps and this page's look is the constraint; MAX_PINGS already bounds the array. */
       var pg = pings[r]; pg.r += 0.6 * dt; pg.a *= 0.972;
       if (pg.a < 0.02) { pings.splice(r, 1); continue; }
       g.strokeStyle = "rgba(5,255,161," + pg.a.toFixed(3) + ")";

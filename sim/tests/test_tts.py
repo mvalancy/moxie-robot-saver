@@ -5,12 +5,10 @@ is exercised only for availability/skip.
 """
 import base64
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.tts import (  # noqa: E402
     strip_markup, Synthesizer, build_cloud_tts_response, synthesize_cloud_tts,
@@ -209,14 +207,11 @@ def test_tone_synth_through_cloud_tts():
 
 
 # ============================================================================
-# The GATEWAY voice (live on our LiteLLM proxy since 2026-09-02)
+# The GATEWAY voice
 #
-# `piper-amy` / `piper-ryan` are registered there and `POST /v1/audio/speech` returns a
-# real RIFF WAV — but the response's `Content-Type` says `audio/mpeg` (a LiteLLM quirk)
-# and the `voice` field is REQUIRED (omitting it is a 500) while its VALUE is ignored.
-# Every test below pins one of those facts, so the next person to touch this client can
-# see which oddities are load-bearing. The end-to-end proof against the real gateway is
-# sim/tests/test_live_gateway_tts.py (creds-gated).
+# Gateway quirks each test pins: `POST /v1/audio/speech` returns a real RIFF WAV labelled
+# `audio/mpeg`, and `voice` is REQUIRED (omitting it is a 500) though its value is ignored.
+# End-to-end proof: sim/tests/test_live_gateway_tts.py (creds-gated).
 # ============================================================================
 
 def _wav(pcm: bytes, rate: int = 22050, channels: int = 1, width: int = 2) -> bytes:
@@ -233,11 +228,8 @@ def _wav(pcm: bytes, rate: int = 22050, channels: int = 1, width: int = 2) -> by
 
 
 class _FakeSpeech:
-    """A stand-in for `client.audio.speech`, recording the kwargs it was called with.
-
-    `content_type` is deliberately the WRONG one our gateway sends, so any code that
-    started branching on the header would have to notice it here first.
-    """
+    """A stand-in for `client.audio.speech`, recording its kwargs. `content_type` is the
+    WRONG one the gateway sends, so code branching on the header would notice here."""
 
     def __init__(self, body: bytes, content_type: str = "audio/mpeg"):
         self.body, self.content_type, self.calls = body, content_type, []

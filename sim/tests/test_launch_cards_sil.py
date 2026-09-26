@@ -1,34 +1,18 @@
 """
 🎴 T10 — a launch card over the wire, from the robot's publish to the robot's hands.
 
-`test_launch_cards.py` proves the decoder. `test_launch_cards_runtime.py` proves the
-runtime's one call site, reading the reply back off a `FakeClient` that records the
-publish and stops there. Neither of them puts a **client** on the other end, so until
-this file the whole feature was unit truth: nothing had ever published an `eb-qr-event`
-and then *received* a launch.
+The real `MoxieRuntime` and the SIL robot (`sim/virtual_moxie.py`) share
+`helpers_runtime.loopback()`; the ROBOT starts the turn, and assertions read the robot's
+own state (`VirtualMoxie.action_stats()`, written only when a `commands/remote_chat` payload
+arrives and decodes) — not the server's record of what it sent.
 
-This file closes that. The real `MoxieRuntime` and the real protocol-faithful SIL robot
-(`sim/virtual_moxie.py`) are wired together by `helpers_runtime.loopback()` — every
-publish is delivered byte for byte to the other end's own `_on_message` — the ROBOT
-starts the turn, and every assertion below reads the robot's **own state**
-(`VirtualMoxie.action_stats()`), not the server's record of what it sent. That is the
-difference this file exists for: `action_stats()` is written by
-`virtual_moxie._apply_action`, which only ever runs because a payload arrived on
-`/devices/<id>/commands/remote_chat` and the client decoded it.
+Refusals travel the same wire: `<launch_if_confirmed:…>`, `<sleep>` and an out-of-catalog id
+must leave the robot holding NOTHING yet answered (`NOREPLY_ACK`).
 
-The refusals are asserted on the same wire, because a suite that only showed a good card
-working would pass just as well with the allowlist deleted. So `<launch_if_confirmed:…>`,
-`<sleep>` and an id outside the catalog are each driven all the way through and the
-robot is required to end up holding **nothing** — and to have been *answered*
-(`NOREPLY_ACK`), because a refusal that left the robot waiting would be its own bug.
+Hardware ceiling: no physical Moxie has sent an `eb-qr-event`; the SIL robot records rather
+than runs actions. This proves the runtime↔client round trip in the recovered wire shape.
 
-**The hardware ceiling has not moved.** No physical Moxie has ever sent us an
-`eb-qr-event`, and a SIL robot is not a robot: it has no camera, it starts no module, and
-`_apply_action` deliberately RECORDS rather than runs (see its docstring). What is proven
-here is the round trip between our runtime and our simulated client, in the recovered
-wire shape — not that paper works.
-
-Hermetic: no broker, no network, no model, no sleeps. The loopback is synchronous.
+Hermetic: synchronous loopback, no broker, network, model or sleeps.
 """
 from __future__ import annotations
 
@@ -39,10 +23,7 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(REPO, "sim"))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 
 pytest.importorskip("paho.mqtt.client", reason="the SIL robot needs paho")
 
@@ -59,12 +40,8 @@ QR = P.QR_EVENT
 
 
 class _App(MoxieApp):
-    """A brain that would answer anything — and must never be asked.
-
-    A vision event is intercepted before any brain sees it, so `turns` staying empty is
-    itself part of the claim: no model call, no billing, no conversation history for a
-    piece of paper.
-    """
+    """A brain that must never be asked: vision events are intercepted first, so `turns`
+    staying empty means no model call and no history for a piece of paper."""
 
     name = "sil-cards"
 
@@ -77,12 +54,8 @@ class _App(MoxieApp):
 
 
 def _pair(*, greet_after_s=300.0, app=None):
-    """A real runtime and a real SIL robot on one in-process wire.
-
-    `greet_after_s` is large by default so nothing in this file can accidentally be
-    passing because of an unprompted hello: the only thing that may put an action in the
-    robot's hands here is the card.
-    """
+    """A real runtime and SIL robot on one in-process wire. `greet_after_s` is large so only
+    the card can put an action in the robot's hands."""
     app = app or _App()
     rt, dev = make_runtime(app, device_id=DEV, nickname="Sam")
     rt.greet_after_s = greet_after_s
@@ -264,11 +237,9 @@ def test_the_confirm_variant_does_not_arrive_as_a_launch_by_another_name():
 
 
 def test_a_card_value_on_a_different_marker_event_launches_nothing_at_the_robot():
-    """Both other marker events reach the runtime in the identical envelope — an ArUco id
-    and a book cover — and a value that happens to read as a card on one of those is
-    still not a card. Asserted on the wire because the SIL robot is what chooses the
-    `input_vars` key, so a client-side slip would fake this as convincingly as a
-    server-side one."""
+    """The other marker events (ArUco id, book cover) arrive in the same envelope; a value
+    that reads as a card there is still not a card. Asserted on the wire, since the SIL
+    robot chooses the `input_vars` key."""
     for event in ("eb-dr-event", "eb-br-event"):
         rt, vm, dev, _ = _pair()
         _scan(vm, rt, "GO<launch:DM>", event=event)
@@ -280,11 +251,8 @@ def test_a_card_value_on_a_different_marker_event_launches_nothing_at_the_robot(
 
 
 def test_a_qr_value_smuggled_onto_another_marker_event_launches_nothing():
-    """The hostile shape the test above cannot reach: the value under the **QR key** on
-    an event that is not the QR one. Nothing stops a turn carrying several `input_vars`,
-    so "which key was set" must not be what decides — the EVENT NAME is. Sent by hand
-    (`input_vars=`) precisely because `value_vars` would never build this envelope, which
-    is what makes it a test of the server rather than of the robot's own key routing."""
+    """The value under the QR key on a NON-QR event: the event name decides, not which key
+    was set. Sent by hand (`input_vars=`), since `value_vars` would never build it."""
     rt, vm, dev, _ = _pair()
     vm.send_face_event("eb-dr-event", input_vars={"$eb_dr_value": "GO<launch:DM>",
                                                   "$eb_qr_value": "GO<launch:DM>"})
@@ -310,13 +278,9 @@ def test_a_refused_card_does_not_disarm_the_next_real_one():
 # 4. The CLI a person actually types
 # --------------------------------------------------------------------------- #
 def test_run_face_events_carries_the_face_value_and_records_what_arrived():
-    """`--face-event eb-qr-event --face-value 'GO<launch:DM>'` end to end.
-
-    `run_face_events` owns the paho lifecycle (connect / loop_start / SUBACK / disconnect)
-    and the loopback has no broker to provide it, so those four calls are stubbed and the
-    SUBACK is seeded. Everything the protocol consists of — the `/state` announce, the
-    config push, the event publish, the reply — still goes over the real loopback and
-    through the real runtime.
+    """`--face-event eb-qr-event --face-value 'GO<launch:DM>'` end to end: paho lifecycle
+    calls are stubbed (the loopback has no broker) and the SUBACK seeded; the protocol
+    itself still crosses the loopback and the real runtime.
     """
     rt, vm, dev, _ = _pair()
     side = vm.client

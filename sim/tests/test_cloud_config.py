@@ -4,10 +4,8 @@ LoggingPolicy gate. Field names verified against embodied/logging/Cloud.proto.
 """
 import json
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.cloud_config import (  # noqa: E402
     LoggingPolicy, MoxieMode, WAKE_DAY_NAMES, build_robot_cloud_config, parse_robot_status,

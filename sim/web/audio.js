@@ -1,33 +1,23 @@
 /* audio.js — Moxie's voice + UI sound effects.
  *
  * Voice, in priority order (so sound ALWAYS works, incl. a fully static deploy):
- *   1) a PRE-CACHED clip shipped with the site (audio/index.json, rendered by
- *      sim/tools/prerender_audio.py with Piper) — the fixed UI phrases + scenario
- *      lines play as real recorded speech with envelope-driven mouth-sync.
- *   2) a live local Piper service (sim/tts/server.py) IF one is actually reachable
- *      — lets arbitrary typed text be synthesized when self-hosting. SKIPPED when
- *      `mode.js` says `degraded`: that state means a hosted deployment answered, where
- *      no sidecar can exist and the 1.4 s probe is pure dead air (see skipProbe()).
- *   3) the browser's own speechSynthesis (Web Speech API) — an honest fallback so
- *      free text still makes sound on the static site instead of silently failing.
- * This mirrors the real robot's CloudTTSResponse -> PCM path
- * (docs/reverse-engineering/perception-pipeline.md) as closely as a web page can.
- *
- * THE SERVER VOICE (the real thing, not a mirror): `playCloudTTS(payload)` plays an
- * actual `CloudTTSResponse` the supervisor published on `/devices/{id}/commands/tts`
- * — base64 raw 16-bit PCM decoded HERE, in the client, like robot firmware does
- * (no server SDK). bridge.js routes it in. See the section near the bottom.
- *
- * SFX: short synthesized cues (WebAudio oscillators) — no asset files needed.
- * THE CHILD'S VOICE: `speakClipOnly(text, "child")` plays a pre-cached clip for that
- * EXACT string and, if there is none, makes no sound at all. It is a separate entry
- * point precisely so it has no route into steps 2 and 3 above — the same code path
- * carries a visitor's own typed/spoken words, and synthesizing those would read them
- * back in a stranger's voice. See the block comment on speakClipOnly.
+ *   1) a PRE-CACHED clip (audio/index.json, rendered by sim/tools/prerender_audio.py)
+ *      with envelope-driven mouth-sync;
+ *   2) a live local Piper service (sim/tts/server.py) if reachable — skipped where no
+ *      sidecar can exist (see skipProbe());
+ *   3) the browser's speechSynthesis, so free text still makes sound.
+ * THE SERVER VOICE: `playCloudTTS(payload)` plays a real `CloudTTSResponse` from
+ * `/devices/{id}/commands/tts`, decoding base64 PCM in the client like firmware does.
+ * THE CHILD'S VOICE: `speakClipOnly(text, "child")` plays a clip for that exact string or
+ * nothing — it has no route into steps 2/3 (see its block comment).
+ * SFX: synthesized WebAudio cues, no assets.
  *
  * Exposes window.moxieAudio = { speak, speakClipOnly, sfx, setEnabled, setTtsBase,
  *                               getClipPhrases, playCloudTTS, decodeCloudTTS, isSpeaking,
  *                               isMoxieSpeaking, isMoxieBusy }.
+ * The three speaking predicates differ: `isSpeaking()` = server TTS only;
+ * `isMoxieSpeaking()` = any voice of hers (not the child); `isMoxieBusy(ms)` = that plus a
+ * grace beat. "May I make a sound now?" wants isMoxieBusy.
  *
  * THREE SPEAKING PREDICATES, AND THEY ARE NOT INTERCHANGEABLE. `isSpeaking()` is narrow
  * — the server-TTS flag only. `isMoxieSpeaking()` is broad — any voice of hers, by any
@@ -40,20 +30,16 @@
 
   var TTS_BASE = (localStorage.getItem("moxie.ttsBase") ||
                   (location.protocol + "//" + (location.hostname || "127.0.0.1") + ":8081"));
-  // Did a HUMAN name that address, or is it just the localhost default? See skipProbe().
+  // Did a HUMAN name that address, or is it the localhost default? See skipProbe().
   var ttsBaseExplicit = false;
   try { ttsBaseExplicit = !!localStorage.getItem("moxie.ttsBase"); } catch (e) {}
   var enabled = true;
   var ctx = null;            // created on first user gesture (autoplay policy)
   var current = null;        // current HTMLAudio/AudioBufferSourceNode
-  /* WHOSE voice `current` is. "child" means the pre-recorded prop voice of the scripted
-   * session (see speakClipOnly); anything else — null included — is MOXIE herself, and
-   * Moxie is never interrupted by the prop. Cleared by stop() and by playback ending. */
+  // Whose voice `current` is: "child" = the scripted prop voice; anything else (null
+  // included) is Moxie, who is never interrupted by the prop.
   var currentWho = null;
-  /* Wall-clock ms of the last moment Moxie's OWN voice was live. Stamped by noteSpoke()
-   * at every point her audio ends, and read only through `isMoxieBusy(graceMs)` — see
-   * the block comment there for why the tail needs a timestamp and not just a flag. */
-  var spokeUntil = 0;
+  var spokeUntil = 0;       // ms of Moxie's last live syllable (see isMoxieBusy)
 
   function actx() {
     if (!ctx) { var C = window.AudioContext || window.webkitAudioContext; ctx = C ? new C() : null; }
@@ -86,50 +72,20 @@
   }
 
   // ---- speech (Piper) with mouth sync ----
-  /* THE THIRD SEAM — a clip that was still LOADING when the answer arrived.
+  /* THE THIRD SEAM — a clip still LOADING when the answer arrives. playUrl/speakLive
+   * fetch and decode before any node exists, so an ambient quip that began loading while
+   * Moxie was silent would start on top of her answer. `floor` counts who last took the
+   * speakers; an ambient load refuses to start if it moved (stale-async guard for audio).
    *
-   * Two guards already stand around a live answer. ambient.js refuses to tick while
-   * `moxieBusy()`, and `ttsPump` stops a local voice already in the air when the server
-   * voice lands. Between them is a hole neither can see: `playUrl` and `speakLive` FETCH
-   * and DECODE before any node exists, so a quip that began loading while Moxie was
-   * genuinely silent — which is most of a turn, ~1.2 s of /api/chat plus 2-3 s of
-   * /api/speech — presents nothing for the answer to stop, and then starts a few hundred
-   * ms LATER, on top of her. The first two guards are both correct and the defect still
-   * happens, which is why it needs a third.
-   *
-   * `floor` counts who last took the speakers, and an AMBIENT load reads it before its
-   * fetch and refuses to start if it moved: the ordinary stale-async-response guard,
-   * applied to audio.
-   *
-   * WHO TAKES THE FLOOR IS THE WHOLE DESIGN, and getting it wrong twice is what taught it.
-   *
-   *   · A REPLY takes it — `ttsPump` for the live answer, and `speak()` for any non-ambient
-   *     line, which is what the scripted and degraded paths play. Both are Moxie answering.
-   *   · AMBIENT never takes it. It is the thing being held back, not the thing holding.
-   *   · THE CHILD'S PROP never takes it, and is never subject to it. `speakClipOnly(…,
-   *     "child")` is a stage prop; Moxie may cut it off, but it is not an answer and
-   *     nothing about it should silence a line already loading.
-   *
-   * The first draft bumped in `stop()`. That is one line above every `speak()`, so every
-   * ordinary back-to-back utterance cancelled whatever was loading behind it — and on the
-   * scripted path that is the CHILD'S line, dropped whenever Moxie's reply won the decode
-   * race. `sim/test_mic_spend.mjs` caught it in CI (3 of 54 checks: "heard: 3.19s@0.95
-   * (Moxie's answer)" where the child should have been) while passing three times out of
-   * three on a faster local machine. The second draft over-corrected to `ttsPump` alone,
-   * which left the SCRIPTED reply — a clip, not PCM — unable to hold ambient off at all,
-   * and block 3 of the ambient guard went red instead. Only the third framing is right,
-   * and it is the product sentence: NOTHING STARTS ON TOP OF MOXIE ANSWERING.
-   *
-   * IT ABANDONS THE TURN, IT DOES NOT FALL THROUGH. `speak()` promises SOUND by walking
-   * clip -> Piper -> the browser voice, so a dropped ambient clip would normally shift one
-   * rung down the ladder — and the browser voice talks over an answer exactly as loudly as
-   * the clip would have. So losing the floor ends the whole chain rather than retrying it.
-   *
-   * IT ABANDONS THE TURN, IT DOES NOT FALL THROUGH. `speak()` promises SOUND by walking
-   */
+   * Who takes the floor: a REPLY does (ttsPump, and speak() for non-ambient lines).
+   * Ambient never does, and the child prop neither takes it nor is subject to it (bumping
+   * in stop() dropped the child's scripted line; ttsPump alone left scripted replies
+   * unguarded). Rule: NOTHING STARTS ON TOP OF MOXIE ANSWERING.
+   * Losing the floor abandons the whole clip->Piper->browser chain; falling through to
+   * the browser voice would talk over the answer just as loudly. */
   var floor = 0;
   function takeFloor() { floor++; }
-  /** Only ambient yields the floor — see the note above for why the child's prop must not. */
+  /** Only ambient yields the floor (the child prop must not — see above). */
   function heldBy(who) { return who === "ambient"; }
 
   function stop() {
@@ -139,43 +95,19 @@
     currentWho = null;
   }
 
-  /* Is the ROBOT's voice occupying the speakers right now?
-   *
-   * `speaking` is the server voice (CloudTTSResponse); `current` is a clip, a Piper stream
-   * or a browser utterance. A `current` tagged "child" is the scripted prop voice, which
-   * does NOT count: Moxie may cut it off, and a newer child line may replace an older one.
-   * This is the one asymmetry that keeps the two voices off each other — see
-   * speakClipOnly's ORDERING note. */
+  // Is MOXIE's voice on the speakers? `speaking` = server voice; `current` = clip, Piper
+  // or browser utterance. A "child" clip does not count (see speakClipOnly ORDERING).
   function moxieIsSpeaking() { return speaking || (!!current && currentWho !== "child"); }
 
-  /* Remember that her voice was live as of NOW. Called at every point Moxie's audio
-   * ends or is cut — so `spokeUntil` is the instant of her last syllable, give or take
-   * one event loop turn. Deliberately a no-op when she was not speaking, so a `stop()`
-   * on silence (or on a child clip) does not push the grace beat out. */
+  // Stamp the end of her voice. No-op when she was not speaking, so stop() on silence or
+  // on a child clip does not push the grace beat out.
   function noteSpoke() { if (moxieIsSpeaking()) spokeUntil = Date.now(); }
 
-  /* Is Moxie's voice unavailable right now — either live, or still inside the grace
-   * beat after her last syllable? THE PREDICATE AMBIENT SELF-TALK ASKS.
-   *
-   * Two parts, and both are load-bearing:
-   *
-   *   SPEAKING — `moxieIsSpeaking()`, the BROAD predicate, not the exported
-   *     `isSpeaking()`. `isSpeaking()` reports only `speaking`, the server-TTS flag, and
-   *     is right for its one caller (cloud-transport.js's late-audio drop, which is
-   *     asking specifically whether cloud audio is already in the air). It is wrong
-   *     here: it is blind to a clip, a Piper stream and the browser voice, and a clip is
-   *     exactly what ambient itself plays and what the degraded and scripted paths play.
-   *     Guarding on it would leave the fallback deployments — the ones with no live
-   *     brain, where the demo has least room to look broken — completely unguarded.
-   *
-   *   GRACE — the tail. `moxieIsSpeaking()` goes false on `onended`, which is the
-   *     sample after her last syllable, not the beat after her last WORD. An ambient
-   *     quip landing in that window does not overlap the answer but still reads as
-   *     interrupting it: the visitor is a few hundred ms into hearing a sentence end,
-   *     and a non-sequitur arrives on top of the silence they were reading it in. A
-   *     boolean cannot express "recently", so the end is timestamped and the caller
-   *     names the beat it wants.
-   *
+  /* THE PREDICATE AMBIENT SELF-TALK ASKS: is her voice live, or inside the grace beat?
+   * Uses the BROAD moxieIsSpeaking() — the exported isSpeaking() is blind to clips, Piper
+   * and the browser voice, which would leave the scripted/degraded deployments unguarded.
+   * The grace tail exists because a quip right after her last syllable still reads as
+   * interrupting; a boolean cannot say "recently", so the end is timestamped.
    * `graceMs` omitted or 0 gives the bare "is she speaking" answer. */
   function isMoxieBusy(graceMs) {
     if (moxieIsSpeaking()) return true;
@@ -183,17 +115,13 @@
     return g > 0 && spokeUntil > 0 && (Date.now() - spokeUntil) < g;
   }
 
-  /* Fetch an audio URL, decode it, play it, and drive the mouth from its envelope.
-   *
-   * `opts.who` tags whose voice this is (see `currentWho`), and `opts.mouth === false`
-   * leaves Moxie's face ALONE. That second option is not cosmetic: the child's clips play
-   * through this same function, and a robot lip-syncing the child's words is a plainly
-   * broken toy. Nothing but the envelope of Moxie's OWN voice may move her mouth. */
+  /* Fetch, decode and play a URL, driving the mouth from its envelope. `opts.who` tags
+   * the voice; `opts.mouth === false` leaves the face alone — the child's clips play here
+   * too, and only Moxie's own voice may move her mouth. */
   function playUrl(url, opts) {
     var who = (opts && opts.who) || null;
     var driveMouth = !(opts && opts.mouth === false);
-    // Capture from the CALLER where it offered one: `speak()`'s window opens at its own
-    // stop(), and `loadClips()` can put an await between the two on a cold manifest.
+    // The caller's floor snapshot where given (loadClips() may await after speak()'s stop()).
     var mine = (opts && opts.since != null) ? opts.since : floor;
     return fetch(url).then(function (r) {
       if (!r.ok) throw new Error("audio " + r.status);
@@ -246,11 +174,8 @@
     });
   }
 
-  /* STRICT clip lookup: the named group and NOTHING else.
-   *
-   * `playClip` deliberately falls through moxie -> child so a line rendered into either
-   * group still makes sound. That fallthrough is exactly wrong for the child: it would
-   * answer a child line with a clip of MOXIE's voice saying the child's words. */
+  // STRICT lookup in the named group only. playClip's moxie->child fallthrough would
+  // answer a child line with Moxie's voice saying the child's words.
   function clipInGroup(manifest, text, who) {
     return (manifest && manifest[who] && manifest[who][text]) || null;
   }
@@ -263,41 +188,14 @@
     if (msg) el.textContent = msg;
   }
 
-  /* Should step 2 — the 1.4 s probe for an optional local Piper sidecar — be skipped?
-   * (docs/architecture/backlog/live-sim-demo.md §6.2, row 4.)
-   *
-   * `speakLive` asks `hostname:8081` for the line and waits up to 1.4 s before giving up
-   * (see the AbortController below). On a HOSTED deployment nothing is listening on port
-   * 8081 and nothing ever will be, so every uncached line costs a second and a half of
-   * dead air — at exactly the moment a degraded page is trying to prove it is still
-   * alive. Clip -> browser voice, directly.
-   *
-   * The gate is `mode.js`'s state and NOT the hostname, because the hostname cannot tell
-   * these two apart:
-   *   · `degraded` — `/api/health` answered, so this is a real deployment of this site
-   *                  with Functions and no sidecar. SKIP.
-   *   · `offline`  — no `/api/health` at all, which is precisely what a self-hoster
-   *                  running `sim/serve.py` on localhost gets. Their Piper on :8081 is
-   *                  the entire reason this probe exists. NEVER SKIP.
-   * `live` also keeps the probe: that path is only reached when the gateway voice did not
-   * arrive, and one wasted probe is the cheaper mistake.
-   *
-   * An address a human typed always wins over the mode — `setTtsBase` or a `moxie.ttsBase`
-   * already in localStorage means somebody asked for this probe on purpose. */
-  /* THE SECOND SKIP, AND THE ONE THAT WAS A REAL BUG (measured 2026-09-03).
-   * :8081 is a LOCALHOST port. From any other origin the probe is not merely wasted — it
-   * is a cross-origin request this site's own CSP (`connect-src 'self'`, sim/web/_headers)
-   * refuses, and Chrome logs the refusal as a console error:
-   *
-   *     Refused to connect to 'https://moxie.mattvalancy.com:8081/tts?text=…'
-   *
-   * The old comment above argued "one wasted probe is the cheaper mistake" and therefore
-   * kept probing in `live`. That reasoning holds for a wasted request; it does not hold
-   * for a policy violation, and `live` is exactly the state the hosted deployment is in.
-   * So the hostname decides ONE thing here, and honestly — the same one it decides in
-   * `env.js`: whether a localhost sidecar could possibly be reachable from this browser at
-   * all. A self-hoster on localhost / a LAN address / *.local is unaffected and still
-   * probes in every state; nothing about which VOICE is chosen is decided here. */
+  /* Skip step 2 (the 1.4 s probe of a local Piper on :8081)?
+   *  · pageCouldReachSidecar(): :8081 is a LOCALHOST port. From a public origin the probe
+   *    is a cross-origin request our CSP (`connect-src 'self'`) refuses and logs, so only
+   *    localhost / LAN / *.local pages ever probe.
+   *  · otherwise skip when `mode.js` says `degraded` — /api/health answered, so this is a
+   *    hosted deployment with no sidecar and the probe is dead air. `offline` (no
+   *    /api/health: a self-hoster on sim/serve.py) and `live` keep probing.
+   *  · an address a human set (setTtsBase / moxie.ttsBase) always wins over the mode. */
   function pageCouldReachSidecar() {
     try {
       var h = (location && location.hostname) || "";
@@ -343,50 +241,21 @@
     });
   }
 
-  /* ------------------------------------------------------------------------
-   * speakClipOnly — a voice with NO fallback, guaranteed by construction.
+  /* speakClipOnly — a voice with NO fallback, guaranteed by construction.
    *
-   * WHY IT IS A SEPARATE FUNCTION. `speak()` promises SOUND: clip -> Piper -> the
-   * browser's own voice, so a line always lands. For the CHILD that promise is exactly
-   * backwards. The same `handleUserTurn` path in `bridge.js` carries three different
-   * things:
+   * bridge.js::handleUserTurn carries the scripted child lines, mic.js's degraded Listen
+   * line, AND whatever a visitor typed or said. Synthesizing the last would read their
+   * own words back in a stranger's voice. So a child line plays ONLY from a clip shipped
+   * for that exact string — no Piper, no speechSynthesis, no tone. A separate function
+   * (not a flag on speak()) makes that a property of which function you called; no path
+   * out of here reaches a synthesizer. No `replaying` gate: it would mute the degraded
+   * mic's scripted line and add nothing; the residual (a visitor typing one of the two
+   * authored lines verbatim hears it) is bounded.
    *
-   *   1. the two scripted child lines of `sessions/demo.json`, which we WANT audible;
-   *   2. `mic.js`'s degraded "Listen", which publishes a scripted child line on purpose;
-   *   3. whatever a VISITOR typed into the Talk box or said into the microphone.
-   *
-   * Synthesizing (3) would read a visitor's own words back at them in a stranger's voice,
-   * and on the mic path talk over them. That is worse than the silence we started with.
-   * So the rule is: a child line is spoken ONLY from a clip this site shipped for that
-   * exact string, and there is no second choice — not Piper, not speechSynthesis, not the
-   * tone generator. Making that a separate entry point rather than a `noFallback` flag
-   * threaded through `speak()` is the point: the guarantee is then a property of which
-   * function you called, and cannot be loosened by editing a condition. There is no code
-   * path out of here that reaches a synthesizer.
-   *
-   * WHY NO `replaying` GATE (bridge.js's replay flag). It was considered and rejected.
-   * The clip check is both the tighter guarantee and the more meaningful one — sound
-   * happens only where this site authored the child's voice for that exact sentence, which
-   * is a fact about the shipped assets rather than about a flag someone can set. Adding
-   * `replaying` on top would buy nothing against case (3) that the clip check does not
-   * already buy, and would actively BREAK case (2): the degraded microphone's scripted
-   * child line runs outside a replay, and muting it is the opposite of what that fallback
-   * is for. The residual it leaves is bounded and known: a visitor who types one of the
-   * two authored lines verbatim hears it read back. Two strings, only after they pressed
-   * send, in the voice the demo already uses. That is a curiosity, not the hazard.
-   *
-   * ORDERING — the child yields, Moxie interrupts. Deliberately asymmetric:
-   *   · Moxie starting to speak CUTS a playing child clip, because `speak()` calls
-   *     `stop()` first. Kept as-is: the robot is the subject of the page and must never
-   *     be talked over by a prop.
-   *   · The child NEVER cuts Moxie. This function refuses to start while
-   *     `moxieIsSpeaking()`, so a visitor typing while Moxie answers cannot silence her.
-   *   · A newer child line replaces an older child line still playing.
-   * The shipped `sessions/demo.json` is timed so the first rule never has to fire —
-   * `test_fallback_coverage.mjs` §2 asserts each scripted child line has room to finish
-   * before the next event, because "Moxie cuts her off mid-word" is what silence turns
-   * into the moment you give the child a voice.
-   * ------------------------------------------------------------------------ */
+   * ORDERING — the child yields, Moxie interrupts: speak() stop()s a playing child clip;
+   * this refuses to start while moxieIsSpeaking(); a newer child line replaces an older
+   * one. sessions/demo.json is timed so Moxie never has to cut the child
+   * (test_fallback_coverage.mjs §2). */
   function speakClipOnly(text, who) {
     if (!enabled || !text) return Promise.resolve(false);
     who = who || "child";
@@ -480,30 +349,20 @@
   }
 
   // ------------------------------------------------------------------------
-  // CloudTTSResponse playback — the SERVER voice (AI seam ③).
-  //
-  // The supervisor synthesizes a turn and publishes a CloudTTSResponse on
-  // `/devices/{id}/commands/tts`; bridge.js hands it here. The SIM decodes the
-  // WIRE ITSELF — exactly like robot firmware, never importing the server SDK
-  // (docs/architecture/sim-as-a-client.md). Shape, from the recovered proto
-  // (embodied/unity/CloudTTS.proto · docs/architecture/ai-seam.md §3):
-  //
+  // CloudTTSResponse playback — the SERVER voice (AI seam ③), decoded from the wire
+  // like firmware, never via the server SDK (docs/architecture/sim-as-a-client.md).
+  // Recovered proto (CloudTTS.proto · docs/architecture/ai-seam.md §3):
   //   AudioBuffer      { bytes buffer; int32 channels; int32 sample_rate }
   //   TTSMark          { uint32 time; uint32 start; uint32 end; string type; string value }
   //   CloudTTSResponse { audio; repeated marks; event_id; chunk_num; ... }
-  //
-  // `buffer` is base64 of RAW little-endian signed 16-bit PCM — it is NOT a
-  // container (no RIFF/OGG header), so `decodeAudioData()` cannot read it; we
-  // build the AudioBuffer by hand. Chunked responses (`chunk_num`) for one
-  // `event_id` are played in order through a small serial queue.
+  // `buffer` is base64 RAW little-endian int16 PCM (no container), so the AudioBuffer is
+  // built by hand. Chunks of one `event_id` play in order through a serial queue.
   // ------------------------------------------------------------------------
 
   var TTS_DEFAULT_RATE = 24000;      // CloudTTSResponse default when unset
   var TTS_MIN_RATE = 3000, TTS_MAX_RATE = 384000;   // Web Audio createBuffer limits
 
-  // Viseme → how far the mouth opens. The mark `value`s our synthesizers emit
-  // follow the common Polly/Piper viseme alphabet; anything unknown gets a
-  // mid-open default, so an unfamiliar mark set still animates.
+  // Viseme (Polly/Piper alphabet) → mouth opening; unknown marks get a mid-open default.
   var VISEME_OPEN = {
     sil: 0.02, p: 0.06, t: 0.20, S: 0.30, T: 0.24, f: 0.16, k: 0.26, i: 0.30,
     r: 0.30, s: 0.20, u: 0.45, "@": 0.50, a: 0.80, e: 0.55, E: 0.62, o: 0.70, O: 0.76,
@@ -518,10 +377,8 @@
     return out;
   }
 
-  /* PURE decode: CloudTTSResponse (object or JSON string) → planar Float32 audio
-   * + metadata. No AudioContext, no DOM — so `node sim/test_audio.mjs` can test
-   * the maths directly. Tolerant of every missing/partial field (a real client
-   * never crashes on a short frame). */
+  /* PURE decode: CloudTTSResponse (object or JSON) → planar Float32 + metadata. No DOM,
+   * so node tests can check the maths. Tolerant of every missing/partial field. */
   function decodeCloudTTS(resp) {
     if (typeof resp === "string") { try { resp = JSON.parse(resp); } catch (e) { resp = null; } }
     resp = resp || {};
@@ -568,41 +425,18 @@
   var ttsQueue = [], ttsPlaying = null, speaking = false, speakingInfo = null;
   var gestureArmed = false, cloudVoice = false;
 
-  /* ---- chunk ordering: a property of the design, not of the timing ----------
-   * One streamed turn arrives as several CloudTTSResponses sharing an `event_id`,
-   * numbered by `chunk_num`, and a client MUST start them in that order — a child who
-   * hears the end of a sentence before its middle is holding a broken toy
-   * (docs/architecture/sim-as-a-client.md §"chunks").
-   *
-   * Sorting the QUEUE is not enough, and that was the bug: the queue only holds what is
-   * *waiting*. With ~0.4 s chunks and one message per round trip, chunk 0 could finish
-   * and empty the queue before chunk 1 landed; chunk 2 — alone in the queue and so
-   * "first" — then started ahead of it (recorded order [0,2,1], CI run 33632125915).
-   * Whether that happened was pure timing: the same code passed on a slower box.
-   *
-   * So the PLAYER owns the order, not the queue. It remembers the utterance being
-   * assembled — which event it is and which chunk_num must come next — and starts a
-   * chunk only when its turn has come, even while sitting completely idle:
-   *
-   *   ORDERING RULE  within one `event_id`, chunk n+1 starts only after chunk n has
-   *                  started, and an event's first chunk is chunk_num 0. A chunk that
-   *                  arrives ahead of its turn WAITS, however idle the player is.
-   *   GAP RULE       the wait is bounded. If the chunk it is waiting for has not
-   *                  arrived TTS_GAP_MS later, that chunk is written off as lost and
-   *                  the lowest chunk in hand starts instead — a skipped sentence beats
-   *                  a robot that stops talking. A chunk that turns up after its slot
-   *                  has passed (a duplicate, or one already written off) is dropped as
-   *                  `late` rather than played out of turn, so the order chunks are
-   *                  STARTED in is always ascending, by construction.
-   *   EVENT RULE     an event stays current for TTS_EVENT_MS after its last chunk
-   *                  drained, then closes: the same event_id seen later is a NEW
-   *                  utterance (a replayed session re-sends the very same ids and must
-   *                  not be silenced by the rule above). A chunk of a DIFFERENT event
-   *                  closes the current utterance at once — events stay FIFO, and
-   *                  whatever is still queued for the old one is stale.
-   *
-   * A payload with no `event_id` is not part of a stream at all: it is its own
-   * one-off utterance and plays FIFO, under no ordering constraint. */
+  /* ---- chunk ordering: owned by the PLAYER, not the queue ---------------------
+   * One streamed turn = several CloudTTSResponses sharing `event_id`, numbered by
+   * `chunk_num`, and they MUST start in order. Sorting the queue is not enough — it only
+   * holds what is waiting, so chunk 2 could start before a late chunk 1.
+   *   ORDERING RULE  within an event, chunk n+1 starts only after chunk n; an event's
+   *                  first chunk is 0. An early chunk WAITS, however idle the player.
+   *   GAP RULE       the wait is bounded by TTS_GAP_MS; then the missing chunk is written
+   *                  off and the lowest in hand starts. A chunk arriving after its slot
+   *                  is dropped as `late`, so start order is ascending by construction.
+   *   EVENT RULE     an event stays current TTS_EVENT_MS after it drains, then closes (a
+   *                  replay re-sends the same ids). A different event closes it at once.
+   * A payload with no `event_id` is a one-off and plays FIFO. */
   var TTS_GAP_MS = 1200;        // how long a missing chunk is waited for
   var TTS_EVENT_MS = 5000;      // how long an idle event stays the current utterance
   var utter = null;             // {eventId, next, idle} — the utterance being assembled
@@ -642,32 +476,14 @@
     }, TTS_GAP_MS);
   }
 
-  /* Loudest mouth-open reached during the CURRENT cloud-TTS utterance, reset when one
-   * starts and left standing after it ends (so it can be read afterwards).
-   *
-   * The mouth is a live ~1 s animation driven by the audio envelope, so *sampling* it
-   * is a race an observer loses on a loaded machine: the utterance can begin and end
-   * between two polls and the peak is gone with it. Remembering the peak turns "did the
-   * face move while it spoke?" from a question about timing into a question about the
-   * whole utterance, which is what anyone actually wants to know. Used by
-   * sim/tests/test_sil.py's cloud-TTS tests. */
+  // Loudest mouth-open of the current/last cloud-TTS utterance, kept after it ends so
+  // "did the face move?" does not race a ~1 s animation (sim/tests/test_sil.py).
   var mouthPeak = 0;
 
-  /* The same trick for the QUEUE. A chunked utterance is a live pipeline — chunks
-   * arrive, wait behind the one playing, and drain — so `ttsPending()` sampled from
-   * outside is a race an observer loses whenever the chunks are short or the box is
-   * loaded: by the time "is it speaking yet?" comes back, the queue that proves the
-   * chunks were pipelined has already emptied. So the page RECORDS the shape of each
-   * playback instead: which event it was, how many chunks it played and in what
-   * chunk_num order, and the deepest the queue ever got behind the chunk playing.
-   *
-   * Reset when a NEW utterance starts — a chunk of a different event — and NOT merely
-   * on the false->true `speaking` edge: a chunked utterance legitimately falls silent
-   * between chunks while it waits for the next one to arrive, and the record has to
-   * survive that gap or the three chunks look like three utterances. Seeded with
-   * whatever is already waiting, so chunks that piled up while the audio context was
-   * still suspended still count; updated as chunks are enqueued and started; left
-   * frozen when playback ends. Read via `lastPlaybackStats()`. */
+  /* The same trick for the queue: a RECORD of each playback (event, chunks played, start
+   * order, deepest queue), since sampling ttsPending() races. Reset only when a NEW event
+   * starts (a chunked utterance goes silent between chunks), seeded with what already
+   * waits, frozen when playback ends. Read via `lastPlaybackStats()`. */
   var stats = { event_id: null, chunks_played: 0, order: [], max_pending: 0 };
 
   function notePending() {                       // deepest queue seen during THIS utterance
@@ -678,8 +494,7 @@
     try { if (window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(v); } catch (e) {}
   }
 
-  // A light, JSON-friendly summary of what is being spoken — deliberately WITHOUT
-  // the decoded PCM, so a UI (or a test) can read it without copying megabytes.
+  // JSON-friendly summary WITHOUT the decoded PCM.
   function ttsSummary(d) {
     return { sampleRate: d.sampleRate, channels: d.channels, frames: d.frames,
              duration: d.duration, bytes: d.bytes, marks: d.marks.length,
@@ -687,14 +502,9 @@
   }
 
   /* ---- #tts-status: one line, two writers -------------------------------
-   * The live "speaking" indicator below and the async service probe in env.js
-   * ("no TTS server — run …") both want this element. They used to write it
-   * directly, so whichever landed last won: a probe resolving mid-playback
-   * wiped the speaking indicator, and the end of playback then restored the
-   * pre-probe text and swallowed the probe's result. audio.js now OWNS the
-   * element — other code hands it a resting hint via `setTtsHint()`, which is
-   * stored and painted only while nothing is speaking.
-   */
+   * The live speaking indicator and env.js's probe result both want this element;
+   * direct writes clobbered each other. audio.js OWNS it: others call setTtsHint() and
+   * the hint is painted only while nothing is speaking. */
   var ttsHint = null;        // {html|text, warn} — the resting line (env.js / the Test button)
   var ttsStatusRest = null;  // the line the markup shipped, captured before any override
 
@@ -714,9 +524,8 @@
     if (el.classList) el.classList.toggle("warn", !!(ttsHint && ttsHint.warn));
   }
 
-  /* Set the resting text of #tts-status. `hint` is a plain string, or
-   * {text} / {html} plus an optional `warn` flag; null clears it. Safe to call
-   * at any time — it never paints over a live speaking indicator. */
+  // Resting text of #tts-status: a string, or {text}/{html} + optional `warn`; null
+  // clears. Never paints over a live speaking indicator.
   function setTtsHint(hint, warn) {
     if (hint === null || hint === undefined) ttsHint = null;
     else if (typeof hint === "string") ttsHint = { text: hint, warn: !!warn };
@@ -725,17 +534,14 @@
     try { paintTtsStatus(); } catch (e) {}
   }
 
-  /* Which utterance does the chunk about to start belong to? A chunk of a different
-   * event (or an unlabelled one-off) begins a NEW utterance, which is the only thing
-   * that resets the record — see the note on `stats` above for why the speaking edge
-   * cannot be the trigger. Also advances the chunk_num the event now expects. */
+  // Does the chunk about to start begin a NEW utterance (different or unlabelled event)?
+  // That alone resets the record. Also advances the chunk_num the event now expects.
   function beginUtterance(d) {
     var u = openUtterance();
     if (!u || !d.eventId || u.eventId !== d.eventId) {
       if (u && u.eventId && u.eventId !== d.eventId) flushEvent(u.eventId);
       mouthPeak = 0;
-      // `ttsQueue` here is what is waiting BEHIND the chunk about to start, so a burst
-      // that queued up before the context could run is not lost by the reset.
+      // ttsQueue = what waits BEHIND this chunk, so a pre-unlock burst still counts.
       stats = { event_id: d.eventId, chunks_played: 0, order: [],
                 max_pending: ttsQueue.length };
       utter = u = { eventId: d.eventId, next: 0, idle: 0 };
@@ -759,9 +565,8 @@
     } catch (e) {}
   }
 
-  // Same event_id → keep the queue sorted by chunk_num; different events stay FIFO.
-  // Sorting alone does NOT order playback (the queue only holds what is still waiting)
-  // — the gate in ttsPump does. It just keeps the lowest chunk in hand at the front.
+  // Keep one event's chunks sorted by chunk_num (events stay FIFO). Only a convenience:
+  // the gate in ttsPump orders playback.
   function ttsEnqueue(item) {
     var i = ttsQueue.length;
     while (i > 0 && ttsQueue[i - 1].dec.eventId === item.dec.eventId &&
@@ -770,8 +575,7 @@
     notePending();
   }
 
-  // Autoplay policy: a page that never got a gesture has a suspended context.
-  // Keep the audio queued and play it on the next real gesture (nothing is lost).
+  // Autoplay: a suspended context keeps the audio queued until the next real gesture.
   function armGesture() {
     if (gestureArmed) return;
     gestureArmed = true;
@@ -798,8 +602,7 @@
       try { var p = a.resume(); if (p && p.then) p.then(ttsPump, function () {}); } catch (e) {}
       return;
     }
-    // THE ORDERING GATE: start the first chunk whose turn has come — never simply the
-    // head of the queue, which only means "first to arrive" (see the note above).
+    // THE ORDERING GATE: the first chunk whose turn has come, not simply the head.
     var qi = 0;
     while (qi < ttsQueue.length && !startable(ttsQueue[qi])) qi++;
     if (qi >= ttsQueue.length) {
@@ -822,22 +625,11 @@
       item.resolve({ played: false, reason: "decode-error: " + (e && e.message), decoded: d });
       return ttsPump();
     }
-    /* THE OTHER HALF OF THE AMBIENT FIX — the answer cuts a local voice already in the air.
-     *
-     * `current` may still hold a LOCAL voice: an ambient quip, a Piper stream, the browser
-     * voice, or a child clip. Assigning `current = src` on top of it merely FORGETS it —
-     * nothing ever stops it — so it keeps playing underneath the answer. Two Moxies at
-     * once is the same defect ambient.js's `moxieBusy` guard fixes from the other side.
-     *
-     * That guard cannot close this one. It stops ambient starting while she is SPEAKING,
-     * but a turn is ~1.2 s of /api/chat plus 2–3 s of /api/speech during which she is
-     * genuinely silent and ambient is right to start — and then the answer lands on top.
-     * So the answer closes it on arrival: the server voice is the thing the visitor asked
-     * for, and it wins, exactly as `speak()`'s unconditional `stop()` makes Moxie win over
-     * the child prop (see speakClipOnly's ORDERING note).
-     *
-     * A cloud chunk is never what gets cut here — `finish()` clears `current` before it
-     * pumps the next chunk — so a chunked utterance still plays through intact. */
+    /* The answer cuts a LOCAL voice already in the air (ambient quip, Piper, browser,
+     * child clip); reassigning `current` alone would leave it playing underneath.
+     * Ambient's moxieBusy guard cannot cover this: a turn has seconds of genuine silence
+     * before the answer lands. A cloud chunk is never cut here — finish() clears
+     * `current` before pumping the next. */
     if (current && current !== src) {
       try { current.stop ? current.stop() : current.pause(); } catch (e) {}
       currentWho = null;
@@ -850,8 +642,7 @@
     stats.order.push(d.chunkNum);
     notePending();
 
-    // Mouth: driven by the audio envelope (the physical truth of the buffer),
-    // raised to the viseme/word track from marks[] when the server sent one.
+    // Mouth: the audio envelope, raised to the marks[] viseme/word track when present.
     var track = markTrack(d.marks), mi = 0;
     var probe = new Uint8Array(analyser.frequencyBinCount);
     var t0 = a.currentTime, raf = 0, guard = 0, done = false;
@@ -866,8 +657,7 @@
         if (track[mi] && track[mi].t <= ms) open = Math.max(open, track[mi].open);
       }
       mouth(open);
-      // Read the value back off the avatar, not the one we computed: the peak then
-      // witnesses that the face really was driven, which is what the test asserts.
+      // Read back off the avatar, so the peak witnesses the face really was driven.
       var shown = open;
       try {
         if (window.moxie && window.moxie.getMouthOpen) shown = window.moxie.getMouthOpen();
@@ -889,26 +679,21 @@
       if (!ttsPlaying) setSpeaking(false);
     }
     src.onended = finish;
-    // Belt-and-braces: if `onended` never fires (a sink that doesn't advance),
-    // never strand the SIM in the speaking state.
+    // If `onended` never fires, never strand the SIM in the speaking state.
     guard = setTimeout(finish, d.duration * 1000 + 1500);
     try { src.start(0); } catch (e) { return finish(); }
     frame();
   }
 
-  /* Play one CloudTTSResponse. Resolves when THIS payload finished playing:
-   * {played, decoded, reason?}. Never rejects — a client that throws on bad
-   * audio is a client that goes mute. */
+  // Play one CloudTTSResponse; resolves {played, decoded, reason?} when THIS payload is
+  // done. Never rejects — a client that throws on bad audio goes mute.
   function playCloudTTS(payload) {
     var dec = decodeCloudTTS(payload);
-    // A decodable payload proves a server voice exists, whatever happens to it
-    // next (muted, queued, no audio context) — env.js reads this so it stops
-    // claiming "no TTS server" while the cloud voice is doing the talking.
+    // A decodable payload proves a server voice exists (env.js stops saying "no TTS server").
     if (dec.frames) cloudVoice = true;
     if (!enabled) return Promise.resolve({ played: false, reason: "muted", decoded: dec });
     if (!dec.frames) return Promise.resolve({ played: false, reason: "empty", decoded: dec });
-    // A chunk whose slot has already passed — a duplicate, or one the GAP RULE wrote off
-    // — is dropped rather than played out of turn, so `order` stays ascending (GAP RULE).
+    // A chunk whose slot has passed (duplicate / written off) is dropped (GAP RULE).
     var cur = openUtterance();
     if (dec.eventId && cur && cur.eventId === dec.eventId && dec.chunkNum < cur.next)
       return Promise.resolve({ played: false, reason: "late", decoded: dec });
@@ -932,29 +717,21 @@
     // --- server voice (CloudTTSResponse on /devices/{id}/commands/tts) ---
     playCloudTTS: playCloudTTS,       // decode + play; resolves when it finished
     decodeCloudTTS: decodeCloudTTS,   // pure wire decode (unit-tested in node)
-    /* NARROW: the server-TTS flag alone. Blind to a clip, a Piper stream and the browser
-     * voice. Keep using it only where the question really is "is CLOUD audio in the air"
-     * (cloud-transport.js's late-audio drop). For "may I make a sound right now?" — what
-     * ambient.js asks — use isMoxieBusy. */
+    // NARROW: server TTS only ("is CLOUD audio in the air", cloud-transport.js). For
+    // "may I make a sound now?" use isMoxieBusy.
     isSpeaking: function () { return speaking; },
     // BROAD: any voice of MOXIE's — clip, Piper, browser voice or server TTS. Not the child.
     isMoxieSpeaking: moxieIsSpeaking,
-    /* Broad, plus a grace beat past her last syllable. `isMoxieBusy(1600)` is "she is
-     * speaking, or stopped less than 1.6 s ago". See the block comment on the function. */
+    // Broad + grace: isMoxieBusy(1600) = speaking, or stopped < 1.6 s ago.
     isMoxieBusy: isMoxieBusy,
     speakingInfo: function () { return speakingInfo; },   // summary, no PCM
     hasCloudVoice: function () { return cloudVoice; },    // a CloudTTSResponse has arrived
     setTtsHint: setTtsHint,           // resting text of #tts-status (never clobbers speaking)
     ttsPending: function () { return ttsQueue.length; },
-    // Peak mouth-open of the current/most recent cloud-TTS utterance (0..1). Survives
-    // the end of playback, so "the mouth moved" is assertable without racing it.
+    // Peak mouth-open of the current/last cloud-TTS utterance (0..1); survives playback.
     lastMouthPeak: function () { return mouthPeak; },
-    /* What the current/most recent cloud-TTS playback actually did, recorded as it
-     * happened and still readable once it is over:
-     *   {event_id, chunks_played, order:[chunk_num…], max_pending}
-     * `order` is the sequence chunks were STARTED in — ascending by construction, see
-     * the ORDERING/GAP rules above — and `max_pending` is the deepest the queue got,
-     * which proves the later chunks really were pipelined rather than dropped. */
+    // {event_id, chunks_played, order:[chunk_num…] (ascending by construction),
+    //  max_pending (proves later chunks were pipelined)} of the current/last playback.
     lastPlaybackStats: function () {
       return { event_id: stats.event_id, chunks_played: stats.chunks_played,
                order: stats.order.slice(), max_pending: stats.max_pending };
@@ -970,8 +747,7 @@
     isUnlocked: function () { return !!(ctx && ctx.state === "running"); },
   };
 
-  // Unlock audio on the first user gesture (browser autoplay policy) and announce
-  // it, so ambient self-talk waits for real audio instead of miming silently.
+  // Unlock on the first gesture and announce it, so ambient waits for real audio.
   var unlocked = false;
   function unlock() {
     if (unlocked) return;

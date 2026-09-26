@@ -3,7 +3,7 @@
 "A test for every feature, proven in BOTH directions": a green
 `sim/tests/test_content_authoring.py` proves the guards are *present*, and this proves
 they are *load-bearing*. Run it by hand after touching the authoring region of
-`mqtt/supervisor/moxie_runtime.py`, `packs.shadow_check` or `render.render_prompt`:
+`mqtt/supervisor/moxie_runtime/`, `packs.shadow_check` or `render.render_prompt`:
 
     python3 sim/tools/authoring_mutation_check.py
 
@@ -32,23 +32,23 @@ earlier mutation can shadow a later one, and a guard reads as un-caught when it 
 import pathlib, subprocess
 
 WT = pathlib.Path(__file__).resolve().parents[2]
-RT = WT / "mqtt/supervisor/moxie_runtime.py"
+RT_CONTENT = WT / "mqtt/supervisor/moxie_runtime/content.py"
 PK = WT / "mqtt/moxie_sdk/content/packs.py"
 REN = WT / "mqtt/moxie_sdk/content/render.py"
 
 MUTATIONS = [
  # ---- §6.3: the one `if` --------------------------------------------------------
- ("A1  drop the `validate_item` call from the writing route", RT,
+ ("A1  drop the `validate_item` call from the writing route", RT_CONTENT,
   "        reasons = content_packs.validate_item(",
   "        reasons = [] and content_packs.validate_item(",
   "a_bad_pattern_is_refused"),
- ("A1  accept an item `validate_item` refused", RT,
+ ("A1  accept an item `validate_item` refused", RT_CONTENT,
   "        if reasons:\n            return {\"ok\": False, \"error\": reasons[0], \"reason\": reasons[0],",
   "        if False:\n            return {\"ok\": False, \"error\": reasons[0], \"reason\": reasons[0],",
   "a_bad_pattern_is_refused"),
 
  # ---- §0/§4.5: the kind refusal --------------------------------------------------
- ("A2  let the editor author a schedule", RT,
+ ("A2  let the editor author a schedule", RT_CONTENT,
   '        if kind == "schedule":',
   '        if False:',
   "schedule_is_refused"),
@@ -57,27 +57,27 @@ MUTATIONS = [
  # coverage. What IS worth pinning is that a schedule gets the *named* refusal — the one
  # that says why — rather than the generic "unknown kind" a mis-cased compare would fall
  # through to, because "no" without a reason is what sends a parent to the issue tracker.
- ("A2  let a schedule fall through to the generic kind refusal", RT,
+ ("A2  let a schedule fall through to the generic kind refusal", RT_CONTENT,
   '        if kind == "schedule":',
   '        if kind == "SCHEDULE":',
   "schedule_is_refused"),
 
  # ---- §4.5: `code` and `extension` are shown, never written ----------------------
- ("A3  drop the unwritable-field refusal", RT,
+ ("A3  drop the unwritable-field refusal", RT_CONTENT,
   "        refusal = self._refuse_unwritable_fields(kind, data, before)\n        if refusal:",
   "        refusal = self._refuse_unwritable_fields(kind, data, before)\n        if False:",
   "extension_and_code_are_not_writable"),
- ("A3  let an extension be rewritten", RT,
+ ("A3  let an extension be rewritten", RT_CONTENT,
   "        if content_packs.canonical(data.get(\"extension\") or {}) \\\n                != content_packs.canonical(base.get(\"extension\") or {}):",
   "        if False:",
   "extension_and_code_are_not_writable"),
- ("A3  let a `code` block be rewritten", RT,
+ ("A3  let a `code` block be rewritten", RT_CONTENT,
   '        if str(data.get("code") or "") != str(base.get("code") or ""):',
   "        if False:",
   "extension_and_code_are_not_writable"),
 
  # ---- §6.5: a write path that skips the live swap --------------------------------
- ("A4  save the overlay and never reload the live module", RT,
+ ("A4  save the overlay and never reload the live module", RT_CONTENT,
   "            merged = content_packs.mark_edited(overlay, ident, data)\n"
   "            if not self._write_content_overlay(merged):\n"
   "                return {\"ok\": False, \"error\": \"could not write the content overlay\",\n"
@@ -91,7 +91,7 @@ MUTATIONS = [
   "authored_item_round_trips"),
 
  # ---- §6.4: the same one-slot undo an import takes -------------------------------
- ("A5  save without snapshotting what it replaced", RT,
+ ("A5  save without snapshotting what it replaced", RT_CONTENT,
   "            self.store.write_shared(self.CONTENT_BACKUP_COLLECTION, {\n"
   "                \"items\": overlay, \"packs\": self._content_packs(),\n"
   "                \"label\": f\"before editing {data.get('name') or key}\",\n"
@@ -100,7 +100,7 @@ MUTATIONS = [
   "undo_restores_an_authored_save or the_undo_slot_holds_one_save"),
 
  # ---- R7: two tabs are detected, never merged ------------------------------------
- ("A6  drop the `local_rev` conflict check", RT,
+ ("A6  drop the `local_rev` conflict check", RT_CONTENT,
   "        if expected and before is not None \\\n                and expected != content_packs.local_rev({\"kind\": kind, **before}):",
   "        if False:",
   "a_second_tab_cannot_silently_discard"),
@@ -112,7 +112,7 @@ MUTATIONS = [
  # `mark_edited` at all (assumption A1: it is the only supported way to change an
  # installed item's content). A route that assembled the store entry by hand is the real
  # regression, and it takes the allowlist with it.
- ("A7  write the store entry by hand instead of through `mark_edited`", RT,
+ ("A7  write the store entry by hand instead of through `mark_edited`", RT_CONTENT,
   "            merged = content_packs.mark_edited(overlay, ident, data)",
   "            merged = dict(overlay)\n"
   "            merged[ident] = {\"kind\": kind, \"key\": key,\n"
@@ -132,7 +132,7 @@ MUTATIONS = [
   "no_shadow_warning_when_nothing_shadows"),
 
  # ---- §4.3/R2: the portability probe rung 1 reports -------------------------------
- ("A10 report the real render's counts instead of the portable render's", RT,
+ ("A10 report the real render's counts instead of the portable render's", RT_CONTENT,
   '        portable = render._minimal_render(data.get("prompt") or "", context,\n'
   "                                          counts=portable_counts)",
   '        portable = render.render_prompt(data.get("prompt") or "", context,\n'

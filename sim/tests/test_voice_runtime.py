@@ -1,27 +1,21 @@
 """
 🎚️ The voice picker's live half — the runtime region, the three status-HTTP routes and
-the swap that a turn actually feels.
+the swap a turn actually feels.
 
-`test_voice_settings.py` covers the pure module and the builders' `override=`. This file
-covers what a parent's click does to a running supervisor: the card's data, the record on
-disk, the engine that speaks the NEXT turn, and the Test button's real `CloudTTSResponse`.
+`test_voice_settings.py` covers the pure module; this covers a parent's click on a running
+supervisor: the card's data, the record on disk, the engine that speaks the NEXT turn, and
+the Test button's real `CloudTTSResponse`.
 
-Hermetic: the appliance's engine builders arrive through `set_voice_engines()` — the seam
-the runtime was given precisely so no test needs `openai`, `piper`, `faster-whisper` or a
-gateway. The HTTP tier goes through `MoxieRuntime._start_status_server` itself (via
-`helpers_runtime.status_server`), so it proves the real handlers rather than a double.
+Hermetic: engine builders arrive through `set_voice_engines()`; HTTP goes through the real
+`_start_status_server` (via `helpers_runtime.status_server`).
 """
 import json
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MQTT = os.path.join(REPO, "mqtt")
-for _p in (MQTT, os.path.join(MQTT, "supervisor")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
 from helpers_runtime import (drive_turn, http_json, make_runtime,  # noqa: E402
                              status_server)
@@ -69,11 +63,9 @@ class _Ears(Transcriber):
 
 
 class _Engines:
-    """Stands in for `config.VoiceEngines`: scripted availability, recorder builders.
-
-    `fail` names sides whose build must return None — the "this pick cannot be built on
-    this box" case, which must never cost the appliance the engine it already had.
-    """
+    """Stands in for `config.VoiceEngines`: scripted availability, recording builders.
+    `fail` names sides whose build returns None — which must never cost the engine the
+    appliance already had."""
 
     def __init__(self, *, gateway=None, piper=(), whisper=(), error="",
                  discovering=False, fail=(), pins=None):
@@ -455,10 +447,9 @@ def test_a_cold_catalog_does_not_refuse_a_good_pick():
 
 
 # ------------------------------------------- the environment's pin, on the card ---
-# An explicit `MOXIE_TTS`/`MOXIE_STT` pins the engine (`voice_settings.pin_for_env`), and
-# the card's whole job here is to be HONEST about it: offer only what the builders would
-# install, refuse a stale page's cross-engine pick with the variable's name in the reason,
-# and never print a pinned-away pick as though it had been installed.
+# An explicit `MOXIE_TTS`/`MOXIE_STT` pins the engine (`voice_settings.pin_for_env`): the
+# card offers only what would install, refuses a stale page's cross-engine pick naming the
+# variable, and never shows a pinned-away pick as installed.
 
 def test_a_pinned_side_offers_only_that_engine_and_says_which_variable_did_it(tmp_path):
     rt, _ = _runtime(tmp_path, _Engines(piper=["en_US-amy-medium"], whisper=["base.en"],

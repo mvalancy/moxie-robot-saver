@@ -1,19 +1,12 @@
-"""X1–X12 — the escape tests for sandboxed content extensions (BEYOND #6 P0).
+"""X1–X12 — escape tests for sandboxed content extensions.
 
-**A sandbox is worth exactly what its escape tests are worth.** These live in their own
-file, apart from `test_ext.py`'s behaviour tests, because they are read by different eyes:
-a reviewer asking "can a stranger's content pack hurt this appliance?" should be able to
-read one file and get an answer.
+Kept apart from `test_ext.py`'s behaviour tests so "can a stranger's content pack hurt this
+appliance?" is answered by one file. The design (`backlog/sandboxed-extensions.md` §3.2) is a
+declarative rule list over a total JSON-AST expression language — no `exec`, parser, loop or
+reachable host object — so these are provable properties of a closed table.
 
-The design under test is `docs/architecture/backlog/sandboxed-extensions.md` §3.2 — a
-declarative rule list over a **total, JSON-AST expression language**, interpreted by pure
-stdlib Python with no `exec`, no parser, no loop and no reachable host object. That choice
-is what makes these assertions *provable properties of a closed table* rather than a
-standing bet against the next CVE in an interpreter we do not maintain (§3.2 reason 2).
-
-Each test below names the guard it fences. Every one was also checked in the **other**
-direction — the guard was removed by hand and the test was watched to fail — and the
-mutation is recorded in the docstring so the next reader knows the assertion has teeth.
+Each test names the guard it fences; its "Mutation checked" note records the hand-removed
+guard that made it fail.
 """
 import ast as pyast
 import json
@@ -24,7 +17,6 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.content import ext as E                      # noqa: E402
 from moxie_sdk.content import render as R                   # noqa: E402
@@ -81,11 +73,8 @@ FROZEN_STATEMENTS = {"say", "markup", "remember", "forget", "scratch", "act",
 FROZEN_FACT_ROOTS = {"speech", "entities", "input_vars", "scratch", "child", "memory",
                      "session", "presence"}
 
-#: `{name: (expression, the capabilities it would need if it were legal)}`. The
-#: capabilities matter: an AST that is refused because it forgot to declare `memory.read`
-#: proves nothing about the dunder guard, so each probe declares exactly what a *legal*
-#: version of itself would need. That way the **only** thing left to refuse it is the
-#: guard under test — which is what made the mutation run below meaningful.
+#: `{name: (expression, capabilities a legal version would need)}` — each probe declares
+#: exactly those, so the ONLY thing left to refuse it is the guard under test.
 ESCAPE_ASTS = {
     "dunder_class_on_a_host_object": ({"var": "volley.__class__"}, ()),
     "builtins": ({"var": "__builtins__"}, ()),
@@ -110,17 +99,12 @@ ESCAPE_ASTS = {
 
 @pytest.mark.parametrize("name", sorted(ESCAPE_ASTS))
 def test_x1_no_op_or_path_can_name_import_or_a_dunder(name):
-    """X1 — every classic escape is a **load-time refusal**, not a runtime block.
+    """X1 — every classic escape is a load-time refusal: an unknown op, a non-fact root, or
+    a `_`-leading segment is not a valid program, so it is never evaluated.
 
-    An unknown op, or a path whose root is not a fact, or a path segment beginning `_`:
-    each one means the program is never evaluated at all, so there is no evaluation to get
-    wrong. `__class__`, `__init__` and `_meta` are therefore not "blocked"; they are not
-    valid programs.
-
-    Mutation checked: deleting the `seg.startswith("_")` refusal in `ext._Validator._var`
-    makes `private_memory_meta`, `private_provenance` and `dunder_init_globals` fail
-    (the dunder paths then validate). Deleting the `root not in FACT_ROOTS` refusal makes
-    `env_root`, `os_root`, `config_root` and `builtins` fail.
+    Mutation checked: deleting the `seg.startswith("_")` refusal in `_Validator._var` fails
+    the private/dunder rows; deleting `root not in FACT_ROOTS` fails `env_root`, `os_root`,
+    `config_root` and `builtins`.
     """
     expr, needed = ESCAPE_ASTS[name]
     e = say(expr, caps=("say",) + needed)
@@ -137,12 +121,8 @@ def test_x1_no_op_or_path_can_name_import_or_a_dunder(name):
 
 
 def test_x1_the_op_table_is_frozen():
-    """X1's second half — the op, statement and fact-root key sets equal frozen literals.
-
-    Adding an operator is therefore a test edit, which is a reviewer. This is the brake on
-    risk R1 (*"the op table grows until it is a language"*), and it is deliberately an
-    equality rather than a subset: removing an op is a breaking change for installed packs
-    and should be noticed too.
+    """X1 — the op, statement and fact-root key sets EQUAL frozen literals, so adding (or
+    removing) an op is a test edit a reviewer sees — the brake on risk R1.
 
     Mutation checked: adding `"eval": (1, 1, None)` to `ext.OPS` fails this test.
     """
@@ -159,12 +139,8 @@ def test_x1_the_op_table_is_frozen():
 
 
 def test_x1_no_grammar_construct_defines_or_calls_anything():
-    """X1's third half — there is no way to *name* a program from inside a program.
-
-    No statement and no op takes another rule, a rule index, a function, or a name that
-    could be bound to one. `let` binds **values**, never references (§4.3), which is what
-    makes the maximum cost of an extension statically computable at load.
-    """
+    """X1 — no statement or op takes a rule, index, function or name; `let` binds values,
+    never references, so an extension's maximum cost is statically computable (§4.3)."""
     e = ext([{"let": {"f": {"lit": {"do": [{"say": "hi"}]}}},
               "do": [{"say": {"str": [{"var": "f"}]}}]}])
     r = E.evaluate(e, facts(), grants=E.DEFAULT_GRANTS)
@@ -190,15 +166,10 @@ def _walk_types(v, path="facts", seen=None):
 
 
 def test_x2_the_fact_base_contains_no_host_object():
-    """X2 — the dict `ContentApp` hands the evaluator is plain JSON, all the way down.
+    """X2 — the fact dict `ContentApp` builds for a real turn is plain JSON all the way
+    down, so attribute-walking has nothing to walk to (§4.4).
 
-    Recursively walk what the host actually builds for a real turn and assert every value
-    is `str/int/float/bool/None/list/dict`. **There is no object to walk to**, so
-    attribute-walking has no target — which is the whole security argument of §4.4, and it
-    is why X1's dunder paths are pointless as well as invalid.
-
-    Mutation checked: making `content_app.ext_facts` put the live `Volley` into the dict
-    (`base["volley"] = volley`) fails this immediately.
+    Mutation checked: putting the live `Volley` into `content_app.ext_facts` fails this.
     """
     from moxie_sdk.content import content_app as CA
     v = Volley("what time is it", config={"child_pii": {"nickname": "Sam",
@@ -227,12 +198,8 @@ def test_x2_the_fact_base_contains_no_host_object():
 
 
 def test_x2_a_hostile_fact_base_still_cannot_produce_an_object():
-    """X2's corollary — even if a host bug *did* leak an object into the fact base, no op
-    can do anything with it: there is no attribute access, and every op coerces.
-
-    This is the belt to §4.4's brace. It documents that the guarantee has two independent
-    halves, so one bug is not an escape.
-    """
+    """X2's corollary — even a leaked object is inert: no op does attribute access and
+    every op coerces, so one host bug is not an escape."""
     class Hostile:
         secret = "sk-should-never-appear"
 
@@ -254,15 +221,10 @@ def test_x2_a_hostile_fact_base_still_cannot_produce_an_object():
 # X3 — a prompt cannot execute Python through Jinja
 # --------------------------------------------------------------------------- #
 
-#: The §2.6 finding, which was **already closed** before this slice began — PR #56/#62 put
-#: `jinja2.sandbox.SandboxedEnvironment` behind `render_prompt`, and PR #78 closed the
-#: matching hole in the dependency-free fallback (`_resolve` refuses `_`-leading path
-#: segments, counted in `BLOCKED`). `test_render_sandbox.py` and
-#: `test_content_pack_sandbox.py` are that work's fences and carry eight escape probes
-#: between them. X3 is kept here anyway, in the extensions' own escape file, because the
-#: brief's acceptance criterion 1 names it and because a reader auditing *this* sandbox
-#: needs the appliance's **other** execution surface fenced in front of them, not in a
-#: file they have to know to go and find.
+#: X3 fences the template renderer (`render_prompt`: jinja2 SandboxedEnvironment, plus the
+#: `_`-refusing fallback). `test_render_sandbox.py` / `test_content_pack_sandbox.py` own
+#: that work; it is repeated here so an audit of THIS sandbox sees the appliance's other
+#: execution surface fenced in the same file.
 JINJA_ESCAPES = {
     "volley_init_globals_builtins": "{{ volley.__init__.__globals__['__builtins__'] }}",
     "volley_init_globals_import_getcwd":
@@ -282,21 +244,13 @@ JINJA_LEAKS = ("posix", "/home/", "C:\\", "<class ", "builtins", "MOXIE_", "sk-"
 @pytest.mark.parametrize("name", sorted(JINJA_ESCAPES))
 def test_x3_a_prompt_cannot_execute_python_through_jinja(name, monkeypatch):
     """X3 — a pack-importable `prompt` is not a code-execution channel, with jinja2
-    installed **or** absent.
+    installed or absent (both shapes run; neither skips, so a skip cannot read as coverage).
 
-    `prompt` and `opener` are pack-importable fields (`packs.SPEC["conversation"]`), so
-    anyone who can hand a parent a pack chooses this string. Under a plain
-    `jinja2.Environment` that walk reaches `__builtins__`, `__import__('os')` and
-    `getcwd()` — proven by execution when the brief was written. It is fenced now, and
-    this test is the fence for **both** renderers: the parametrisation runs once as
-    shipped, and once with jinja2 forced absent so the dependency-free fallback is
-    exercised on the same probes. A skip that reads as coverage would be worse than a
-    failure, so neither shape is skipped.
+    Under a plain `jinja2.Environment` these walks reach `__builtins__` and `os.getcwd()`.
 
-    Mutation checked (twice): swapping `render._sandbox()` back to a plain
-    `jinja2.Environment` fails every probe on the jinja2 shape; deleting the
-    `part.startswith("_")` refusal in `render._resolve` fails
-    `session_repr_globals_environ` on the jinja2-less shape.
+    Mutation checked: a plain `jinja2.Environment` in `render._sandbox()` fails every probe
+    on the jinja2 shape; deleting `part.startswith("_")` in `render._resolve` fails
+    `session_repr_globals_environ` on the fallback shape.
     """
     monkeypatch.setenv("MOXIE_LLM_API_KEY", "sk-x3-canary-value")
     v = Volley("hi", config={"child_pii": {"nickname": "Sam"}})
@@ -328,12 +282,8 @@ def test_x3_ordinary_templating_still_works_in_both_shapes(monkeypatch):
 
 
 def test_x3_an_extension_is_the_only_other_execution_surface():
-    """X3's point, stated as an assertion: with the renderer sandboxed, the capability
-    model in §5 is the appliance's **only** execution surface rather than its second one.
-
-    `code` is still never executed — the field round-trips as opaque data, and nothing in
-    `moxie_sdk` calls `exec`, `eval` or `compile` on it (§7.4, forever).
-    """
+    """X3 — with the renderer sandboxed, the §5 capability model is the only execution
+    surface; `code` round-trips as opaque data and is never exec/eval/compiled (§7.4)."""
     for name in ("content_app.py", "ext.py", "module.py", "packs.py", "render.py"):
         src = open(os.path.join(REPO, "mqtt", "moxie_sdk", "content", name)).read()
         tree = pyast.parse(src)
@@ -348,13 +298,8 @@ def test_x3_an_extension_is_the_only_other_execution_surface():
 # --------------------------------------------------------------------------- #
 
 def test_x4_the_grammar_has_no_loop_or_recursion_construct():
-    """X4(i) — you cannot write a loop, because there is no loop to write.
-
-    Not "loops are rejected": the op and statement key sets (frozen in X1) contain no
-    iteration, no jump, no user-defined function and no way to name a rule from inside a
-    rule. §2.5's finding — not one of upstream's nine hooks iterates — is what makes that
-    affordable rather than crippling.
-    """
+    """X4(i) — there is no loop to write: the frozen op/statement sets have no iteration,
+    jump, user function or rule reference."""
     for word in ("while", "for", "loop", "each", "map", "filter", "reduce", "recurse",
                  "goto", "call", "def", "fn", "lambda", "apply", "yield"):
         assert word not in E.OPS, f"{word!r} is an operator"
@@ -368,16 +313,10 @@ def test_x4_the_grammar_has_no_loop_or_recursion_construct():
 
 
 def test_x4_a_costly_ast_hits_the_step_budget_and_returns():
-    """X4(ii) — the backstop works, and it returns rather than hanging.
+    """X4(ii) — a costly `if` chain hits `MOXIE_EXT_MAX_STEPS`, returns `ok=False,
+    breach="steps"` and discards its effects. Timed on the injected clock, not the runner.
 
-    A deep chain of `if`s that re-evaluates a costly subtree burns steps. It hits
-    `MOXIE_EXT_MAX_STEPS`, returns `ok=False` with `breach="steps"`, and discards its
-    effects whole. Measured against the *injected* monotonic clock, so the assertion is
-    about the evaluator's own accounting rather than about how loaded the CI runner is
-    (integration playbook rule 11).
-
-    Mutation checked: removing the `self.steps > self.limits.max_steps` raise in
-    `_Machine.step` makes this test run to completion and return `ok=True`.
+    Mutation checked: removing the `steps > max_steps` raise in `_Machine.step` → `ok=True`.
     """
     costly = {"concat": [{"str": [{"+": list(range(16))}]}] * 32}   # ~577 nodes
     e = say(costly)
@@ -394,12 +333,10 @@ def test_x4_a_costly_ast_hits_the_step_budget_and_returns():
 
 
 def test_x4_the_wall_clock_budget_holds_without_threads_or_signals():
-    """X4(ii) again, on the other budget — the wall clock is an **injected** monotonic
-    reading checked every 256 steps, with no thread and no signal, so it behaves
-    identically in the supervisor's handler thread and in a Worker isolate (§6.2).
+    """X4(ii) — the wall-clock budget is an injected monotonic reading checked every 256
+    steps (no thread, no signal), so it behaves the same in the supervisor and a Worker.
 
-    Mutation checked: removing the `self.monotonic() > self.deadline` raise makes this
-    return `ok=True`.
+    Mutation checked: removing the `monotonic() > deadline` raise → `ok=True`.
     """
     node = {"concat": [{"str": [{"+": list(range(16))}]}] * 32}    # ~577 nodes
     clock = {"t": 0.0}
@@ -434,18 +371,11 @@ HUGE["repeat_nested_to_depth_8"] = _node
 
 @pytest.mark.parametrize("name", sorted(HUGE))
 def test_x5_a_huge_allocation_fails_the_op_not_the_process(name):
-    """X5 — every allocation path fails at its cap, and the process survives.
+    """X5 — every allocation path (nested `repeat`, big `concat`, `join`, wide `format`)
+    hits the value/total byte cap, returns `ok=False`, leaves no effect, never MemoryErrors.
 
-    `repeat` nested eight deep, `concat` of 32 × 16 KiB, `join` over a list with a 900-char
-    separator, and `format` with a five-digit width: each one hits
-    `MOXIE_EXT_MAX_VALUE_BYTES` or `MAX_TOTAL_BYTES`, returns `ok=False`, and leaves no
-    effect behind. Nothing here is allowed to raise `MemoryError` — the cap is checked as
-    each value is produced, and `repeat`'s own bound (16) means the largest single
-    intermediate is 16 × the value cap even in the worst case.
-
-    Mutation checked: removing the `n > self.limits.max_value_bytes` raise in
-    `_Machine.charge` makes `repeat_nested_to_depth_8` return `ok=True` with a
-    4-billion-character string, which is exactly the failure mode this cap exists for.
+    Mutation checked: removing the `n > max_value_bytes` raise in `_Machine.charge` makes
+    `repeat_nested_to_depth_8` return a 4-billion-character string.
     """
     e = say(HUGE[name])
     assert E.validate(e) == [], "the AST is legal; the *value* is what must fail"
@@ -456,12 +386,8 @@ def test_x5_a_huge_allocation_fails_the_op_not_the_process(name):
 
 
 def test_x5_a_width_beyond_the_spec_is_refused_at_load():
-    """X5's other half — `{"format": ["1000000000d", 1]}` never reaches an op at all.
-
-    `format` takes an **explicit spec** (§6.1), and the spec grammar caps the width at five
-    digits. A billion-wide field is therefore a malformed program, refused at import, which
-    is the only moment at which refusing it costs nobody anything.
-    """
+    """X5 — `format`'s spec grammar caps width at five digits, so a billion-wide field is a
+    malformed program refused at import."""
     # The spec is *data*, so the op returns the error value rather than raising…
     assert E.is_error(E._format("1000000000d", 1))
     # …and an error reaching a `say` fails the extension rather than speaking "error"
@@ -472,10 +398,9 @@ def test_x5_a_width_beyond_the_spec_is_refused_at_load():
 
 
 def test_x5_the_total_allocation_counter_stops_death_by_a_thousand_strings():
-    """X5's third path — no single value breaches, but the running total does.
+    """X5 — no single value breaches but the running total does.
 
-    Mutation checked: removing the `self.total > self.limits.max_total_bytes` raise makes
-    this return `ok=True`.
+    Mutation checked: removing the `total > max_total_bytes` raise → `ok=True`.
     """
     e = ext([{"let": {f"b{i}": {"repeat": ["A", 16]} for i in range(24)},
               "do": [{"say": {"concat": [{"var": f"b{i}"} for i in range(24)]}}]}])
@@ -500,16 +425,11 @@ def _nest(depth):
 
 
 def test_x6_deep_recursion_cannot_reach_the_python_stack():
-    """X6 — a 10 000-deep expression is a **load refusal**, never a stack probe.
+    """X6 — depth 32 evaluates, 33 and 10 000 are load refusals; no `RecursionError`
+    escapes (validator and evaluator are both depth-counted).
 
-    Depth 32 evaluates. Depth 33 is refused. Depth 10 000 is refused. In no case does a
-    `RecursionError` escape, because the validator is depth-counted before the evaluator is
-    ever reached and the evaluator is depth-counted again (`_Machine.eval` raises
-    `_Breach("invalid")` at `MAX_DEPTH`) for a caller that skipped validation.
-
-    Mutation checked: removing the `depth > MAX_DEPTH` refusal from `_Validator.expr` makes
-    the 10 000-deep case raise `RecursionError` out of `validate()` — which is what turns a
-    hostile pack into a 500 instead of a shrug.
+    Mutation checked: removing `depth > MAX_DEPTH` from `_Validator.expr` makes the
+    10 000-deep case raise `RecursionError` out of `validate()`.
     """
     ok = say(_nest(28))
     assert E.validate(ok) == []
@@ -549,11 +469,8 @@ FORBIDDEN_IMPORTS = {"time", "random", "os", "datetime", "secrets", "subprocess"
 
 
 def test_x7_the_evaluator_imports_no_clock_and_no_entropy():
-    """X7(i) — parse `ext.py` with `ast` and assert the forbidden imports are absent.
-
-    This is cheap and it does not rot: an agent adding `import time` for "just a quick
-    timeout" fails here before the review ever sees it. It is also the *mechanism* behind
-    §6.1's determinism claim, rather than a restatement of it.
+    """X7(i) — `ext.py`'s AST has none of the forbidden imports (the mechanism behind
+    §6.1's determinism claim).
 
     Mutation checked: adding `import time` to `ext.py` fails this test.
     """
@@ -584,12 +501,8 @@ def test_x7_two_clock_reads_in_one_program_agree():
 
 
 def test_x7_the_same_seed_gives_the_same_stream():
-    """X7(ii) again — `random.*` draws from a PRNG seeded by the host, not from entropy.
-
-    Not for secrecy, for **determinism** (§5.1): an extension with real entropy cannot be
-    replayed, and replay is how the goldens work. The child still perceives variety because
-    the seed is `sha256(turn_key ‖ extension_id)` and the turn key changes.
-    """
+    """X7(ii) — `random.*` is a PRNG seeded by `sha256(turn_key ‖ extension_id)`: for
+    replayable determinism (§5.1), while the changing turn key still gives variety."""
     e = ext([{"do": [{"say": {"join": [{"list": [{"random.int": [1, 1000]},
                                                  {"random.int": [1, 1000]},
                                                  {"random.pick": [{"lit": ["a", "b", "c",
@@ -605,12 +518,8 @@ def test_x7_the_same_seed_gives_the_same_stream():
 
 
 def test_x7_a_fact_op_without_its_capability_is_refused_at_load():
-    """X7(iii) — a program using `clock.ms` without declaring `clock` never runs.
-
-    "Absent, not refused, when not granted" (§4.2) means the *turn* is never at risk: the
-    extension fails validation, and `ContentApp` proceeds exactly as it does with no
-    extension at all.
-    """
+    """X7(iii) — `clock.ms` without declaring `clock` fails validation, and `ContentApp`
+    proceeds as if there were no extension (§4.2: the turn is never at risk)."""
     undeclared = ext([{"do": [{"say": {"str": [{"clock.ms": []}]}}]}], caps=("say",))
     reasons = E.validate(undeclared)
     assert reasons and "clock" in reasons[0]
@@ -641,18 +550,13 @@ UNICODE_TRICKS = {
 
 @pytest.mark.parametrize("name", sorted(UNICODE_TRICKS))
 def test_x8_unicode_tricks_cannot_change_a_capability(name):
-    """X8 — a homoglyph capability is **refused**, never silently granted, and never
-    rendered into the parent's grant list as the real thing.
+    """X8 — a homoglyph capability is refused, never granted or rendered as the real one.
 
-    The check is deliberately *normalize and compare*, not *normalize and use*: `"ｍemory
-    .write"` NFKC-folds **to** `"memory.write"`, so folding-then-matching would grant a
-    capability whose written form is not the one the review rendered. The name must
-    already be in NFKC normal form **and** match `^[a-z0-9_.]+$`.
+    Normalize-and-COMPARE, not normalize-and-use: the name must already be NFKC-normal and
+    match `^[a-z0-9_.]+$`, else `"ｍemory.write"` would fold to a grant the review never showed.
 
-    Mutation checked: changing `normal_name` to `return unicodedata.normalize("NFKC", raw)`
-    (fold-and-use) makes `fullwidth_m` and `math_bold` pass validation and appear in the
-    grant list as "Can remember things from this activity" — a scary grant reading as an
-    accepted one, which is precisely the attack.
+    Mutation checked: `normal_name` returning the NFKC fold makes `fullwidth_m` and
+    `math_bold` validate and appear as "Can remember things from this activity".
     """
     trick = UNICODE_TRICKS[name]
     assert E.normal_name(trick) == "", f"{name} normalized to a usable name"
@@ -694,13 +598,8 @@ def test_x8_unicode_tricks_cannot_change_an_op(trick):
 # --------------------------------------------------------------------------- #
 
 def test_x9_an_extension_cannot_read_another_modules_namespace():
-    """X9(i) — `{"var": "memory.other_module.x"}` is null, because the fact base contains
-    **only** this extension's namespace.
-
-    The namespace is supplied by the host, never by the extension: there is no operator, no
-    statement and no path segment that names a namespace, a device, a collection or a
-    file. The words for those do not exist in the grammar (§4.4 rule 3).
-    """
+    """X9(i) — `memory.other_module.x` is null: the fact base holds only this extension's
+    host-supplied namespace, and no grammar word names a namespace, device or file."""
     from moxie_sdk.content import content_app as CA
     v = Volley("hi", persist_data={"ext:mine": {"score": 7},
                                    "other_module": {"secret": "not yours"},
@@ -722,21 +621,14 @@ BAD_KEYS = ["../other/x", "/etc/passwd", "a/../../b", "..", "a..b", "", " ",
 
 @pytest.mark.parametrize("key", BAD_KEYS)
 def test_x9_a_traversal_key_is_refused_at_load(key):
-    """X9(ii) — a memory key is `^[A-Za-z0-9][A-Za-z0-9_-]*(\\.[…])*$`: dot-segmented, no
-    empty segment (so no `..`), no `/` or `\\` (so no traversal), and **no `_`-leading
-    segment** (so a program cannot write `_meta` or `_provenance`, which belong to
-    `MemoryStore` and not to a pack).
+    """X9(ii) — memory keys are dot-segmented `[A-Za-z0-9][A-Za-z0-9_-]*`: no empty
+    segment, no `/` or `\\`, no `_`-leading segment (`_meta`/`_provenance` belong to MemoryStore).
 
-    Honest deviation from the brief's X9 list, recorded here rather than buried: the brief
-    also names `"other_ns.x"` as something to refuse. We do **not** refuse it, because it
-    is structurally identical to `"timers.1"` — the key the brief's own §4.1 example
-    writes — and a rule that refused one would refuse the other. It is safe for a
-    different and stronger reason, asserted in the next test: whatever the key, the write
-    lands under the **host-supplied namespace**, so `other_ns.x` is a key *inside* this
-    extension's own block and reaches nobody else.
+    Deliberate deviation from the brief: `"other_ns.x"` is NOT refused — it is shaped like
+    `"timers.1"` — and is safe because the write lands under the host-supplied namespace
+    (next test).
 
-    Mutation checked: widening `_KEY` to `^[^\\x00]+$` makes every row here pass
-    validation.
+    Mutation checked: widening `_KEY` to `^[^\\x00]+$` makes every row validate.
     """
     e = ext([{"do": [{"remember": {"key": key, "value": 1}}, {"say": "hi"}]}],
             caps=("say", "memory.write"))
@@ -745,15 +637,11 @@ def test_x9_a_traversal_key_is_refused_at_load(key):
 
 
 def test_x9_the_store_call_names_a_host_supplied_namespace(tmp_path):
-    """X9(iii) — the write goes to `merge(device_id, own_namespace, …)` with **both**
-    arguments supplied by the host, and a second robot's file is byte-unchanged.
+    """X9(iii) — writes go to `merge(device_id, own_namespace, …)`, both host-supplied; a
+    second robot's file is byte-unchanged. The extension picks a key, never a namespace.
 
-    This is the assertion that makes the previous test's deviation safe: the extension
-    chooses a key, never a namespace and never a device.
-
-    Mutation checked: making `content_app.apply_ext_effects` take the namespace from the
-    effect (`eff.get("namespace", ns)`) and adding one to the effect makes the
-    cross-namespace assertion fail.
+    Mutation checked: taking the namespace from the effect in `apply_ext_effects` fails
+    the cross-namespace assertion.
     """
     from moxie_sdk.content import content_app as CA
     from moxie_sdk.store import JsonStore, MemoryStore
@@ -789,17 +677,10 @@ def test_x9_the_store_call_names_a_host_supplied_namespace(tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_x10_a_capability_mismatch_is_a_load_refusal_in_both_directions():
-    """X10 — declared == used, or it does not install.
+    """X10 — declared == used, or it does not install. Over-declaring matters to a parent:
+    the grant list shown must be exactly what the program can do (acceptance criterion 4).
 
-    Using more than you declared is the obvious half. Declaring more than you use is the
-    half that matters to a parent: without it a pack could ask for `memory.write` and never
-    write, leaving a door open for a later "upgrade" that does — or make the review look
-    scarier than the program is, which trains parents to tick without reading.
-
-    The consequence is acceptance criterion 4: the list a parent was shown is exactly,
-    provably, what the program can do.
-
-    Mutation checked (twice): deleting the `missing` branch lets `uses_undeclared` install;
+    Mutation checked: deleting the `missing` branch lets `uses_undeclared` install;
     deleting the `spare` branch lets `declares_unused` install.
     """
     uses_undeclared = ext([{"do": [{"remember": {"key": "x", "value": 1}},
@@ -846,25 +727,9 @@ def test_x10_the_default_granted_set_is_exactly_four():
 
 
 def test_x10_p1_capabilities_are_declared_rendered_and_refused():
-    """The P1 boundary, asserted rather than assumed: a capability that cannot yet *do*
-    anything parses as grammar (so §8's goldens are checked today) and is **refused at
-    load**. Shipping one that does nothing would be worse than refusing it aloud.
-
-    **The example changed on 2026-09-04, and only the example.** This test used to make
-    its point with `act`, because `volley.execution_actions` was not on the wire (brief
-    S5). It is now, so `act` is no longer an example of a capability that does nothing —
-    `test_x10_an_act_is_bounded_declared_and_granted_or_it_does_not_load` below is what
-    guards it instead, and it guards *more*, not less. `brain` is still an example, so it
-    is the one used here. Nothing about the invariant moved: the last two lines — *a
-    still-P1 capability is refused, and `evaluate()` has no `allow_p1` door* — are the
-    escape property, and they are unchanged and still assert on `E.P1_CAPABILITIES`.
-
-    **`subscribe` left the set on 2026-09-05**, the same way and for the same reason, so
-    the assertion below no longer names it: `Volley.subscriptions` had no consumer, and
-    now it has one (`content_app.subscriptions_of` → `Reply.subscribe` →
-    `moxie_runtime._publish_chat`'s merge). Its own three gates are asserted in
-    `test_x10_a_subscribe_is_bounded_declared_and_granted_or_it_does_not_load` below —
-    again, *more* than this test was claiming, not less.
+    """P1 boundary: a capability that cannot yet do anything (`brain`) parses as grammar
+    but is refused at load, and `evaluate()` has no `allow_p1` door. `act` and `subscribe`
+    have left `P1_CAPABILITIES`; their gates are asserted in the two tests below.
     """
     e = ext([{"do": [{"brain": {"prompt": "hi"}}, {"say": "ok"}]}],
             caps=("say", "brain"))
@@ -879,22 +744,13 @@ def test_x10_p1_capabilities_are_declared_rendered_and_refused():
 
 
 def test_x10_an_act_is_bounded_declared_and_granted_or_it_does_not_load():
-    """What replaced the `act` half of the test above — the three gates, each asserted.
+    """An `act` loads only if all three gates hold:
 
-    An `act` is not free just because the wire exists. It is refused at **load**, never at
-    runtime, unless all three hold:
-
-    1. **The name is in the closed table.** `ext.ACTION_WORDS` is the whole set of robot
-       functions this appliance will ever name, and it is the same table the parent-facing
-       sentence comes from — so a function nobody wrote English for cannot be declared,
-       granted or emitted. `qr-launch-cards.md` §P0-b: *"the catalog is a closed allowlist,
-       and this is a safety property, not tidiness."*
-    2. **The pack declared it.** `act.foo` used but not declared fails at load, because
-       declared-equals-used is a load condition (§5) — so the grant list a parent reads is
-       provably the program's reach.
-    3. **The host granted it.** `act.<name>` is in neither `DEFAULT_GRANTS` nor
-       `content_app.SHIPPED_EXTRA_GRANTS`; an ungranted one does not run at all, so "absent,
-       not refused, when not granted" (§4.2) still holds — the turn is never at risk.
+    1. the name is in the closed `ext.ACTION_WORDS` table (the same one the parent-facing
+       sentence comes from — a safety property, not tidiness);
+    2. the pack declared it (declared == used is a load condition);
+    3. the host granted it (`act.<name>` is not in `DEFAULT_GRANTS`; only the set pinned in
+       `SHIPPED_EXTRA_GRANTS` is) — ungranted means the program never runs.
     """
     from moxie_sdk.content import content_app as CA
     good = ext([{"do": [{"act": {"name": "eb_timer_request", "args": ["1", "0"]}},
@@ -917,18 +773,9 @@ def test_x10_an_act_is_bounded_declared_and_granted_or_it_does_not_load():
     r = E.evaluate(undeclared, facts(), grants=E.DEFAULT_GRANTS | {"act.eb_wake"})
     assert not r.ok and r.effects == [], "an undeclared act must never reach an effect"
 
-    # 3 — declared and known, but not granted: still nothing runs.
-    #
-    # NARROWED 2026-09-08, not dropped. This used to assert that NO `act.<name>` was
-    # granted to a shipped extension. Exactly one now is: `act.eb_timer_request`, because
-    # the shipped `Timer` global had matched and done nothing since it was written, and
-    # making it a program needs that one recovered function. `SHIPPED_EXTRA_GRANTS`' own
-    # comment asked for precisely this — "the day one does, adding that single act.<name>
-    # is a code change in a file a reviewer reads".
-    #
-    # So the invariant is now the SET, which is a stronger claim than "none": widening it
-    # reddens this line, and the gate itself is still asserted with an act that is not
-    # granted. `eb_wake` is used for that because it is in the catalog and is not shipped.
+    # 3 — declared and known, but not granted: still nothing runs. The shipped grant SET
+    # is pinned (only `act.eb_timer_request`, for the `Timer` global) so widening it
+    # reddens here; `eb_wake` is in the catalog and not shipped, so it exercises the gate.
     shipped_acts = {c for c in set(E.DEFAULT_GRANTS) | set(CA.SHIPPED_EXTRA_GRANTS)
                     if c.startswith("act.")}
     assert shipped_acts == {"act.eb_timer_request"}, (
@@ -951,14 +798,10 @@ def test_x10_an_act_is_bounded_declared_and_granted_or_it_does_not_load():
 
 
 def test_x10_the_host_will_not_name_a_function_the_table_does_not():
-    """The second gate on the same table, at the host boundary — belt to the validator's
-    brace, because `execution_actions_of` is the last function before a string becomes a
-    `function_id` addressed to a robot in a child's room.
-
-    Two ways in are checked: an effect list handed straight to `apply_ext_effects` (what a
-    future evaluator bug would produce) and a Python global handler calling
-    `volley.add_execution_action` directly (which never passed a validator at all). Both
-    drop the unknown name and keep the known one.
+    """Second gate on the action table at the host boundary (`execution_actions_of` is the
+    last step before a `function_id` reaches a robot). Both an effect list passed straight
+    to `apply_ext_effects` and a Python global calling `add_execution_action` drop the
+    unknown name and keep the known one.
     """
     from moxie_sdk.content import content_app as CA
     v = Volley("hi")
@@ -976,22 +819,13 @@ def test_x10_the_host_will_not_name_a_function_the_table_does_not():
 
 
 def test_x10_a_subscribe_is_bounded_declared_and_granted_or_it_does_not_load():
-    """`subscribe`'s three gates, the twin of the `act` test above.
+    """A `subscribe` loads only if all three gates hold:
 
-    A `subscribe` is not free just because the wire exists. It is refused at **load**,
-    never at runtime, unless all three hold:
-
-    1. **The event is in the closed vocabulary.** `ext.SUBSCRIBE_EVENTS` is the recovered
-       vision catalog (vision.md §1.1-1.2) and nothing else, so a pack cannot ask to be
-       woken by a string somebody invented. The same argument `qr-launch-cards.md` §P0-b
-       makes for the launch-card catalogue, pointed the other way down the wire: an
-       *input* a stranger's pack can arrange to receive is as much a surface as an output
-       it can send.
-    2. **The pack declared it.** Declared-equals-used is a load condition (§5), so the
-       grant list a parent reads is provably the program's reach.
-    3. **The host granted it.** `subscribe` is in neither `DEFAULT_GRANTS` nor
-       `content_app.SHIPPED_EXTRA_GRANTS`; grantable is not granted, and an ungranted
-       capability means the program never runs at all (§4.2's *"absent, not refused"*).
+    1. the event is in the closed `ext.SUBSCRIBE_EVENTS` vision catalog — an input a
+       stranger's pack can arrange to receive is as much a surface as an output;
+    2. the pack declared it;
+    3. the host granted it (`subscribe` is in neither `DEFAULT_GRANTS` nor
+       `SHIPPED_EXTRA_GRANTS`).
     """
     from moxie_sdk.content import content_app as CA
     good = ext([{"do": [{"subscribe": ["eb-qr-event"]}, {"say": "ok"}]}],
@@ -1032,16 +866,9 @@ def test_x10_a_subscribe_is_bounded_declared_and_granted_or_it_does_not_load():
 
 
 def test_x10_the_host_will_not_name_an_event_the_table_does_not():
-    """The second gate on the event table, at the host boundary — the exact twin of
-    `test_x10_the_host_will_not_name_a_function_the_table_does_not` above, and load-bearing
-    for the same reason: `subscriptions_of` is the last function before a string becomes an
-    `EventSubscription.active[]` entry addressed to a robot in a child's room.
-
-    Two ways in, both checked. An effect list handed straight to `apply_ext_effects` is
-    what a future evaluator bug would produce. `volley.update_subscriptions` is the
-    *contract's* API for a registered Python global handler
-    (`content-module-contract.md` §"What module code may do"), and that caller never met
-    the validator at all — which is why the gate cannot live only in `ext.py`.
+    """Second gate on the event table at the host boundary (`subscriptions_of`), twin of
+    the action test: an effect list and a Python global calling `update_subscriptions`
+    (which never meets the validator) are both filtered.
     """
     from moxie_sdk.content import content_app as CA
     v = Volley("hi")
@@ -1060,15 +887,10 @@ def test_x10_the_host_will_not_name_an_event_the_table_does_not():
 # --------------------------------------------------------------------------- #
 
 def test_x11_effects_are_all_or_nothing():
-    """X11 — a program whose third statement breaches leaves **no** memory write, **no**
-    output and **no** note.
+    """X11 — a breach in statement three leaves no memory write, output or note: effects
+    are applied by the host only after the program returns, and discarded whole (§4.5).
 
-    Statements do not touch the world; they append to an effect list the host applies
-    *after* the program returns (§4.5). So a breach mid-program discards the list whole,
-    and a partially-executed extension cannot write half a memory record.
-
-    Mutation checked: making `evaluate()` return `ExtResult(ok=False, effects=effects, …)`
-    on a `_Breach` — i.e. handing back the prefix that happened to succeed — fails every
+    Mutation checked: returning the successful effect prefix on `_Breach` fails every
     assertion below.
     """
     e = ext([{"do": [
@@ -1086,12 +908,8 @@ def test_x11_effects_are_all_or_nothing():
 
 
 def test_x11_an_error_value_reaching_an_effect_fails_the_extension():
-    """X11's sibling, and §4.6's whole point — an error never becomes speech.
-
-    `int("banana")` is the error value. It propagates through every op, and when it reaches
-    a `say` the **extension** fails rather than the child hearing the word "error". That is
-    the one instinct of upstream's `f"Script error: {e}"` we deliberately do not port (U6).
-    """
+    """X11 — an error never becomes speech: `int("banana")` propagates to `say`, and the
+    extension fails rather than the child hearing "error" (§4.6)."""
     e = say({"concat": ["I counted ", {"str": [{"int": ["banana"]}]}, " sheep"]})
     r = E.evaluate(e, facts(), grants=E.DEFAULT_GRANTS)
     assert not r.ok and r.breach == "error", r
@@ -1118,13 +936,8 @@ def test_x11_an_error_value_reaching_an_effect_fails_the_extension():
     ({"==": [True, 1]}, False),
 ])
 def test_x11_every_bad_input_returns_a_value_rather_than_raising(expr, expected):
-    """§4.6 as a sweep — *there is no state in which the evaluator does not return.*
-
-    Division by zero yields an error value, a missing key yields null, an out-of-range
-    index yields null, a cross-type comparison is false. A total language has no exceptions
-    to leak, which is why `test_no_escape` can be a provable property here and is only a
-    bet in an embedded-VM design (§3.2 reason 2 and reason 4).
-    """
+    """§4.6 sweep — the evaluator always returns: ÷0 is an error value, missing key/index
+    is null, cross-type comparison is false."""
     m = E._Machine(facts(), E.Limits(), 0, {}, 0, None)
     got = m.eval(expr)
     if expected == "error":
@@ -1138,14 +951,9 @@ def test_x11_every_bad_input_returns_a_value_rather_than_raising(expr, expected)
 # --------------------------------------------------------------------------- #
 
 def test_x12_a_pathological_regex_is_still_capped_by_the_item():
-    """X12 — extensions do not construct regexes, and they do not fix the one that exists.
-
-    There is no regex operator, no `match`, no `search` and no way to build a pattern; the
-    only regex on this path is the **item's own** `pattern`, which `packs.validate_item`
-    caps at `MAX_PATTERN_CHARS` and compiles once. That cap is a *named, accepted* risk
-    (brief P7: a compiled Python regex has no timeout in the stdlib), and this test asserts
-    the boundary rather than claiming the risk away — the risk stays filed against packs,
-    where it belongs (R6).
+    """X12 — extensions cannot construct regexes; the only regex is the item's own
+    `pattern`, capped by `packs.validate_item` at `MAX_PATTERN_CHARS` (accepted risk P7:
+    stdlib regex has no timeout; filed against packs, R6).
     """
     from moxie_sdk.content import packs as P
     for word in ("regex", "match", "search", "pattern", "compile", "re"):
@@ -1173,12 +981,8 @@ NEVER_REACHABLE = ("network", "filesystem", "subprocess", "environment variable"
 
 
 def test_nothing_an_extension_can_express_reaches_any_of_these():
-    """Acceptance criterion 6 — stated as the enumerated union of the op table and the
-    fact base, which is the only form of this claim that a test can actually check.
-
-    These are not "refused by default". **There is no operator, statement or path that
-    names them**, so refusing them is not a policy decision a config flag could reverse.
-    """
+    """Acceptance criterion 6 — the forbidden surfaces are absent from the op table and
+    fact base altogether, so no config flag could re-enable them."""
     surface = set(E.OPS) | set(E.STATEMENTS) | set(E.FACT_ROOTS) | {"lit", "var"}
     # Every name in the surface is in our own source, and the surface is small enough to
     # read in one screen — which is the property that justified choosing this design.

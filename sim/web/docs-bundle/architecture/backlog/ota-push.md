@@ -163,7 +163,7 @@ The contract already commits us to consuming both:
 **`/devices/{id}/state`** (up). Plus one event, if P1 is ever built:
 **`/devices/{id}/events/client-service-http-token`** (E13), answered the way every other event is —
 by publishing to `…/commands/{command}` — the pattern the runtime already implements for
-`query_result` at [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):2510.
+`query_result` at [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):2510.
 
 ### 3.4 Result codes — and the honest answer is "there are none"
 
@@ -184,7 +184,7 @@ report *offered*, never *installed*. The precedent is written down and enforced 
 *"Never reports success for a command it did not send … a recovered command with no acknowledgement is
 reported as **sent**, not as **done**"*
 ([`config-and-telemetry-contract.md`](../config-and-telemetry-contract.md):518-519), implemented for the
-wake command at [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):2548-2556. An OTA is that
+wake command at [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):2548-2556. An OTA is that
 rule at ten times the stakes: the only honest completion signal we can ever produce is
 **`robot_firmware_version` changing on a later `/state`**, which is an observation, not an acknowledgement.
 
@@ -217,11 +217,11 @@ first — the feature is one key away from working and one key away from being c
 | Seam | Where | State |
 |---|---|---|
 | Building the config document | [`cloud_config.py`](../../../mqtt/moxie_sdk/cloud_config.py):102-115 `build_robot_cloud_config` | Additive from a keyword whitelist. **No OTA keyword.** An unexpected kwarg raises `TypeError` rather than shipping — the docstring at :514-519 says this is on purpose. |
-| Publishing it | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):2517-2540 `_push_config` | Publishes the whole document **on connect and on every edit**. See R1 — this is the stickiness hazard. |
+| Publishing it | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):2517-2540 `_push_config` | Publishes the whole document **on connect and on every edit**. See R1 — this is the stickiness hazard. |
 | The parent's edit path | [`cloud_config.py`](../../../mqtt/moxie_sdk/cloud_config.py):437-506 `sanitize_config_overrides` | The single whitelist every console POST passes through. |
-| The **fleet** edit path | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):1399-1401 | ⚠️ **`POST /config?scope=fleet` calls the *same* `sanitize_config_overrides`.** One key added to that whitelist is one POST away from every robot. See R2. |
+| The **fleet** edit path | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):1399-1401 | ⚠️ **`POST /config?scope=fleet` calls the *same* `sanitize_config_overrides`.** One key added to that whitelist is one POST away from every robot. See R2. |
 | Keys that must not reach a robot | [`cloud_config.py`](../../../mqtt/moxie_sdk/cloud_config.py):514-529 `SERVER_ONLY_KEYS` / `robot_config_kwargs` | The existing, tested precedent for a config key that lives in the layers but is stripped before the wire. |
-| The permit gate | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):2528-2534 | An unpermitted device gets `build_unpaired_cloud_config()` — no child data, no household settings. An OTA target must inherit this for free, and §5 G1 makes that explicit rather than incidental. |
+| The permit gate | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):2528-2534 | An unpermitted device gets `build_unpaired_cloud_config()` — no child data, no household settings. An OTA target must inherit this for free, and §5 G1 makes that explicit rather than incidental. |
 | Reading the robot's version | [`cloud_config.py`](../../../mqtt/moxie_sdk/cloud_config.py):531-543 `parse_robot_status` | Already surfaces `robot_firmware_version` **and** `ota_reboot_required`. Nothing more is needed to *report*. |
 | The HTTP-token event | [`tools/robot-toolkit/moxie_toolkit/cloud.py`](../../../tools/robot-toolkit/moxie_toolkit/cloud.py):78 | The constant exists in the toolkit; **no handler exists in the supervisor.** |
 | The console's honest position today | [`config-and-telemetry-contract.md`](../config-and-telemetry-contract.md):484 | *"This appliance serves no `api/ota`, so it **never claims 'up to date'** — it reports what the robot said and says no update server is configured."* **P0 keeps this sentence true.** |
@@ -273,14 +273,14 @@ flowchart TD
 
 | Gate | Rule | Why, and what it is anchored to |
 |---|---|---|
-| **G1 — permitted device only** | An unpermitted robot's document is `build_unpaired_cloud_config()` and can never carry an OTA key. | The gate already exists ([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):2528-2534); this makes inheritance explicit and testable rather than a happy accident of ordering. |
-| **G2 — per-robot scope, never fleet** | `ota_update` is **structurally excluded** from `sanitize_config_overrides`, and rides its own arm record. It must not be reachable from `POST /config` at either scope. | R2. `?scope=fleet` shares the whitelist ([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):1399-1401). *"One robot at a time"* must be a property of the type, not of a reviewer's care. |
+| **G1 — permitted device only** | An unpermitted robot's document is `build_unpaired_cloud_config()` and can never carry an OTA key. | The gate already exists ([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):2528-2534); this makes inheritance explicit and testable rather than a happy accident of ordering. |
+| **G2 — per-robot scope, never fleet** | `ota_update` is **structurally excluded** from `sanitize_config_overrides`, and rides its own arm record. It must not be reachable from `POST /config` at either scope. | R2. `?scope=fleet` shares the whitelist ([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):1399-1401). *"One robot at a time"* must be a property of the type, not of a reviewer's care. |
 | **G3 — closed positive allowlist of versions** | The target must be one of a hard-coded set of known-good `otaver` strings. Today that set has **exactly one** member, E6's 803 string. An unrecognised string is refused even if it looks right. | The repo's own established pattern: the launch-card allowlist is derived rather than transcribed *"because a rotted allowlist rots in the permissive direction"* ([`openmoxie-feature-audit.md`](../openmoxie-feature-audit.md), PR #148 row). Here it must be **literal**, because there is no source to derive from. |
 | **G4 — must differ from what the robot reported** | Compare against `robot_firmware_version` from a `/state` we have actually received. **No `/state` yet ⇒ refuse.** Equal ⇒ refuse. | I1/U2. Offering a robot the version it is already running is at best a no-op and at worst an unknown; and a robot we have never heard from is a robot whose version we are guessing. |
 | **G5 — the artifact exists and its digest matches a pin** | The `url` endpoint answers only for an artifact already present in the local store whose SHA-256 equals a pinned manifest value. No digest, no serve. | E2 — `OtaUpdate` has **no** digest field, so the robot cannot check what we meant to send; only `update_engine`'s signature check protects it (E8). Our digest pin protects against *our own* store being wrong, which is the failure the robot's signature cannot distinguish from an attack. |
 | **G6 — `id` is one path segment we minted** | `^[a-z0-9][a-z0-9_-]{0,31}$`, chosen from our own store's keys. Never parent-supplied text. | S1 puts `id` straight into a URL path. A parent-typed `id` is a path-traversal and SSRF primitive aimed at a device we cannot debug. |
 | **G7 — quiet, or not at all** | Refuse while the robot's last `/state` shows an active session, while `user_state` is anything but `PAIRED_VALID`, and inside a configured bedtime/wake window. | E4 + `DisengageReason` ([`power-and-system-events.md`](../../reverse-engineering/protocol/power-and-system-events.md):81-87). **Read the limit honestly: we cannot make the robot wait.** `OTA_LOCK` is the robot quiescing *itself*, and `UnpairUserRequest`/`UnpairUserReady` bracket a graceful detach the robot drives. All we control is whether we *offer* — so the design declines to offer rather than pretending to schedule. |
-| **G8 — one-shot arm, expiring, self-clearing** | An arm is an explicit owner action for one `device_id`, carries an expiry (default 1 h), survives exactly **one** config push, and is cleared when either the expiry passes or a later `/state` reports the target version. | **R1, the sharpest hazard in this seam.** `_push_config` republishes the whole document on connect and on every edit ([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):2517-2540). A target stored as an ordinary config override would be re-asserted **forever, on every reconnect** — an accidental permanent instruction. The arm record is why the key is not a setting. |
+| **G8 — one-shot arm, expiring, self-clearing** | An arm is an explicit owner action for one `device_id`, carries an expiry (default 1 h), survives exactly **one** config push, and is cleared when either the expiry passes or a later `/state` reports the target version. | **R1, the sharpest hazard in this seam.** `_push_config` republishes the whole document on connect and on every edit ([`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):2517-2540). A target stored as an ordinary config override would be re-asserted **forever, on every reconnect** — an accidental permanent instruction. The arm record is why the key is not a setting. |
 
 ### Three rules that sit above the gates
 
@@ -493,7 +493,7 @@ refusals, with no transmitter, and a written reason.
 | Phase | Effort | Files it would touch |
 |---|:--:|---|
 | **P0** | **S** | `mqtt/moxie_sdk/ota.py` (new, pure) · `sim/tests/test_ota.py` (new) · a prose note beside `SERVER_ONLY_KEYS` in [`cloud_config.py`](../../../mqtt/moxie_sdk/cloud_config.py):514 · the console's read-only firmware line |
-| **P1** | **M** | `mqtt/moxie_sdk/ota_store.py` (new) · a route on [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) beside the existing table at :1359 · a `client-service-http-token` branch near `_on_event` :3565 · a console card · `sim/tests/test_ota_store.py`, `test_ota_sil.py` |
+| **P1** | **M** | `mqtt/moxie_sdk/ota_store.py` (new) · a route on [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) beside the existing table at :1359 · a `client-service-http-token` branch near `_on_event` :3565 · a console card · `sim/tests/test_ota_store.py`, `test_ota_sil.py` |
 | **P2** | **M**, owner-gated | the arm record in the fleet store · one call in `_push_config` :2517 · `MOXIE_OTA_ARM` · inverting T5 |
 
 **Risks are R1-R7 in §8.** The limits we could not establish from our own docs are **U1-U4 in §1**, and

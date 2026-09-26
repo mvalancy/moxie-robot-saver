@@ -1,42 +1,24 @@
 """
-The **activity record** on disk, through the parent's privacy switch — the last two gaps.
+The ACTIVITY RECORD on disk, through the parent's privacy switch (the transcript half is
+`test_transcript_memory_policy.py`):
 
-`test_transcript_memory_policy.py` closed the transcript half of the same promise. Two
-halves were left, both admitted in `moxie_runtime.py`'s own comments:
+  1. Telemetry needs an erasure path: `NO_DATA` means "no packet, no count, no day row; a
+     restart finds an empty store" (config-and-telemetry-contract.md §③), including data
+     written before the switch moved.
+  2. `ingest_mentor_behavior` (a per-child log of finished/quit/refused activities) is
+     gated by `LoggingPolicy` like everything else written about a child.
 
-  1. **Telemetry had a gate and no erasure path at all.** `do_DELETE` accepted only
-     `/memory`, so a parent who moved the switch to `NO_DATA` stopped new writes and kept
-     every packet and every day row already on disk, with nothing to press. §③ of
-     `docs/architecture/config-and-telemetry-contract.md` says `NO_DATA` means *"nothing.
-     No packet, no count, no day row. A restart finds an empty store."* — false the moment
-     the switch was flipped rather than set.
-  2. **`ingest_mentor_behavior` was ungated.** It writes a durable per-child behavioural
-     log — which activity was finished, quit or refused, with a timestamp on each — and it
-     was the last thing this appliance wrote about a child with no `LoggingPolicy` gate,
-     so a `NO_DATA` robot still accumulated a behavioural profile while its telemetry and
-     its transcript were being refused.
+Every assertion reads the store back off DISK — a 200 or a `False` return is not evidence.
+Each "nothing written" test has a `NO_MEDIA`/`FULL` twin proving the path does write.
 
-Every assertion here reads **the store back off disk** (`os.path.exists`, `json.load`,
-`store.read`). A 200 is not evidence of an erase and a `False` return is not evidence of a
-gate — a gate that returns False and writes the file anyway is exactly the bug. The
-HTTP tests check the status code *and then* look at the files.
-
-Non-vacuity is asserted throughout: every "nothing is written" test has a `NO_MEDIA`/`FULL`
-twin that proves the same path DOES write, so the gate cannot pass by disabling the
-feature.
-
-Hermetic: fake MQTT transport, no brain, tmp store, no sleeps, no network.
+Hermetic: fake MQTT transport, no brain, tmp store, no sleeps.
 """
 from __future__ import annotations
 
 import json
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 import pytest  # noqa: E402
 
@@ -49,11 +31,9 @@ from moxie_sdk.cloud_config import LoggingPolicy    # noqa: E402
 from moxie_sdk.store import JsonStore               # noqa: E402
 from moxie_sdk.types import RobotContext            # noqa: E402
 
-#: The behavioural log's file name, written out rather than imported from
-#: `moxie_runtime.MENTOR_BEHAVIORS_COLLECTION`. This is the name a parent's data actually
-#: has on disk (`mqtt/data/README.md`), and a suite that took it from the module under
-#: test could be renamed into agreement with a bug. The two telemetry names come from
-#: `moxie_sdk.telemetry`, which owns them and is not what is being gated here.
+#: The behavioural log's on-disk name, written out rather than imported from the module
+#: under test, so a rename cannot drift into agreement with a bug (`mqtt/data/README.md`).
+#: The telemetry names come from `moxie_sdk.telemetry`, which owns them.
 BEHAVIORS = "mentor_behaviors"
 
 
@@ -135,11 +115,8 @@ def _http(port, path, method="GET"):
 # =========================================================================== #
 
 def test_no_media_and_full_write_the_behaviour_log(tmp_path):
-    """The non-vacuity twin, first, so the gate below cannot pass by writing nothing.
-
-    `NO_MEDIA` is the default and it stores the record; so does `FULL`. A MentorBehavior
-    has no opaque payload to withhold — it is `module_id`/`content_id`/`action` and a
-    timestamp — so the choice is binary, like the transcript's."""
+    """Non-vacuity twin: `NO_MEDIA` (default) and `FULL` store the record. A MentorBehavior
+    has no opaque payload, so the choice is binary."""
     rt, did = _rt(tmp_path)
     assert rt.telemetry_policy(did) == LoggingPolicy.NO_MEDIA     # nobody chose; default
     _finish(rt, did)
@@ -178,12 +155,8 @@ def test_a_fleet_wide_no_data_rule_also_stops_the_behaviour_log(tmp_path):
 
 
 def test_the_gate_is_persistence_only_the_turn_is_unaffected(tmp_path):
-    """`ingest_mentor_behavior` still parses and returns the record under `NO_DATA`, and
-    the console's live feed still gets its line.
-
-    Same doctrine as the transcript gate and `ingest_telemetry`: this is a **persistence**
-    gate. `self.recent` is a 120-entry deque that dies with the process and never reaches
-    disk; blinding a parent's own console would be privacy theatre with a real cost."""
+    """A PERSISTENCE gate: under `NO_DATA` the record is still parsed and returned and the
+    console's in-memory live feed (`self.recent`) still gets its line."""
     rt, did = _rt(tmp_path)
     _set_policy(rt, did, LoggingPolicy.NO_DATA)
     rec = rt.ingest_mentor_behavior(did, {"mentor_behavior": {"module_id": "MODULE_X",
@@ -307,13 +280,9 @@ def test_erasing_one_robot_leaves_the_other_alone(tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_flipping_to_no_data_erases_the_record_already_on_disk(tmp_path):
-    """The documented decision: unlike the *facts* store (which keeps what it stored so a
-    parent can still read and correct it), the activity record goes with the switch.
-
-    §③ promises `NO_DATA` means an empty store, and the insights card already tells a
-    parent under `NO_DATA` that nothing is being saved — a surviving ring makes both of
-    them lie. A parent who wants the history gone *without* changing the policy has the
-    explicit erase instead."""
+    """Unlike the facts store (kept so a parent can read and correct it), the activity
+    record goes with the switch — §③ and the insights card both promise nothing is saved.
+    The explicit erase removes history without changing the policy."""
     rt, did = _rt(tmp_path)
     _drive(rt, did)
     assert len(_on_disk(tmp_path, did)) == 3
@@ -341,11 +310,8 @@ def test_a_fleet_wide_no_data_rule_erases_every_robots_record(tmp_path):
 
 
 def test_a_no_data_record_is_not_rehydrated_by_a_restart(tmp_path):
-    """A durable fleet rule outlives the process; the files must not.
-
-    Telemetry hydrates lazily rather than at boot, so without the boot sweep a restart
-    under a fleet-wide `NO_DATA` would serve the old ring to the console the first time
-    anyone looked — "a restart finds an empty store" is the contract's own sentence."""
+    """A durable fleet `NO_DATA` rule outlives the process, so the boot sweep must erase:
+    telemetry hydrates lazily, and would otherwise serve the old ring after a restart."""
     rt, did = _rt(tmp_path)
     _drive(rt, did)
     assert len(_on_disk(tmp_path, did)) == 3

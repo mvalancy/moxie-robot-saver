@@ -313,9 +313,9 @@ served by `GET /schedule?device_id=…`
 ##### In the console
 
 The parent reads it on the **📅 Today's plan** card: `GET /local/robots/{device_id}/schedule` is a
-thin proxy of the runtime's `GET /schedule` ([`../../server/moxie_server/main.py`](../../server/moxie_server/main.py)),
+thin proxy of the runtime's `GET /schedule` ([`routes/console.py`](../../server/moxie_server/routes/console.py)),
 normalized by the pure `normalize_schedule_view`
-([`../../server/moxie_server/fleet.py`](../../server/moxie_server/fleet.py)) into one row per served
+([`fleet/cards.py`](../../server/moxie_server/fleet/cards.py)) into one row per served
 entry — clock time, name, and the `line` above it in muted text — plus a footer carrying the
 constraints the payload reports: the bedtime window and how many slots it cost, each pinned parent
 request, and *"no telemetry module signal — finish/abandon comes from the robot's reports"* whenever
@@ -516,7 +516,7 @@ never re-summarizes, or re-pays for, the same turns) and merges it in.
 ### What a parent can do
 
 The supervisor's localhost status server serves the memory
-([`moxie_runtime.py`](../../mqtt/supervisor/moxie_runtime.py), the memory region):
+([`moxie_runtime.py`](../../mqtt/supervisor/moxie_runtime/), the memory region):
 
 | Endpoint | Effect |
 |---|---|
@@ -529,7 +529,7 @@ The supervisor's localhost status server serves the memory
 Erasure is never policy-gated — a parent must always be able to delete — and neither is the
 edit: fixing a nearly-right line must work on a `NO_DATA` robot too, where the only
 alternative is deleting it. The parent console drives all of it from the
-🧠 **What Moxie remembers** card ([`server/static/app.js`](../../server/static/app.js)
+🧠 **What Moxie remembers** card ([`server/static/js/memory.js`](../../server/static/js/memory.js)
 `refreshMemory` → `normalize_memory` → `GET`/`DELETE /local/robots/{id}/memory[/{namespace}[/{item}]]`
 and `POST …/memory/{namespace}/{item}`; the parent-facing guide is
 [`what-moxie-remembers.md`](../guides/what-moxie-remembers.md)).

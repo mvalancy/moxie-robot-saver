@@ -1,7 +1,5 @@
-/* Voice-loop tests — TTS out (Piper) and STT in (faster-whisper), plus the
- * bridge's public surface. Exercises the REAL services over HTTP and asserts the
- * robot's real wire shapes. Skips gracefully (exit 0 with a notice) when a
- * service isn't running, so CI without the voice stack still passes.
+/* Voice-loop tests — TTS out (Piper), STT in (faster-whisper), and the bridge's public
+ * surface, against the REAL services' wire shapes. Skips (exit 0) a service not running.
  *
  * Run: node sim/test_voice.mjs   [TTS_BASE=http://127.0.0.1:8081] [STT_BASE=...]
  */

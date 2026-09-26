@@ -1,26 +1,20 @@
 """
 🎨 Moxie's look — face/appearance customization (openmoxie-feature-audit.md §4.1 ADOPT #9).
 
-The child picks layers; the layers ride down inside `child_pii` as
-`ChildDecrypted.face_options` (a *clear* repeated-string field, Cloud.proto:166); and the
-pushed `child_pii.id` is re-derived from the chosen layers so the robot cannot composite
-from a stale cached texture. Four things are worth a test and they are all here:
+Chosen layers ride down in `child_pii` as `ChildDecrypted.face_options` (Cloud.proto:166),
+and `child_pii.id` is re-derived from them so the robot cannot composite from a stale
+texture. Tested here:
 
-  * **the catalog is honest** — every slot and every option traces to one of exactly two
-    cited sources: a line in `docs/` (the hex colour enums), or the asset-id list ingested
-    as data from OpenMoxie (MIT) into `moxie_sdk/face_assets.json` under the citation that
-    file carries. This file re-asserts both halves from second, independent copies — the
-    enums id-for-id, the ingest by prefix map, per-slot counts and a fingerprint — so an
-    id that appears without provenance fails the build. The single highest-value test in
-    the file is still `test_the_catalog_invents_nothing`;
-  * **validate / sanitize** — what a parent may send, and what must be refused;
-  * **the render** — `face_options` + the cache-buster in the built `RobotCloudConfig`,
-    and the byte-for-byte no-change when no look is chosen;
-  * **the runtime seam** — a face edit re-pushes, a fleet look layers under a per-robot
-    one, and the snapshot shows the texture key (no broker: `helpers_runtime.FakeClient`).
+  * the catalog is honest — every option traces to a cited docs enum (hex colours) or to
+    the OpenMoxie (MIT) ingest in `face_assets.json`, re-asserted from independent copies
+    (`test_the_catalog_invents_nothing` is the key test);
+  * validate / sanitize — what a parent may send and what is refused;
+  * the render — `face_options` + cache-buster in `RobotCloudConfig`, byte-identical when
+    no look is chosen;
+  * the runtime seam — a face edit re-pushes, fleet look layers under per-robot, and the
+    snapshot shows the texture key (`helpers_runtime.FakeClient`).
 
-Nothing here has been observed on a physical robot; see `faces.py` for exactly which
-parts are cited and which two are flagged assumptions.
+Not observed on a physical robot; `faces.py` flags its two assumptions.
 """
 import hashlib
 import json
@@ -32,7 +26,6 @@ from collections import Counter
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk import faces                                      # noqa: E402
 from moxie_sdk.cloud_config import (build_robot_cloud_config,    # noqa: E402
@@ -65,12 +58,9 @@ CITED_FACE_COLORS = {"blue": "#BBCFE1", "yellow": "#F0F055", "green": "#9BDB9B",
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 # ---- the ingested half -------------------------------------------------------------- #
-# `mqtt/moxie_sdk/face_assets.json` transcribes OpenMoxie's `MOXIE_CUSTOMIZATIONS` list
-# (MIT, https://github.com/jbeghtol/openmoxie, `site/hive/content/data.py`, commit
-# c8c2d380, ingested 2026-09-02) — the ids only; the mapping and the labels are ours.
-# Everything below is a *second, independent* statement of what that ingest produced, so
-# an id quietly added to, dropped from or moved between slots fails here rather than
-# redefining "what we ingested". None of it has been rendered by a physical robot.
+# `face_assets.json` transcribes the ids of OpenMoxie's `MOXIE_CUSTOMIZATIONS` (MIT,
+# `site/hive/content/data.py` @ c8c2d380); mapping and labels are ours. Below is an
+# independent restatement, so an id added, dropped or moved between slots fails here.
 MANIFEST_ENTRIES = 60
 
 #: Each upstream id is `MX_<nnn>_<Group>_<Detail>`; the group prefix names the layer, and
@@ -104,17 +94,12 @@ def test_the_slots_are_the_fourteen_our_docs_name():
 
 
 def test_the_catalog_invents_nothing():
-    """**The guard that matters.** Every option in the catalog must trace to one of
-    exactly two sources, and nothing else may appear:
-
-      * `origin: "recovered-enum"` — the eye/face colour enums our own corpus lists *with
-        hex* (`docs/features/robot-lifecycle.md`:280-283). Those are re-asserted below,
-        id-for-id and hex-for-hex, from a second copy written out in this file.
-      * `origin: "openmoxie-manifest"` — the 60 asset ids ingested as data from
-        OpenMoxie (MIT), cited in `face_assets.json`'s own `source` block. Those are
-        pinned by shape, by per-slot count, and by a fingerprint over `(slot, id)` pairs.
-
-    An id that is neither — a plausible-looking one somebody typed in — fails here."""
+    """The guard that matters: every option is either
+      * `origin: "recovered-enum"` — the colour enums with hex from
+        `docs/features/robot-lifecycle.md`:280-283, re-asserted id-for-id and hex-for-hex; or
+      * `origin: "openmoxie-manifest"` — the 60 ingested ids, pinned by shape, per-slot
+        count and a fingerprint over `(slot, id)`.
+    Anything else (a plausible id somebody typed) fails."""
     for slot in faces.FACE_SLOTS:
         for opt in slot["options"]:
             assert opt["origin"] in faces.OPTION_ORIGINS, (slot["id"], opt)
@@ -283,11 +268,9 @@ def test_validate_rejects_an_option_a_cited_slot_does_not_offer():
 
 
 def test_a_slot_with_no_options_at_all_still_takes_an_asset_label():
-    """Three slots survive the widening with nothing in them — `Stickers`, `Extras`,
-    `Misc`; neither our corpus nor the ingested manifest lists an id for any of them. We
-    cannot check a value against a catalog we do not have, so there we check only that it
-    is a plausible asset name. Never an invented id — the parent supplies it. (The
-    placeholder below is deliberately not a real Moxie asset name.)"""
+    """`Stickers`, `Extras`, `Misc` have no known ids, so only plausibility is checked —
+    the parent supplies the value; nothing is invented. (The placeholder is not a real
+    asset name.)"""
     assert faces.validate_face({"stickers": "Whatever_The_Parent_Typed"}) == {
         "stickers": "Whatever_The_Parent_Typed"}
     with pytest.raises(ValueError) as e:
@@ -390,14 +373,10 @@ def test_the_same_look_always_yields_the_same_texture_key():
 
 
 def test_the_texture_key_is_pinned_to_a_recorded_value():
-    """Determinism is only worth something if it is *stable across releases*: the whole
-    point is that a household that did not change its look does not get its child id
-    churned by an SDK upgrade. So the algorithm is pinned to values recorded from the
-    catalog as it shipped — a change to `FACE_CACHE_NAMESPACE`, to the `\x1f` join, or
-    to a wire spelling moves these and has to be a deliberate, migrated decision.
-
-    Both spellings are covered: the recovered-enum join, and a mixed look carrying an
-    ingested manifest id verbatim."""
+    """Stable across releases, so an SDK upgrade never churns an unchanged household's
+    child id: pinned to recorded values, so changing `FACE_CACHE_NAMESPACE`, the `\x1f`
+    join or a wire spelling must be a deliberate, migrated decision. Covers a recovered-enum
+    look and a mixed look with an ingested id."""
     assert faces.face_child_id(["EyeColor_teal", "FaceColor_pink"], "Sam") == (
         "a6f3609a-0e20-512c-ae72-a16153adf140")
     mixed = faces.face_options_list({"eye_color": "teal",
@@ -609,7 +588,7 @@ def test_status_snapshot_publishes_the_catalog_and_the_texture_key(tmp_path):
 
 
 def test_the_console_normalizer_carries_the_catalog_and_the_key(tmp_path):
-    """`server/moxie_server/fleet.py` is the console's half of the seam: it must pass the
+    """`server/moxie_server/fleet/` is the console's half of the seam: it must pass the
     catalog through without inventing rows, and survive a supervisor that has none."""
     sys.path.insert(0, os.path.join(REPO, "server"))
     from moxie_server.fleet import normalize_fleet

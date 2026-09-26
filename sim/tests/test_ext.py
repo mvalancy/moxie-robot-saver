@@ -1,22 +1,19 @@
 """T1–T18 — behaviour, determinism and integration for sandboxed content extensions.
 
-`test_ext_escapes.py` answers *"can a stranger's pack hurt this appliance?"*. This file
-answers the other two questions: *does the language actually express what content authors
-have written?* (T1–T7, against the six hand-ported upstream hooks) and *does a broken one
-leave the child with a working robot?* (T8–T18).
+`test_ext_escapes.py` asks "can a stranger's pack hurt this appliance?". This file asks
+whether the language expresses what authors wrote (T1–T7, the hand-ported upstream hooks)
+and whether a broken extension still leaves the child a working robot (T8–T18).
 
-Design: `docs/architecture/backlog/sandboxed-extensions.md`. Prior art: OpenMoxie
-(MIT, © Justin Beghtol) — cited, hand-ported, never copied; see `ATTRIBUTION.md`.
+Design: `docs/architecture/backlog/sandboxed-extensions.md`. Prior art: OpenMoxie (MIT,
+© Justin Beghtol) — cited, hand-ported, never copied; see `ATTRIBUTION.md`.
 """
 import json
 import os
 import re
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.content import ext as E                              # noqa: E402
 from moxie_sdk.content import packs as P                            # noqa: E402
@@ -55,22 +52,12 @@ def run_row(row, *, allow_p1=False):
 # T1–T6 — the six §8 hooks reproduce their goldens byte for byte
 # --------------------------------------------------------------------------- #
 
-#: What is still missing, per row. Named precisely, because a stale `xfail` reason is a
-#: lie the suite tells every time it runs.
+#: What each remaining xfail row still lacks (a stale reason is a lie the suite repeats):
 #:
 #: * **G5** needs `brain` — one model call per turn from inside a pack, with the budget
 #:   brief §5.1 requires before a pack may spend money and latency inside the 6 s turn.
 #:
-#: Two capabilities have left this dict, and the pattern both times was the same: the
-#: capability was not missing *grammar*, it was missing a **host** — somewhere for its
-#: effect to go.
-#:
-#: * `act` (2026-09-04) — brief S5. `G2`/`G3` are plain tests below.
-#: * `subscribe` (2026-09-05) — `Volley.subscriptions` was assigned and read by nothing.
-#:   `content_app.subscriptions_of` now bounds it and puts it on `Reply.subscribe`, and
-#:   `moxie_runtime._publish_chat` **merges** it into the supervisor's own vision
-#:   subscription (never over it) before it reaches
-#:   `RemoteChatAction.EventSubscription.active[]`. `G6` is a plain test below.
+#: `act` (G2/G3) and `subscribe` (G6) left this dict once their effects got a host.
 P1_REASON = {
     "G5": "needs the `brain` capability and its one-call-per-turn budget (brief §5.1)",
 }
@@ -78,18 +65,12 @@ P1_REASON = {
 
 @pytest.mark.parametrize("name", ["G1", "G4"])
 def test_t1_t6_conformance_p0(name):
-    """T1/T4 — the two hooks P0 can grant reproduce their effect list byte for byte.
+    """T1/T4 — the two P0-grantable hooks reproduce their effect list byte for byte.
 
-    G1 is `MoxieTime.get_response` — the clock, a `%`, a conditional and a formatted
-    sentence. G4 is `MoxieTimers`' wake hook — `session.is_empty`, an `input_vars` read,
-    a `forget`, per-turn scratch and a markup line that repeats a chime three times with
-    `<break time="1s"/>`.
-
-    G4 also records the one thing we deliberately did **not** port: upstream's
-    `time.sleep(0.5)`. The corpus-correct replacement was in the same function all along
-    (§5.3) — `<break>` is honoured by the *robot*, on its playback clock, where it is
-    free; a sleep spends the turn's 6 seconds to do nothing and is the simplest
-    denial-of-service in any sandbox.
+    G1 is `MoxieTime.get_response` (clock, `%`, conditional, formatted sentence); G4 is
+    `MoxieTimers`' wake hook (`session.is_empty`, `input_vars`, `forget`, scratch, a chime
+    repeated with `<break time="1s"/>`). Upstream's `time.sleep(0.5)` is deliberately not
+    ported: `<break>` is free on the robot's playback clock, a sleep burns the turn (§5.3).
     """
     row = ROWS[name]
     r = run_row(row)
@@ -100,14 +81,8 @@ def test_t1_t6_conformance_p0(name):
 
 @pytest.mark.parametrize("name", ["G2", "G3", "G5", "G6"])
 def test_t1_t6_conformance_p1_grammar_is_already_valid(name):
-    """T2/T3/T5/T6, the half that could pass before the wire — **the programs validate**.
-
-    §8's point worth checking early: these four were gated by *capability*, not by
-    expressiveness. Their grammar was accepted by the validator all along, which is why
-    three of them turned green below the moment their effect got a host — G2/G3 when
-    `act` was plumbed, G6 when `subscribe` was — rather than needing to be written that
-    day. Only G5 is still waiting, and only on `brain`.
-    """
+    """T2/T3/T5/T6 — the programs validate. These rows were gated by capability, not
+    expressiveness; only G5 still waits (on `brain`)."""
     row = ROWS[name]
     assert E.validate(row["ast"], allow_p1=True) == []
     assert row["expected_effects"], "the golden must exist now, not later"
@@ -115,18 +90,12 @@ def test_t1_t6_conformance_p1_grammar_is_already_valid(name):
 
 @pytest.mark.parametrize("name", ["G2", "G3"])
 def test_t1_t6_conformance_act(name):
-    """T2/T3 — the two `act` hooks reproduce their effect list byte for byte. ✅ 2026-09-04.
+    """T2/T3 — the two `act` hooks reproduce their effect list byte for byte, now that
+    `wire.encode_action` carries `function_id`/`function_args` and
+    `content_app.execution_actions_of` turns an effect into an `execute` Action.
 
-    These were `xfail(strict=True)` from the day the evaluator landed, on brief S5: *"the
-    single most important scoping fact in this brief"* — `volley.execution_actions` was
-    not on the wire, so an `act` capability could not do anything and was refused at load
-    rather than shipped as a lie. Two changes closed it: `wire.encode_action` learned to
-    carry `function_id`/`function_args` (#119), and `content_app.execution_actions_of`
-    turns an effect into an `execute` `Action`.
-
-    G2 is `MoxieTimers` set — the §4.1 worked example verbatim: a `remember`, an
-    `act.eb_timer_request` with two `function_args`, and a sentence. G3 is its
-    status/cancel sibling, three `let`s deep into an h/m/s line.
+    G2 is `MoxieTimers` set (the §4.1 example: `remember`, `act.eb_timer_request` with two
+    args, a sentence); G3 is its status/cancel sibling, three `let`s deep.
     """
     row = ROWS[name]
     r = run_row(row)
@@ -136,21 +105,10 @@ def test_t1_t6_conformance_act(name):
 
 
 def test_t6_conformance_subscribe():
-    """T6 — `MoxieGo`, whole. ✅ 2026-09-05, and the third of the four rows to flip.
-
-    This was `xfail(strict=True)` for one reason only: the pack **declares** `subscribe`,
-    declared-equals-used is a load condition (§5, X10), and `subscribe` was refused at
-    load because `Volley.subscriptions` was assigned by `update_subscriptions` and read by
-    **nothing**. The grammar was accepted all along (the test above proves that), so the
-    fix was a host, not a language: `content_app.subscriptions_of` →`Reply.subscribe` →
-    `moxie_runtime._publish_chat`'s merge → `EventSubscription.active[]`.
-
-    The golden did **not** move, and that is worth stating rather than assuming: the
-    facts in this row make `speech == "eb-qr-event"` with a `GO`-prefixed value, so the
-    rule that matches is the *middle* one — a `say` and a `handled`, no `subscribe`. The
-    two re-arming rules that do subscribe are the first and third. `test_ext_subscribe.py`
-    is where the effect itself is driven; the generator was re-run and
-    `ext_conformance.json` came back byte-identical.
+    """T6 — `MoxieGo`, whole. It declares `subscribe`, which now has a host
+    (`subscriptions_of` → `Reply.subscribe` → the runtime's merge). The golden is unchanged:
+    these facts match the MIDDLE rule (`say` + `handled`, no `subscribe`); the subscribing
+    rules are driven in `test_ext_subscribe.py`.
     """
     row = ROWS["G6"]
     r = run_row(row)
@@ -165,12 +123,8 @@ def test_t6_conformance_subscribe():
 
 @pytest.mark.parametrize("name", ["G5"])
 def test_t1_t6_conformance_still_p1(name, request):
-    """T5 — still `xfail`, and the reason names **only** what is actually missing.
-
-    `strict=True` on purpose: the day someone makes one of these grantable and forgets to
-    remove the marker, an XPASS fails the suite and says so. That is exactly how G2/G3
-    were caught the day `act` landed, and how G6 was caught the day `subscribe` did.
-    """
+    """T5 — still `xfail(strict=True)`: an XPASS the day one becomes grantable fails the
+    suite and says so."""
     request.node.add_marker(pytest.mark.xfail(strict=True, reason=P1_REASON[name]))
     row = ROWS[name]
     r = run_row(row)
@@ -196,13 +150,9 @@ def test_the_conformance_goldens_are_not_upstream_code():
 
 @pytest.mark.parametrize("name", ["G1", "G3"])
 def test_t7_the_same_inputs_give_byte_identical_effects(name):
-    """T7 — 100 runs at a fixed injected clock and seed, one golden.
-
-    Same AST + same fact base + same seed → byte-identical effect list (§6.1). It holds
-    because there is no ambient clock, no ambient entropy, `keys` sorts, `sort` is a total
-    order over scalars, and `format` requires an explicit spec — so no language's default
-    float repr ever reaches output. That last one is also what will make the P1 JavaScript
-    port checkable against this very file.
+    """T7 — 100 runs at a fixed injected clock and seed produce one golden (§6.1): no
+    ambient clock or entropy, `keys` sorts, `sort` is total, and `format` needs an explicit
+    spec, so no float repr leaks — which also makes a JS port checkable against this file.
     """
     row = ROWS[name]
     first = json.dumps(run_row(row).effects, sort_keys=True)
@@ -248,13 +198,9 @@ def app_with(module_json, chat=None, **kw):
 
 
 def test_t8_a_breach_does_not_end_the_turn():
-    """T8 — Moxie keeps talking. That is the requirement, and it dictates the whole
-    failure design (§6.4).
-
-    A poisoned `on: global` extension behaves like a matched global with no handler: it
-    **falls through to the conversation** (S1), and the child gets a normal answer. A
-    poisoned `on: turn.before` is skipped and the model runs. No exception escapes
-    `respond()`, and nothing the child hears mentions a failure.
+    """T8 — Moxie keeps talking (§6.4). A poisoned `on: global` falls through to the
+    conversation like a handler-less global (S1); a poisoned `on: turn.before` is skipped.
+    Nothing escapes `respond()` and the child hears no mention of a failure.
     """
     app = app_with(MODULE)
     reply = app.respond(Turn(robot=robot(), speech="tell me a story"))
@@ -286,13 +232,9 @@ def test_t8_a_failing_extension_writes_nothing(tmp_path):
 
 
 def test_t9_three_breaches_quarantine_for_the_session(tmp_path, capsys):
-    """T9 — a broken extension may cost the child one turn's latency; it may not cost
-    every turn's.
-
-    After `MOXIE_EXT_MAX_BREACHES` breaches the extension is not evaluated at all: the
-    4th turn never reaches the evaluator (asserted by the step counter never advancing),
-    and the parent gets **one** `ext_events` entry, not four.
-    """
+    """T9 — a broken extension may cost one turn's latency, not every turn's: after
+    `MOXIE_EXT_MAX_BREACHES` it is not evaluated at all (step counter frozen), and the
+    parent gets ONE `ext_events` entry."""
     store = MemoryStore(JsonStore(str(tmp_path)))
     app = ContentApp(load_modules(MODULE), lambda m: "the model answered",
                      default_module_id="CHAT", memory=store, safety_classifier=False)
@@ -342,12 +284,9 @@ def ext_item(caps=("say",), key="Greeter", version=1, rules=None):
 
 
 def test_t10_a_pack_round_trips_with_an_extension_inside():
-    """T10 — export → parse → review → apply → the extension is live on the next turn.
-
-    No new storage and no new concept: an extension is a field on an item, so it rides the
-    three existing pack collections, the existing 2×2 review and the existing overlay
-    (§7.1, §7.5). The exported bytes re-import to the same digest.
-    """
+    """T10 — export → parse → review → apply → live next turn. An extension is a field on
+    an item, so it rides the existing pack collections, review and overlay (§7.1, §7.5);
+    the exported bytes re-import to the same digest."""
     module = load_modules({"globals": [ext_item()["data"]]})
     items = P.shipped_items({"globals": [ext_item()["data"]]})
     pack = P.export_pack(items, name="Greeter pack", pack_id="greet-1")
@@ -383,13 +322,9 @@ def test_t10_the_extension_survives_the_field_allowlist_unchanged():
 
 
 def test_t11_a_capability_escalation_defaults_unticked():
-    """T11 — §7.3's five-row matrix, including the two-sentence case.
-
-    The comparison is over the **capability set**, independent of `source_version` and
-    independent of `local_rev`. So a pack cannot escalate privileges by bumping a version
-    number, and it cannot escalate them quietly on a machine where the parent never edited
-    anything. A *shrinking* set is not a conflict — less is always safe.
-    """
+    """T11 — §7.3's five-row matrix. Compared over the capability SET, independent of
+    `source_version`/`local_rev`, so bumping a version cannot escalate privileges; a
+    shrinking set is never a conflict."""
     base = ext_item(caps=("say",))
     installed_data = P.normalize_data("global", base["data"])
     rev = P.local_rev({"kind": "global", "data": installed_data})
@@ -451,13 +386,9 @@ def test_t11_a_capability_escalation_defaults_unticked():
 
 
 def test_t12_the_digest_covers_the_extension():
-    """T12 — flip one operator in a signed-off pack and the review ticks nothing.
-
-    No new mechanism: `pack_digest` already hashes the whole body minus
-    `digest`/`signatures`, and items are keyed `kind:key` rather than indexed so a re-post
-    between review and import cannot swap what a parent ticked (P2, P3). An extension is
-    inside an item's `data`, so this is the payoff for the flat-`items[]` decision.
-    """
+    """T12 — flip one operator in a signed-off pack and the review ticks nothing:
+    `pack_digest` hashes the body and items are keyed `kind:key`, so nothing can be swapped
+    between review and import (P2, P3)."""
     items = P.shipped_items({"globals": [ext_item(caps=("say", "clock"), rules=[
         {"do": [{"say": {"concat": ["It is ", {"str": [{"clock.ms": []}]}]}}]}])["data"]]})
     pack = P.export_pack(items, name="Clock", pack_id="clock-1")
@@ -476,16 +407,8 @@ def test_t12_the_digest_covers_the_extension():
 # --------------------------------------------------------------------------- #
 
 def test_t13_explain_produces_english_and_leaks_no_json():
-    """T13 — one sentence per rule, and nothing that reads like a program.
-
-    `explain()` matters as much as `evaluate()`: a parent who is not a programmer has to be
-    able to review a pack that contains one. The idiom is already proven in this codebase —
-    the 📅 card's *"why this activity today"* line is the same trick over the recommender's
-    inputs.
-
-    The assertion is deliberately harsh: no brace, no `"var"`, no `ext_format`, and **no
-    capability identifier**. A sentence containing `memory.write` would be a permissions
-    string wearing a sentence's clothes.
+    """T13 — `explain()` gives one sentence per rule and nothing that reads like a program:
+    no brace, no `"var"`, no `ext_format`, no capability identifier.
     """
     for name, row in ROWS.items():
         lines = E.explain(row["ast"])
@@ -535,14 +458,8 @@ def test_t13_the_grant_list_is_what_the_program_can_do():
 # --------------------------------------------------------------------------- #
 
 def test_t14_no_data_policy_drops_the_write_and_the_note(tmp_path, capsys):
-    """T14 — under `LoggingPolicy.NO_DATA` a `remember` writes nothing, and the extension
-    **still speaks**.
-
-    The drop happens *at the store* (M6), not at the caller, which is the property that
-    makes the privacy gate worth having: a new write path cannot forget to check it. The
-    extension is not told it failed, and does not need to be — speaking is the part the
-    child experiences.
-    """
+    """T14 — under `LoggingPolicy.NO_DATA` a `remember` writes nothing (dropped at the
+    store, M6, so no write path can forget the gate) and the extension still speaks."""
     from moxie_sdk.cloud_config import LoggingPolicy
     store = MemoryStore(JsonStore(str(tmp_path)),
                         policy=lambda device_id: LoggingPolicy.NO_DATA)
@@ -586,13 +503,8 @@ def test_t14_a_note_never_reaches_the_child():
 # --------------------------------------------------------------------------- #
 
 def test_t15_the_allowlist_pin_covers_extension():
-    """T15 — `FIELDS["conversation"]` and `FIELDS["global"]` both contain `extension`,
-    pinned against `dataclasses.fields()`.
-
-    That pin (P1) is what makes adding a field that carries a *program* a loud change: the
-    moment `extension` went into `SPEC` and not into the dataclass, the existing pin test
-    started failing. It is the guard rail we want on this field above all others.
-    """
+    """T15 — `FIELDS["conversation"]`/`["global"]` contain `extension`, pinned against
+    `dataclasses.fields()` (P1) so a field carrying a program is a loud change."""
     assert "extension" in P.FIELDS["conversation"]
     assert "extension" in P.FIELDS["global"]
     assert "extension" not in P.FIELDS["schedule"], \
@@ -604,13 +516,9 @@ def test_t15_the_allowlist_pin_covers_extension():
 
 
 def test_t16_the_extension_budget_is_inside_the_turn_budget(monkeypatch):
-    """T16 — `MOXIE_EXT_BUDGET_S < MOXIE_BRAIN_BUDGET_S` is asserted at import, and a
-    configuration that violates it fails startup with a sentence a person can act on.
-
-    An extension gets a *slice* of a child's patience, not a claim on it: 0.25 s of a 6 s
-    turn, or 8 % when both hooks run. A deployment that inverts that has written a
-    configuration in which an extension can eat the whole turn, and it should be told at
-    boot rather than at 3 a.m. with a silent robot.
+    """T16 — `MOXIE_EXT_BUDGET_S < MOXIE_BRAIN_BUDGET_S` is asserted at import; an
+    inverted configuration fails startup with an actionable sentence rather than a silent
+    robot later.
     """
     import importlib
     import config as cfg
@@ -640,13 +548,9 @@ def test_t16_every_limit_is_an_env_var():
 # --------------------------------------------------------------------------- #
 
 def test_t17_validation_runs_on_load_not_only_on_import():
-    """T17 — an extension written **straight into the store**, bypassing import, is refused
-    at load, logged once, and does not run.
-
-    Two reasons this matters. A store file is editable by anyone with the disk, so import
-    is not the only door. And `reload_content()`'s attribute swap re-validates, so an
-    extension that would fail under a *newer* validator stops loading rather than running
-    under old rules (§7.5).
+    """T17 — an extension written straight into the store (bypassing import) is refused at
+    load, logged once, and does not run; `reload_content()` re-validates so newer rules
+    apply to old extensions (§7.5).
     """
     smuggled = {"ext_format": 1, "capabilities": ["say"], "on": "global",
                 "rules": [{"do": [{"say": {"getattr": [{"var": "speech"}, "x"]}}]}]}
@@ -704,15 +608,8 @@ def shipped_app(chat=None):
 
 
 def test_t18_a_shipped_example_activity_works_end_to_end():
-    """T18 — the G1 clock extension, in `mqtt/content_modules/starter.json`, answers
-    *"what time is it"* through `ContentApp.respond()` with a well-formed sentence and
-    **no model call**.
-
-    This is the whole slice in one assertion: a shipped activity whose behaviour is a
-    *program* rather than a prompt, running the same evaluator a stranger's pack would,
-    under the same capability rules, producing the same effect list the conformance golden
-    records — and costing nothing at the brain.
-    """
+    """T18 — the shipped G1 clock extension (`starter.json`) answers "what time is it"
+    through `ContentApp.respond()` with a well-formed sentence and NO model call."""
     app, calls = shipped_app()
     reply = app.respond(Turn(robot=robot(), speech="hey Moxie, what time is it?"))
     assert reply.text.startswith("The time is "), reply
@@ -723,14 +620,9 @@ def test_t18_a_shipped_example_activity_works_end_to_end():
 
 
 def test_t18_an_imported_lookalike_does_not_inherit_the_shipped_grants():
-    """T18's security half, and the reason the shipped grant is anchored to the program's
-    **bytes** rather than to its key.
-
-    An imported pack that overrides `global:What Time Is It` with a *different* program
-    gets the four default grants, so its `clock` use is refused and the turn falls through.
-    A pack that copies ours byte for byte does get the grant, which is correct: it is our
-    program, unchanged, and `explain()` renders it identically.
-    """
+    """T18's security half — the shipped grant is anchored to the program's BYTES: a pack
+    overriding `global:What Time Is It` with a different program gets default grants
+    (so `clock` is refused and the turn falls through); a byte-identical copy is ours."""
     doc = json.load(open(STARTER))
     defaults = P.shipped_items(doc)
     hostile = json.loads(json.dumps(defaults["global:What Time Is It"]))
@@ -777,15 +669,9 @@ def test_t18_the_shipped_activity_reviews_in_english():
 
 
 def test_a_pack_needing_p1_installs_and_says_it_will_not_run():
-    """The honest counterpart: a pack whose program needs a capability this appliance
-    still cannot honour installs — exactly as one carrying `code` does — and the review
-    says, in words, that it will not run here.
-
-    Saying nothing would repeat the mistake the `code` ⚠️ exists to avoid (P5): a parent
-    who ticks something and gets nothing deserves to be told.
-
-    The example moved from G2 to G5 on 2026-09-04: G2 wanted `act`, and `act` is real now,
-    so it is no longer an example of anything. G5 wants `brain`, which still is not.
+    """A pack needing a capability this appliance cannot honour yet (G5, `brain`) installs,
+    as one carrying `code` does, and the review says in words that it will not run here
+    (P5: a parent who ticks something and gets nothing deserves to be told).
     """
     data = P.normalize_data("conversation", {"module_id": "M", "content_id": "c",
                                              "prompt": "hi",
@@ -797,14 +683,9 @@ def test_a_pack_needing_p1_installs_and_says_it_will_not_run():
 
 
 def test_a_pack_that_acts_now_reviews_as_something_this_appliance_can_run():
-    """G2's review, after the wire landed — and the honest half of what changed.
-
-    The *"…but not yet on this appliance"* line is **gone**, because the appliance can now
-    honour `act`. What has not changed is that it still is not *granted*: `act.<name>` is
-    in neither `DEFAULT_GRANTS` nor `content_app.SHIPPED_EXTRA_GRANTS`, so an imported pack
-    that declares one is refused at load by the grant check and reported to the parent
-    through the `ext_events` ring, exactly as an imported pack declaring `clock` is today.
-    Which grants a parent may hand out is the console card, and that is still P1.
+    """G2's review now omits "…but not yet on this appliance" since `act` is honoured —
+    but `act.<name>` is still not granted to imports, so one declaring it is refused at
+    load and reported via `ext_events`, like `clock` today.
     """
     data = P.normalize_data("global", {"name": "Timer", "pattern": "set a timer",
                                        "extension": ROWS["G2"]["ast"]})
@@ -812,14 +693,8 @@ def test_a_pack_that_acts_now_reviews_as_something_this_appliance_can_run():
     assert not any(w.startswith("…but not yet on this appliance") for w in warnings), warnings
     assert "this activity can ask Moxie to set or cancel a timer" in warnings, warnings
     assert P.validate_item({"kind": "global", "key": "Timer", "data": data}) == []
-    # …and the grant is still a real gate, not a formality.
-    #
-    # UPDATED 2026-09-08: `act.eb_timer_request` IS now in `SHIPPED_EXTRA_GRANTS`, because
-    # the shipped `Timer` global became a program (it had matched and done nothing since it
-    # was written). So the gate is asserted with an act that is still ungranted — `eb_wake`
-    # — which is what this block was always testing: that declaring an act is not the same
-    # as being granted one. `test_ext_escapes.py`'s gate 3 pins the granted set to exactly
-    # `{act.eb_timer_request}`, so a second one cannot arrive quietly.
+    # …and the grant is still a real gate: `eb_wake` is declared but ungranted (only
+    # `act.eb_timer_request` is shipped; `test_ext_escapes.py` pins that set).
     assert "act.eb_timer_request" not in E.DEFAULT_GRANTS
     assert "act.eb_wake" not in E.DEFAULT_GRANTS
     assert "act.eb_wake" not in CA.SHIPPED_EXTRA_GRANTS

@@ -1,27 +1,18 @@
 /* functions/api/_lib/env.js — read and validate the DEMO_* configuration surface.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §5 (the variable table) and §4.2
- * (what the browser is allowed to know). This module is the ONLY place a DEMO_*
- * variable is read, so every default, clamp and required-value rule lives once.
+ * Spec: docs/architecture/backlog/live-sim-demo.md §5 (the variable table) and §4.2 (what
+ * the browser may know). The ONLY place a DEMO_* variable is read.
  *
- * The constraints that bite here, restated because they are easy to break later:
+ *   C1 — THE REPO IS PUBLIC. No key, token, account id or deployment hostname here.
+ *        Secrets arrive as Cloudflare bindings on `context.env`; `wrangler.toml` has no
+ *        `[vars]` block.
+ *   C3 — NOTHING HARD-CODED TO OUR GATEWAY OR DOMAIN. `DEMO_GATEWAY_BASE_URL` has no
+ *        default, so an unconfigured fork degrades instead of calling *our* gateway.
+ *   C5 — FAIL-SAFE DEFAULT. No variables ⇒ `configured: false` ⇒ `gateway_not_configured`,
+ *        so a secretless branch preview is the plain scripted demo.
  *
- *   C1 — THE REPO IS PUBLIC. Nothing in this file may carry a key, a token, an
- *        account id or a deployment hostname. Every secret arrives at runtime as a
- *        Cloudflare environment binding on `context.env` and is read here and nowhere
- *        else. `wrangler.toml` gets no `[vars]` block: it is committed and
- *        world-readable.
- *   C3 — NOTHING HARD-CODED TO OUR GATEWAY OR OUR DOMAIN. `DEMO_GATEWAY_BASE_URL` has
- *        NO default on purpose. `mqtt/config.py` does carry a Python default for the
- *        local stack; copying it here would make an unconfigured fork silently call
- *        *our* gateway. Unset means degraded, never "guess ours".
- *   C5 — FAIL-SAFE DEFAULT. With no variables set at all, `configured` is false and the
- *        mode is `gateway_not_configured`. A branch preview with no secrets is therefore
- *        automatically the plain scripted demo.
- *
- * Structural guard against C1: `baseUrl`, `apiKey` and `ticketSecret` are defined
- * NON-ENUMERABLE on the returned config, so `JSON.stringify(cfg)` — the shape of every
- * accidental leak — cannot contain them. `sim/test_mode.mjs` asserts that.
+ * Credentials are defined NON-ENUMERABLE on the returned config, so `JSON.stringify(cfg)`
+ * — the shape of every accidental leak — cannot contain them (`sim/test_mode.mjs`).
  */
 
 /** §5's table, as code. A value absent from here has no default and is required. */
@@ -33,41 +24,24 @@ export const DEFAULTS = Object.freeze({
   DEMO_MAX_TOKENS: 160,
   DEMO_MAX_INPUT_CHARS: 500,
   DEMO_MAX_TTS_CHARS: 300,
-  // 4000, raised with the turn count above. THE BYTE CAP IS THE REAL BOUND — `hmac.js`
-  // drops oldest-first until the history fits, so leaving this at 1500 while raising the
-  // turn count to 12 would have changed nothing: twelve turns of a real conversation do
-  // not fit in 1500 characters and the extra eight would have been dropped on every
-  // request. `maxJsonBodyBytes` is derived from this (`limits.js`), so the accepted body
-  // grows to ~17.6 KB with it, which is still far below anything worth refusing.
+  // The byte cap is the real history bound: `hmac.js` drops oldest-first until it fits,
+  // so it must be large enough for DEMO_MAX_HISTORY_TURNS. `body.js::maxJsonBodyBytes`
+  // derives the accepted body size from it.
   DEMO_MAX_CONTEXT_CHARS: 4000,
-  // 12, not 4. Four turns is two exchanges: she forgot the beginning of any real
-  // conversation, which is the single most character-breaking thing a companion can do.
-  // 12 is what the robot path has always used (`mqtt/moxie_sdk/apps/llm_app.py` max_history),
-  // and the byte ceiling below — not this count — is what actually bounds the prompt.
+  // Matches the robot path (`mqtt/moxie_sdk/apps/llm_app.py` max_history); the byte cap
+  // above, not this count, bounds the prompt.
   DEMO_MAX_HISTORY_TURNS: 12,
-  // Repetition pressure, in OpenAI's chat-completions vocabulary. Both default ON and
-  // MODEST: a companion for a child SHOULD repeat some things — her name, a reassurance,
-  // a catchphrase — so these are sized to break a degenerate affirmation loop rather than
-  // to force novelty. `chat.js` drops them automatically and permanently if the gateway
-  // rejects them, so a backend that does not know these fields costs one extra call once
-  // and never a degraded page. Set either to 0 to send it not at all.
+  // Repetition pressure (OpenAI vocabulary). Modest: sized to break an affirmation loop,
+  // not to forbid a catchphrase. `chat.js` drops them permanently if the gateway rejects
+  // them. 0 = not sent.
   DEMO_FREQUENCY_PENALTY: 0.4,
   DEMO_PRESENCE_PENALTY: 0.3,
-  // The per-turn shape cue (`_lib/turnshape.js`). ON, because the defect it addresses is
-  // the one the owner reported and it costs NOTHING — no extra call, no extra token beyond
-  // one short sentence, and no new failure mode: the cue is a server-built system message
-  // and a model that ignores it produces exactly the turn it would have produced anyway.
-  // `0` removes the sentence entirely and the body is byte-identical to the pre-2026-09-06
-  // one, which is what makes the two arms of the measurement in §4.10 comparable.
+  // The per-turn shape cue (`_lib/turnshape.js`): one server-built sentence, no extra
+  // call. `0` removes it and the upstream body is byte-identical to one without it (§4.10).
   DEMO_TURN_SHAPE: "1",
-  // THE LAST OF THE REPETITION LEVERS, and the only one that costs money: when a reply
-  // comes back WORD FOR WORD the same as something Moxie already said in this same
-  // conversation, `chat.js` asks the gateway once more before answering. Default ON,
-  // because the defect it closes is the one the owner actually reported and the two free
-  // levers above did not finish it off. Set to 0 to switch it off entirely: a deployment
-  // on a tight `DEMO_UNIT_BUDGET_HOUR` may prefer the duplicate to the second completion,
-  // and that is a legitimate choice rather than a broken one. See `chat.js` step 8b for
-  // what a re-rolled turn costs and what it is bounded by.
+  // The one repetition lever that SPENDS: a reply identical to an earlier one in this
+  // conversation is asked for once more (`chat.js` step 8b). 0 disables it for a
+  // deployment on a tight unit budget.
   DEMO_REROLL: "1",
   DEMO_MAX_AUDIO_BYTES: 500000,
   DEMO_MIN_AUDIO_BYTES: 2000,
@@ -98,24 +72,14 @@ export const DEFAULTS = Object.freeze({
   DEMO_TURNSTILE_TIMEOUT_MS: 2000,
 });
 
-/** The two optional Cloudflare Access service-token variables.
+/** The optional Cloudflare Access service-token pair. A gateway behind an Access-protected
+ *  tunnel answers an unauthenticated `fetch` with an HTML login page at 200 — which looks
+ *  exactly like a broken gateway — so when configured, both halves are sent upstream as
+ *  `CF-Access-Client-Id` / `CF-Access-Client-Secret`.
  *
- *  WHY THEY EXIST. The owner's gateway is expected to sit behind a **Cloudflare Tunnel**.
- *  A plain public tunnel hostname needs nothing extra — it is just a base URL. But a
- *  tunnel protected by **Cloudflare Access** answers an unauthenticated server-side
- *  `fetch` with an **HTML login page**, with a 200 status. That is the worst possible
- *  failure shape: it looks exactly like a broken gateway, and from a bare 502 it is
- *  maddening to diagnose. So a service token can be configured, and when it is, both
- *  routes send it on every upstream call as `CF-Access-Client-Id` /
- *  `CF-Access-Client-Secret`.
- *
- *  BOTH OR NEITHER. Exactly one of the pair is a MISCONFIGURATION, not a partial
- *  credential: calling upstream half-credentialled would produce that same HTML login
- *  page while looking configured. `readConfig` therefore reports it in `missing` so every
- *  route answers `gateway_not_configured` and makes no upstream call at all.
- *
- *  The secret half is a **secret** binding like the API key, and is non-enumerable on the
- *  returned config for the same reason (see the header). */
+ *  BOTH OR NEITHER: half a pair would produce that same login page while looking
+ *  configured, so `readConfig` reports it in `missing` (⇒ `gateway_not_configured`, no
+ *  upstream call). Both halves are non-enumerable credentials. */
 export const ACCESS_VARS = Object.freeze([
   "DEMO_GATEWAY_ACCESS_CLIENT_ID",
   "DEMO_GATEWAY_ACCESS_CLIENT_SECRET",
@@ -128,33 +92,15 @@ export const REQUIRED_FOR_LIVE = Object.freeze([
   "DEMO_CHAT_MODEL",
 ]);
 
-/** The Cloudflare Turnstile pair, and the third variable that tunes it.
+/** The Cloudflare Turnstile pair. The SECRET verifies a token; the SITEKEY (public, a
+ *  plain variable) lets the browser mint one. BOTH OR NEITHER: a secret alone refuses every
+ *  visitor, a sitekey alone renders a widget nothing checks — so half a pair goes in
+ *  `missing`, same rule as `ACCESS_VARS`.
  *
- *  WHY IT IS A PAIR AND WHY HALF IS A MISCONFIGURATION. `DEMO_TURNSTILE_SECRET` is what
- *  the Function verifies a token WITH; `DEMO_TURNSTILE_SITEKEY` is what the BROWSER needs
- *  to mint one at all (it is a public value — it ships to every visitor either way, which
- *  is why it is a plain variable and not a secret). Configure only the secret and every
- *  visitor is refused, because no browser can produce a token; configure only the sitekey
- *  and the page renders a widget whose token nothing checks — a bot control that is
- *  theatre. Neither half is a partial control, so `readConfig` reports the missing one in
- *  `missing` and every route answers `gateway_not_configured` and spends nothing. That is
- *  exactly the rule `ACCESS_VARS` above already establishes for a service token, applied
- *  to the same class of mistake.
- *
- *  ENFORCEMENT IS OFF WITH NEITHER SET, AND THAT IS THE DEFAULT ON PURPOSE (C5). A branch
- *  preview has neither, and it MUST NOT have them: Turnstile authorizes a hostname and
- *  all of its subdomains, and the platform-assigned PREVIEW hostname is not on this
- *  widget's domain list — so a real challenge on a preview URL could never pass, and a
- *  preview that enforced would be a preview nobody can use. (Which preview host that is
- *  is deployment CONFIG and is deliberately not named in this tree, C3; `docs/guides/
- *  deploy-cloudflare.md` is where the deployment's own names live.) A self-hosted fork
- *  with no Cloudflare account is the same case with the same answer.
- *
- *  `DEMO_TURNSTILE_HOSTS` is deliberately NOT in this pair: it is optional, and its
- *  default is not a literal but *the hostname of the request being answered*
- *  (`./turnstile.js::hostAllowed` says why at length — chiefly that a default of "this
- *  deployment's own host" can never hand production a `localhost` allowance by omission).
- */
+ *  Neither set ⇒ enforcement OFF, deliberately (C5): a preview's platform hostname is not on
+ *  the widget's domain list, so a real challenge there could never pass. The optional
+ *  `DEMO_TURNSTILE_HOSTS` defaults to the request's own hostname
+ *  (`./turnstile.js::hostAllowed`). */
 export const TURNSTILE_VARS = Object.freeze([
   "DEMO_TURNSTILE_SECRET",
   "DEMO_TURNSTILE_SITEKEY",
@@ -163,22 +109,10 @@ export const TURNSTILE_VARS = Object.freeze([
 /**
  * The `voice` field to send for a model name — `piper-amy` → `amy`.
  *
- * **THE GATEWAY REQUIRES THIS FIELD AND IGNORES ITS VALUE. Omitting it is an HTTP 500.**
- * Transcribed from `mqtt/moxie_sdk/tts.py::voice_for_model` (:80-90), whose docstring says
- * exactly that and cites `docs/guides/litellm-tts-setup.md` ("Live since 2026-09-02"): the
- * MODEL NAME selects the Piper voice, so the field only has to be present and sane.
- *
- * This function exists because of a bug the four-call gateway probe caught. The spec's §5
- * reads `mqtt/config.py`:91-92 as "our gateway encodes the voice in the model id, so empty
- * is correct there" and concludes the field can be omitted. That is a misreading:
- * `MOXIE_TTS_VOICE=""` means "do not set the env var", and `tts.py` then DERIVES the value
- * — it never sends nothing. A `/api/speech` that omitted the field answered 500 on every
- * single call, which would have shipped a hosted demo with a permanently silent voice and
- * an `upstream_down` badge nobody could explain. `sim/tools/probe_demo_gateway.mjs` is
- * what found it, and it is the whole reason that probe exists.
- *
- * A model whose suffix is not a word — `tts-1` → `1` — falls back to OpenAI's own default
- * voice, which is what an OpenAI-shaped endpoint would want anyway.
+ * THE GATEWAY REQUIRES THIS FIELD AND IGNORES ITS VALUE; omitting it is an HTTP 500 (the
+ * model name selects the Piper voice). Transcribed from
+ * `mqtt/moxie_sdk/tts.py::voice_for_model`; found by `sim/tools/probe_demo_gateway.mjs`.
+ * A non-word suffix (`tts-1` → `1`) falls back to OpenAI's default voice.
  */
 export function voiceForModel(model) {
   const tail = String(model || "").split("-").pop().trim();
@@ -188,44 +122,19 @@ export function voiceForModel(model) {
 /** The only audio formats `audio.js` can decode (§5, mirroring mqtt/config.py:101). */
 export const TTS_FORMATS = Object.freeze(["wav", "pcm"]);
 
-/** Every container `functions/api/transcribe.js` knows how to name for an upload. The
- *  ALLOWLIST of which of them this deployment will actually forward is `DEMO_STT_FORMATS`,
- *  and it is much shorter — see the next comment. */
+/** Every container `functions/api/transcribe.js` knows how to name for an upload. Which
+ *  of them this deployment forwards is `DEMO_STT_FORMATS` (below). */
 export const STT_CONTAINERS = Object.freeze(["wav", "webm", "ogg", "mp4", "mp3", "flac"]);
 
 /**
- * The containers the configured gateway is believed to accept at `/v1/audio/transcriptions`.
+ * `DEMO_STT_FORMATS`: the containers the gateway is believed to accept at
+ * `/audio/transcriptions`.
  *
- * ===========================================================================
- * THE DEFAULT IS `wav` ALONE, AND THAT IS A MEASUREMENT, NOT A GUESS.
- *
- * §10 assumption 15 asked whether the gateway accepts webm/Opus — what a browser's
- * `MediaRecorder` actually produces. **It does not.** Probed live on 2026-09-03 through
- * `sim/tools/probe_demo_gateway.mjs`, one utterance (`sim/web/audio/moxie/03e31950df81e786.mp3`,
- * "Hi! I am Moxie. It is nice to meet you.") in four containers against `stt-whisper`:
- *
- *   * 16 kHz mono 16-bit RIFF/WAVE → **200**, word-perfect transcript, 2 582 ms
- *   * 48 kHz mono webm/Opus        → **500**, a 270-byte JSON error
- *   * 48 kHz mono ogg/Opus         → **500**, the same 270-byte error
- *   * 44.1 kHz mono mp4/AAC        → **500**, the same 270-byte error
- *
- * Three different containers and two different codecs failing identically says this is not
- * a container quirk: that deployment decodes PCM and nothing else. It is also why the
- * Python client never hit it — `mqtt/moxie_sdk/stt.py::wav_bytes` has always wrapped the
- * robot's headerless frames in a RIFF container before uploading.
- *
- * WHY AN ALLOWLIST RATHER THAN JUST LETTING IT FAIL. The gateway answers **500**, not a
- * 4xx, so `reasonForUpstreamStatus` maps it to `upstream_down` — a 503 — and `mode.js`
- * degrades the WHOLE PAGE on a 503 (§6.3). Pressing the microphone once would therefore
- * take the brain and the voice down with it, permanently, for a container problem. And it
- * would spend a real gateway call and 1.6-4.3 s to be told so, every single time. Refusing
- * it here instead is free, is per-turn, and leaves the rest of the demo alive.
- *
- * IT IS A DEPLOYMENT FACT, SO IT IS A VARIABLE. OpenAI's own documented Whisper API
- * accepts webm; this gateway's deployment is stricter. A fork whose gateway is more
- * capable sets `DEMO_STT_FORMATS=wav,webm,ogg,mp4,mp3,flac` and the route forwards them
- * all. Nothing here is hard-coded to anyone's gateway (C3).
- * ===========================================================================
+ * THE DEFAULT IS `wav` ALONE, BY MEASUREMENT (§10 assumption 15): the probed gateway
+ * transcribed 16 kHz RIFF/WAVE and answered 500 for webm/Opus, ogg/Opus and mp4/AAC alike —
+ * it decodes PCM only. Forwarding anyway would cost a real call, and the 500 maps to
+ * `upstream_down` (503), which degrades the WHOLE page; refusing here is free and per-turn.
+ * A fork with a more capable gateway widens the list (C3).
  */
 function sttFormats(env) {
   const raw = str(env, "DEMO_STT_FORMATS", DEFAULTS.DEMO_STT_FORMATS);
@@ -234,8 +143,7 @@ function sttFormats(env) {
     const v = part.trim().toLowerCase();
     if (STT_CONTAINERS.includes(v) && !out.includes(v)) out.push(v);
   }
-  // An entirely unusable value falls back to the default rather than to "nothing", which
-  // would silently switch the ears off with no reason anyone could read.
+  // An unusable value falls back to the default, not to "nothing" (a silent ears-off).
   return out.length ? out : [DEFAULTS.DEMO_STT_FORMATS];
 }
 
@@ -246,54 +154,28 @@ export const PUBLIC_LIMIT_KEYS = Object.freeze([
   "max_tts_chars",
   "max_tokens",
   "chat_per_min",
-  // The three the MICROPHONE needs (P1). `max_record_ms` is the one that actually bounds
-  // the cost of the ears, and it can only be enforced in the browser: §4.1 is explicit
-  // that `DEMO_MAX_AUDIO_BYTES` is NOT a duration cap for a compressed container —
-  // 500 KB of Opus is minutes, not seconds — so the byte cap alone is not an honest
-  // ceiling and the recorder has to stop itself. The two byte caps let `mic.js` skip an
-  // upload that is already doomed (too small to be speech, too large to be accepted),
-  // which is a request that never happens rather than one that is refused.
+  // The microphone's caps. `max_record_ms` can only be enforced by the recorder (a byte
+  // cap is not a duration cap for a compressed container); the byte caps let `mic.js`
+  // skip an upload that is already doomed.
   "max_record_ms",
   "max_audio_bytes",
   "min_audio_bytes",
-  // NOT here on purpose: `DEMO_QUEUE_MAX_WAIT_MS` / `DEMO_QUEUE_MAX_DEPTH`. §4.2's rule is
-  // that the browser is told a cap only when the browser has to OBEY it — the way `mic.js`
-  // must obey `max_record_ms`. The queue is entirely server-side and entirely invisible: a
-  // waiting visitor sees one slightly slower turn, and a refused one gets the same
-  // `at_capacity` + `Retry-After` envelope §4.5 already specifies and `mode.js` already
-  // renders. Publishing the numbers would add a public surface with nothing to do.
+  // Deliberately absent: the queue caps. The browser is told a cap only when it must
+  // OBEY it; the queue is server-side and a refusal is the ordinary `at_capacity` envelope.
 ]);
 
 /**
  * The built-in persona. Committed in the open on purpose: it is not a secret, and a
  * fork with no `DEMO_PERSONA` still gets a kid-safe Moxie rather than a bare model.
  *
- * ============================================================================
- * THIS IS THE PERSONA THE ROBOT PATH HAS ALWAYS HAD, AND THE HOSTED SITE DID NOT.
- *
- * Until 2026-09-06 this constant was four sentences — about 55 words of safety policy
- * with no character in it at all. The result was measurable on the live site: asked
- * "what are you?", she answered *"I'm Moxie, your friendly robot friend!"*; asked about
- * quantum entanglement she deflected with *"Let's talk about something more fun
- * instead!"*. Warm, harmless, and interchangeable with any assistant wearing a name tag.
- *
- * Meanwhile `mqtt/moxie_sdk/apps/llm_app.py`'s `DEFAULT_PERSONA` — the one the LOCAL
- * robot path has used all along — carried the GRL lore, the voice rules, the embodiment,
- * and a redirect discipline far stronger than "say so kindly". **The two prompts
- * disagreed completely and the hosted one was a stub of the local one**, which is the
- * whole reason the hosted demo did not sound like Moxie. This is that persona, ported.
- *
- * WHY THE REAL DEVICE'S PERSONA IS NOT AN OPTION, and why authoring one is legitimate
- * rather than invention: `docs/reverse-engineering/runtime/content-and-conversation.md`
- * :156-164 establishes that the system prompt was **never in the firmware** — it lived on
- * Embodied's cloud and did not ship on the robot. The firmware carries only the empty
- * slots (`global_context`, `conversation_context`, `prompt_context`). So there is no
- * original text to recover and nothing here is a copy of one; what the RE corpus DOES
- * give us is the surrounding truth this text is built to respect — the GRL framing
- * (`firmware/unity-assets.md`:59), the child-as-"mentor" relation (`runtime/turn-taking.md`
- * :8), and the eleven-expression face that the mood field drives
- * (`runtime/behavior-markup.md`:107-133).
- * ============================================================================
+ * Ported from the robot path's `mqtt/moxie_sdk/apps/llm_app.py::DEFAULT_PERSONA` so the
+ * hosted demo and a real robot sound like the same character. The original device prompt
+ * lived in Embodied's cloud and was never in the firmware
+ * (`docs/reverse-engineering/runtime/content-and-conversation.md`), so there is nothing to
+ * recover; this is authored to respect the RE corpus (GRL lore, the child-as-mentor
+ * relation, the eleven-expression face). The later paragraphs each answer a failure
+ * measured by `sim/eval_live.mjs` (affirmation loops, a question every turn, confidently
+ * answering a forgotten fact).
  */
 export const DEFAULT_PERSONA =
   "You are Moxie, a small friendly robot companion for a child. You were built by the " +
@@ -318,14 +200,6 @@ export const DEFAULT_PERSONA =
   "You never ask a child for private information — address, street, school name, phone " +
   "number, passwords, full name — and you never ask them to keep a secret from their " +
   "grown-ups. You never swear.\n" +
-  // MEASURED 2026-09-06, and the reason this paragraph exists at all. `sim/eval_live.mjs`
-  // drove seven turns of a child who is listening rather than driving — "ok", "yeah",
-  // "hmm" — at the live site and got: "That's great!" -> "That's awesome!" -> "I'm so glad
-  // to hear that!" -> "Great to hear that!" -> "Can you tell me about it?" -> "Can you tell
-  // me about it?". An exact duplicate, a trigram overlap of 1.0, two of eleven faces, six
-  // words a turn. Nothing in the persona told her to move, so a short answer left her with
-  // nothing to do but affirm — and affirmation is the one move that needs no new
-  // information, which is exactly why a model falls into it.
   "Keep the conversation MOVING. Never repeat a sentence you have already said in this " +
   "conversation, and do not answer twice in a row with the same shape of line — a string " +
   "of 'That's great!' and 'That's awesome!' is not a conversation. If the child gives you " +
@@ -333,25 +207,11 @@ export const DEFAULT_PERSONA =
   "affirm and ask them to say more. Take a turn of your own — offer a specific idea, tell " +
   "them a tiny fact or a silly joke, notice something, or suggest something you could do " +
   "together right now. It is your job to be interesting, not theirs.\n" +
-  // MEASURED AGAIN after the rule above shipped, and this is the correction it needed.
-  // Breaking the affirmation loop took trigram overlap from 1.0 to 0.2 and exact
-  // duplicates to zero — and the conversation still read as a loop, because six of seven
-  // turns came back as "Did you ... today?". Same shape, different words. The earlier
-  // wording ("ask at most one question, and make it a specific one") was obeyed to the
-  // letter and made it worse: it licensed a question every single turn. A companion that
-  // ends every turn with a question is interviewing, not talking.
   "DO NOT end every turn with a question. Most turns should be something you say, not " +
   "something you ask: a small fact, a thing you noticed, a joke, an idea, something you " +
   "like. Ask a question only when you genuinely want to know the answer, at most every " +
   "other turn, and never the same question twice. Never open two turns in a row the same " +
   "way, and never ask 'did you ... today?' more than once in a conversation.\n" +
-  // MEASURED by `sim/eval_live.mjs`'s `window` scenario, 2026-09-07. Asked "what was my
-  // secret word?" eight turns after being told it — far enough back that it had fallen off
-  // the six-exchange context window by design — she answered "I heard you saw a bird!".
-  // She did not have the fact and did not say so; she answered a different question
-  // confidently. Forgetting is fine and inevitable at any window size. Pretending not to
-  // have forgotten is what makes a companion untrustworthy, and it is the one failure a
-  // child would notice and remember.
   "If you cannot remember something, SAY SO simply and warmly — \"I don't remember, can " +
   "you tell me again?\" — and never answer a different question instead or guess at what " +
   "they meant. Only say you remember something if it is actually there in what you have " +
@@ -371,16 +231,16 @@ function bool(env, name, fallback) {
   return !/^(0|false|no|off)$/i.test(v);
 }
 
-/** The repo's allowlist idiom (mqtt/moxie_sdk/cloud_config.py:435-475): coerce, clamp,
- *  and fall back to the default on anything unusable — a bad number must never become a
- *  bigger cap than the default. */
-function int(env, name, min, max, notes) {
+/** The repo's allowlist idiom (mqtt/moxie_sdk/cloud_config.py): coerce, clamp, and fall
+ *  back to the default on anything unusable — a bad number must never become a bigger cap
+ *  than the default. `int` refuses a fraction; `num` (penalties) accepts one. */
+function ranged(env, name, min, max, notes, integer) {
   const dflt = DEFAULTS[name];
   const v = str(env, name, null);
   if (v === null) return dflt;
   const n = Number(v);
-  if (!Number.isFinite(n) || !Number.isInteger(n)) {
-    notes.push(name + ": not an integer, using the default");
+  if (!Number.isFinite(n) || (integer && !Number.isInteger(n))) {
+    notes.push(name + (integer ? ": not an integer" : ": not a number") + ", using the default");
     return dflt;
   }
   if (n < min || n > max) {
@@ -389,26 +249,8 @@ function int(env, name, min, max, notes) {
   }
   return n;
 }
-
-/** The float sibling of `int()`. Separate rather than a flag on it because the failure
- *  they guard against differs: `int` refuses `1.5` as "not an integer", which is right for
- *  a turn count and wrong for a penalty, where 0.4 is the useful value. Same shape
- *  otherwise — out of range or unparseable falls back to the default and says so. */
-function num(env, name, min, max, notes) {
-  const dflt = DEFAULTS[name];
-  const v = str(env, name, null);
-  if (v === null) return dflt;
-  const n = Number(v);
-  if (!Number.isFinite(n)) {
-    notes.push(name + ": not a number, using the default");
-    return dflt;
-  }
-  if (n < min || n > max) {
-    notes.push(name + ": out of range, using the default");
-    return dflt;
-  }
-  return n;
-}
+const int = (env, name, min, max, notes) => ranged(env, name, min, max, notes, true);
+const num = (env, name, min, max, notes) => ranged(env, name, min, max, notes, false);
 
 /** `DEMO_ALLOWED_ORIGINS` — comma separated. Empty means "the request's own origin
  *  only", which is what lets a fork on any domain work with zero configuration (C3). */
@@ -426,15 +268,9 @@ function origins(env) {
 /**
  * `DEMO_TURNSTILE_HOSTS` — comma separated bare hostnames, lower-cased.
  *
- * EMPTY MEANS "the hostname of the request being answered", which is the same idiom
- * `origins()` above uses for `DEMO_ALLOWED_ORIGINS` and is what lets a fork on any domain
- * work with zero configuration (C3). `./turnstile.js::hostAllowed` is where that default
- * is applied and where the argument for it lives.
- *
- * A value with a scheme or a path is tolerated and reduced to its hostname — `https://
- * moxie.example.com/sim` becomes `moxie.example.com` — because the thing a person has in
- * their clipboard when they set this variable is a URL, and silently comparing a full URL
- * against a bare hostname would fail for every visitor with no reason anyone could read.
+ * Empty means "the request's own hostname" (applied in `./turnstile.js::hostAllowed`).
+ * A pasted URL is reduced to its hostname, since comparing a full URL against a bare
+ * hostname would fail every visitor with no readable reason.
  */
 function turnstileHosts(env) {
   const raw = str(env, "DEMO_TURNSTILE_HOSTS", "");
@@ -489,9 +325,8 @@ export function readConfig(env) {
   if (!baseUrl) missing.push("DEMO_GATEWAY_BASE_URL");
   if (!apiKey) missing.push("DEMO_GATEWAY_API_KEY");
   if (!chatModel) missing.push("DEMO_CHAT_MODEL");
-  // Half a service token is worse than none: it looks configured and answers an HTML
-  // login page. Named in `missing` so the fail-safe path of C5 handles it, and noted so
-  // an operator reading `/api/health` server-side can see WHICH half is absent.
+  // Half a pair (Access token or Turnstile) goes in `missing` so C5's fail-safe path
+  // handles it, and in `notes` so an operator can see WHICH half is absent.
   if (accessId && !accessSecret) {
     missing.push("DEMO_GATEWAY_ACCESS_CLIENT_SECRET");
     notes.push("DEMO_GATEWAY_ACCESS_CLIENT_ID is set without its secret: a Cloudflare " +
@@ -502,11 +337,6 @@ export function readConfig(env) {
     notes.push("DEMO_GATEWAY_ACCESS_CLIENT_SECRET is set without its client id: a Cloudflare " +
                "Access service token needs BOTH halves, so the gateway is treated as unconfigured");
   }
-  // Half a Turnstile pair, for the reasons TURNSTILE_VARS spells out: a secret with no
-  // sitekey refuses every visitor, and a sitekey with no secret is a widget nothing
-  // checks. Named in `missing` so C5's fail-safe path handles it — the deployment reads
-  // as unconfigured and spends nothing — and noted so an operator reading `/api/health`
-  // server-side can see WHICH half is absent without anyone reading the secret.
   if (turnstileSecret && !turnstileSitekey) {
     missing.push("DEMO_TURNSTILE_SITEKEY");
     notes.push("DEMO_TURNSTILE_SECRET is set without DEMO_TURNSTILE_SITEKEY: the browser " +
@@ -527,32 +357,20 @@ export function readConfig(env) {
     notes,
     chatModel,
     ttsModel,
-    // ALWAYS a non-empty string when a TTS model is configured: `DEMO_TTS_VOICE` when set,
-    // otherwise derived from the model name. The field is mandatory upstream (see
-    // `voiceForModel`), so the derivation lives HERE rather than at the call site — that
-    // way no route can omit it by forgetting to.
+    // Always non-empty when a TTS model is set: the field is mandatory upstream
+    // (`voiceForModel`), so it is derived here and no route can forget it.
     ttsVoice: str(e, "DEMO_TTS_VOICE", "") || (ttsModel ? voiceForModel(ttsModel) : ""),
     ttsFormat,
-    // Read ONLY when the format is pcm — a wav reply carries its own rate (§5). The
-    // clamp mirrors audio.js:617-618 so a configured rate can never be one the browser
-    // decoder would refuse.
+    // Read ONLY for pcm (a wav carries its own rate). Clamp mirrors the browser decoder's.
     ttsSampleRate: int(e, "DEMO_TTS_SAMPLE_RATE", 3000, 384000, notes),
     sttModel,
     persona: str(e, "DEMO_PERSONA", DEFAULT_PERSONA),
     deviceId: str(e, "DEMO_DEVICE_ID", DEFAULTS.DEMO_DEVICE_ID),
     allowedOrigins: origins(e),
-    // ---- `DEMO_TRUST_XFF` — OFF, AND IT MUST STAY OFF IN PRODUCTION.
-    //
-    // `_lib/limits.js::clientIp` keys every per-IP window on `CF-Connecting-IP`, the one
-    // address header Cloudflare sets itself and overwrites on the way in. When that header
-    // is ABSENT there is no trustworthy address at all: `X-Forwarded-For` is a string the
-    // caller types, so a fallback to it is not a weaker limit, it is NO limit — one
-    // process rotates the header and owns an unbounded supply of rate-limit buckets.
-    //
-    // So the fallback is opt-in and the default is to key the request as `unknown`, which
-    // is a SINGLE SHARED BUCKET for every unidentifiable caller (see `clientIp`). Set this
-    // ONLY for a local `wrangler pages dev`, where there is no Cloudflare in front and
-    // nobody hostile behind. Setting it on a public deployment hands the per-IP tier away.
+    // `DEMO_TRUST_XFF` — OFF, AND IT MUST STAY OFF IN PRODUCTION. `X-Forwarded-For` is
+    // caller-typed, so falling back to it hands out unlimited rate-limit buckets. Without
+    // it an absent `CF-Connecting-IP` keys as one shared `unknown` bucket
+    // (`clientip.js::clientIp`). For local `wrangler pages dev` only.
     trustXff: bool(e, "DEMO_TRUST_XFF", false),
     maxTokens: int(e, "DEMO_MAX_TOKENS", 1, 4096, notes),
     maxInputChars: int(e, "DEMO_MAX_INPUT_CHARS", 1, 20000, notes),
@@ -562,22 +380,13 @@ export function readConfig(env) {
     // Clamped to OpenAI's own -2..2, as floats rather than ints.
     frequencyPenalty: num(e, "DEMO_FREQUENCY_PENALTY", -2, 2, notes),
     presencePenalty: num(e, "DEMO_PRESENCE_PENALTY", -2, 2, notes),
-    // The free repetition lever that acts on the SHAPE of a turn rather than its words —
-    // see `_lib/turnshape.js` for the measurement that made it necessary and for the ways
-    // it can be obeyed and still fail.
     turnShape: bool(e, "DEMO_TURN_SHAPE", true),
-    // The one repetition lever that spends. `chat.js` step 8b.
     reroll: bool(e, "DEMO_REROLL", true),
     maxAudioBytes: int(e, "DEMO_MAX_AUDIO_BYTES", 1, 50000000, notes),
     minAudioBytes: int(e, "DEMO_MIN_AUDIO_BYTES", 0, 50000000, notes),
-    // The CLIENT-SIDE recording cap (§4.1). It is enforced by `sim/web/mic.js`, not by a
-    // route — a Function only ever sees the finished upload — so this value's whole job is
-    // to be published in `publicLimits` and obeyed by the recorder. It is still read and
-    // clamped here so the deployment has ONE place that decides it, and so a fork can
-    // shorten it without touching JavaScript that ships to a browser.
+    // Enforced by `sim/web/mic.js` (a Function only sees the finished upload); read here
+    // so the deployment has one place that decides it, then published.
     maxRecordMs: int(e, "DEMO_MAX_RECORD_MS", 1000, 600000, notes),
-    // Which containers this gateway will actually take. See `sttFormats` — the default of
-    // `wav` alone is a live measurement, not caution.
     sttFormats: sttFormats(e),
     chatPerMin: int(e, "DEMO_CHAT_PER_MIN", 1, 100000, notes),
     chatPerHour: int(e, "DEMO_CHAT_PER_HOUR", 1, 1000000, notes),
@@ -588,79 +397,30 @@ export function readConfig(env) {
     sttPerHour: int(e, "DEMO_STT_PER_HOUR", 1, 1000000, notes),
     maxConcurrentChat: int(e, "DEMO_MAX_CONCURRENT_CHAT", 1, 10000, notes),
     maxConcurrentSpeech: int(e, "DEMO_MAX_CONCURRENT_SPEECH", 1, 10000, notes),
-    // ---- The admission queue that sits BEHIND those ceilings (`_lib/limits.js::admit`).
-    //
-    // WHY THESE EXIST RATHER THAN A BIGGER CEILING. The owner asked for "a few users able
-    // to actually use the sim live (10 users or so), queued if we are at our limit". The
-    // obvious move — raise `DEMO_MAX_CONCURRENT_CHAT` — is the wrong one: the ceiling is
-    // matched to the upstream key's `max_parallel_requests`, which exists to protect
-    // another service sharing the same self-hosted gateway. Raising it here would not
-    // create capacity, it would only move the refusal upstream and turn it into a 429 that
-    // starves the neighbour. At ~1.2 s a turn, four slots already serve ~3 turns/second —
-    // far more than ten *conversational* visitors need. What actually breaks today is a
-    // momentary collision, and a short bounded wait absorbs exactly that.
-    //
-    // `DEMO_QUEUE_MAX_WAIT_MS` — 2500 ms. Two turn-times at the ceiling, so a burst of
-    //   ~8 collided requests drains inside it. It is deliberately SMALL: it is added to a
-    //   turn a visitor is already waiting on, so 2.5 s + ~1.2 s stays under four seconds
-    //   and far under `DEMO_CHAT_TIMEOUT_MS` (20 000). Tens of seconds would be a hung
-    //   page, which is a worse failure than an honest refusal. Clamped at 10 000 for the
-    //   same reason: no configuration may make the wait rival the upstream timeout.
-    // `DEMO_QUEUE_MAX_DEPTH` — 8. **A queue with no depth cap is just a slower way to fall
-    //   over**: past the depth, the request is refused immediately, exactly as today. 8 is
-    //   the arithmetic of the wait, not a round number — 4 slots x 2500 ms / ~1200 ms per
-    //   turn ≈ 8 requests can actually be served inside the maximum wait, so a ninth
-    //   waiter would be promised a slot the queue cannot deliver. 8 waiting plus 4 in
-    //   flight is 12 visitors mid-turn, which is the "10 users or so" that was asked for.
-    //
-    // EITHER SET TO 0 DISABLES THE QUEUE and restores the pre-2026-09-03 behaviour: at
-    // capacity, refuse instantly. That is the escape hatch a deployment reaches for if a
-    // wait ever proves worse than a refusal, and it needs no code change.
+    // The admission queue behind those ceilings (`limits.js::admit`). The ceiling matches
+    // the upstream key's `max_parallel_requests` (it protects a service sharing the
+    // gateway), so a short bounded wait absorbs momentary collisions instead.
+    // `DEMO_QUEUE_MAX_WAIT_MS` 2500: small, because it is added to a turn a visitor is
+    //   already waiting on; clamped at 10 000 so it never rivals the upstream timeout.
+    // `DEMO_QUEUE_MAX_DEPTH` 8: a queue with no depth cap is just a slower way to fall
+    //   over; 4 slots × 2.5 s / ~1.2 s per turn ≈ 8 serviceable waiters.
+    // Either at 0 disables the queue: at capacity, refuse instantly.
     queueMaxWaitMs: int(e, "DEMO_QUEUE_MAX_WAIT_MS", 0, 10000, notes),
     queueMaxDepth: int(e, "DEMO_QUEUE_MAX_DEPTH", 0, 1000, notes),
-    // ---- The CROSS-ISOLATE tier that sits ON TOP of the per-IP window
-    // (`_lib/limits.js::admit`, and the long comment there for what it is worth).
-    //
-    // `DEMO_CACHE_COUNTER` — ON. It costs one `caches.default.match()` plus one `put()`
-    //   per ADMITTED request and nothing at all on any refusal path, needs no binding, and
-    //   is a no-op wherever `caches.default` is absent (bare `node`, some local dev
-    //   runtimes) — which is why the default can be "on" without making a fork's tests
-    //   depend on a Cloudflare runtime. Set it to `0` to switch the tier off and get
-    //   exactly the pre-2026-09-05 in-isolate behaviour back; that is the escape hatch,
-    //   and it needs no code change.
-    // `DEMO_CACHE_TIMEOUT_MS` — 250 ms, the deadline on EACH of those two cache ops.
-    //   The measurement it is sized against: three cache ops on a preview cost ≤44 ms
-    //   (live-sim-demo.md §4.6.1 row h), so 250 ms is ~5x the whole measured budget for
-    //   one op — generous enough that a merely slow colo still gets counted, small enough
-    //   that a wedged cache costs a fifth of a second on a ~1.2 s turn rather than hanging
-    //   it. Clamped 10..2000 for that reason: no configuration may let a counter that is
-    //   explicitly best-effort out-wait the call it is guarding.
+    // The cross-isolate counter tier (`limits.js::admit`). `DEMO_CACHE_COUNTER` ON: one
+    // cache match+put per ADMITTED request, nothing on refusals, a no-op where
+    // `caches.default` is absent; `0` restores in-isolate-only counting.
+    // `DEMO_CACHE_TIMEOUT_MS` 250 per op (~5× the measured cost, §4.6.1); clamped 10..2000
+    // so a best-effort counter can never out-wait the call it guards.
     cacheCounter: bool(e, "DEMO_CACHE_COUNTER", true),
     cacheTimeoutMs: int(e, "DEMO_CACHE_TIMEOUT_MS", 10, 2000, notes),
-    // ---- The SYNTHESISED-AUDIO cache behind `/api/speech` (`_lib/ttscache.js`, §4.7).
-    // A different tier from the counter above and switched independently, because they
-    // fail in opposite directions and must be able to be turned off separately: the
-    // counter being wrong lets a visitor through, this one being wrong would play a child
-    // the wrong audio, and nobody should have to disable a rate limiter to disable a cache.
-    //
-    // `DEMO_TTS_CACHE` — ON. Synthesis is the most expensive thing this deployment does
-    //   (131 348 B and 1 091 ms for a 30-character line, measured 2026-09-02) and the
-    //   audio for one (voice, text) never changes, so the second visitor to hear a line
-    //   should not pay to make it again. It needs no binding and is a no-op wherever
-    //   `caches.default` is absent, which is why "on" is a safe default for a fork. Set it
-    //   to `0` for exactly the pre-2026-09-05 route, with no cache call at all.
-    // `DEMO_TTS_CACHE_TTL_S` — 86 400 (one day), the `max-age` on a stored entry and the
-    //   staleness test on the way back out. A day rather than a week because the entry's
-    //   only reason to expire is a voice that changed behind an unchanged model id, and
-    //   rather than an hour because a colo that forgets faster than visitors arrive is a
-    //   cache that never hits. Clamped 60..604 800.
-    // `DEMO_TTS_CACHE_TIMEOUT_MS` — 1 000, the deadline on EACH cache op: the lookup, the
-    //   body read and the write. Four times the counter's 250 ms, and deliberately: this
-    //   tier moves up to ~1.3 MB where the counter moves a two-field JSON object, and the
-    //   thing a slow op is being weighed against is a ~1 100 ms synthesis rather than a
-    //   free in-memory decision. Clamped 50..5 000, so no configuration can let a cache
-    //   that is explicitly best-effort out-wait `DEMO_SPEECH_TIMEOUT_MS` (12 000) — or,
-    //   at the other end, switch the tier off by stealth with a deadline nothing can meet.
+    // The synthesised-audio cache (`_lib/ttscache.js`), switched independently of the
+    // counter because they fail in opposite directions (a wrong counter admits; a wrong
+    // cache would play the wrong audio). `DEMO_TTS_CACHE` ON; `0` = no cache call at all.
+    // `DEMO_TTS_CACHE_TTL_S` one day (60..604 800): an entry only needs to expire if a
+    //   voice changes behind an unchanged model id.
+    // `DEMO_TTS_CACHE_TIMEOUT_MS` 1000 per op (50..5000): the entry is up to ~1.3 MB and is
+    //   weighed against a ~1.1 s synthesis; the clamp keeps it under the speech timeout.
     ttsCache: bool(e, "DEMO_TTS_CACHE", true),
     ttsCacheTtlS: int(e, "DEMO_TTS_CACHE_TTL_S", 60, 604800, notes),
     ttsCacheTimeoutMs: int(e, "DEMO_TTS_CACHE_TIMEOUT_MS", 50, 5000, notes),
@@ -670,34 +430,18 @@ export function readConfig(env) {
     speechTimeoutMs: int(e, "DEMO_SPEECH_TIMEOUT_MS", 1000, 120000, notes),
     sttTimeoutMs: int(e, "DEMO_STT_TIMEOUT_MS", 1000, 120000, notes),
     ticketTtlS: int(e, "DEMO_TICKET_TTL_S", 5, 3600, notes),
-    // WHETHER a service token is in play, never what it is (§4.2). A route needs this to
-    // decide whether to add the two headers; nothing else may know.
+    // WHETHER a service token is in play, never what it is (§4.2).
     accessToken: !!(accessId && accessSecret),
-    // ---- Cloudflare Turnstile (`./turnstile.js`).
-    //
-    // `turnstileSitekey` is a PUBLIC value and is enumerable on purpose: the browser
-    // cannot render a widget without it, so it is published on the same surface the page
-    // already learns `mode` from (`publicTurnstile` below, `/api/health`). The SECRET is
-    // non-enumerable with the API key, further down.
-    //
-    // `turnstileTimeoutMs` — 2 000, the deadline on the one siteverify call. It is sized
-    // against the CONCURRENCY SLOT and not against the visitor's patience: the call
-    // happens with a slot held, so a hung endpoint would otherwise keep that slot, and
-    // everyone in the FIFO behind it, waiting for `DEMO_CHAT_TIMEOUT_MS` (20 000). Two
-    // seconds is generous for a Cloudflare edge endpoint, and a slow answer is treated as
-    // no answer — which fails OPEN (`./turnstile.js`'s header says why). Clamped
-    // 100..10 000 so no configuration can let a check that is explicitly best-effort
-    // out-wait the route it guards, nor switch it off by stealth with a deadline nothing
-    // can meet.
+    // Cloudflare Turnstile. The sitekey is public and enumerable (published via
+    // `publicTurnstile`); the secret is non-enumerable below. `DEMO_TURNSTILE_TIMEOUT_MS`
+    // 2000 (100..10 000): the call holds a concurrency slot, and a slow answer fails open.
     turnstileSitekey,
     turnstileHosts: turnstileHosts(e),
     turnstileTimeoutMs: int(e, "DEMO_TURNSTILE_TIMEOUT_MS", 100, 10000, notes),
   };
 
-  // WHETHER the bot control is enforced, never the secret (§4.2). Both halves, or it is
-  // off — see TURNSTILE_VARS. `configured` is deliberately NOT part of this: enforcement
-  // is a property of the Turnstile pair alone, so `/api/health` on a deployment with a
-  // Turnstile pair and no gateway still tells the browser the sitekey it would need.
+  // WHETHER the bot control is enforced (never the secret). A property of the pair alone,
+  // not of `configured`, so `/api/health` still publishes the sitekey without a gateway.
   cfg.turnstile = !!(turnstileSecret && turnstileSitekey);
 
   // Voice and ears are "configured at all" (§3.2), which means the gateway itself is
@@ -705,26 +449,16 @@ export function readConfig(env) {
   cfg.voice = cfg.configured && !!ttsModel;
   cfg.ears = cfg.configured && !!sttModel;
 
-  // The three values a leak would actually cost us. Non-enumerable, so they are
-  // readable by the routes and invisible to JSON.stringify (see the header).
+  // The credentials: readable by the routes, invisible to JSON.stringify (see the header).
   for (const [name, value] of [
     ["baseUrl", baseUrl],
     ["apiKey", apiKey],
-    // A Cloudflare Access service token is a credential in both halves — the client id is
-    // as good as a username and is just as much a thing an attacker would like to have —
-    // so both are non-enumerable, exactly like the API key.
+    // Both halves of an Access token are credentials.
     ["accessClientId", accessId],
     ["accessClientSecret", accessSecret],
-    // §5: derived from the API key when unset, so the minimum config is two values.
-    // The derivation itself is P0-b's functions/api/_lib/hmac.js (HKDF); this only
-    // carries the configured material.
+    // §5: when unset, `hmac.js` derives it from the API key (HKDF).
     ["ticketSecret", str(e, "DEMO_TICKET_SECRET", "")],
-    // The Turnstile widget's SECRET. Non-enumerable for exactly the same reason as the
-    // gateway key: `JSON.stringify(cfg)` is the shape of every accidental leak, and this
-    // value must never be in one. It appears in ONE place — the form body of the single
-    // `fetch` in `./turnstile.js` — and nowhere else: not in a response, not in a header,
-    // not in a note, not in an error string. `sim/test_turnstile.mjs` asserts both halves
-    // (invisible to JSON, absent from every response on every path).
+    // Used only in the siteverify form body (`./turnstile.js`).
     ["turnstileSecret", turnstileSecret],
   ]) {
     Object.defineProperty(cfg, name, { value, enumerable: false, writable: false, configurable: false });
@@ -735,8 +469,7 @@ export function readConfig(env) {
 /**
  * The mode this configuration can support, with no gateway call and no counters.
  * `mode` is `live` only when a base URL, a key and a chat model are all present and the
- * kill switch is on (§3.2). Budget exhaustion is a *counter* state, so it is passed in
- * rather than guessed: P0-a ships no counter and therefore no budget reason.
+ * kill switch is on (§3.2). Budget exhaustion is a counter state, so it is passed in.
  */
 export function modeOf(cfg, budget) {
   if (!cfg.enabled) return { mode: "degraded", reason: "gateway_not_configured" };
@@ -749,10 +482,8 @@ export function modeOf(cfg, budget) {
  * The headers every upstream call carries. ONE function, so `chat.js` and `speech.js`
  * cannot drift apart on the credentials they present.
  *
- * `Authorization` is the gateway key. The two `CF-Access-*` headers are added only when a
- * complete service token is configured (see `ACCESS_VARS`) — the shape Cloudflare Access
- * expects for a non-interactive client. NONE of these values is ever put in a response, a
- * log line or an error string; this object goes into `fetch()` and nowhere else (§4.2).
+ * The `CF-Access-*` pair is added only for a complete service token (`ACCESS_VARS`). This
+ * object goes into `fetch()` and nowhere else (§4.2).
  *
  * @param {object} cfg
  * @param {string} contentType
@@ -772,24 +503,10 @@ export function upstreamHeaders(cfg, contentType) {
 /**
  * The Turnstile SITEKEY the browser needs, or `""` when the control is not enforced.
  *
- * ============================================================================
- * WHY THE SITEKEY IS PUBLISHED BY THE SERVER AND NOT WRITTEN INTO THE HTML.
- *
- * A sitekey is a public value: it ships to every visitor in the widget markup either way,
- * and Cloudflare's own docs treat it as such. So this is not about secrecy at all — it is
- * about C3, *nothing hard-coded to our gateway or our domain.* A sitekey in
- * `sim/web/sim.html` would be **this deployment's** sitekey in a **public repo**, which
- * means every fork and every branch preview would render a widget bound to a domain list
- * they are not on, mint tokens that can never verify, and refuse their own visitors — and
- * the only fix would be editing shipped HTML. Publishing it on the surface the page
- * already reads (`/api/health`, via `./envelope.js`'s `turnstile` field) means a fork sets
- * one variable, a preview sets none and the widget simply never appears, and the page's
- * behaviour follows the deployment instead of the checkout.
- *
- * It returns `""` — not the sitekey — whenever enforcement is off, so the browser cannot
- * render a widget the server is not going to check. That is the same asymmetry
- * `publicLimits` has: the page is told a thing only when the page has to act on it.
- * ============================================================================
+ * Published via `/api/health` rather than written into HTML because of C3: a committed
+ * sitekey would be THIS deployment's, so every fork and preview would render a widget
+ * bound to a domain list it is not on. `""` when not enforced, so the browser never
+ * renders a widget the server will not check.
  */
 export function publicTurnstile(cfg) {
   return cfg && cfg.turnstile ? String(cfg.turnstileSitekey || "") : "";

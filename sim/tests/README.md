@@ -83,7 +83,7 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   in-process against a status-server double whose payload keys are diffed against the
   real runtime. Needs `fastapi` + `httpx`; skips cleanly without them (CI has neither).
 - **`test_memory_view.py`** — the pure transform behind the console's 🧠 What Moxie
-  remembers card (`moxie_server/fleet.py::normalize_memory`): the runtime's namespaced
+  remembers card (`moxie_server/fleet/memory.py::normalize_memory`): the runtime's namespaced
   `/memory` payload flattened into dated rows per activity, newest first, with counts —
   plus the tolerance that matters on a parent's screen (a partial namespace, a list a
   module invented, a raw `memory.json` off disk, and a supervisor that is down).
@@ -230,7 +230,7 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   `DECLARED_BINARIES` with their reason and their provider. Eleven mutants, 12/12 caught.
 - **`test_shared_ceilings.py` + `helpers_shared_ceilings.mjs`** — the per-IP **hour** and **day**
   windows and the unit budget's **day** ceiling on the shared Cache API tier of
-  `functions/api/_lib/limits.js` (live-sim-demo.md §4.6.3). A Python wrapper around a node
+  `functions/api/_lib/limits.js` / `sharedtier.js` (live-sim-demo.md §4.6.3). A Python wrapper around a node
   suite, because the code under test is JavaScript and the only honest way to test a Cache
   API tier is to drive the real module with a real injected store. It is a wrapper rather
   than a `sim/test_*.mjs` for a reason worth knowing: `test_ci_test_coverage.py` requires a
@@ -545,6 +545,13 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   `v1.0.0` URLs, sha256-verified, cached, idempotent). That step fails unless ≥3 of its 4
   tests really passed — only the live-brain one may legitimately skip, when the gateway
   degrades to its canned fallback.
+
+## [`edge/`](edge/README.md) — the Pages Functions suites' sections
+
+`sim/test_demo_proxy.mjs` and `sim/test_turnstile.mjs` are thin entry points (CI and the
+mutation checkers invoke them by those names); their sections live in
+`edge/demo_proxy/` and `edge/turnstile/`, with the harness they share in `edge/common.mjs`.
+They are `.mjs`, so pytest never collects them.
 
 ## Two rules that keep this suite hermetic and green
 

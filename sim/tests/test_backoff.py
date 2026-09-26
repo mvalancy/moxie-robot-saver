@@ -3,13 +3,11 @@ Rate-limit / backoff / pacing tests (the AI-seam resilience) — pure, no networ
 A busy gateway should slow us down and recover, not fail the child.
 """
 import os
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.chat import (  # noqa: E402
     is_rate_limit_error, is_offline_error, is_server_error,

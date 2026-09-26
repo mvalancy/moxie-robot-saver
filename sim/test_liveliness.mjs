@@ -1,25 +1,16 @@
-/* test_liveliness.mjs — the four things the owner asked for on 2026-09-06, driven in a
- * real browser against the real page.
+/* test_liveliness.mjs — four liveliness behaviours, in a real browser on the real page:
+ *   1. Moxie stops muttering while you talk to her, and resumes once you stop
+ *      (`ambient.js`'s conversation hold).
+ *   2. Her self-talk appears in the comms log.
+ *   3. The chat dock fills the width available to it, rail open or closed, desktop and phone.
+ *   4. The speech bubble hangs on her HEAD in the 3-D scene and follows her.
  *
- *   1. Moxie stops muttering to herself while you are talking to her, and starts again
- *      once you have stopped (`ambient.js`'s conversation hold).
- *   2. Her self-talk appears in the comms log, where it can be read rather than only
- *      caught in passing.
- *   3. The chat dock fills the width actually available to it — which depends on whether
- *      the engineering panel is open — at desktop AND phone widths.
- *   4. The speech bubble hangs above her HEAD in the 3-D scene, not pinned to the top of
- *      the screen, so it stays with her when she moves.
- *
- * EVERY ASSERTION READS RECORDED STATE, NEVER A LIVE SAMPLE (playbook rule 11). The page
- * exports `window.__ambient.state()` and `window.__moxieAnchor`-style readouts for exactly
- * this reason: a test that waited 45 real seconds for the hold to lapse, or that sampled
- * "is she talking right now", would be the flaky-by-construction shape this repo has been
- * bitten by three times. The hold's quiet period is SHORTENED through its test seam and
- * then the recorded flag is read back.
+ * EVERY ASSERTION READS RECORDED STATE, NEVER A LIVE SAMPLE (playbook rule 11): the page's
+ * test seams are read back, and the hold's quiet period is shortened through its seam.
  *
  *   node sim/test_liveliness.mjs
  */
-import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable }
+import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable, launchBrowser }
   from "./browser_harness.mjs";
 
 const LABEL = "liveliness + chat layout";
@@ -27,30 +18,13 @@ const { puppeteer, chrome } = await requireBrowser(LABEL);
 const { fails, ok, eq, count } = makeChecks();
 
 const site = await serveWeb();
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"],
-});
+const browser = await launchBrowser(puppeteer, chrome);
 
 /* ---- WAIT FOR THE LAYOUT, NOT FOR A NUMBER OF MILLISECONDS ---------------- *
- *
- * THERE ARE NO FIXED SLEEPS LEFT IN THIS FILE and the `settle()` helper that supplied
- * them is gone with them, because all three of its call sites turned out to be waiting
- * for something the page could simply be ASKED about. Two of them were the same
- * condition — "the browser has finished the relayout I just asked it for". `open()`
- * slept 500 ms after the seams appeared, and the dock-geometry
- * block slept 400 ms after clicking `#rail-toggle`; on a runner starved enough to drop
- * frames, either could hand a mid-flight rectangle to a check that then reports it as a
- * layout bug. `#rail-toggle`'s handler is the clearer case: it toggles the class
- * synchronously and then re-frames the stage two `requestAnimationFrame`s later
- * (`rail.js`), so what the 400 ms was really buying was frames, and frames are exactly
- * what a starved runner stops delivering on schedule.
- *
- * Fonts first, because a webfont that lands late re-flows every text box this suite
- * measures. Then the widths under measurement have to read IDENTICALLY on three
- * consecutive animation frames — three, not two, so a single quiet frame in the middle of
- * a reflow cannot be mistaken for the end of one. Bounded: a layout that never settles
- * fails here, loudly, instead of quietly handing on a number nobody can explain.
+ * No fixed sleeps: a starved runner drops frames and a sleep can hand a mid-flight
+ * rectangle to a check. Fonts first (a late webfont re-flows every box), then the measured
+ * widths must read IDENTICALLY on three consecutive animation frames. Bounded: a layout
+ * that never settles fails loudly.
  */
 async function layoutSettled(page, sels = ["#chat-dock", "#panel"], timeout = 30000) {
   return page.evaluate(async (sels, timeout) => {
@@ -76,22 +50,10 @@ async function layoutSettled(page, sels = ["#chat-dock", "#panel"], timeout = 30
 }
 
 /* ---- EYES, and the hermeticity they required ------------------------------ *
- *
- * Until 2026-09-06 this suite installed no `console` and no `pageerror` listener, so a
- * page script that 404'd or threw was structurally invisible to it: the seams it waits
- * for (`window.__ambient`, `window.__bubbleAnchor`) would simply never appear and the run
- * would time out with nothing saying why. `watchPage()` gives it both listeners.
- *
- * ADDING THEM FORCED THE FIXTURE TO BECOME HERMETIC, and that is a fix in its own right.
- * This suite intercepted nothing, so on a `127.0.0.1` origin — which `env.js` treats as
- * LOCAL — the page's two optional-sidecar probes went to the real loopback ports. On a
- * developer's box with Piper on :8081 they succeed; in CI they are refused, and the
- * refusal is two console errors. What the page then believes about Piper decides whether
- * `#speech-btn` is the typed turn or the local "Say" control, so this suite's own
- * measurements already depended on what happened to be running on the machine. Refusing
- * both probes here — and COUNTING the refusals, so `notable()` forgives exactly two —
- * makes every box see the same page, which is the same idiom `test_mobile_layout.mjs` and
- * `test_ambient_guard.mjs` already use.
+ * `watchPage()` makes a 404'd or throwing page script visible instead of a silent timeout.
+ * The two optional-sidecar probes (a 127.0.0.1 origin is LOCAL to env.js) are refused and
+ * COUNTED here, so every machine sees the same page whatever happens to be listening on
+ * :8081/:8082 — that decides what #speech-btn is.
  */
 const EYES = new WeakMap();
 const eyes = (label, page) => {
@@ -113,10 +75,8 @@ async function open(width, height, isMobile) {
     if (r.isInterceptResolutionHandled()) return;
     const u = r.url();
     if (/:808[12]\//.test(u)) { seen.aborted.n++; return r.abort("connectionrefused"); }
-    /* No gateway is reachable from this suite and none should be. Answering `/api/health`
-     * 404 is byte-for-byte what the static server did before (it holds no such file); it
-     * is written out here only so the console error it causes can be COUNTED at the
-     * request that causes it, rather than forgiven by a widened pattern. */
+    /* No gateway is reachable and none should be. `/api/health` answers 404 (as the static
+     * server would) so its console error is COUNTED at the request, not forgiven by a pattern. */
     if (/\/api\/health\b/.test(u)) {
       seen.aborted.refused++;
       return r.respond({ status: 404, contentType: "text/plain", body: "not found" });
@@ -127,10 +87,7 @@ async function open(width, height, isMobile) {
   await page.goto(site.url + "/sim.html", { waitUntil: "domcontentloaded" });
   // The seam has to exist before anything below means anything.
   await page.waitForFunction("window.__ambient && window.moxie && window.__bubbleAnchor", { timeout: 20000 });
-  // …and the first layout has to be FINISHED, not merely 500 ms old, before any block
-  // below measures a rectangle. (`ambient.js` attaches its transcript observer in the same
-  // synchronous pass that defines `window.__ambient`, so `state().watching` is already
-  // true by the time the wait above returns — this settle owes it nothing.)
+  // …and the first layout must be FINISHED before any block measures a rectangle.
   await layoutSettled(page);
   return page;
 }
@@ -146,21 +103,9 @@ async function open(width, height, isMobile) {
   eq(idleBefore, true, "liveness starts ON (the visitor's own switch)");
 
   /* ---- a REAL turn puts the hold on ------------------------------------- *
-   *
-   * THE THIRD FIXED SLEEP, and the one that only turned up because the fix below was
-   * being MEASURED under load rather than reasoned about. This waited 250 ms in the page
-   * for `ambient.js`'s `MutationObserver` to see the row and call `noteTurn()`. The
-   * observer is a microtask, so it has always fired long before 250 ms — but the WINDOW
-   * matters, because the hold this then reads is only 4 000 ms wide: on a runner starved
-   * badly enough for a 250 ms timer to come back over four seconds late, the hold it was
-   * waiting for has already lapsed and `a turn in the log puts the conversation hold ON`
-   * goes red for a page that did exactly the right thing. Measured once at loadavg 77 on
-   * 24 cores while proving the lapse fix.
-   *
-   * `chatting` is the marker `reflectHold()` paints from inside `noteTurn()`, so polling
-   * for it waits on the observer having RUN rather than on a duration — and it resolves
-   * on the first turn of the event loop, which is what keeps the read inside the 4 s
-   * window instead of merely usually inside it. */
+   * Polls for `chatting`, the marker `reflectHold()` paints inside `noteTurn()`, instead of
+   * sleeping: the hold is only 4 s wide, and a late timer on a starved runner could read it
+   * after it had already lapsed. */
   const held = await page.evaluate(() => {
     window.__ambient.quietMs(4000);            // 45 s is unwatchable in a test
     const el = document.getElementById("transcript");
@@ -194,26 +139,10 @@ async function open(width, height, isMobile) {
      "…and the visitor's OWN liveness switch is NOT flipped: a hold is not a setting");
 
   /* ---- and it lifts on its own once the conversation goes quiet ---------- *
-   *
-   * WAITED ON THE RECORDED CONDITION, NOT ON NODE'S CLOCK. This slept a flat 4600 ms in
-   * Node for a hold shortened to 4000 ms and then read the result back. Those are two
-   * different clocks. The hold lapses on `ambient.js`'s own
-   * `setTimeout(reflectHold, CHAT_QUIET_MS + 50)` INSIDE the page; `settle()` counts on
-   * Node's event loop, which keeps time whether or not the page has been given any.
-   *
-   * MEASURED, on untouched `dev` under 2x CPU oversubscription: `conversing` had already
-   * gone false — it is derived live from `Date.now() - lastTurnAt` and so needs no timer
-   * at all — while `chatting` and the paused hint, the two things only `reflectHold()`
-   * repaints, were both still set. Two of the three checks below went red for a page that
-   * was behaving perfectly, which is this repo's oldest bug shape: a fixed sleep standing
-   * in for a condition.
-   *
-   * ALL THREE ARE WAITED FOR TOGETHER, and that is the load-bearing detail rather than a
-   * flourish. A wait on `conversing` alone would return on the wall clock — before
-   * `reflectHold()` had run at all — and would read the two DOM markers a beat early:
-   * one race swapped for a tighter one. The condition is therefore the WHOLE lapse, after
-   * which each part is still asserted separately, so a lapse that only half happened
-   * still names the half that did not. */
+   * Waited on the recorded condition, not Node's clock: the lapse runs on the page's own
+   * `setTimeout(reflectHold, …)`. All three markers are waited for TOGETHER (`conversing` is
+   * derived live and would return before `reflectHold()` had repainted the other two), then
+   * each is asserted separately so a half-lapse names the half that did not happen. */
   const HOLD_LAPSE_MS = 30000;              // 7x the shortened 4 s hold: generous, bounded
   let lapseTimedOut = false;
   try {
@@ -221,9 +150,7 @@ async function open(width, height, isMobile) {
       () => window.__ambient.state().conversing === false &&
             !document.getElementById("hud").classList.contains("chatting") &&
             document.getElementById("liveness-hold").hidden === true,
-      // Polled on a timer rather than on `raf`, puppeteer's default: a page starved of
-      // frames is exactly the case this wait exists for, and rAF is the first thing such
-      // a page stops delivering.
+      // Polled on a timer, not rAF: a frame-starved page is exactly what this wait is for.
       { timeout: HOLD_LAPSE_MS, polling: 50 });
   } catch { lapseTimedOut = true; }
   const lifted = await page.evaluate(() => ({
@@ -231,10 +158,7 @@ async function open(width, height, isMobile) {
     hudChatting: document.getElementById("hud").classList.contains("chatting"),
     hintShown: !document.getElementById("liveness-hold").hidden,
   }));
-  /* A WAIT THAT GIVES UP HAS TO SAY SO. Left silent, a timed-out wait would be reported
-   * below as an ordinary disagreement and say nothing about the 30 s spent waiting for
-   * it — so whichever of the three is still wrong carries the timeout in its own message,
-   * which is what names the one that never arrived. */
+  /* A wait that gives up says so: the still-wrong check carries the timeout in its message. */
   const late = lapseTimedOut
     ? ` [the wait for the lapse TIMED OUT after ${HOLD_LAPSE_MS}ms — THIS is what never arrived]`
     : "";
@@ -264,16 +188,9 @@ async function open(width, height, isMobile) {
      "…and NOT a `.turn`: that class is what addTranscript() appends streamed replies into");
 
   /* ---- and she cannot silence herself with her own voice ----------------- *
-   *
-   * THIS ONE IS DELIBERATELY A DURATION AND STAYS ONE. Everything else in this block
-   * waits for something to HAPPEN; this asserts that nothing does — that a `.mutter` row
-   * is not a `.turn` and so never reaches `noteTurn()`. There is no condition to wait
-   * for, because the correct behaviour is the absence of one, and a wait-for-a-condition
-   * here would either return instantly (proving nothing) or hang until it timed out. The
-   * 250 ms is the window in which the observer would have fired if it were going to, and
-   * it is safe in the failing direction: starve the runner and `conversing` is even more
-   * certainly false, so a stalled frame cannot turn this check green when it should be
-   * red. */
+   * Deliberately a DURATION: this asserts that nothing happens (a `.mutter` is not a `.turn`,
+   * so never reaches `noteTurn()`), so there is no condition to wait for. 250 ms is the window
+   * the observer would fire in; starving the runner can only make the check more certain. */
   const selfHold = await page.evaluate(() => new Promise((r) => setTimeout(
     () => r(window.__ambient.state().conversing), 250)));
   eq(selfHold, false,
@@ -306,11 +223,8 @@ async function dockGeometry(page) {
 
   // …and closing the panel really does hand it the rest of the window.
   await page.click("#rail-toggle");
-  // The class flips synchronously in `rail.js`, but the re-frame it schedules is two
-  // animation frames away and the grid relayout is a frame away — so this waits for the
-  // widths to stop moving rather than for 400 ms to pass. Nothing about the ANSWER is
-  // baked into the wait: it settles on whatever width the page arrives at, and the checks
-  // below are what decide whether that width is the right one.
+  // The class flips synchronously but the re-frame is two animation frames away, so wait
+  // for the widths to stop moving; the checks below decide whether the width is right.
   await layoutSettled(page);
   const closedRail = await dockGeometry(page);
   eq(closedRail.closed, true, "desktop: the engineering panel can now be CLOSED at all");
@@ -336,12 +250,8 @@ async function dockGeometry(page) {
 /* ======================================================================== *
  * 3b. SHE REACTS, AND SHE THINKS VISIBLY — the loading-bar layer
  * ======================================================================== *
- *
- * "Reduce the amount of time where Moxie is idle or what she is doing is unclear."
- * Between a tap and an answer there were two dead gaps — the recording and the gateway
- * round trip — and the only feedback in either was grey text. The rules that keep the fix
- * from being annoying are the ones worth testing, so all four are asserted: it is subtle,
- * it never repeats itself back to back, it does NOT fire on a fast turn, and it yields.
+ * The rules that keep it from being annoying are what is asserted: it is subtle, never
+ * repeats back to back, does NOT fire on a fast turn, and yields.
  */
 {
   const page = await open(1280, 900);
@@ -360,11 +270,8 @@ async function dockGeometry(page) {
     window.moxieAlive.listening();
     return { faces: window.__seen.faces.slice(), state: window.moxieAlive.__state() };
   });
-  /* ASSERTED ON THE LAYER'S OWN RECORDED PICK, not on a count of `setFace` calls. The
-   * first draft counted them and read 3 where it expected 1, because `setFace` is a SHARED
-   * channel: the avatar blinks through it and ambient self-talk drives it too. Counting
-   * calls on a channel three systems write to measures the page, not the feature
-   * (playbook rule 11). `__state().last` is what THIS layer chose. */
+  /* Asserted on the layer's own recorded pick (`__state().last`), not a count of `setFace`
+   * calls — blinking and ambient self-talk share that channel. */
   ok(["curious", "happy"].includes(listened.state.last.listen),
      `opening the mic picks an attentive face at once (got ${listened.state.last.listen})`);
   ok(listened.faces.length >= 1, "…and it really did reach the avatar");
@@ -397,9 +304,7 @@ async function dockGeometry(page) {
   await page.evaluate(() => window.moxieAlive.settled());
 
   // ---- and it never repeats itself back to back -------------------------- //
-  // The rule `mqtt/moxie_sdk/filler.py::pick_filler` uses on the robot path: a stuck line
-  // reads as a broken robot rather than a thinking one. Ten consecutive picks from a
-  // two-item list must alternate — never the same twice running.
+  // As `filler.py::pick_filler` on the robot path: ten picks from a two-item list alternate.
   const picks = await page.evaluate(() => {
     const out = [];
     for (let i = 0; i < 10; i++) {
@@ -430,30 +335,16 @@ async function dockGeometry(page) {
   eq(a.offStage, false, "…with her head in front of the camera");
 
   /* ---- ONE INSTANT, WHICH IS WHY THE TOLERANCES BELOW ARE TENTHS ---------- *
-   *
    * `a.exact` is the frame stash `updateBubbleAnchor` wrote when it placed the box: the
-   * head/crown/chest it actually projected, unrounded, in viewport px. Before it existed
-   * `a.head` was RE-PROJECTED at readout time, so every geometry check below compared a
-   * box placed at frame N against a head sampled at frame N+1 — a live sample in a file
-   * whose header promises none (playbook rule 11). That is what reddened CI on PR #202,
-   * on a diff of Python and YAML that cannot reach browser layout code.
-   *
-   * Reproduced by construction rather than by waiting: stepping motor 6 (body lean, which
-   * pivots at her base so her head swings furthest) end to end and sampling 120 frames put
-   * up to 15.6 px between `--leader` and the box's real gap on an UNLOADED machine. The
-   * same script against the stash: 0.06 px. The CI number, 2.5 px, is that error with only
-   * breathing and liveness moving her — and the stash here is routinely ~85 ms old when a
-   * puppeteer round-trip reads it, which is the whole story of why a loaded runner sees
-   * more of it than a developer's box does. */
+   * head/crown/chest it actually projected, unrounded, in viewport px. Re-projecting the head
+   * at readout time would compare frame N's box with frame N+1's head (up to 15.6 px while
+   * she leans; 0.06 px against the stash). */
   const e = a.exact;
   eq(a.stamped, true, "…and the page recorded the frame it placed the bubble from");
   eq(a.frozen, false, "…a CURRENT frame, not a stash frozen behind a hidden bubble");
 
-  /* The residual is NAMED, not absorbed: when the bubble is at her chest the placement
-   * anchors on the CHEST, and projecting a point 62 cm below her head lands a few px to
-   * the side of the head once she is off the camera axis (measured 5.2 px after the pan
-   * below, 0.15 px dead centre). 8 px covers that with room; the next assertion pins the
-   * rest of the difference on that anchor rather than leaving it unexplained. */
+  /* When the bubble is at her chest it anchors on the CHEST, which projects a few px off the
+   * head once she is off the camera axis; 8 px covers it and the next check pins the rest. */
   ok(Math.abs(e.bubble.cx - e.head.x) <= 8,
      `…horizontally centred on her head (bubble ${e.bubble.cx.toFixed(1)} vs head ${e.head.x.toFixed(1)})`);
   const anchorX = e.above ? e.head.x : e.chest.x;
@@ -464,31 +355,31 @@ async function dockGeometry(page) {
   ok(Math.abs(e.bubble.top - e.box.top) <= 0.1 &&
      Math.abs(e.bubble.cx - (e.box.left + e.box.width / 2)) <= 0.1,
      `…and CSS put the box where the anchor computed it (top ${e.bubble.top.toFixed(2)} vs ${e.box.top.toFixed(2)})`);
-  /* THE INVARIANT IS THAT IT NEVER COVERS HER FACE, and that is what is asserted —
-   * not one particular placement.
-   *
-   * There are two legal positions and which one is used depends on the viewport: above
-   * her head where the framing headroom leaves room (portrait and landscape phones), and
-   * at her chest on a leader where it does not (a desktop frames her large, so her crown
-   * is near the top of the stage). Pinning "always above" is what produced the reported
-   * bug in the first place — the old code flipped to "below the crown", which IS her
-   * face. So the test asserts the rule rather than the outcome: the box may not overlap
-   * the head anchor, whichever side it is on. */
+  /* THE INVARIANT IS THAT IT NEVER COVERS HER FACE — asserted as a rule, not a placement.
+   * Above her head where the framing leaves room, at her chest on a leader where it does not;
+   * either way the box may not overlap the head anchor. */
   const overlapsHead = e.bubble.top <= e.head.y && e.bubble.bottom >= e.head.y;
   eq(overlapsHead, false,
      `the bubble never covers her face (head ${e.head.y.toFixed(1)}, bubble ${e.bubble.top.toFixed(1)}..${e.bubble.bottom.toFixed(1)})`);
   if (e.leader > 0) {
     ok(e.bubble.top > e.head.y,
        `…at her chest, below the head (bubble top ${e.bubble.top.toFixed(1)} vs head ${e.head.y.toFixed(1)})`);
-    /* THE LEADER SPANS THE GAP — to a TENTH of a pixel, because both sides now come from
-     * one instant. The only residual left is `--by`'s own `.toFixed(1)` quantisation, so
-     * 0.2 px is the budget with double the headroom it needs (measured worst case 0.05
-     * over 48 frames of her body lean swinging end to end, and 0.044 across a camera pan).
-     * A looser number here would be absorbing an error nobody had explained, which is the
-     * shape of the bug this replaced rather than a fix for it. */
+    /* The leader spans the gap to 0.2 px: both sides come from one instant, and the only
+     * residual is `--by`'s `.toFixed(1)` (measured worst case 0.05). */
     const gap = e.bubble.top - e.head.y;
     ok(Math.abs(e.leader - gap) <= 0.2,
        `…on a leader that spans exactly the gap (${e.leader.toFixed(2)}px for ${gap.toFixed(2)}px)`);
+    /* …AND THE LINE ON SCREEN IS THAT LEADER. The corner-tick `#bubble::before { top: -1px;
+     * border-left: 2px }` once survived into the leadered rule and drew a cyan bar DOWN through
+     * the text. The pseudo-element must end at the bubble's top edge with no tick borders. */
+    const drawn = await page.evaluate(() => {
+      const cs = getComputedStyle(document.getElementById("bubble"), "::before");
+      return { top: parseFloat(cs.top), h: parseFloat(cs.height), bl: cs.borderLeftWidth, bt: cs.borderTopWidth };
+    });
+    ok(Math.abs(drawn.top + drawn.h) <= 1.5 && drawn.h > 0,
+       `…and the DRAWN leader rises from the box top to her head (top ${drawn.top}, height ${drawn.h})`);
+    ok(drawn.bl === "0px" && drawn.bt === "0px",
+       `…as a plain line, not the corner tick stretched (border-left ${drawn.bl}, border-top ${drawn.bt})`);
   } else {
     ok(e.bubble.bottom < e.head.y,
        `…above the head (bubble bottom ${e.bubble.bottom.toFixed(1)} vs head ${e.head.y.toFixed(1)})`);
@@ -498,36 +389,20 @@ async function dockGeometry(page) {
   ok(a.bubble.top > 0 && a.bubble.left >= 0 && a.bubble.right <= 1280,
      "…entirely on screen");
 
-  /* THE WHOLE POINT, and it is stated as the owner stated it: MOVE THE CAMERA and the
-   * bubble stays on her head. `window.__setCam` is the deterministic placement hook the
-   * screenshot harnesses already use, so this is a real orbit rather than a synthetic
-   * drag — and a viewport-pinned bubble (the old `top: 22px; left: 50%`) cannot move at
-   * all when the camera does, which is what makes the third assertion the load-bearing
-   * one rather than decoration.
-   *
-   * Head YAW was tried here first and is the wrong instrument: rotating the head about
-   * its own axis moves its CENTRE by about seven pixels, so the test could not tell
-   * "tracks the head" from "does nothing". */
-  /* WAITED ON THE PLACEMENT COUNTER, NOT ON A CLOCK. The old form slept 600 ms and read
-   * whatever was there. That was only ever safe because the readout re-projected the head
-   * live, so it answered even on a frame the page never rendered; now that it reports the
-   * placement it actually made, a runner starved enough to skip 600 ms of frames would be
-   * asked "where did the bubble go" before it had gone anywhere — and would truthfully
-   * answer "nowhere". Measured: under 2x CPU oversubscription this suite reached the read
-   * with `head.x` still 638, unmoved, because no frame had been placed since the pan. So
-   * the test waits for `seq` to advance instead, which is the page telling it the anchor
-   * has been re-placed rather than the test guessing. */
-  const b = await page.evaluate((seq0) => {
-    // PAN, not orbit: orbiting keeps the camera TARGETED on her, so she stays dead centre
-    // and the screen position barely changes (measured: 30 px, which proves nothing).
-    // Moving the target sideways is what slides her across the viewport.
+  /* MOVE THE CAMERA and the bubble stays on her head (`window.__setCam`, a real re-placement;
+   * a viewport-pinned bubble cannot move at all). Head yaw is the wrong instrument — it moves
+   * the head centre ~7 px. Waited on the placement counter `seq`, not a clock: a starved
+   * runner may not have placed a new frame yet, and would truthfully answer "nowhere". */
+  const b = await page.evaluate(() => {
+    // The counter is read AT the pan, not reused from `a`: frames keep placing while the
+    // bubble is visible, so an older seq could already be two past and return a stale frame.
+    const seq0 = window.__bubbleAnchor().seq;
+    // PAN, not orbit: orbiting keeps her dead centre; moving the target slides her across.
     window.__setCam(1.8, 2.1, 4.8, 1.5, 1.22, 0);
     return new Promise((r, reject) => {
       const t0 = performance.now();
       const poll = () => {
-        // A HIDDEN BUBBLE PLACES NOTHING, by design — so keep her talking while we wait.
-        // On a starved runner her hold timer can lapse before the next frame lands, and a
-        // wait for a placement that the page has correctly decided not to make never ends.
+        // A hidden bubble places nothing by design, so keep her talking while we wait.
         if (document.getElementById("bubble").classList.contains("hidden"))
           window.moxie.setSpeech("Do you ever think about the sky?");
         const a = window.__bubbleAnchor();
@@ -538,7 +413,7 @@ async function dockGeometry(page) {
       };
       poll();
     });
-  }, a.seq);
+  });
   const be = b.exact;
   ok(b.seq > a.seq, `the anchor was re-placed after the camera moved (frame ${a.seq} -> ${b.seq})`);
   ok(Math.abs(be.head.x - e.head.x) > 40,
@@ -549,13 +424,8 @@ async function dockGeometry(page) {
      `…which the old viewport-pinned bubble could not have done (${e.bubble.cx.toFixed(0)} -> ${be.bubble.cx.toFixed(0)})`);
 
   /* ---- AND THE READOUT IS HONEST ABOUT BEING STALE ------------------------ *
-   *
-   * `updateBubbleAnchor` deliberately early-returns while the bubble is hidden: there is
-   * no sense burning a forced synchronous layout every frame for a box nobody can see, so
-   * her head walks away from the last recorded placement and the stash goes stale by
-   * design. That is correct, and it is exactly why the readout must SAY so — a caller
-   * that cannot tell "frozen because hidden" from "current" is back to guessing which
-   * instant it is holding, which is the defect this whole slice is about. */
+   * Hidden, the anchor deliberately stops updating (no forced layout for an invisible box),
+   * so the readout must SAY it is frozen rather than look current. */
   const frozen = await page.evaluate(() => {
     document.getElementById("bubble").classList.add("hidden");     // what the hold timer does
     const first = window.__bubbleAnchor();
@@ -573,33 +443,14 @@ async function dockGeometry(page) {
 /* ======================================================================== *
  * 4a. THE ANCHOR READOUT IS ONE INSTANT — PROVED BY MOVING HER FAST
  * ======================================================================== *
- *
- * THE RACE IS CREATED HERE, NOT WAITED FOR. Every check above samples her standing more
- * or less still, and at rest the defect this block exists for is a fraction of a pixel:
- * it is why `sim/test_liveliness.mjs` was green on every developer's machine while PR
- * #202 — a Python promotion checker, a workflow and a Markdown file, none of which can
- * reach browser layout code — went red on a loaded CI runner at 88.5px for 91px.
- *
- * The mechanism, measured rather than reasoned about: `updateBubbleAnchor` runs at the top
- * of `animate()` and places the box from the head it projects there; the rest of `animate`
- * then moves her (motor smoothing, breathing, liveness offsets) and the next frame moves
- * her again. A readout that RE-PROJECTS the head at call time therefore compares a box
- * from frame N against a head from frame N+1, and the gap between them is one frame of
- * head travel. Slow frames — swiftshader on a loaded runner — are bigger frames.
- *
- * So this block does what a loaded runner does, deliberately and in a tenth of a second:
- * it steps motor 6 (body lean, which pivots at her base, so her head describes the widest
- * arc she has) and motor 4 (nod) end to end, and reads the anchor every frame. Measured
- * against the old live-re-projecting readout, this reaches 15.6 px of drift on an UNLOADED
- * machine. Against the frame stash it is 0.06. The tolerances below are the second number
- * with headroom, and every one of these checks reddens if the readout goes back to mixing
- * two instants — which is what makes them the assertion that the fix is a fix.
+ * The race is CREATED here: motors 6 (lean, the widest head arc) and 4 (nod) are stepped end
+ * to end while the anchor is read every frame. A readout that re-projects the head at call
+ * time drifts up to 15.6 px; the frame stash stays near 0.06, and these tolerances redden
+ * if the readout ever mixes two instants again.
  */
 {
   const page = await open(1280, 900);
-  // Per-sweep head-y RANGE, recorded alongside the rows and used for nothing but the
-  // failure text below. The wait is untouched — this only lets a red say which of two
-  // incompatible stories produced it (see backlog/head-sweep-wait.md).
+  // Per-sweep head-y RANGE, used only in the failure text (backlog/head-sweep-wait.md).
   const probe = await page.evaluate(async () => {
     const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
     const rows = [];
@@ -609,9 +460,7 @@ async function dockGeometry(page) {
     for (let i = 0; i < 16; i++) {
       const start = rows.length;
       const stepStart = window.moxie.getAnimationStepCount();
-      // Re-said every sweep: the bubble's own hold timer would otherwise hide it midway,
-      // and a hidden bubble freezes the anchor BY DESIGN (nothing is placed, so nothing is
-      // recorded) — which would quietly turn this into a test of nothing.
+      // Re-said every sweep: a hidden bubble freezes the anchor by design.
       window.moxie.setSpeech("Do you ever think about the sky?");
       window.moxie.setMotor(6, ends[i % 2]);          // body lean: the biggest head arc
       window.moxie.setMotor(4, ends[(i + 1) % 2]);    // nod, on the opposite phase
@@ -646,11 +495,8 @@ async function dockGeometry(page) {
   ok(validStepDeltas(probe.stepDeltas) && !validStepDeltas(Array(16).fill(0)),
      `the page counted its own animation steps (${probe.stepDeltas.join(", ")})`);
   const spread = Math.max(...m.map((r) => r.headMoved)) - Math.min(...m.map((r) => r.headMoved));
-  // One check, two stories. A small `spread` means EITHER the drive never moved her (a real
-  // defect) OR this runner was too starved to advance her far enough to measure it. The fixed
-  // four-frame wait cannot tell them apart, so the RED says which: sweeps that moved her less
-  // than the 6px this assertion is really about are counted and reported. Nearly all of them
-  // stalled -> the machine; the drive moved her every sweep and she still went nowhere -> the drive.
+  // A small `spread` means EITHER the drive never moved her OR the runner was too starved to
+  // move her far; the red message counts sweeps that moved < 6 px to say which.
   const stalled = probe.sweeps.filter((r) => r < 6).length;
   const underStepped = probe.stepDeltas.filter((steps) => steps < 4).length;
   ok(spread > 40,
@@ -675,16 +521,8 @@ async function dockGeometry(page) {
 /* ======================================================================== *
  * 4b. THE FACE IS SAFE AT EVERY VIEWPORT — including the ones that broke
  * ======================================================================== *
- *
- * The reported bug was PHONE-ONLY and the desktop check above would never have caught it:
- * "on mobile in portrait the word bubbles at the top of the screen completely block
- * Moxie's face". Measured at 393x851 before the fix — bubble 88..149 with her head at 148.
- * The old code flipped the bubble "below its anchor" when there was no room above, and the
- * anchor was just above her CROWN, so below it was her face.
- *
- * Landscape is here for the same reason and a second one: at 851x393 the stage had been
- * squeezed to 56 px of a 393 px screen (38 of 375 on a smaller phone) by a layout that
- * stacked five rows on the axis a landscape phone has least of.
+ * Portrait phones once had the bubble flipped over her face; landscape phones once squeezed
+ * the stage to a sliver. Both are asserted here.
  */
 for (const [label, w, h] of [
   ["portrait 393x851", 393, 851],
@@ -703,10 +541,7 @@ for (const [label, w, h] of [
   eq(a.hidden, false, `${label}: she is speaking`);
   eq(a.anchored, true, `${label}: the bubble is anchored to her, not pinned to the viewport`);
   eq(a.frozen, false, `${label}: …and its anchor readout is a current frame, not a frozen one`);
-  /* THE SAFETY-CRITICAL ONE, and it reads the same single instant as everything else now:
-   * `a.exact.head` is the head this frame's placement projected, not one re-projected a
-   * frame later. A face rule judged against a head from a different instant is a face rule
-   * that can pass while the box is over her face — the exact failure mode it exists for. */
+  /* THE SAFETY-CRITICAL ONE, judged on the head THIS placement projected (one instant). */
   const ex = a.exact;
   const covers = ex.bubble.top <= ex.head.y && ex.bubble.bottom >= ex.head.y;
   eq(covers, false,
@@ -728,12 +563,8 @@ for (const [label, w, h] of [
 /* ======================================================================== *
  * 5. SHE DRAWS — lazily, strictly, and never at the cost of her words
  * ======================================================================== *
- *
- * The server half (the fence never reaching what she SPEAKS) is proven hermetically in
- * `sim/test_demo_proxy.mjs` §15m. This is the browser half: that a diagram she wrote
- * actually renders, that bad syntax draws nothing rather than something broken, and that
- * the 3.3 MB mermaid bundle is not on the critical path of a page that mostly never needs
- * it.
+ * Browser half (server half: `sim/test_demo_proxy.mjs` §15m): a diagram renders, bad syntax
+ * draws nothing, and the 3.3 MB mermaid bundle is not on the critical path.
  */
 {
   const page = await open(1280, 900);

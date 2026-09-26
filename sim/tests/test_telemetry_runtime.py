@@ -1,32 +1,25 @@
 """
 Durable telemetry through the REAL `MoxieRuntime` — write, restart, read it back.
 
-`test_telemetry.py` owns the pure half (the envelope, the privacy filter, the caps and
-the day arithmetic). This file owns the half that only the runtime can prove:
+`test_telemetry.py` owns the pure half. Here, what only the runtime proves:
 
-  * a Packet ingested by one supervisor is **still there for the next one** — the whole
-    point of the slice, and the reason the 📈 card can now show a week;
-  * the `LoggingPolicy` gate is really bound to the parent's per-robot config, for all
-    three values, on the path that actually touches disk;
-  * the existing in-memory read paths (`status_snapshot`'s `telemetry_count`, the
-    schedule planner's packet buffer) see the history rather than only this process;
-  * `wake_robot` publishes the recovered `wakeup` command on the recovered topic — and
-    reports failure honestly when it cannot.
+  * a Packet ingested by one supervisor is still there for the next one;
+  * the `LoggingPolicy` gate follows the parent's per-robot config, all three values, on
+    the path that touches disk;
+  * in-memory read paths (`status_snapshot`'s `telemetry_count`, the planner's buffer)
+    see the history, not just this process;
+  * `wake_robot` publishes the recovered `wakeup` command on the recovered topic, and
+    reports failure honestly.
 
-No broker, no robot: `helpers_runtime.make_runtime` gives a real runtime with a
-recording transport, and every store is rooted at the test's own `tmp_path`.
+No broker or robot: `helpers_runtime.make_runtime`, stores rooted at `tmp_path`.
 """
 import datetime
 import json
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 pytest.importorskip("paho.mqtt.client", reason="the runtime needs paho")
 
@@ -47,18 +40,9 @@ def _rt(tmp_path, **kw):
     return make_runtime(_App(), store=JsonStore(str(tmp_path)), **kw)
 
 
-#: **Noon today**, not "now". The daily roll-up is keyed on the LOCAL calendar day and
-#: `history_view` counts back from today, so a test that wants to see its own row in the
-#: week has to stamp its packets today — a fixed epoch from last year lands outside every
-#: window, which is correct behaviour and a useless fixture.
-#:
-#: It was `int(time.time())`, and that is a clock flake of the family fixed in PR #60/#63:
-#: the packets below are stamped `TODAY - 30`, so an import at 00:00:10 put them on
-#: *yesterday's* roll-up row while `history_view`'s "today" was the new day — the row
-#: assertion and `history[-1]["day"]` both fail, ~30 red seconds every night. Noon is
-#: still "today" (which is all the roll-up needs) and no ±30 s offset can cross a day
-#: boundary from there, so the fixture means what its name says at every hour.
-#: Noon exists in every timezone on every DST transition day, unlike 00:00 or 02:00.
+#: NOON TODAY, not "now": the roll-up is keyed on the local calendar day and `history_view`
+#: counts back from today, so packets must land today; from noon no ±30 s offset can cross
+#: midnight, and noon exists on every DST transition day.
 TODAY = int(datetime.datetime.combine(
     datetime.date.today(), datetime.time(12, 0)).timestamp())
 
@@ -96,13 +80,8 @@ def test_telemetry_survives_a_supervisor_restart(tmp_path):
     day = T.packet_day({"recorded_at": TODAY})
     today_row = [r for r in after["history"] if r["day"] == day]
     assert today_row and today_row[0]["count"] == 3
-    # `history_view` counts back from TODAY AT CALL TIME, while `day` comes from `TODAY`,
-    # which is fixed at MODULE IMPORT. Those are the same day except when the test run
-    # itself crosses midnight between import and here — which happened on 2026-09-07 at
-    # 00:03:58 UTC (run 34068212046, import 23:57): the 09-06 row was present and correct
-    # (the assertion above passed), but the window had moved on and `history[-1]` was 09-07.
-    # Pinning the stamp to noon fixed the ±30 s OFFSET crossing a boundary; it could not fix
-    # the WINDOW moving. So the tail is compared against the view's own notion of today.
+    # `history_view` counts back from today AT CALL TIME while `day` was fixed at import, so
+    # a run crossing midnight moves the window; compare the tail against the view's own today.
     today = T.packet_day({"recorded_at": int(datetime.datetime.now().timestamp())})
     assert len(after["history"]) == 7 and after["history"][-1]["day"] == today
 

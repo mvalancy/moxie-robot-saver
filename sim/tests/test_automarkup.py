@@ -1,25 +1,19 @@
 """
 The markup floor (`moxie_sdk/automarkup.py` + `moxie_sdk/vocab.py`) — hermetic, no sleeps.
 
-Moxie's voice is synthesized on the robot, from markup, so this module *is* the delivery:
-there is no TTS for a cloud to improve (docs/architecture/mqtt-and-conversation.md §5.3).
-That makes the floor's failure modes concrete, and each one gets a test here:
+Moxie synthesizes her voice on the robot from markup, so this module IS the delivery
+(mqtt-and-conversation.md §5.3). Each failure mode gets a test:
 
-  * **a word the child never hears** — a generator that edits the line it is decorating is
-    the one bug that cannot be shipped, so `strip_markup(annotate(t)) == strip_markup(t)`
-    is asserted over every line the tree can produce (T3);
-  * **an asset id the robot cannot play** — the catalogs are the app-hardcoded subset, so
-    a typo would ship a mark that does nothing (or, unknowably, faults a robot). 0 unknown
-    ids over the whole corpus, and the module's dropped-id counter at 0 (T2);
-  * **a twitchy robot** — the failure mode a child actually notices. Hard caps, asserted
-    on a 120-word paragraph (T8);
-  * **a face that flips mid-answer** — a streamed reply must carry ONE mood (T5);
-  * **an answer that changes between two workers** — no `random`, no `hash()`; identical
-    bytes under different `PYTHONHASHSEED` in a subprocess (T6);
-  * **latency on the hot path** — the seam runs per spoken chunk, between the first token
-    and the first audio (T10).
+  * a word the child never hears — `strip_markup(annotate(t)) == strip_markup(t)` over
+    every line the tree can produce (T3);
+  * an asset id the robot cannot play — 0 unknown ids over the corpus, dropped counter 0 (T2);
+  * a twitchy robot — hard caps on a 120-word paragraph (T8);
+  * a face that flips mid-answer — a streamed reply carries ONE mood (T5);
+  * two workers disagreeing — no `random`/`hash()`; identical bytes under different
+    `PYTHONHASHSEED` (T6);
+  * hot-path latency — the seam runs per spoken chunk (T10).
 
-Nothing here talks to a network, a broker, a model or a clock.
+No network, broker, model or clock.
 """
 import json
 import os
@@ -33,9 +27,6 @@ from xml.etree import ElementTree
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 from helpers_runtime import CHAT_TOPIC, LatchClient, drive_once, make_runtime  # noqa: E402
 from moxie_sdk import automarkup, vocab                                       # noqa: E402
@@ -79,12 +70,9 @@ def _content_lines():
 
 
 def _fuzz_lines(n=200):
-    """`n` generated lines: deterministic, and deliberately awkward.
-
-    Built from a fixed word pool with a fixed LCG (no `random`, so the corpus is the same
-    in every process) and salted with the shapes that break naive markup generators —
-    decimals, abbreviations, ellipses, contractions, em dashes, repeated punctuation,
-    unicode quotes, a one-word line, a line with no terminal punctuation at all."""
+    """`n` deterministic, deliberately awkward lines: a fixed LCG over a fixed pool, salted
+    with decimals, abbreviations, ellipses, contractions, em dashes, repeated punctuation,
+    unicode quotes, a one-word line and a line with no terminal punctuation."""
     pool = ("I you we my your Moxie friend today robot star sky big small up down "
             "amazing wonderful sorry oops hmm wow please what how why because think "
             "play draw sing count learn breathe listen story game rocket kitten").split()
@@ -550,10 +538,8 @@ def test_annotate_imports_nothing_outside_the_stdlib():
 # --------------------------------------------------------------------------- #
 # T10 — the budget, measured against THIS machine rather than against a constant
 # --------------------------------------------------------------------------- #
-#: A fixed unit of the same *kind* of work the floor does — a regex sweep over the line
-#: and the string rebuild that follows — sized to cost about what one `annotate` costs.
-#: It is a yardstick, not a benchmark: dividing by it cancels whatever the machine and
-#: the scheduler are doing, because both halves are timed in the same interleaved loop.
+#: A yardstick of the same kind of work as `annotate` (a regex sweep + rebuild), timed in
+#: the same interleaved loop so the ratio cancels machine and scheduler load.
 _CALIB_WORD = re.compile(r"[A-Za-z']+")
 
 
@@ -566,13 +552,8 @@ def _calibration_unit(line):
 
 
 def _interleaved_medians(subject, calibrate, n=400):
-    """Median cost of `subject` and of `calibrate`, sampled ALTERNATELY in one loop.
-
-    Interleaving is the whole trick. A preemption lands on whichever call it lands on,
-    so over 400 pairs both medians absorb the same scheduler weather and the ratio
-    between them is a property of the code. Sampled in two separate loops the two halves
-    drift apart by up to 38% on a loaded box (measured), which is why they are not.
-    """
+    """Median cost of `subject` and `calibrate`, sampled ALTERNATELY in one loop so both
+    absorb the same scheduler noise (separate loops drift up to 38% apart under load)."""
     subj, calib = [], []
     for i in range(n):
         t0 = time.perf_counter()
@@ -588,23 +569,14 @@ def _interleaved_medians(subject, calibrate, n=400):
 
 
 def test_the_floor_costs_about_what_one_pass_over_the_line_costs():
-    """The seam runs per spoken chunk, on the hot path PR #17 bought down to a measured
-    1.52 s first-audio, so the floor may not quietly become the expensive part of it.
+    """The floor may not become the expensive part of the per-chunk hot path.
 
-    This used to read `assert p95 < 1.0` ms. That number measured the MACHINE: on a box
-    at load average 88 the same unchanged code gave a p95 of 7.3 ms against a median of
-    0.34 ms — the tail is the scheduler preempting the process, not the floor getting
-    slower, and a green that depends on who else is running is not a green. The budget is
-    therefore a RATIO to a calibration timed in the same run, at the MEDIAN, where the
-    signal lives. Measured over five trials at load 88-104: ratio 0.86-0.91, so 2.0 is
-    roughly a 2.2x headroom.
+    A RATIO to an in-run calibration at the MEDIAN, not an absolute p95 (a loaded box gave
+    7.3 ms p95 vs 0.34 ms median on unchanged code). Measured ratio 0.86-0.91 under load,
+    so 2.0 is ~2.2x headroom; an injected 0.5 ms sleep reads 6.4-8.8.
 
-    What this catches: anything that doubles the cost of a chunk — a network call, a
-    lock, a sleep, an algorithmic regression. An injected `time.sleep(0.5 ms)` takes the
-    ratio to 6.4-8.8 (measured).
-    What it does NOT catch: a single bare `open()` of a small file, which is a ~10%
-    effect against a ~5%-wide band. That case is covered exactly, and without any timing
-    at all, by `test_the_hot_path_opens_no_file_and_reaches_no_socket` below.
+    Not caught here: a single small `open()` (~10%, inside the noise band) — see
+    `test_the_hot_path_opens_no_file_and_reaches_no_socket`.
     """
     line = ("I love that you asked me about the stars tonight, because they are my very "
             "favourite thing in the whole wide sky, and I think about them a lot when it "
@@ -625,14 +597,9 @@ def test_the_floor_costs_about_what_one_pass_over_the_line_costs():
 
 
 def test_the_hot_path_opens_no_file_and_reaches_no_socket():
-    """The half of the old p95 budget that was actually about the PRODUCT: "a regression
-    that adds I/O fails loudly here". Timing said that only obliquely, and said it in a
-    machine-dependent way. Asserting it directly is exact, instant and load-immune — a
-    single `open()` is a ~10% blip in a timing run and cannot be told from noise, but it
-    is either present or absent here.
-
-    `pytest.fail` raises `BaseException`, so a caller that swallows `Exception` to fall
-    back to the floor cannot hide the violation.
+    """"A regression that adds I/O fails loudly", asserted directly rather than by timing:
+    exact, instant and load-immune. `pytest.fail` raises `BaseException`, so a caller that
+    swallows `Exception` to fall back to the floor cannot hide it.
     """
     import builtins
     import socket

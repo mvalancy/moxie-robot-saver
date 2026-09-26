@@ -18,7 +18,9 @@ Spec: [`../docs/architecture/backlog/live-sim-demo.md`](../docs/architecture/bac
 | [`api/speech.js`](api/speech.js) | `POST /api/speech` | The voice, and only for words we ourselves just wrote. **There is no text field on this route, ever** — the text lives inside the signed ticket, which is what makes it structurally unable to become a free TTS API. Sniffs the bytes, never the Content-Type. |
 | [`api/_lib/envelope.js`](api/_lib/envelope.js) | — | The one response shape, built from a fixed key allowlist, plus the status and `Retry-After` mapping of §4.5. |
 | [`api/_lib/hmac.js`](api/_lib/hmac.js) | — | RFC 5869 HKDF over `crypto.subtle` HMAC-SHA-256; mint/verify the speech ticket and the context blob under **separate domain labels**; a constant-time compare with no early exit. |
-| [`api/_lib/limits.js`](api/_lib/limits.js) | — | Request admission: the origin pin, the per-IP windows, the request-**unit** budget, the concurrency ceiling, a bounded body reader. **Its counters are best-effort and in-process — not a global ceiling** (§4.6). |
+| [`api/_lib/limits.js`](api/_lib/limits.js) | — | Request admission (`admit()`): the origin pin, the per-IP windows, the request-**unit** budget, the concurrency ceiling. Split across [`counters.js`](api/_lib/counters.js), [`sharedtier.js`](api/_lib/sharedtier.js) (the Cache API tier), [`clientip.js`](api/_lib/clientip.js) and [`body.js`](api/_lib/body.js) (the bounded body readers), all re-exported from `limits.js`. **Its counters are best-effort and in-process — not a global ceiling** (§4.6). |
+| [`api/_lib/prompt.js`](api/_lib/prompt.js) + [`api/_lib/reply.js`](api/_lib/reply.js) | — | The pure halves of `chat.js`: the server-built upstream body, and the parsing of what comes back. |
+| [`api/_lib/upstream.js`](api/_lib/upstream.js) | — | The redirect/429/fetch-failure mapping and refusal envelope the three spending routes share. The one `fetch()` stays in each route. |
 | [`api/_lib/wire.js`](api/_lib/wire.js) | — | `build_chat_response`'s field set and `build_cloud_tts_response`'s, transcribed from `mqtt/moxie_sdk/`; the minimal markup floor built from the three mark templates `stub.js` already emits. |
 | [`api/_lib/ttscache.js`](api/_lib/ttscache.js) | — | The synthesised-audio cache behind `/api/speech` (spec §4.8). A **hit makes zero upstream calls**; a miss costs one extra `match`. Keyed on the gateway, model, voice, format, sample rate and the **exact** text, under the full untruncated HMAC — a key that ignored the voice would serve one child a line in another's. **Fails open** on every failure, stores nothing but a successful synthesis, and `DEMO_TTS_CACHE=0` removes it entirely. **Per-colo, not global; a cold colo pays.** |
 | [`api/_lib/wav.js`](api/_lib/wav.js) | — | RIFF walker → `{pcm, rate, channels}`, carrying the header's **own** rate out. Refuses 8/24-bit, a JSON body, and an HTML page. |
@@ -62,7 +64,7 @@ it would answer 405 rather than run.
    converse is asserted too, and it is the ordering rule the bot control had to obey:
    every refusal *cheaper* than Turnstile makes **zero `siteverify` calls**, so a blocked
    utterance never buys a round trip to prove the visitor is human, and `admit()` — not
-   Cloudflare — is what absorbs a flood. And since 2026-09-05 those refusals cost **zero
+   Cloudflare — is what absorbs a flood. Those refusals cost **zero
    units** as well, not merely zero calls: `slot.refundBudget()` hands back what admission
    charged on every path that returns without reaching the gateway.
 3. **`/api/speech` cannot become a free text-to-speech API.** It has no text field. The
@@ -73,7 +75,7 @@ it would answer 405 rather than run.
 ## The bot control: Cloudflare Turnstile
 
 Everything else in this tree bounds the **cost** of a request that has already been made.
-None of it can tell a child from a script — `api/_lib/limits.js::checkOrigin` says so in
+None of it can tell a child from a script — `api/_lib/clientip.js::checkOrigin` says so in
 capitals, because `curl` forges an `Origin` header trivially. Turnstile is the piece that
 can, and it guards **both** visitor-driven spending routes:
 
@@ -186,6 +188,7 @@ and none may ever be required by a test:
 ```sh
 node sim/test_mode.mjs             # the mode machine + the probe
 node sim/test_demo_proxy.mjs       # the caps, the origin pin, the no-leak sweep
+                                   # (sections in sim/tests/edge/demo_proxy/)
 node sim/test_demo_tickets.mjs     # forgery, expiry, replay, tampering, constant-time
 node sim/test_wav_decode.mjs       # both halves of the audio contract, sample for sample
 node sim/test_turnstile.mjs        # the bot control: three checks, both halves of the

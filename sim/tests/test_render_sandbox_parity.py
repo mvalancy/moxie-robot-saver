@@ -1,36 +1,20 @@
-"""Did the sandbox break a legitimate prompt? — the other half of PR #56.
+"""Did the sandbox break a legitimate prompt? — the parity half of the render sandbox.
 
-`test_render_sandbox.py` proves the hostile side: eight escape probes come back inert.
-That is only half the question a security fix has to answer. `SandboxedEnvironment`
-changes attribute access for *every* template, and a sandbox that quietly turns a
-working prompt into an empty string would degrade every single content turn while all
-of those escape tests still pass — the failure mode is silent by design, because
-`is_safe_attribute` returning False substitutes an *undefined* rather than raising
-(`render.py`'s own docstring says so).
+`test_render_sandbox.py` proves escapes come back inert. But `SandboxedEnvironment`
+substitutes an undefined (silently) when `is_safe_attribute` refuses, so an over-tight
+sandbox would quietly empty working prompts while every escape test passes. This fence is
+differential:
 
-So this file is the parity fence, and it is deliberately differential:
+* The oracle is the pre-sandbox renderer (`_plain_render`: `jinja2.Environment(undefined=
+  ChainableUndefined, autoescape=False, keep_trailing_newline=True)` with the same
+  minimal-render fallback). Legitimate templates must render byte-identically through both.
+* The corpus is real: every Jinja-bearing string in `mqtt/content_modules/*.json`, collected
+  at test time so new modules join automatically.
+* `BLOCKED` must not move — a refusal of an already-empty value is invisible in output.
+* The whole path: shipped `memory_chat.json` through the real `ContentApp` and
+  `MoxieRuntime`; the brain's system message carries the nickname and fact, no `{{`.
 
-* **The oracle is the pre-sandbox renderer itself.** `_plain_render` reconstructs the
-  exact environment PR #56 replaced — `jinja2.Environment(undefined=ChainableUndefined,
-  autoescape=False, keep_trailing_newline=True)` with the same fall-back-to-minimal
-  behaviour (`git show c584d3e^:mqtt/moxie_sdk/content/render.py`). Every legitimate
-  template must render **byte-identically** through both. Nothing here re-states what
-  the renderer *should* produce; the old renderer says what it produced.
-* **The corpus is the real one.** Every Jinja-bearing string in
-  `mqtt/content_modules/*.json` — the modules we actually ship — is collected from the
-  files at test time, so a new module joins the fence automatically instead of needing
-  somebody to remember this file exists.
-* **`BLOCKED` must not move.** A refusal is invisible in the output when the refused
-  value happened to be empty anyway, so output parity alone is not proof. The counter
-  `_CountingSandbox` exists for is the second, independent signal: a legitimate
-  template must never trip it, not even once.
-* **The whole path, not just the function.** The last test drives the shipped
-  `memory_chat.json` through the real `ContentApp` and the real `MoxieRuntime` with a
-  fake brain, and asserts the *system message the brain received* carries the
-  nickname and the remembered fact and no un-rendered `{{`. Creds-free.
-
-If a legitimate construct ever does break, the fix belongs in `render.py` — the sandbox
-stays.
+A broken legitimate construct is fixed in `render.py`; the sandbox stays.
 """
 from __future__ import annotations
 
@@ -42,8 +26,6 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 from moxie_sdk.content import render as R          # noqa: E402
 
@@ -54,12 +36,9 @@ MODULE_DIR = os.path.join(REPO, "mqtt", "content_modules")
 
 # --------------------------------------------------------------- the oracle --
 def _plain_render(template: str, context: dict) -> str:
-    """`render_prompt` exactly as it behaved BEFORE the sandbox landed.
-
-    Kept as a literal transcription of the pre-fix body rather than a call into
-    `render` so that a future edit to `render.py` cannot silently move the oracle
-    too. The `except Exception -> _minimal_render` tail is part of the old contract
-    and is reproduced here for the same reason."""
+    """`render_prompt` as it behaved BEFORE the sandbox, transcribed literally (including
+    the `except Exception -> _minimal_render` tail) so edits to `render.py` cannot move the
+    oracle."""
     if not template:
         return ""
     try:
@@ -72,12 +51,8 @@ def _plain_render(template: str, context: dict) -> str:
 
 # ------------------------------------------------------------- the contexts --
 def _child_context():
-    """The context `ContentApp` really builds, with memory populated.
-
-    `wrap_facts` is what makes `{{ volley.persist_data.ns.facts }}` render as bullet
-    lines instead of a list repr, so the fixture goes through it — a parity test on a
-    plain list would be testing a shape the runtime never renders.
-    """
+    """The context `ContentApp` really builds, with memory — through `wrap_facts`, so facts
+    render as bullet lines as they do at runtime."""
     from moxie_sdk.content.memory import wrap_facts
     from moxie_sdk.content.volley import Session, Volley
 
@@ -206,16 +181,12 @@ def test_the_remembered_facts_reach_the_prompt_as_bullets():
 
 
 # ------------------------------------------- the documented construct corpus --
-#: Everything `content-module-contract.md`:42 promises a module author (`{{…}}`,
-#: `{% if %}`) plus the ordinary Jinja an author would reach for next. Each entry is
-#: rendered through both renderers and must agree; each must also produce something.
-#:
-#: Chosen for the sandbox's actual attack surface on *legitimate* code:
-#: dict-key access that falls through `getattr` (`persist_data.memory_chat`), bound
-#: methods on known mutables (`.items()`, `.get()`, `.keys()`), string methods,
-#: filters that call `getattr` internally (`|attr` is deliberately NOT here — it is an
-#: escape probe and lives in `test_render_sandbox.py`), iteration over a `list`
-#: subclass (`FactList`), and a `@property` on a dataclass (`session.overflow`).
+#: Everything `content-module-contract.md`:42 promises (`{{…}}`, `{% if %}`) plus ordinary
+#: Jinja an author would reach for next, chosen for the sandbox's surface on LEGITIMATE code:
+#: dict-key fallthrough (`persist_data.memory_chat`), bound methods on known mutables
+#: (`.items()`, `.get()`, `.keys()`), string methods, getattr-using filters (`|attr` is an
+#: escape probe and lives elsewhere), iteration over `FactList`, and a dataclass
+#: `@property` (`session.overflow`). Each must agree across renderers and produce output.
 LEGIT = {
     # the contract's two documented forms
     "dotted_path": "Hi {{ volley.config.child_pii.nickname }}!",
@@ -288,18 +259,9 @@ def test_a_documented_construct_produces_something(name):
 
 
 def test_the_fence_would_notice_an_over_tight_sandbox():
-    """Prove the parity assertion has teeth.
-
-    A green differential suite is only evidence if it *could* have gone red, so this
-    swaps in the failure mode the fix could plausibly have shipped — a sandbox whose
-    `is_safe_attribute` refuses everything, which is exactly what "the sandbox emptied
-    a working prompt" looks like — and requires the oracle to catch it on the shipped
-    corpus. It is not a claim about jinja2; it is a claim about this file.
-
-    (Measured while writing it: `ImmutableSandboxedEnvironment` — the obvious
-    over-tightening — breaks *nothing* in the legitimate corpus, because it only
-    refuses **mutating** methods (`dict.pop`, `list.append`), and no legitimate prompt
-    mutates. That is a real finding, but it makes Immutable useless as a control.)
+    """The parity assertion has teeth: a sandbox whose `is_safe_attribute` refuses
+    everything must be caught on the shipped corpus. (`ImmutableSandboxedEnvironment` is
+    useless as a control — it only refuses mutating methods, which no prompt uses.)
     """
     from jinja2.sandbox import SandboxedEnvironment
 
@@ -326,22 +288,13 @@ def test_the_fence_would_notice_an_over_tight_sandbox():
 
 # ------------------------------------ the renderer a BARE-METAL install still uses --
 #
-# `mqtt/requirements.txt` now lists `jinja2>=3.0`, so the supervisor **container** runs the
-# real sandboxed renderer (`test_render_container_deps.py` pins that). `pyproject.toml`
-# still gates jinja2 behind the `content` extra on purpose, so a bare `pip install
-# moxie-cloud-sdk` takes the `ImportError` branch: no jinja2, no sandbox, and
-# `_minimal_render` doing the work. Every shipped module must render there too.
-#
-# Verified against the real artifact on 2026-09-02: the 0.7.0 wheel installed into a venv
-# holding only `paho-mqtt` renders `Hi {{ volley.config.child_pii.nickname }}!` → `Hi Sam!`.
+# The container ships jinja2 (`test_render_container_deps.py`), but `pyproject.toml` keeps it
+# behind the `content` extra, so a bare `pip install moxie-cloud-sdk` renders with
+# `_minimal_render`. Every shipped module must render there too.
 
 def _no_jinja2_render(template: str, context: dict) -> str:
-    """`render_prompt` with jinja2 made unimportable — the container's code path.
-
-    Blocks the import rather than uninstalling anything, so the assertion holds in a
-    full-fat venv too (the same technique `test_package_contents.py` uses to prove no
-    module needs an optional backend).
-    """
+    """`render_prompt` with jinja2 made unimportable (import blocked, nothing uninstalled —
+    as in `test_package_contents.py`)."""
     import builtins
     real_import = builtins.__import__
 
@@ -384,25 +337,10 @@ def test_the_fallback_reaches_memory_the_same_way_jinja_does():
 
 
 def test_a_block_construct_is_no_longer_a_hole_in_the_fallback():
-    """**The gap this test used to pin, now closed** — and the decision it refused to guess.
-
-    It used to assert the pre-fix behaviour: with no jinja2 the minimal renderer
-    substituted `{{ … }}` and passed block tags through **verbatim**, so an imported pack
-    using the `{% if %}` form `content-module-contract.md`:42 advertises put template
-    source into the brain's system prompt. It said "change it when that decision lands".
-    Both halves of the decision have landed:
-
-    * the container ships jinja2, so the documented form really works in production
-      (`test_render_container_deps.py`);
-    * the fallback no longer passes anything through — it **evaluates** a simple
-      `{% if dotted.path %}` (which is all the documented form needs, and all `_resolve`
-      can honestly decide) and removes what it cannot evaluate, counting each removal in
-      `render.STRIPPED` (`test_render_fallback.py`).
-
-    The old objection — "stripping the tags would render the branch unconditionally" —
-    is answered by evaluating rather than stripping: the branch is taken only when the
-    path is truthy, byte-identically to jinja2. The two asserts below are the two
-    branches; a fallback that guessed would get one of them wrong."""
+    """Without jinja2 the fallback EVALUATES a simple `{% if dotted.path %}` (the documented
+    form) byte-identically to jinja2 and strips what it cannot evaluate, counting it in
+    `render.STRIPPED`. The two asserts are the two branches; a guessing fallback would get
+    one wrong."""
     tail = "Hi {{ volley.config.child_pii.nickname }}"
     template = "{% if presence.face_present %}They are here.{% endif %}" + tail
     ctx = _child_context()
@@ -421,12 +359,8 @@ def test_a_block_construct_is_no_longer_a_hole_in_the_fallback():
 # ------------------------------------------------------- the whole-path proof --
 def test_the_shipped_module_renders_through_the_real_runtime(tmp_path):
     """End to end, creds-free: shipped `memory_chat.json` → real `ContentApp` → real
-    `MoxieRuntime` → the wire. The brain is fake **only** so the test can read the
-    system message it was handed; everything upstream of it is production code.
-
-    This is the assertion that would have failed if the sandbox had emptied the prompt:
-    the escape probes and the unit renders would all still pass.
-    """
+    `MoxieRuntime` → the wire, with a fake brain only to read its system message. This is
+    what would fail if the sandbox emptied the prompt."""
     from helpers_runtime import assert_spec_response, drive_once
     from moxie_sdk.content import ContentApp, load_modules
     from moxie_sdk.store import JsonStore, MemoryStore

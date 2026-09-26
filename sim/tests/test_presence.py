@@ -11,10 +11,8 @@ Honest scope: no physical robot has ever sent us one of these events. These test
 robot behavior.
 """
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk import presence as P                          # noqa: E402
 

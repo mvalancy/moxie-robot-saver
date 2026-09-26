@@ -1,56 +1,28 @@
-"""The readiness line must not outrun the subscriptions — nor the broker's ACK of them.
+"""The readiness lines must not outrun the subscriptions — nor the broker's ACK of them.
 
-`helpers_stack.Supervisor.start()` waits for `[runtime] broker connected` before it lets
-a robot announce itself. For as long as `_on_connect` printed that line *before* calling
-`subscribe`, the supervisor advertised readiness it did not have: the SIL robot's single
-`/state` could land in the gap and go unheard, and `test_live_gateway_turn_e2e` failed as
-"no config pushed within timeout" — intermittently, and *more often on a quiet box*,
-because a busy one is slow enough to lose the race.
+1. `[runtime] broker connected` (CONNACK) is printed only AFTER `subscribe` is called — else
+   a robot's single `/state` could land before any subscription existed.
+2. `subscribe()` only queues a SUBSCRIBE (sent on the network thread after the callback), so
+   "broker connected" means "we asked". A robot booted on it can lose its QoS-0,
+   non-retained config push outright (seen as the first HIL scenario failing 0/4 with the
+   second green). So `[runtime] subscriptions acknowledged by the broker` is printed from a
+   real `on_subscribe` SUBACK, and harnesses boot robots on that.
 
-Found by the sixth integration pass while verifying the week soak (2026-09-04). It is
-playbook rule 23's shape inside the runtime: a signal that was true of an earlier moment.
-The assertion is on the ORDER OF EFFECTS, not on the source text, so a refactor that keeps
-the bug cannot pass it.
-
-**AND THE SAME BUG ONE HANDSHAKE LATER (2026-09-05).** Subscribing before printing made
-the line honest about what it claimed; it did not make the claim useful, because
-`subscribe()` does not subscribe. It generates a mid, queues a SUBSCRIBE packet and
-returns — under `loop_forever()` the bytes go out on the network thread *after* this
-callback — so `broker connected` has always meant *"we asked"*. A robot booted on it
-publishes `/state` into a broker with no matching subscription; the config push that
-answers a `/state` is QoS 0 and not retained, so the message is not late, it is **gone**.
-HIL, on the promotion PR:
-
-    ❌ scenario 'basic-conversation': 0/4 turns OK — no config pushed within timeout
-
-with `motion-demo`, the *second* scenario, green at 4/4 in the same job. First fails,
-second passes: a startup race, not a scenario bug. PR #143 fixed exactly this on the
-robot's side of the same wire (`sim/tests/test_sil_handshake.py`); this is the
-supervisor's.
-
-The fix is a real `on_subscribe` and a **second** line,
-`[runtime] subscriptions acknowledged by the broker`, printed from the SUBACK. The first
-line keeps its meaning — `/status`'s `broker_connected`, the console card and the rc=5
-guards below all still want the CONNACK — so nothing that already reads it was moved
-under. The bottom half of this file is the order-of-effects proof for the new line.
+`broker connected` keeps its meaning (`/status`, the console card and the rc=5 guards want
+the CONNACK). Assertions are on the ORDER OF EFFECTS, not source text.
 """
-import io, os, sys
+import io, os
 from contextlib import redirect_stdout
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 
 import pytest
 pytest.importorskip("paho.mqtt.client")
 
 
 class _OrderRecordingClient:
-    """Records every subscribe, and what stdout had said by the time it arrived.
-
-    `subscribe` takes whatever paho takes — one topic, or the `[(topic, qos), …]` list the
-    runtime now sends so that one SUBSCRIBE is answered by one SUBACK.
-    """
+    """Records every subscribe and what stdout had said by then. Accepts one topic or the
+    `[(topic, qos), …]` list the runtime sends (one SUBSCRIBE ⇒ one SUBACK)."""
 
     def __init__(self, out):
         self.out, self.subscribes = out, []
@@ -109,20 +81,14 @@ def test_a_refused_connack_neither_subscribes_nor_claims_connection():
 
 
 # --------------------------------------------------------------------------- #
-# THE SECOND HANDSHAKE: the line a harness may actually boot a robot on.
-#
-# Everything above is about the CONNACK. Everything below is about the SUBACK, and the
-# distinction is a deleted message rather than a slow one — see the module docstring.
+# THE SECOND HANDSHAKE: the line a harness may actually boot a robot on (the SUBACK).
 # --------------------------------------------------------------------------- #
 SUBACK_LINE = "[runtime] subscriptions acknowledged by the broker"
 
 
 def test_the_subscribed_line_is_not_printed_by_the_connack():
-    """The whole bug in one assertion.
-
-    `_on_connect` has done everything it can — it has asked. It must not say the broker
-    answered, because the broker has not: the SUBSCRIBE packet is still queued.
-    """
+    """The bug in one assertion: `_on_connect` has only ASKED, so it must not print that the
+    broker answered — the SUBSCRIBE is still queued."""
     rt = _fresh_runtime()
     out = io.StringIO()
     with redirect_stdout(out):
@@ -177,12 +143,8 @@ def test_the_subscribed_line_is_flushed():
 
 
 def test_one_subscribe_call_covers_every_topic_so_one_suback_is_enough():
-    """Why `_on_subscribe` needs no counting.
-
-    Four `subscribe()` calls are four SUBACKs, and a flag set on the first of them is the
-    original bug wearing a callback. One list subscribe is one packet and one ack, which
-    is what PR #143 did on the robot side.
-    """
+    """No counting in `_on_subscribe`: one list subscribe is one packet and one ack (four
+    calls would be four SUBACKs, and a flag on the first is the original bug)."""
     rt = _fresh_runtime()
     out = io.StringIO()
     client = _OrderRecordingClient(out)
@@ -197,12 +159,8 @@ def test_one_subscribe_call_covers_every_topic_so_one_suback_is_enough():
 
 
 def test_a_disconnect_disarms_it_so_a_reconnect_must_earn_it_again():
-    """A SUBACK is a fact about a socket, and the socket is gone.
-
-    The SIL/CI brokers run clean sessions, so a reconnect re-subscribes from scratch. A
-    latched flag would let the *second* connection's readiness be claimed by the first
-    connection's ack — the same "true of an earlier moment" shape, one layer up.
-    """
+    """A SUBACK is a fact about a socket: after a reconnect (clean sessions re-subscribe),
+    readiness must not be claimed by the previous connection's ack."""
     rt = _fresh_runtime()
     out = io.StringIO()
     with redirect_stdout(out):
@@ -216,14 +174,8 @@ def test_a_disconnect_disarms_it_so_a_reconnect_must_earn_it_again():
 
 
 def test_a_refused_subscription_is_not_readiness():
-    """An ack can say no, and `0x80` is how it says it.
-
-    A broker ACL that does not grant this credential `/devices/+/state`
-    (security-broker-auth.md §2.2) answers the SUBSCRIBE with a failure code per refused
-    filter. The supervisor is then genuinely deaf, so arming readiness on that SUBACK
-    would be `broker connected rc=5` wearing a later callback — the same comfortable lie
-    the rest of this file exists to prevent.
-    """
+    """A SUBACK can refuse (`0x80` per filter, e.g. an ACL not granting `/devices/+/state`);
+    the supervisor is then deaf, so readiness must not arm."""
     rt = _fresh_runtime()
     out = io.StringIO()
     with redirect_stdout(out):
@@ -241,15 +193,10 @@ def test_a_refused_subscription_is_not_readiness():
 
 
 def test_the_connack_callback_is_the_only_place_that_subscribes():
-    """The fact the ack-without-counting rests on.
-
-    `_on_subscribe` arms readiness on the first SUBACK it sees, which is sound only while
-    exactly one SUBSCRIBE is ever sent per connection. A second `subscribe()` call
-    anywhere in the runtime would let an unrelated ack arm it early, so this pins the
-    property rather than trusting the reviewer who added the second call.
-    """
-    src = open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py"),
-               encoding="utf-8").read()
+    """Exactly one `.subscribe(` call in the runtime — the fact ack-without-counting rests on
+    (a second call would let an unrelated ack arm readiness early)."""
+    from helpers_runtime import runtime_source
+    src = runtime_source()
     calls = [ln.strip() for ln in src.splitlines()
              if ".subscribe(" in ln and not ln.strip().startswith("#")]
     assert calls == ["c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])"], (

@@ -1,43 +1,23 @@
 /* test_typed_turn.mjs — the typed line, in a REAL browser, all the way to real sound.
  *
- * WHY A BROWSER SUITE AND NOT ANOTHER FAKE-DOM ONE. `sim/test_cloud_transport.mjs` already
- * drives the transport under a stubbed window on a virtual clock, and it is excellent at
- * what it does — but it cannot see a Content-Security-Policy refusal, it cannot see one
- * element sitting on top of another, and its Web Audio is a stub, so "audio played" is a
- * counter it increments itself. This repo has already shipped a half-working feature that
- * way (PR #82, corrected in #87: 770 assertions all read a FILE while Web Audio was
- * stubbed). So every claim here is measured in Chrome:
+ * test_cloud_transport.mjs covers the transport under a fake DOM, but cannot see a CSP
+ * refusal, overlapping elements, or real Web Audio. So every claim here is measured in
+ * Chrome: the request that left the page, and the samples that reached an
+ * AudioBufferSourceNode. The fixture is a real 440 Hz tone and the PEAK AMPLITUDE is
+ * asserted, so a silent clip fails.
  *
- *   · the request that actually left the page (`page.on("request")`), and
- *   · the sample data that actually reached an `AudioBufferSourceNode`.
+ * Blocks: 1 hosted+live "Ask" reaches /api/chat and her voice plays; 2 an over-long line is
+ * refused client-side for free; 3 hosted+degraded spends nothing and still answers; 4 the
+ * controls that cannot work are disabled and clicking them logs no CSP error; 5 local+Piper
+ * is unchanged; 6 local without a sidecar adopts the box only after the probe, scripted;
+ * 7 an opener is a real turn while a rail phrase chip sends nothing.
  *
- * THE SILENT-CLIP TRAP, closed on purpose. A fixture of zero bytes decodes cleanly, plays
- * cleanly and passes every structural check while making no sound. So the fixture is a
- * real 440 Hz tone and the assertion is on the PEAK SAMPLE AMPLITUDE read back out of the
- * buffer the browser was handed — a silent clip fails it.
- *
- * WHAT IS PROVEN, one scenario per block:
- *   1. hosted + live      — "Ask" reaches /api/chat, and Moxie's own voice really plays.
- *   2. hosted + live      — an over-long line is refused CLIENT-side and costs no request.
- *   3. hosted + degraded  — the same click spends NO live turn and still answers.
- *   4. hosted             — the controls that genuinely cannot work are disabled, and
- *                           clicking them produces no CSP console error. This is the
- *                           defect that started the slice, asserted directly.
- *   5. local + Piper      — the local path is BYTE-FOR-BYTE the behaviour it has today.
- *   6. local, no sidecar  — the box is adopted only after the probe answers, and the
- *                           turn is scripted.
- *   7. hosted + live      — TAPPING AN OPENER is a real turn: the opener's own words in
- *                           the /api/chat body, the ticket redeemed, her voice audible —
- *                           and the rail's phrase chips, clicked on the same page, send
- *                           nothing at all. That pair IS the feature's definition.
- *
- * No gateway, no Cloudflare account, no network: `/api/*` and the :8081 sidecar are
- * answered at the browser, and the site is served from a loopback static server.
+ * No network: `/api/*` and the :8081 sidecar are answered at the browser.
  *
  *   node sim/test_typed_turn.mjs
  */
 import { join } from "node:path";
-import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo, launchBrowser } from "./browser_harness.mjs";
 
 const LABEL = "typed-turn test";
 const { puppeteer, chrome, skip } = await requireBrowser(LABEL);
@@ -103,12 +83,8 @@ function wavOfTone() {
 }
 const WAV = wavOfTone();
 
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-         "--autoplay-policy=no-user-gesture-required",
-         `--host-resolver-rules=MAP moxie.hosted.test 127.0.0.1:${site.port}`],
-});
+const browser = await launchBrowser(puppeteer, chrome,
+  { autoplay: true, hosts: { "moxie.hosted.test": site.port } });
 
 /**
  * Open sim.html with `/api/*` (and optionally the :8081 sidecar) answered at the browser.
@@ -130,11 +106,9 @@ async function open(url, opts) {
     if (/\/api\/(chat|speech|transcribe)\b/.test(r.url())) bodies.push({ url: r.url(), body: r.postData() || "" });
   });
 
-  /* Web Audio, instrumented at the layer that makes sound. `createBuffer` + a wrapped
-   * `start()` is where the GATEWAY voice lands (audio.js:709-716 builds the buffer by hand
-   * from int16 PCM — it never calls decodeAudioData), and `decodeAudioData` is where the
-   * PIPER voice lands. Both are recorded, along with the peak amplitude of what was
-   * actually scheduled, so a silent buffer cannot pass. */
+  /* Web Audio, instrumented where sound is made: `createBuffer` + wrapped `start()` is the
+   * GATEWAY voice (audio.js builds it from int16 PCM), `decodeAudioData` the PIPER voice. The
+   * peak amplitude of what was scheduled is recorded, so a silent buffer cannot pass. */
   await page.evaluateOnNewDocument(() => {
     window.__audio = { created: 0, decoded: 0, started: 0, frames: 0, rate: 0, peak: 0 };
     const C = window.AudioContext || window.webkitAudioContext;
@@ -204,14 +178,8 @@ async function open(url, opts) {
 
 const CORS = { "Access-Control-Allow-Origin": "*" };
 
-/* Console errors, minus the ones this fixture CAUSED on purpose.
- *
- * A local page with no sidecar really does log `net::ERR_CONNECTION_REFUSED` for each
- * doomed :8081/:8082 probe — that is today's behaviour on any self-hoster's machine and
- * has nothing to do with this slice. Rather than loosening the guard, forgive exactly as
- * many of those lines as this fixture aborted requests, and nothing else: a real console
- * error still fails, and so does one refusal too many. (`sim/test_env_hosted.mjs` uses the
- * same correlation trick for the one legitimate /api/health 404.) */
+/* Console errors, minus the ones this fixture CAUSED: exactly one forgiven
+ * ERR_CONNECTION_REFUSED per aborted :8081/:8082 probe, nothing else. */
 const ABORTED = /Failed to load resource: net::ERR_(CONNECTION_REFUSED|FAILED|BLOCKED_BY_CLIENT)/;
 const PROBE_404 = /Failed to load resource: the server responded with a status of 404/;
 function notable(errs, aborted) {
@@ -321,14 +289,8 @@ try {
   }
 
   /* =======================================================================
-   * 3. HOSTED + DEGRADED — the fallback answers and spends nothing.
-   *
-   * Note what is NOT copied from `mic.js` here: its degraded path publishes a SCRIPTED
-   * CHILD LINE, which it used to publish through this same `sendUserTurn` — spending, on a
-   * live page, a whole chat + speech turn on words the visitor never said. The typed path
-   * never could: the only text that reaches `sendUserTurn` is text a human typed. `mic.js`
-   * now goes through `sendScriptedTurn` instead, and `sim/test_mic_spend.mjs` counts the
-   * requests to prove it.
+   * 3. HOSTED + DEGRADED — the fallback answers and spends nothing. (mic.js's scripted child
+   * line goes through `sendScriptedTurn`, never `sendUserTurn`; test_mic_spend.mjs counts it.)
    * ===================================================================== */
   {
     const { page, errs, reqs, bodies, aborted } = await open(HOSTED, { health: HEALTH_BARE });
@@ -352,12 +314,8 @@ try {
   }
 
   /* =======================================================================
-   * 4. HOSTED — the dead controls. THE DEFECT THIS SLICE STARTED FROM.
-   *
-   * Before: `#speech-btn`, `#tts-test` and `#bus-connect` were marked `needs-backend`,
-   * which is a tooltip and half opacity — they stayed fully clickable and a click fired a
-   * cross-origin request the site's own CSP refused. Silence for the visitor, a console
-   * error for anyone looking. A click must never produce one again.
+   * 4. HOSTED — the dead controls: `#speech-btn`, `#tts-test` and `#bus-connect` used to stay
+   * clickable and fire a cross-origin request the CSP refused. A click must never log one.
    * ===================================================================== */
   {
     const { page, errs, reqs, aborted } = await open(HOSTED, { health: HEALTH_LIVE, chat: true });
@@ -385,19 +343,13 @@ try {
   }
 
   /* =======================================================================
-   * 5. LOCAL + a reachable Piper sidecar — TODAY'S BEHAVIOUR, UNCHANGED.
-   *
-   * The owner's standing rule is that the local engines stay first-class options. With a
-   * sidecar answering on :8081 the button keeps its name, keeps its job, and the typed
-   * turn does not take it over.
+   * 5. LOCAL + a reachable Piper sidecar — unchanged: the local engines stay first-class, so
+   * the button keeps its job and the typed turn does not take it over.
    * ===================================================================== */
   {
-    /* `health: null` -> `/api/health` 404s, which is `offline`: a self-hoster running
-     * `sim/serve.py` with no Pages Functions. That is the deployment a Piper sidecar
-     * actually belongs to, and it matters here — in `degraded` `audio.js::skipProbe`
-     * already refuses to look for a sidecar (that rule predates this slice and is
-     * untouched by it), so a `degraded` fixture would silently never reach Piper and this
-     * block would prove nothing. */
+    /* `health: null` -> /api/health 404s = `offline` (sim/serve.py, no Functions): the
+     * deployment a sidecar belongs to. In `degraded`, `audio.js::skipProbe` never looks for
+     * Piper, so this block would prove nothing. */
     const { page, errs, reqs, bodies, aborted } = await open(LOCAL, { health: null, piper: true });
     const before = await page.evaluate(snapshot);
     eq(before.adopted, false, "local + Piper: the typed turn does NOT take the box over");
@@ -449,30 +401,12 @@ try {
   }
 
   /* =======================================================================
-   * 7. AN OPENER IS A REAL TURN — the same request a typed line makes.
-   *
-   * WHAT IT IS. `#chat-openers` in the chat dock: three buttons —
-   * *"Tell me a silly joke"* / *"What makes you happy?"* / *"Surprise me!"* — the
-   * owner's chosen effortless-chat direction, with no imposed mission or game structure.
-   * docs/architecture/backlog/gamify-the-public-sim.md's 🅐. Tapping one is a whole first
-   * turn for a visitor who has been told nothing about this robot and has no idea what
-   * she can do.
-   *
-   * WHY THE PROOF BELONGS HERE. `sim/test_mobile_layout.mjs` block 8 drives the openers
-   * on a 390x844 phone, but on a DEGRADED page: every turn there is scripted by `stub.js`
-   * and no request leaves the browser, which is exactly right for "one tap, no scrolling,
-   * no drawer, the log grew" and says nothing at all about the wire. The claim made here
-   * is the other one, and it is the property the whole feature is defined by: an opener
-   * goes down the SAME path a typed line takes — `moxieTypedTurn.send` -> `sendUserTurn`
-   * -> `POST /api/chat` -> a speech ticket -> her real voice — so it spends, queues and
-   * is refused under exactly the same rules. Nothing about it is canned.
-   *
-   * THE NEGATIVE CONTROL IS IN THIS BLOCK, ON THIS PAGE, and it is not decoration: it is
-   * the distinction the feature exists for. `#speech-chips` in the engineering rail look
-   * like these and are not these — they play PRE-CACHED SHIPPED AUDIO and send nothing
-   * (`sim.html`:174-178). One is clicked here and the `/api/chat` count must NOT move.
-   * The day someone "simplifies" the openers into phrase chips, or repurposes the phrase
-   * chips into openers, one of the two halves below goes red.
+   * 7. AN OPENER IS A REAL TURN — the same path a typed line takes
+   * (`moxieTypedTurn.send` -> `sendUserTurn` -> POST /api/chat -> ticket -> her voice), so it
+   * spends, queues and is refused under the same rules. test_mobile_layout.mjs block 8 covers
+   * the degraded phone layout; this covers the wire.
+   * NEGATIVE CONTROL on the same page: a rail `#speech-chips` chip plays shipped audio and
+   * must NOT move the /api/chat count — the distinction the feature exists for.
    * ===================================================================== */
   {
     const { page, errs, reqs, bodies, aborted } = await open(HOSTED, { health: HEALTH_LIVE, chat: true });
@@ -523,10 +457,8 @@ try {
        "…and the message box was never touched: an opener SENDS, it does not pre-fill");
 
     /* ---- THE NEGATIVE CONTROL: a phrase chip is not an opener ----
-     * `moxieAudio.speak` is wrapped rather than the sound being timed, so this is a
-     * DETERMINISTIC fact about what the chip's handler asked for — no waiting on a decode
-     * and nothing for a slow machine to make flaky. `includes` rather than a length,
-     * because Moxie mutters to herself through the same function every 11-24 s. */
+     * `moxieAudio.speak` is wrapped (deterministic, no decode wait); `includes`, not a length,
+     * because ambient self-talk uses the same function. */
     await page.waitForSelector("#speech-chips .chip", { timeout: 10000 }).catch(() => {});
     await page.evaluate(() => {
       window.__spoke = [];
