@@ -1,15 +1,7 @@
 /* hud.js — the SIM page's HUD glue: panel wiring, typed turns, transcript, controls.
- *
- * Lived inline at the bottom of `sim.html` until 2026-09-04 (213 lines). Moved out so
- * `script-src` can drop `'unsafe-inline'`: a same-origin file is covered by `'self'` and,
- * unlike a hash, cannot drift out of sync with the policy and blank the page.
- *
- * Loaded WITHOUT defer/async, in the same document position the inline block held, so its
- * execution order relative to the other classic scripts on the page is unchanged.
- */
-/* HUD glue — mirrors the #bus-status text (written by bridge.js) onto
- * body[data-bus] so CSS can color the status line, the topbar link lamp,
- * and the REC button. Pure presentation; touches no simulator state. */
+ * Loaded without defer/async where its old inline block sat, so execution order is
+ * unchanged. Also mirrors #bus-status (bridge.js) onto body[data-bus] so CSS can color the
+ * status line, link lamp and REC button. */
 (function () {
   "use strict";
   var el = document.getElementById("bus-status");
@@ -80,22 +72,10 @@
   if (window.moxie) wireScene();
   else window.addEventListener("moxie-ready", wireScene, { once: true });
 
-  /* Name the motor sliders.
-   *
-   * `moxie.js::buildPanel` writes each row as
-   *     <label><span>4 · Head tilt (nod)</span><span class="val">16384</span></label>
-   *     <input type="range" …>
-   * — the <label> WRAPS neither the input nor carries a `for`, so it labels nothing, and
-   * the seven sliders reach the accessibility tree as `slider ""`. Measured on the live
-   * site 2026-09-04: those seven, plus #led-color and #qr-kind, were the only interactive
-   * nodes on the page with an empty accessible name. A sighted user reads the text an
-   * inch away; a screen-reader user is told "slider, 16384" seven times.
-   *
-   * Fixed here rather than in moxie.js because this file already owns the HUD glue, and
-   * because the fix is one attribute copied from text the panel already renders — there
-   * is no second source of truth to drift. It runs from a MutationObserver rather than
-   * on `moxie-ready`: that event is dispatched BEFORE buildPanel() appends anything, so a
-   * ready-handler would run against an empty #motors. */
+  /* Name the motor sliders. moxie/panel.js renders `<label><span>4 · Head tilt</span>…`
+   * beside the input without wrapping it or a `for`, so each slider reached the a11y tree as
+   * `slider ""`. The name is copied from the rendered text (no second source of truth), from
+   * a MutationObserver because `moxie-ready` fires BEFORE the panel is built. */
   (function labelMotors() {
     var host = document.getElementById("motors");
     if (!host) return;
@@ -126,12 +106,9 @@
     var test = document.getElementById("tts-test");
     var st = document.getElementById("tts-status");
     function speak(t) { if (t && window.moxieAudio) window.moxieAudio.speak(t); }
-    /* When there is no local Piper sidecar, `cloud-transport.js` takes this box over as
-     * the "ask Moxie" control (see its `adoptSpeechControl`) — because "speak arbitrary
-     * text" is structurally not something a hosted deploy can offer, and a button that
-     * looks live and silently fails is worse than one that is honest. These two listeners
-     * are left in place and STAND DOWN instead of being removed: the phrase chips below
-     * hold a reference to `inp`, and removing/replacing the nodes would break them. */
+    /* On a page with no local Piper sidecar, cloud-transport.js adopts this box as the "ask
+     * Moxie" control (adoptSpeechControl). These listeners STAND DOWN rather than being removed:
+     * the phrase chips below hold a reference to `inp`. */
     function typedTurnOwnsBox() {
       try { return !!(window.moxieTypedTurn && window.moxieTypedTurn.adopted()); } catch (e) { return false; }
     }
@@ -182,37 +159,13 @@
   })();
 
 
-  /* THE THREE OPENERS — `#chat-openers`, in the chat dock under the log.
-   *
-   * Three buttons that each send a whole first turn for a visitor who has been told
-   * nothing about this robot: *"Tell me a silly joke"*, *"What makes you happy?"*,
-   * *"Surprise me!"* (the owner's decided effortless-chat direction).
-   *
-   * ONE LINE OF REAL WORK, and every word of the rest of this note is about WHICH PATH it
-   * takes. `window.moxieTypedTurn.send` is `cloud-transport.js`'s `sendTyped` — "the one
-   * typed path, shared by whichever control is carrying it", in its own header. Going
-   * through it buys three things, and each one is a bug avoided rather than a nicety:
-   *
-   *   · THE SPEND STORY IS INHERITED, NOT RE-IMPLEMENTED. `canSpendLiveTurn()`, the
-   *     Turnstile token, the bounded FIFO queue and the server's `admit()` all apply
-   *     unchanged, because an opener IS a typed line as far as everything downstream is
-   *     concerned. A chip with its own send path would be a second, cheaper way to spend
-   *     the gateway, and nothing would have noticed until the bill.
-   *   · THE CLIENT-SIDE CAP AND THE STATUS LINE come with it (`maxChars()` and
-   *     `#chat-status`), so a refusal is explained under the control the visitor used.
-   *   · IT MEANS THE SAME THING IN BOTH ADOPTION STATES, which a synthetic click on
-   *     `#speech-btn` would NOT. That button is the "ask Moxie" control only on a page
-   *     whose typed turn adopted it; on a self-hosted page with a live Piper sidecar it
-   *     still means "SAY this text out loud", so faking a click there would have Moxie
-   *     announce the prompt in her own voice instead of answering it.
-   *
-   * DELEGATED FROM THE CONTAINER rather than bound per button: the three are static markup
-   * today, and one listener on the group keeps that true if a fourth ever arrives from
-   * data. `closest("button.opener")` because a tap can land on a text node inside the
-   * button — the same reason `sim/test_mobile_layout.mjs`'s `hitTest` accepts a descendant.
-   *
-   * THE VISIBLE LABEL IS THE MESSAGE. There is no `data-text` attribute to drift out of
-   * sync with what the visitor read; see the note in `sim.html` beside the markup. */
+  /* THE THREE OPENERS (#chat-openers): each sends a whole first turn through
+   * `window.moxieTypedTurn.send` — cloud-transport.js's one typed path — so the spend guards
+   * (canSpendLiveTurn, Turnstile, the FIFO queue, server admit()), the length cap and the
+   * status line all apply unchanged. A synthetic click on #speech-btn would NOT be
+   * equivalent: with a live Piper sidecar that button means "say this aloud".
+   * Delegated from the container; `closest("button.opener")` because a tap can land on a text
+   * node. The visible label IS the message (no data-text to drift). */
   (function wireOpeners() {
     var box = document.getElementById("chat-openers");
     if (!box) return;

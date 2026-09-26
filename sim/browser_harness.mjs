@@ -1,20 +1,11 @@
-/* browser_harness.mjs — the shared plumbing for the headless-browser suites.
+/* browser_harness.mjs — shared plumbing for the headless-browser suites.
  *
- * NOT a test. `sim/tests/test_ci_test_coverage.py` enumerates `sim/test_*.mjs` and
- * `sim/run_*.sh`; this file is neither, on purpose — it is imported by the suites that
- * are, and it exists because three of them needed the same 60 lines of puppeteer
- * discovery and the same static server, and a third hand-rolled copy is how those drift.
+ * NOT a test (`sim/tests/test_ci_test_coverage.py` enumerates only `test_*.mjs`). One copy
+ * of puppeteer/Chrome discovery, the static server, and the console-error "eyes".
  *
- * WHY ITS OWN STATIC SERVER rather than `sim/serve.py`. `sim/test_csp.mjs` has to load the
- * site with the REAL `sim/web/_headers` policy applied, because that policy is only ever
- * sent by Cloudflare Pages — every browser suite in this repo until now served the pages
- * with NO CSP at all, which means none of them could have caught a policy that breaks the
- * page. `serveWeb({ headers: true })` parses `_headers` and sends the `/*` block, so the
- * suite tests the header we actually ship. With `headers: false` it is a plain static
- * server and behaves like `serve.py` did.
- *
- * Everything here SKIPS CLEANLY (exit 0) when no browser is available, like the suites it
- * serves — CI runners without Chrome must stay green rather than red-for-the-wrong-reason.
+ * Its own static server rather than `sim/serve.py`: `serveWeb({ headers: true })` sends the
+ * REAL `sim/web/_headers` `/*` block, so suites test the CSP we ship (only Cloudflare Pages
+ * sends it otherwise). With `headers: false` it is a plain static server.
  */
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -57,20 +48,9 @@ export function findChrome() {
 }
 
 /**
- * Skip the whole suite. Green on a contributor's laptop; RED under CI.
- *
- * WHY THE ASYMMETRY. A clean skip is right for someone who just cloned the repo and has
- * no browser — the other 18 suites still tell them something. It is exactly WRONG in CI,
- * where a skip is indistinguishable from a pass in the badge, and where the browser suites
- * are the ones guarding the live public site. For months `npm install puppeteer` was in no
- * workflow file, so nine suites printed "skipped — puppeteer not found" on every green run
- * and the merge gate quietly lost its best assertions — the same shape as PR #82, whose 770
- * assertions all read a file while Web Audio was stubbed. `test_typed_turn.mjs` was written
- * to close exactly that hole and had never once executed here.
- *
- * So: under `CI`, a missing browser is a FAILURE, not a skip. If the install step above ever
- * breaks, the tier reddens and says so instead of deleting five minutes of coverage in
- * silence. A test that cannot fail is not a test, and a skip that cannot be seen is not a skip.
+ * Skip the whole suite: green on a contributor's laptop, RED under CI. In CI a skip looks
+ * like a pass while the suites guarding the live site silently stop running, so a missing
+ * browser there is a FAILURE.
  */
 export function skipper(label) {
   return (msg) => {
@@ -84,6 +64,21 @@ export function skipper(label) {
     console.log(`ℹ️  ${label} skipped —`, msg);
     process.exit(0);
   };
+}
+
+/**
+ * Launch headless Chrome the way the SIM suites need it: software GL (swiftshader) so the
+ * WebGL stage renders on GPU-less runners, optional autoplay, and optional host mappings
+ * (`{ "moxie.hosted.test": port }`) so a loopback server can play a public hostname.
+ */
+export async function launchBrowser(puppeteer, chrome, { hosts = {}, autoplay = false, args = [], ...opts } = {}) {
+  const rules = Object.entries(hosts).map(([h, port]) => `MAP ${h} 127.0.0.1:${port}`).join(",");
+  return puppeteer.launch({
+    executablePath: chrome, headless: "new", ...opts,
+    args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
+           ...(autoplay ? ["--autoplay-policy=no-user-gesture-required"] : []),
+           ...(rules ? [`--host-resolver-rules=${rules}`] : []), ...args],
+  });
 }
 
 /**
@@ -118,12 +113,9 @@ const MIME = {
 };
 
 /**
- * The `/*` block of `sim/web/_headers`, as a plain object.
- *
- * Only that block is read, and that is the honest scope: the later blocks in the file set
- * `Cache-Control` only, which is irrelevant to what a browser will REFUSE to run. Parsing
- * the real file rather than restating the policy is the point — a suite that hard-coded
- * the CSP string could pass while the shipped header said something else.
+ * The `/*` block of `sim/web/_headers`, as a plain object — parsed from the real file, never
+ * restated, so a suite cannot pass against a policy we do not ship. (Later blocks set only
+ * Cache-Control, which does not affect what a browser refuses.)
  */
 export function pagesHeaders() {
   const src = readFileSync(join(web, "_headers"), "utf8");
@@ -141,35 +133,29 @@ export function pagesHeaders() {
 }
 
 /**
- * A page's HTML **plus the source of its own scripts**, as one string to grep.
- *
- * WHY THIS EXISTS. Until 2026-09-04 every page carried its behaviour in an inline
- * `<script>`, so a suite could assert "cloud.html fetches fixtures/cloud.json" by grepping
- * the .html file. Dropping `'unsafe-inline'` from `script-src` moved all of that into
- * sibling `.js` files, and those greps would have gone quietly false — the CODE still does
- * the thing, the FILE no longer mentions it.
- *
- * So the unit of inspection is now the page *and what it loads*. That is strictly stronger
- * than the old grep: a page that dropped the `<script src>` tag entirely would keep its
- * behaviour "in the repo" but lose it on screen, and this notices, because it follows the
- * tags the page actually carries.
- *
- * `vendor/` is DELIBERATELY EXCLUDED. Concatenating the minified libraries would make the
- * assertions vacuous in the worst way — `mermaid.render` appears inside `mermaid.min.js`,
- * so "docs.html must render mermaid" would pass for a page that never called it.
+ * A page's HTML **plus the source of its own scripts** (following relative ES-module
+ * imports), as one string to grep — behaviour lives in sibling `.js` files, not inline.
+ * `vendor/` is EXCLUDED, or `mermaid.render` inside mermaid.min.js would satisfy
+ * "docs.html must render mermaid" for a page that never calls it.
  *
  * @param {string} name e.g. "cloud.html"
  * @returns {string} the HTML followed by each first-party script it references, in order.
  */
 export function pageSource(name) {
   const html = readFileSync(join(web, name), "utf8");
-  const parts = [html];
-  for (const m of html.matchAll(/<script[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) {
-    const ref = m[1].split("?")[0].replace(/^\.\//, "");
-    if (/^[a-z]+:|^\/\//i.test(ref) || ref.startsWith("vendor/") || ref.includes("..")) continue;
+  const parts = [html], seen = new Set();
+  const add = (ref, by) => {
+    ref = normalize(ref.split("?")[0].replace(/^\.\//, ""));
+    if (seen.has(ref) || /^[a-z]+:|^\/\//i.test(ref) || ref.startsWith("vendor/") || ref.startsWith("..")) return;
+    seen.add(ref);
     const f = join(web, ref);
-    if (existsSync(f)) parts.push(`\n/* ==== ${ref} (loaded by ${name}) ==== */\n` + readFileSync(f, "utf8"));
-  }
+    if (!existsSync(f)) return;
+    const src = readFileSync(f, "utf8");
+    parts.push(`\n/* ==== ${ref} (loaded by ${by}) ==== */\n` + src);
+    // follow relative ES-module imports (moxie.js -> moxie/*.js)
+    for (const m of src.matchAll(/\bfrom\s+["'](\.{1,2}\/[^"']+)["']/g)) add(join(dirname(ref), m[1]), ref);
+  };
+  for (const m of html.matchAll(/<script[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) add(m[1], name);
   return parts.join("\n");
 }
 
@@ -181,18 +167,10 @@ async function freePort() {
 }
 
 /**
- * Serve any directory of static files on a free loopback port.
- *
- * WHY IT IS SEPARATE FROM `serveWeb`. Every browser suite in this repo until now loaded
- * `sim/web` — the public simulator — and `grep -rln "server/static" sim/test_*.mjs` came
- * back empty, so the PARENT CONSOLE (`server/static/index.html` + `js/*.js`, ~2,400 lines
- * of the thing a parent actually uses) had no headless coverage at all. Its cards are
- * asserted only through Python route tests, which cannot see a button that never wires
- * up. `serveWeb` is now a thin call to this with `web` and the Pages headers.
- *
- * `extIsHtml: false` is the console's shape: it is served by FastAPI's StaticFiles, which
- * does NOT rewrite `/sim` to `/sim.html` the way Cloudflare's `_redirects` does, so
- * inventing that here would let a suite pass against a route the real server 404s.
+ * Serve any directory of static files on a free loopback port (`serveWeb` is this with
+ * `sim/web` and the Pages headers; the parent-console suite serves `server/static`).
+ * `extIsHtml: false` matches FastAPI's StaticFiles, which does NOT rewrite `/sim` to
+ * `/sim.html` the way Cloudflare's `_redirects` does.
  *
  * @param {string} dir absolute path of the directory to serve
  * @param {{headers?: Record<string,string>, extIsHtml?: boolean}} [opts]
@@ -237,42 +215,18 @@ export async function serveWeb(opts = {}) {
 }
 
 /* ---- EYES: what the browser itself reported ------------------------------- *
+ * A suite with no listeners cannot fail on a 404'd script, a CSP refusal or an uncaught
+ * exception. Both listeners are needed: `pageerror` sees only uncaught exceptions, while a
+ * 404'd script or CSP refusal surfaces only as a CONSOLE message.
  *
- * WHY THIS IS HERE AND NOT IN ONE SUITE. On 2026-09-06 four browser suites
- * (`test_a11y`, `test_bg_perf`, `test_mobile_layout` and — for the console half —
- * `test_console_insights`) were measured as installing NO `console` and NO `pageerror`
- * listener at all. A suite with no listener cannot fail on a 404'd script, a CSP refusal
- * or an uncaught exception no matter what else it asserts: it can only notice a breakage
- * that happens to move the one property it reads. `sim/test_ambient_guard.mjs` had the
- * right idiom already — a console listener, a pageerror listener, and a `notable()` filter
- * that forgives the noise the FIXTURE ITSELF provoked — and this is that idiom hoisted so
- * the other suites share the definition instead of forking it. `test_ambient_guard.mjs`
- * imports it from here now, so there is exactly one answer to "what counts as an error".
- *
- * `pageerror` ALONE IS NOT ENOUGH, and that is the reason both listeners are installed
- * together by one call. `pageerror` fires for uncaught exceptions only. A script tag whose
- * `src` 404s raises no exception anywhere — it surfaces as a CONSOLE message ("Failed to
- * load resource: the server responded with a status of 404"), and so does a CSP refusal
- * and a blocked mixed-content fetch. A suite holding only a `pageerror` listener is blind
- * to a missing script, which is the single most likely way this site breaks in production.
- *
- * THE FILTER IS A BUDGET, NOT A PATTERN. Every suite here deliberately refuses some
- * requests — `r.abort("connectionrefused")` for the local sidecars, a 404 for `/api/health`
- * when the fixture wants the offline branch — and each of those prints a console error the
- * fixture asked for. Forgiving them by loosening the regex would forgive the REAL ones too.
- * Instead the interceptor COUNTS what it provoked and `notable()` forgives exactly that
- * many, so a second, unexplained 404 is still a failure. That correlation is what makes
- * `notable(...).length === 0` an assertion about the page rather than about the fixture.
+ * THE FILTER IS A BUDGET, NOT A PATTERN. The interceptor COUNTS the errors the fixture
+ * provoked on purpose (aborted sidecars, deliberate error statuses) and `notable()` forgives
+ * exactly that many, so a second, unexplained 404 is still a failure.
  */
 export const ABORTED_NOISE =
   /Failed to load resource: net::ERR_(CONNECTION_REFUSED|FAILED|BLOCKED_BY_CLIENT|ABORTED)/;
-/* Any status the fixture DELIBERATELY served, not only 404. `test_ambient_guard.mjs`
- * provoked 404s and nothing else, so its original pattern named 404 alone; adding
- * `test_console_insights.mjs` brought a fixture that answers `GET …/telemetry` with a
- * REAL 503 to reach the console's "telemetry threw" render path, and a pattern pinned to
- * 404 would have made that a failure on a page doing exactly what it was asked. The
- * widening is safe because the count is what forgives, not the pattern: `refused` is
- * incremented at the interceptor, once per response the fixture broke on purpose. */
+/* Any status the fixture DELIBERATELY served (e.g. a real 503), not only 404. Safe to match
+ * broadly because the count, not the pattern, is what forgives. */
 export const REFUSED_NOISE =
   /Failed to load resource: the server responded with a status of \d{3}/;
 
@@ -343,11 +297,8 @@ export function finish(label, { fails, count }) {
 }
 
 /* ---- a real, audible PCM clip -------------------------------------------- *
- * The gateway voice arrives as `CloudTTSResponse.audio.buffer`: base64 little-endian
- * int16 PCM (see `sim/web/audio.js::decodeCloudTTS`). A test fixture of zeros would decode,
- * play, and pass every structural check while being SILENT — so the fixture is a real tone
- * and the suites assert the peak sample amplitude that comes back out of the Web Audio
- * buffer, not merely that something was scheduled. */
+ * Base64 LE int16 PCM like `CloudTTSResponse.audio.buffer`. A real tone, not zeros, so suites
+ * can assert the peak amplitude that comes back out of Web Audio rather than a silent pass. */
 export function pcmToneBase64({ seconds = 0.25, rate = 22050, freq = 440, amp = 0.8 } = {}) {
   const n = Math.floor(seconds * rate);
   const buf = Buffer.alloc(n * 2);

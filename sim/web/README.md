@@ -24,37 +24,36 @@ drives the same API live from MQTT when a broker + supervisor are connected.
 
 | file | purpose |
 |---|---|
-| `index.html` | page shell, importmap (three@0.160.0), HUD rail markup, bus-status→HUD glue script |
-| `sim.html` | the SIM itself: the WebGL stage, the engineering rail (`<aside id="panel">`) and — since 2026-09-05 — **`#chat-dock`, the composer**. The dock is the HUD grid's own bottom row at every width and holds the cue line, `#transcript` and one row of `#speech-input` + `#mic-btn` + `#speech-btn`. Those four nodes were **moved out of the rail, not copied**: everything on this page binds by id, and a second text box is the trap [`mobile-first-visit.md`](../../docs/architecture/backlog/mobile-first-visit.md) names. Why it moved: on a cold 390×844 load of the live site the box was **0 × 0**, and tapping `CONTROLS` put it at **y = 2 095** of an 844 px viewport — the turn worked and was unreachable |
-| `moxie.js` | model, rig, face renderer, animation loop, `window.moxie` API |
-| `bridge.js` | MQTT→avatar bridge: subscribes to the bus and drives `window.moxie` from live `remote-chat`/markup/motor traffic — including `/commands/tts` (the server voice) |
-| `audio.js` | sound: UI SFX, the pre-cached/Piper/browser voices, and **`playCloudTTS`** — decodes the server's `CloudTTSResponse` (base64 raw 16-bit PCM) and plays it with mouth lip-sync |
-| `style.css` | mission-control HUD skin (dark void + cyan telemetry, per [docs/design/style-guide.md](../../docs/design/style-guide.md)) |
-| `mode.js` | what this deployment can actually DO: polls same-origin `GET /api/health` ([`../../functions/api/health.js`](../../functions/api/health.js)) and publishes `window.moxieMode` — `live` / `degraded` / `offline`, the reason, the capacity signal and the poll schedule ([spec §6.3/§7](../../docs/architecture/backlog/live-sim-demo.md)) |
-| `turnstile.js` | the browser half of the **bot control**: publishes `window.moxieTurnstile.getToken(action)`, which `cloud-transport.js` (`"chat"`) and `mic.js` (`"transcribe"`) each call on ONE line of their send path — one widget per action, because the server refuses each route's token in the other's place and 15 s of billable speech-to-text must not be buyable with a typed turn's challenge. Renders Cloudflare's widget only when `mode.js` reports a sitekey from [`/api/health`](../../functions/api/health.js) — so a fork, a `file://` page, a static CDN and a branch preview load **no third-party script at all** and the whole thing is inert (a preview's platform-assigned hostname is not on the widget's domain list, so a challenge there could never pass). The widget is `appearance: "interaction-only"` and `execution: "execute"`: **no checkbox in front of a child**, and a FRESH token minted per send, because a token is single-use and lives 300 s — one per page load would work for the first turn of a conversation and refuse every one after it. Every failure path resolves `null` rather than hanging, and `cloud-transport.js` turns that into one honest sentence in the transcript: **never a silent dead Send** — and from the SECOND consecutive failure into a `stub.js` answer plus a transport strike, so a blocked widget host degrades the page like any other unreachable transport instead of repeating one sentence under a LIVE badge. A failed script load is never memoised (one `onerror` used to disable every turn for the life of the page), a challenge already on screen is never `reset()` out from under the visitor, and the holder is a `pointer-events:none` layer centred in the viewport — anchored to the bottom it sat exactly on top of `#rail-toggle` on a phone and swallowed every tap on it |
-| `env.js` | the honest indicator: paints the env badge, the capacity pill, the `needs-backend` marks and the hosted banner **from the mode**, not from the hostname. Renders correctly before `mode.js` answers, and with `mode.js` absent. A mark can now also be **`dead`** — a control that cannot work on this origin (`#tts-test`, `#bus-connect`, `#tts-base`, `#stt-base`) is *disabled*, not merely hinted, because a click could only ever fire a cross-origin request the CSP refuses; `#mic-btn` is deliberately marked but never disabled, since "Listen" really does play a scripted line. It also measures whatever is bottom-anchored — `#chat-dock` at every width, plus `#panel` in drawer mode — and lifts the hosted banner clear of the whole stack (`--eb-lift`); the banner used to sit exactly on top of `#rail-toggle` on a phone and swallow every tap on it, and the control it would swallow now is the composer |
-| `mic.js` | the ears: records, and posts to whichever STT this deployment has — the same-origin [`POST /api/transcribe`](../../functions/api/transcribe.js) when `mode.js` reports `ears`, else the local sidecar at `<base>/stt` (`sim/stt/server.py`), with an explicit `moxie.sttBase` always winning. **Stops itself at `DEMO_MAX_RECORD_MS` (15 s, published in `/api/health`'s `limits`)** — the byte cap is a size cap, not a duration cap, for a compressed container. On the hosted path it **encodes 16 kHz mono WAV itself**, because the gateway answers HTTP 500 to webm/Opus, ogg/Opus and mp4/AAC ([spec §10 assumption 15](../../docs/architecture/backlog/live-sim-demo.md)); the sidecar keeps `MediaRecorder`. Any refusal falls back to the scripted child line, with the reason on the status line — and that consolation goes out through `cloud-transport.js`'s **`sendScriptedTurn`**, never `sendUserTurn`: nobody said those words, so they may not buy a `/api/chat` + `/api/speech` turn. A denied microphone, a clip under `min_audio_bytes` and an empty transcript get an honest status line and no scripted line at all — they were never recorded, and never spent anything |
-| `cloud-transport.js` | the live turn: wraps `window.moxieBridge`'s `sendUserTurn` and takes it to the same-origin `POST /api/chat` + `POST /api/speech` ([`../../functions/api/chat.js`](../../functions/api/chat.js), [`speech.js`](../../functions/api/speech.js)) when `mode.js` says the deployment is `live`. **Routes the TTS message before the chat message** so there is one voice and not two ([spec §3.4](../../docs/architecture/backlog/live-sim-demo.md)); a connected MQTT broker always wins the turn; anything else delegates to `bridge.js` untouched. It also owns **where a typed line comes from**: when no local Piper sidecar answers, `env.js` calls `adopt()` and the page's existing `#speech-input`/`#speech-btn` become the typed turn ("Say" → "Ask") instead of a dead TTS control that silently failed against `:8081`; with a sidecar reachable the button is untouched and the **Talk** box (`#chat-input`/`#chat-send`) is injected instead. Exactly one typed control is ever visible, and both go through the same `sendTyped` — so the same `admit()` gate the microphone passes. It also publishes **`sendScriptedTurn`**, the free seam `mic.js` uses to console a failed microphone: a broker still gets the line, a page with nothing spendable still answers from `stub.js`, and a live page gets the local echo plus the stub answer with **no request at all**. |
-| `_headers` | Cloudflare Pages cache policy **and** the site's security headers (`/api/*` `no-store`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, **HSTS**, and a CSP whose `connect-src` and `script-src` are the real controls). `script-src` names exactly **two** off-origin hosts and no more: `https://static.cloudflareinsights.com`, the analytics beacon **Pages injects** into every HTML response, and `https://challenges.cloudflare.com`, Turnstile's widget script — which cannot be self-hosted, so `frame-src` went from `'none'` to that one host (the challenge is an iframe) and `connect-src` widened by that one host and nothing else. Every absence there fails **silently**: no widget, no token, and "try again" on every send. `'unsafe-inline'` is **gone** from `script-src`; ONE inline block remains site-wide (sim.html's importmap, which cannot be a file in any browser) and its **hash is generated, never typed** — `sim/tools/build_csp_hashes.py` owns it and hosts are edited here, beside the paragraph that justifies them. The file also explains why the inert `/api/*` block must never grow security headers (they live in `envelope.js`). **It applies to these static pages only, never to Pages *Function* responses** (assumption-ledger row 27). Exercised for real by `sim/test_csp.mjs`, which serves every page with this file's headers actually applied |
-| `sw-reset.js` | sim.html: unregisters a stale service worker left by another app on this port and reloads once |
-| `hud.js` | sim.html: the HUD glue — panel wiring, the typed turn, the transcript, the controls |
-| `rail.js` | sim.html: the phone-width rail drawer, so the 3D stage stays visible. **Unchanged by the 2026-09-05 composer work, deliberately** — the rail became *optional* by having the conversation move out of it, not by changing when the drawer opens |
-| `home.js` | index.html: pointer/scroll parallax, sparkles and the staggered card reveal — all skipped under `prefers-reduced-motion` |
-| `setup.js` | setup.html: turns the two forms into Moxie QR codes, using `qr.js`'s encoders rather than reimplementing them |
-| `cloud.js` | cloud.html: the console mock — reads `fixtures/cloud.json` and renders the five panels |
-| `docs.js` | docs.html: the explorer — tree, full-text search, Markdown + Mermaid render, deep links, keyboard shortcuts |
-| `wire-bg.js` | index/setup/cloud: mounts the wireframe-Moxie background via `moxie-wire.js`, at the `data-opacity` its host element carries |
+| `index.html` | the hub / landing page (`home.js`, `bg.js`, `wire-bg.js`) |
+| `sim.html` | the SIM: the WebGL stage, the engineering rail (`<aside id="panel">`) and `#chat-dock`, the composer — the HUD grid's bottom row at every width, holding the cue line, `#transcript` and `#speech-input` + `#mic-btn` + `#speech-btn`. Those nodes live ONLY here (everything binds by id; a second text box is the trap [`mobile-first-visit.md`](../../docs/architecture/backlog/mobile-first-visit.md) names). Its one inline block is the importmap the CSP hashes |
+| `moxie.js` | entry module: renderer, scene, rig, `window.moxie` API, animation loop |
+| `moxie/config.js` | motor table (`MOTOR_DEFS`), rest pose, `motorAngle`, the spring-elbow curve |
+| `moxie/geometry.js` | pure geometry: body lathe profile, arm shells, egg head, face panel |
+| `moxie/textures.js` | canvas textures: head ears, grille, wordmark, heart LED, glows, debug labels |
+| `moxie/face.js` | expressions, the canvas face, icon badges, blink/easing |
+| `moxie/liveness.js` | additive idle micro-motion + gaze drift (deliberate idle beats are `life.js`) |
+| `moxie/bubble.js` | speech bubble: typewriter, head/chest anchoring, `window.__bubbleAnchor` for tests |
+| `moxie/stage.js` | camera framing inside the part of the viewport the dock/rail leave free |
+| `moxie/panel.js` | the by-hand controls: motor sliders, expression chips, speech box, heart LED |
+| `bridge.js` | MQTT→avatar bridge: drives `window.moxie` from `remote_chat` markup, `commands/tts` (the server voice), motors, telehealth, `response_actions`; publishes the activity log |
+| `audio.js` | sound: UI SFX, pre-cached/Piper/browser voices, and `playCloudTTS` (base64 16-bit PCM with lip-sync) |
+| `style.css` + `css/hud.css`, `css/dock.css`, `css/rail.css` | the mission-control HUD skin ([style guide](../../docs/design/style-guide.md)); sim.html links hud → dock → rail → style.css, and that order is the cascade |
+| `mode.js` | what this deployment can DO: polls same-origin `GET /api/health` and publishes `window.moxieMode` (`live` / `degraded` / `offline`, reason, capacity) — [spec §6.3/§7](../../docs/architecture/backlog/live-sim-demo.md) |
+| `turnstile.js` | browser half of the bot control: `window.moxieTurnstile.getToken(action)`, one widget per spending route, a fresh single-use token per send, inert unless `/api/health` reports a sitekey. Every failure resolves `null`, which `cloud-transport.js` turns into an honest sentence (never a silent dead Send) |
+| `env.js` | the honest indicator: env badge, capacity pill, `needs-backend`/`dead` marks and the hosted banner — painted from the mode, not the hostname; lifts the banner clear of bottom-anchored chrome (`--eb-lift`) |
+| `mic.js` | the ears: records and posts to `/api/transcribe` (hosted, 16 kHz WAV it encodes itself, capped at `DEMO_MAX_RECORD_MS`) or the local STT sidecar; failures fall back to a scripted line through the free `sendScriptedTurn` |
+| `cloud-transport.js` | the live turn: `sendUserTurn` → same-origin `/api/chat` + `/api/speech` when `live` (TTS routed first: one voice); owns which control carries a typed line (`adopt()`), and `sendScriptedTurn` |
+| `ambient.js` / `ambient.json` | her self-talk between turns (never over a live answer) |
+| `life.js` | ALIVE mode: idle beats through the real motor targets, backing off joints a user holds |
+| `diagram.js` | renders a mermaid diagram she drew into the log (lazy, same-origin, `securityLevel: strict`) |
+| `stub.js` | offline stand-ins (brain replies with real markup, scripted STT) for a fully static deploy |
+| `qr.js` | revival QR payloads + launch cards, byte-identical to the Python toolkit (`sim/test_qr.mjs`) |
+| `hud.js`, `rail.js`, `sw-reset.js` | sim.html glue: panel wiring + openers, the phone rail drawer, stale service-worker self-heal |
+| `home.js`, `setup.js`, `cloud.js`, `docs.js`, `bg.js`, `wire-bg.js`, `moxie-wire.js` | the hub, setup, cloud-console and docs pages and their backgrounds |
+| `_headers` | Cloudflare Pages cache + security headers for the static pages (CSP, HSTS, nosniff…). The header comment is the rationale for every CSP host; the importmap hash is generated by [`../tools/build_csp_hashes.py`](../tools/build_csp_hashes.py). Every app script needs a `no-cache` entry (subdirectories: one `/dir/*` rule) — `sim/test_csp.mjs` enforces it. Does NOT apply to Pages Function responses (`functions/api/_lib/envelope.js` sets those) |
 
-> **The eight files above were inline `<script>` blocks until 2026-09-04.** They are files so
-> `script-src` can drop `'unsafe-inline'` — the site's last XSS loader hole. A `<script src>` is
-> covered by `'self'` and needs no hash; a hash that drifts from its block does not degrade, it
-> **blanks the page**. Thirteen of fourteen blocks went this way; the fourteenth, `sim.html`'s
-> `<script type="importmap">`, cannot be a file in any browser and is the one hash the policy
-> carries — generated by [`../tools/build_csp_hashes.py`](../tools/build_csp_hashes.py), never typed.
-> **Each one keeps the document position its inline block held and carries no `defer`/`async`**, so
-> execution order is unchanged; and each is listed in `_headers`' explicit `no-cache` block, because
-> an app script missing from that list is served with Pages' default caching.
-
+All scripts are same-origin files so `script-src` needs no `'unsafe-inline'`; classic scripts
+keep their document order (no `defer`/`async`).
 
 ## What this deployment can do (`mode.js` + `window.moxieMode`)
 
@@ -158,43 +157,44 @@ on `window` with the API in `event.detail`.
 ```js
 moxie.setMotor(index, value)     // value 0..32767, animates smoothly to target
 moxie.getMotor(index)            // current (smoothed) position, rounded int
-moxie.setFace(expression)        // "neutral" | "happy" | "sad" | "surprised" | "thinking" | "blink"
+moxie.setFace(expression)        // any of moxie.expressions (11 moods + sleep/thinking) or "blink"
 moxie.setSpeech(text)            // speech bubble + mouth "talking" animation
 moxie.setMouthOpen(0..1)         // external lip-sync drive (audio.js calls this while speaking)
 moxie.getMouthOpen()             // current lip-sync drive (0..1)
 moxie.setHeartLED(on, "#ff5577") // chest LED on/off, optional color
-moxie.centerAll()                // every motor back to 16384 (extra convenience)
+moxie.showIcons([...]) / clearIcons()  // up to 4 icon badges over the face
+moxie.centerAll()                // every motor back to its rest pose
+moxie.setIdle(bool) / isAlive() / isUserHeld(i)  // liveness + life.js hooks
+moxie.setSceneLight(0..1)        // 0 = dark room lit by the projected face
+moxie.setShowAxes(bool)          // debug: labelled axis triads on every rig node
 ```
 
-Motor values use the real hardware range: **0..32767** (`MOTOR_MAX_POS`), with
-**16384** as the center/rest pose. Values are mapped piecewise-linearly to joint
-angles, so center is always the rest pose even where the range is asymmetric
-(an arm can swing much further up than it can tuck down).
+Motor values use the real hardware range **0..32767** (`MOTOR_MAX_POS`), **16384** = center.
+Values map piecewise-linearly to joint angles, so center is the rest pose even where the range
+is asymmetric.
 
 ## Motor index → joint
 
+Source of truth: `MOTOR_DEFS` in [`moxie/config.js`](moxie/config.js).
+
 | index | joint | motion at low → high value |
 |---|---|---|
-| 0 | LEFT shoulder | left arm tucked down → raised up (~-20° → +109°) |
-| 1 | LEFT elbow | left forearm out → folded in across the front (~-26° → +86°) |
-| 2 | RIGHT shoulder | right arm tucked down → raised up |
-| 3 | RIGHT elbow | right forearm out → folded in |
-| 4 | HEAD tilt | face nods down → up (±16°; body leans along slightly) |
-| 5 | BODY yaw | body turns right → left on the base (±60°) |
-| 6 | BODY lean | leans back → forward (±17°) |
+| 0 | LEFT shoulder up/down | arm slightly back → raised up (~-17° → +109°) |
+| 1 | LEFT shoulder in/out | against the body (rest = 0) → swung out (~60°); the spring elbow folds as it swings clear |
+| 2 | RIGHT shoulder up/down | as 0, mirrored |
+| 3 | RIGHT shoulder in/out | as 1, mirrored |
+| 4 | HEAD tilt | nod (±22°) |
+| 5 | BODY yaw | turns on the base (±60°) |
+| 6 | BODY lean | upper torso leans back ↔ forward at the chest seam (±16°); the speaker section stays planted |
 
-The rig is a tree of named `THREE.Group` pivots
-(`yaw → lean → { head/face, shoulderL → elbowL, shoulderR → elbowR }`), one
-group rotation per DOF. The base disc stays fixed while the body yaws/leans,
-like the real robot. Elbow hinges are pre-tilted so folding "in" carries the
-forearm slightly across the front, hug-style, instead of clipping the shell.
+The elbows have no motor: `springElbowFromMotor` derives the fold from the in/out axis (the body
+holds the forearm straight at rest). The rig is a tree of named `THREE.Group` pivots
+(`yaw → breathe → { lower torso, lean → upper torso → { head tilt → face, arms } }`); the base
+disc stays fixed. `moxie.setShowAxes(true)` labels every pivot.
 
-## Notes / assumptions
+## Notes
 
-- There is no separate head ball on Moxie, so motor 4 tilts the face-screen
-  about a pivot inside the shell and couples ~30% into the body lean.
-- The face is drawn to a 512×512 canvas texture each frame (eyes, brows,
-  mouth, blush), with an idle blink every few seconds. `setSpeech` overlays a
-  mouth-flap animation for the bubble's duration.
-- Gentle idle "breathing" sway is additive at render time and never disturbs
-  the commanded motor values reported by `getMotor`.
+- The face is drawn to a 512×512 canvas texture each frame (eyes, brows, mouth, blush, icon
+  badges); `setSpeech` overlays a mouth-flap for the bubble's duration.
+- Liveness (breathing, micro-sway, gaze drift) is additive at render time and never disturbs the
+  commanded values `getMotor` reports.

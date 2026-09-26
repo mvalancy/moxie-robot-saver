@@ -1,32 +1,12 @@
 /* diagram.js — Moxie draws. Renders a mermaid diagram she wrote, in the comms log.
  *
- * The source arrives on the response envelope as `diagram` (`functions/api/_lib/envelope.js`),
- * already separated from the words she SPEAKS by `chat.js::splitDiagram` — so nothing here
- * has to worry about syntax being read aloud, and nothing here should ever put source text
- * where a person expects prose.
+ * The source arrives on the response envelope as `diagram`, already split from the words
+ * she speaks by `chat.js::splitDiagram`.
  *
- * ============================================================================
- * WHY MERMAID IS LOADED LAZILY, AND ONLY FROM OUR OWN ORIGIN.
- *
- * `vendor/mermaid.min.js` is 3.3 MB — roughly the whole rest of this page put together.
- * Loading it on every visit to pay for a feature most turns never use would be a
- * straightforward regression in the thing the SIM is judged on (time to a robot on
- * screen), so it is fetched the first time she actually draws something and never before.
- *
- * AND IT COMES FROM `vendor/`, NOT A CDN. `sim/web/_headers` pins
- * `script-src 'self' 'sha256-…' https://static.cloudflareinsights.com
- * https://challenges.cloudflare.com`. A lazy load from anywhere else is refused by the
- * policy at fetch time — silently, from this file's point of view — and the feature simply
- * would not work in production while working perfectly on a local server with no headers.
- * `sim/test_csp.mjs` is the guard that catches that class of mistake; the same-origin
- * vendored copy is the path that does not need catching.
- *
- * `securityLevel: "strict"` — DELIBERATELY STRICTER THAN THE DOCS EXPLORER, which uses
- * "loose". `docs.js` renders diagrams WE wrote and committed; this renders text a language
- * model produced in response to whatever a stranger typed. Strict is what stops a diagram
- * carrying click handlers or raw HTML into the page. The rendered SVG is inserted as the
- * result of `mermaid.render`, under a CSP with no `unsafe-eval` and `object-src 'none'`.
- * ============================================================================
+ * Mermaid (3.3 MB) is loaded LAZILY, on her first drawing, and only from `vendor/`: the
+ * CSP's script-src would silently refuse any other origin in production.
+ * `securityLevel: "strict"` — stricter than the docs explorer's "loose" — because this
+ * renders model output prompted by a stranger, not diagrams we committed.
  */
 (function () {
   "use strict";
@@ -80,13 +60,9 @@
     /** Recorded facts, for the tests (playbook rule 11). */
     stats: { rendered: 0, invalid: 0, loadFailed: 0 },
 
-    /**
-     * Draw `src` into the comms log. Resolves `true` when a diagram really landed.
-     *
-     * Every failure path resolves FALSE and draws nothing: an unavailable bundle, a CSP
-     * refusal, syntax mermaid rejects, a render that throws. She said her words either
-     * way — the picture is the bonus, and a broken picture is worse than none.
-     */
+    /** Draw `src` into the comms log; resolves `true` only when a diagram really landed.
+     *  Every failure (bundle, CSP, syntax, render) resolves false and draws nothing — her
+     *  words stand either way. */
     render: function (src) {
       var source = String(src || "").trim();
       if (!source) return Promise.resolve(false);

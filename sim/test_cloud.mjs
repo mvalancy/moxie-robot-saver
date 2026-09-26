@@ -1,11 +1,7 @@
-/* Cloud-console fixture + wiring test. The example parent console (cloud.html) is
- * a STATIC surface, but its data must stay faithful to the real Moxie contract so
- * the demo teaches the true shape and a live server can drop in unchanged:
- *   - JSON:API documents (server/moxie_server/serializers.py)
- *   - the MQTT content model: module_id/content_id, MentorBehavior, MissionConfig
- *     (docs/reverse-engineering/content-and-conversation.md)
- * This asserts the fixture carries those shapes and cloud.html actually consumes
- * them. Run: node sim/test_cloud.mjs
+/* Cloud-console fixture + wiring test: cloud.html's static data must keep the real
+ * contract's shapes — JSON:API documents (server/moxie_server/serializers.py) and the MQTT
+ * content model (module_id/content_id, MentorBehavior, MissionConfig) — and the page must
+ * consume them. Run: node sim/test_cloud.mjs
  */
 import { readFileSync } from "node:fs";
 import { pageSource } from "./browser_harness.mjs";
@@ -69,9 +65,7 @@ ok(d.notifications && Array.isArray(d.notifications.data) &&
    "notifications must be {data:[], meta:{unread:N}}");
 
 // ---- cloud.html actually consumes the fixture -------------------------------
-/* The page AND the scripts it loads. `cloud.html`'s console glue lived inline until
- * 2026-09-04, when dropping `'unsafe-inline'` from `script-src` moved it to
- * `cloud.js`; grepping the .html alone would now be checking an empty room. */
+/* The page AND the scripts it loads (the glue lives in cloud.js). */
 const html = pageSource("cloud.html");
 ok(html.includes('fetch("fixtures/cloud.json")'), "cloud.html must fetch fixtures/cloud.json");
 for (const panel of ["overview", "missions", "conversations", "robot", "notifications"])

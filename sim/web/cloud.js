@@ -1,9 +1,5 @@
 /* cloud.js — the cloud-console mock: reads `fixtures/cloud.json` and renders the five
- * panels (overview, missions, conversations, robot, notifications).
- *
- * Lived inline in `cloud.html` until 2026-09-04 (128 lines); moved out for
- * `script-src 'self'` (see `sim/web/_headers`).
- */
+ * panels (overview, missions, conversations, robot, notifications). */
 (function(){
   "use strict";
   var TABS = [

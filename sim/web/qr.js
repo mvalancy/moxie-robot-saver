@@ -56,25 +56,12 @@
   }
 
   /* ---- launch cards: `GO<launch:MODULE[:CONTENT]>` ---------------------------
-   *
-   * A DIFFERENT QR reader from everything above. The three encoders above feed the
-   * robot's *setup* scanner (`bo-wifi`), whose grammar is provably closed and cannot
-   * launch anything. A launch card feeds the *runtime* reader, which surfaces to the
-   * cloud as the `eb-qr-event` vision event — so the payload here is not JSON at all,
-   * it is the action-tag grammar with a literal `GO` marker in front of it.
-   * Brief: docs/architecture/backlog/qr-launch-cards.md.
-   *
-   * WHAT THIS SIDE IS AND IS NOT. This is the *printing* side. The authority on what a
-   * card may do is `mqtt/moxie_sdk/launch_cards.py::decode`, which runs on the server
-   * against bytes a stranger chose; the list below is a print-side convenience so the
-   * browser cannot make paper the server will refuse. Nothing here is a security
-   * boundary, and a stale list here fails safe in both directions (a card that will not
-   * scan, or a card we decline to print) — never in the permissive one.
-   *
-   * The list is TRANSCRIBED, and the Python one is DERIVED from `schedule.py`. That is a
-   * real asymmetry and it is held closed by a test, not by discipline:
-   * `sim/test_qr.mjs` compares this array against `launch_cards._catalog()` id for id, so
-   * a change to `schedule.ONBOARD_MODULES` reddens CI here rather than rotting quietly.
+   * A DIFFERENT reader: not the setup scanner (closed grammar, launches nothing) but the
+   * runtime QR reader, surfaced to the cloud as `eb-qr-event` — so this is the action-tag
+   * grammar with a literal `GO` prefix, not JSON (backlog/qr-launch-cards.md).
+   * This is only the PRINTING side; `mqtt/moxie_sdk/launch_cards.py::decode` is the
+   * authority, and a stale list here fails safe. sim/test_qr.mjs compares this array with
+   * `launch_cards._catalog()` id for id.
    */
   var CARD_PREFIX = "GO";                 // literal, case-sensitive, never normalised
   var CARD_TAG = "launch";                // the one tag a card may carry
@@ -85,13 +72,8 @@
     "SCAVENGERHUNT", "STORY", "STORYTELLING", "WHIMSY",
   ];
 
-  /* The ungated formatter — the browser's `--face-value`.
-   *
-   * The SIM is a robot as well as a phone: `sim/virtual_moxie.py` grew `--face-value` so a
-   * SIL robot could publish the exact hostile strings a stranger's card might carry, and
-   * this is the same lever in the browser. It is how a refusal can be shown to travel the
-   * boundary rather than merely to hold on the server side of it. `encodeCard` below is
-   * the only thing a UI should call.
+  /* The ungated formatter — the browser's `--face-value` (as in `sim/virtual_moxie.py`), so a
+   * hostile card string can be shown travelling the boundary. UIs call `encodeCard`.
    */
   function cardPayload(tag, moduleId, contentId) {
     var body = String(tag);

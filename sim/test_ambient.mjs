@@ -1,9 +1,6 @@
-// test_ambient.mjs — guard the ambient self-talk layer (sim/web/ambient.json).
-//
-// No browser needed. Verifies every ambient line is well-formed, has a valid
-// face, and (critically) has a PRE-CACHED audio clip so it actually speaks on
-// the static deploy. Growing ambient.json over time stays safe as long as this
-// passes (re-run prerender_audio.py --ambient after adding lines).
+// test_ambient.mjs — every ambient self-talk line (sim/web/ambient.json) is well-formed,
+// has a valid face and a PRE-CACHED clip (so it speaks on the static deploy). After adding
+// lines, re-run prerender_audio.py --ambient.
 //
 //   node sim/test_ambient.mjs
 import { readFileSync, existsSync } from "node:fs";
@@ -38,14 +35,9 @@ for (const ln of amb.lines || []) {
   if (rel) ok(existsSync(join(web, "audio", rel)), `ambient clip file missing: ${rel}`);
 }
 
-/* THE THINKING FILLERS — three copies of the same eight sentences, pinned together.
- *
- * `mqtt/moxie_sdk/filler.py` is the source (the robot path has had these all along),
- * `sim/web/bridge.js` speaks them, and `audio/index.json` keys its clips BY THE EXACT
- * TEXT. Punctuation is load-bearing: an em dash typed as a hyphen, or "Hmmm" for "Hmmmm",
- * and the lookup misses and she is silently mute at the one moment she is meant to fill.
- * Silence is also the correct failure, which is precisely why nothing would notice — so
- * the three copies are compared here rather than trusted. */
+/* THE THINKING FILLERS — filler.py (source), bridge.js (speaks them) and audio/index.json
+ * (clips keyed BY EXACT TEXT) must agree character for character, or she is silently mute
+ * when she should fill. */
 {
   const py = readFileSync(join(here, "..", "mqtt", "moxie_sdk", "filler.py"), "utf8");
   const pyLines = [...py.matchAll(/\("([^"]+)",\s*\n?\s*MOOD/g)].map((m) => m[1]);

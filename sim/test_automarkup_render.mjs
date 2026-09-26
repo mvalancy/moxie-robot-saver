@@ -1,68 +1,16 @@
 /* The markup floor, seen from the only renderer we can assert against.
  *
- * No hardware has ever played our markup: everything we believe about how a robot
- * performs a `<mark cmd:…>` is inferred from the recovered generators
- * (docs/reverse-engineering/runtime/behavior-markup.md). The browser SIM is the one place
- * the inference is executable, so this drives the EIGHT byte-exact goldens from
- * sim/tests/goldens/annotate.json through the REAL sim/web/bridge.js and asserts the
- * avatar actually does something different for each of them — a face per mood, motors for
- * the arm gestures, badges for the icons.
- *
- * The goldens file is written by the Python side (sim/tests/test_automarkup.py pins it
- * byte for byte), so this is a genuine cross-language contract check: if the floor emits
- * an id the SIM does not animate, this fails rather than the robot silently doing nothing.
+ * Drives the EIGHT byte-exact goldens from sim/tests/goldens/annotate.json (pinned by
+ * sim/tests/test_automarkup.py) through the REAL sim/web/bridge.js and asserts the avatar
+ * does something different for each — a face per mood, motors for arm gestures, badges for
+ * icons. An id the floor emits but the SIM does not animate fails here.
  *
  * No browser, no network. Run: node sim/test_automarkup_render.mjs
  */
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { loadBridge, readGolden } from "./bridge_harness.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, "web", "bridge.js"), "utf8");
-const goldens = JSON.parse(readFileSync(join(here, "tests", "goldens", "annotate.json"), "utf8"));
-
-// ---- stubs: the same minimal window/document/mqtt shims test_bridge.mjs uses ----
-let calls = { setFace: [], setSpeech: [], setMotor: [], showIcons: [], clearIcons: [] };
-const reset = () => { calls = { setFace: [], setSpeech: [], setMotor: [], showIcons: [], clearIcons: [] }; };
-const moxie = {
-  setFace: (f) => calls.setFace.push(f),
-  setSpeech: (t) => calls.setSpeech.push(t),
-  setMotor: (i, v) => calls.setMotor.push([i, v]),
-  getMotor: () => 16384,
-  showIcons: (n) => calls.showIcons.push(n),
-  clearIcons: () => calls.clearIcons.push(true),
-  setHeartLED: () => {},
-};
-const clickHandlers = {}, mqttClientRef = { c: null }, els = {};
-const fakeEl = (id) => ({
-  id, value: "", textContent: "", innerHTML: "", className: "", scrollTop: 0, scrollHeight: 0,
-  addEventListener: (e, cb) => { if (e === "click" && id) clickHandlers[id] = cb; },
-  appendChild: () => {},
-  querySelector: () => ({ set textContent(v) {}, get textContent() { return ""; } }),
-});
-globalThis.window = { moxie, addEventListener: () => {} };
-globalThis.location = { hostname: "127.0.0.1" };
-globalThis.document = {
-  getElementById: (id) => (els[id] ||= fakeEl(id)),
-  createElement: () => fakeEl(),
-};
-globalThis.mqtt = {
-  connect: () => {
-    const h = {};
-    mqttClientRef.c = {
-      on: (e, cb) => { h[e] = cb; }, subscribe: () => {}, end: () => {},
-      _emit: (e, ...a) => h[e] && h[e](...a),
-    };
-    return mqttClientRef.c;
-  },
-};
-
-(0, eval)(src);
-clickHandlers["bus-connect"]();
-const client = mqttClientRef.c;
-if (!client) throw new Error("bridge did not connect over mqtt");
-client._emit("connect");
+const goldens = readGolden("annotate.json");
+const { calls, reset, client } = loadBridge();
 
 const play = (markup, text) => {
   reset();

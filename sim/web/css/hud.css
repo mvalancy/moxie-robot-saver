@@ -1,0 +1,502 @@
+/* Moxie SIM — mission-control HUD skin (docs/design/style-guide.md).
+ * The WebGL canvas (#app) is fixed fullscreen behind everything; #hud is a fixed grid
+ * overlay: topbar / notice / [stage | rail] / chat. Split across css/hud.css (this file),
+ * css/dock.css, css/rail.css and style.css (responsive + late additions), linked in that
+ * order from sim.html — the order IS the cascade. Fonts are vendored. */
+
+:root {
+  /* backgrounds — deepest → elevated */
+  --void:      #060609;
+  --bg:        #0a0a0f;
+  --surface-1: #0e0e14;
+  --surface-2: #12121a;
+  --surface-3: #1a1a2e;
+  --hairline:  #2a303c;
+
+  /* text — cool grey ramp */
+  --text:      #e8edf5;
+  --text-dim:  #c8d0dc;
+  --muted:     #8892a4;
+  --muted-2:   #6b7a8d;
+  --dim:       #5a6577;
+  --dimmer:    #4a5568;
+
+  /* accents */
+  --cyan:      #00f0ff;
+  --cyan-dim:  #0e7490;
+  --amber:     #fcee0a;
+  --mint:      #05ffa1;
+  --magenta:   #ff2a6d;
+  --purple:    #a855f7;
+
+  /* cyan at low alpha — ambient glow / hairlines */
+  --glow-06:   rgba(0, 240, 255, 0.06);
+  --glow-12:   rgba(0, 240, 255, 0.12);
+  --glow-30:   rgba(0, 240, 255, 0.30);
+
+  --font-ui:   'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  /* spacing scale */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+
+  --rail-w: 380px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ---- void atmosphere ------------------------------------------------------ */
+/* behind the (alpha) WebGL canvas: a faint cyan aura where the robot stands,
+   a vignette pulling the edges down toward --void */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(55% 48% at 42% 46%, var(--glow-06) 0%, transparent 70%),
+    radial-gradient(130% 100% at 50% 45%, transparent 45%, rgba(0, 0, 0, 0.55) 100%),
+    linear-gradient(180deg, var(--bg) 0%, var(--void) 100%);
+}
+
+/* over the canvas, under the HUD: a whisper of scanline */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 240, 255, 0.016) 0px,
+    rgba(0, 240, 255, 0.016) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+#app, #app canvas {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
+#app { z-index: 1; }
+
+/* ---- HUD overlay grid ----------------------------------------------------- */
+#hud {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--rail-w);
+  /* The composer is a grid ROW, not an overlay, so nothing can sit on top of it and the
+     stage row is what gives way when the conversation grows. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "topbar topbar"
+    "notice notice"
+    "stage  panel"
+    "chat   panel";
+  pointer-events: none;          /* let orbit-drag reach the canvas… */
+}
+#topbar, #notice, #panel, #chat-dock { pointer-events: auto; }   /* …except real HUD chrome */
+
+/* ---- title bar ------------------------------------------------------------ */
+#topbar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-height: 48px;
+  padding: 0 var(--sp-4);
+  background: linear-gradient(180deg, rgba(6, 6, 9, 0.92), rgba(6, 6, 9, 0.78));
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--hairline);
+}
+#topbar .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+#topbar .glyph {
+  width: 9px;
+  height: 9px;
+  background: var(--cyan);
+  transform: rotate(45deg);
+  box-shadow: 0 0 10px var(--glow-30);
+  flex: none;
+}
+#topbar h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  white-space: nowrap;
+}
+#topbar .tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+#topbar .tag.dim { color: var(--dim); border-color: transparent; }
+#topbar .linkstate {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ALIVE toggle — prominent, always in the topbar. On = Moxie lives its imaginary
+   life (autonomous motion, sliders move); off = full manual control. */
+#alive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;                 /* push to the right, before the link state */
+  padding: 6px 13px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+#alive-toggle .alive-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+#alive-toggle.alive-on {
+  color: var(--mint);
+  border: 1px solid rgba(5, 255, 161, 0.5);
+  background: rgba(5, 255, 161, 0.08);
+  box-shadow: 0 0 14px rgba(5, 255, 161, 0.18);
+}
+#alive-toggle.alive-on .alive-dot {
+  background: var(--mint);
+  box-shadow: 0 0 8px rgba(5, 255, 161, 0.8);
+  animation: pulse 2s ease-in-out infinite;
+}
+#alive-toggle.alive-off {
+  color: var(--dim);
+  border: 1px solid var(--hairline);
+  background: transparent;
+}
+#alive-toggle.alive-off .alive-dot { background: var(--dimmer); }
+#alive-toggle:hover { border-color: var(--mint); }
+
+/* link lamp — colored via body[data-bus] (set by the HUD glue script) */
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dimmer);
+  flex: none;
+}
+body[data-bus="live"] .dot { background: var(--mint);    box-shadow: 0 0 8px rgba(5, 255, 161, 0.6);  animation: pulse 2s ease-in-out infinite; }
+body[data-bus="down"] .dot { background: var(--magenta); box-shadow: 0 0 8px rgba(255, 42, 109, 0.6); }
+body[data-bus="rec"]  .dot { background: var(--amber);   box-shadow: 0 0 8px rgba(252, 238, 10, 0.55); animation: pulse 1.2s ease-in-out infinite; }
+body[data-bus="wait"] .dot { background: var(--cyan);    box-shadow: 0 0 8px var(--glow-30);           animation: pulse 1.2s ease-in-out infinite; }
+body[data-bus="live"] #link-label { color: var(--mint); }
+body[data-bus="down"] #link-label { color: var(--magenta); }
+body[data-bus="rec"]  #link-label { color: var(--amber); }
+body[data-bus="wait"] #link-label { color: var(--cyan); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+/* ---- disclaimer bar ------------------------------------------------------- */
+/* Legal/ethical notice gets its own slim bar under the topbar: full width,
+   readable size + contrast, and an unmistakable GitHub affordance. */
+#notice {
+  grid-area: notice;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 6px var(--sp-4);
+  background: rgba(6, 6, 9, 0.85);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--hairline);
+  box-shadow: 0 1px 0 var(--glow-06);
+}
+.notice-badge {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  color: var(--amber);
+  border: 1px solid rgba(252, 238, 10, 0.35);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.disclaimer {
+  margin: 0;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.disclaimer strong { color: var(--text); font-weight: 600; }
+.notice-link {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--cyan);
+  border: 1px solid var(--glow-30);
+  border-radius: 4px;
+  padding: 4px 10px;
+  white-space: nowrap;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.notice-link:hover {
+  background: rgba(0, 240, 255, 0.08);
+  box-shadow: 0 0 10px var(--glow-12);
+}
+
+/* ---- stage overlays ------------------------------------------------------- */
+#stage {
+  grid-area: stage;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: none;
+}
+
+#hud-frame { display: none; }   /* removed: the 3D is the full-screen background, not one framed section */
+#hud-frame .corner {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+}
+#hud-frame .tl { top: 0;    left: 0;    border-top: 1px solid var(--glow-30);    border-left: 1px solid var(--glow-30); }
+#hud-frame .tr { top: 0;    right: 0;   border-top: 1px solid var(--glow-30);    border-right: 1px solid var(--glow-30); }
+#hud-frame .bl { bottom: 0; left: 0;    border-bottom: 1px solid var(--glow-30); border-left: 1px solid var(--glow-30); }
+#hud-frame .br { bottom: 0; right: 0;   border-bottom: 1px solid var(--glow-30); border-right: 1px solid var(--glow-30); }
+
+/* ---- speech callout ------------------------------------------------------- */
+/* Anchored to her head by moxie/bubble.js, which writes `--bx`/`--by` (stage-relative
+   px) every frame and adds `.anchored`. Without `.anchored` (WebGL never started) it stays
+   the old pinned caption rather than landing at 0,0. `min-width` is dropped once anchored
+   so short quips do not become wide empty boxes. */
+#bubble {
+  position: absolute;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(420px, calc(100% - 32px));
+  min-width: min(220px, calc(100% - 32px));
+  pointer-events: auto;
+  padding: 9px 14px 12px;
+  background: rgba(14, 14, 20, 0.88);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--glow-30);
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--glow-06), 0 0 28px var(--glow-06);
+  opacity: 1;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+#bubble.anchored {
+  top: var(--by, 22px);
+  left: var(--bx, 50%);
+  /* `--by` is always the TOP edge, in both placements, so the box never has to be measured
+     twice: `updateBubbleAnchor` does the arithmetic and CSS just places it. */
+  transform: translate(-50%, 0);
+  min-width: 0;
+  max-width: min(340px, calc(100% - 32px));
+  /* No transition on position: this moves every frame with the camera, and an ease on a
+     per-frame write is a bubble that swims a fifth of a second behind her. */
+  transition: opacity 0.2s ease;
+  will-change: top, left;
+}
+/* ABOVE HER HEAD (the default, and what the framing headroom exists to allow): a short
+   tail under the box, pointing down at the crown. */
+#bubble.anchored::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  transform: translateX(-50%) rotate(45deg);
+  background: rgba(14, 14, 20, 0.88);
+  border-right: 1px solid var(--glow-30);
+  border-bottom: 1px solid var(--glow-30);
+}
+/* AT HER CHEST, ON A LEADER (no room above): a line from the box's top back to her head;
+   `--leader` is the exact gap in px. */
+#bubble.anchored.leadered::after { display: none; }
+#bubble.anchored.leadered::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: auto;                /* override the corner tick below, or the line runs DOWN */
+  bottom: 100%;
+  border: 0;
+  border-radius: 0;
+  width: 2px;
+  height: var(--leader, 0px);
+  transform: translateX(-50%);
+  background: linear-gradient(to bottom, var(--glow-30), rgba(14, 14, 20, 0.88));
+  pointer-events: none;
+}
+/* Behind the camera: `project()` returns mirrored coordinates, so the bubble is faded out
+   rather than drawn somewhere untrue. Not `display:none` — that would drop it from the
+   accessibility tree mid-sentence, and its text is still the current utterance. */
+#bubble.off-stage { opacity: 0; pointer-events: none; }
+
+#bubble .callout-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  margin-bottom: 5px;
+}
+#bubble-text {
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--text);
+}
+/* typewriter caret — blinks while Moxie's line is typing out */
+#bubble.typing #bubble-text::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.16em;
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--glow-30);
+  animation: caret-blink 0.75s steps(1, end) infinite;
+}
+@keyframes caret-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  #bubble.typing #bubble-text::after { animation: none; opacity: 1; }
+}
+/* corner tick + downward connector toward the robot */
+#bubble::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  width: 12px;
+  height: 12px;
+  border-top: 2px solid var(--cyan);
+  border-left: 2px solid var(--cyan);
+  border-radius: 6px 0 0 0;
+}
+#bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -19px;
+  left: 50%;
+  width: 1px;
+  height: 18px;
+  background: linear-gradient(180deg, var(--glow-30), transparent);
+}
+#bubble.hidden {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-8px);
+  pointer-events: none;
+}
+
+/* ---- stage hint ----------------------------------------------------------- */
+#scene-hint {
+  position: absolute;
+  left: 26px;
+  bottom: 24px;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+}
+#scene-hint code {
+  font-family: inherit;
+  color: var(--cyan-dim);
+}
+
+/* ---- HUD rail ------------------------------------------------------------- */
+#panel {
+  grid-area: panel;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 10px 10px 10px 0;               /* float, don't touch the edges */
+  background: rgba(9, 12, 19, 0.30);       /* GLASS — the 3D shows through */
+  backdrop-filter: blur(22px) saturate(1.15);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+#rail-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-3) 20px;
+}
+
+/* drawer handle — hidden on desktop, shown in phone/drawer mode */
+#rail-toggle {
+  display: none;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--sp-4);
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  background: rgba(10, 10, 15, 0.9);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+#rail-toggle .tick {
+  width: 12px;
+  height: 2px;
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--glow-30);
+  flex: none;
+}
+#rail-toggle .caret { margin-left: auto; }

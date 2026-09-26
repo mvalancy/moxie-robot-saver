@@ -1,26 +1,15 @@
-/* env.js — environment awareness for the SIL.
+/* env.js — environment awareness for the SIM. Purely presentational.
  *
- * Tells the user what this deployment can actually DO — and marks the controls that
- * genuinely need a server (live voice, mic/STT, live-robot link) with tooltips, status
- * text, a capacity pill and a one-time banner — so it is obvious why you can't, e.g.,
- * record and talk to Moxie here. Purely presentational.
- *
- * WHAT CHANGED, and why it matters: this file used to decide everything from the
- * HOSTNAME. Any non-local host was assumed backend-less, so the page told every visitor
- * "hosted demo — only pre-scripted lines have audio (no live TTS)" whether that was true
- * or not, and it never re-checked. It now asks `mode.js` (which asks `GET /api/health`,
- * spec docs/architecture/backlog/live-sim-demo.md §3.2/§6.3/§7) and paints the badge, the
- * pill, the `needs-backend` marks and the banner FROM THE ANSWER. The hostname still
- * decides one thing only, and honestly: whether the OPTIONAL LOCAL sidecars (:8081 Piper,
- * :8082 STT) could possibly be reachable, because those are localhost ports.
- *
- * Every mode is honest, including the two where nothing is configured:
- *   offline / boot / not-configured -> byte-identical to the page as it shipped before.
- *   degraded                        -> the same page, plus the reason, on screen.
- *   live                            -> says the live brain is on, and stops claiming the
- *                                      mic needs a local server when it does not.
- * It also renders correctly BEFORE mode.js has answered (and if mode.js is absent
- * entirely), because `boot` is deliberately today's page.
+ * Tells the visitor what this deployment can actually DO, and marks the controls that
+ * need a server (live voice, mic/STT, live-robot link) with tooltips, status text, a
+ * capacity pill and a one-time banner. Everything is painted from `mode.js`'s answer
+ * (GET /api/health; live-sim-demo.md §3.2/§6.3/§7). The hostname decides one thing only:
+ * whether the OPTIONAL LOCAL sidecars (:8081 Piper, :8082 STT) could be reachable.
+ *   offline / boot / not-configured -> the plain page, unchanged.
+ *   degraded                        -> the same page, plus the reason.
+ *   live                            -> says the live brain is on; the mic no longer
+ *                                      claims to need a local server.
+ * Renders correctly before mode.js answers (or without it): `boot` is the plain page.
  */
 (function () {
   "use strict";
@@ -46,8 +35,7 @@
     badgeEl = document.createElement("span");
     badgeEl.className = "env-badge " + (isLocal ? "local" : "hosted");
     ls.parentNode.insertBefore(badgeEl, ls);
-    // The capacity / degrade pill (§7). aria-live so a screen reader hears the state
-    // change, and it sits beside the badge so it can never cover the avatar.
+    // Capacity/degrade pill (§7): aria-live, beside the badge so it never covers the avatar.
     pillEl = document.createElement("span");
     pillEl.className = "mode-pill";
     pillEl.setAttribute("aria-live", "polite");
@@ -72,38 +60,25 @@
     if (document.body)
       document.body.setAttribute("data-mode", (snap && snap.state) || "boot");
     if (!pillEl) return;
-    // Never a raw status code and never an upstream error string — mode.js only ever
-    // hands over one of its own fixed lines (§7).
+    // Only ever one of mode.js's fixed lines — never a status code or upstream error (§7).
     var msg = (snap && snap.message) || "";
     pillEl.textContent = msg;
-    // Also on the title: the pill's inline wording is dropped at phone widths (style.css),
-    // and the badge alone carries the state there.
+    // Also on the title: the inline wording is hidden at phone widths (style.css).
     pillEl.title = msg;
     pillEl.hidden = !msg;
     pillEl.className = "mode-pill" + (msg ? " on level-" + ((snap && snap.level) || "ok") : "");
   }
 
-  // `on === false` UNMARKS: the mode can change mid-session (a health poll that reports
-  // ears turns the mic from unavailable to available), so the mark has to be removable —
-  // and its tooltip replaced, or a stale "needs a local server" title would outlive the
-  // claim it was making.
   /**
    * @param {Element|null} btn
    * @param {string} tip     what to tell a human, on hover and to a screen reader.
-   * @param {boolean} [on]   `false` UNMARKS.
+   * @param {boolean} [on]   `false` UNMARKS (the mode can change mid-session, and a stale
+   *                         tooltip must not outlive its claim).
    * @param {boolean} [dead] the control CANNOT work here — disable it, do not merely hint.
-   *
-   * WHY `dead` EXISTS (measured on the live site, 2026-09-03). A mark was a tooltip and
-   * half opacity, and nothing else: `#speech-btn`, `#tts-test` and `#bus-connect` stayed
-   * fully clickable on the hosted deploy, and clicking them fired a cross-origin request
-   * (:8081 Piper, :9001 MQTT/WS) that this site's own CSP correctly refused — silence for
-   * the visitor and a console error for anyone looking. A control that looks live and
-   * silently fails is worse than one that is visibly unavailable, so a control whose ONLY
-   * job is to reach another origin is now disabled on an origin that may not reach one.
-   *
-   * `dead` is deliberately NOT implied by the mark. `#mic-btn` is marked on a scripted
-   * deploy and must stay clickable — "Listen" really does play a scripted child line
-   * there, which is behaviour, not a dead end. The distinction is the whole point.
+   *                         A control whose only job is a cross-origin request (:8081,
+   *                         :9001) would just trip our CSP. Not implied by the mark:
+   *                         #mic-btn is marked on a scripted deploy but still plays a
+   *                         scripted child line.
    */
   function needsBackend(btn, tip, on, dead) {
     if (!btn) return;
@@ -117,11 +92,8 @@
   }
   function warn(el, html) { if (el) { el.innerHTML = html; el.classList.add("warn"); } }
 
-  // #tts-status is shared with the cloud/server voice indicator in audio.js, and
-  // this probe is async: writing the element directly meant a slow probe could
-  // land mid-utterance and wipe the live "speaking" line (and be wiped in turn
-  // when playback restored the pre-probe text). audio.js owns that element, so
-  // hand it a resting hint instead — it paints it only when nothing is speaking.
+  // #tts-status is owned by audio.js (shared with its live "speaking" line), and this
+  // probe is async — so hand it a resting hint rather than writing it directly.
   function ttsHint(html, isWarn) {
     if (window.moxieAudio && window.moxieAudio.setTtsHint)
       return window.moxieAudio.setTtsHint({ html: html, warn: !!isWarn });
@@ -132,30 +104,13 @@
   }
 
   /* ---- the Voice panel's standing note (#voice-note) ----
-   *
-   * WHY IT MOVED HERE. That <p> was written when typing into the Speech box could only
-   * ever reach a local Piper sidecar or `speechSynthesis`, and it said so: "Free text
-   * uses your browser's voice, or a local Piper service if you run one." PR #112 changed
-   * what the box does — with no sidecar, `cloud-transport.js::adoptSpeechControl` renames
-   * "Say" to "Ask" and routes the line to Moxie — but nothing updated the paragraph, so
-   * on the live site (measured 2026-09-04: state=live, liveTurns=true, button reading
-   * "Ask") the panel described the opposite of what the button beside it does.
-   *
-   * It is painted from the SAME two facts `apply()` already uses to decide the button —
-   * whether a local Piper answered, and `mode.js`'s snapshot — so the note and the button
-   * cannot disagree; there is no third source of truth to drift.
-   *
-   * It is written directly, unlike `#tts-status`. That element is shared with audio.js's
-   * live "speaking" indicator, so env.js hands audio.js a resting hint instead of racing
-   * it (see `ttsHint` below). Nothing else writes #voice-note, so there is nothing to
-   * hand off to — the ownership is the same, the hand-off is simply unnecessary. */
+   * Painted from the same two facts apply() uses for #speech-btn (did a local Piper
+   * answer; mode.js's snapshot), so the note and the button cannot disagree. Written
+   * directly: nothing else writes #voice-note. */
   var VOICE_NOTE_PIPER =
     "Tap phrases above play shipped audio (no server). Free text uses your browser&#39;s " +
     "voice, or a local Piper service if you run one.";
-  /* "…at the bottom" rather than "…here": since 2026-09-05 the box these two sentences
-   * describe is the page's composer and is NOT beside this note any more (the phrase
-   * chips still are, so "above" is still true of them). The note stayed in the rail
-   * because it is about the chips and the voice; only the pointer had to move. */
+  // "at the bottom": the message box is the page composer, not beside this note.
   var VOICE_NOTE_LIVE =
     "Tap a phrase above to play shipped audio. Type in the message box at the bottom and " +
     "press <b>Ask</b> &mdash; Moxie answers there, in her own voice.";
@@ -173,8 +128,7 @@
     var el = $("voice-note");
     if (!el) return;                                   // a fork that removed the note
     var live = !!(snap && snap.state === "live" && snap.liveTurns);
-    // Not adopted and no Piper = the button is the old, disabled "Say": the shipped
-    // wording is still the honest description of what free text can do (nothing here).
+    // Not adopted and no Piper = the old, disabled "Say": the Piper wording is still honest.
     var want = piper ? VOICE_NOTE_PIPER
              : !asks ? VOICE_NOTE_PIPER
              : live  ? VOICE_NOTE_LIVE
@@ -182,8 +136,7 @@
     if (el.innerHTML !== want) el.innerHTML = want;
   }
 
-  // Is a server voice available? Then "no TTS server" is simply untrue — the
-  // Piper sidecar is only one of the two ways this sim gets a voice.
+  // A server voice counts as a voice: then "no TTS server" would be untrue.
   function hasCloudVoice() {
     try {
       var a = window.moxieAudio;
@@ -199,17 +152,10 @@
     var opt = ("AbortSignal" in window && AbortSignal.timeout) ? { signal: AbortSignal.timeout(2500) } : {};
     return fetch(url, opt).then(function (r) { return r.ok; }).catch(function () { return false; });
   }
-  // Locally, probe for the optional TTS/STT sidecars and annotate accordingly.
-  // On the hosted static deploy those ports can't exist, so skip the two
-  // guaranteed-to-fail cross-origin requests and go straight to the hosted-demo
-  // annotations — same UI, no wasted requests or pending connections.
+  // Probe the optional sidecars only on a local origin; hosted, those ports cannot exist.
   var localTts = false, localStt = false;
-  /* Has the sidecar question been ANSWERED yet? On a hosted origin it is answered the
-   * moment the page loads (those ports cannot be reached from here, so no probe fires).
-   * On a local origin it is only answered when the probe settles — and the answer decides
-   * whether `#speech-btn` stays the Piper "Say" control or becomes the typed turn, so
-   * acting before it lands would flip the button's label and job under a self-hoster who
-   * does have Piper running. `ttsProbed` is what makes that impossible. */
+  // Has the sidecar question been ANSWERED? It decides whether #speech-btn stays Piper's
+  // "Say" or becomes the typed turn, so nothing may act before the probe settles.
   var ttsProbed = !isLocal;
   if (isLocal) {
     Promise.all([probe(origin + ":8081/health"), probe(origin + ":8082/health")])
@@ -224,8 +170,7 @@
   function render() {
     var snap = modeSnap();
     paintBadge(snap);
-    // A same-origin transcribe route is a real pair of ears, so the mic no longer needs
-    // a locally-run server. `ears` is the server's own answer to that question.
+    // A same-origin transcribe route (`ears`) means the mic needs no local server.
     apply(localTts, localStt || !!(snap && snap.ears), snap);
     paintBanner(snap);
   }
@@ -234,30 +179,21 @@
     // Voice / TTS
     if (tts) {
       ttsHint("piper tts &middot; connected", false);
-      // A reachable sidecar: everything in this panel is exactly as it has always been.
-      // Written explicitly rather than left alone so the branch is SYMMETRIC — no mark, no
-      // `disabled` and no tooltip from the other branch can survive into this one.
+      // Written explicitly so no mark/disabled/tooltip from the other branch survives.
       needsBackend($("tts-test"), "Speaks a test line through the local Piper TTS server.", false);
       needsBackend($("tts-base"), "The local Piper TTS server this page is using.", false);
       needsBackend($("speech-btn"), "Speaks this line through the local Piper TTS server.", false);
       paintVoiceNote(true, false, snap);
     }
     else {
-      // The buttons really do need the local Piper server, cloud voice or not — and they
-      // still do in `live`: the hosted voice route only ever speaks text the server
-      // itself just wrote (§3.2's ticket, no text field), so "speak arbitrary text" is
-      // structurally not something the hosted demo can offer.
+      // These need a local Piper even in `live`: the hosted voice route only speaks text
+      // the server itself just wrote, never arbitrary text.
       needsBackend($("tts-test"), "Needs the Piper TTS server (python3 sim/tts/server.py). Not available on the hosted demo.", true, !isLocal);
       needsBackend($("tts-base"), "Addresses the local Piper TTS server. A page served from another origin cannot reach it (CSP: connect-src 'self').", true, !isLocal);
-      /* `#speech-btn` is the one control here with somewhere better to be. Its Piper job
-       * is impossible without a sidecar, but the box beside it is the most obvious "talk
-       * to Moxie" affordance on the page — so hand it the typed turn rather than leaving
-       * a dead button that silently 'fails' into a CSP error. See
-       * `cloud-transport.js::adoptSpeechControl`. WHAT DECIDES: being in this branch at
-       * all means the sidecar probe came back with no Piper, and `ttsProbed` means it has
-       * actually come back — never a hostname test. Where the turn then GOES is `mode.js`'s
-       * answer, inside the transport. If the transport is absent (a fork that removed it),
-       * the button genuinely cannot do anything and is disabled instead. */
+      /* #speech-btn has somewhere better to be: with no Piper (and only once the probe has
+       * settled — never a hostname test) it becomes the typed turn
+       * (cloud-transport.js::adoptSpeechControl); mode.js decides where the turn goes.
+       * Without the transport it can do nothing and is disabled. */
       var took = ttsProbed && typedTurn() && typedTurn().adopt(true);
       if (took)
         needsBackend($("speech-btn"),
@@ -266,8 +202,7 @@
         needsBackend($("speech-btn"),
           "Speaks arbitrary text via the local Piper TTS server. On the hosted demo only pre-rendered demo lines play.",
           true, !isLocal && ttsProbed);
-      // `took` is what the button itself was decided from one line up, so the note can
-      // never claim a typed line reaches Moxie on a page where it does not.
+      // The note follows `took`, the same fact the button was decided from.
       paintVoiceNote(false, !!took, snap);
       // ...but only say the sim has no voice when it really has neither.
       if (!hasCloudVoice())
@@ -288,24 +223,17 @@
       warn(micSt, isLocal
         ? "no STT server &mdash; run <code>python3 sim/stt/server.py</code> (Listen falls back to a scripted line)"
         : "hosted demo &mdash; Listen plays a scripted child line (no live speech&#8209;to&#8209;text)");
-      // NOT `dead`: "Listen" still publishes a scripted child line here, which is real
-      // behaviour and the fallback this page has always had.
+      // NOT `dead`: Listen still publishes a scripted child line here.
       needsBackend($("mic-btn"), "Live speech-to-text needs the STT server (python3 sim/stt/server.py). On the hosted demo, Listen plays a scripted demo line instead.");
     }
-    // The STT address field only ever points at the local sidecar, so it is dead for the
-    // same reason `#tts-base` is — and arming it on a hosted origin would only produce a
-    // refused request.
+    // The STT address only points at the local sidecar: dead off-localhost, like #tts-base.
     needsBackend($("stt-base"),
       stt && isLocal
         ? "The local speech-to-text server this page is using."
         : "Addresses the local STT server (python3 sim/stt/server.py). A page served from another origin cannot reach it (CSP: connect-src 'self').",
       !(stt && isLocal), !isLocal);
-    // Live bus / Link (no probe — it's a WebSocket broker connection). This one keeps its
-    // mark in EVERY mode, live included: a real robot's MQTT broker genuinely is not
-    // available here, and no same-origin route can change that.
-    // `dead` off-localhost: `bridge.js` opens `ws://host:9001`, which a secure page may
-    // not open at all and which `connect-src 'self'` refuses regardless — so the click
-    // could only ever produce a console error. Locally it is a working control.
+    // Live bus: marked in EVERY mode (a real robot's broker is never on this origin), and
+    // dead off-localhost — bridge.js opens ws://host:9001, which CSP refuses.
     needsBackend($("bus-connect"),
       "Links a REAL robot's MQTT broker over WebSocket (:9001). Needs your self-hosted backend — not available on the hosted demo.",
       true, !isLocal);
@@ -318,49 +246,17 @@
     }
   }
 
-  /* ---- the banner must never sit ON a control (measured in Chrome, 2026-09-03) ----
-   *
-   * At phone widths the HUD rail collapses to `#rail-toggle` ("Controls"), anchored to the
-   * BOTTOM of the viewport — and `#env-banner` is `position: fixed; bottom: …; z-index: 30`
-   * stretched `left:10px; right:10px` under `@media (max-width: 640px)`. It landed exactly
-   * on top of the toggle. At 375x667 on the live site:
-   *
-   *     #rail-toggle           357x48 at y=610, visible, pointer-events:auto
-   *     elementFromPoint(centre) -> div#env-banner            (NOT the toggle)
-   *     tap()                    -> refused, element obscured
-   *     force-click              -> aria-expanded STAYS false
-   *
-   * So on the demo's most likely device the primary control was dead, with no feedback,
-   * until the visitor dismissed a notice that never said it was in the way.
-   *
-   * THE FIX IS LAYOUT, NOT z-index. Raising the toggle over the banner would only move the
-   * collision (the banner's own dismiss X would go under it). The banner is instead LIFTED
-   * clear of whatever is bottom-anchored, measured rather than guessed — the panel is
-   * ~48 px collapsed and up to 42 vh open, and the composer grows with the conversation,
-   * so no constant is right. (The last line of this paragraph used to read "at >=900 px
-   * nothing is bottom-anchored and the lift is 0"; that stopped being true on 2026-09-05,
-   * when the composer became the HUD grid's bottom row at every width. See below.)
-   *
-   * `sim/test_mobile_layout.mjs` asserts `document.elementFromPoint()` at the toggle's
-   * centre resolves to the toggle at 360/375/414 — the assertion that would have caught
-   * this. A visibility check would not have: the toggle was visible the whole time. */
+  /* ---- the banner must never sit ON a control ----
+   * `#env-banner` is fixed to the bottom, and on phones it landed exactly on #rail-toggle
+   * (elementFromPoint at the toggle's centre hit the banner; taps were swallowed). The
+   * fix is LAYOUT, not z-index (raising the toggle would bury the banner's dismiss X): the
+   * banner is lifted clear of the MEASURED bottom stack — no constant fits a 48 px handle,
+   * a 42vh drawer and a growing composer. test_mobile_layout.mjs asserts the hit test. */
   var DRAWER_MQ = "(max-width: 899px)";       // must match the CSS drawer breakpoint
 
-  /* WHAT IS BOTTOM-ANCHORED CHANGED ON 2026-09-05, and getting this wrong is not
-   * cosmetic. This used to measure `#panel` alone, and only in drawer mode, because the
-   * collapsed rail handle was the lowest thing on the page and at >=900 px nothing was
-   * bottom-anchored at all. Both halves of that are now false: `#chat-dock` — the
-   * conversation and the box a visitor types into — is the bottom row of the HUD grid at
-   * EVERY width, and in drawer mode the rail stacks directly above it.
-   *
-   * So the lift is measured from the TOP of the highest box in that bottom stack, and a
-   * box only counts when it really is down there (`bottom` in the lower half of the
-   * viewport) — which is what keeps the desktop side column, whose bottom is also low but
-   * whose top is not, out of the sum. `#panel` is only ever offered in drawer mode for
-   * the same reason.
-   *
-   * The control this banner would otherwise swallow is now the composer, i.e. the one
-   * control the whole page exists for. */
+  // The bottom stack is #chat-dock at EVERY width, plus #panel in drawer mode. The lift
+  // is from the top of the highest box whose bottom is in the lower half of the viewport,
+  // which keeps the desktop side column out of the sum.
   function liftBanner() {
     var root = document.documentElement;
     if (!root || !root.style || !root.style.setProperty) return;
@@ -386,9 +282,8 @@
     liftBanner();
     try { window.addEventListener("resize", liftBanner, { passive: true }); } catch (e) {}
     try { window.addEventListener("orientationchange", liftBanner); } catch (e) {}
-    // These boxes also change height with no resize event at all — opening the drawer, a
-    // <details> group toggling, the conversation growing a row — so watch them where the
-    // browser can, and fall back to the toggle click where it cannot.
+    // These boxes also resize without a window resize (drawer, <details>, a new log row):
+    // watch them, or fall back to the toggle click.
     try {
       var watched = 0, ids = ["panel", "chat-dock"];
       for (var i = 0; i < ids.length; i++) {
@@ -421,9 +316,8 @@
     if (t.innerHTML !== want) t.innerHTML = want;
   }
 
-  // mode.js answers asynchronously, so subscribe BEFORE the first render — and before
-  // the dismissed-banner early-out below, or a dismissed banner would also freeze the
-  // badge at its boot value.
+  // Subscribe BEFORE the first render and before the dismissed-banner early-out, or a
+  // dismissed banner would freeze the badge at its boot value.
   if (window.moxieMode && window.moxieMode.onChange) window.moxieMode.onChange(render);
   else render();
 

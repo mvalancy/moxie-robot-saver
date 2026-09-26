@@ -1,24 +1,12 @@
 // test_env_hosted.mjs — the hosted deploy must not fire doomed backend probes, and what
 // it tells a visitor must be TRUE in every mode.
 //
-// env.js probes optional local TTS/STT sidecars (:8081/:8082 /health) to annotate the
-// simulator, but those ports can't exist on the hosted Cloudflare deploy. This loads
-// sim.html under a NON-local hostname (mapped to the local test server via Chrome's
-// host-resolver rules) and asserts: env = "hosted", ZERO :8081/:8082 probes fired, the
-// badge shows, and there are no console errors. Also sanity-checks that a LOCAL load
-// still probes (feature detection intact).
-//
-// It then does the part that matters for the honest indicator (spec
-// docs/architecture/backlog/live-sim-demo.md §6.3/§7): with `/api/health` stubbed at the
-// browser, the page is driven through OFFLINE (the route is absent — the guarantee that
-// none of this regressed the existing site), DEGRADED (the route answered
-// `gateway_not_configured`), LIVE, LIVE-but-BUSY, and a malformed reply. Each case
-// asserts the real rendered badge, pill, banner and `needs-backend` marks — not a mock.
-//
-// The mode probe REPLACED the two sidecar probes on a hosted host; it did not join them
-// (spec acceptance criterion A10), and this file is what proves it.
-//
-// Skips cleanly (exit 0) with no browser, like the other headless tests.
+// Loads sim.html under a NON-local hostname (Chrome host-resolver rules) and asserts
+// env = "hosted", ZERO :8081/:8082 sidecar probes, the badge, and no console errors; a LOCAL
+// load must still probe. Then, with /api/health stubbed at the browser, drives the honest
+// indicator (live-sim-demo.md §6.3/§7) through OFFLINE, DEGRADED, LIVE, LIVE-but-BUSY and a
+// malformed reply, asserting the rendered badge, pill, banner and needs-backend marks. The
+// mode probe REPLACES the sidecar probes on a hosted host (acceptance criterion A10).
 //
 //   node sim/test_env_hosted.mjs
 import { spawn } from "node:child_process";
@@ -28,7 +16,7 @@ import { dirname, join } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import net from "node:net";
-import { skipper } from "./browser_harness.mjs";
+import { skipper, launchBrowser } from "./browser_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -100,25 +88,16 @@ const HEALTH_BUSY = JSON.stringify(envelope.envelope({
 }));
 
 // A non-local hostname mapped to the loopback test server — makes env.js see a "hosted" host.
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-         `--host-resolver-rules=MAP moxie.hosted.test 127.0.0.1:${port}`],
-});
+const browser = await launchBrowser(puppeteer, chrome, { hosts: { "moxie.hosted.test": port } });
 
 /**
  * Load sim.html and report what a visitor would actually see.
  * @param {string} url
  * @param {{health?:{status:number,body:string,contentType?:string},
  *           transport?:boolean, noTransport?:boolean}} [opts]
- *   `health` stubs the /api/health reply at the browser (the static test server has no
- *   Functions). `transport` sets `window.moxieCloudTransport` before any script runs — it
- *   is now redundant on a full page (P0-b's `cloud-transport.js` sets it for real) and is
- *   kept because it also covers a page where the flag arrives from somewhere else.
- *   `noTransport` serves a 404 for `cloud-transport.js`, which is how the "configured but
- *   no live transport" state is reached NOW THAT THE FILE SHIPS: a partial deploy, a stale
- *   cached index, or a fork that removed it. That state must still read SCRIPTED — the
- *   honesty guard is the point of the whole slice.
+ *   `health` stubs /api/health at the browser. `transport` presets
+ *   `window.moxieCloudTransport`. `noTransport` 404s cloud-transport.js (a partial deploy or
+ *   fork) — that state must still read SCRIPTED.
  */
 async function load(url, opts = {}) {
   const page = await browser.newPage();
@@ -147,29 +126,13 @@ async function load(url, opts = {}) {
       return r.continue();
     });
   }
-  // `raw`, not `errs`: `errs` is a `const` declared further down in this same function, so
-  // pushing to it here is a temporal-dead-zone ReferenceError — this handler exists for a
-  // navigation that failed, and it would have replaced that named failure with a stack
-  // trace. Reproduced by aborting the navigation. A slow runner that hits the 15 s cap
-  // lands here, which is exactly the machine this suite had never run on.
+  // `raw`, not `errs`: `errs` is declared further down, so pushing to it here would be a
+  // temporal-dead-zone ReferenceError replacing the named navigation failure.
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 }).catch((e) => raw.push("NAV " + e.message));
-  // PIN THE SAMPLE TO THE EVENT, *THEN* KEEP THE ABSENCE WINDOW.
-  //
-  // `domcontentloaded` returns before `mode.js` has asked anything, so until 2026-09-06
-  // this line was a bare `setTimeout(3000)` and the expiry of that number was the only
-  // thing that made `state`, `badge`, `banner`, the pill and the three `needs-backend`
-  // marks true — roughly forty assertions riding on one bet about how fast the runner is.
-  // The condition is observable: `mode.js` RECORDS every verdict it reaches in
-  // `stats().transitions` ("Recorded, not sampled … a poll that already happened is a
-  // fact; one that is about to is a bet", mode.js:126), so the wait is on the fact.
-  //
-  // The residual settle is NOT redundant and is deliberately left at its full length: the
-  // suite's negative assertions (`sidecar.length === 0`, `errs.length === 0`,
-  // `notFound.length === 1`) are absence claims, and `audio.js`'s :8081/:8082 sidecar
-  // probes are not part of the mode verdict at all — `local.sidecar.length === 2` needs
-  // them to have fired. A wait that returned early would weaken every one of those. This
-  // pair only ever EXTENDS the wait, never shortens it — the rule `test_mic_spend.mjs`
-  // wrote down when the same defect was found there.
+  // Wait on the FACT (`mode.js` records every verdict in `stats().transitions`), THEN keep
+  // the full settle: the absence assertions (no sidecar probe, no error, one 404) and the
+  // local sidecar probes are outside the mode verdict, so this pair only ever EXTENDS the
+  // wait, never shortens it.
   await page.waitForFunction(
     () => !!window.moxieMode && window.moxieMode.stats().transitions.length > 0,
     { timeout: 20000 },
@@ -197,47 +160,24 @@ async function load(url, opts = {}) {
       hasMode: !!window.moxieMode,
       state: window.moxieMode ? window.moxieMode.state() : null,
       polls: window.moxieMode ? window.moxieMode.stats().polls : null,
-      // WHAT "NEVER AGAIN" ACTUALLY LOOKS LIKE. `api.length === 1` below counts the
-      // requests that happened inside this function's settle — and `POLL_MIN_MS` is
-      // 30 000 ms, so NO settle this suite could afford can see a second one. Measured
-      // 2026-09-06 by deleting `mode.js`'s `if (sticky) return` no-poll-storm guard: the
-      // check "an absent route must be probed ONCE and never again" stayed GREEN.
-      // `scheduled` is the timer's own record — `schedule()` pushes to it before arming —
-      // so an empty array is proof the storm was never even queued, with no clock in it.
+      // A second poll cannot happen inside any affordable settle (POLL_MIN_MS is 30 s), so
+      // "probed ONCE" is asserted on `scheduled` — the timer's own record, pushed before arming —
+      // with no clock in it.
       scheduled: window.moxieMode ? window.moxieMode.stats().scheduled : null,
     };
   });
   await page.close();
-  // Chrome logs a 404 SUBRESOURCE as a console error, and a static host with no Pages
-  // Functions genuinely 404s the mode probe — once — which IS the offline path working
-  // as designed. So that one entry is separated out precisely (by correlating the console
-  // text with the 404 responses actually observed) rather than by loosening the guard:
-  // `errs` stays strict for everything else, and `notFound` is asserted by URL, so any
-  // OTHER missing asset fails both checks instead of hiding behind this one.
-  // `noTransport` withholds cloud-transport.js ON PURPOSE, so its 404 is part of the
-  // fixture rather than a fault — forgiven by the same correlation rule and no more
-  // loosely: `notFound` is still asserted by URL, so any OTHER missing asset fails.
+  // Chrome logs a 404 subresource as a console error, and an offline host 404s the mode probe
+  // once by design (and `noTransport` withholds cloud-transport.js on purpose). Those are
+  // separated by correlating console text with observed 404s, and `notFound` is asserted by
+  // URL, so any OTHER missing asset still fails.
   /** A localhost sidecar, by host AND port — see the note under `onlySidecarRefusals`. */
   const SIDECAR = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\]):(8081|8082)(\/|$)/;
   const expected404 = (u) => /\/api\/health\b/.test(u) || (opts.noTransport && /cloud-transport\.js/.test(u));
   const onlyProbe404 = notFound.length > 0 && notFound.every(expected404);
-  // AND the doomed sidecar probes themselves. This file already TRACKS them (`sidecar`,
-  // above) because they are the expected behaviour of a localhost load — `audio.js` asks
-  // Piper :8081 and STT :8082 whether they are there, on purpose. What it did not do is
-  // tolerate the CONSOLE ERROR Chrome logs when the port is dead, which is the normal case
-  // for everyone without those services running. That went unnoticed because this suite had
-  // never executed in CI (no browser was ever installed), and on the author's machine two
-  // stale processes happened to be listening — so it passed on local accident, twice over.
-  // Correlated with requests that actually failed, so a refusal to any OTHER host still fails.
-  //
-  // ANCHORED ON THE HOST, not merely on the port. `/:808[12]\b/` tested the whole URL, so a
-  // refusal to `http://evil.test:8081/x.png` was forgiven too — proved by injecting exactly
-  // that, which reddens `test_responsive.mjs` and left this one green. The sidecars are
-  // LOCALHOST services; a refusal to anything else is a real page fault.
-  //
-  // And forgiven ONE FOR ONE rather than by a flag: `refused` is the list of requests that
-  // actually failed, so the budget is its length. A page that refused two sidecar probes
-  // and then also refused something else can no longer hide the third behind the first two.
+  // The doomed sidecar probes' console errors are forgiven too — anchored on the LOCALHOST
+  // host, not just the port (a refusal to `evil.test:8081` is a real fault), and ONE FOR ONE
+  // against requests that actually failed, so a third refusal cannot hide behind two probes.
   let budget = refused.filter((u) => SIDECAR.test(u)).length;
   const allSidecars = refused.length > 0 && refused.every((u) => SIDECAR.test(u));
   const errs = raw.filter((t) => {
@@ -306,20 +246,14 @@ try {
   ok(/own voice is live/.test(live.ttsStatus), `live voice wording (got "${live.ttsStatus}")`);
   ok(/live brain answers on this page/.test(live.banner), `live banner (got "${live.banner}")`);
   ok(live.sidecar.length === 0, "a live hosted page still fires no sidecar probes");
-  // THE POSITIVE CONTROL for the two "never ARMED" checks above. Without this line an
-  // empty `scheduled` would satisfy them for the wrong reason — a renamed field, a stats
-  // object that stopped being populated, a page that never booted `mode.js` at all — and
-  // they would report "no poll storm" about a page that never polled anything.
+  // POSITIVE CONTROL for the "never ARMED" checks: an empty `scheduled` must not pass because
+  // the field was renamed or mode.js never booted.
   ok(Array.isArray(live.scheduled) && live.scheduled.length === 1 && live.scheduled[0] >= 30000,
      `a LIVE page DOES arm its next poll, ~30 s out (scheduled ${JSON.stringify(live.scheduled)})`);
   ok(live.errs.length === 0, `live console errors: ${live.errs.slice(0, 3).join(" | ")}`);
 
-  // --- 3b. LIVE with no transport loaded. P0-a shipped this state by simply not having a
-  //         transport file; now that `cloud-transport.js` ships, the state is reached by a
-  //         page served WITHOUT it — a partial deploy, a stale cached index, a fork that
-  //         removed it. Either way the page must NOT claim LIVE over something that still
-  //         answers from `stub.js`. (Rule 17: the guard was right and the world changed
-  //         under it, so the guard's SETUP moved and its assertion did not.)
+  // --- 3b. LIVE with no transport loaded (a page served WITHOUT cloud-transport.js): it
+  //         must NOT claim LIVE over something that still answers from stub.js.
   const noTr = await load(HOSTED, { health: { status: 200, body: HEALTH_LIVE }, noTransport: true });
   ok(noTr.state === "live", `the mode is still live (got ${noTr.state})`);
   ok(noTr.badge === "HOSTED DEMO · SCRIPTED",

@@ -1,31 +1,20 @@
 // test_mermaid.mjs — every Mermaid diagram in the docs explorer must render CLEANLY.
 //
-// Guards the three failure modes that made diagrams look broken:
-//   1. parse errors (a diagram fails to render → a `.err` box),
-//   2. clipped labels (multi-line node text spilling past the diagram box — caused by
-//      the webfont loading after Mermaid measured the boxes, and by literal `\n`),
-//   3. literal "\n" in rendered text (must be `<br/>` in the source).
-//
-// Loads each doc that the index says has Mermaid, renders it in a real browser via
-// docs.html, and asserts a clean SVG with no error box, no clipped label, no "\n".
-// Skips cleanly (exit 0) when puppeteer/Chrome are absent, like the other browser tests.
+// Guards: 1. parse errors (an `.err` box), 2. clipped labels (text measured before the
+// webfont loaded, or literal `\n`), 3. literal "\n" in rendered text (use `<br/>`).
+// Renders each doc the index marks as having Mermaid in docs.html in a real browser.
 //
 //   node sim/test_mermaid.mjs
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import net from "node:net";
-import { requireBrowser } from "./browser_harness.mjs";
+import { requireBrowser, launchBrowser } from "./browser_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
 
-/* Browser discovery lives in ONE place. This file used to carry its own copy of
- * `loadPuppeteer` + `findChrome` — and a second copy is exactly how the defect this
- * branch exists to fix survived: the scan for `node_modules/puppeteer` under `~/Code` is a
- * developer-machine path that cannot exist on a runner, so every CI run skipped and
- * stayed green. `requireBrowser` is the same discovery plus the rule that a missing
- * browser is a FAILURE under CI, and it cannot drift from the other suites' copy. */
+/* Browser discovery lives in ONE place (requireBrowser: a missing browser FAILS under CI). */
 const { puppeteer, chrome, skip } = await requireBrowser("mermaid tests");
 
 const port = await new Promise((res) => {
@@ -44,10 +33,7 @@ function cleanup() { try { server.kill("SIGKILL"); } catch {} }
 if (!(await waitUp())) { cleanup(); skip("serve.py did not come up"); }
 
 const fails = [];
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"],
-});
+const browser = await launchBrowser(puppeteer, chrome);
 let docs = [], totalSvg = 0;
 try {
   const idx = await (await fetch(base + "/docs-index.json")).json();
@@ -91,21 +77,9 @@ try {
   cleanup();
 }
 
-/* A TEST THAT CANNOT FAIL IS NOT A TEST — the floor under the whole loop.
- *
- * `docs` is `idx.files.filter(f => f.mermaid > 0)`. If that field ever stops being
- * written (a `build_docs_bundle.py` change, a schema rename, an index that failed to
- * rebuild), the filter returns EMPTY, the loop body never executes, not one diagram is
- * rendered, and this file prints "✅ mermaid tests OK — 0 diagrams across 0 docs" and
- * exits 0. That is the same shape as the defect this branch was opened for: a green
- * badge over assertions that never fired. Demonstrated, not theorised — filtering on a
- * field that does not exist exits 0 with the success banner.
- *
- * So the counts are a tripwire, not a target. They sit well under today's numbers (63
- * diagrams across 46 docs) because the point is to catch a COLLAPSE — the index losing
- * the field, or half the docs falling out of the bundle — not to freeze the doc tree.
- * If a legitimate reorganisation ever takes the tree below these, move them and say so
- * in the commit; that is a decision worth making on purpose. */
+/* A TEST THAT CANNOT FAIL IS NOT A TEST: if the index stops writing `mermaid`, the filter
+ * is empty and the loop "passes" with 0 diagrams. These floors are a tripwire for a
+ * COLLAPSE, well under today's counts; move them deliberately if the tree shrinks. */
 const FLOOR_DOCS = 25, FLOOR_SVG = 35;
 if (docs.length < FLOOR_DOCS)
   fails.push(`only ${docs.length} docs claim a Mermaid diagram (floor ${FLOOR_DOCS}) — ` +
