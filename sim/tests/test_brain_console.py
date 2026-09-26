@@ -174,9 +174,9 @@ def test_the_card_reads_the_environments_pin_and_the_deciding_layer():
 def test_the_console_route_forwards_the_scope_the_supervisor_expects():
     """`scope` travels as a query parameter (the supervisor's own route shape), and the
     card's own `scope` key must not be forwarded into the body as if it were a field."""
-    with open(os.path.join(REPO, "server", "moxie_server", "main.py")) as fh:
-        main = fh.read()
-    assert '@app.get("/local/robots/{device_id}/brain")' in main
-    assert '@app.post("/local/robots/{device_id}/brain")' in main
+    from helpers_console import server_source
+    main = server_source()
+    assert '.get("/local/robots/{device_id}/brain")' in main
+    assert '.post("/local/robots/{device_id}/brain")' in main
     assert "scope=fleet" in main
     assert 'k != "scope"' in main

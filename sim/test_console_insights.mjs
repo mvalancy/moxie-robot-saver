@@ -41,7 +41,7 @@
  * `page.setRequestInterception` — the idiom `test_mic_spend.mjs` and `test_ambient_guard.mjs`
  * established for `/api/*`.
  *
- * THE FIXTURES ARE BUILT BY THE REAL NORMALIZERS. `server/moxie_server/fleet.py` is
+ * THE FIXTURES ARE BUILT BY THE REAL NORMALIZERS. `server/moxie_server/fleet/` is
  * deliberately dependency-free ("Pure + dependency-free (no fastapi/network here)"), and
  * `/local/robots/{id}/telemetry` is literally `normalize_telemetry(supervisor_json)`. So
  * this suite hands SUPERVISOR payloads to the real `normalize_telemetry` /
@@ -91,10 +91,10 @@ const PNG = Buffer.from(
  * Inputs here are SUPERVISOR payloads (what `moxie_server` fetches); outputs are exactly
  * what the console route returns, because the same function computes them. */
 const PY = `
-import importlib.util, json, sys
+import json, sys
 repo, dev = sys.argv[1], sys.argv[2]
-spec = importlib.util.spec_from_file_location("fleet", repo + "/server/moxie_server/fleet.py")
-m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+sys.path.insert(0, repo + "/server")
+from moxie_server import fleet as m
 
 DAYS  = ["2026-08-29","2026-08-30","2026-08-31","2026-09-01","2026-09-02","2026-09-03","2026-09-04"]
 COUNT = [0, 4, 2, 0, 9, 3, 5]
@@ -158,7 +158,7 @@ let FIX;
 try {
   FIX = JSON.parse(execFileSync("python3", ["-c", PY, repo, DEV], { encoding: "utf8" }));
 } catch (e) {
-  skip("python3 could not build the fixtures from server/moxie_server/fleet.py — " + e.message);
+  skip("python3 could not build the fixtures from server/moxie_server/fleet/ — " + e.message);
 }
 /* The fixture builder must not be able to hand back a hollow shell. */
 ok(FIX.full.ok === true && FIX.full.count === 3 && FIX.full.history.length === 7,

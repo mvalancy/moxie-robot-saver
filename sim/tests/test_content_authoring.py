@@ -556,15 +556,15 @@ def test_the_authoring_routes_are_declared():
     rather than a parent.
 
     Read as text rather than imported: the hermetic tier has no fastapi."""
-    with open(os.path.join(REPO, "server", "moxie_server", "main.py")) as fh:
-        main = fh.read()
-    assert '@app.post("/local/content/item")' in main
-    assert '@app.post("/local/content/render")' in main
+    from helpers_console import server_source
+    main = server_source()
+    assert '.post("/local/content/item")' in main
+    assert '.post("/local/content/render")' in main
     assert "normalize_content_item_result" in main, \
         "the item route does not normalize its answer, so a card could 500 on a refusal"
     # P0 does not build the paid rung, and must not accidentally ship its route. Matched
     # as a route LITERAL rather than as a substring, so prose about P1 does not trip it.
-    assert '@app.post("/local/content/try")' not in main, "`/content/try` is P1 (§9), not P0"
+    assert '.post("/local/content/try")' not in main, "`/content/try` is P1 (§9), not P0"
 
     with open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py")) as fh:
         runtime = fh.read()
@@ -578,8 +578,8 @@ def test_the_supervisor_route_owns_the_validation_not_the_proxy():
     names it and the console's does not."""
     with open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py")) as fh:
         runtime = fh.read()
-    with open(os.path.join(REPO, "server", "moxie_server", "main.py")) as fh:
-        main = fh.read()
+    from helpers_console import server_source
+    main = server_source()
     assert "content_packs.validate_item(" in runtime, \
         "the supervisor's writing route does not call validate_item at all (§6.3)"
     assert "validate_item(" not in main, \
@@ -667,17 +667,9 @@ def test_no_timer_in_the_editor_can_reach_a_model():
 @pytest.fixture
 def console(rt, base, tmp_path, monkeypatch):
     """The real console app in-process, pointed at the real supervisor above."""
-    pytest.importorskip("fastapi", reason="the console app")
-    pytest.importorskip("httpx", reason="fastapi's TestClient")
-    monkeypatch.setenv("MOXIE_DB", str(tmp_path / "console.db"))
-    monkeypatch.setenv("MOXIE_SUPERVISOR_STATUS", base)
-    sys.path.insert(0, os.path.join(REPO, "server"))
-    try:
-        from fastapi.testclient import TestClient
-        from moxie_server import main
-    except Exception as e:                      # pynacl / segno not in this env
-        pytest.skip(f"console app not importable: {e}")
-    main.STATUS_URL = base                      # read from the env at import time
+    from helpers_console import console_app, set_status_url
+    TestClient, main = console_app(tmp_path / "console.db", base)
+    set_status_url(base, monkeypatch)
     with TestClient(main.app) as c:
         yield c
 

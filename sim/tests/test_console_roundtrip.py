@@ -33,6 +33,8 @@ import threading
 
 import pytest
 
+from helpers_console import console_app, set_status_url
+
 pytest.importorskip("fastapi", reason="console tests need fastapi")
 pytest.importorskip("httpx", reason="console tests need httpx (fastapi TestClient)")
 
@@ -50,6 +52,7 @@ face_child_id = _faces.face_child_id
 face_options_list = _faces.face_options_list
 
 DEVICE = "d_console_rt"
+DEAD = "http://127.0.0.1:1/status"     # nothing listens on port 1
 
 
 # --------------------------------------------------------------------------- #
@@ -778,21 +781,9 @@ def supervisor(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def client(supervisor, tmp_path_factory):
-    """The console app in-process, pointed at the fake supervisor.
-
-    `MOXIE_DB` is redirected first: `moxie_server.main` calls `db.init()` at import
-    time and would otherwise create `server/moxie.db` in the working tree.
-    """
-    os.environ["MOXIE_DB"] = str(tmp_path_factory.mktemp("console") / "console-test.db")
-    os.environ["MOXIE_SUPERVISOR_STATUS"] = supervisor.status_url
-    try:
-        from fastapi.testclient import TestClient
-        from moxie_server import main
-    except Exception as e:                      # pynacl/segno/... not in this env
-        pytest.skip(f"console app not importable: {e}")
-    # main.STATUS_URL is read from the env at import; set it explicitly too, so the
-    # test is correct even if another test imported the module first.
-    main.STATUS_URL = supervisor.status_url
+    """The console app in-process, pointed at the fake supervisor."""
+    TestClient, main = console_app(tmp_path_factory.mktemp("console") / "console-test.db",
+                                   supervisor.status_url)
     with TestClient(main.app) as c:
         yield c
 
@@ -818,12 +809,7 @@ def test_fleet_normalizes_the_supervisors_snapshot(client):
 
 def test_fleet_is_graceful_when_the_supervisor_is_down(client, supervisor, monkeypatch):
     """Nothing listening on the status URL → ok:false with an empty fleet, never a 500."""
-    from moxie_server import main
-    dead = socket.socket()
-    dead.bind(("127.0.0.1", 0))
-    port = dead.getsockname()[1]
-    dead.close()
-    monkeypatch.setattr(main, "STATUS_URL", f"http://127.0.0.1:{port}/status")
+    set_status_url(DEAD, monkeypatch)
     f = client.get("/local/fleet").json()
     assert f["ok"] is False and f["robots"] == [] and f["robot_count"] == 0
     assert f["error"]
@@ -1078,8 +1064,7 @@ def test_erasing_telemetry_from_the_console_really_empties_the_store(client, sup
 def test_erasing_telemetry_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
     """503 with the console's own shape and `erased:false` — never a 500, and never a
     claim that something was deleted by a call that never arrived."""
-    import moxie_server.main as M
-    monkeypatch.setattr(M, "STATUS_URL", "http://127.0.0.1:1/status")
+    set_status_url(DEAD, monkeypatch)
     r = client.delete(f"/local/robots/{DEVICE}/telemetry")
     assert r.status_code == 503, r.text
     out = r.json()
@@ -1128,12 +1113,7 @@ def test_safety_for_an_unknown_device_is_a_404(client):
 
 
 def test_safety_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
-    from moxie_server import main
-    dead = socket.socket()
-    dead.bind(("127.0.0.1", 0))
-    port = dead.getsockname()[1]
-    dead.close()
-    monkeypatch.setattr(main, "STATUS_URL", f"http://127.0.0.1:{port}/status")
+    set_status_url(DEAD, monkeypatch)
     s = client.get(f"/local/robots/{DEVICE}/safety").json()
     assert s["ok"] is False and s["events"] == [] and s["error"]
 
@@ -1173,8 +1153,7 @@ def test_the_open_toggle_round_trips(client, supervisor):
 def test_permit_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
     """A parent clicking Permit with the supervisor stopped must get a readable answer,
     not a stack trace — the same 503-with-a-body contract as the config endpoints."""
-    from moxie_server import main
-    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    set_status_url(DEAD, monkeypatch)
     r = client.post(f"/local/robots/{DEVICE}/permit", json={})
     assert r.status_code == 503 and r.json()["ok"] is False
     r = client.get("/local/permits")
@@ -1360,12 +1339,7 @@ def test_memory_for_an_unknown_device_is_a_404(client):
 def test_memory_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
     """Reading *or* erasing with the supervisor stopped must be a readable ok:false —
     never a 500, and never a UI that silently claims the memory is gone."""
-    from moxie_server import main
-    dead = socket.socket()
-    dead.bind(("127.0.0.1", 0))
-    port = dead.getsockname()[1]
-    dead.close()
-    monkeypatch.setattr(main, "STATUS_URL", f"http://127.0.0.1:{port}/status")
+    set_status_url(DEAD, monkeypatch)
     r = client.get(f"/local/robots/{DEVICE}/memory")
     assert r.status_code == 503
     assert r.json()["ok"] is False and r.json()["namespaces"] == [] and r.json()["error"]
@@ -1437,12 +1411,7 @@ def test_schedule_for_an_unknown_device_is_a_404(client):
 def test_schedule_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
     """A plan nobody can fetch must read as "supervisor unreachable", never as an empty
     day — a parent would take a blank list for "Moxie has nothing planned"."""
-    from moxie_server import main
-    dead = socket.socket()
-    dead.bind(("127.0.0.1", 0))
-    port = dead.getsockname()[1]
-    dead.close()
-    monkeypatch.setattr(main, "STATUS_URL", f"http://127.0.0.1:{port}/status")
+    set_status_url(DEAD, monkeypatch)
     r = client.get(f"/local/robots/{DEVICE}/schedule")
     assert r.status_code == 503
     s = r.json()
@@ -1568,8 +1537,7 @@ def test_an_unknown_verb_is_a_400(client):
 
 
 def test_telehealth_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
-    import moxie_server.main as main
-    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    set_status_url(DEAD, monkeypatch)
     r = client.get(f"/local/robots/{DEVICE}/telehealth")
     assert r.status_code == 503
     body = r.json()
@@ -1827,8 +1795,7 @@ def test_testing_a_robot_that_is_not_connected_is_a_404(client):
 def test_a_supervisor_that_is_down_is_a_503_in_the_cards_own_shape(client, monkeypatch):
     """The card must be able to render the failure, so a 503 still carries both empty
     dropdowns and an error sentence rather than a FastAPI 500 page."""
-    from moxie_server import main as console_main
-    monkeypatch.setattr(console_main, "STATUS_URL", "http://127.0.0.1:1/status")
+    set_status_url(DEAD, monkeypatch)
     r = client.get(f"/local/robots/{DEVICE}/voice")
     assert r.status_code == 503
     v = r.json()
@@ -2039,8 +2006,7 @@ def test_a_code_carrying_item_is_flagged_all_the_way_to_the_card(client, content
 def test_the_content_card_gets_a_503_in_its_own_shape_when_the_supervisor_is_down(
         client, monkeypatch):
     """Acceptance criterion 10: the card renders the reason, never a blank list."""
-    from moxie_server import main as console_main
-    monkeypatch.setattr(console_main, "STATUS_URL", "http://127.0.0.1:1/status")
+    set_status_url(DEAD, monkeypatch)
     r = client.get("/local/content")
     assert r.status_code == 503
     v = r.json()
@@ -2092,8 +2058,7 @@ def test_the_days_window_is_forwarded_to_the_supervisor(client):
 
 
 def test_telemetry_history_is_empty_when_the_supervisor_is_down(client, monkeypatch):
-    import moxie_server.main as main
-    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    set_status_url(DEAD, monkeypatch)
     body = client.get(f"/local/robots/{DEVICE}/telemetry").json()
     assert body["ok"] is False and body["history"] == []
     assert body["persisted"] is False and body["totals"]["total"] == 0
@@ -2183,9 +2148,8 @@ def test_wake_up_on_a_record_with_no_mqtt_identity_is_a_409_not_a_success(client
 
 def test_wake_up_reports_a_down_supervisor_instead_of_success(client, paired,
                                                               monkeypatch):
-    import moxie_server.main as main
     auth, rid = paired
-    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    set_status_url(DEAD, monkeypatch)
     r = client.post(f"/api/robots/{rid}/wakeup", headers=auth)
     assert r.status_code >= 400
     assert r.json()["error"] and r.json().get("published") is not True
@@ -2220,9 +2184,8 @@ def test_ota_status_reports_the_robots_own_firmware_and_never_up_to_date(client,
 
 def test_ota_status_is_unavailable_when_the_supervisor_is_down(client, paired,
                                                                monkeypatch):
-    import moxie_server.main as main
     auth, rid = paired
-    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    set_status_url(DEAD, monkeypatch)
     body = client.get(f"/api/robots/{rid}/ota_status", headers=auth).json()
     assert body["status"] == "unavailable" and body["version"] is None
 

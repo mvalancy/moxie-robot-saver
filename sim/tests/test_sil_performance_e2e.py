@@ -521,17 +521,9 @@ def test_the_console_route_drives_the_same_rehearsal(lab, plain, tmp_path_factor
     """`POST /local/robots/{id}/preview` on the REAL console app, proxied to the REAL
     supervisor, landing on a REAL robot. The console is the surface an author touches, and
     it is the one hop the supervisor's own tests cannot see."""
-    pytest.importorskip("fastapi", reason="the console app needs fastapi")
-    pytest.importorskip("httpx", reason="fastapi's TestClient needs httpx")
-    sys.path.insert(0, os.path.join(REPO, "server"))
-    os.environ["MOXIE_DB"] = str(tmp_path_factory.mktemp("console") / "preview-test.db")
-    os.environ["MOXIE_SUPERVISOR_STATUS"] = lab["status"] + "/status"
-    try:
-        from fastapi.testclient import TestClient
-        from moxie_server import main
-    except Exception as e:                       # pynacl / segno / ... not installed
-        pytest.skip(f"console app not importable: {e}")
-    main.STATUS_URL = lab["status"] + "/status"  # read from the env at import time
+    from helpers_console import console_app
+    TestClient, main = console_app(tmp_path_factory.mktemp("console") / "preview-test.db",
+                                   lab["status"] + "/status")
     line = "Wow, you did it!"
     plain.reset()
     with TestClient(main.app) as c:
