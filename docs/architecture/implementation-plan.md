@@ -327,7 +327,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   when `subscribe` got its own, leaving G5 and `brain`. Both times the pattern was the same — the
   capability was never missing *grammar*, it was missing somewhere for its effect to go.) The remaining
   half is
-  [`ext.py`](../../mqtt/moxie_sdk/content/ext.py)'s `_is_p1` / `P1_CAPABILITIES` gate plus
+  [`ext.py`](../../mqtt/moxie_sdk/content/ext/)'s `_is_p1` / `P1_CAPABILITIES` gate plus
   `content_app._reply_from_volley` plumbing `volley.execution_actions` into an `Action` at all. The wire
   was necessary, not sufficient. **Still honestly missing:** no physical robot has ever been sent one of
   these, so nothing proves a real robot's JSON decoder accepts `function_id` by that spelling
@@ -380,7 +380,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   `xfail(strict=True)` conformance rows flip green; the other two do not, and I measured which.**
   #119 (above) put `function_id`/`function_args` on the wire and correctly reported that the four rows
   did **not** flip: *"the wire was necessary, not sufficient."* The remainder was two things, and this is
-  them. (1) [`ext.py`](../../mqtt/moxie_sdk/content/ext.py)'s `_is_p1` refused **any** `act.*` capability
+  them. (1) [`ext.py`](../../mqtt/moxie_sdk/content/ext/)'s `_is_p1` refused **any** `act.*` capability
   at load, so a pack could not declare one however well the wire behaved; `act` is now out of
   `P1_CAPABILITIES`, whose docstring records for each survivor *which host is still missing*.
   (2) `execution_actions` appeared **nowhere** in `mqtt/moxie_sdk/**` — there was no path from a pack's

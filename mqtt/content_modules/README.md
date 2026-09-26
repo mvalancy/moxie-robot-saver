@@ -20,7 +20,7 @@ Data-driven content modules loaded by the [content engine](../moxie_sdk/content/
 
 *(BEYOND #6 P0, 2026-09-03. Design:
 [`backlog/sandboxed-extensions.md`](../../docs/architecture/backlog/sandboxed-extensions.md);
-evaluator: [`ext.py`](../moxie_sdk/content/ext.py).)*
+evaluator: [`ext/`](../moxie_sdk/content/ext/).)*
 
 A `global` or a `conversation` may carry a small **program** — a rule list over a total
 JSON-AST expression language with no `exec`, no parser, no loops and no reachable host

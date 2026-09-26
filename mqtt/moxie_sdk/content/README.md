@@ -14,10 +14,10 @@ Data-driven Moxie activities: the implementation of the
   filters on what may be remembered.
 - [`content_app.py`](content_app.py) — `ContentApp`, the `MoxieApp` that runs a module through the AI
   seam, plus the sandboxed-extension *host* (fact base in, effects out).
-- [`ext.py`](ext.py) — the sandboxed extension evaluator: a total JSON-AST language with a closed
+- [`ext/`](ext/) — the sandboxed extension evaluator: a total JSON-AST language with a closed
   operator table, capability checks and English `explain()`
-  ([brief](../../../docs/architecture/backlog/sandboxed-extensions.md)). Its import list is a tested
-  security boundary, so it stays one self-contained file.
+  ([brief](../../../docs/architecture/backlog/sandboxed-extensions.md)). A package whose import
+  boundary (pure stdlib + its own siblings, nothing else) is a tested security property.
 - [`packs.py`](packs.py) — 📦 content packs: export, review (the 2×2 that never clobbers a local
   edit), apply, the shipped ⊕ overlay merge, and authoring helpers
   ([packs](../../../docs/architecture/backlog/content-packs.md) ·

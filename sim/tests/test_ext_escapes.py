@@ -22,7 +22,15 @@ from moxie_sdk.content import ext as E                      # noqa: E402
 from moxie_sdk.content import render as R                   # noqa: E402
 from moxie_sdk.content.volley import Volley, Session        # noqa: E402
 
-EXT_PY = os.path.join(REPO, "mqtt", "moxie_sdk", "content", "ext.py")
+CONTENT = os.path.join(REPO, "mqtt", "moxie_sdk", "content")
+EXT_DIR = os.path.join(CONTENT, "ext")
+#: Every module of the evaluator package. X7 bounds the package, not one file, so a new
+#: sibling is inside the boundary the moment it exists.
+EXT_FILES = sorted(os.path.join(EXT_DIR, f) for f in os.listdir(EXT_DIR) if f.endswith(".py"))
+
+
+def ext_source() -> str:
+    return "\n".join(open(f, encoding="utf-8").read() for f in EXT_FILES)
 
 
 def facts(**kw):
@@ -284,9 +292,9 @@ def test_x3_ordinary_templating_still_works_in_both_shapes(monkeypatch):
 def test_x3_an_extension_is_the_only_other_execution_surface():
     """X3 — with the renderer sandboxed, the §5 capability model is the only execution
     surface; `code` round-trips as opaque data and is never exec/eval/compiled (§7.4)."""
-    for name in ("content_app.py", "ext.py", "module.py", "packs.py", "render.py"):
-        src = open(os.path.join(REPO, "mqtt", "moxie_sdk", "content", name)).read()
-        tree = pyast.parse(src)
+    names = ["content_app.py", "module.py", "packs.py", "render.py"]
+    for name in names + [os.path.relpath(f, CONTENT) for f in EXT_FILES]:
+        tree = pyast.parse(open(os.path.join(CONTENT, name)).read())
         for node in pyast.walk(tree):
             if isinstance(node, pyast.Call) and isinstance(node.func, pyast.Name):
                 assert node.func.id not in ("exec", "eval", "compile", "__import__"), \
@@ -466,25 +474,61 @@ def test_x6_the_evaluator_is_depth_counted_even_without_validation():
 
 FORBIDDEN_IMPORTS = {"time", "random", "os", "datetime", "secrets", "subprocess",
                      "socket", "pathlib", "shutil", "importlib", "ctypes", "threading"}
+STDLIB_ALLOWED = {"__future__", "math", "re", "unicodedata", "dataclasses"}
+
+
+def _import_breaches(src: str, siblings) -> list:
+    """What in `src` reaches outside the evaluator package's boundary.
+
+    The only legal imports are the four pure stdlib modules and `from .<sibling>`: a
+    level-1 relative import naming a module of THIS package. `from .. import store` or
+    `from ..render import …` is level 2 — it leaves the package — and is a breach even
+    though no forbidden name appears in it, because a sibling of `ext/` could hand the
+    evaluator a clock, a store or a network client.
+    """
+    bad = []
+    for node in pyast.walk(pyast.parse(src)):
+        if isinstance(node, pyast.Import):
+            bad += [a.name for a in node.names if a.name.split(".")[0] not in STDLIB_ALLOWED]
+        elif isinstance(node, pyast.ImportFrom):
+            if node.level == 0:
+                if (node.module or "").split(".")[0] not in STDLIB_ALLOWED:
+                    bad.append(node.module)
+            elif node.level != 1:
+                bad.append("." * node.level + (node.module or ""))
+            else:
+                names = [node.module.split(".")[0]] if node.module else [a.name for a in node.names]
+                bad += ["." + n for n in names if n not in siblings]
+        elif (isinstance(node, pyast.Call) and isinstance(node.func, pyast.Name)
+              and node.func.id == "__import__"):
+            bad.append("__import__()")
+    return bad
+
+
+def test_x7_the_import_audit_itself_refuses_each_way_out():
+    """The audit below is the whole X7 guarantee, so it is proven in both directions here
+    against sources built to escape — not only against a tree that happens to be clean."""
+    sib = {"grammar", "values"}
+    assert _import_breaches("import math\nfrom .grammar import OPS\nfrom . import values", sib) == []
+    for escape in ("import time", "import os.path", "from datetime import datetime",
+                   "from .. import store", "from ..render import render_prompt",
+                   "from ...types import Turn", "from .nope import x", "from . import nope",
+                   "from moxie_sdk import store", "__import__('os')"):
+        assert _import_breaches(escape, sib), escape
 
 
 def test_x7_the_evaluator_imports_no_clock_and_no_entropy():
-    """X7(i) — `ext.py`'s AST has none of the forbidden imports (the mechanism behind
-    §6.1's determinism claim).
+    """X7(i) — no module of the `ext` package imports a clock, entropy, I/O or anything
+    outside the package (the mechanism behind §6.1's determinism claim).
 
-    Mutation checked: adding `import time` to `ext.py` fails this test.
+    Mutation checked: adding `import time` to `ext/machine.py` fails this test.
     """
-    tree = pyast.parse(open(EXT_PY).read())
-    imported = set()
-    for node in pyast.walk(tree):
-        if isinstance(node, pyast.Import):
-            imported |= {a.name.split(".")[0] for a in node.names}
-        elif isinstance(node, pyast.ImportFrom) and node.module:
-            imported.add(node.module.split(".")[0])
-    assert not (imported & FORBIDDEN_IMPORTS), \
-        f"ext.py imports {sorted(imported & FORBIDDEN_IMPORTS)}"
-    assert imported <= {"__future__", "math", "re", "unicodedata", "dataclasses"}, \
-        f"ext.py grew an import: {sorted(imported)}"
+    siblings = {os.path.basename(f)[:-3] for f in EXT_FILES}
+    assert {"__init__", "grammar", "machine"} <= siblings, siblings
+    for path in EXT_FILES:
+        src = open(path, encoding="utf-8").read()
+        assert not _import_breaches(src, siblings), \
+            f"ext/{os.path.basename(path)} imports {_import_breaches(src, siblings)}"
 
 
 def test_x7_two_clock_reads_in_one_program_agree():
@@ -987,7 +1031,7 @@ def test_nothing_an_extension_can_express_reaches_any_of_these():
     # Every name in the surface is in our own source, and the surface is small enough to
     # read in one screen — which is the property that justified choosing this design.
     assert len(surface) <= 80, len(surface)
-    src = open(EXT_PY).read()
+    src = ext_source()
     for name in surface:
         assert name in src
 

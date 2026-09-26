@@ -110,7 +110,7 @@ Two of those fields are not text a person types:
   **exactly three top-level names** — `volley`, `session` and `presence` (`content_app.py`:312 for the
   opener, :371 for the prompt) — which is what makes §4.3's chip list closeable at all.
 - **`extension` is a JSON-AST program** validated by
-  [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py)`::validate()` — 53 frozen operators, no `exec`, no
+  [`ext.py`](../../../mqtt/moxie_sdk/content/ext/)`::validate()` — 53 frozen operators, no `exec`, no
   loops, and capabilities checked in both directions at load
   ([`sandboxed-extensions.md`](sandboxed-extensions.md)).
 

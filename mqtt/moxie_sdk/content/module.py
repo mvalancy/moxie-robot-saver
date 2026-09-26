@@ -9,7 +9,7 @@ A module is JSON with three optional sections (docs/architecture/content-module-
 Every record carries `source_version`, the pack author's per-item counter (default 1),
 used only by `packs.py` to tell an upgrade from a re-import (content-packs.md §2.3).
 
-`extension` is a sandboxed program this appliance runs (`ext.py`); `code` is inert data
+`extension` is a sandboxed program this appliance runs (`ext/`); `code` is inert data
 that is never run. Both are plain data here — validation happens at import and load, not
 in this loader, so a bad pack cannot take the reload down. Pure (no MQTT/LLM).
 """
@@ -47,7 +47,7 @@ class Conversation:
     max_volleys: int = 40
     code: str = ""                       # optional Python hooks (pre/post_process, …)
     memory: dict = field(default_factory=dict)   # see `memory_namespace` below
-    extension: dict = field(default_factory=dict)  # a sandboxed program — see ext.py
+    extension: dict = field(default_factory=dict)  # a sandboxed program — see ext/
     source_version: int = 1              # the author's counter for this item (packs.py)
 
     # ---- long-term memory, declared rather than scripted (OpenMoxie MemoryChat) ----
@@ -93,7 +93,7 @@ class Global:
     entity_groups: str = ""              # e.g. "3,4" — which capture groups are entities
     action: int = 0
     code: str = ""
-    extension: dict = field(default_factory=dict)  # a sandboxed program — see ext.py
+    extension: dict = field(default_factory=dict)  # a sandboxed program — see ext/
     source_version: int = 1              # the author's counter for this item (packs.py)
     _rx: Optional[re.Pattern] = field(default=None, repr=False)
 

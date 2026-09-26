@@ -4,7 +4,7 @@
 effect list becomes a `RemoteChatAction` spelled the way the recovered contract spells it
 (`wire.encode_action` carries `function_id`/`function_args`, RemoteChat.proto:255-281):
 
-    {"act": {"name, args}}                       ext.py  `_st_act` / `_run_stmt`
+    {"act": {"name, args}}                       ext/  `_st_act` / `_run_stmt`
       → {"kind": "act", …}                       ext.evaluate's effect list
       → volley.execution_actions                 content_app.apply_ext_effects
       → Reply.actions [Action(EXECUTE, …)]       content_app.execution_actions_of

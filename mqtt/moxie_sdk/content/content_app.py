@@ -4,7 +4,7 @@ ContentApp — runs a content module through the AI seam
 commands), else the active conversation — render its prompt over the volley, ask the
 injected `chat(messages) -> str` brain, return a Reply.
 
-Global handlers are registered Python callables or sandboxed extensions (`ext.py`); a
+Global handlers are registered Python callables or sandboxed extensions (`ext/`); a
 module's `code` string is never executed.
 
 **Memory.** `volley.persist_data` is loaded per turn from the durable `MemoryStore` and
@@ -170,7 +170,7 @@ class ContentApp(MoxieApp):
 
     # ---- sandboxed extensions (BEYOND #6) ----
     def _ext_limits_now(self):
-        """The budget from `config.py` (supervisor) or `ext.py`'s defaults (bare SDK)."""
+        """The budget from `config.py` (supervisor) or `ext/`'s defaults (bare SDK)."""
         if self._ext_limits is not None:
             return self._ext_limits
         try:
@@ -440,7 +440,7 @@ class ContentApp(MoxieApp):
 # --------------------------------------------------------------------------- #
 # Sandboxed content extensions — the host half (sandboxed-extensions.md §4.4/§4.5)
 #
-# `ext.py` is the pure evaluator; everything that touches the world lives here:
+# `ext/` is the pure evaluator; everything that touches the world lives here:
 #   * `ext_facts()` builds a plain-JSON fact base — no live object to walk (X2).
 #   * `apply_ext_effects()` applies effects only after the program ended, so a breach
 #     leaves nothing half-applied (X11).
@@ -759,7 +759,7 @@ def full_key_of(kind: str, key: str) -> str:
 
 
 def _clock_local(now: float) -> dict:
-    """`clock.local` (§4.2), computed in the host so `ext.py` imports no clock (X7)."""
+    """`clock.local` (§4.2), computed in the host so `ext/` imports no clock (X7)."""
     t = time.localtime(now)
     return {"hour": t.tm_hour, "minute": t.tm_min, "weekday": (t.tm_wday + 1) % 7,
             "iso": time.strftime("%Y-%m-%dT%H:%M:%S", t)}

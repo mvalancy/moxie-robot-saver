@@ -32,7 +32,7 @@ from moxie_sdk.cloud_config import (SERVER_ONLY_KEYS,               # noqa: E402
 from moxie_sdk.types import ChildProfile                            # noqa: E402
 
 #: The four brains, written out. A fifth one is a test edit and a reviewer — the rule
-#: `content/ext.py::OPS` states for its own closed table, and the reason this literal
+#: `content/ext/::OPS` states for its own closed table, and the reason this literal
 #: exists at all: a registry that is asserted with `set(BRAINS) == set(BRAINS)` asserts
 #: nothing about what is in it.
 EXPECTED = ("llm", "content", "webhook", "echo")

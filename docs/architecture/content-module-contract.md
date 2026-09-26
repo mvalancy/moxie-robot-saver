@@ -659,7 +659,7 @@ means something other than what the reviewer read. Six upstream hooks is a hand-
 
 *(BEYOND #6 P0, built 2026-09-03. Design:
 [`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md). Code:
-[`ext.py`](../../mqtt/moxie_sdk/content/ext.py). Tests:
+[`ext.py`](../../mqtt/moxie_sdk/content/ext/). Tests:
 [`test_ext_escapes.py`](../../sim/tests/test_ext_escapes.py) ·
 [`test_ext.py`](../../sim/tests/test_ext.py).)*
 
@@ -726,7 +726,7 @@ network, the filesystem, a subprocess, an environment variable, any credential, 
 device's store, another module's namespace, the safety rule table, `LoggingPolicy`, or the
 host's own clock and entropy (both are injected). The complete set of strings that resolve
 to anything is the operator table plus the fact base, and both are enumerated in
-[`ext.py`](../../mqtt/moxie_sdk/content/ext.py).
+[`ext.py`](../../mqtt/moxie_sdk/content/ext/).
 
 **The fact base** is a plain-JSON dict the host builds before a single node is evaluated —
 `speech`, `entities`, `input_vars`, `child`, `memory` (its own namespace only), `scratch`,

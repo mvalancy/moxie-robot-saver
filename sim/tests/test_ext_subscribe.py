@@ -4,7 +4,7 @@
 proves the subscription reaches the WIRE, merged alongside the supervisor's own vision
 subscription rather than instead of it:
 
-    {"subscribe": [event, …]}                     ext.py  `_st_subscribe` / `_run_stmt`
+    {"subscribe": [event, …]}                     ext/  `_st_subscribe` / `_run_stmt`
       → {"kind": "subscribe", "events": […]}       ext.evaluate's effect list
       → volley.subscriptions                      content_app.apply_ext_effects
       → Reply.subscribe                           content_app.subscriptions_of
@@ -89,7 +89,7 @@ def app_with(module_json, chat=None, **kw):
 def test_the_subscribable_events_are_exactly_the_recovered_vision_catalog():
     """`ext.SUBSCRIBE_EVENTS` == `presence.VISION_EVENTS`, order included.
 
-    Deliberately separate objects: `ext.py`'s import list is a security boundary (X7) and
+    Deliberately separate objects: `ext/`'s import list is a security boundary (X7) and
     `presence.py` imports `os`. This equality is what makes the duplication safe, and it
     also means the appliance only asks for events `_on_remote_chat`/`_on_event` can route.
     """

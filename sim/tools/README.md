@@ -50,7 +50,7 @@
   seed, the NFKC identity check, the memory-key grammar, the host-supplied namespace, the two
   capability-equality checks, the all-or-nothing effect list, the jinja2 sandbox, the pattern cap —
   and requires the corresponding test to go **red**. All 28 are caught. Run it by hand after
-  touching `ext.py`, `render.py`, `content_app.py`'s host half or `packs.py`'s pattern cap; a green
+  touching `ext/`, `render.py`, `content_app.py`'s host half or `packs.py`'s pattern cap; a green
   suite proves a guard is *present*, and only this proves it is *load-bearing*.
 - **`subscribe_mutation_check.py`** — the same proof for the `subscribe` capability's **25 guards**:
   the load-time event allowlist, the width of `ext.SUBSCRIBE_EVENTS`, the P1 gate, both host

@@ -2,7 +2,7 @@
 
 > ### ✅ P0 SHIPPED — 2026-09-03
 >
-> Built as specified, at [`mqtt/moxie_sdk/content/ext.py`](../../../mqtt/moxie_sdk/content/ext.py),
+> Built as specified, at [`mqtt/moxie_sdk/content/ext.py`](../../../mqtt/moxie_sdk/content/ext/),
 > behind [`sim/tests/test_ext_escapes.py`](../../../sim/tests/test_ext_escapes.py) (X1–X12) and
 > [`sim/tests/test_ext.py`](../../../sim/tests/test_ext.py) (T1–T18) — 150 tests — plus
 > [`sim/tools/ext_mutation_check.py`](../../../sim/tools/ext_mutation_check.py), which removes each
@@ -23,7 +23,7 @@
 > Verified against the code: [`volley.py`](../../../mqtt/moxie_sdk/content/volley.py):89
 > `self.subscriptions`, :100 `update_subscriptions`, :109 `add_subscriptions` (the asymmetry is
 > deliberate and documented at :112); `ACTION_WORDS` at
-> [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py):175 with `MAX_ACTIONS`:294. Guards:
+> [`ext.py`](../../../mqtt/moxie_sdk/content/ext/):175 with `MAX_ACTIONS`:294. Guards:
 > [`test_ext_act.py`](../../../sim/tests/test_ext_act.py),
 > [`test_ext_subscribe.py`](../../../sim/tests/test_ext_subscribe.py) and
 > [`sim/tools/subscribe_mutation_check.py`](../../../sim/tools/subscribe_mutation_check.py).

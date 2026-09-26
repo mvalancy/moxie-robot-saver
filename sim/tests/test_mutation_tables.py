@@ -201,7 +201,7 @@ def _audit(rows):
 
 #: A miniature target file whose `a()` and `b()` are byte-identical. That is not a contrived
 #: shape invented to make a test fail — it is exactly `_connack_failed`/`_suback_failed` in
-#: `moxie_runtime.py`, `_var`/`lookup` in `ext.py`, and the budget/window fail-open blocks
+#: `moxie_runtime.py`, `_var`/`lookup` in `ext/`, and the budget/window fail-open blocks
 #: in `limits.js` that turned this defect up in the first place. Twins are GOOD code here;
 #: they are two gates on the same fact, written the same way on purpose. It is the *anchor*
 #: that must tell them apart, and nothing but this check makes it.

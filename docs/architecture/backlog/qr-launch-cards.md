@@ -139,7 +139,7 @@ with a greeting or `ResultCode.NOREPLY_ACK` and **never** carries an action.
 >    landed, **all four** `xfail(strict)` rows still xfailed, refused at load with *"needs something this
 >    appliance cannot grant yet: `act.eb_timer_request`"* — so *"this slice flips four rows green"* was a
 >    claim and the wire was **necessary, not sufficient**: the gate was
->    [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py)'s `_is_p1` / `P1_CAPABILITIES` plus
+>    [`ext.py`](../../../mqtt/moxie_sdk/content/ext/)'s `_is_p1` / `P1_CAPABILITIES` plus
 >    `content_app._reply_from_volley`.
 > 3. ~~**The browser SIM still cannot read it.**~~ — **fixed 2026-09-04.**
 >    [`bridge.js::applyAction`](../../../sim/web/bridge.js) now reads `function_id` before the SIM's
@@ -178,7 +178,7 @@ MOXIE_GO/QR-enabled module (`eb_enable_qr` + `eb-qr-event` subscription)"*). Tod
   and nothing ever reads `Volley.execution_actions` onto the wire — the audit's §3.2 *"Execution
   actions … not plumbed onto the wire"* row (ADOPT, **S**), and the blocker
   [`sandboxed-extensions.md`](sandboxed-extensions.md) calls **S5** (its `act.*` capabilities are
-  *refused at load* because of it — [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py):177-181).
+  *refused at load* because of it — [`ext.py`](../../../mqtt/moxie_sdk/content/ext/):177-181).
 * ~~[`wire.py::build_chat_response`](../../../mqtt/moxie_sdk/wire.py) builds each action as
   `{output_type, action, module_id, content_id}` and **silently drops** `Action.function` /
   `Action.args`~~ — **fixed 2026-09-04**; see the box above.
