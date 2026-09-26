@@ -75,13 +75,13 @@ def test_the_console_learns_the_module_catalog_from_the_supervisor(client):
 #: nested dicts.
 _ABSENT = "<absent>"
 _DOWN = [
-    ("GET", "/local/fleet", None,
+    ("GET", "/local/fleet", 200,             # the fleet list itself stays renderable
      {"ok": False, "robots": [], "robot_count": 0, "error": ...}),
-    ("GET", f"/local/robots/{DEVICE}/telemetry", None,
+    ("GET", f"/local/robots/{DEVICE}/telemetry", 503,
      {"ok": False, "history": [], "persisted": False, "totals.total": 0}),
     ("DELETE", f"/local/robots/{DEVICE}/telemetry", 503,     # never claims an erase
      {"ok": False, "erased": False, "records": [], "error": ...}),
-    ("GET", f"/local/robots/{DEVICE}/safety", None,
+    ("GET", f"/local/robots/{DEVICE}/safety", 503,
      {"ok": False, "events": [], "error": ...}),
     ("POST", f"/local/robots/{DEVICE}/permit", 503, {"ok": False}),
     ("GET", "/local/permits", 503, {"pending": []}),
@@ -115,8 +115,7 @@ def test_every_card_is_graceful_when_the_supervisor_is_down(client, monkeypatch,
                                                             method, path, status, expect):
     set_status_url(DEAD, monkeypatch)
     r = client.request(method, path, json={} if method == "POST" else None)
-    if status is not None:
-        assert r.status_code == status, r.text
+    assert r.status_code == status, r.text
     body = r.json()
     for key, want in expect.items():
         if want is ...:
@@ -139,8 +138,7 @@ def test_an_unknown_device_is_a_404_in_the_cards_own_shape(client, route, empty)
     body = r.json()
     assert body["ok"] is False
     assert {k: body[k] for k in empty} == empty
-    if route != "telehealth":
-        assert "d_nope" in body["error"] if route == "schedule" else body["error"]
+    assert "d_nope" in body["error"]
 
 
 # --------------------------------------------------------------------------- #
