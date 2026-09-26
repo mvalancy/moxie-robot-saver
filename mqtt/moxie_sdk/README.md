@@ -98,6 +98,9 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
 - [`chat.py`](chat.py) — the LLM boundary: `make_openai_chat` (a whole completion),
   `make_openai_stream` / `stream_completion` (text deltas), plus the rate-limit
   classification, `Pacer` and `call_with_backoff` both share.
+- [`content/`](content/README.md) — the data-driven activity engine (`ContentApp`), content packs,
+  the sandboxed extension language and the prompt-template sandbox.
+- [`apps/`](apps/README.md) — the built-in apps (`LLMApp`, `WebhookApp`, `EchoApp`).
 
 ---
 📖 [Back to top](../../README.md)
