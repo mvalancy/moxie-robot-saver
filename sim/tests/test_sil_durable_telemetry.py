@@ -444,16 +444,9 @@ def console(stack):
     is that the other end is `mqtt/run.py` with a live broker behind it, so "wakeup
     published" can be asserted by a subscriber instead of by a recorded fake.
     """
-    pytest.importorskip("fastapi", reason="the console needs fastapi")
-    pytest.importorskip("httpx", reason="the console's TestClient needs httpx")
-    if "moxie_server.main" not in sys.modules:      # db.init() runs at import time
-        os.environ["MOXIE_DB"] = os.path.join(stack.log_dir, "console-test.db")
-    try:
-        from fastapi.testclient import TestClient
-        from moxie_server import main
-    except Exception as e:                          # pynacl/segno/... absent
-        pytest.skip(f"console app not importable: {e}")
-    main.STATUS_URL = f"{_status_url(stack.supervisor)}/status"
+    from helpers_console import console_app
+    TestClient, main = console_app(os.path.join(stack.log_dir, "console-test.db"),
+                                   f"{_status_url(stack.supervisor)}/status")
     with TestClient(main.app) as c:
         yield c
 
