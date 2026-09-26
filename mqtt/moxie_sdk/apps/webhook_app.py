@@ -13,14 +13,9 @@ Response (JSON):
 
 Point `endpoint` at your service (e.g. a game server) and it *becomes* Moxie's brain.
 
-**Two ways to ask for an action, and neither is ever spoken.** A service may name
-`actions` outright (the JSON field above) *or* write an action tag inline in `text` —
-`<exit>`, `<sleep>`, `<launch:MOD[:CID]>` — the same grammar `moxie_sdk/actions.py`
-defines for a model. `LLMApp` and `ContentApp` have always stripped those tags before
-the line is spoken; this app did not, so an external brain's `<launch:DRAW>` was read
-out to the child verbatim *and* never became an action. It now runs the same
-`parse_action_tags` they do, so the tag is consumed either way and the child hears only
-words. Declared `actions` come first, then the ones lifted out of the text.
+Actions may be declared in `actions` or written inline as tags in `text` (the
+`moxie_sdk/actions.py` grammar); inline tags are stripped so they are never spoken.
+Declared actions come first.
 """
 from __future__ import annotations
 import json
@@ -50,12 +45,8 @@ def _json_to_reply(d: dict) -> Reply:
                                   function=a.get("function"), args=a.get("args", {})))
         except Exception:
             pass
-    # An external brain may also write the tags inline, and a tag that survives into
-    # `text` is spoken aloud — "less-than launch greater-than" to a child. Strip them the
-    # way every other app does (`LLMApp.respond`, `ContentApp`), keeping whatever action
-    # they carry. Markup goes through the same call for its text only
-    # (`content_app.py:142`): `<mark .../>` is not one of the four names we claim, so the
-    # behavior language is left untouched and its actions are not counted twice.
+    # Strip inline tags from text (keeping their actions) and from markup (text only, so
+    # actions are not counted twice; `<mark/>` is untouched).
     text, tag_actions = parse_action_tags(d.get("text", "") or "")
     markup = d.get("markup")
     return Reply(text=text,

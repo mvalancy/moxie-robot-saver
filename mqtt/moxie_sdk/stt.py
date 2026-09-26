@@ -4,21 +4,10 @@ utterance. Transport-free + pluggable: a `Transcriber` (Whisper, or any engine, 
 Deepgram-shaped proxy) behind a small interface, and an `SttSession` that accumulates
 `zmqSTT` audio frames by VAD state and emits the utterance on END_OF_SPEECH.
 
-Two engines ship, and **both are first class** — which one you want is a property of the
-deployment, not a quality ranking:
-
-* `WhisperTranscriber` — local faster-whisper. No network, no key, nothing leaves the
-  house. What a home appliance (or an offline demo) should run; `MOXIE_STT=whisper`
-  selects it even when a gateway URL is configured.
-* `OpenAITranscriber` — an OpenAI-compatible `/audio/transcriptions` endpoint (our
-  LiteLLM gateway, live since 2026-09-02). What a *hosted* deployment needs, where there
-  is no box to put a 140 MB model on: same host, same key and same rate limits as the
-  brain and the voice. `MOXIE_STT=gateway`; `auto` picks it when one is configured.
-
-`FallbackTranscriber` puts one behind the other, so a gateway outage costs a downgrade
-(local ears, or an honest "" from `NullTranscriber`) rather than a raised exception in
-the middle of a child's sentence — the same latch-and-report-once contract the voice
-path uses (`tts.py::FallbackSynthesizer`).
+Two first-class engines: `WhisperTranscriber` (local faster-whisper — nothing leaves the
+house) and `OpenAITranscriber` (an OpenAI-compatible `/audio/transcriptions` gateway, for
+hosted deployments with no room for a model). `FallbackTranscriber` puts one behind the
+other with the voice path's latch-and-report-once contract.
 
 Wire shapes verbatim from embodied/perception/audio/zmqSTT.proto:
   zmqSTTRequest { VADState vad; bytes audio_content; string uuid }   VAD: UNKNOWN=0,
@@ -90,12 +79,8 @@ class SttSession:
 
 
 class WhisperTranscriber(Transcriber):
-    """Local STT via faster-whisper (CPU/GPU). Imported lazily so the SDK has no hard
-    dependency; `available()` is False when it (or numpy) isn't installed.
-
-    A first-class engine, not a consolation prize: it is the right answer for a home
-    appliance (no network egress, no key, no per-utterance latency to someone else's
-    box) and `MOXIE_STT=whisper` selects it even when a gateway is configured."""
+    """Local STT via faster-whisper (CPU/GPU), imported lazily; `available()` is False
+    without it or numpy. `MOXIE_STT=whisper` selects it even with a gateway configured."""
     name = "faster-whisper"
 
     def __init__(self, model: str = "base.en", device: str = "auto",
@@ -125,25 +110,14 @@ class WhisperTranscriber(Transcriber):
 
 
 class SttServerError(RuntimeError):
-    """A transcription endpoint answered with something that is not a transcript.
-
-    Distinct from a transport failure (429/5xx/connection — retried by
-    `call_with_backoff`) because it is never worth retrying: an unknown model name, a
-    revoked key or a proxy that decided to answer with a bare error object will say the
-    same thing next time. `FallbackTranscriber` catches it and listens with the standby.
-    """
+    """A transcription endpoint answered with something that is not a transcript. Not
+    retried (unlike 429/5xx); `FallbackTranscriber` catches it."""
 
 
 def wav_bytes(pcm: bytes, sample_rate: int = 16000, *, channels: int = 1,
               sample_width: int = 2) -> bytes:
-    """16-bit mono PCM → a RIFF/WAVE **file** in memory (stdlib `wave`, no deps).
-
-    `/audio/transcriptions` is a multipart upload of a *file*, and the robot's mic gives
-    us headerless frames — so the container has to be made here. The rate written is the
-    one handed in (the perception bus streams 16 kHz; a WAV from the TTS side may be
-    22050), which is the whole point: a header that lied about the rate would pitch-shift
-    the audio and wreck the transcript.
-    """
+    """16-bit PCM → a RIFF/WAVE file in memory (the upload needs a file; the mic gives
+    headerless frames). The header carries the true rate, or the audio pitch-shifts."""
     import io
     import wave
     buf = io.BytesIO()
@@ -170,30 +144,15 @@ def transcript_text(resp) -> str:
 
 
 class OpenAITranscriber(Transcriber):
-    """Cloud ears via an OpenAI-compatible `/audio/transcriptions` endpoint.
+    """Cloud ears via an OpenAI-compatible `/audio/transcriptions` endpoint (same host,
+    key and rate limits as the brain and voice). Reply shape: `{"text": ...}`.
 
-    Live on our LiteLLM gateway since 2026-09-02 — same host, same key and same rate
-    limits as the brain and the voice, which is the whole reason it exists: a *hosted*
-    deployment (the SIM on Cloudflare, a VPS, a container with no model volume) has
-    nowhere to put faster-whisper's weights, and this makes hearing one env line instead
-    of a 140 MB download. On a box that can hold the model, local whisper is still a
-    first-class choice — see `MOXIE_STT` in `mqtt/config.py`.
-
-    Verified shapes (2026-09-02): models `stt-whisper` (default), `graphling-stt`,
-    `stt-whisper-base`; a 22050 Hz mono 16-bit WAV came back word for word; an unknown
-    model is a 400. The reply is `{"text": "...", "usage": null}`.
-
-    Lazily imports openai (no hard SDK dep) and takes the same seams as
-    `OpenAIVoiceSynthesizer`: `client=` for a fake, `pacer=`/`sleep=` for an instant
-    backoff, so every test in `sim/tests/test_stt_gateway.py` runs with **no openai
-    installed at all**. 429/5xx are retried and paced by the shared
-    `chat.call_with_backoff` + `Pacer`, exactly like the LLM and the voice.
+    openai is imported lazily; `client=`, `pacer=`, `sleep=` are test seams. 429/5xx are
+    retried by the shared `chat.call_with_backoff` + `Pacer`.
     """
     name = "openai-stt"
 
-    #: Shortest utterance worth a network round trip. A robot's VAD closes on breaths and
-    #: door slams; anything under this is silence to any ASR, and the gateway would charge
-    #: a request (and ~3 s) to tell us so.
+    #: Shortest utterance worth a request (VAD closes on breaths and door slams).
     MIN_MS = 120
 
     def __init__(self, base_url: str, api_key: str, model: str = "stt-whisper", *,
@@ -205,13 +164,11 @@ class OpenAITranscriber(Transcriber):
                             max_retries=0)
         from .chat import Pacer
         self._client = client
-        #: Public on purpose — a console model picker (and `describe()`) reads it.
+        #: Public: the console model picker reads it.
         self.model = model
         self.base_url = base_url
         self._language = language
-        # Injectable like make_openai_chat's: Pacer and call_with_backoff both bind
-        # `time.sleep` at definition time, so a test that wants an instant backoff has to
-        # hand its own in rather than patch the module.
+        # Injectable (Pacer/backoff bind `time.sleep` early) so tests can back off instantly.
         self._pacer = pacer if pacer is not None else Pacer()
         self._sleep = sleep
         self._max_retries = max_retries
@@ -222,10 +179,7 @@ class OpenAITranscriber(Transcriber):
 
     @classmethod
     def available(cls, base_url: str = "") -> bool:
-        """True when this engine could actually run: the openai SDK is importable **and**
-        an endpoint is configured. Mirrors `WhisperTranscriber.available()` (which asks
-        the same question of faster-whisper + numpy) — an unconfigured cloud engine is as
-        unavailable as an uninstalled local one."""
+        """True when the openai SDK is importable and an endpoint is configured."""
         if not (base_url or "").strip():
             return False
         try:
@@ -246,9 +200,7 @@ class OpenAITranscriber(Transcriber):
 
         def _once():
             import io
-            # A FRESH stream per attempt: a retry that re-sent a consumed BytesIO would
-            # upload zero bytes and get an empty transcript back, which is worse than the
-            # 429 it was retrying.
+            # A fresh stream per attempt: a retry must not re-send a consumed BytesIO.
             kw = {"language": self._language} if self._language else {}
             return self._client.audio.transcriptions.create(
                 model=self.model,
@@ -261,12 +213,7 @@ class OpenAITranscriber(Transcriber):
 
 
 class NullTranscriber(Transcriber):
-    """The bottom rung: hears nothing and says so, by returning "".
-
-    It exists so `FallbackTranscriber` always has something to fall back *to* on a box
-    with no local whisper installed. An empty transcript is what the runtime already
-    does with an empty utterance, so a gateway outage degrades to "Moxie didn't catch
-    that" instead of an exception mid-turn."""
+    """The bottom rung: hears nothing and returns "" (the standby when no local whisper)."""
     name = "no-ears"
 
     def transcribe(self, pcm: bytes, sample_rate: int = 16000) -> str:
@@ -274,21 +221,8 @@ class NullTranscriber(Transcriber):
 
 
 class FallbackTranscriber(Transcriber):
-    """A primary set of ears with a standby behind them — the STT twin of
-    `tts.py::FallbackSynthesizer`, and it exists for the same reason.
-
-    The gateway is a network call to someone else's box. An unknown model name, a
-    revoked key, an outage past the SDK's backoff: any of those surfaces as an exception
-    on the turn's transcription path, i.e. as a *crash* where a child expected to be
-    heard. This wrapper turns that into a downgrade — the standby (local
-    `WhisperTranscriber` when it is installed, else `NullTranscriber`) does the hearing
-    for the rest of the run.
-
-    Failure is reported ONCE, on the first failure, and then latched: a dead endpoint
-    must not cost every later utterance its network timeout, and a parent reading the log
-    must not scroll past one line per sentence. `failed` and `describe()` say which
-    engine is actually listening, so `/status` and the tests can tell.
-    """
+    """Primary ears with a standby — the STT twin of `tts.py::FallbackSynthesizer`: the
+    first failure is reported once and latches the standby for the rest of the run."""
     name = "fallback"
 
     def __init__(self, primary: Transcriber, standby: Transcriber, *, log=None):

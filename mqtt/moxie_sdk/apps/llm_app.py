@@ -2,12 +2,8 @@
 LLMApp — the Moxie brain. Drives Moxie from any OpenAI-compatible chat endpoint
 (Ollama, LiteLLM, vLLM, LM Studio, …). Local-first; never hard-wired to a vendor.
 
-Beyond plain chat, this app makes Moxie **expressive**: the model returns a small
-JSON object choosing an emotion + gesture alongside its line, and we translate that
-into the robot's real **behavior markup** (`cmd:playback-mood`, `cmd:behaviour-tree`
-with a `Gesture_*`, `cmd:icons-v2`) — the exact verbs reverse-engineered in
-docs/reverse-engineering/behavior-markup.md. The same markup drives a real re-homed
-robot and the SIL avatar, so the personality *acts*, it doesn't just talk.
+Expressive: the model returns JSON choosing a mood + gesture with its line, which
+becomes the robot's behavior markup (runtime/behavior-markup.md) via the shared floor.
 """
 from __future__ import annotations
 import json
@@ -22,10 +18,8 @@ from ..chat import is_offline_error as _is_offline_error
 from .. import presence as presence_seam
 from .. import vocab
 
-# Moxie's character. The real persona was cloud-authored and is NOT in the firmware
-# (see content-and-conversation.md "Where Moxie's personality lives"), so a revival
-# server authors it — this is our take, built from the cues the firmware does give:
-# a warm SEL (social-emotional learning) mentor for kids, GRL lore, age-adaptive.
+# Moxie's character. The original persona was cloud-authored (not in firmware), so this
+# is ours, built from the firmware's cues: a warm SEL mentor for kids, GRL lore.
 DEFAULT_PERSONA = (
     "You are Moxie, a small friendly robot companion for a child. You were built by "
     "the Global Robotics Laboratory (GRL) to learn about human friendship and feelings.\n"
@@ -52,12 +46,8 @@ DEFAULT_PERSONA = (
     "grown-ups. You never swear."
 )
 
-# The robot's real vocabularies live in one frozen, cited catalog now
-# (moxie_sdk/vocab.py, from docs/reverse-engineering/runtime/behavior-markup.md). These
-# two names are kept as the *menu the prompt offers the model* — the short labels it may
-# write — and both resolve through `vocab`, so the model can never authorize an id we
-# have not recovered. `MOODS` is the pre-floor 5-value menu, retained for the knob-off
-# path; the live prompt now offers the real 11-value `ePlaybackMood` by name.
+# Short labels the model may write; both resolve through `vocab`. `MOODS` is the old
+# 5-value menu for the `MOXIE_AUTOMARKUP=0` path.
 MOODS = {"neutral": 0, "positive": 1, "concerned": 2, "oops": 4, "surprised": 5}
 GESTURES = {k: v for k, v in vocab.GESTURE_ALIASES.items() if not k.startswith("Gesture_")}
 
@@ -65,12 +55,7 @@ _MARK = '<mark name="cmd:{verb},data:{body}"/>'
 
 
 def _turn_key(turn) -> str:
-    """A stable per-turn seed for the floor's deterministic gesture spacing.
-
-    `Turn` carries no `event_id` (the runtime owns that), and adding one is the
-    planner's contract change, not the floor's — so the key is built from what the
-    app already has. Same turn -> same markup; a different turn paces differently.
-    """
+    """A stable per-turn seed for the floor's deterministic gesture spacing."""
     robot = getattr(turn, "robot", None)
     return f"{getattr(robot, 'device_id', '')}|{getattr(turn, 'speech', '')}"
 
@@ -91,16 +76,9 @@ def _mark(verb: str, data: dict) -> str:
 
 def build_markup(text: str, mood=None, gesture=None, *,
                  turn_key: str = "", chunk_index: int = 0) -> str:
-    """Perform one spoken line — the model's choice as a *hint* into the shared floor.
-
-    There is exactly **one** markup generator in the tree: `moxie_sdk.automarkup.annotate`
-    (docs/architecture/backlog/expressiveness.md §1). What the model chose is handed to it
-    as `mood_hint`/`gesture_hint`; the rules fill in everything the model does not say —
-    delivery, per-clause gestures, pauses, the closing rest pose — and an id the model
-    invents is dropped rather than passed to the wire.
-
-    Costs nothing: pure local string work, no second model call, no I/O.
-    `MOXIE_AUTOMARKUP=0` falls back to the previous two-mark output.
+    """Perform one spoken line via the one markup generator, `automarkup.annotate`; the
+    model's mood/gesture are hints (invented ids are dropped). Pure, no model call.
+    `MOXIE_AUTOMARKUP=0` falls back to one mood mark + at most one gesture.
     """
     if _automarkup_enabled():
         return annotate(text, mood_hint=mood, gesture_hint=gesture,
@@ -117,19 +95,9 @@ def build_markup(text: str, mood=None, gesture=None, *,
     return "".join(out)
 
 
-# --- streaming ------------------------------------------------------------- #
-# The expressive prompt asks for `{"say": …, "mood": …, "gesture": …}`, and the model
-# writes that object left to right — so while a reply is still streaming we have the
-# spoken words but NOT yet the mood/gesture, which arrive after the closing quote of
-# "say". Rather than spend a second model call per chunk (the whole point of streaming is
-# to be faster, not more expensive), an in-flight chunk is scored by the floor's own
-# rules, and the closing chunk additionally passes the mood/gesture the model actually
-# chose as hints. `stream_style()` — the old punctuation-only guess, a second and
-# divergent generator — is gone: the floor reads punctuation better than it did.
-#
-# One mood per answer: `chunk_index` is the chunk's index within the answer, and the
-# floor emits `cmd:playback-mood` on index 0 only, so a four-sentence reply holds one
-# face instead of flipping it every sentence.
+# --- streaming --- The model writes `{"say", "mood", "gesture"}` left to right, so an
+# in-flight chunk is scored by the floor's rules alone; only the closing chunk gets the
+# model's mood/gesture as hints. The mood mark goes on chunk index 0 only.
 
 
 _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f",
@@ -139,15 +107,9 @@ _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f",
 class SayStream:
     """Pull the spoken words out of a *streaming* reply, as they arrive.
 
-    In expressive mode the model streams a JSON object, so the spoken line is the value
-    of its `"say"` key: this walks the growing raw text, finds that key, and decodes the
-    string incrementally (stopping short of a half-arrived `\\uXXXX` escape) so the
-    segmenter downstream only ever sees real words. Everything after the closing quote —
-    `"mood"`, `"gesture"` — is never spoken.
-
-    A model that ignores the format and just writes prose is handled too: the first
-    non-space character decides. `{` (or a ``` fence) means JSON, anything else means the
-    whole stream is the spoken line.
+    Expressive mode: decodes the `"say"` string incrementally (never half an escape);
+    nothing after it is spoken. If the first non-space char is not `{` or a fence, the
+    whole stream is prose and is spoken as is.
     """
 
     def __init__(self, expressive: bool = True):
@@ -225,15 +187,9 @@ class LLMApp(MoxieApp):
 
     name = "llm"
 
-    # Few-shot lines for the tag rules, measured against graphling-medium (see
-    # sim/tests/test_live_action_tags.py). Three findings, all the hard way:
-    #   * it writes a tag OR the JSON envelope, and drops the tag when asked for both —
-    #     so the examples show the finished object with the tag already inside "say";
-    #   * a *trailing* tag is forgotten by the time the sentence ends (0/3 goodbyes),
-    #     a *leading* one is decided before any words exist (4/4) — hence "begin with";
-    #   * with only one example of each rule it parrots the example verbatim, so there
-    #     are two goodbyes, an explicit "never reuse their wording", and one untagged
-    #     line so an ordinary turn does not grow a spurious tag.
+    # Few-shot tag examples (measured in sim/tests/test_live_action_tags.py): the tag goes
+    # inside "say", LEADING (a trailing tag gets forgotten), with two goodbyes and one
+    # untagged line so the model neither parrots nor over-tags.
     _TAG_EXAMPLES = (
         "\nThe examples below show only WHERE THE TAG GOES. Never reuse their wording — "
         "say it your own way, fresh every time:\n"
@@ -256,19 +212,14 @@ class LLMApp(MoxieApp):
         + _LAST_CHECK
     )
 
-    #: Below this many characters a finished sentence waits for the next one, so the
-    #: child never hears a lone "Hi." followed by a gap (moxie_sdk/segment.py).
+    #: Minimum chunk length (moxie_sdk/segment.py).
     stream_min_chars = 24
 
     def __init__(self, base_url: str, api_key: str, model: str = "gpt-4o-mini",
                  persona: str = DEFAULT_PERSONA, max_tokens: int = 200,
                  temperature: float = 0.8, max_history: int = 12,
                  expressive: bool = True, *, client=None):
-        # `client` is the OpenAI-compatible seam, exactly as OpenAIVoiceSynthesizer
-        # takes one (moxie_sdk/tts.py): inject a client and openai is never imported,
-        # so a test driving this brain with a fake runs on a bare interpreter. Only
-        # the real path pays for the dependency — everything below (chat.py's
-        # stream_completion / call_with_backoff / Pacer) is pure Python either way.
+        # Inject `client` and openai is never imported (tests run without it).
         if client is None:
             from openai import OpenAI      # lazy import so the SDK has no hard dep
             client = OpenAI(base_url=base_url, api_key=api_key or "sk-local",
@@ -291,12 +242,7 @@ class LLMApp(MoxieApp):
             who += f" Their pronouns are {c.pronouns}."
         if c.notes:
             who += f" Context about them: {c.notes}"
-        # What Moxie's own eyes have told the server (moxie_sdk/presence.py). The robot
-        # emits found/lost face events and nothing else — no pixels, no boxes, no
-        # identity (docs/architecture/vision.md §1.1) — so this is presence, not sight.
-        # `line` is deliberately EMPTY unless something changed, which is most turns: a
-        # standing "a child is visible" would be a per-turn tax on the context window and
-        # would teach the model to narrate the camera.
+        # Presence (moxie_sdk/presence.py): `line` is empty unless something changed.
         pres = getattr(turn, "presence", None)
         line = pres.get("line", "") if isinstance(pres, dict) else ""
         if not line:      # no Turn (a `greeting()` call) -> derive it from the raw record
@@ -304,8 +250,7 @@ class LLMApp(MoxieApp):
         if line:
             who += f"\n\nWhat you can see right now: {line}"
             print(f"[llm] presence in prompt: {line}", flush=True)
-        # Model agency: the tags the brain may write inline (moxie_sdk/actions.py
-        # parses them off the line and onto the Reply as real robot actions).
+        # Robot-control tags the brain may write inline (moxie_sdk/actions.py).
         tags = ("\n\n--- Robot controls (most important rule) ---\n" + ACTION_TAG_PROMPT +
                 "\nThese tags are REQUIRED when they apply, not optional:\n"
                 "  * Child says goodbye / is done / asks to stop -> your reply MUST "
@@ -340,10 +285,8 @@ class LLMApp(MoxieApp):
     def _parse(raw: str):
         """Pull {say, mood, gesture} out of the model's reply, tolerating stray prose.
 
-        A field the model did not write comes back as **None**, not a default: the markup
-        floor treats a hint as "the brain made a choice here", so handing it a
-        manufactured `"neutral"` would pin every line to a blank face and silence the
-        rules. No choice -> no hint -> the rules score the line.
+        A missing field is None, not a default — a manufactured hint would override the
+        floor's own scoring.
         """
         raw = (raw or "").strip()
         if not raw:
@@ -379,15 +322,8 @@ class LLMApp(MoxieApp):
     def respond_stream(self, turn: Turn):
         """Answer as the model writes: one `ReplyChunk` per finished sentence.
 
-        A whole completion costs 18-45 s on our gateway, but its first sentence is done
-        after a handful of tokens — so the child hears real words at first-token latency
-        instead of waiting for the full answer (docs/architecture/mqtt-and-conversation.md
-        §4.5). The persona, the JSON envelope and the leading-tag convention are exactly
-        the ones `respond` uses; only the delivery changes.
-
-        If the stream fails **before any words were spoken**, this falls back to the
-        ordinary `respond` call and yields its answer as the single closing chunk, so a
-        gateway that cannot stream is never worse than before."""
+        Same prompt as `respond`; only delivery changes. A stream that fails before any
+        words were spoken falls back to `respond` as a single closing chunk."""
         return self._stream_chunks(turn)
 
     def _stream_chunks(self, turn: Turn):
@@ -410,11 +346,7 @@ class LLMApp(MoxieApp):
                         carry = actions          # action, wait for words to attach it to
                         continue
                     carry = []
-                    # The floor scores this chunk from its own words; `spoken` is its
-                    # index within the answer, so only the first one carries the mood.
-                    # (Markup built here is inert until the runtime publishes it, and the
-                    # runtime's per-chunk safety gate runs first — a blocked chunk is
-                    # dropped with its markup and never reaches the wire.)
+                    # `spoken` = chunk index (only index 0 carries the mood).
                     markup = build_markup(text, turn_key=_turn_key(turn),
                                           chunk_index=spoken) if self._expressive else None
                     spoken += 1
@@ -423,8 +355,6 @@ class LLMApp(MoxieApp):
             raise
         except Exception as e:
             if spoken == 0:
-                # Nothing has been said yet, so the whole answer is still recoverable:
-                # take the ordinary non-streaming path and close the turn with it.
                 print(f"[llm] stream unavailable ({type(e).__name__}); "
                       f"falling back to a single reply", flush=True)
                 yield ReplyChunk.from_reply(self.respond(turn))
@@ -432,9 +362,8 @@ class LLMApp(MoxieApp):
             print(f"[llm] stream died mid-answer ({type(e).__name__}); "
                   f"closing with what we have", flush=True)
 
-        # The last sentence is ALWAYS still in the segmenter (a boundary is only
-        # confirmed by following text), so this is the real closing line — and by now the
-        # model's own mood/gesture have arrived at the tail of the JSON.
+        # The last sentence is always still in the segmenter; the model's mood/gesture
+        # have arrived by now and become hints for the closing chunk.
         tail = (seg.flush() or [""])[0]
         say, mood, gesture = self._parse(says.raw)
         if not tail and spoken == 0:
@@ -443,8 +372,6 @@ class LLMApp(MoxieApp):
         actions = carry + actions
         if not text and not actions and spoken == 0:
             text, mood, gesture = "Tell me more!", "happy", "question"
-        # The model's own mood/gesture have arrived by now — they become hints into the
-        # same floor the earlier chunks used, never a second generator.
         markup = (build_markup(text, mood, gesture, turn_key=_turn_key(turn),
                                chunk_index=spoken)
                   if (self._expressive and text) else None)
@@ -455,9 +382,7 @@ class LLMApp(MoxieApp):
         try:
             from ..chat import call_with_backoff, note_model_call
             def _once():
-                # This direct path does not pass through make_openai_chat(), so it
-                # shares that seam's attempt counter and campaign guard explicitly.
-                # A retry re-enters _once and is therefore another counted attempt.
+                # Counted like make_openai_chat's calls (each retry is an attempt).
                 note_model_call("chat")
                 r = self._client.chat.completions.create(
                     model=self._model, messages=messages,
@@ -465,9 +390,8 @@ class LLMApp(MoxieApp):
                 return (r.choices[0].message.content or "").strip()
             raw = call_with_backoff(_once, pacer=self._pacer)
         except Exception as e:
-            # Endpoint unreachable → signal ERROR_OFFLINE so the robot degrades to its
-            # on-device fallback (ai-seam.md §2) instead of us faking a line. Any other
-            # (soft) error → keep the robot talking with a friendly retry.
+            # Unreachable → ERROR_OFFLINE (robot falls back on-device, ai-seam.md §2);
+            # any other error → a friendly retry line.
             if _is_offline_error(e):
                 return Reply.offline()
             from ..chat import is_rate_limit_error
@@ -479,8 +403,6 @@ class LLMApp(MoxieApp):
             return Reply(text=text, markup=build_markup(text, "shy", "self"),
                          end_turn=False)
         text, mood, gesture = self._parse(raw)
-        # The model may have written robot-control tags into its line — lift them out
-        # as real actions and speak only what is left (moxie_sdk/actions.py).
         text, actions = parse_action_tags(text)
         if not text and not actions:
             text = "Tell me more!"

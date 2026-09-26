@@ -1,13 +1,10 @@
 """
 Presence — Moxie's own eyes, folded into a small state machine the brain can read.
 
-The robot runs its vision **on-device** and never sends pixels; what it can send is a
-handful of semantic event strings (docs/architecture/vision.md:19-21, :63-88). Until now
-nobody consumed them — not OpenMoxie, not us (openmoxie-feature-audit.md:497). This
-module is the pure half of "a Moxie that notices you walked in": events in, a bounded
-per-robot state + a list of **derived signals** out. No I/O, no clock of its own (the
-caller passes `now`), no transport — so it unit-tests exactly, and the runtime keeps all
-the policy (`mqtt/supervisor/moxie_runtime.py`).
+The robot runs vision on-device and sends only semantic event strings
+(docs/architecture/vision.md:19-21, :63-88). This is the pure half: events in, a bounded
+per-robot state + derived signals out. No I/O, no clock (the caller passes `now`); the
+policy lives in the runtime (`mqtt/supervisor/moxie_runtime/presence.py`).
 
 ## The events we ingest (recovered catalog — INFERRED, never observed)
 
@@ -19,40 +16,25 @@ the policy (`mqtt/supervisor/moxie_runtime.py`).
 | `eb-dr-event` | `input_vars['$eb_dr_value']` — an ArUco id | vision.md:57 |
 | `eb-br-event` | `input_vars['$eb_br_value']` — a Moxie book | vision.md:58 |
 
-**Granularity is the whole story**: these carry *found/lost only* — "**No bounding box, no
-(x,y) position, no distance, no face embedding/identity is delivered to the module/cloud**"
-(vision.md:51-53). So the richest thing a server can build from them is *presence*: is
-someone there, since when, and how long were they gone. That is what this module models.
+They carry found/lost only — no box, position, distance or identity (vision.md:51-53) —
+so what can be built is *presence*: is someone there, since when, how long were they
+gone. A subscribed event arrives as the `speech` of an ordinary `RemoteChatRequest`
+(OpenMoxie `doc/RemoteModuleAPI.md` §Event Handling), after the brain subscribes via
+`RemoteChatAction.EventSubscription` (remote-chat-protocol.md:103-106).
 
-**How they arrive.** They are not a separate topic: a subscribed event is delivered to the
-brain **as the `speech` of an ordinary `RemoteChatRequest`** — "instead of the modules
-receiving something the user said, it receives a special event string like
-`eb-found-face`" (OpenMoxie `doc/RemoteModuleAPI.md` §Event Handling, MIT; the same shape
-our `docs/reverse-engineering/runtime/content-and-conversation.md`:385-390 shows for QR).
-A brain only receives them after it *subscribes*, via
-`RemoteChatAction.EventSubscription{clear, active[], passive[]}`
-(remote-chat-protocol.md:103-106, ai-seam.md §2(b)). The runtime does both.
-
-**Honesty.** No physical robot has ever sent us one of these. Everything here is built
-from the recovered catalog and the module API doc; the payload *keys* are cited, the
-*timing* (how fast a real robot flickers found/lost) is guesswork, which is exactly why
-the hysteresis constants below are knobs rather than magic numbers.
+No physical robot has sent us one: the payload keys are cited, the flicker timing is a
+guess — hence the hysteresis knobs below.
 
 ## The model
 
     absent ──eb-found-face──▶ present        (signal: arrived, away_s)
     present ──eb-lost-target──▶ absent       (signal: left, present_s)
 
-with two hysteresis rules so a face that flickers at the edge of the frame cannot spam
-the brain (and cannot trigger a greeting per blink):
+with hysteresis so a face flickering at the frame edge cannot spam the brain:
 
-* a `found` less than `FLICKER_S` after the matching `lost` is a **flicker**, not an
-  arrival: the present-run clock is *not* restarted and no `arrived` is emitted;
-* a `lost` that ends a present-run shorter than `MIN_PRESENT_S` is a **flicker** too, not
-  a departure — the state still goes absent (the face really is gone), but no `left`;
-* and a departure is announced **once per presence**: after a `left`, only a fresh
-  `arrived` re-arms it, so a face blinking at the edge of the frame produces one `left`
-  and one `arrived` no matter how many times the tracker changes its mind.
+* a `found` within `FLICKER_S` of the `lost` is a flicker: no `arrived`, clock kept;
+* a `lost` ending a run shorter than `MIN_PRESENT_S` is a flicker: absent, but no `left`;
+* a departure is announced once per presence (only a fresh `arrived` re-arms `left`).
 """
 from __future__ import annotations
 
@@ -76,9 +58,8 @@ VALUE_KEYS = {QR_EVENT: "$eb_qr_value",
               MARKER_EVENT: "$eb_dr_value",
               BOOK_EVENT: "$eb_br_value"}
 
-#: The execute-action that aims the face search at "someone close enough": floats as a
-#: proportion of the image view, `["0.15","0","0","true","true"]` = fire at >=15% of frame
-#: width (vision.md:40-45). Exposed as a constant so the runtime never re-types it.
+#: Execute-actions aiming the face search at "someone close enough" (>=15% of frame
+#: width, vision.md:40-45).
 CUSTOM_FACE_SEARCH = "eb_custom_face_search"
 BINNED_FACE_SEARCH = "eb_start_binned_face_search"
 CLOSE_ENOUGH_ARGS = ["0.15", "0", "0", "true", "true"]
@@ -91,18 +72,14 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-#: A face re-found within this many seconds is the SAME person flickering, not an
-#: arrival. Nothing in the recovered corpus tells us how twitchy the on-device tracker
-#: is (it already waits "for an extended period" before it calls a target lost —
-#: vision.md:48), so this is a knob, defaulted conservatively.
+#: A face re-found within this many seconds is the same person flickering (a guessed knob).
 FLICKER_S = _env_float("MOXIE_PRESENCE_FLICKER_S", 3.0)
 
 #: A present-run shorter than this ends without a `left` — a one-frame false positive
 #: should not read as "they walked out".
 MIN_PRESENT_S = _env_float("MOXIE_PRESENCE_MIN_PRESENT_S", 2.0)
 
-#: The rolling event log is a window, not an archive (same rule as the runtime's mentor
-#: behaviors). Bounded so a robot left running for a week cannot grow this without limit.
+#: The rolling event log is a bounded window, not an archive.
 HISTORY_MAX = 20
 
 #: How recently an arrival still counts as "just now" in the prompt line.
@@ -112,9 +89,8 @@ LONG_ABSENCE_S = 120.0
 
 
 def new_state() -> dict:
-    """A robot that has told us nothing yet. `face_present=None` means *unknown* — the
-    robot may simply not have vision subscribed — which is deliberately different from
-    `False` ("we were told the face went away")."""
+    """A robot that has told us nothing yet. `face_present=None` means unknown, distinct
+    from `False` ("told the face went away")."""
     return {"face_present": None,     # None = never heard from, True/False = told
             "last_seen_at": None,     # last eb-found-face
             "last_lost_at": None,     # last eb-lost-target/eb-lost-face
@@ -136,11 +112,8 @@ def is_vision_event(name) -> bool:
 
 
 def value_of(payload, event_name: str) -> str:
-    """The semantic payload of a marker event, from `RemoteChatRequest.input_vars`.
-
-    Accepts the `$`-prefixed spelling the catalog documents and the bare one it warns
-    about, and tolerates a payload that is not a dict at all (an unknown/garbled event
-    must never raise on the MQTT loop)."""
+    """The semantic payload of a marker event from `input_vars` (`$`-prefixed or bare
+    key). Never raises on a garbled payload."""
     key = VALUE_KEYS.get(event_name)
     if not key or not isinstance(payload, dict):
         return ""
@@ -152,8 +125,7 @@ def value_of(payload, event_name: str) -> str:
 
 
 def _gap(now, then) -> float:
-    """`now - then`, floored at 0 so a clock that steps backwards cannot make a
-    duration negative (and cannot turn an absence into a fake arrival)."""
+    """`now - then`, floored at 0 (a clock stepping backwards cannot go negative)."""
     if then is None:
         return 0.0
     try:
@@ -165,8 +137,7 @@ def _gap(now, then) -> float:
 def update_presence(state, event_name, payload=None, now=None):
     """Fold one vision event into `state`. Returns `(new_state, signals)`.
 
-    **Pure**: `state` is never mutated — a fresh dict (and a fresh history list) comes
-    back, so a caller can diff, and a failed publish can drop the update.
+    Pure: `state` is never mutated.
 
     `signals` is a list of dicts, each `{"name": …, "at": now, …}`:
 
@@ -177,8 +148,7 @@ def update_presence(state, event_name, payload=None, now=None):
     | `flicker` | `direction` (`found`/`lost`), `gap_s` | a blip that was deliberately NOT promoted to arrived/left |
     | `qr` / `marker` / `book` | `value` | a scanned code / ArUco id / recognized book |
 
-    An event name we do not model returns the state unchanged and no signals, so a
-    future firmware string can never corrupt presence.
+    An unmodelled event name returns the state unchanged and no signals.
     """
     if now is None:
         import time
@@ -203,8 +173,7 @@ def update_presence(state, event_name, payload=None, now=None):
         if was is True:
             pass                                     # a repeat found: refresh, say nothing
         elif away is not None and away < FLICKER_S:
-            # Hysteresis: the same person, still there, the tracker just blinked. The
-            # present-run clock is left alone so "how long have they been here" survives.
+            # Flicker: keep the present-run clock.
             st["flickers"] = int(st["flickers"]) + 1
             signals.append({"name": "flicker", "direction": "found",
                             "gap_s": away, "at": now})
@@ -225,9 +194,7 @@ def update_presence(state, event_name, payload=None, now=None):
             pass                                     # already absent (or never present)
         elif (st.get("announced") == "left"
               or (present_s is not None and present_s < MIN_PRESENT_S)):
-            # Either a run too short to have been a real presence, or a presence we have
-            # ALREADY reported as over — a face blinking at the edge of the frame must
-            # produce one `left`, not one per blink.
+            # Too short to be real, or already reported as over: one `left` per presence.
             st["flickers"] = int(st["flickers"]) + 1
             signals.append({"name": "flicker", "direction": "lost",
                             "gap_s": present_s if present_s is not None else 0.0,
@@ -250,8 +217,7 @@ def update_presence(state, event_name, payload=None, now=None):
 def snapshot(state, now=None) -> dict:
     """The small, JSON-safe presence context a `Turn` carries into the brain.
 
-    Durations are resolved here (against `now`) rather than shipped as timestamps, so an
-    app never has to know what clock the runtime used."""
+    Durations are resolved against `now`, so an app never sees the runtime's clock."""
     if now is None:
         import time
         now = time.time()
@@ -279,8 +245,7 @@ def snapshot(state, now=None) -> dict:
 
 
 def human_duration(seconds) -> str:
-    """A duration a system prompt can say out loud — deliberately vague, because the
-    numbers themselves are noise to a child ("about ten minutes", never "612 s")."""
+    """A deliberately vague duration a prompt can say ("about ten minutes", not "612 s")."""
     try:
         s = max(0.0, float(seconds))
     except (TypeError, ValueError):
@@ -297,18 +262,9 @@ def human_duration(seconds) -> str:
 
 
 def prompt_line(state, now=None) -> str:
-    """One short, kid-safe sentence for the system prompt — **or `""`**.
-
-    Empty is the common case on purpose. A line every turn would be a standing tax on
-    the context window and would teach the model to narrate the camera; the brain only
-    needs telling when the situation actually changed (someone just walked up, or the
-    room has been empty for a while).
-
-    Deliberately **descriptive, never imperative**. An early draft ended "Greet them
-    warmly, briefly." and a live turn came back with a bare action tag and no spoken
-    words — the persona already knows how to be warm, and a second instruction arriving
-    as *situational context* competes with the turn the child actually started. Context
-    lines say what is true; the persona decides what to do about it."""
+    """One short, kid-safe sentence for the system prompt — or `""` (the common case: only
+    a change is worth saying). Descriptive, never imperative: an instruction here competes
+    with the child's own turn; the persona decides what to do about it."""
     if now is None:
         import time
         now = time.time()
@@ -332,12 +288,8 @@ def prompt_line(state, now=None) -> str:
     return ""
 
 
-# --- the greeting a runtime may speak when someone walks back in ------------------
-#
-# Short, warm, and not a conversation opener that demands an answer: the child has
-# walked into the room, not started a turn. Rotated so it never lands twice running
-# (same rule as `filler.py`), and performed through the markup floor
-# (`moxie_sdk.automarkup`) like any other line the brain did not author markup for.
+# --- the greeting a runtime may speak when someone walks back in ---
+# Short and warm, not demanding an answer; never the same line twice running.
 GREETINGS = (
     "Oh! Hi {name}! I was wondering where you went.",
     "Hey {name}, there you are! I missed you.",

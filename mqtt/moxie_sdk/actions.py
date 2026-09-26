@@ -9,10 +9,8 @@ model may write a small tag inline (`<exit>`, `<sleep>`, `<launch:MOD>`,
 docs/architecture/ai-seam.md §2 "RemoteChatAction — the brain drives navigation").
 The tag itself is stripped, so nothing leaks into what Moxie speaks.
 
-Pattern from OpenMoxie (MIT) — `site/hive/mqtt/volley.py::ingest_action_tags`. The
-idea is theirs; this implementation, its grammar rules and its tolerance policy are
-ours. Credited in ../../ATTRIBUTION.md and docs/architecture/openmoxie-feature-audit.md
-§4.1 row 4.
+Pattern from OpenMoxie (MIT, `volley.py::ingest_action_tags`, see ATTRIBUTION.md); this
+implementation and its rules are ours.
 
 Grammar (see `parse_action_tags` for the exact rules)
 ----------------------------------------------------
@@ -28,27 +26,17 @@ around the name and around each `:`-separated field is tolerated.
 
 Tolerance policy (decided here, tested in sim/tests/test_action_tags.py)
 -----------------------------------------------------------------------
-* A tag whose **name is one of ours** is always removed from the spoken text, even
-  when its arguments are malformed (`<exit:now>`, `<launch>`, `<launch::x>`). A
-  child should never hear "less-than launch greater-than"; a malformed tag simply
-  produces no action.
-* A tag whose **name is not one of ours** is left alone — text and all. That is
-  deliberate: the robot's own behavior markup is `<mark .../>` and content openers
-  use `<opener>`, so a blanket "strip every `<...>`" would eat live syntax. We only
-  claim the four names we define.
-* Unrecognised trailing fields make a launch malformed (`<launch:A:B:C>` → no
-  action) rather than being silently truncated — a wrong module is worse than none.
+* A tag with one of our names is always stripped, even when malformed (then it yields
+  no action) — a child must never hear it.
+* Any other `<...>` is left alone (`<mark/>` markup and `<opener>` are live syntax).
+* Extra fields make a launch malformed (`<launch:A:B:C>` → no action) rather than
+  truncated — a wrong module is worse than none.
 
 Contract caveat — `launch_if_confirmed`
 ---------------------------------------
-Our recovered contract *does* define `RemoteChatAction.ActionID.launch_if_confirmed`
-(= 2; docs/reverse-engineering/protocol/proto-catalog.md, ai-seam.md §2), but our
-`ActionType` enum has no confirm variant yet, so we map the tag to
-`ActionType.LAUNCH`. **This is lossy**: the robot launches immediately instead of
-asking the child to confirm first. We do not invent a wire value the enum does not
-define. The mapping lives in `LAUNCH_IF_CONFIRMED_AS` below — the day `ActionType`
-gains a confirm member, that one line is the whole fix. Tracked in
-docs/architecture/implementation-plan.md (Known gaps → ai-seam).
+The contract defines `ActionID.launch_if_confirmed` (= 2, proto-catalog.md), but
+`ActionType` has no confirm member yet, so the tag maps to LAUNCH — lossy (no
+confirmation). `LAUNCH_IF_CONFIRMED_AS` is the one-line fix.
 """
 from __future__ import annotations
 import re
@@ -136,24 +124,14 @@ def parse_action_tags(text: str) -> Tuple[str, List[Action]]:
 def tag_names(text: str) -> List[str]:
     """The names of the tags we recognise in `text`, lowercased, in the order they appear.
 
-    The half `parse_action_tags` throws away. It exists because the returned `Action` does
-    **not** remember which tag produced it: `LAUNCH_IF_CONFIRMED_AS` (above) maps
-    `<launch_if_confirmed:MOD>` onto the very same `ActionType.LAUNCH` a plain
-    `<launch:MOD>` produces, so a caller that must treat the two differently cannot do it
-    by inspecting the `Action`. `launch_cards.decode` is that caller — a printed card may
-    say `launch` and nothing else, and "of type LAUNCH" is not the same question.
-
-    Malformed tags are listed too (`<launch>` yields `["launch"]` and no action): the
-    question here is what the card *said*, not what it produced. Names we do not own are
-    not listed, exactly as they are not stripped. Pure, and total on any string.
+    Needed because `launch_if_confirmed` parses to the same LAUNCH as `launch`
+    (`launch_cards.decode` must tell them apart). Malformed tags are listed too.
     """
     return [m.group(1).lower() for m in _TAG_RE.finditer(text or "")
             if m.group(1).lower() in KNOWN_TAGS]
 
 
-# The paragraph we show the model so it actually uses the tags. Kept short, kid-safe,
-# and explicit that tags are silent — a model that explains the tag out loud is worse
-# than one that never uses it.
+# The paragraph that teaches the model the tags; explicit that tags are silent.
 ACTION_TAG_PROMPT = (
     "You can control the robot with tags. Write a tag on its own inside your spoken "
     "line and it is removed before anyone hears it — never say the tag out loud, never "

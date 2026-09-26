@@ -1,22 +1,15 @@
 """
 Which of a gateway's models are EARS and which are a VOICE — a pure name classifier.
 
-`GET /v1/models` on our LiteLLM gateway returns one flat list: chat models, TTS models
-and STT models side by side, with nothing in the payload that says which is which
-(LiteLLM's `model_info.mode` is server-side config, not part of the public listing). A
-parent console that wants to offer "pick Moxie's voice" / "pick her ears" therefore has
-to read the *names*, and the names are the only contract we actually have.
-
-So the rules here are pinned to the model ids the gateway really served on 2026-09-02:
+`GET /v1/models` returns one flat list with nothing saying which model is which, so the
+voice picker classifies by name. Pinned to ids a LiteLLM gateway has served:
 
     voice : piper-amy · piper-ryan · graphling-tts-narrator · graphling-tts-character ·
             tts-piper-amy · tts-piper-ryan
     ears  : stt-whisper · graphling-stt · stt-whisper-base
     brain : graphling-small/medium/large, qwen2.5-7b, …  (neither — ignored)
 
-Deliberately pure and offline: no HTTP, no client, no key. Feed it whatever
-`client.models.list()` gave you (or a hand-typed list) and it answers. Discovery wiring
-is a later slice's job; this is the half that can be tested without spending a request.
+Pure and offline.
 """
 from __future__ import annotations
 from typing import Dict, List, Optional, Sequence
@@ -45,9 +38,7 @@ def is_stt_model(model_id: str) -> bool:
 def classify_audio_models(ids: Sequence[str]) -> Dict[str, List[str]]:
     """`{"tts": [...], "stt": [...]}` — audio models only, **input order preserved**.
 
-    Stable order matters: a console picker renders this list, and a picker whose entries
-    shuffle between page loads is a bug report. Chat models are dropped, and the TTS rule
-    is applied first so an id that somehow matched both can never appear twice.
+    Stable order for the console picker; chat models dropped; TTS wins a double match.
     """
     tts: List[str] = []
     stt: List[str] = []

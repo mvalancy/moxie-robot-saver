@@ -21,10 +21,8 @@ from typing import Optional
 _MARK_RE = re.compile(r"<mark\b[^>]*/?>", re.I)     # <mark name="cmd:..."/> behavior tags
 _TAG_RE = re.compile(r"<[^>]+>")                    # any residual angle-bracket tag
 
-# Emoji / pictographs. An LLM writes "Sure! 😀" and a TTS engine reads the character's
-# Unicode NAME aloud — Piper says "grinning face" mid-sentence (observed in the live
-# talk-loop run, PR #12). They carry no speech, so they come off before synthesis;
-# ordinary punctuation (!?,.'"-… and friends) is deliberately left alone.
+# Emoji / pictographs: a TTS engine reads their Unicode NAME aloud ("grinning face"), so
+# they come off before synthesis. Ordinary punctuation is left alone.
 _EMOJI_RE = re.compile(
     "["
     "\U0001F000-\U0001FAFF"      # emoticons, pictographs, transport, flags, symbols ext-A
@@ -68,23 +66,15 @@ class Synthesizer:
 
 
 class VoiceServerError(RuntimeError):
-    """A voice endpoint answered with something that is not audio.
-
-    Distinct from a transport failure (429/5xx/connection — those are retried by
-    `call_with_backoff`) because it is never worth retrying: an unknown model name, a
-    revoked key or a proxy that decided to explain itself in JSON will say the same
-    thing next time. `FallbackSynthesizer` catches it and speaks with the standby voice.
-    """
+    """A voice endpoint answered with something that is not audio. Not retried (unlike
+    429/5xx); `FallbackSynthesizer` catches it and speaks with the standby voice."""
 
 
 def voice_for_model(model: str) -> str:
-    """The `voice` field to send for a model name — `piper-amy` → `amy`.
+    """The `voice` field to send for a model name — `piper-amy` → `amy`, else `alloy`.
 
-    The LiteLLM gateway **requires** `voice` (omitting it is an HTTP 500) but **ignores**
-    its value: the model name selects the Piper voice (docs/guides/litellm-tts-setup.md,
-    "Live since 2026-09-02"). So the field only has to be present and sane. A model whose
-    suffix is not a word — `tts-1` → `1` — falls back to OpenAI's own default voice,
-    which is what an OpenAI-shaped endpoint would want anyway.
+    LiteLLM requires `voice` (500 without it) but the model selects the Piper voice
+    (docs/guides/litellm-tts-setup.md), so it only has to be present and sane.
     """
     tail = (model or "").rsplit("-", 1)[-1].strip()
     return tail if tail.isalpha() else "alloy"
@@ -110,16 +100,9 @@ def _json_error(raw: bytes):
 def pcm_from_audio(raw: bytes, *, sample_rate: int, channels: int = 1):
     """`(pcm16, sample_rate, channels)` from whatever an `/audio/speech` call returned.
 
-    **Sniff the bytes, never the Content-Type.** Our gateway labels a perfectly good
-    Piper WAV `audio/mpeg` (a LiteLLM quirk, observed live 2026-09-02), so a client that
-    branched on the header would ship an MP3 decoder at a RIFF file. A RIFF/WAVE payload
-    is unwrapped with the stdlib `wave` module and the header's **own** rate/channels come
-    back with it — that is how a `CloudTTSResponse` carries the TRUE rate even when the
-    voice (and with it the rate) changes under us. Anything else is assumed to be the raw
-    PCM we asked for, at the configured rate.
-
-    An error body (a proxy answering 200-with-JSON, or an unknown-model 400 surfaced as
-    bytes) raises `VoiceServerError` rather than being handed to a child as noise.
+    Sniffs the bytes, never the Content-Type (LiteLLM labels WAV `audio/mpeg`). A WAV is
+    unwrapped and its header's own rate/channels returned; anything else is taken as raw
+    PCM at the configured rate. A JSON error body raises `VoiceServerError`.
     """
     if not raw:
         raise VoiceServerError("the voice server returned an empty body (no audio)")
@@ -144,22 +127,11 @@ def pcm_from_audio(raw: bytes, *, sample_rate: int, channels: int = 1):
 
 
 class OpenAIVoiceSynthesizer(Synthesizer):
-    """Server voice via an OpenAI-compatible audio endpoint (`/audio/speech`).
+    """Server voice via an OpenAI-compatible `/audio/speech` endpoint (openai imported
+    lazily). 429/5xx back off like the LLM gateway (`chat.call_with_backoff` + Pacer).
 
-    Lazily imports openai (no hard SDK dep). A busy voice server backs off + paces
-    exactly like the LLM gateway (shared chat.call_with_backoff + Pacer) — 429/5xx are
-    retried, not failed.
-
-    Live against our LiteLLM gateway since 2026-09-02 (`piper-amy` / `piper-ryan`):
-
-    * `response_format="wav"` (the default) is unwrapped here, so `sample_rate` /
-      `channels` come from the **file's own header** — swap `piper-amy` for a 16 kHz
-      voice and the CloudTTSResponse follows without a config change.
-    * `response_format="pcm"` is passed straight through at the configured
-      `sample_rate` (nothing in the payload can tell us otherwise).
-    * `voice` is always sent — the gateway 500s without it — defaulting to the model's
-      suffix (`piper-amy` → `amy`) when unset. Its value is ignored there; the model is
-      the voice.
+    `wav` replies carry their own rate/channels; `pcm` uses the configured rate. `voice`
+    is always sent (see `voice_for_model`).
     """
     name = "openai-voice"
 
@@ -175,16 +147,11 @@ class OpenAIVoiceSynthesizer(Synthesizer):
         self._client = client
         self._model, self._fmt = model, response_format
         self._voice = (voice or "").strip() or voice_for_model(model)
-        # The CONFIGURED shape — what a raw-PCM reply is assumed to be. `self.sample_rate`
-        # is the LAST reply's true rate (a WAV header overrides it); keep them apart so a
-        # wav-derived rate can never leak into a later pcm call.
+        # Configured shape (for raw PCM) vs the last reply's true shape, kept apart so a
+        # WAV-derived rate never leaks into a later pcm call.
         self._sample_rate, self._channels = int(sample_rate), int(channels)
         self.sample_rate, self.channels = int(sample_rate), int(channels)
-        # Injectable like make_openai_chat's — the Pacer binds `time.sleep` at
-        # construction, so a test that wants an instant backoff needs its own.
-        # Injectable like make_openai_chat's — Pacer and call_with_backoff both bind
-        # `time.sleep` at definition time, so a test that wants an instant backoff has to
-        # hand its own in rather than patch the module.
+        # Injectable (Pacer/backoff bind `time.sleep` early) so tests can back off instantly.
         self._pacer = pacer if pacer is not None else Pacer()
         self._sleep = sleep
         self._max_retries = max_retries
@@ -215,16 +182,10 @@ def make_voice_synthesizer(base_url: str, api_key: str, voice: Optional[str] = N
 
 
 class PiperSynthesizer(Synthesizer):
-    """Local, offline server voice via Piper (https://github.com/rhasspy/piper) — our
-    default/primary TTS (Amy). No network, no gateway TTS model, no voice creds needed:
-    it synthesizes on the box that runs the supervisor, so the SIM can speak even before
-    the gateway registers a TTS model (see docs/guides/litellm-tts-setup.md).
+    """Local, offline server voice via Piper (https://github.com/rhasspy/piper).
 
-    Piper is imported lazily (no hard dep); `available()` is False when it isn't
-    installed. Output is raw 16-bit mono PCM at the voice's own sample rate (Amy-medium
-    is 22050 Hz), matching the CloudTTSResponse AudioBuffer convention. Tests inject
-    `voice_fn` to exercise the whole path without Piper (like the OpenAI backend's
-    `client=`)."""
+    Imported lazily; `available()` is False without it. Output is 16-bit mono PCM at the
+    voice's own rate. Tests inject `voice_fn` to run without Piper."""
     name = "piper"
     channels = 1
 
@@ -246,10 +207,7 @@ class PiperSynthesizer(Synthesizer):
             import io, wave                        # fallback: capture WAV, return PCM
             buf = io.BytesIO()
             with wave.open(buf, "wb") as w:
-                # piper-tts >= 1.3 renamed the WAV writer; its `synthesize` became a
-                # chunk generator, so calling it with a wave writer raises
-                # "# channels not specified" (seen with piper-tts 1.3 in the compose
-                # `voice` profile). Prefer the explicit WAV entry point when present.
+                # piper-tts >= 1.3: `synthesize` yields chunks; use `synthesize_wav`.
                 if hasattr(voice, "synthesize_wav"):
                     voice.synthesize_wav(text, w)
                 else:
@@ -272,11 +230,9 @@ class PiperSynthesizer(Synthesizer):
 
 
 class ToneSynthesizer(Synthesizer):
-    """A built-in, zero-dependency placeholder 'voice': a deterministic 16-bit PCM tone
-    shaped to the text length (short fade in/out, no clicks). NOT speech — it lets the
-    SIM's audio path work out of the box with no model, network, or extra deps (demos,
-    CI, the default before Piper/gateway is configured). Real speech is `PiperSynthesizer`
-    (offline) or `OpenAIVoiceSynthesizer` (gateway). Selected with MOXIE_TTS=tone."""
+    """Zero-dependency placeholder 'voice' (MOXIE_TTS=tone): a deterministic 16-bit PCM tone
+    sized to the text, faded at the edges. Not speech — it exercises the audio path in
+    demos/CI with no model or network."""
     name = "tone"
 
     def __init__(self, sample_rate: int = 22050, freq: float = 330.0,
@@ -313,17 +269,9 @@ def make_piper_synthesizer(model_path: str, config_path: Optional[str] = None,
 class FallbackSynthesizer(Synthesizer):
     """A primary voice with a standby behind it — so a child never hears silence.
 
-    The gateway voice is a network call to someone else's box. An unknown model name, a
-    revoked key, a proxy that answers with JSON, an outage past the SDK's backoff: any of
-    those used to surface as an exception on the turn's synthesis path, i.e. as NO audio
-    at all in the middle of a conversation. This wrapper turns that into a downgrade —
-    the standby (`PiperSynthesizer` when a Piper model is configured, else the built-in
-    `ToneSynthesizer`) speaks the rest of the run.
-
-    Failure is reported ONCE, on the first failure, and then latched: a dead endpoint
-    must not cost every later turn its network timeout, and a parent reading the log must
-    not have to scroll past one line per sentence. `failed` and `name` say which voice is
-    actually talking, so `/status` and the tests can tell.
+    Any primary failure downgrades to the standby for the rest of the run. Reported once
+    and latched, so a dead endpoint does not cost every later turn its timeout. `failed` /
+    `voice_name` say which voice is talking.
     """
     name = "fallback"
 
@@ -382,10 +330,8 @@ def build_cloud_tts_response(audio: bytes, *, event_id: str = "", channels: int 
 
 
 def decode_cloud_tts_response(resp: dict) -> dict:
-    """SIM-side counterpart to build_cloud_tts_response: a CloudTTSResponse (dict or JSON
-    string) → `{audio: bytes, sample_rate, channels, marks, event_id, chunk_num}`. This
-    is what a client (the SIM's audio playback, a robot) needs to actually speak — it
-    base64-decodes the AudioBuffer back to raw PCM. Tolerant of missing/partial fields."""
+    """Client-side inverse of `build_cloud_tts_response`: a CloudTTSResponse (dict or JSON)
+    → `{audio, sample_rate, channels, marks, event_id, chunk_num}`. Tolerant of gaps."""
     if isinstance(resp, (str, bytes)):
         import json as _json
         resp = _json.loads(resp)
@@ -408,11 +354,7 @@ def decode_cloud_tts_response(resp: dict) -> dict:
 def synthesize_cloud_tts(synth: Synthesizer, markup: str, *, event_id: str = "",
                          voice: Optional[str] = None, chunk_num: int = 0) -> dict:
     """CloudTTSRequest(markup) → CloudTTSResponse: strip markup → synthesize → wrap.
-
-    `chunk_num` rides through to the response so a multi-chunk turn (a filler chunk 0
-    followed by the real answer as chunk 1 — see the runtime's brain-latency budget)
-    plays back in order: a client queues the chunks of one `event_id` by `chunk_num`
-    (docs/architecture/sim-as-a-client.md:77)."""
+    `chunk_num` rides through so a client plays a multi-chunk turn in order."""
     text = strip_markup(markup)
     audio = synth.synthesize(text, voice=voice) if text else b""
     return build_cloud_tts_response(audio, event_id=event_id,

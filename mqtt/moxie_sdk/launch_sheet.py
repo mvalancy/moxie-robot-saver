@@ -1,71 +1,23 @@
 """
 🎴 The launch-card **sheet** — the paper `launch_cards.py` was written to read back.
 
-`launch_cards.encode` is the payload; this is the page a parent prints, cuts up and hands
-to a child. It is the last piece of P0-c in
-`docs/architecture/backlog/qr-launch-cards.md`, and it is deliberately thin: **every
-string it puts under a QR comes from `launch_cards.encode`**, so the printing side can
-never emit a payload the reading side refuses. There is no second copy of the payload
-format in this file, and there must never be one — an id outside the closed catalog
-raises out of `encode` before a single module is drawn.
+The page a parent prints and cuts up (P0-c of backlog/qr-launch-cards.md). Every payload
+comes from `launch_cards.encode` — there is no second copy of the format here, and an id
+outside the catalog raises before anything is drawn.
 
-Why an HTML page and not PNGs or a PDF
---------------------------------------
-Upstream OpenMoxie ships 24 PNGs (`site/data/qr/extract.py`, MIT, (c) Justin Beghtol —
-credited in `ATTRIBUTION.md`; the idea is theirs, the code below is ours). We ship **one
-self-contained HTML file with the symbols as inline SVG**, for three reasons that are all
-about paper rather than about taste:
+**One self-contained HTML file with inline-SVG symbols** (OpenMoxie ships PNGs; the idea is
+theirs, the code ours — ATTRIBUTION.md): vector modules are rasterised at the printer's
+native resolution (no grey fringes), sizes are physical millimetres a test can check, and
+Ctrl-P / "Save as PDF" is the whole pipeline.
 
-1. **A raster QR is resampled by the printer; a vector one is not.** A PNG has a fixed
-   pixel grid, and a home printer scales it to its own DPI — module edges land mid-pixel
-   and come out as grey fringes, which is the ordinary way a home-printed QR stops
-   scanning. Every `<rect>`/`<path>` below is rasterised by the print driver at the
-   device's native resolution, so a module edge is exact at any size.
-2. **The size is stated in millimetres, not in pixels.** `SYMBOL_MM` and `MODULE_MM` are
-   physical quantities a test can check (`sim/tests/test_launch_sheet.py`), rather than a
-   scale factor whose real size depends on a DPI nobody wrote down.
-3. **One file, no pipeline.** A parent opens it and presses Ctrl-P; "Save as PDF" in the
-   same dialog produces a PDF for anyone who wants one. The brief says explicitly: *do
-   not build a PDF pipeline.*
+**segno** builds the matrix (imported lazily; the `cards` extra in `mqtt/pyproject.toml`),
+so the SDK wheel still installs with paho-mqtt alone.
 
-The one dependency, and why it is optional
-------------------------------------------
-`segno` builds the QR matrix. It is **not** re-implemented here — Reed-Solomon and mask
-selection are exactly the sort of thing to take from a library that is tested. It is
-already a declared dependency of the console (`server/requirements.txt`) and therefore of
-the test environment (`sim/tests/requirements-hermetic.txt`), so this file adds **nothing
-new to CI**. It is imported *lazily* and declared as the `cards` extra in
-`mqtt/pyproject.toml` rather than a base dependency, so the SDK wheel still installs with
-`paho-mqtt` alone: importing this module never needs segno, and only `qr_matrix` (and its
-callers) do. Absence is reported as one sentence naming the fix, not a traceback.
-
-What the geometry is chosen for
--------------------------------
-A card is scanned off paper by a robot's camera, so the number that matters is the
-printed width of one module (`MODULE_MM`), and the second one is the quiet zone
-(`QUIET_MODULES`, the four all-white modules ISO/IEC 18004 requires around the symbol —
-plenty of home-printed codes fail only because a layout cropped them).
-
-  * **Error correction Q (25 %)**, not the M the browser preview uses. A card lives in a
-    child's hands: a crease, a thumb over a corner, a lamp reflection. Q survives all
-    three, and here it is nearly free — the payloads are 13-26 bytes, so Q costs one
-    symbol version (29x29 instead of 25x25) and nothing else.
-  * **One version for the whole deck** (`deck_version`): every card is drawn at the
-    version the *longest* payload needs, so all 24 symbols are the same size and density
-    and the module size is one number for the sheet instead of 24. Derived from the
-    payloads, never typed in — a longer id changes it automatically.
-  * **56 mm symbols**, which at 29 modules + 8 quiet modules gives ~1.5 mm per module.
-    The common field rule of thumb is a 10:1 read distance to symbol width, i.e. ~0.5 m
-    for this card.
-
-**Both of those last numbers are rules of thumb, not measurements of this robot.** Our
-corpus says nothing about the camera's resolution, focus range or field of view
-(`docs/architecture/vision.md` describes only the semantic events it emits), and **no
-physical Moxie has ever sent us an `eb-qr-event`**. So the honest claim is: the symbols
-are correct, they are large, and their quiet zone is intact — not that a Moxie has read
-one. See `sim/tests/test_launch_sheet.py`, which reads the payload back out of the
-rendered module matrix and hands it to the real `launch_cards.decode`; that closes
-everything except the optics.
+**Geometry.** Error correction Q (a crease, a thumb, a glare), one symbol version for the
+whole deck (`deck_version`, derived from the payloads), 56 mm symbols with the ISO/IEC
+18004 four-module quiet zone ≈ 1.5 mm/module. These are rules of thumb, not measurements
+of Moxie's camera, and no Moxie has scanned one; `sim/tests/test_launch_sheet.py` decodes
+the rendered matrix with the real `launch_cards.decode`, which covers all but the optics.
 
 Usage
 -----
@@ -80,27 +32,20 @@ from . import launch_cards as cards_seam
 from . import schedule as schedule_seam
 
 # --------------------------------------------------------------------------- #
-# The physical page. Every length is millimetres, because every one of them ends
-# up as a millimetre on paper.
+# The physical page, in millimetres.
 # --------------------------------------------------------------------------- #
 
-#: Printer margin. Most consumer inkjets and lasers cannot image closer than ~6.4 mm to
-#: the edge; 10 mm clears that on every one we could name and keeps the arithmetic round.
+#: Printer margin (consumer printers cannot image closer than ~6.4 mm).
 PAGE_MARGIN_MM = 10.0
 
-#: The printable box **both** common paper sizes agree on, so one file prints correctly on
-#: A4 (210 x 297 mm) and US Letter (215.9 x 279.4 mm) with no size flag and no second
-#: build: the narrower width is A4's, the shorter height is Letter's.
+#: The printable box both A4 and US Letter agree on (A4's width, Letter's height).
 SHEET_WIDTH_MM = 210.0 - 2 * PAGE_MARGIN_MM        # 190.0 — A4 is the narrower
 SHEET_HEIGHT_MM = 279.4 - 2 * PAGE_MARGIN_MM       # 259.4 — Letter is the shorter
 
 #: The running header on each printed sheet (cut instruction + page number).
 HEADER_MM = 7.0
 
-#: One card, and the grid of them. 2 x 3 is a deliberate choice over a denser grid: a card
-#: is an object a child picks up and holds toward a robot's face, so postcard-sized beats
-#: six-to-a-page, and the extra room is what buys the 1.5 mm module below. 24 ids print on
-#: four sheets.
+#: One card and the grid: postcard-sized 2 x 3, which buys the 1.5 mm module.
 CARD_W_MM = 90.0
 CARD_H_MM = 80.0
 CARD_GAP_MM = 4.0
@@ -110,30 +55,20 @@ ROWS = 3
 #: The printed width of the whole QR symbol, quiet zone included.
 SYMBOL_MM = 56.0
 
-#: The all-white border ISO/IEC 18004 requires around a symbol, in modules. Four is the
-#: standard's own minimum and it is drawn as part of the SVG, so no layout can crop it.
+#: ISO/IEC 18004's minimum quiet zone, drawn inside the SVG so no layout can crop it.
 QUIET_MODULES = 4
 
-#: Error-correction level for a card. See the module docstring — Q (25 %) costs one symbol
-#: version at these payload lengths and buys tolerance of a crease, a thumb and a glare.
+#: Error-correction level Q (25 %).
 ERROR_LEVEL = "q"
 
-#: Byte mode, explicitly. segno would otherwise split `GO<launch:DM>` into mixed
-#: alphanumeric/byte segments — legal, decodable, and pointless here (the version is
-#: pinned by the longest payload either way), while a single byte segment is the most
-#: universally handled encoding there is and is what the browser twin (`sim/web/qr.js`)
-#: already emits. Determinism is the other half: with the version pinned, the error level
-#: un-boosted and the mode fixed, one payload has exactly one matrix.
+#: Byte mode, explicitly: the most widely handled encoding, what `sim/web/qr.js` emits,
+#: and (with version and level pinned) one payload → exactly one matrix.
 ENCODE_MODE = "byte"
 
-#: The floor a printed module must clear for a camera to resolve it. Practical guidance,
-#: **not** a measurement of Moxie's camera, which our corpus does not describe. The sheet
-#: as configured lands at roughly 1.5 mm, so this is a guard against a future geometry
-#: edit silently shrinking the paper, not a claim about optics.
+#: Guard against a geometry edit shrinking modules (practical guidance, not optics data).
 MIN_MODULE_MM = 0.6
 
-#: Pure black on pure white. Contrast is a scannability property, so it is named here
-#: rather than left to a stylesheet: no brand colour goes near a symbol.
+#: Pure black on white — contrast is a scannability property.
 DARK = "#000000"
 LIGHT = "#ffffff"
 
@@ -142,36 +77,23 @@ LIGHT = "#ffffff"
 # 1. What goes on a card
 # --------------------------------------------------------------------------- #
 def card_label(module_id: str) -> str:
-    """The human-readable name for a card, or the id when there is no honest name.
-
-    `schedule.MODULE_LABELS` maps only the ids that are unambiguously an English word or
-    phrase; it deliberately does not invent Embodied product names for the rest (`AB`,
-    `FF`, `RDL` today). A card for one of those shows its id, and `unlabelled_ids` below
-    lets the sheet say so in as many words rather than leaving a parent to guess.
-    """
+    """The card's name from `schedule.MODULE_LABELS`, or the id when there is no honest
+    name (we invent none)."""
     labels = getattr(schedule_seam, "MODULE_LABELS", {})
     label = labels.get(module_id) if isinstance(labels, dict) else None
     return label if isinstance(label, str) and label else module_id
 
 
 def catalog_ids() -> List[str]:
-    """The ids a sheet covers by default — `launch_cards`' closed catalog, sorted.
-
-    Read through `launch_cards` rather than re-derived from `schedule.py`, because the
-    catalog has exactly one owner and this is not it. `launch_cards._catalog()` is a live
-    function of `schedule.py`; a third derivation here would be the very drift
-    `sim/test_qr.mjs` exists to catch.
-    """
+    """The default ids — `launch_cards`' closed catalog (its one owner), sorted."""
     return sorted(cards_seam.LAUNCHABLE_MODULE_IDS)
 
 
 def cards_for(ids: Optional[Iterable[str]] = None) -> List[Tuple[str, str, str]]:
     """`(module_id, label, payload)` for each requested id, in the order given.
 
-    **The payload comes from `launch_cards.encode` and from nowhere else.** That is the
-    whole safety story of this module: an id outside the catalog raises here, so a sheet
-    cannot exist that carries a card the runtime would refuse. Requesting nothing means
-    the whole catalog.
+    The payload comes only from `launch_cards.encode`, so an id outside the catalog raises
+    here. `None` means the whole catalog.
     """
     wanted = catalog_ids() if ids is None else [str(i) for i in ids]
     if not wanted:
@@ -180,11 +102,7 @@ def cards_for(ids: Optional[Iterable[str]] = None) -> List[Tuple[str, str, str]]
 
 
 def unlabelled_ids(ids: Optional[Iterable[str]] = None) -> List[str]:
-    """The requested ids `schedule.MODULE_LABELS` has no plain-English name for.
-
-    Derived, so the sheet's footnote can name them without anyone transcribing a list that
-    would rot the first time a label is added.
-    """
+    """The requested ids with no plain-English name (for the sheet's footnote)."""
     return [i for i, label, _ in cards_for(ids) if label == i]
 
 
@@ -192,12 +110,7 @@ def unlabelled_ids(ids: Optional[Iterable[str]] = None) -> List[str]:
 # 2. The symbol
 # --------------------------------------------------------------------------- #
 def _segno():
-    """`segno`, or one sentence saying how to get it. See the module docstring.
-
-    Imported here rather than at module scope so the SDK wheel keeps installing with
-    `paho-mqtt` alone and so importing this module — which every test of the pure parts
-    above does — never needs it.
-    """
+    """`segno` (lazily), or one sentence saying how to get it."""
     try:
         import segno                                       # noqa: PLC0415
     except ImportError as exc:                             # pragma: no cover - env-shaped
@@ -211,16 +124,8 @@ def _segno():
 def deck_version(payloads: Sequence[str]) -> int:
     """The one symbol version every card in this deck is drawn at.
 
-    The maximum of what each payload needs on its own, so the whole deck is the same size
-    and density and `module_mm` is a single number for the sheet. Derived from the
-    payloads: a longer module id, or a card carrying a `content_id`, moves it by itself.
-
-    `make_qr`, never `make`: `segno.make` returns a **Micro QR** when a short payload fits
-    one (`M4-M` holds 15 bytes and `GO<launch:AB>` is 13), and that is a different
-    symbology — its own version numbering (`"M4"`, a string, not an int), a two-module
-    quiet zone, and no reason whatever to believe the robot's reader accepts it. Forcing
-    the ordinary kind keeps the version an integer and the deck one symbology. Found by
-    mutating `ERROR_LEVEL` to `m` and watching this function crash.
+    The max any payload needs, so every symbol has one size. `make_qr`, never `make`:
+    `segno.make` may return a Micro QR, a different symbology the robot may not read.
     """
     segno = _segno()
     if not payloads:
@@ -233,10 +138,7 @@ def deck_version(payloads: Sequence[str]) -> int:
 def qr_matrix(payload: str, version: int) -> List[List[int]]:
     """The QR module matrix for one payload — rows of 0/1, quiet zone **not** included.
 
-    `boost_error=False` matters: segno raises the error level on its own when a shorter
-    payload leaves room, which would give the deck a mix of Q and H symbols. One stated
-    level for every card beats a slightly better one on some of them. `make_qr` rather
-    than `make` for the reason `deck_version` gives: never a Micro QR.
+    `boost_error=False` keeps one stated level for every card.
     """
     segno = _segno()
     qr = segno.make_qr(payload, error=ERROR_LEVEL, mode=ENCODE_MODE,
@@ -253,16 +155,8 @@ def symbol_svg(payload: str, version: int, symbol_mm: float = SYMBOL_MM,
                label: str = "") -> str:
     """One QR symbol as inline SVG, sized in millimetres.
 
-    The `viewBox` is in *modules*, the `width`/`height` in mm, so the browser's print
-    rasteriser draws every module edge on the device's own pixel grid at whatever DPI it
-    has — the property a PNG cannot have. Horizontal runs of dark modules are merged into
-    one path segment, which keeps a 24-card file small enough to open instantly.
-
-    No `xmlns`: an `<svg>` inside HTML is put in the SVG namespace by the HTML parser
-    itself, so the attribute would be redundant — and leaving it out means the printed page
-    contains **no URL at all**, which is a stronger form of the self-contained property
-    than "the only URL is a namespace". `test_no_deployment_defaults.py` flags a hostname
-    in shipped Python and it was right to: the guard is cheaper to satisfy than to widen.
+    `viewBox` in modules, size in mm; horizontal dark runs merge into one path segment.
+    No `xmlns` (redundant inside HTML), so the page contains no URL at all.
     """
     matrix = qr_matrix(payload, version)
     units = len(matrix) + 2 * QUIET_MODULES
@@ -295,10 +189,7 @@ def symbol_svg(payload: str, version: int, symbol_mm: float = SYMBOL_MM,
 def geometry(version: int, symbol_mm: float = SYMBOL_MM) -> Dict[str, float]:
     """Every physical fact about the sheet, as numbers a test can assert on.
 
-    The point of returning this rather than measuring the HTML: the guard in
-    `sim/tests/test_launch_sheet.py` checks the *arithmetic of the paper* — that the grid
-    fits inside the printable box of both paper sizes, that the symbol fits inside a card,
-    and that a module clears `MIN_MODULE_MM` — instead of regexing a stylesheet.
+    (`test_launch_sheet.py` checks the paper arithmetic, not the stylesheet.)
     """
     grid_w = COLUMNS * CARD_W_MM + (COLUMNS - 1) * CARD_GAP_MM
     grid_h = ROWS * CARD_H_MM + (ROWS - 1) * CARD_GAP_MM
@@ -366,8 +257,7 @@ def render_sheet(ids: Optional[Iterable[str]] = None,
                  title: str = "Moxie launch cards") -> str:
     """The whole printable page: one self-contained HTML document, no network at all.
 
-    No external stylesheet, script or font — a file bound for a printer must not depend on
-    a CDN being up, and a parent may well open it with the appliance switched off.
+    No external stylesheet, script or font — it must print with nothing online.
     """
     deck = cards_for(ids)
     version = deck_version([p for _, _, p in deck])
