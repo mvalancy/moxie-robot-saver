@@ -1,7 +1,7 @@
 """
 📅 Today's plan — the console's read of the recommender's "why this activity today".
 
-`normalize_schedule_view` is the whole of `server/`'s new logic: the route in `main.py` is
+`normalize_schedule_view` is the whole of `server/`'s new logic: the route in `routes/console.py` is
 a thin proxy of the supervisor's `GET /schedule?device_id=…` (the same shape the 🎨 look
 and 🎭 Be Moxie cards use), and everything the card renders is decided here.
 

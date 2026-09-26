@@ -15,7 +15,7 @@
 > [`mqtt/config.py`](../../../mqtt/config.py) (`BRAIN_BUILDERS`, `BrainEngines`) ·
 > [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) (`app_for`, `brain_for`,
 > `brain_view`, `brain_update`).
-> Console: [`fleet.py`](../../../server/moxie_server/fleet.py)`::normalize_brain_option`:1017 +
+> Console: [`fleet.py`](../../../server/moxie_server/fleet/)`::normalize_brain_option`:1017 +
 > `::normalize_brain_robot`:1032 + two proxy routes
 > + the 🧠 card in [`server/static/`](../../../server/static/index.html).
 > Tests: [`test_brains.py`](../../../sim/tests/test_brains.py) (82) +

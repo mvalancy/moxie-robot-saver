@@ -1,8 +1,10 @@
 # functions/api/ — the four routes
 
 Every route the hosted Sim has. All same-origin under `/api/*`, all Cloudflare Pages
-Functions, all exporting a single `onRequest{Get,Post}` so Pages answers 405 for every
-other method by itself.
+Functions, each exporting a single `onRequest{Get,Post}`. Any other method is not handled by
+the Function and falls through to the static site: under `wrangler pages dev`,
+`GET /api/chat` answers the home page with a 200 and `POST /api/health` a 405. Neither runs
+route code or spends anything.
 
 The full argument for each of them — what it is for, what it refuses, and which of the
 security properties it carries — is one level up, in

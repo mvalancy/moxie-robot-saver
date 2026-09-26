@@ -129,7 +129,7 @@ def test_junk_inside_the_transcript_and_moods_is_dropped_not_rendered():
 
 
 def test_it_is_pure_enough_for_the_hermetic_suite():
-    """`fleet.py` must import with **fastapi refused**, because CI's hermetic env has
+    """`fleet/` must import with **fastapi refused**, because CI's hermetic env has
     none — and if it ever grows a web dependency this whole file stops running there.
 
     Checked in a subprocess with an import hook that refuses `fastapi`/`httpx`, rather

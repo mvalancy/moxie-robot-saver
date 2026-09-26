@@ -33,6 +33,8 @@ import urllib.error
 
 import pytest
 
+from helpers_console import console_js
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
@@ -556,15 +558,15 @@ def test_the_authoring_routes_are_declared():
     rather than a parent.
 
     Read as text rather than imported: the hermetic tier has no fastapi."""
-    with open(os.path.join(REPO, "server", "moxie_server", "main.py")) as fh:
-        main = fh.read()
-    assert '@app.post("/local/content/item")' in main
-    assert '@app.post("/local/content/render")' in main
+    from helpers_console import server_source
+    main = server_source()
+    assert '.post("/local/content/item")' in main
+    assert '.post("/local/content/render")' in main
     assert "normalize_content_item_result" in main, \
         "the item route does not normalize its answer, so a card could 500 on a refusal"
     # P0 does not build the paid rung, and must not accidentally ship its route. Matched
     # as a route LITERAL rather than as a substring, so prose about P1 does not trip it.
-    assert '@app.post("/local/content/try")' not in main, "`/content/try` is P1 (§9), not P0"
+    assert '.post("/local/content/try")' not in main, "`/content/try` is P1 (§9), not P0"
 
     with open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py")) as fh:
         runtime = fh.read()
@@ -578,8 +580,8 @@ def test_the_supervisor_route_owns_the_validation_not_the_proxy():
     names it and the console's does not."""
     with open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py")) as fh:
         runtime = fh.read()
-    with open(os.path.join(REPO, "server", "moxie_server", "main.py")) as fh:
-        main = fh.read()
+    from helpers_console import server_source
+    main = server_source()
     assert "content_packs.validate_item(" in runtime, \
         "the supervisor's writing route does not call validate_item at all (§6.3)"
     assert "validate_item(" not in main, \
@@ -595,9 +597,9 @@ def test_the_chip_list_is_closed_to_the_two_portable_forms():
     Asserted over the chip table's own source: every fragment it can insert is run through
     `_minimal_render` and must come back with `STRIPPED` unmoved."""
     import re
-    js = _asset("app.js")
+    js = console_js()
     m = re.search(r"const ED_CHIPS\s*=\s*\[(.*?)\n\];", js, re.S)
-    assert m, "app.js has no ED_CHIPS table"
+    assert m, "the console JS has no ED_CHIPS table"
     fragments = re.findall(r"insert:\s*'((?:[^'\\]|\\.)*)'", m.group(1))
     assert len(fragments) >= 4, fragments
     ctx = {"volley": {"config": {"child_pii": {"nickname": "Ada"}},
@@ -616,7 +618,7 @@ def test_the_editor_never_offers_a_verb_p0_refuses():
     no `merge_items` operation at all (§3.3), schedules are §0, and `code`/`extension` are
     read-only windows."""
     html = _asset("index.html")
-    js = _asset("app.js")
+    js = console_js()
     assert "ed-panel" in html, "the editor panel is not on the page"
     assert "readonly" in html.lower() or "readOnly" in js, \
         "the raw surface must be read-only in P0 (R1)"
@@ -628,10 +630,10 @@ def test_the_card_grew_the_four_functions_the_brief_names():
     `renderDraftPrompt` / `renderChips` are the four seams the brief hands a later agent,
     and a rename that silently split one of them would leave that agent reading a plan
     that no longer describes the file."""
-    js = _asset("app.js")
+    js = console_js()
     for fn in ("function openEditor(", "async function saveItem(",
                "async function renderDraftPrompt(", "function renderChips("):
-        assert fn in js, f"app.js has no {fn}…)"
+        assert fn in js, f"the console JS has no {fn}…)"
     assert "'/local/content/item'" in js and "'/local/content/render'" in js
 
 
@@ -644,7 +646,7 @@ def test_no_timer_in_the_editor_can_reach_a_model():
     later pass adds a *Try it*, this assertion is what stops it from being wired to the
     same debounce — the mistake upstream's harness makes, where every keypress-to-answer
     is a real model call with no budget and no counter."""
-    js = _asset("app.js")
+    js = console_js()
     editor = js[js.index("const ED_CHIPS"):]
     timers = [ln for ln in editor.splitlines()
               if "setTimeout(" in ln or "setInterval(" in ln]
@@ -667,17 +669,9 @@ def test_no_timer_in_the_editor_can_reach_a_model():
 @pytest.fixture
 def console(rt, base, tmp_path, monkeypatch):
     """The real console app in-process, pointed at the real supervisor above."""
-    pytest.importorskip("fastapi", reason="the console app")
-    pytest.importorskip("httpx", reason="fastapi's TestClient")
-    monkeypatch.setenv("MOXIE_DB", str(tmp_path / "console.db"))
-    monkeypatch.setenv("MOXIE_SUPERVISOR_STATUS", base)
-    sys.path.insert(0, os.path.join(REPO, "server"))
-    try:
-        from fastapi.testclient import TestClient
-        from moxie_server import main
-    except Exception as e:                      # pynacl / segno not in this env
-        pytest.skip(f"console app not importable: {e}")
-    main.STATUS_URL = base                      # read from the env at import time
+    from helpers_console import console_app, set_status_url
+    TestClient, main = console_app(tmp_path / "console.db", base)
+    set_status_url(base, monkeypatch)
     with TestClient(main.app) as c:
         yield c
 

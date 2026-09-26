@@ -1,140 +1,58 @@
 /* functions/api/transcribe.js — POST /api/transcribe, the ears.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §3.2 (`POST /api/transcribe` — the ears
- * (P1)), §4.1 (the caps, and the paragraph about why a byte cap is not a duration cap),
- * §4.5 (the status table), §6 (the fallback), §9's P1 paragraph, §10 assumptions 15/16.
+ * Spec: docs/architecture/backlog/live-sim-demo.md §3.2, §4.1 (why a byte cap is not a
+ * duration cap), §4.5 (statuses), §6 (fallback), §10 assumptions 15/16.
  *
- * This is the third and last leg of "a stranger opens the production domain and TALKS to
- * Moxie": `/api/chat` is the brain, `/api/speech` is the voice, and this is what lets a
- * visitor SPEAK instead of type. Today `sim/web/mic.js` posts to a local sidecar on port
- * 8082 that a hosted visitor has never run, every request fails, and the page quietly
- * answers with a scripted child line — honest, but never actually listening.
+ * WHAT MAKES THE EARS SAFE, in the order the code checks it:
+ *  1. `DEMO_STT_MODEL` unset => no ears and no call (`/api/health` already says `ears: false`).
+ *  2. The floor is free: under `DEMO_MIN_AUDIO_BYTES` the answer is `too_short`, uncharged.
+ *  3. The ceiling `DEMO_MAX_AUDIO_BYTES` is checked against `Content-Length` before reading.
+ *  4. The bytes are SNIFFED, not believed; an unrecognised container is refused for free.
+ *  5. The model is server-fixed; nothing but the audio itself reaches the upstream body.
+ *  6. STT is priced by DURATION. A WAV's declared playing time is read from its header and
+ *     refused over `DEMO_MAX_RECORD_MS`. Compressed containers cannot be timed without a
+ *     decoder, so `DEMO_STT_FORMATS` defaults to `wav` alone — a fork that widens it re-opens
+ *     the gap with no warning from the code.
+ *  7. A bot control (`_lib/turnstile.js`) with its OWN action, so a chat token cannot buy
+ *     the ears. This is the more expensive route to leave open: 60/hour x 15 s from one
+ *     address with no daily window.
+ *  8. NOTHING IS STORED, LOGGED OR CACHED. Caching STT is a privacy problem, not a saving.
  *
- * ===========================================================================
- * WHAT MAKES THE EARS SAFE, in the order the code checks it.
+ * Zero upstream calls on every refusal path, and each of those refunds the units `admit()`
+ * charged. The key never leaves this process; no upstream status, body or header is
+ * forwarded (an OpenAI-compatible error names the model and often a key prefix).
  *
- *  1. `DEMO_STT_MODEL` UNSET ⇒ THERE ARE NO EARS, AND NO CALL IS MADE. `/api/health`
- *     already reports `ears: false` from the same config (`_lib/env.js`), so the page
- *     never offers a microphone it cannot serve, and this route agrees with the probe
- *     rather than second-guessing it.
- *  2. THE FLOOR IS FREE. Under `DEMO_MIN_AUDIO_BYTES` (2 000) the route returns
- *     `too_short` and **the gateway is never touched** — the rule transcribed from
- *     `mqtt/moxie_sdk/stt.py`:194-197, *"no audio → no request, no cost, no latency"*.
- *     A hosted demo gets a lot of accidental 300-byte clips.
- *  3. THE CEILING IS CHECKED BEFORE THE BODY IS READ. `DEMO_MAX_AUDIO_BYTES` (500 000) is
- *     compared against the declared `Content-Length` first (`_lib/limits.js`).
- *  4. THE BYTES ARE SNIFFED, NOT BELIEVED. The visitor's `Content-Type` is a claim; the
- *     magic number is evidence. Anything that is not a recognised audio container is
- *     `bad_request` with **zero** upstream calls — 500 KB of JPEG costs nothing.
- *  5. THE MODEL IS SERVER-FIXED. Nothing from the request reaches the upstream body except
- *     the audio itself: no `model`, no `language`, no `prompt`, no `temperature`,
- *     no `response_format`. §4.1's single highest-value control, applied here too.
- *  6. THE DURATION CEILING IS ENFORCED HERE FOR WAV, AND ONLY FOR WAV. **The byte cap
- *     alone is not a cost ceiling for the ears** — STT is priced by duration, and 500 KB
- *     is ~15 s of 16 kHz 16-bit PCM but 62 s at 8 kHz 8-bit, ~125 s of 4-bit ADPCM, and
- *     *minutes* of webm/Opus. Since 2026-09-03 a RIFF/WAVE body has its declared playing
- *     time read out of its own header (`_lib/wav.js::wavDurationMs`) and is refused
- *     `too_long` above `DEMO_MAX_RECORD_MS`, before any upstream call — step 4c below.
- *     For the compressed containers the duration lives in a bitstream and reading it
- *     means shipping a decoder, which a Function must not do to a hostile upload; for
- *     those the ceiling is still only the byte cap plus `sim/web/mic.js`'s hard stop,
- *     which a caller who is not using our page never runs. **What makes that gap
- *     theoretical rather than live is `DEMO_STT_FORMATS`, which defaults to `wav` alone
- *     (deviation (2) below), so today every forwarded request IS duration-capped — and a
- *     fork that widens it re-opens the gap with no warning from the code.**
- *  7. **AND SINCE 2026-09-05, A BOT CONTROL IN FRONT OF THE MONEY.** Everything above
- *     bounds the cost of a request that has already been made; none of it can tell a
- *     child from a `curl` loop, and `_lib/limits.js::checkOrigin` says so in capitals.
- *     Cloudflare Turnstile (`_lib/turnstile.js`) is step 4d, with its OWN widget
- *     `action` — `TURNSTILE_ACTIONS.transcribe` — so a token the page minted for a typed
- *     sentence is not spendable on the ears. It is config-gated (no secret, no
- *     enforcement), so previews and forks are untouched. **This route is the more
- *     expensive of the two to leave open**: 60 requests/hour x 15 s is 15 minutes of
- *     billable STT from one address, with no daily window at all to stop it.
- *  8. NOTHING IS STORED, LOGGED OR CACHED. §9's P1 line says it for the caching idea and
- *     it is worth repeating here: **do not cache STT — that is a privacy problem, not a
- *     saving.** A child's voice arrives, becomes text, and is forgotten. There is no
- *     store to write to anyway (§2.6).
- * ===========================================================================
- *
- * THE KEY NEVER LEAVES THIS PROCESS (C1, §4.2), exactly as in `chat.js` and `speech.js`:
- * read once as `context.env.DEMO_GATEWAY_API_KEY` inside `_lib/env.js`, used only as an
- * outbound `Authorization` header, never in a body, a header, an error string or a log
- * line. No upstream status, body or header is forwarded — an upstream error body from an
- * OpenAI-compatible gateway names the model and often the key prefix.
- *
- * ZERO UPSTREAM CALLS ON EVERY REFUSAL PATH: unconfigured, no STT model, forbidden origin,
- * rate-limited, over budget, at capacity, over the byte cap, under the byte floor, an
- * unrecognised container, a container this gateway does not take, a WAV whose own header
- * declares more than `DEMO_MAX_RECORD_MS`, and a refused bot check. All return before the
- * one `fetch()`, and every one of them **REFUNDS THE UNITS `admit()` CHARGED**
- * (`spentNothing()` below): a refusal that kept them let a flood of 2 KB uploads empty the
- * shared hourly budget and take the whole demo scripted while spending nothing itself.
- *
- * ===========================================================================
- * TWO DELIBERATE DEVIATIONS FROM §3.2, both documented at their site.
- *
- * (1) **The response is the HOUSE ENVELOPE with a `transcript` field, not the bare
- *     `DeepgramResponse` §3.2 sketched.** §3.2's appeal was that `mic.js`:44-45 already
- *     parses `{channel:{alternatives:[{transcript}]}}` — but that shape carries no
- *     `reason`, no `mode`, no `retry_after_s` and no `limits`. A rate-limited visitor
- *     would be indistinguishable from a deployment with no ears, an over-budget one from
- *     a dead gateway, and `mic.js` could not do the one thing §6 requires of it: degrade
- *     HONESTLY and say which. So this route answers the same envelope as the other three,
- *     `mic.js` reads `transcript` from it, and `mic.js` KEEPS its Deepgram parse for the
- *     local sidecar (`sim/stt/server.py`:69-70), which is untouched. One extra branch in
- *     the client buys the whole §4.5 status table.
- *
- * (2) **THE GATEWAY DOES NOT ACCEPT webm/Opus, AND THAT CHANGED THIS ROUTE.** §10
- *     assumption 15, settled live on 2026-09-03: a 16 kHz mono RIFF/WAVE transcribes
- *     word-perfect in 2.58 s, while the SAME UTTERANCE as webm/Opus, ogg/Opus and mp4/AAC
- *     all answer **HTTP 500**. Since 500 maps to `upstream_down` — a 503, which degrades
- *     the whole page — forwarding a browser's default recording would have taken the brain
- *     and the voice down every time someone pressed the microphone, after paying 1.6-4.3 s
- *     for the privilege. So the route carries a container allowlist (`DEMO_STT_FORMATS`,
- *     default `wav`, step 4b below) and refuses the rest for free and per-turn; and
- *     `sim/web/mic.js` now ENCODES 16 kHz mono WAV in the browser rather than shipping
- *     whatever `MediaRecorder` felt like producing. The full evidence table is in
- *     `_lib/env.js::sttFormats`.
- *
- * (3) **An upstream 4xx about the PAYLOAD answers `bad_request` (400), not
- *     `upstream_down` (503).** The distinction is not pedantry: `mode.js` degrades the
- *     WHOLE PAGE off a 503 (§6.3, `live --> degraded`), so a gateway that rejects one
- *     audio container would take the brain and the voice down with it — while §4.5's
- *     `bad_request` row says explicitly *"does not change mode"*. A gateway refusing our
- *     bytes is a fact about the bytes; a gateway that is down is a fact about the gateway.
- *     `reasonForUpstreamStatus` is the whole table, and 401/403 stay `upstream_down`
- *     because a revoked key IS an operator problem. **This is also the shape of the answer
- *     if assumption 15 turns out badly:** a gateway that refuses webm/Opus produces a
- *     degradable per-turn reason and a scripted line, never a 502 and never a dead page.
- * ===========================================================================
+ * DELIBERATE DEVIATIONS FROM §3.2
+ *  (1) The response is the house envelope with a `transcript` field, not a bare
+ *      DeepgramResponse, so a refusal can carry `reason`/`retry_after_s` and `mic.js` can
+ *      degrade honestly. `mic.js` keeps its Deepgram parse for the local sidecar.
+ *  (2) The gateway answers webm/Opus, ogg/Opus and mp4/AAC with HTTP 500 (measured; 16 kHz
+ *      mono WAV transcribes fine), and a 500 would degrade the whole page. Hence the
+ *      container allowlist, and `mic.js` encoding WAV in the browser.
+ *  (3) An upstream 4xx about the PAYLOAD is `bad_request` (400, per-turn), not
+ *      `upstream_down` (503, degrades the page) — see `reasonForUpstreamStatus`.
  */
 import { readConfig, modeOf, publicLimits, upstreamHeaders } from "./_lib/env.js";
 import { respond } from "./_lib/envelope.js";
-import { admit, budgetState, loadOf, noteUpstreamCall, readAudioBody } from "./_lib/limits.js";
+import { admit, noteUpstreamCall, readAudioBody } from "./_lib/limits.js";
 import { tokenFromHeader, verify as verifyTurnstile } from "./_lib/turnstile.js";
 import { wavDurationMs } from "./_lib/wav.js";
 import { joinUrl } from "./_lib/wire.js";
+import { fetchFailure, limitedOrRedirected, refusal as refuse } from "./_lib/upstream.js";
+
+const refusal = (cfg, reason, extra) => refuse(cfg, "transcribe", reason, extra, { transcript: "" });
 
 export async function onRequestPost(context) {
   const request = context.request;
   const cfg = readConfig(context.env);
 
-  // ---- 1. Configuration (C5). No variables at all => `gateway_not_configured`, no call.
+  // 1. Configuration. `ears` derives from the same `cfg` as the probe, so they cannot
+  //    disagree.
   const gate = modeOf(cfg, null);
   if (gate.mode !== "live") return refusal(cfg, "gateway_not_configured", {});
-  // A configured gateway with no STT model is not a pair of ears (§5). Same reason as the
-  // voice's equivalent, so `mode.js` degrades identically — and `/api/health` has already
-  // told the page `ears: false`, so a well-behaved page never gets here at all. This is
-  // the belt to that braces: `ears` is derived from the same `cfg`, so the probe and the
-  // route CANNOT disagree.
   if (!cfg.ears) return refusal(cfg, "gateway_not_configured", {});
 
-  // ---- 2. Admission: origin pin, per-IP windows (10/min, 60/hour), unit budget,
-  // capacity ceiling. Same order and same helper as the other two routes, so no route can
-  // spend a unit before checking the pin (`_lib/limits.js::admit`). Awaited since
-  // 2026-09-03: at capacity it joins a bounded FIFO rather than refusing outright, and the
-  // `finally` below is what hands the slot to whoever is next.
+  // 2. Admission, same helper and order as the other routes; the `finally` hands the slot on.
   const slot = await admit({ request, cfg, route: "transcribe" });
   if (!slot.ok) {
     return refusal(cfg, slot.reason, {
@@ -145,83 +63,38 @@ export async function onRequestPost(context) {
   }
 
   try {
-    /** A refusal from inside the admitted section — one that spends NOTHING upstream, and
-     *  therefore hands back the `UNITS.transcribe` (2) `admit()` charged before this `try`
-     *  was entered. Same helper, same argument and same one exception as
-     *  `chat.js::spentNothing`: the step-6 upstream refusal below does NOT use it, because
-     *  that request reached the gateway and its units were really spent. */
+    // A refusal that spends nothing upstream gives back the units `admit()` charged (see
+    // `chat.js`); the upstream failure at step 5 does not.
     const spentNothing = (reason, extra) => {
       slot.refundBudget();
       return refusal(cfg, reason, { load: slot.load, rateLimit: slot.rateLimit, ...(extra || {}) });
     };
 
-    // ---- 3. The body: raw audio bytes, bounded at both ends. `too_short` is the
-    // no-cost floor and is the most common refusal a real demo will serve.
+    // 3. The body: raw audio, bounded at both ends.
     const body = await readAudioBody(request, cfg);
     if (!body.ok) return spentNothing(body.reason);
 
-    // ---- 4. What IS this? Sniffed from the bytes, with the declared type as a fallback
-    // and an allowlist as the answer. An unrecognised body never becomes a paid request.
+    // 4. What is it? Sniffed, with the declared type as fallback, against an allowlist…
     const kind = audioKind(body.bytes, request.headers.get("Content-Type"));
     if (!kind) return spentNothing("bad_request");
 
-    // ---- 4b. …and is it a container THIS GATEWAY takes? `DEMO_STT_FORMATS` defaults to
-    // `wav` alone because that is what was measured (see `_lib/env.js::sttFormats` for the
-    // four-container probe of 2026-09-03). This check is free, per-turn, and — crucially —
-    // keeps a rejected container from becoming an upstream **500**, which would map to
-    // `upstream_down` and degrade the brain and the voice along with the ears.
+    // 4b. …that this gateway takes (`DEMO_STT_FORMATS`; see deviation 2).
     if (!cfg.sttFormats.includes(kind.ext)) return spentNothing("bad_request");
 
-    // ---- 4c. …and how LONG does it say it is? **STT IS PRICED BY DURATION, AND THE BYTE
-    // CAP IS NOT A DURATION CAP** — point 6 of this file's header says so, and until
-    // 2026-09-03 that was the end of it. It is only the end of it for the CONTAINERS WE
-    // CANNOT CHEAPLY READ. A RIFF/WAVE declares its own playing time in four header
-    // integers, so for that one container the cap is enforceable here, server-side, before
-    // the upload becomes a paid request — and `DEMO_STT_FORMATS` defaults to `wav` alone,
-    // so on the shipped configuration that is every request that reaches the gateway.
-    //
-    // The gap this closes is not small: 500 KB of 16 kHz 16-bit mono is the ~15 s §4.1
-    // assumed, but the SAME 500 KB of 8 kHz 8-bit is 62 s, and of 4-bit ADPCM ~125 s. All
-    // are well-formed files; none was refused before; each costs what its duration costs.
-    //
-    // `null` means the header could not be read (not RIFF, no `fmt `/`data`, a zero rate),
-    // and is treated as NO OPINION rather than as "short" — such a body is left to the
-    // container allowlist and the byte caps exactly as before. **Nothing here decodes
-    // audio**: it is a chunk walk over integers, which is all a hostile upload should ever
-    // be subjected to inside a Function.
+    // 4c. …and how long does it say it is? A header walk over integers, no decoding. An
+    //     unreadable header is NO OPINION, left to the allowlist and byte caps.
     if (kind.ext === "wav") {
       const dur = wavDurationMs(body.bytes);
       if (dur && dur.ms > cfg.maxRecordMs) return spentNothing("too_long");
     }
 
-    // ---- 4d. THE BOT CONTROL (`_lib/turnstile.js`), and it is HERE for the same three
-    // reasons `chat.js` step 7 sets out at length — cheapest refusal first, `admit()` in
-    // front of siteverify rather than behind it, and nothing that can be refused locally
-    // buying a network round trip. So it runs after the byte caps, after the container
-    // sniff and after the duration ceiling, and immediately before the only `fetch()` in
-    // this file.
-    //
-    // WHY THIS ROUTE NEEDED IT AT ALL, stated plainly because the first draft of the
-    // Turnstile slice left it out: **the ears are the more expensive half.** STT is priced
-    // by duration, the per-IP windows here are 10/min and 60/hour with NO daily cap, and
-    // `DEMO_MAX_RECORD_MS` is 15 s — so 60 x 15 s = 15 minutes of billable transcription
-    // per hour from ONE address, ~1,440 calls a day, for ever, driven by a `curl` loop
-    // with a 2 KB RIFF header and a forged `Origin`. `_lib/limits.js::checkOrigin` says
-    // in capitals what the origin pin is worth against that (*"curl FORGES THESE HEADERS
-    // TRIVIALLY"*), which is the whole reason this file is what it is.
-    //
-    // THE TOKEN ARRIVES ON A HEADER, NOT IN THE BODY: the body is raw audio bytes and
-    // there is no field to put it in (`_lib/turnstile.js::TOKEN_HEADER` carries the two
-    // rejected alternatives and why).
-    //
-    // AND IT IS A **DIFFERENT ACTION** FROM THE CHAT TURN. `TURNSTILE_ACTIONS.transcribe`
-    // is what check 2 requires back here, so a token the page minted for a typed sentence
-    // is refused by the ears exactly as a stranger's would be — which is the point of
-    // having an action check at all when the two routes do not cost the same.
+    // 4d. The bot control, placed as in `chat.js` step 7: after every free refusal and
+    //     immediately before the only `fetch()`. The token rides a HEADER because the body
+    //     is raw audio.
     const bot = await verifyTurnstile(cfg, request, tokenFromHeader(request), "transcribe");
     if (!bot.ok) return spentNothing(bot.reason);
 
-    // ---- 5. The one upstream call.
+    // 5. The one upstream call.
     const upstream = await callGateway(cfg, body.bytes, kind);
     if (!upstream.ok) {
       return refusal(cfg, upstream.reason, {
@@ -231,19 +104,14 @@ export async function onRequestPost(context) {
       });
     }
 
-    // ---- 6. The transcript. An EMPTY one is a success, not an error: the gateway heard
-    // silence, `mic.js` says "(nothing heard)" exactly as it does today, and nothing is
-    // published to the bus. Turning silence into a 4xx would make the page shout at a
-    // visitor who simply did not speak.
+    // 6. The transcript. An EMPTY one is a success: the gateway heard silence.
     const clean = cleanTranscript(upstream.text, cfg.maxInputChars);
     return respond(
       {
         ok: true,
         degraded: false,
         reason: null,
-        // The one place `message` is used on a success: the visitor is entitled to know
-        // that what comes back is not all of what they said. It is scrubbed of URLs and
-        // key-shaped tokens by `envelope.js::sanitizeMessage` like every other message.
+        // The one success that uses `message`: the visitor is told the transcript was cut.
         message: clean.truncated ? "transcript truncated to the input cap" : "",
         mode: "live",
         load: slot.load,
@@ -262,15 +130,8 @@ export async function onRequestPost(context) {
   }
 }
 
-/* ---------------------------------------------------------------------------- *
- * What kind of audio is this?
- * ---------------------------------------------------------------------------- */
-
-/** The containers this route will forward, by magic number. Every one of these is
- *  something a browser's `MediaRecorder` or the local sidecar can actually produce, plus
- *  wav for a hand-made control clip. The `ext` matters: an OpenAI-compatible
- *  `/audio/transcriptions` decides how to decode largely from the FILENAME, which is why
- *  `mqtt/moxie_sdk/stt.py`:254 sends `("utterance.wav", …)` rather than a bare stream. */
+/** The containers this route forwards. The `ext` matters: `/audio/transcriptions` decodes
+ *  largely by FILENAME, hence `utterance.<ext>`. */
 export const AUDIO_KINDS = Object.freeze({
   webm: { ext: "webm", mime: "audio/webm" },
   ogg: { ext: "ogg", mime: "audio/ogg" },
@@ -283,7 +144,7 @@ export const AUDIO_KINDS = Object.freeze({
 /** The declared-`Content-Type` fallback, used ONLY when the bytes are unrecognised. */
 const TYPE_TO_KIND = Object.freeze({
   "audio/webm": "webm",
-  "video/webm": "webm", // what Chrome labels a `MediaRecorder` blob on some versions
+  "video/webm": "webm", // Chrome labels some `MediaRecorder` blobs this way
   "audio/ogg": "ogg",
   "application/ogg": "ogg",
   "audio/wav": "wav",
@@ -304,18 +165,9 @@ const ascii = (b, at, s) => {
 };
 
 /**
- * Identify the container. **Sniff the bytes, never the Content-Type** — the same rule
- * `_lib/wav.js` applies to the gateway's replies (`mqtt/moxie_sdk/tts.py`:110-145), and it
- * matters even more here because this Content-Type comes from a VISITOR. `mic.js`:77 only
- * ever falls back to the *string* `"audio/webm"`; whether that string describes the blob
- * is not something the browser guarantees (§10 assumption 16).
- *
- * The declared type is consulted only as a second opinion, and only against the same
- * allowlist. Everything else — JSON, HTML, an image, raw headerless PCM — is refused, and
- * that refusal is free.
- *
- * EXPORTED so `sim/test_demo_ears.mjs` and `sim/tools/probe_demo_gateway.mjs` can exercise
- * the real classifier rather than a copy of it.
+ * Identify the container from its magic number; the VISITOR's Content-Type is a second
+ * opinion against the same allowlist. Everything else — JSON, HTML, an image, raw PCM — is
+ * refused for free.
  *
  * @param {Uint8Array} b
  * @param {string|null} declaredType
@@ -325,7 +177,7 @@ export function audioKind(b, declaredType) {
   const bytes = b || new Uint8Array(0);
   let id = null;
   if (bytes.length >= 12) {
-    // EBML — Matroska and therefore webm, which is what Chrome and Firefox record.
+    // EBML — Matroska, and therefore webm.
     if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) id = "webm";
     else if (ascii(bytes, 0, "OggS")) id = "ogg";
     else if (ascii(bytes, 0, "RIFF") && ascii(bytes, 8, "WAVE")) id = "wav";
@@ -343,28 +195,14 @@ export function audioKind(b, declaredType) {
   return null;
 }
 
-/* ---------------------------------------------------------------------------- *
- * The transcript
- * ---------------------------------------------------------------------------- */
-
 /**
- * The visitor's own words, on their way back to the visitor's own browser — and then
- * straight into `/api/chat` as the next turn. So it is bounded and stripped of control
- * characters here rather than trusted downstream.
- *
- * TRUNCATED, NOT REFUSED, and this is the one place that rule differs from §4.1's
- * treatment of typed input. A typed sentence over `DEMO_MAX_INPUT_CHARS` is `too_long`
- * because the visitor can see it and shorten it. A SPOKEN one cannot be shortened after
- * the fact, and refusing the whole utterance because an ASR produced 501 characters would
- * throw away everything the child said. With `DEMO_MAX_RECORD_MS` at 15 s this is a
- * defensive edge (15 s of speech is ~40 words), and the visitor is told via `message`.
+ * The visitor's words on their way back to the browser and then into `/api/chat`, so they
+ * are bounded and stripped of control characters here. TRUNCATED, NOT REFUSED — unlike
+ * typed input, speech cannot be shortened after the fact — and the visitor is told.
  */
 export function cleanTranscript(text, maxChars) {
   // eslint-disable-next-line no-control-regex
   const flat = String(text === undefined || text === null ? "" : text)
-    // C0 and C1 control characters: a JSON string carries them through happily, and a
-    // transcript row would then render them as nothing at all. Written as escapes so the
-    // source file itself stays plain text.
     .replace(/[\u0000-\u001F\u007F-\u009F]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -372,32 +210,18 @@ export function cleanTranscript(text, maxChars) {
   return flat.length > max ? { text: flat.slice(0, max).trim(), truncated: true } : { text: flat, truncated: false };
 }
 
-/* ---------------------------------------------------------------------------- *
- * The upstream call
- * ---------------------------------------------------------------------------- */
-
-/** An upstream reply larger than this is not a transcript, and reading all of it into a
- *  string is the only harm it could do us. A whisper `{"text": …}` for a 15-second clip is
- *  a few hundred bytes. */
+/** A whisper `{"text": …}` for 15 s is a few hundred bytes; anything this large is not one. */
 const MAX_UPSTREAM_REPLY_BYTES = 1000000;
 
 /**
- * §4.5's status table, for an upstream status — and deviation (2) of the header.
+ * An upstream status -> reason, answering "whose problem is it, and should the whole page
+ * degrade?" (a 503 degrades the page; a 400 is per-turn).
  *
- * The question this answers is not "what went wrong" but **"whose problem is it, and
- * should the whole page degrade?"** `mode.js` takes a 503 as evidence the deployment is
- * unhealthy and degrades the brain and the voice with it (§6.3); a 400 is per-turn and
- * changes nothing (§4.5: *"does not change mode"*).
- *
- *   429            → `rate_limited`   the gateway's own limiter; the caller adds Retry-After
- *   413            → `too_long`       our cap was looser than the gateway's
- *   401 / 403 / 407 → `upstream_down` a revoked or unauthorised key: an OPERATOR problem
- *   other 4xx      → `bad_request`    the gateway refused THESE BYTES (400, 415, 422 …)
- *   5xx and the rest → `upstream_down`
- *
- * The `other 4xx` row is the one that matters for §10 assumption 15. If a gateway rejects
- * webm/Opus it does so with a 400 or a 415, and this table turns that into one refused
- * turn with a scripted answer instead of a page that declares itself broken.
+ *   429              -> rate_limited
+ *   413              -> too_long       our cap was looser than the gateway's
+ *   401 / 403 / 407  -> upstream_down  a revoked key is an OPERATOR problem
+ *   other 4xx        -> bad_request    the gateway refused THESE BYTES
+ *   5xx and the rest -> upstream_down
  */
 export function reasonForUpstreamStatus(status) {
   const s = Number(status);
@@ -409,26 +233,15 @@ export function reasonForUpstreamStatus(status) {
 }
 
 /**
- * `POST {base}/audio/transcriptions` as a multipart upload, with a SERVER-FIXED model.
+ * `POST {base}/audio/transcriptions`, multipart, server-fixed model.
  *
- * The body is built here and never forwarded: `model` comes from `DEMO_STT_MODEL`, and the
- * only visitor-supplied part is the file itself. No `language`, no `prompt`, no
- * `temperature`, no `timestamp_granularities` — every one of those is a parameter a
- * visitor could otherwise steer, and none of them is needed to hear a child say hello.
- *
- * `response_format` is `json`, which is what `mqtt/moxie_sdk/stt.py`:256 asks for and what
- * `docs/guides/litellm-stt-setup.md` records the gateway answering: `{"text": …}`.
- *
- * @returns {{ok:boolean, text?:string, reason?:string, retryAfterS?:number}}
+ * @returns {Promise<{ok:boolean, text?:string, reason?:string, retryAfterS?:number}>}
  */
 async function callGateway(cfg, bytes, kind) {
   const form = buildTranscribeForm(cfg, bytes, kind);
 
-  // ONE credential function for all three routes (`_lib/env.js::upstreamHeaders`), so they
-  // cannot drift on what they present — but the Content-Type it sets has to GO. `fetch`
-  // generates the multipart boundary itself when the body is a FormData, and a
-  // hand-written `Content-Type` would override it with one that names no boundary, which
-  // an upstream reads as a malformed body. This is the one route where that applies.
+  // `fetch` writes the multipart boundary itself for a FormData body; a hand-set
+  // Content-Type would name no boundary and read upstream as a malformed body.
   const headers = upstreamHeaders(cfg, "multipart/form-data");
   delete headers["Content-Type"];
 
@@ -440,40 +253,16 @@ async function callGateway(cfg, bytes, kind) {
       headers,
       body: form,
       signal: AbortSignal.timeout(cfg.sttTimeoutMs),
-      // ---- REDIRECTS ARE NOT FOLLOWED, AND A 3xx IS A DOOR PROBLEM.
-      //
-      // `fetch`'s default is `follow`. This request carries the deployment's ONLY
-      // credential on an `Authorization` header (plus the `CF-Access-*` pair when a
-      // service token is configured), so following a 3xx means re-issuing it at whatever
-      // host the `Location` names. The Fetch standard does strip `Authorization` across an
-      // origin change — but a same-origin redirect keeps it, a 307/308 replays the BODY
-      // with it, and none of that is a property this file should be depending on a runtime
-      // to get right for it. `manual` removes the question: the 3xx is returned as-is and
-      // is answered below, with nothing re-sent anywhere.
-      //
-      // And a 3xx from the gateway is not an ambiguous signal. **A tunnel that redirects
-      // is a door problem, not a brain problem** — an Access login flow, a moved or
-      // renamed endpoint, a `DEMO_GATEWAY_BASE_URL` configured as `http://` that the host
-      // bounces to `https://`. Every one of those is fixed at the door, which is exactly
-      // what `gateway_unreachable_or_gated` tells an operator (`_lib/envelope.js`), and
-      // none is fixed by restarting a model server, which is what `upstream_down` would
-      // have sent them off to do.
-      redirect: "manual",
+      redirect: "manual", // a 3xx is a door problem; see `_lib/upstream.js`
     });
   } catch (err) {
-    const timedOut = err && (err.name === "TimeoutError" || err.name === "AbortError");
-    return timedOut ? { ok: false, reason: "timeout" } : { ok: false, reason: "upstream_down" };
+    return fetchFailure(err);
   }
 
-  // The gateway's own limiter, before anything else: a 429 is a 429 whatever body it
-  // carries, and it is the one upstream status with a number worth passing on.
-  if (res.status === 429) return { ok: false, reason: "rate_limited", retryAfterS: retryAfterOf(res) };
-
-  // A redirect, unfollowed — see `redirect: "manual"` above. It is answered HERE rather
-  // than left to `reasonForUpstreamStatus`, whose table has no 3xx row and whose catch-all
-  // is `upstream_down`: that would degrade the whole page (§6.3) and point an operator at
-  // the model server for a fault that is at the door.
-  if (res.status >= 300 && res.status < 400) return { ok: false, reason: "gateway_unreachable_or_gated" };
+  // 429 and 3xx before `reasonForUpstreamStatus`, whose catch-all would call a redirect
+  // `upstream_down`.
+  const early = limitedOrRedirected(res);
+  if (early) return early;
 
   let text;
   try {
@@ -483,17 +272,13 @@ async function callGateway(cfg, bytes, kind) {
   }
   if (text.length > MAX_UPSTREAM_REPLY_BYTES) return { ok: false, reason: "upstream_down" };
 
-  // An HTML body where JSON was expected is a **Cloudflare Access login page** in front of
-  // the tunnel — famously served with a 200 (`_lib/env.js::ACCESS_VARS`). Its fix is a
-  // service token, not a gateway restart, so it keeps its own reason. Checked before the
-  // status table because Access answers 200, 302 and 403 alike with the same page.
+  // A Cloudflare Access login page answers 200, 302 and 403 alike, so it is recognised
+  // before the status table.
   if (looksLikeHtml(text, res.headers.get("Content-Type"))) {
     return { ok: false, reason: "gateway_unreachable_or_gated" };
   }
 
-  // The body is deliberately NOT read for a message here: an OpenAI-compatible error names
-  // the model (`docs/guides/litellm-stt-setup.md`:  `Invalid model name passed in model=…`)
-  // and sometimes a key prefix. It classifies the failure and is then dropped on the floor.
+  // The error body only classifies the failure and is then dropped.
   if (!res.ok) return { ok: false, reason: reasonForUpstreamStatus(res.status) };
 
   let parsed;
@@ -502,10 +287,7 @@ async function callGateway(cfg, bytes, kind) {
   } catch {
     return { ok: false, reason: "upstream_down" };
   }
-  // `{"text": "…"}` — the shape `stt.py::transcript_text` accepts and the one the gateway
-  // was measured returning. A 200 with no `text` is a gateway that answered something else
-  // entirely, which is `upstream_down`, not an empty transcript: silence must not be
-  // indistinguishable from a broken endpoint.
+  // A 200 with no `text` is a gateway answering something else — not silence.
   if (!parsed || typeof parsed !== "object" || typeof parsed.text !== "string") {
     return { ok: false, reason: "upstream_down" };
   }
@@ -513,13 +295,9 @@ async function callGateway(cfg, bytes, kind) {
 }
 
 /**
- * The multipart body, built from configuration plus the one file.
- *
- * EXPORTED for the same reason `speech.js::buildSpeechBody` is: `sim/tools/probe_demo_gateway.mjs`
- * posts the body THIS function builds to a real gateway, because "the route works against a
- * stub" and "the body the route builds is accepted upstream" are two different claims — and
- * P0-b learned that the hard way when `/audio/speech` answered 500 to a body missing a
- * `voice` field no hermetic test required.
+ * The multipart body: `model` from `DEMO_STT_MODEL`, `response_format: json`, and the one
+ * file. No `language`/`prompt`/`temperature` — nothing a visitor could steer. Exported so
+ * `sim/tools/probe_demo_gateway.mjs` can post exactly this body to a real gateway.
  */
 export function buildTranscribeForm(cfg, bytes, kind) {
   const form = new FormData();
@@ -529,41 +307,9 @@ export function buildTranscribeForm(cfg, bytes, kind) {
   return form;
 }
 
-/** A body that starts with markup, or says it is markup. Cheap and deliberately loose:
- *  its only job is to separate "a login page" from "an API error" for the OPERATOR. */
+/** Markup, by header or by leading bytes. Loose on purpose: it only separates "a login
+ *  page" from "an API error" for the operator. */
 function looksLikeHtml(text, contentType) {
   if (/^\s*text\/html/i.test(String(contentType || ""))) return true;
   return /^\s*(?:<!doctype html|<html\b)/i.test(String(text || ""));
-}
-
-function retryAfterOf(res) {
-  const n = Number(res.headers.get("Retry-After"));
-  if (Number.isFinite(n) && n > 0) return Math.min(300, Math.ceil(n));
-  return 10;
-}
-
-/** §4/§7's envelope with §4.5's status and `Retry-After`. `message` stays empty for the
- *  same reason as in `chat.js` and `speech.js`: the visitor-facing copy lives in
- *  `sim/web/mode.js`, next to the badge it paints, so it is honest in `offline` too —
- *  where there is no server to send a string. */
-function refusal(cfg, reason, extra) {
-  const budget = budgetState(cfg);
-  return respond(
-    {
-      ok: false,
-      degraded: true,
-      reason,
-      retry_after_s: (extra && extra.retryAfterS) || (reason === "budget_exhausted" ? budget.retryAfterS : 0),
-      mode: "degraded",
-      load: (extra && extra.load) || loadOf(cfg, "transcribe"),
-      limits: publicLimits(cfg),
-      messages: [],
-      speech: [],
-      context: "",
-      transcript: "",
-      voice: cfg.voice,
-      ears: cfg.ears,
-    },
-    { rateLimit: (extra && extra.rateLimit) || null },
-  );
 }

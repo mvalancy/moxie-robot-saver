@@ -14,6 +14,7 @@ into a local one, which is what this guard does.
 required form. Comments are stripped before scanning, because a guard that string-matches
 over a whole file fires on the prose explaining it (playbook rule 17, learnt the same way).
 """
+import glob
 import os
 import re
 
@@ -36,10 +37,11 @@ def _code(src: str) -> str:
 
 
 def _mjs_files():
-    return sorted(
-        os.path.join(SIM, f) for f in os.listdir(SIM)
-        if f.startswith("test_") and f.endswith(".mjs")
-    )
+    """Every node suite, plus the section modules under `sim/tests/edge/` they import."""
+    top = [os.path.join(SIM, f) for f in os.listdir(SIM)
+           if f.startswith("test_") and f.endswith(".mjs")]
+    edge = glob.glob(os.path.join(SIM, "tests", "edge", "**", "*.mjs"), recursive=True)
+    return sorted(top + edge)
 
 
 def test_there_are_node_suites_to_check():

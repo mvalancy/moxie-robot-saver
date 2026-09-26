@@ -1,55 +1,26 @@
 /* functions/api/_lib/wav.js — whatever `/audio/speech` returned -> raw 16-bit PCM.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §3.2 (`POST /api/speech`), §2.2 (the
- * gateway lies about its Content-Type).
+ * Spec: docs/architecture/backlog/live-sim-demo.md §3.2 (`POST /api/speech`), §2.2.
+ * The edge transcription of `mqtt/moxie_sdk/tts.py::pcm_from_audio`.
  *
- * THE ONE RULE, and it is not a style preference: **SNIFF THE BYTES, NEVER THE
- * CONTENT-TYPE.** Our gateway labels a perfectly good Piper WAV `audio/mpeg` — a LiteLLM
- * quirk observed live on 2026-09-02 and written down twice, at
- * `mqtt/moxie_sdk/tts.py`:110-125 and `docs/guides/litellm-tts-setup.md`:58-60. A client
- * that branched on the header would ship an MP3 decoder at a RIFF file and play noise, or
- * nothing, to a child. This module is the edge transcription of `tts.py::pcm_from_audio`
- * (:110-145) — cited, not imported, because a Pages Function cannot import Python and
- * `wave` does not exist here.
+ *   1. SNIFF THE BYTES, NEVER THE CONTENT-TYPE. The gateway labels a valid Piper WAV
+ *      `audio/mpeg` (a LiteLLM quirk); branching on the header would play noise.
+ *   2. CARRY THE HEADER'S OWN rate and channels out, not the configured ones.
+ *      `DEMO_TTS_SAMPLE_RATE` is used only for a headerless raw-PCM reply.
+ *   3. AN ERROR BODY IS NEVER HANDED TO A VISITOR AS NOISE. JSON, HTML, a named foreign
+ *      container, or any non-RIFF body when `wav` was asked for raises; the route answers
+ *      503 `upstream_down`. The headerless branch opens only under `DEMO_TTS_FORMAT=pcm`
+ *      (and a caller that does not say gets the strict `wav` reading).
  *
- * THE SECOND RULE: **carry the header's OWN rate and channels out**, not the configured
- * ones. That is how a `CloudTTSResponse` stays truthful when the voice — and with it the
- * sample rate — changes under us. `DEMO_TTS_SAMPLE_RATE` is consulted only for a raw-PCM
- * reply, which has no header to ask (§5).
+ * Under `pcm`, "is this audio?" is undecidable: an odd length or mostly-printable body is
+ * refused, but a short binary error blob would pass. That is why `wav` is the default.
  *
- * THE THIRD RULE: **an error body is never handed to a visitor as noise.** A proxy
- * answering 200-with-JSON, or an unknown-model 400 surfaced as bytes, raises here and the
- * route answers 503 `upstream_down` (§3.2). The alternative is a page that plays a
- * half-second of static, which is the failure mode this whole contract exists to prevent.
- *
- * That rule used to be an OVERCLAIM, and the fix is the reason `format` exists on this
- * function's second argument. Until 2026-09-03 the non-RIFF branch was reached under EVERY
- * configuration, so the module's guarantee held for exactly three shapes — empty, `{`/`[`,
- * and `<` — and a 200 that was none of them (`text/plain`, an SSE `data: {"error":…}`
- * frame whose `data: ` prefix defeats the `{` sniff, an `ID3` mp3, a webm EBML header) was
- * returned as `container:"raw"`, base64'd and shipped to the visitor at status 200 with
- * `degraded:false`. §5 of the spec restricts `DEMO_TTS_FORMAT` to `wav` (the shipped
- * default) or `pcm`, and the raw branch is only ever CORRECT under `pcm` — where the body
- * genuinely has no header to read (spec §3.2's "anything else → treat as raw PCM"). So the
- * branch is now gated on the format that was actually ASKED FOR, and a caller that does
- * not say gets the strict reading. An mp3 from a gateway that quietly ignored
- * `response_format` is not a leak but it is still full-scale static in a child's ear,
- * which is the same harm from the other direction.
- *
- * WHAT THE RULE DOES **NOT** COVER, said plainly: under `DEMO_TTS_FORMAT=pcm` there is no
- * header and no magic number, so "is this audio?" is undecidable. Two cheap sanity guards
- * run there (an odd byte length is not 16-bit PCM; a body that is almost entirely
- * printable ASCII is text) and a known container is named and refused, but a short binary
- * error blob would still pass. `wav` is the default for that reason.
- *
- * 16-bit only. `CloudTTSResponse.AudioBuffer` is 16-bit PCM and `audio.js`'s decoder reads
- * `getInt16` with no width branch (`audio.js`:641-683), so an 8- or 24-bit WAV would play
- * as garbage rather than fail. Refusing it is the honest outcome.
+ * 16-bit only: `audio.js` decodes with `getInt16` and no width branch, so an 8/24-bit WAV
+ * would play as garbage. It is refused, not converted.
  */
 
-/** The one error this module raises. `reason` maps onto §3.2's closed reason set; the
- *  `message` is for a server-side comment only and never reaches a response body — the
- *  route builds its own visitor-facing copy (§4.2). */
+/** The one error this module raises. `message` is server-side only and never reaches a
+ *  response body (§4.2). */
 export class AudioBodyError extends Error {
   constructor(message, kind) {
     super(message);
@@ -59,37 +30,28 @@ export class AudioBodyError extends Error {
   }
 }
 
-/** Does this body look like a JSON document rather than audio? Cheap prefix sniff first
- *  (a 268 KB PCM buffer must not be run through JSON.parse on every call), then a real
- *  parse of a bounded prefix to be sure. */
-function jsonError(bytes) {
+/** Index of the first non-whitespace byte. */
+function skipWs(bytes) {
   let i = 0;
   while (i < bytes.length && (bytes[i] === 0x20 || bytes[i] === 0x09 || bytes[i] === 0x0a || bytes[i] === 0x0d)) i++;
+  return i;
+}
+
+/** Does this body look like a JSON document rather than audio? A body that starts with
+ *  `{` or `[` is not audio, whether or not it parses (a truncated error is still an error). */
+function jsonError(bytes) {
+  const i = skipWs(bytes);
   if (i >= bytes.length) return null;
-  if (bytes[i] !== 0x7b && bytes[i] !== 0x5b) return null; // '{' or '['
-  try {
-    // 8 KB is far more than any gateway error body and far less than any audio buffer.
-    JSON.parse(new TextDecoder().decode(bytes.subarray(i, Math.min(bytes.length, i + 8192))));
-    return true;
-  } catch {
-    // It began with a brace and did not parse: a truncated JSON error is still not audio.
-    return true;
-  }
+  return bytes[i] === 0x7b || bytes[i] === 0x5b ? true : null; // '{' or '['
 }
 
 /**
- * Does this body look like an HTML document?
- *
- * This one is not about audio formats at all — it is a DIAGNOSIS. The gateway is expected
- * to sit behind a Cloudflare Tunnel, and a tunnel protected by Cloudflare Access answers
- * an unauthenticated server-side fetch with an HTML LOGIN PAGE carrying a 200 status. An
- * HTML page is not RIFF, so without this check it would fall through to the raw-PCM branch
- * and a child would hear several seconds of loud static made out of markup. Byte-sniffed
- * like everything else here (`<` first, after whitespace), so no Content-Type is trusted.
+ * Does this body look like an HTML document? A diagnosis: a Cloudflare Access-protected
+ * tunnel answers an unauthenticated fetch with an HTML login page at 200, which would
+ * otherwise fall through to the raw branch as static.
  */
 function htmlBody(bytes) {
-  let i = 0;
-  while (i < bytes.length && (bytes[i] === 0x20 || bytes[i] === 0x09 || bytes[i] === 0x0a || bytes[i] === 0x0d)) i++;
+  const i = skipWs(bytes);
   if (i >= bytes.length || bytes[i] !== 0x3c) return false; // '<'
   const head = new TextDecoder().decode(bytes.subarray(i, Math.min(bytes.length, i + 512))).toLowerCase();
   return /^<(?:!doctype|html|head|meta|title|\?xml|script|body)\b/.test(head) || head.includes("<html");
@@ -105,18 +67,9 @@ const ascii = (b, at, s) => {
 };
 
 /**
- * Name a container we can RECOGNISE but not decode, by magic number.
- *
- * The same shape as `transcribe.js::audioKind` (:222-250) and deliberately not a second
- * invention of it — that route sniffs a VISITOR's upload against an allowlist, this one
- * sniffs a GATEWAY's reply against a denylist, but "sniff the bytes, never the
- * Content-Type" is one rule and the byte tests are the same tests.
- *
- * ONLY exact literal magics are used. `transcribe.js`'s loosest test — an MPEG frame sync,
- * `bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0` — is deliberately ABSENT: raw 16-bit
- * PCM starts `ff fb` any time its first sample is near -1 300, so that test would refuse
- * perfectly good audio under `DEMO_TTS_FORMAT=pcm`. A 4-byte literal collides with real
- * PCM at about 2^-32, which is a rate we can live with; a 11-bit one does not.
+ * Name a container we can RECOGNISE but not decode, by magic number — the same byte tests
+ * as `transcribe.js::audioKind`. ONLY exact literal magics: the MPEG frame-sync test
+ * (`ff fb…`) is deliberately absent, since raw 16-bit PCM can start with those bytes.
  *
  * @returns {string|null} a word for the server-side message, never for the wire
  */
@@ -131,15 +84,9 @@ function foreignContainer(bytes) {
 }
 
 /**
- * Is this body, to a first approximation, TEXT?
- *
- * The last line of defence on the `pcm` path, where there is no header and no magic number
- * to read. An SSE frame (`data: {"error":…}`) and a `text/plain` proxy error both slip past
- * `jsonError` — the `data: ` prefix means the `{` sniff never fires — and both are ~100 %
- * printable. 16-bit PCM is not: every other byte is a sample's HIGH byte, which sits at
- * 0x00/0xff for quiet audio and spreads over the whole range for loud audio, so even a
- * pathological signal lands far under this threshold. Bounded to 8 KB like `jsonError`, and
- * only consulted on bodies long enough for the ratio to mean anything.
+ * Is this body, to a first approximation, TEXT? The last guard on the headerless `pcm`
+ * path: an SSE `data: {"error":…}` frame or a `text/plain` error slips past `jsonError`
+ * and is ~100 % printable, while 16-bit PCM's high bytes never are. Bounded to 8 KB.
  */
 function mostlyText(bytes) {
   if (bytes.length < 32) return false;
@@ -168,9 +115,7 @@ export function pcmFromAudio(raw, fallback) {
   const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw || 0);
   if (!bytes.length) throw new AudioBodyError("the voice server returned an empty body", "empty");
   if (jsonError(bytes)) throw new AudioBodyError("the voice server returned JSON, not audio", "json");
-  // An HTML body where audio was expected is almost always an Access login page in front
-  // of the tunnel — see `htmlBody`. Distinguished from every other failure because the fix
-  // is completely different: configure the service token, do not restart the gateway.
+  // Distinguished because the fix differs: configure the Access token (see `htmlBody`).
   if (htmlBody(bytes)) throw new AudioBodyError("the voice server returned an HTML page, not audio", "html");
 
   const rate = Math.round(Number(fallback && fallback.sampleRate)) || 22050;
@@ -178,23 +123,17 @@ export function pcmFromAudio(raw, fallback) {
   const format = String((fallback && fallback.format) || "wav").toLowerCase();
 
   if (bytes.length < 12 || fourcc(bytes, 0) !== "RIFF" || fourcc(bytes, 8) !== "WAVE") {
-    // A container we can NAME is never raw PCM, whichever format was asked for. Under
-    // `wav` it is a gateway that ignored `response_format`; under `pcm` it is the same
-    // gateway ignoring the same field. Base64'ing either as "PCM" plays full-scale static.
+    // A container we can NAME is never raw PCM, whichever format was asked for.
     const named = foreignContainer(bytes);
     if (named) {
       throw new AudioBodyError("the voice server returned " + named + ", not decodable audio", "unreadable");
     }
     if (format !== "pcm") {
-      // THE THIRD RULE, now actually enforced. `wav` was requested and this is not RIFF:
-      // it is an error body, a container we do not know, or a gateway that ignored
-      // `response_format` — and not one of those is something a child should hear. The
-      // route maps `unreadable` onto `upstream_down` and the page degrades (§3.2, §4.5).
+      // Rule 3: `wav` was requested and this is not RIFF. Mapped to `upstream_down`.
       throw new AudioBodyError("non-RIFF body where wav was requested", "unreadable");
     }
-    // `DEMO_TTS_FORMAT=pcm`: headerless samples at the CONFIGURED rate — the only case
-    // where the configured rate is the right answer (spec §3.2, §5). Two cheap sanity
-    // guards, because there is no header here to be wrong about.
+    // `DEMO_TTS_FORMAT=pcm`: headerless samples at the CONFIGURED rate, after two cheap
+    // sanity guards.
     if (bytes.length % 2 !== 0) {
       throw new AudioBodyError("raw body of odd byte length is not 16-bit PCM", "unreadable");
     }
@@ -204,41 +143,11 @@ export function pcmFromAudio(raw, fallback) {
     return { pcm: bytes, sampleRate: rate, channels: ch, container: "raw" };
   }
 
-  // Walk the chunk list rather than assuming the canonical 44-byte layout: real encoders
-  // insert LIST/INFO/fact chunks, and an odd-sized chunk is padded to an even boundary
-  // (RIFF requires the pad byte, and it is NOT counted in the chunk size).
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let pos = 12;
-  let fmt = null;
-  let data = null;
-  while (pos + 8 <= bytes.length) {
-    const id = fourcc(bytes, pos);
-    const size = view.getUint32(pos + 4, true);
-    const body = pos + 8;
-    if (size > bytes.length - body) {
-      // A truncated final chunk. `data` is usable up to what actually arrived; anything
-      // else is unreadable.
-      if (id === "data" && data === null) data = { at: body, size: bytes.length - body };
-      break;
-    }
-    if (id === "fmt " && size >= 16) {
-      fmt = {
-        format: view.getUint16(body, true),
-        channels: view.getUint16(body + 2, true),
-        sampleRate: view.getUint32(body + 4, true),
-        bitsPerSample: view.getUint16(body + 14, true),
-      };
-    } else if (id === "data" && data === null) {
-      data = { at: body, size };
-    }
-    pos = body + size + (size % 2); // the RIFF pad byte
-  }
-
+  const { fmt, data } = walkRiff(bytes, false);
   if (!fmt) throw new AudioBodyError("WAV with no fmt chunk", "unreadable");
   if (!data || data.size <= 0) throw new AudioBodyError("WAV with no data chunk", "unreadable");
   if (fmt.bitsPerSample !== 16) {
-    // Deliberately NOT converted. See the header: the browser decoder has no width branch,
-    // so a silent conversion bug here would be inaudible to us and audible to a child.
+    // Deliberately NOT converted (see the header).
     throw new AudioBodyError(
       "the voice server sent " + fmt.bitsPerSample + "-bit WAV; CloudTTSResponse.AudioBuffer is 16-bit PCM",
       "bit_depth",
@@ -246,8 +155,7 @@ export function pcmFromAudio(raw, fallback) {
   }
 
   const channels = Math.max(1, Math.min(8, fmt.channels || ch));
-  // The header's own rate, clamped to the window `audio.js`:617-618 will accept, so a
-  // strange header can never produce a payload the browser decoder would refuse.
+  // The header's own rate, clamped to the window `audio.js` accepts.
   const sampleRate = Math.max(3000, Math.min(384000, fmt.sampleRate || rate));
   return {
     pcm: bytes.subarray(data.at, data.at + data.size),
@@ -258,17 +166,9 @@ export function pcmFromAudio(raw, fallback) {
 }
 
 /**
- * A minimal 16-bit RIFF/WAVE writer. The tests need to synthesize the exact bodies a
- * gateway sends, and a writer written next to the reader is a writer that pins the same
- * field offsets. `sim/test_wav_decode.mjs` builds its fixtures with it and then feeds the
- * result through `audio.js`'s real decoder, which is how one test pins both halves of the
- * contract with no server.
- *
- * SINCE 2026-09-05 IT HAS ONE PRODUCTION CALLER: `_lib/ttscache.js` wraps decoded PCM back
- * into a WAV before storing it, so a cache entry carries its own rate and channel count and
- * the hit path can decode with `pcmFromAudio` — the same function the miss path decodes the
- * gateway's answer with. Round-tripping through the writer and the reader in this one file
- * is what makes "the hit is byte-identical to the miss" a property rather than a hope.
+ * A minimal 16-bit RIFF/WAVE writer. Tests build fixtures with it; `_lib/ttscache.js`
+ * wraps decoded PCM in it before storing, so a cache hit decodes through `pcmFromAudio`
+ * exactly like a miss.
  */
 export function writeWav(pcm, { sampleRate, channels, bitsPerSample }) {
   const bits = bitsPerSample || 16;
@@ -296,60 +196,58 @@ export function writeWav(pcm, { sampleRate, channels, bitsPerSample }) {
   return out;
 }
 
-/* ---------------------------------------------------------------------------- *
- * How LONG is this WAV? — the one duration a Function can actually measure
- * ---------------------------------------------------------------------------- */
+/**
+ * Walk a RIFF/WAVE chunk list (bytes 12+) rather than assuming the canonical 44-byte
+ * layout: encoders insert LIST/INFO/fact chunks, and an odd-sized chunk carries an
+ * uncounted pad byte. A truncated `data` chunk is measured on what actually ARRIVED — a
+ * header may not buy audio (or duration) the body did not pay bytes for.
+ *
+ * @param {boolean} firstFmt keep the first `fmt ` chunk (else the last one wins)
+ * @returns {{fmt: object|null, data: {at:number, size:number}|null}}
+ */
+function walkRiff(bytes, firstFmt) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let pos = 12;
+  let fmt = null;
+  let data = null;
+  while (pos + 8 <= bytes.length) {
+    const id = fourcc(bytes, pos);
+    const size = view.getUint32(pos + 4, true);
+    const body = pos + 8;
+    if (size > bytes.length - body) {
+      if (id === "data" && data === null) data = { at: body, size: bytes.length - body };
+      break;
+    }
+    if (id === "fmt " && size >= 16 && !(firstFmt && fmt)) {
+      fmt = {
+        format: view.getUint16(body, true),
+        channels: view.getUint16(body + 2, true),
+        sampleRate: view.getUint32(body + 4, true),
+        bitsPerSample: view.getUint16(body + 14, true),
+      };
+    } else if (id === "data" && data === null) {
+      data = { at: body, size };
+    }
+    pos = body + size + (size % 2); // the RIFF pad byte
+  }
+  return { fmt, data };
+}
 
 /**
- * The playing time a RIFF/WAVE body DECLARES, in milliseconds, or `null` if this is not a
- * WAV whose header can be read.
+ * The playing time a RIFF/WAVE body DECLARES, in ms, or `null` if its header cannot be read.
  *
- * ============================================================================
- * WHY THIS EXISTS: A BYTE CAP IS NOT A DURATION CAP, AND STT IS PRICED BY DURATION.
+ * WHY: STT is priced by duration and a byte cap is not a duration cap — 500 KB is ~15 s at
+ * 16 kHz/16-bit/mono but ~31 s at 8 kHz/16-bit and ~125 s as 4-bit ADPCM, all legal, and
+ * `DEMO_MAX_RECORD_MS` was otherwise enforced only by `mic.js` in the browser.
+ * `transcribe.js` refuses `too_long` above the cap.
  *
- * `DEMO_MAX_AUDIO_BYTES` (500 000) was derived in §4.1 from ONE measurement — 193 358 B
- * for 6.04 s of 16 kHz 16-bit mono, i.e. ~32 KB/s — which makes 500 KB read like "about
- * 15 seconds". That arithmetic holds for exactly that one format. **Every other legal WAV
- * declares more seconds in the same bytes**, and the header is what the transcriber
- * believes:
+ * ONLY WAV: compressed containers carry duration in the bitstream, and a Function must
+ * not run a decoder on a hostile upload. The cap is total only because
+ * `DEMO_STT_FORMATS` defaults to `wav` alone; a fork that widens it re-opens the gap.
  *
- *     16 kHz, 16-bit, mono   32 000 B/s   500 KB ->  ~15 s   (the assumed case)
- *      8 kHz, 16-bit, mono   16 000 B/s   500 KB ->  ~31 s
- *      8 kHz,  8-bit, mono    8 000 B/s   500 KB ->  ~62 s
- *      8 kHz,  4-bit ADPCM    4 000 B/s   500 KB -> ~125 s
- *
- * None of those is malformed, none is exotic, and every one of them is a legitimate file
- * a `curl` can post today. The byte ceiling therefore buys a *four-to-eight-fold* looser
- * duration ceiling than §4.1 claims it does, and `DEMO_MAX_RECORD_MS` — the number that
- * is actually supposed to bound STT cost — was enforced ONLY in `sim/web/mic.js`, in the
- * browser, where a caller who is not using our page simply does not run it.
- *
- * A WAV header is four fixed-offset integers behind a chunk walk this file already does,
- * so for this ONE container the duration is knowable server-side for free, before the
- * upload is forwarded. `transcribe.js` calls this and refuses `too_long` above the cap.
- *
- * **AND HERE IS WHAT IT DOES NOT COVER, stated rather than implied.** webm/Opus,
- * ogg/Opus, mp4/AAC, mp3 and FLAC carry their duration in a bitstream, not in a header
- * field — reading it means walking pages, parsing frame headers, or shipping a decoder,
- * and a decoder is exactly what a Function must not do to a hostile upload. For those
- * containers the honest ceiling is still the byte cap plus `mic.js`'s hard stop, and it is
- * still not a duration cap. **The reason this closes the hole in practice rather than
- * merely narrowing it is `DEMO_STT_FORMATS`, which defaults to `wav` ALONE** (see
- * `env.js::sttFormats`: the gateway answered HTTP 500 to all three compressed containers
- * when they were probed on 2026-09-03). Under the shipped configuration, WAV is the only
- * container that reaches the gateway at all — so on this deployment the duration cap is
- * total. A fork that widens `DEMO_STT_FORMATS` re-opens exactly the gap this comment
- * describes, and gets no warning from the code, which is why it is written down here.
- * ============================================================================
- *
- * The duration is computed from `nSamplesPerSec x nChannels x wBitsPerSample`, NOT from
- * the header's own `nAvgBytesPerSec` field: that field is redundant, is ignored by most
- * decoders, and is the one a hostile file would inflate to under-declare its own length.
- * The three fields used are the three a decoder actually reads.
- *
- * Returns `null` — meaning "no opinion", never "it is short" — for a body that is not
- * RIFF/WAVE, has no `fmt ` or `data` chunk, or declares a rate/width of zero. A caller
- * must treat `null` as *unknown duration*, not as *within the cap*.
+ * Computed from rate × channels × bits, NOT the redundant `nAvgBytesPerSec` a hostile file
+ * would inflate. `null` means "unknown", never "short". Uses the FIRST `fmt ` chunk and its
+ * own walk rather than `pcmFromAudio`, which throws on non-16-bit — the case this catches.
  *
  * @param {Uint8Array|ArrayBuffer} raw
  * @returns {{ms:number, sampleRate:number, channels:number, bitsPerSample:number,
@@ -360,37 +258,8 @@ export function wavDurationMs(raw) {
   if (bytes.length < 12) return null;
   if (fourcc(bytes, 0) !== "RIFF" || fourcc(bytes, 8) !== "WAVE") return null;
 
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let pos = 12;
-  let fmt = null;
-  let dataBytes = null;
-  // The same chunk walk as `pcmFromAudio` — real encoders insert LIST/INFO/fact chunks and
-  // an odd-sized chunk carries a pad byte that is not counted in its size. Deliberately a
-  // SEPARATE walk rather than a call into that function: `pcmFromAudio` throws on anything
-  // that is not 16-bit, and 8-bit is precisely the case this exists to catch.
-  while (pos + 8 <= bytes.length) {
-    const id = fourcc(bytes, pos);
-    const size = view.getUint32(pos + 4, true);
-    const body = pos + 8;
-    if (size > bytes.length - body) {
-      // Truncated final chunk. A `data` chunk that CLAIMS more than arrived is measured on
-      // what arrived: a header may not buy duration the upload did not pay bytes for.
-      if (id === "data" && dataBytes === null) dataBytes = bytes.length - body;
-      break;
-    }
-    if (id === "fmt " && size >= 16 && !fmt) {
-      fmt = {
-        formatTag: view.getUint16(body, true),
-        channels: view.getUint16(body + 2, true),
-        sampleRate: view.getUint32(body + 4, true),
-        bitsPerSample: view.getUint16(body + 14, true),
-      };
-    } else if (id === "data" && dataBytes === null) {
-      dataBytes = size;
-    }
-    pos = body + size + (size % 2);
-  }
-
+  const { fmt, data } = walkRiff(bytes, true);
+  const dataBytes = data ? data.size : null;
   if (!fmt || dataBytes === null || dataBytes <= 0) return null;
   const channels = fmt.channels || 1;
   const bytesPerSecond = (fmt.sampleRate * channels * fmt.bitsPerSample) / 8;
@@ -401,6 +270,6 @@ export function wavDurationMs(raw) {
     channels,
     bitsPerSample: fmt.bitsPerSample,
     dataBytes,
-    formatTag: fmt.formatTag,
+    formatTag: fmt.format,
   };
 }
