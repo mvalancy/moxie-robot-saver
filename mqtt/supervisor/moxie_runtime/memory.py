@@ -9,68 +9,27 @@ from .constants import MEMORY_POLICY
 
 
 class MemoryMixin:
-    # ---- conversation memory (survives restarts) ----
-    #
-    # THIS IS THE SECOND MEMORY, AND IT IS THE ONE THAT HOLDS THE CHILD'S OWN WORDS.
-    #
-    # `MemoryStore` (below) keeps a handful of durable *facts* a module derived from a
-    # conversation. This keeps the **rolling transcript** — every line, as said — and
-    # `MOXIE_MEMORY_DIR` writes it to disk. Both compose files set that variable
-    # (`docker-compose.yml`, `docker-compose.images.yml` → `/data/memory`), so on a
-    # shipped appliance this path is ON by default.
-    #
-    # It used to be guarded by nothing but `if not self._memory_dir`, while this file's
-    # own comments and `docs/architecture/content-module-contract.md` both promised that
-    # `LoggingPolicy.NO_DATA` means nothing about the child is written. That was a stated
-    # guarantee the code did not keep. These four methods are the gate that keeps it.
-    #
-    # Three decisions, written down because a reader will ask about each:
-    #
-    #  1. **`NO_MEDIA` (the default) writes the transcript; only `NO_DATA` stops it.**
-    #     Telemetry's `NO_MEDIA` withholds `event_data` because that field is opaque
-    #     `bytes` that could be audio or video — literal media a gate cannot classify. A
-    #     transcript has no such payload: it is *entirely* text this process is already
-    #     holding in RAM to make conversation work. So there is nothing to withhold and
-    #     the choice is binary, and it is made the same way long-term memory and the
-    #     safety journal make it (`MEMORY_POLICY`, `SAFETY_JOURNAL_POLICY`): allowed
-    #     under `NO_MEDIA`/`FULL`, refused under `NO_DATA`. Deciding otherwise would mean
-    #     the *default* deployment loses conversational continuity across a restart while
-    #     still storing derived facts about the same child — stricter in name and not in
-    #     substance.
-    #
-    #  2. **Flipping to `NO_DATA` deletes the file that is already there.** Refusing new
-    #     writes and leaving yesterday's transcript on disk is a half-guarantee, and the
-    #     contract is explicit that *"reads and erase always work"* — erasure is never
-    #     policy-gated, so removing it is always permitted. It is also load-bearing:
-    #     `_load_memory` reads that file straight back into RAM and into the next prompt,
-    #     so a file left behind is not merely stored, it is still *in use*. The sweep runs
-    #     at boot and after any config edit that could have flipped the switch, and the
-    #     write path removes the file too, so no single missed hook leaves it lying about.
-    #
-    #  3. **In-memory history is NOT gated.** This is a *persistence* gate. The rolling
-    #     window in RAM is what lets Moxie hold the thread of the conversation it is in;
-    #     a robot that forgot the previous sentence would not be more private, it would
-    #     be broken. Nothing about the child leaves this process either way, and the
-    #     window dies with it. The privacy question is what survives on disk.
-    #
-    # The gate resolves through `memory_policy` — the same per-device callable the
-    # runtime installs on `MemoryStore` — rather than a new constant or a new resolver,
-    # so a parent has one switch, not two that could disagree.
+    # ---- conversation transcript (survives restarts) ----
+    # The rolling transcript — the child's own words — written under MOXIE_MEMORY_DIR
+    # (on by default in both compose files). Persistence is gated on `memory_policy`, the
+    # same switch as `MemoryStore`:
+    #  1. NO_MEDIA (default) and FULL persist it; only NO_DATA stops it. A transcript has
+    #     no opaque media payload to withhold, so the choice is binary.
+    #  2. Flipping to NO_DATA deletes the existing file (at boot, on config edits, and on
+    #     the write path): `_load_memory` would otherwise feed it into the next prompt.
+    #  3. In-RAM history is not gated — without it Moxie forgets the last sentence.
 
     def _memory_path(self, device_id: str) -> str:
         safe = "".join(c for c in device_id if c.isalnum() or c in "-_")
         return os.path.join(self._memory_dir, f"{safe}.json")
 
     def transcript_persists(self, device_id) -> bool:
-        """False under `NO_DATA` — this robot's transcript is never written to disk, and
-        anything already there is removed. Resolved per call from the **effective**
-        (`fleet ⊕ per-robot`) config, so a parent flipping the switch on a live robot
-        takes effect on the very next turn with no restart."""
+        """False under NO_DATA: the transcript is never written and existing copies are
+        removed. Resolved per call from the effective config (no restart needed)."""
         return self.memory_policy(device_id) != LoggingPolicy.NO_DATA
 
     def _unlink(self, path: str) -> bool:
-        """Remove one file. True if it was there. Best-effort by design: this runs on the
-        MQTT thread, and a file we cannot delete must not cost the child their turn."""
+        """Remove one file; True if it was there. Best effort (runs on the MQTT thread)."""
         try:
             os.remove(path)
             return True
@@ -81,8 +40,7 @@ class MemoryMixin:
             return False
 
     def _forget_transcript(self, device_id: str) -> bool:
-        """Delete this robot's on-disk transcript (and any half-written `.tmp` beside
-        it). Never policy-gated — an erase always works — and idempotent."""
+        """Delete this robot's on-disk transcript (+ any `.tmp`). Never policy-gated."""
         if not self._memory_dir:
             return False
         path = self._memory_path(device_id)
@@ -94,11 +52,8 @@ class MemoryMixin:
         return gone
 
     def purge_transcripts(self) -> int:
-        """Remove every stored transcript whose robot is now under `NO_DATA`.
-
-        Called at startup and after any config edit that could have flipped the switch,
-        so "I turned recording off" means the file is gone *now* — not at the next turn,
-        and not only for the robots that happen to be connected."""
+        """Remove every stored transcript whose robot is now under NO_DATA (at startup
+        and after config edits — for connected and offline robots alike)."""
         if not self._memory_dir or not os.path.isdir(self._memory_dir):
             return 0
         removed = 0
@@ -119,10 +74,8 @@ class MemoryMixin:
         return removed
 
     def _load_memory(self):
-        """Restore per-device conversation history from disk, if configured — for the
-        robots whose parents allow it. The `NO_DATA` sweep runs FIRST, so a fleet-wide
-        rule (which is durable, and therefore outlives the process) is honoured across a
-        restart instead of being undone by one."""
+        """Restore per-device history from disk. The NO_DATA sweep runs first so a
+        durable fleet rule is honoured across a restart."""
         if not self._memory_dir:
             return
         try:
@@ -139,10 +92,8 @@ class MemoryMixin:
             print(f"[runtime] memory load failed: {e}")
 
     def _save_memory(self, device_id: str):
-        """Persist one robot's history (trimmed) so it survives a restart — **unless the
-        parent's `LoggingPolicy` says nothing about this child may be stored**, in which
-        case we write nothing and remove whatever is already there (see decisions 1-3
-        above). `self.history` is untouched either way: the conversation still works."""
+        """Persist one robot's (trimmed) history, or under NO_DATA write nothing and
+        remove what exists. `self.history` is untouched either way."""
         if not self._memory_dir:
             return
         if not self.transcript_persists(device_id):
@@ -161,29 +112,14 @@ class MemoryMixin:
             print(f"[runtime] memory save failed: {e}")
 
     # ---- long-term memory (persist_data + what a parent may read/erase) ----
-    # The *conversation history* above is the rolling transcript. This is the other
-    # memory: the durable facts a content module keeps between conversations
-    # (docs/architecture/content-module-contract.md → `volley.persist_data` /
-    # `session.summarize()`), stored by `moxie_sdk/store.py::MemoryStore`.
-    #
-    # The app owns the store (ContentApp builds one); the runtime owns two things the
-    # app cannot know: the parent's per-device privacy switch, and *when a conversation
-    # ended* — which is the only moment the whole transcript still exists.
-    #
-    # BEYOND #4 (openmoxie-feature-audit.md §4.2) says a memory a parent cannot read or
-    # erase is not acceptable on a child's device. `/memory` is that floor: GET to read
-    # what Moxie remembers (every item with its id and provenance), DELETE to forget one
-    # item, one namespace or all of it, POST to erase the same way or to **correct** one
-    # item in place. The console's 🧠 card is the browser over exactly these.
+    # Durable facts a content module keeps between conversations (content-module-contract.md
+    # `volley.persist_data` / `session.summarize()`, `moxie_sdk/store.py::MemoryStore`).
+    # The app owns the store; the runtime owns the parent's privacy switch and the moment a
+    # conversation ends. `/memory` lets a parent read, erase or correct it (audit BEYOND #4).
 
     def memory_policy(self, device_id) -> LoggingPolicy:
-        """The LoggingPolicy governing what may be *remembered* about this child — the
-        parent's explicit `logging_policy` if there is one, else `MEMORY_POLICY`.
-        `NO_DATA` means no memory is written at all (reads and erase still work).
-
-        Read from the **effective** config (fleet ⊕ per-robot), so a house rule set once
-        for the appliance turns memory off for every robot on it, and a single robot can
-        still be set apart."""
+        """The LoggingPolicy for what may be remembered about this child: the effective
+        (fleet + per-robot) `logging_policy`, else `MEMORY_POLICY`. NO_DATA = no writes."""
         raw = (self.effective_config(device_id) or {}).get("logging_policy")
         if raw is None:
             return MEMORY_POLICY
@@ -193,14 +129,8 @@ class MemoryMixin:
             return MEMORY_POLICY
 
     def _wire_memory_policy(self, app=None):
-        """Hand an app's memory store this runtime's per-device privacy gate.
-
-        Done here rather than at construction so an app built by `config.build_app()`
-        (which knows nothing about a device's config overrides) still honours them.
-        `app` defaults to the appliance's own brain; `app_for` passes every brain it
-        builds later, so a per-child brain's memory obeys the same parent switch as the
-        default one — a privacy gate that applied to only one of them would be worse
-        than none, because nobody would know which."""
+        """Hand an app's memory store this runtime's per-device privacy gate. Done late
+        so `config.build_app()` apps and every per-child brain `app_for` builds obey it."""
         mem = getattr(app if app is not None else self.app, "memory", None)
         if mem is not None and getattr(mem, "policy", None) is None:
             try:
@@ -209,8 +139,8 @@ class MemoryMixin:
                 pass
 
     def memory_store(self):
-        """The app's memory store, or a read-only view of the same files for an app
-        that has none (so `/memory` answers for any app)."""
+        """The app's memory store, or a read-only view of the same files (so `/memory`
+        answers for any app)."""
         mem = getattr(self.app, "memory", None)
         if mem is not None:
             return mem
@@ -228,11 +158,8 @@ class MemoryMixin:
         return view
 
     def erase_memory(self, device_id, namespace=None, item=None) -> dict:
-        """Forget one item, one namespace, or everything for this robot.
-
-        Never policy-gated: a parent must always be able to delete. `item` is the finest
-        cut — one wrong line goes without costing the rest of what that activity learned
-        (BEYOND #4's other half)."""
+        """Forget one item, one namespace, or everything for this robot. Never
+        policy-gated."""
         if item:
             removed = self.memory_store().erase_item(device_id, namespace, item)
             what = f"{namespace}/{item}"
@@ -253,16 +180,10 @@ class MemoryMixin:
         return out
 
     def edit_memory_item(self, device_id, namespace, item, text) -> dict:
-        """Correct one remembered item — the other thing a parent needs when a summary is
-        wrong but not worthless ("Puppy sleeps on **his** bed" → "…my bed").
-
-        The store keeps the item's id, **pins** it (a human decision outranks decay) and
-        re-runs the two rules that decide what may live in a prompt: the safety
-        classifier, and the no-verbatim check against this robot's recent conversation —
-        so a parent cannot paste the child's own words back in. A refusal raises, and the
-        handler turns it into a 400 with the reason. Not policy-gated: fixing a wrong line
-        must work even on a `NO_DATA` robot, where the only alternative is deleting it."""
-        edited = self.memory_store().edit_item(
+        """Correct one remembered item in place. The store pins it and re-runs the safety
+        classifier and the no-verbatim check against recent history; a refusal raises
+        (the handler answers 400). Not policy-gated."""
+        self.memory_store().edit_item(
             device_id, namespace, item, text,
             history=list(self.history.get(device_id) or []))
         self._note("memory", f"✏️ corrected memory: {namespace}/{item}")
@@ -285,16 +206,11 @@ class MemoryMixin:
     def _end_conversation(self, device_id, reason: str, *, robot=None, inline=False):
         """Tell the app a conversation finished, so it can write long-term memory.
 
-        `inline=True` when we are already on a worker thread (the turn path); otherwise
-        the work is submitted to the pool, because this can make a brain call and the
-        MQTT loop must never block on one. A failure here is logged and dropped: a
-        summary is a nice-to-have, and a child's session must not end badly for it."""
-        # The module is exiting, and the recovered contract is explicit that *"events are
-        # automatically unsubscribed when the module exits"* (RemoteModuleAPI
-        # §Unsubscribing). The latch is keyed `(device, module)`, which catches a switch
-        # A→B but **not** a re-entry A→B→A: the key matches again and we never re-subscribe.
-        # Cleared here, before the early return below, because a conversation with no
-        # history still ended a module.
+        `inline=True` on a worker thread (the turn path); otherwise submitted to the pool
+        so the MQTT loop never blocks on a brain call. Failures are logged and dropped.
+        """
+        # Module exit ends its event subscriptions (RemoteModuleAPI), so drop the vision
+        # latch — before the early return: a history-less conversation still ended a module.
         self._forget_robot_state(device_id, vision_only=True)
         robot = robot or self.robots.get(device_id)
         history = list(self.history.get(device_id) or [])

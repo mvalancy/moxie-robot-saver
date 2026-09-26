@@ -11,8 +11,8 @@ from .constants import SAFETY_JOURNAL_POLICY
 class SafetyMixin:
     # ---- child safety (AI seam §2 — InputSafety) ----
     def safety_policy(self, device_id) -> LoggingPolicy:
-        """The LoggingPolicy governing this robot's safety journal — the parent's explicit
-        `logging_policy` override if there is one, else `SAFETY_JOURNAL_POLICY`."""
+        """This robot's safety-journal LoggingPolicy: the parent's override, else
+        `SAFETY_JOURNAL_POLICY`."""
         raw = (self._config_overrides.get(device_id) or {}).get("logging_policy")
         if raw is None:
             return SAFETY_JOURNAL_POLICY
@@ -22,14 +22,12 @@ class SafetyMixin:
             return SAFETY_JOURNAL_POLICY
 
     def _safety_keeps_rows(self, device_id) -> bool:
-        """False under `NO_DATA`: the journal then keeps counts and nothing else — no
-        excerpt, no per-event row, so none of the child's words are stored at all."""
+        """False under NO_DATA: counts only — no rows, no excerpts."""
         return self.safety_policy(device_id) != LoggingPolicy.NO_DATA
 
     def _assess(self, text, role):
-        """Run the classifier, or None when it is off / the text is empty. A classifier
-        that raises is treated as "allow": a broken safety stage must never silence Moxie
-        (it is a layer under the model's own alignment, not the only one)."""
+        """Run the classifier; None when off or the text is empty. A classifier that
+        raises allows: a broken safety stage must never silence Moxie."""
         if self.safety is None or not (text or "").strip():
             return None
         try:
@@ -73,13 +71,9 @@ class SafetyMixin:
         return red
 
     def _safety_gate_input(self, device_id, event_id, speech, seq) -> bool:
-        """Pre-inference gate: assess what the CHILD said before any brain call.
-
-        Hard-blocked → the brain is never called; Moxie speaks a gentle, kid-appropriate
-        redirect as a spec-conformant `RemoteChatResponse` carrying
-        `input.safety` (`RemoteChatInput.InputSafety`, RemoteChat.proto:180-186/:198/:335).
-        Flagged → allowed through to the brain and recorded for a parent.
-        Returns True when the turn was answered here and the caller must stop.
+        """Pre-inference gate on what the CHILD said. Blocked -> the brain is never
+        called and Moxie speaks a redirect carrying `input.safety` (RemoteChat.proto
+        InputSafety); flagged -> allowed and recorded. True when the turn was answered here.
         """
         verdict = self._assess(speech, safety_seam.CHILD)
         if not verdict:
@@ -90,8 +84,7 @@ class SafetyMixin:
         red = self._safety_redirect(device_id, verdict)
         if self._is_stale(device_id, seq):
             return True
-        # Deliberately remember only OUR line: putting the blocked utterance in the
-        # history would feed it to the brain as context on the very next turn.
+        # Remember only OUR line: the blocked utterance must not reach the next prompt.
         self._remember(device_id, "", red.text)
         _, red_scored = self._stage(red.text, red, turn_key=event_id,
                                     markup=red.markup)

@@ -5,49 +5,21 @@ from moxie_sdk import brains as brain_seam
 
 
 class BrainMixin:
-    # ---- 🧠 the brain picker: any brain, hot-swappable, per child -----------------
-    #
-    # `ai-seam.md` §2 calls the brain a seam and says any AI can wear the shell. It was
-    # true of the drawing and false of the box: `MOXIE_APP` chose one brain, once, at
-    # import, for every child on the appliance. These few methods are the whole feature,
-    # and each half is something this codebase already does:
-    #
-    #   * **the registry** — `moxie_sdk/brains.py`, a closed positive list (the idiom of
-    #     `content/packs.py::SPEC` and `content/ext.py::OPS`). A name resolves to a
-    #     builder; an unknown name is refused, never guessed;
-    #   * **the selection** — `brain` is an ordinary key in the ordinary config layers
-    #     (`fleet/config.json` ⊕ the per-robot overrides, audit ADOPT #6). There is no
-    #     second store and no second layering: `POST /config?scope=fleet` already writes
-    #     the house rule and `POST /config?device_id=` already writes one robot's;
-    #   * **the swap** — the 🎚️ voice picker's rule, exactly: the choice is resolved ONCE
-    #     at the top of a turn (`_handle_turn`), so the next turn uses the new brain and a
-    #     turn already in flight finishes with the one it started with. Same shape as
-    #     `reload_content()`'s attribute swap: no restart, no reconnect, no dropped turn;
-    #   * **the pin** — an explicit `MOXIE_APP` wins over any per-child pick (PR #77's
-    #     owner rule). It is enforced in `brains.resolve_brain`, which every read goes
-    #     through, so a pick stored before the pin appeared cannot install anything.
-    #
-    # A brain that cannot be built on this box (a `webhook` with no endpoint, an `llm`
-    # with no `MOXIE_LLM_BASE_URL`) keeps the appliance TALKING with the brain it already
-    # had, and says so once — the same trade `_install_voice` makes, for the same reason:
-    # a downgrade caused by an attempt to improve things is the worst shape a failure can
-    # take.
+    # Brain picker (backlog/brain-picker.md): the registry is `moxie_sdk/brains.py` (a
+    # closed list); the selection is the ordinary `brain` config key (defaults + fleet +
+    # per-robot); the swap happens once at the top of each turn, so a turn in flight keeps
+    # its brain; an explicit MOXIE_APP pins it (enforced in `brains.resolve_brain`). A brain
+    # that cannot be built keeps the current one talking and says so once.
     BRAIN_KEY = brain_seam.CONFIG_KEY
 
     def set_brain_engines(self, engines):
-        """Install the appliance's brain builders (`config.brain_engines()`).
-
-        Without one the card still renders and the appliance keeps its boot brain — an
-        honest floor rather than a picker that offers what this box cannot build."""
+        """Install the appliance's brain builders (`config.brain_engines()`). Without
+        them the appliance keeps its boot brain."""
         self._brain_engines = engines
 
     def _brain_availability(self) -> dict:
-        """`{available, pin, pin_note, default}` — never raises.
-
-        No discovery and no network: unlike the gateway's voice catalog, the set of
-        brains is a table in this repo. With no engines installed the answer is still the
-        real table, marked with the brain this runtime actually booted with.
-        """
+        """`{available, pin, pin_note, default}` — never raises; no network (the brain
+        set is a table in this repo)."""
         boot = brain_seam.sanitize_brain(getattr(self.app, "name", "")) \
             or brain_seam.DEFAULT_BRAIN
         engines = self._brain_engines
@@ -59,9 +31,8 @@ class BrainMixin:
                         "pin": brain_seam.sanitize_brain(out.get("pin")),
                         "pin_note": str(out.get("pin_note") or ""),
                         "default": brain_seam.sanitize_brain(out.get("default")) or boot}
-            except (Exception, SystemExit) as e:   # a broken seam is local-only, and a
-                # misconfigured `MOXIE_APP` raises SystemExit rather than Exception — a
-                # card that 500s is a worse answer than a card that shows the real table.
+            except (Exception, SystemExit) as e:   # a bad MOXIE_APP raises SystemExit;
+                # show the real table rather than 500 the card.
                 self._note("brain", f"🧠 brain options unavailable: {type(e).__name__}")
         return {"available": brain_seam.options(default=boot), "pin": "",
                 "pin_note": "", "default": boot}
@@ -71,12 +42,9 @@ class BrainMixin:
         return self._brain_availability()["pin"]
 
     def brain_for(self, device_id) -> dict:
-        """Which brain answers THIS robot, and which layer said so.
-
-        `{brain, source, requested, pinned, note}` — `brains.resolve_brain` over
-        `defaults ⊕ fleet ⊕ per-robot`, read from the store each time so an edit made in
-        another process (or by hand in `fleet/config.json`) is picked up on the next turn.
-        """
+        """Which brain answers THIS robot, and which layer said so:
+        `{brain, source, requested, pinned, note}`. Read from the store each time so an
+        edit from another process lands on the next turn."""
         avail = self._brain_availability()
         return brain_seam.resolve_brain(
             default=avail["default"],
@@ -87,12 +55,7 @@ class BrainMixin:
     def app_for(self, device_id):
         """The `MoxieApp` in force for one robot — built on first use, then cached.
 
-        Called ONCE per turn, at the top, and the result is carried through the turn: a
-        parent who swaps a brain mid-answer gets the new one on the child's *next*
-        sentence, never halfway through this one.
-
-        The lock covers the BUILD, never the turn: constructing a brain is a client
-        object, not a network round trip, and `respond()` runs outside it.
+        Called once at the top of a turn. The lock covers the build only, never `respond()`.
         """
         name = self.brain_for(device_id)["brain"]
         app = self._brains.get(name)
@@ -114,9 +77,7 @@ class BrainMixin:
                 except Exception as e:           # noqa: BLE001 — a bad pick must not kill us
                     note = f"{type(e).__name__}: {e}"
             if app is None:
-                # Keep talking with the brain we already have, and say it ONCE per name
-                # rather than once per turn — a child must not pay for a parent's typo,
-                # and an operator must not have to read the same line every ten seconds.
+                # Keep the current brain; report the failure once per name, not per turn.
                 if self._brain_failed.get(name) != note:
                     self._brain_failed[name] = note
                     self._note("brain", f"🧠 {name} could not be built — keeping "
@@ -132,13 +93,8 @@ class BrainMixin:
             return app
 
     def brain_view(self) -> dict:
-        """What the 🧠 card renders: every brain this appliance can run, the house rule,
-        and which one answers each robot — with the layer that decided it.
-
-        Fleet-level *and* per-robot in one document, because the whole point of the
-        feature is the difference between the two: a card that showed only the appliance
-        value could not show that one child is on a different brain.
-        """
+        """The brain card: every brain this appliance can run, the house rule, and which
+        one answers each robot (with the deciding layer)."""
         avail = self._brain_availability()
         fleet = brain_seam.sanitize_brain(self.fleet_config().get(self.BRAIN_KEY))
         robots = []
@@ -166,14 +122,8 @@ class BrainMixin:
     def brain_update(self, patch, device_id: str = "", scope: str = "robot") -> dict:
         """Persist a brain pick — the house rule (`scope="fleet"`) or one robot's.
 
-        The pick is checked against the registry AND against the environment's pin, and a
-        refusal carries the sentence the card shows, naming `MOXIE_APP`. It then goes
-        through the ordinary config write (`update_fleet_config` / `update_config`), so
-        there is one code path that stores a parent's setting and one that pushes a
-        robot's document — this method adds a validation and a log line, not a store.
-
-        Nothing is "installed" here: the next turn resolves the layers and builds what it
-        finds. That is what makes the swap free of a restart and safe mid-conversation.
+        Validated against the registry and the MOXIE_APP pin, then stored through the
+        ordinary config write. The next turn resolves and builds it; no restart.
         """
         try:
             name = brain_seam.normalize_brain_patch(patch, pin=self.brain_pin())

@@ -8,16 +8,16 @@ from markup import make_markup
 
 
 class VoiceMixin:
-    # ---- TTS (AI seam §3) — server voice for the SIM ----
+    # ---- TTS (ai-seam §3): server voice for the SIM ----
     def set_synthesizer(self, synth):
-        """Install a server-side TTS engine (moxie_sdk.tts.Synthesizer). The SIM plays
-        the resulting audio; a real robot self-synthesizes so this is SIM-only."""
+        """Install a server-side TTS engine (`moxie_sdk.tts.Synthesizer`). SIM-only: a
+        real robot self-synthesizes."""
         self._synth = synth
 
     def _maybe_synthesize(self, device_id, markup, event_id="", chunk_num=0):
-        """If a synthesizer is set, render the line and publish a CloudTTSResponse to
-        /devices/{id}/commands/tts. TTS failure never breaks the turn. `chunk_num` keeps
-        a multi-chunk turn (filler then answer) in playback order for the client."""
+        """Render the line and publish a CloudTTSResponse to `/devices/{id}/commands/tts`
+        if a synthesizer is set. Never breaks the turn. `chunk_num` keeps a multi-chunk
+        turn in playback order."""
         if self._synth is None:
             return None
         try:
@@ -31,55 +31,29 @@ class VoiceMixin:
             print(f"[runtime] TTS synth failed (non-fatal): {e}", flush=True)
             return None
 
-    # ---- 🎚️ the voice picker (backlog/voice-picker.md) ----
-    # Two dropdowns — **Speech** and **Listening** — over what this appliance can really
-    # use: the gateway's audio models, the local engines installed on the box, and the two
-    # built-ins. The pick is FLEET-level (`fleet/voice.json`), because a voice is a
-    # property of the house rather than of one robot, and it survives a restart because
-    # `run.py` reads the same record before it builds either engine.
-    #
-    # Two properties are load-bearing and neither costs the turn loop anything:
-    #   * **Discovery never blocks a turn.** `voice_settings.GatewayCatalog` caches one
-    #     `GET /v1/models` for `MOXIE_VOICE_DISCOVERY_TTL_S` and refreshes it on a
-    #     background thread; the first call after boot answers with the local entries and
-    #     `discovering: true`.
-    #   * **A swap takes effect on the NEXT turn.** `set_synthesizer` / `set_transcriber`
-    #     rebind one attribute; a turn already in flight finishes on the engine it started
-    #     with. That is the whole reason there is no lock inside the turn loop — the lock
-    #     below serializes concurrent *swaps*, nothing else.
-    #
-    # And one thing the card is NOT allowed to do: overrule the operator. An explicit
-    # `MOXIE_TTS`/`MOXIE_STT` pins the engine (`voice_settings.pin_for_env`), the pinned
-    # side's dropdown offers only that engine's entries, and `pin_notes` carries the
-    # sentence that says which variable did it. A picker that silently moved a deployment
-    # off local Piper would be a bug — see the owner rule in `voice_settings`' header.
+    # ---- the voice picker (backlog/voice-picker.md) ----
+    # Speech + Listening over what this box can really use (gateway audio models, local
+    # engines, built-ins). The pick is fleet-level (`fleet/voice.json`) and read by run.py
+    # at boot. Discovery never blocks a turn (cached, refreshed in the background); a swap
+    # rebinds one attribute, so it applies from the next turn and the lock below only
+    # serializes swaps. An explicit MOXIE_TTS/MOXIE_STT pins the engine and the card says so.
 
     DEFAULT_VOICE_TEST_LINE = "Hi, I'm Moxie."
-    #: How long a console WRITE may wait for the first gateway listing (seconds). Only
-    #: `voice_update` uses it — see `_voice_discovery`. Generous because it is paid once,
-    #: by a parent who just pressed Save, and the alternative is refusing their pick.
+    #: How long a console WRITE may wait for the first gateway listing (`voice_update` only).
     VOICE_SETTLE_S = 10.0
 
     def set_voice_engines(self, engines):
-        """Install the appliance's engine builders + discovery (`config.voice_engines()`).
-
-        Without one the picker still works and offers `tone` / `off` — an honest floor
-        rather than a card that claims models this box cannot build."""
+        """Install the engine builders + discovery (`config.voice_engines()`). Without
+        them the picker offers only `tone` / `off`."""
         self._voice_engines = engines
 
     def _voice_discovery(self, *, refresh: bool = False,
                          settle_s: float = 0.0) -> dict:
-        """`{available, discovering, gateway_error}` — never raises.
+        """`{available, discovering, gateway_error, pins, pin_notes}` — never raises.
 
-        A discovery that throws is reported as `gateway_error` beside the local entries,
-        because a card that empties itself when a proxy hiccups is worse than one that
-        says the gateway is unreachable next to the options it already had.
-
-        `settle_s` is the only way this waits, it is bounded, and only `voice_update`
-        passes it: a WRITE has to be judged against the real list, or a supervisor that
-        booted three seconds ago refuses a perfectly good pick with "choose one of: tone"
-        (seen live on 2026-09-02). Reads — the card's poll, and anything a turn touches —
-        pass 0 and get whatever is cached, instantly.
+        A failing discovery is reported beside the local entries rather than emptying the
+        card. Only `voice_update` passes `settle_s` (a write must be judged against the
+        real list); reads return whatever is cached, instantly.
         """
         blank = {k: "" for k in voice_seam.KINDS}
         engines = self._voice_engines
@@ -97,9 +71,7 @@ class VoiceMixin:
             src = out.get(field) if isinstance(out.get(field), dict) else {}
             return {k: str(src.get(k) or "") for k in voice_seam.KINDS}
 
-        # `pins`/`pin_notes` are what an explicit `MOXIE_TTS`/`MOXIE_STT` has taken off
-        # the table (`config.VoiceEngines.available`). They travel with the availability
-        # they explain, so the card can never show a filtered list without its reason.
+        # What an explicit MOXIE_TTS/MOXIE_STT removed, travelling with its reason.
         return {"available": out.get("available") or voice_seam.build_available(),
                 "discovering": bool(out.get("discovering")),
                 "gateway_error": str(out.get("gateway_error") or ""),
@@ -110,14 +82,9 @@ class VoiceMixin:
         return voice_seam.read_settings(self.store)
 
     def voice_view(self, *, refresh: bool = False) -> dict:
-        """What the 🎚️ card renders: every option, which one is in force, which one is
-        the default, whether discovery is still running and whether the gateway answered.
-
-        `current` is what is IN FORCE — a stored pick when there is one, otherwise the
-        default computed from this moment's availability. A stored pick the gateway can no
-        longer confirm stays current on purpose (`voice_settings.sanitize_choice`): an
-        outage must not silently revert a parent's choice.
-        """
+        """The voice card: every option, which is in force, the defaults, discovery and
+        gateway status. A stored pick the gateway cannot currently confirm stays current
+        (an outage must not revert a parent's choice)."""
         disc = self._voice_discovery(refresh=refresh)
         stored = voice_seam.read_settings(self.store)
         resolved = voice_seam.resolve_settings(stored, disc["available"])
@@ -143,14 +110,9 @@ class VoiceMixin:
                 "robots": [d for d in self.robots if self.is_permitted(d)]}
 
     def voice_update(self, patch) -> dict:
-        """Persist a parent's pick and swap the live engines to match.
-
-        The patch is checked against what is available RIGHT NOW
-        (`normalize_voice_settings`), so a stale page cannot install a model this gateway
-        stopped serving; the refusal carries the sentence the card shows. Order —
-        validate, persist, install — means a supervisor that dies mid-swap comes back with
-        the choice a parent was told was saved.
-        """
+        """Persist a parent's pick and swap the live engines to match. Validated against
+        what is available now; validate -> persist -> install, so a crash mid-swap comes
+        back with the saved choice."""
         with self._voice_lock:
             disc = self._voice_discovery(settle_s=self.VOICE_SETTLE_S)
             stored = voice_seam.read_settings(self.store)
@@ -158,8 +120,7 @@ class VoiceMixin:
                 settings = voice_seam.normalize_voice_settings(
                     patch, disc["available"], current=stored)
             except ValueError as e:
-                # A refusal that names only the surviving options reads as "the gateway
-                # lost your voice"; when the environment is what removed it, say that.
+                # If the env pin removed the option, say so rather than blame the gateway.
                 notes = " ".join(n for k, n in sorted(disc["pin_notes"].items())
                                  if n and k in (patch if isinstance(patch, dict) else {}))
                 why = f"{e} {notes}".strip()
@@ -176,15 +137,8 @@ class VoiceMixin:
                        pins: dict | None = None) -> dict:
         """Build both engines for `current` and bind them. Returns one report per side.
 
-        **A build that fails keeps the engine that is already speaking.** Losing the voice
-        because a newly chosen one could not be constructed would be a downgrade caused by
-        an *attempt to improve things*, which is the worst shape a failure can take. `off`
-        is the one intentional `None`, so it is spelled out rather than inferred.
-
-        `pins` is what `MOXIE_TTS`/`MOXIE_STT` allow (`config.engine_pins`). It changes
-        nothing here — the builders enforce it themselves — but a choice the pin will
-        ignore gets a note saying so, because a log line reading `speech: piper-ryan
-        (gateway, chosen)` next to a box that is speaking with Piper is a lie.
+        A failed build keeps the engine already speaking (`off` is the one intentional
+        None). A choice the env pin (`pins`) will override gets a note saying so.
         """
         chosen, pins = chosen or {}, pins or {}
         engines = self._voice_engines
@@ -226,13 +180,8 @@ class VoiceMixin:
         return report
 
     def voice_test(self, device_id, text: str = "") -> dict:
-        """Speak one line with the CURRENT speech engine and send it to one robot.
-
-        This is the card's **Test** button, and it is the only honest answer to "did my
-        pick work": it exercises the engine that is actually installed, on the wire the
-        SIM really plays (`commands/tts`, a `CloudTTSResponse`), rather than reporting the
-        record back to the page that just wrote it.
-        """
+        """The card's Test button: speak one line with the installed speech engine and
+        send it to one robot as a `CloudTTSResponse` (the wire the SIM plays)."""
         line = str(text or "").strip() or self.DEFAULT_VOICE_TEST_LINE
         if not self.is_permitted(device_id):
             return {"ok": False, "device_id": device_id, "error": "not permitted",
@@ -261,16 +210,10 @@ class VoiceMixin:
                 "channels": int(audio.get("channels") or 1),
                 "bytes": len(audio.get("buffer") or "")}
 
-    # ---- STT extension point ----
-    # ---- STT (AI seam §1) ----
+    # ---- STT (ai-seam §1) ----
     def set_transcriber(self, transcriber):
-        """Install an STT engine (moxie_sdk.stt.Transcriber). Without one, audio
-        frames are ignored (text turns still work).
-
-        Live VAD accumulators are dropped with the old engine: an `SttSession` captures the
-        transcriber it was built with, so a 🎚️ swap mid-utterance would otherwise finish
-        that utterance on the engine a parent just replaced. Losing a half-spoken sentence
-        at the exact moment someone changes the ears is the right trade."""
+        """Install an STT engine (`moxie_sdk.stt.Transcriber`); without one audio frames are
+        ignored. Live VAD sessions are dropped: they captured the old engine."""
         self._transcriber = transcriber
         self._stt_sessions.clear()
 
@@ -283,9 +226,9 @@ class VoiceMixin:
         return s
 
     def feed_stt(self, device_id, vad, audio: bytes = b"", uuid: str = ""):
-        """Feed one VAD-tagged audio frame; on END_OF_SPEECH, transcribe and publish a
-        zmqSTTResponse back to the robot (/devices/{id}/commands/zmq). Returns the
-        transcript when final, else None. No transcriber → no-op."""
+        """Feed one VAD-tagged audio frame; on END_OF_SPEECH transcribe and publish a
+        zmqSTTResponse (`/devices/{id}/commands/zmq`). Returns the final transcript, else
+        None. No transcriber -> no-op."""
         if self._transcriber is None:
             return None
         from moxie_sdk.stt import build_stt_response
@@ -298,20 +241,15 @@ class VoiceMixin:
         self._publish(f"/devices/{device_id}/commands/zmq", resp,
                       device_id=device_id, what="stt_result")
         self._note("stt", f"👂 heard: '{transcript[:40]}'")
-        # 🎭 During a telehealth session the child's side of the conversation is the only
-        # thing the operator can see (text only — no audio and no video reach them this
-        # phase; `backlog/telehealth.md` §2.5). This is a READ of transcript the STT path
-        # already produced, not a new capture: outside a session nothing is kept.
+        # During telehealth the operator sees the child's side as text (a read of what
+        # STT already produced; backlog/telehealth.md §2.5).
         if self._telehealth.get(device_id, {}).get("session_id"):
             self._telehealth_note(device_id, telehealth_seam.CHILD, transcript)
         return transcript
 
     def handle_zmq(self, device_id, payload):
-        """STT audio arrives on events/zmq. The real robot sends
-        `b'<proto.full_name>:' + zmqSTTRequest_bytes` (needs the compiled proto to
-        decode — the remaining wire step). A JSON frame
-        `{vad, audio_content(base64), uuid}` is accepted here too, so the STT pipeline
-        (accumulate → transcribe → publish zmqSTTResponse) is exercised end-to-end."""
+        """STT audio on `events/zmq`: the robot's `b'<proto.full_name>:' + zmqSTTRequest`
+        frame, or a JSON `{vad, audio_content(base64), uuid}` frame (SIL/tests)."""
         try:
             data = json.loads(payload)
         except Exception:
@@ -325,7 +263,7 @@ class VoiceMixin:
                 except Exception:
                     audio = b""
             return self.feed_stt(device_id, data["vad"], audio, data.get("uuid", ""))
-        # real robot: `b'<full_name>:' + zmqSTTRequest` protobuf
+        # Real robot: `b'<full_name>:' + zmqSTTRequest` protobuf.
         raw = payload if isinstance(payload, (bytes, bytearray)) else str(payload).encode()
         from moxie_sdk.stt import decode_zmq_stt_frame
         frame = decode_zmq_stt_frame(raw)

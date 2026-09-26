@@ -3,24 +3,16 @@ from __future__ import annotations
 from .constants import MENTOR_BEHAVIORS_COLLECTION
 
 
-
 class ScheduleMixin:
     # ---- the day plan ----
     SCHEDULE_EXPLAIN_COLLECTION = "schedule_explain"   # robots/<id>/schedule_explain.json
 
     def plan_schedule_for(self, device_id, *, now=None) -> tuple:
-        """Plan this robot's day → `(ContentSchedule, explanations, inputs)`.
+        """Plan this robot's day -> `(ContentSchedule, explanations, inputs)`.
 
-        The recommender (audit §4.2 BEYOND #7) is a pure function; this method is the
-        only place that gathers its signals from live state:
-          * the running content module's `schedules[]` (read-only authoring templates),
-          * this robot's stored `mentor_behaviors` (what the child finished vs. quit),
-          * its effective config — `schedule_preferences.parent_requests[]` and the
-            bedtime windows (read-only; the config path itself is untouched),
-          * its buffered telemetry Packets (see `moxie_sdk.schedule.telemetry_signals`
-            for what those can honestly contribute — no module-scoped event vocabulary
-            is recovered, so they are context, not a score).
-        See `moxie_sdk/schedule.py` for the shape, the weights and the citations.
+        The recommender (`moxie_sdk/schedule.py`) is pure; this gathers its live inputs:
+        the content module's `schedules[]`, stored mentor behaviors, the effective config
+        (parent requests, bedtime) and buffered telemetry (context only, not a score).
         """
         from moxie_sdk.schedule import plan
         schedules = None
@@ -43,10 +35,8 @@ class ScheduleMixin:
                     child_name=child, now=now)
 
     def build_schedule_for(self, device_id) -> dict:
-        """The ContentSchedule this robot gets for this session — the planner's output,
-        and the value of `CloudQueryResponse.schedule`. The parent-readable "why this
-        activity today" lines are stored alongside it (never on the wire) so
-        `GET /schedule` can show them after the robot has pulled its day."""
+        """The ContentSchedule served as `CloudQueryResponse.schedule`. The "why this
+        activity today" lines are stored beside it (never on the wire) for `GET /schedule`."""
         sched, explanations, inputs = self.plan_schedule_for(device_id)
         try:
             self.store.write(device_id, self.SCHEDULE_EXPLAIN_COLLECTION,
@@ -59,8 +49,7 @@ class ScheduleMixin:
 
     @staticmethod
     def _schedule_inputs_summary(inputs) -> dict:
-        """The parent-facing slice of the planner's inputs: what it knew, not the whole
-        catalog. Everything here is already JSON-safe (`plan_inputs` guarantees it)."""
+        """The parent-facing slice of the planner's inputs (already JSON-safe)."""
         keys = ("device_id", "day", "now", "bucket", "slot_minutes", "child_name",
                 "bedtime", "slots", "parent_requests", "ftue_skips", "telemetry",
                 "planned")
@@ -70,10 +59,8 @@ class ScheduleMixin:
         return out
 
     def schedule_view(self, device_id, *, refresh: bool = False) -> dict:
-        """`GET /schedule?device_id=…` — the day this robot was served, the "why this
-        activity today" line behind every entry, and a summary of the signals the planner
-        had. Read-only: with nothing stored yet (the robot has not pulled a schedule this
-        run) it plans one on the spot rather than answering empty."""
+        """`GET /schedule?device_id=…`: the served day, the "why" behind each entry and
+        the planner's inputs. Plans on the spot if nothing is stored yet."""
         stored = self.store.read(device_id, self.SCHEDULE_EXPLAIN_COLLECTION, None)
         if refresh or not isinstance(stored, dict) or not stored.get("explanations"):
             if not self._is_known(device_id) and not self.store.read(

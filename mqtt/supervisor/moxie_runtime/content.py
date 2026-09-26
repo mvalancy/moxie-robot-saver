@@ -7,27 +7,12 @@ from moxie_sdk.content import render
 
 
 class ContentMixin:
-    # ---- 📦 content packs (backlog/content-packs.md) ----
-    # Content stops being a file in our repository and becomes a thing a parent installs
-    # and a stranger publishes: one JSON file, reviewed before it changes anything, undoable
-    # afterwards. Everything hard is in the pure `moxie_sdk/content/packs.py` — this region
-    # is the store, the clock and the live swap, and nothing else.
-    #
-    # Three properties are load-bearing here, and each is asserted by a test:
-    #   * **Review writes nothing.** `content_review` is a pure read; only `content_import`
-    #     touches the store, and only after it has taken the one-slot snapshot `undo`
-    #     restores (R1: one atomic `write_shared`, so a crash leaves the old set or the new
-    #     one, never a mixture).
-    #   * **The overlay is written, never the merged view.** Effective content is *shipped
-    #     defaults ⊕ overlay*; an import writes only the accepted items into the overlay, so
-    #     a future release's improved starter chat is still an upgrade rather than something
-    #     the overlay silently shadows.
-    #   * **The swap is one attribute.** `reload_content()` reassigns `self.app.module`; a
-    #     turn already in flight finishes on the module object it started with and the NEXT
-    #     turn uses the new one. There is no lock in the turn loop — the same rule the voice
-    #     picker adopted for engine swaps — and that is documented behaviour, not an
-    #     oversight. `_push_config` is untouched: nothing a P0 pack carries reaches
-    #     `RobotCloudConfig`, which is exactly why face/config packs are P2.
+    # ---- content packs (backlog/content-packs.md) ----
+    # The logic is in the pure `moxie_sdk/content/packs.py`; this is the store, the clock
+    # and the live swap. Review writes nothing; import snapshots first (one-slot undo, one
+    # atomic write). Only the overlay is written (effective = shipped defaults + overlay),
+    # so a release's improved starter content still upgrades. The swap is one attribute
+    # (`reload_content`): a turn in flight finishes on its module, the next uses the new one.
 
     CONTENT_ITEMS_COLLECTION = "content_items"    # → $MOXIE_DATA_DIR/fleet/content_items.json
     CONTENT_PACKS_COLLECTION = "content_packs"    # the ledger the 📦 card lists
@@ -35,11 +20,8 @@ class ContentMixin:
 
     @staticmethod
     def pack_max_bytes() -> int:
-        """Largest pack body this appliance will buffer (`MOXIE_PACK_MAX_BYTES`, 1 MiB).
-
-        Read per call rather than at import, so the cap is testable and a deployment can
-        raise it without a code change. Upstream has no cap at all and round-trips the
-        pack through a hidden form field twice."""
+        """Largest pack body this appliance will buffer (`MOXIE_PACK_MAX_BYTES`, default
+        1 MiB), read per call so tests and deployments can change it."""
         try:
             value = int(os.environ.get("MOXIE_PACK_MAX_BYTES", "").strip() or 0)
         except ValueError:
@@ -47,15 +29,8 @@ class ContentMixin:
         return value if value > 0 else content_packs.DEFAULT_MAX_BYTES
 
     def _content_apps(self) -> list:
-        """Every live app that carries a content module.
-
-        Since 🧠 per-child brains, "the content app" is not necessarily `self.app`: an
-        appliance whose default is `llm` can still have one child on `content`, built
-        lazily by `app_for` and held in `_brains`. A pack import that swapped only
-        `self.app.module` would install content that the child who is actually running it
-        never sees — so the swap iterates. De-duplicated by identity, because the
-        appliance's own brain is also cached under its own name.
-        """
+        """Every live app that carries a content module — not only `self.app`: a per-child
+        `content` brain may be cached in `_brains`. De-duplicated by identity."""
         apps, seen = [], set()
         for app in [getattr(self, "app", None)] + list(self._brains.values()):
             if app is None or id(app) in seen:
@@ -67,14 +42,9 @@ class ContentMixin:
         return apps
 
     def _content_defaults(self) -> dict:
-        """The SHIPPED baseline the overlay sits on top of.
-
-        `config.build_content_app()` records it on the app (`content_defaults`) *before* it
-        applies the overlay, which is the only way an `undo` can put a shipped item back
-        after a pack replaced it. Without it — a bare `MoxieApp`, or an app built some other
-        way — we fall back to the loaded module itself, which is the same answer on a fresh
-        appliance and an honest approximation on one that has already imported (the merge is
-        idempotent, and overlay entries win either way)."""
+        """The SHIPPED baseline under the overlay. `config.build_content_app()` records
+        it on the app before applying the overlay (so undo can restore a shipped item);
+        otherwise fall back to the loaded module (overlay entries win either way)."""
         for app in self._content_apps():
             recorded = getattr(app, "content_defaults", None)
             if isinstance(recorded, dict):
@@ -86,7 +56,7 @@ class ContentMixin:
         return content_packs.items_from_module(getattr(self.app, "module", None))
 
     def _content_overlay(self) -> dict:
-        """The installed overlay (`fleet/content_items.json`) — `{}` when nothing imported."""
+        """The installed overlay (`fleet/content_items.json`); `{}` when nothing imported."""
         rec = self.store.read_shared(self.CONTENT_ITEMS_COLLECTION, {}) or {}
         items = rec.get("items") if isinstance(rec, dict) else None
         return items if isinstance(items, dict) else {}
@@ -102,16 +72,12 @@ class ContentMixin:
         return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
     def content_items(self) -> dict:
-        """**Effective content**: shipped defaults, then the overlay by `kind:key`."""
+        """Effective content: shipped defaults, then the overlay by `kind:key`."""
         return content_packs.merge_items(self._content_defaults(), self._content_overlay())
 
     def _known_child_names(self) -> list:
-        """Names this appliance knows, for the export-time PII flag.
-
-        The child profile the supervisor was started with, every connected robot's, and any
-        name-ish string in the fleet config. It catches the names we know and **nothing
-        else** — a prompt naming a sibling or a school sails straight through, and the card
-        says so."""
+        """Names this appliance knows (startup child, connected robots, name-ish fleet
+        config values) for the export-time PII flag. Catches only names we know."""
         names = []
         for child in ([getattr(self, "child", None)]
                       + [getattr(r, "child", None) for r in self.robots.values()]):
@@ -126,13 +92,8 @@ class ContentMixin:
         return names
 
     def reload_content(self) -> dict:
-        """Rebuild the live `ContentModule` from defaults ⊕ overlay and swap it in.
-
-        One attribute assignment. The next turn renders the new prompt; a turn already in
-        flight finishes on the module it started with, and a conversation session keeps its
-        `Conversation` for that session (brief §2.5). No restart, and nothing on the wire —
-        a pack is server-side data.
-        """
+        """Rebuild the live `ContentModule` from defaults + overlay and swap it in (one
+        attribute per live content brain; nothing on the wire, no restart)."""
         defaults, overlay = self._content_defaults(), self._content_overlay()
         module = content_packs.build_module(defaults, overlay)
         live = False
@@ -147,7 +108,7 @@ class ContentMixin:
                 "overlay": len(overlay), "shipped": len(defaults)}
 
     def content_view(self) -> dict:
-        """The 📦 card's poll: the inventory, the pack ledger, and whether undo is armed."""
+        """The pack card's poll: inventory, pack ledger, and whether undo is armed."""
         items = self.content_items()
         backup = self.store.read_shared(self.CONTENT_BACKUP_COLLECTION, {}) or {}
         rows = content_packs.inventory(items, known_names=self._known_child_names())
@@ -167,11 +128,8 @@ class ContentMixin:
 
     def content_export(self, keys=None, *, name: str = "", pack_id: str = "",
                        details: str = "", author: str = "", now=None) -> dict:
-        """Build a pack from the named installed items (`kind:key`), or from all of them.
-
-        Returns the pack itself — the HTTP layer serializes it and the browser saves it.
-        A key that is not installed is an error rather than a quietly smaller file.
-        """
+        """Build a pack from the named installed items (`kind:key`), or all of them. An
+        uninstalled key is an error, not a quietly smaller file."""
         items = self.content_items()
         wanted = [str(k).strip() for k in (keys or []) if str(k or "").strip()]
         if wanted:
@@ -188,12 +146,8 @@ class ContentMixin:
                                          author=author, now=now)
 
     def content_review(self, body) -> dict:
-        """What WOULD happen if this pack were imported. Writes nothing, reads no clock.
-
-        `expect_digest` in the answer is the digest of the body as reviewed; echoing it back
-        on import is what closes the review-one-file-import-another gap that upstream's
-        hidden form field leaves open.
-        """
+        """What WOULD happen if this pack were imported. Writes nothing. `expect_digest`
+        echoed back on import proves the imported file is the reviewed one."""
         pack, meta = content_packs.parse_pack(body)
         rows = content_packs.review_pack(pack, self.content_items(),
                                          digest=meta["digest"])
@@ -215,13 +169,9 @@ class ContentMixin:
         }
 
     def content_import(self, body, accept=None, expect_digest: str = "") -> dict:
-        """Apply the accepted items, then make them live. The only verb here that writes.
-
-        Refuses with `conflict: True` (HTTP **409**) when `expect_digest` — the digest the
-        reviewer was shown — is not the digest of the body now being imported: the pack is
-        re-sent between review and import (the server holds no session state), so the two
-        can genuinely be different files.
-        """
+        """Apply the accepted items and make them live — the only writing verb here.
+        Refuses with `conflict` (409) when `expect_digest` does not match the body (the
+        server holds no session between review and import)."""
         pack, meta = content_packs.parse_pack(body)
         if expect_digest and str(expect_digest) != meta["computed"]:
             return {"ok": False, "conflict": True,
@@ -252,7 +202,7 @@ class ContentMixin:
                 "undo_available": bool(summary["applied"])}
 
     def content_undo(self) -> dict:
-        """Put the one-slot snapshot back — the overlay AND the ledger, byte for byte."""
+        """Restore the one-slot snapshot: the overlay AND the ledger."""
         with self._content_lock:
             backup = self.store.read_shared(self.CONTENT_BACKUP_COLLECTION, {}) or {}
             items = backup.get("items") if isinstance(backup, dict) else None
@@ -271,52 +221,25 @@ class ContentMixin:
         return {"ok": True, "restored": len(items), "reload": reload,
                 "label": str(backup.get("label") or ""), "undo_available": False}
 
-    # ---- ✍️ content authoring (backlog/content-authoring.md) ----
-    # Packs made content **shippable**; these two verbs make it **writable**. The design
-    # decision they rest on is that an authored item is exactly as untrusted as an
-    # imported one *because it enters through the same functions* (brief §6.1) — so there
-    # is no "we wrote this one" branch anywhere below, and the only genuinely new safety
-    # code in the whole slice is the `validate_item` call in `content_save_item`.
-    #
-    # Why that one call is the load-bearing line (§6.3): `packs.mark_edited` calls
-    # `normalize_data` and **not** `validate_item` — `apply_pack` does that itself before
-    # writing. So a save that skipped it would let an authored global with a
-    # non-compiling `pattern` reach `Global.from_dict`, which compiles at LOAD, and a
-    # throw inside the loader takes down `reload_content()` for every item at once.
-    # `sim/tools/authoring_mutation_check.py` deletes the call and requires
-    # `test_a_bad_pattern_is_refused_with_validate_items_own_sentence` to go red.
-    #
-    # What is deliberately absent here: `POST /content/try`. P0 makes **no brain call**
-    # (brief §9's "not in P0" list), so there is no budget, no counter and no 429 in this
-    # region — `config.AUTHOR_TRY_BUDGET` is declared for P1 and consumed by nobody yet.
+    # ---- content authoring (backlog/content-authoring.md) ----
+    # An authored item is as untrusted as an imported one because it goes through the same
+    # functions (§6.1). The one new safety line is `validate_item` in `content_save_item`:
+    # `mark_edited` only normalizes, and an invalid global `pattern` would otherwise crash
+    # `reload_content()` for every item (authoring_mutation_check.py deletes it to prove
+    # it). No brain call in P0: there is no `/content/try` route.
 
-    #: Item kinds the editor may write. `schedule` is absent on purpose and refused by
-    #: name below: it is the one kind that reaches the robot as `ContentSchedule`, and no
-    #: physical Moxie has ever been served a pack-authored one (brief §0), so a
-    #: parent-facing button must not put an unobserved wire behaviour behind it.
+    #: Item kinds the editor may write. `schedule` is refused by name: it reaches the robot
+    #: as `ContentSchedule` and no Moxie has been served a pack-authored one (brief §0).
     AUTHORABLE_KINDS = ("conversation", "global")
 
     def content_save_item(self, body) -> dict:
-        """✍️ Save one authored item — validate, snapshot, write the overlay, reload.
+        """Save one authored item: validate, snapshot, write the overlay, reload.
 
-        The verb the 📦 card's ✏️ and ＋ New both call. Everything it enforces is a
-        refusal, and each refusal is a sentence rather than a status code:
-
-        * a **schedule** is refused by kind (§0/§4.5), naming the robot as the reason;
-        * a change to **`code`** or **`extension`** is refused (§4.5) — both round-trip a
-          save untouched and neither is authorable in any phase, so the editor shows them
-          and the route makes that structural;
-        * `validate_item`'s own sentence is returned verbatim for anything it refuses,
-          because a paraphrase here would be a second validator (§6.1);
-        * a stale `local_rev` is a **409** with the import conflict's own wording (R7):
-          two tabs are *detected*, never merged, and the one undo slot is not a fix for
-          that and must not be described as one.
-
-        On success it takes the same one-slot snapshot an import takes, so
-        `POST /content/undo` restores an authored save with no new mechanism, and calls
-        `reload_content()` so disk and memory never disagree about what Moxie says next
-        (§6.5). The answer carries the shadow check for a command (§4.4) — advice, never a
-        refusal, and scoped to the phrases the author actually typed.
+        Refusals are sentences: a schedule (by kind); any change to `code`/`extension`
+        (never authorable); `validate_item`'s own sentence verbatim; a stale `local_rev`
+        -> 409 (two tabs are detected, never merged). Success takes the same one-slot
+        snapshot as an import (so undo works) and returns the command shadow check
+        (advice only).
         """
         if not isinstance(body, dict):
             return {"ok": False, "error": "expected a JSON object",
@@ -354,7 +277,7 @@ class ContentMixin:
         if refusal:
             return refusal
 
-        # §6.3 — the one `if`. `mark_edited` normalizes; it does not validate.
+        # §6.3: `mark_edited` normalizes; it does not validate.
         reasons = content_packs.validate_item(
             {"kind": kind, "key": key, "data": data,
              "source_version": content_packs.source_version_of(before or {})})
@@ -397,15 +320,8 @@ class ContentMixin:
 
     @staticmethod
     def _refuse_unwritable_fields(kind: str, data: dict, before) -> dict:
-        """`code` and `extension` survive a save untouched, or the save does not happen.
-
-        Not a warning: the property that makes a pack safe is structural (§6.5), and an
-        editor that could *change* an extension would be the text→AST surface
-        `backlog/sandboxed-extensions.md` P1 owns — with a second compiler, which that
-        brief already refused in its own §7.4. So the card shows both fields read-only and
-        this refuses anything else, for a new item as much as an edited one (a parent
-        cannot *create* a `code` block either).
-        """
+        """`code` and `extension` must survive a save untouched, or it does not happen —
+        for new items too. Editing an extension belongs to backlog/sandboxed-extensions.md."""
         base = content_packs.normalize_data(kind, (before or {}).get("data")) if before \
             else content_packs.normalize_data(kind, {})
         if content_packs.canonical(data.get("extension") or {}) \
@@ -426,36 +342,19 @@ class ContentMixin:
                               "for behaviour this appliance CAN run."}
         return {}
 
-    #: The sample values rung 1 renders against. A prompt is a template over exactly three
-    #: top-level names — `volley`, `session` and `presence` (`content_app.py`:312 for the
-    #: opener, :371 for the prompt) — and that closed list is what makes the chip list
-    #: closeable at all (§4.3).
+    #: Sample facts for rung 1. A prompt template sees exactly three names — `volley`,
+    #: `session`, `presence` — which is what makes the chip list closeable (§4.3).
     RENDER_SAMPLE_FACTS = ("likes drawing dinosaurs",
                            "is learning to whistle",
                            "was nervous about the school play")
 
     def content_render(self, body) -> dict:
-        """👁️ Resolve a draft prompt against a sample context. **No brain, no store.**
+        """Resolve a draft prompt against a sample context (rung 1, §5.1). No brain, no store.
 
-        Rung 1 of the loop (§5.1), and the highest-value free feedback we can give: the
-        panel is *the actual system prompt the brain would receive*, which is the thing a
-        prompt author most needs and today cannot see at all. `render_prompt` is a pure
-        function over a plain dict, so this route is one call and a made-up context.
-
-        It renders **twice**, and that is a decision worth defending. The second pass is
-        `render._minimal_render` — the dependency-free renderer a bare
-        `pip install moxie-cloud-sdk` without the `content` extra lands on. Reporting only
-        `render.STRIPPED` around the real call would report **zero** on every appliance we
-        ship (the container installs jinja2), i.e. a counter that can never fire where it
-        matters. Rendering both answers the question §4.3 actually promises — *does this
-        prompt mean the same thing off this box?* — and `portable_identical: false` is the
-        signal that an author has typed past the guided grammar.
-
-        `counts_advisory` is `true` and stays true: `render.BLOCKED` / `render.STRIPPED`
-        are process-global integers the turn loop also moves, so even the narrow window
-        `render._tally` takes is polluted by a concurrent turn. The fix is not a lock
-        around the renderer (§5.1 forbids it — the turn loop calls it too); the fix is
-        saying so.
+        Renders twice: with the installed renderer and with `render._minimal_render` (what
+        a bare SDK install without jinja2 uses), so `portable_identical: false` flags a
+        prompt that would mean something different off this box. `counts_advisory` stays
+        true: the render counters are process-global and a concurrent turn moves them.
         """
         if not isinstance(body, dict):
             return {"ok": False, "error": "expected a JSON object",
@@ -503,13 +402,9 @@ class ContentMixin:
 
     @staticmethod
     def _render_context(sample: dict) -> dict:
-        """The three top-level names a prompt template may see, filled with sample values.
-
-        Plain dicts rather than a live `Volley`/`Session`: `render_prompt` walks dotted
-        paths over dicts and objects alike, and a made-up turn must not be able to reach
-        anything real. `FactList` is used for the facts so `{{ …facts }}` renders as
-        bullet lines here exactly as it does on a turn, instead of as a list repr.
-        """
+        """The three names a prompt template may see, filled with sample values — plain
+        dicts, so a made-up turn cannot reach anything real. `FactList` renders facts as
+        bullet lines, as on a real turn."""
         from moxie_sdk.content.memory import FactList
         return {
             "volley": {
