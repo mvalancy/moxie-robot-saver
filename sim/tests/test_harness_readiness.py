@@ -254,8 +254,7 @@ def test_the_status_rows_telemetry_count_is_a_length_and_never_none():
 # ---------------------------------------------------------------------------
 # TEARDOWN MUST NOT RACE, AND MUST NOT FAIL A PASSING RUN
 #
-# Seen as "✅ 2/2 scenarios passed" followed by `rm: cannot remove …/fleet: Directory not
-# empty` and exit 1. Two defects:
+# A passing run once exited 1 on `rm: cannot remove …: Directory not empty`. Two defects:
 #   1. `kill` only REQUESTS an exit; the SIGTERM handler flushes state, so `rm -rf` could
 #      race a dying writer. Wait for the processes to be gone first.
 #   2. Under `bash -e` the failing `rm` aborted cleanup before `return 0`.

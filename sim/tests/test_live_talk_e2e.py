@@ -1,21 +1,15 @@
 """
 Live TALK end-to-end — real speech in, real speech out.
 
-Everything else in the suite proves the *shape* of the voice path: `test_tts.py`
-synthesizes with an injected `voice_fn`, `test_stt.py` accumulates VAD frames around a
-fake transcriber, and `sim/run_smoke.sh` round-trips a `CloudTTSResponse` whose audio is
-the built-in `ToneSynthesizer` beep. None of that is speech. A tone survives every one
-of those tests, which is exactly the gap DoD criterion 6 called out: "live voice (real
-STT/TTS speech, not the tone synth)" was the last thing not live-proven.
-
-This file closes it in two tiers.
+The rest of the suite proves the voice path's *shape* (`test_tts.py`, `test_stt.py`,
+`sim/run_smoke.sh`'s tone beep) — a tone survives all of it. This is DoD criterion 6,
+"live voice (real STT/TTS speech, not the tone synth)", in two tiers.
 
 **Tier 1 — the voice is intelligible.** `PiperSynthesizer` (Amy, Moxie's voice) speaks a
 fixed sentence; the PCM is resampled to the robot's 16 kHz and handed to the real
 `WhisperTranscriber`. The transcript must recover the sentence (word overlap ≥ 0.7), and
-a companion test proves the same pipeline *rejects* the placeholder: the tone's spectral
-flatness is ~10 orders of magnitude below Amy's and Whisper hears no words in it. So this
-test cannot pass on tone output — which is the whole point of writing it.
+a companion test proves the same pipeline *rejects* the placeholder tone, so this cannot
+pass on tone output.
 
 **Tier 2 — the talk loop.** A second, deliberately *different* Piper voice (Lessac) plays
 the child. Its audio is chopped into `zmqSTTRequest` protobuf frames — START_OF_SPEECH,
@@ -28,13 +22,9 @@ transcribed back and matched against the reply text. Two variants: the shipped
 `starter.json` `globals[]` handler (0 gateway calls) and the same module on the real
 gateway (1 call).
 
-Thresholds are ratios, not equality: ASR is lossy and a temperature-0.8 model is not
-reproducible (same reasoning as `test_live_action_tags.py`). The observed values are far
-above the floors — see the printed `[talk]` lines, which also carry the per-stage wall
-clock the "~20 s reprompt window" audit asked for.
-
-Skips cleanly and instantly without piper / faster-whisper / the voice files / a gateway
-key, so the hermetic CI run is unaffected.
+Thresholds are ratios: ASR is lossy and a sampling model is not reproducible. The printed
+`[talk]` lines carry observed values and per-stage wall clock. Skips instantly without
+piper / faster-whisper / the voice files / a gateway key.
 
     .venv/bin/python -m pytest sim/tests/test_live_talk_e2e.py -q -s
 """

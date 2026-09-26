@@ -9,10 +9,9 @@ and shipped prompt produce a tag in this bounded sample. Historical samples obse
 
 What is asserted here is a bounded acceptance sample: `_ACCEPT` of `_TRIALS`
 goodbye turns must lift a real `<exit>` action off the model's own text, and likewise
-for `<launch:...>`. A rate is the honest shape for a temperature-0.8 model — a
-1-of-1 assertion would be a coin flip dressed as a test, and demanding 3/3 of a
-sampling model would make the suite flap. The threshold is deliberately well above
-the measured 0/N historical sample. It is not a population adherence estimate.
+for `<launch:...>`. A rate is the honest shape for a sampling model (1-of-1 is a coin flip, 3/3
+flaps); the threshold sits well above the 0/N historical sample. It is not a
+population adherence estimate.
 
 Runs only with a gateway key (`MOXIE_LLM_API_KEY` / `LITELLM_MASTER_KEY`, e.g. from
 the git-ignored `mqtt/.env`); skips cleanly otherwise. Retries and the other two tests

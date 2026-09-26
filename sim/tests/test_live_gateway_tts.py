@@ -1,25 +1,16 @@
 """
 Live GATEWAY voice — real speech out of our LiteLLM proxy, read back by Whisper.
 
-`test_tts.py` proves the *shape* of the gateway client against a fake `/audio/speech`
-(WAV unwrapping, the derived rate, the required-but-ignored `voice` field, the standby).
-Every one of those tests would still pass if the gateway returned four seconds of hiss.
-This file is the one that cannot: **the audio must transcribe back into the sentence we
-asked for**, at word-overlap ≥ 0.7, and a companion guard shows the same pipeline
-*rejects* the built-in `ToneSynthesizer` placeholder — so a green here means real speech
-came down the wire, not that the plumbing is connected.
+`test_tts.py` proves the gateway client's *shape* against a fake `/audio/speech`, and
+would pass if the gateway returned hiss. Here **the audio must transcribe back into the
+sentence we asked for** (word overlap ≥ 0.7), and a companion guard shows the pipeline
+*rejects* the `ToneSynthesizer` placeholder — the tier-1 pattern of
+`test_live_talk_e2e.py`, pointed at the gateway.
 
-Exactly the tier-1 pattern of `test_live_talk_e2e.py` (same floor, same anti-tone guard,
-same `[gw]` printed evidence), pointed at the gateway instead of at local Piper.
-
-**Budget: 4 requests to `/v1/audio/speech`, one per test** — one WAV (Amy), one WAV
-(Ryan, to show the model switch), one PCM, one deliberately-unknown model to prove the
-downgrade. The synthesizer is built by `config.build_synthesizer()` rather than by hand,
-so what is under test is the shipped switch (`MOXIE_VOICE_BASE_URL` + the model), not a
-test-local client.
-
-Runs when `MOXIE_VOICE_BASE_URL` and a key are set (mqtt/.env of this tree or the main
-checkout); skips cleanly and instantly otherwise, so the hermetic tier is unaffected.
+**Budget: 4 `/v1/audio/speech` requests, one per test** (Amy WAV, Ryan WAV for the model
+switch, one PCM, one unknown model for the downgrade). Built by
+`config.build_synthesizer()`, so the shipped switch is under test. Skips instantly without
+`MOXIE_VOICE_BASE_URL` + a key.
 
     MOXIE_VOICE_BASE_URL=https://gateway.graphlings.net/v1 \
       .venv/bin/python -m pytest sim/tests/test_live_gateway_tts.py -q -s
