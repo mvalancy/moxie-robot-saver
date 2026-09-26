@@ -1,17 +1,20 @@
 """
-Fleet-view tests (M6 parent console) — normalize the MQTT supervisor's status snapshot
-into the console-facing shape. Pure (no fastapi/network), so it runs in the hermetic
-suite; mirrors MoxieRuntime.status_snapshot() → server/local/fleet.
+The console's pure normalizers (`server/moxie_server/fleet/`): supervisor payloads →
+the shapes the cards render. The contract is defensive: a card must never 500 and must
+never look empty when the truth is "unreachable". Pure (no fastapi, no network).
 """
 import os
 import sys
+
+import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "server"))
 
 from moxie_server.fleet import (  # noqa: E402
-    event_counts, normalize_event, normalize_fleet, normalize_robot,
-    normalize_telemetry, robot_summary,
+    UNSUPPORTED_ACTIONS, event_counts, normalize_event, normalize_fleet,
+    normalize_history, normalize_robot, normalize_telemetry, normalize_voice,
+    ota_status_view, resolve_device_id, robot_summary, unsupported_action,
 )
 
 
@@ -65,7 +68,7 @@ def test_robot_summary_flags_ota_and_falls_back():
     assert robot_summary({}) == "connected"         # nothing known → a sane default
 
 
-# --- telemetry / insights view (M6) ---
+# --- telemetry / insights view ---
 
 def _telemetry():
     return {
@@ -117,10 +120,7 @@ def test_normalize_event_tolerates_a_partial_packet():
     assert normalize_event({"recorded_at": "77"})["recorded_at"] == 77
 
 
-# --- 🎚️ the voice picker's normalizer (backlog/voice-picker.md) ----------------------
-# The console keeps no list of voices: it renders exactly what the supervisor offers. So
-# the only job here is to make that payload *renderable no matter what arrives* — a card
-# that 500s or blanks itself is worse than one that prints the reason.
+# --- the voice picker: render exactly what the supervisor offers, whatever arrives ---
 
 def _voice_payload():
     return {
@@ -144,7 +144,6 @@ def _voice_payload():
 
 
 def test_normalize_voice_keeps_every_field_the_card_renders():
-    from moxie_server.fleet import normalize_voice
     v = normalize_voice(_voice_payload())
     assert v["ok"] is True and v["error"] is None
     assert [e["id"] for e in v["available"]["speech"]] == ["gateway:piper-amy", "tone"]
@@ -156,7 +155,6 @@ def test_normalize_voice_keeps_every_field_the_card_renders():
 
 
 def test_normalize_voice_reports_a_gateway_outage_without_blanking_the_card():
-    from moxie_server.fleet import normalize_voice
     payload = _voice_payload()
     payload["gateway_error"] = "APIConnectionError"
     v = normalize_voice(payload)
@@ -165,7 +163,6 @@ def test_normalize_voice_reports_a_gateway_outage_without_blanking_the_card():
 
 
 def test_normalize_voice_carries_a_refusals_reason():
-    from moxie_server.fleet import normalize_voice
     v = normalize_voice({"ok": False, "error": "bad pick",
                          "reason": "'gateway:x' is not one of this appliance's options."})
     assert v["ok"] is False and "not one of" in v["reason"]
@@ -173,7 +170,6 @@ def test_normalize_voice_carries_a_refusals_reason():
 
 
 def test_normalize_voice_never_raises_on_junk():
-    from moxie_server.fleet import normalize_voice
     for junk in (None, {}, [], "nope", {"available": "not a dict"},
                  {"ok": True, "available": {"speech": "abc"}},
                  {"ok": True, "selected": 7, "updated_at": "soon"}):
@@ -185,10 +181,8 @@ def test_normalize_voice_never_raises_on_junk():
 
 
 def test_normalize_voice_carries_the_environments_pin_to_the_card():
-    """A short dropdown needs its reason travelling with it. The supervisor filtered the
-    list because `MOXIE_TTS` pinned the engine; if the note were dropped here, the card
-    would look like a gateway that had lost half its voices."""
-    from moxie_server.fleet import normalize_voice
+    """A dropdown shortened by `MOXIE_TTS` needs its reason travelling with it, or it reads
+    as a gateway that lost half its voices."""
     payload = _voice_payload()
     payload["pins"] = {"speech": "piper", "listening": ""}
     payload["pin_notes"] = {"speech": "MOXIE_TTS=piper pins the voice to local Piper; "
@@ -198,25 +192,19 @@ def test_normalize_voice_carries_the_environments_pin_to_the_card():
     assert v["pins"] == {"speech": "piper", "listening": ""}
     assert "MOXIE_TTS=piper" in v["pin_notes"]["speech"]
     assert v["pin_notes"]["listening"] == ""
-    # An older supervisor sends neither field; the card must still render.
+    # an older supervisor sends neither field; the card must still render
     plain = normalize_voice(_voice_payload())
     assert plain["pins"] == {"speech": "", "listening": ""}
     assert plain["pin_notes"] == {"speech": "", "listening": ""}
 
 
 def test_normalize_voice_drops_an_option_with_no_id():
-    from moxie_server.fleet import normalize_voice
     payload = _voice_payload()
     payload["available"]["speech"].append({"label": "a voice with no id"})
     assert len(normalize_voice(payload)["available"]["speech"]) == 2
 
 
-# ---------------------------------------------------------------------------
-# Durable telemetry → the 📈 card, and the three console actions
-# ---------------------------------------------------------------------------
-# `normalize_telemetry` grew a history/retention/policy half when telemetry became
-# durable, and three new pure helpers landed for the endpoints that used to report
-# success for nothing. All pure, so they belong in this hermetic file.
+# --- durable telemetry: the insights card's history / retention / policy half ---
 
 def _durable_payload(**over):
     """A runtime `GET /telemetry` body of the durable shape."""
@@ -238,7 +226,6 @@ def _durable_payload(**over):
 
 
 def test_normalize_history_scales_bars_against_the_busiest_day():
-    from moxie_server.fleet import normalize_history
     rows = normalize_history([{"day": "2026-09-01", "count": 4, "top_event": "wake"},
                               {"day": "2026-09-02", "count": 1, "top_event": "said"}])
     assert [r["share"] for r in rows] == [1.0, 0.25]
@@ -247,7 +234,6 @@ def test_normalize_history_scales_bars_against_the_busiest_day():
 
 def test_normalize_history_keeps_a_zero_day_as_a_zero_day():
     """A quiet day must render as a quiet day, not vanish from the week."""
-    from moxie_server.fleet import normalize_history
     rows = normalize_history([{"day": "2026-09-01", "count": 0},
                               {"day": "2026-09-02", "count": 0}])
     assert len(rows) == 2 and all(r["share"] == 0.0 for r in rows)
@@ -255,7 +241,6 @@ def test_normalize_history_keeps_a_zero_day_as_a_zero_day():
 
 
 def test_normalize_history_never_raises_on_junk():
-    from moxie_server.fleet import normalize_history
     for junk in (None, [], "nope", [None, 7, {}, {"day": ""}],
                  [{"day": "2026-09-02", "count": "x"}]):
         assert isinstance(normalize_history(junk), list)
@@ -272,8 +257,7 @@ def test_normalize_telemetry_carries_the_durable_half():
 
 
 def test_normalize_telemetry_never_claims_persistence_it_was_not_told_about():
-    """A payload from a supervisor that predates durable telemetry (or an error body)
-    must not be rendered as if it had a history."""
+    """An older supervisor's payload (or an error body) must not render as a history."""
     t = normalize_telemetry({"ok": True, "device_id": "d", "summary": {"count": 1},
                              "events": []})
     assert t["persisted"] is False and t["history"] == []
@@ -283,8 +267,7 @@ def test_normalize_telemetry_never_claims_persistence_it_was_not_told_about():
 
 
 def test_normalize_telemetry_reports_a_no_data_robot_honestly():
-    """Under `NO_DATA` the card must say nothing is kept rather than show an empty week
-    as though the robot had been silent."""
+    """Under `NO_DATA` nothing is kept — not an empty week of a silent robot."""
     t = normalize_telemetry(_durable_payload(policy="NO_DATA", persisted=False,
                                              history=[], totals={}))
     assert t["persisted"] is False and t["policy"] == "NO_DATA"
@@ -301,12 +284,10 @@ def test_normalize_telemetry_still_never_raises_on_junk():
         assert isinstance(t["history"], list) and isinstance(t["totals"], dict)
 
 
-# --- the three console actions ---
+# --- the device actions that used to report success for nothing ---
 
 def test_unsupported_action_is_never_a_fake_success():
-    """The bug this shape exists to make impossible: `reboot` used to return
-    `{"error": null}` while publishing nothing."""
-    from moxie_server.fleet import unsupported_action
+    """`reboot` must never return `{"error": null}` while publishing nothing."""
     body = unsupported_action("reboot")
     assert body["ok"] is False and body["supported"] is False
     assert body["error"] == "unsupported" and body["action"] == "reboot"
@@ -315,24 +296,23 @@ def test_unsupported_action_is_never_a_fake_success():
 
 
 def test_unsupported_action_has_a_reason_even_for_an_unlisted_name():
-    from moxie_server.fleet import unsupported_action
     body = unsupported_action("teleport")
     assert body["ok"] is False and "teleport" in body["reason"]
 
 
 def test_reboot_is_the_only_unsupported_action_and_wakeup_is_not_one():
-    """A regression guard with teeth: if someone lists `wakeup` here again, the real
-    publish path has been quietly turned back into a no-op."""
-    from moxie_server.fleet import UNSUPPORTED_ACTIONS
+    """Listing `wakeup` here would quietly turn its real publish path into a no-op."""
     assert set(UNSUPPORTED_ACTIONS) == {"reboot"}
 
 
+def _ota_snap(reboot_required):
+    return {"ok": True, "robots": [{"device_id": "d_abc", "firmware": "3.6.4",
+                                    "ota_reboot_required": reboot_required}]}
+
+
 def test_ota_status_never_says_up_to_date():
-    """This appliance serves no `api/ota`, so "there is nothing newer" is not a claim it
-    is in a position to make about anything."""
-    from moxie_server.fleet import ota_status_view
-    snap = {"ok": True, "robots": [{"device_id": "d_abc", "firmware": "3.6.4",
-                                    "ota_reboot_required": False}]}
+    """This appliance serves no `api/ota`, so it cannot claim nothing newer exists."""
+    snap = _ota_snap(False)
     for view in (ota_status_view(snap, "d_abc"), ota_status_view(snap),
                  ota_status_view(None), ota_status_view({"ok": False, "robots": []})):
         assert view["status"] != "up_to_date"
@@ -340,10 +320,7 @@ def test_ota_status_never_says_up_to_date():
 
 
 def test_ota_status_reports_the_firmware_the_robot_actually_told_us():
-    from moxie_server.fleet import ota_status_view
-    snap = {"ok": True, "robots": [{"device_id": "d_abc", "firmware": "3.6.4",
-                                    "ota_reboot_required": False}]}
-    view = ota_status_view(snap, "d_abc")
+    view = ota_status_view(_ota_snap(False), "d_abc")
     assert view["status"] == "unknown" and view["version"] == "3.6.4"
     assert view["ota_reboot_required"] is False and view["device_id"] == "d_abc"
     assert "no OTA server" in view["note"]
@@ -351,16 +328,12 @@ def test_ota_status_reports_the_firmware_the_robot_actually_told_us():
 
 def test_ota_status_surfaces_the_one_ota_fact_the_protocol_gives_us():
     """`ota_reboot_required` is a real `RobotStatus` field the robot reports up."""
-    from moxie_server.fleet import ota_status_view
-    snap = {"ok": True, "robots": [{"device_id": "d_abc", "firmware": "3.6.4",
-                                    "ota_reboot_required": True}]}
-    view = ota_status_view(snap, "d_abc")
+    view = ota_status_view(_ota_snap(True), "d_abc")
     assert view["status"] == "reboot_required" and view["ota_reboot_required"] is True
     assert "holding a reboot" in view["reason"]
 
 
 def test_ota_status_is_unavailable_rather_than_invented_when_nothing_is_known():
-    from moxie_server.fleet import ota_status_view
     snap = {"ok": True, "robots": [{"device_id": "d_other"}]}
     view = ota_status_view(snap, "d_abc")
     assert view["status"] == "unavailable" and view["version"] is None
@@ -368,36 +341,26 @@ def test_ota_status_is_unavailable_rather_than_invented_when_nothing_is_known():
 
 
 def test_ota_status_will_not_guess_which_robot_when_several_are_connected():
-    from moxie_server.fleet import ota_status_view
     snap = {"ok": True, "robots": [{"device_id": "d_1"}, {"device_id": "d_2"}]}
     assert ota_status_view(snap)["status"] == "unavailable"
 
 
 # --- resolving a parent-app record to an MQTT identity ---
 
-def test_resolve_device_id_prefers_what_the_record_remembers():
-    from moxie_server.fleet import resolve_device_id
-    snap = {"ok": True, "robots": [{"device_id": "d_other", "pending": False}]}
-    assert resolve_device_id({"mqtt-device-id": "d_mine"}, snap) == ("d_mine", "record")
+def _served(*ids, pending=False):
+    return {"ok": True, "robots": [{"device_id": d, "pending": pending} for d in ids]}
 
 
-def test_resolve_device_id_falls_back_to_the_only_served_robot():
-    from moxie_server.fleet import resolve_device_id
-    snap = {"ok": True, "robots": [{"device_id": "d_only", "pending": False}]}
-    assert resolve_device_id({}, snap) == ("d_only", "sole-served")
-
-
-def test_resolve_device_id_refuses_to_guess_between_two_robots():
-    from moxie_server.fleet import resolve_device_id
-    snap = {"ok": True, "robots": [{"device_id": "d_1", "pending": False},
-                                   {"device_id": "d_2", "pending": False}]}
-    assert resolve_device_id({}, snap) == (None, "ambiguous")
-
-
-def test_resolve_device_id_ignores_a_pending_robot():
-    """A robot that has not been permitted is not "the" robot — nothing may be sent to
-    it, so it cannot be the implicit target of a button."""
-    from moxie_server.fleet import resolve_device_id
-    snap = {"ok": True, "robots": [{"device_id": "d_pending", "pending": True}]}
-    assert resolve_device_id({}, snap) == (None, "none")
-    assert resolve_device_id(None, None) == (None, "none")
+@pytest.mark.parametrize("record, snap, expected", [
+    # what the record remembers wins
+    ({"mqtt-device-id": "d_mine"}, _served("d_other"), ("d_mine", "record")),
+    # otherwise the only served robot
+    ({}, _served("d_only"), ("d_only", "sole-served")),
+    # never a guess between two
+    ({}, _served("d_1", "d_2"), (None, "ambiguous")),
+    # an unpermitted robot cannot be the implicit target of a button
+    ({}, _served("d_pending", pending=True), (None, "none")),
+    (None, None, (None, "none")),
+], ids=["record", "sole-served", "ambiguous", "pending", "nothing"])
+def test_resolve_device_id(record, snap, expected):
+    assert resolve_device_id(record, snap) == expected

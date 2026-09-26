@@ -1,33 +1,19 @@
 """🩺 `no config pushed within timeout` must say WHICH — starved, or wedged.
 
-**The finding (2026-09-07).** A smoke failure was finally captured with its log intact,
-at load 147:
-
-    [virtual-moxie] subscriptions acknowledged by the broker
-    [virtual-moxie] → state (software_version=24.10.803)
-    ❌ SIL round-trip FAILED:
-       - no config pushed within timeout
-
-The robot's own SUBSCRIBE had been acknowledged **before** it announced, so this is not
-the QoS-0-and-not-retained race `test_sil_supervisor_readiness.py` reproduces. Twenty
-seconds is not a tight budget either. What the line was actually reporting was a
-supervisor starved by ~150 spinning cores — **in exactly the words reserved for a broken
-one**, because the wait had no way to tell the difference and said so in neither
-direction.
+A smoke failure under heavy load (robot subscribed and acknowledged BEFORE announcing, so
+not the QoS-0 race `test_sil_supervisor_readiness.py` reproduces) turned out to be a
+supervisor starved of CPU — reported in exactly the words reserved for a broken one,
+because the wait could not tell the difference.
 
 **The rule.** A wait whose expiry means *"we stopped waiting"* must not be phrased as a
-verdict about the thing waited for. That is precisely the correction PR #209 made to
-`sim/test_csp.mjs`, where `setTimeout(resolve("timeout"), 3000)` raced `onload`/`onerror`
-and `"timeout"` was then compared against `"loaded"` and `"refused"` as if it were a third
-verdict.
+verdict about the thing waited for.
 
-**Why asking works.** The status server is a **different transport** (HTTP on localhost)
-from the one that went quiet (MQTT). An answer there separates *alive but did not push*
-from *not answering anything at all* — which a longer MQTT timeout never could.
+**Why asking works.** The status server is a different transport (HTTP on localhost) from
+the one that went quiet (MQTT), so an answer there separates *alive but did not push* from
+*not answering anything at all* — which a longer MQTT timeout never could.
 
-**What this file proves:** the three outcomes are distinguishable, none of them is silent,
-and the diagnosis cannot itself throw — a failure path that raises would replace a
-misleading message with no message.
+**Proved here:** the three outcomes are distinguishable, none is silent, and the diagnosis
+cannot itself throw (a raising failure path would replace a misleading message with none).
 """
 from __future__ import annotations
 

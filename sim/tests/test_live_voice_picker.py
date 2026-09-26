@@ -1,23 +1,15 @@
 """
 Live 🎚️ picker discovery — the dropdowns filled from the REAL gateway listing.
 
-`test_voice_settings.py` proves every rule here against a fake `models.list()`, and each
-of those tests would still pass if the gateway had stopped serving `piper-amy` tomorrow.
-This file is the one that cannot: it asks the actual gateway what it serves and asserts
-that **the "piper-amy when possible" default is still possible**, that the classifier
-still splits the listing into voices and ears, and that an environment which names no
-engine pins nothing — the state every ordinary deployment is in.
+`test_voice_settings.py` proves every rule against a fake `models.list()`, and would pass
+if the gateway stopped serving `piper-amy` tomorrow. The listing is the one picker input
+we do not own, and a rename there silently turns the default into "the first voice in the
+list". So this asks the real gateway and asserts the "piper-amy when possible" default is
+still possible, the classifier still splits voices from ears, and an environment naming
+no engine pins nothing.
 
-Why it is worth a live request at all: the picker's whole promise is "what this appliance
-can *really* use right now", and the listing is the only input to it we do not own. A
-rename on the gateway silently turns the console's default into "the first voice in the
-list" with nothing failing anywhere.
-
-**Budget: ONE request to `/v1/models`.** All four assertions share the one listing through
-a `GatewayCatalog` built here, which is also the seam the appliance itself uses.
-
-Runs when `MOXIE_VOICE_BASE_URL` and a key are set (mqtt/.env of this tree or the main
-checkout); skips cleanly and instantly otherwise.
+**Budget: ONE `/v1/models` request**, shared through a `GatewayCatalog` (the appliance's
+own seam). Skips instantly without `MOXIE_VOICE_BASE_URL` + a key.
 
     .venv/bin/python -m pytest sim/tests/test_live_voice_picker.py -q -s
 """

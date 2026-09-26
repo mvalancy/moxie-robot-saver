@@ -1,26 +1,17 @@
 """The container ships jinja2; the SDK's base dependencies still do not.
 
-`content-module-contract.md`:42 promises a module author that `prompt` is Jinja2-templated
-and names the block form (`{% if %}`). For two releases that promise was false in the one
-place it mattered: `mqtt/requirements.txt` — the **container's** dependency list, and the
-only thing `mqtt/Dockerfile` installs — listed `paho-mqtt` and `openai` and nothing else, so
-every shipped appliance ran `render_prompt`'s dependency-free fallback and put literal
-template syntax into the brain's system prompt.
+`content-module-contract.md` promises Jinja2-templated prompts (`{% if %}`), but the
+container's `mqtt/requirements.txt` (the only thing `mqtt/Dockerfile` installs) once lacked
+jinja2, so every appliance ran the fallback renderer and fed literal template syntax to
+the brain. The fix is a split, load-bearing in opposite directions:
 
-Fixing that is a *split*, not a single edit, and both sides of the split are load-bearing in
-opposite directions:
+* **`requirements.txt` must contain jinja2**, or the documented form silently degrades in
+  production (safe because `render_prompt` is sandboxed; `test_render_sandbox.py`).
+* **`pyproject.toml`'s base `dependencies` must NOT**, keeping the SDK's "no heavy
+  dependencies" property (`test_package_contents.py`); jinja2 stays the `content` extra.
 
-* **`requirements.txt` must contain jinja2** — otherwise the documented form silently
-  degrades in production again. (Safe to ship only because `render_prompt` builds a
-  `SandboxedEnvironment`; see `test_render_sandbox.py`.)
-* **`pyproject.toml`'s base `dependencies` must NOT contain jinja2** — the SDK's "imports and
-  unit-tests with no heavy dependencies" property is deliberate and is itself tested
-  (`test_package_contents.py`). jinja2 stays an optional extra there (`content`).
-
-A future maintainer "tidying up" will reach for one of two obvious moves — promote the extra
-into base deps, or drop the container line as a duplicate of the extra — and both are wrong.
-So this file pins the split in **both** directions, reading the real files rather than a
-copy, because a comment in either file cannot fail a test run.
+Both obvious "tidy-ups" — promote the extra to base, or drop the container line as a
+duplicate — are wrong, so this pins the split in both directions against the real files.
 """
 from __future__ import annotations
 

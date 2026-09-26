@@ -1,15 +1,10 @@
 """The `script-src` hashes in `sim/web/_headers` must match the pages on disk.
 
-THE FAILURE THIS PREVENTS IS NOT A DEGRADED PAGE, IT IS A BLANK ONE. `_headers` is a static
-file that only Cloudflare Pages ever sends, so an inline `<script>` can run under
-`script-src 'self'` only if its exact SHA-256 is listed. Edit the block, forget the header,
-and the browser refuses it — on the live domain, silently, because every local suite serves
-the bytes it just built rather than the header that shipped.
-
-This is the fast, browser-free half of that guard: it runs in the ordinary pytest job in
-about a millisecond, so a stale header is caught long before the browser tier. Block 6 of
-`sim/test_csp.mjs` asserts the same thing again in JavaScript, from the live headers a
-browser actually received.
+The failure is a BLANK page, not a degraded one: `_headers` is only ever sent by
+Cloudflare Pages, so an edited inline `<script>` whose SHA-256 is not listed is refused on
+the live domain — silently, because local suites serve the bytes they just built. This is
+the browser-free half (runs in ~1 ms); `sim/test_csp.mjs` block 6 asserts it again from
+the headers a browser received.
 
 Run:  MOXIE_LLM_API_KEY= .venv/bin/python -m pytest sim/tests/test_csp_hashes.py -q
 """
@@ -61,13 +56,9 @@ def test_script_src_has_no_inline_escape_hatch():
 
 
 def test_no_page_carries_an_inline_event_handler_attribute():
-    """No hash this policy grants can cover one, and they fail SILENTLY.
-
-    `<button onclick="f()">` needs `'unsafe-hashes'` plus a hash per handler. Without it the
-    handler does not error — it simply never fires, which is the kind of defect that reaches
-    a visitor rather than a test. Note what is NOT a violation and was miscounted in
-    `_headers` until 2026-09-04: `el.onclick = function(){}` in a .js file assigns a function
-    OBJECT and is not an inline script at all.
+    """No hash this policy grants can cover one, and they fail SILENTLY: `<button
+    onclick="f()">` needs `'unsafe-hashes'`, and without it the handler just never fires.
+    (`el.onclick = function(){}` in a .js file is a function object, not an inline script.)
     """
     _hashes, _blocks, problems = gen.scan()
     assert not problems, "\n".join(problems)

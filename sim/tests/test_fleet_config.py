@@ -1,17 +1,11 @@
 """
-Fleet-level default config (openmoxie-feature-audit.md §4.1 ADOPT #6) — one appliance,
-several robots, one place to set house rules.
+Fleet-level default config: one appliance, several robots, one place for house rules.
 
-The push is layered `defaults ⊕ fleet ⊕ per-robot`: the builder's own kwarg defaults,
-then the appliance-wide record in the store (`fleet/config.json`), then this robot's own
-overrides. Three things are worth a test and they are all here:
-
-  * `merge_config_layers` — the pure precedence + deep-merge rule;
-  * `JsonStore.read_shared`/`write_shared` — the fleet record, kept out of `robots/`;
-  * the runtime seam — a fleet edit reaches **every** connected robot's `/config`, a
-    per-robot override still wins, and the status snapshot stays JSON-safe.
-
-No broker and no network: the runtime's MQTT client is `helpers_runtime.FakeClient`.
+The push is layered `defaults ⊕ fleet ⊕ per-robot`. Tested here: the pure precedence +
+deep-merge rule (`merge_config_layers`), the store's `fleet/config.json` record (kept out
+of `robots/`), the console's view of the layers, and the runtime seam — a fleet edit
+reaches **every** connected robot, a per-robot override still wins, and the status
+snapshot stays JSON-safe. No broker: the transport is `helpers_runtime.FakeClient`.
 """
 import json
 import os
@@ -44,8 +38,7 @@ def test_nested_objects_deep_merge_key_by_key():
 
 
 def test_lists_replace_rather_than_concatenate():
-    """`weekday_bedtime` and `alarms.wakes` are lists: the robot's replaces the fleet's,
-    it never appends to it (two bedtimes would be nonsense on the wire)."""
+    """The robot's list replaces the fleet's (two bedtimes would be nonsense on the wire)."""
     merged = merge_config_layers({"weekday_bedtime": ["20:00", "07:00"]},
                                  {"weekday_bedtime": ["21:30", "06:30"]})
     assert merged["weekday_bedtime"] == ["21:30", "06:30"]
@@ -156,7 +149,6 @@ CONFIG_TOPIC = "/devices/{d}/config"
 
 def _runtime(tmp_path, devices=("d_one", "d_two")):
     pytest.importorskip("paho.mqtt.client", reason="the runtime imports paho")
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from helpers_runtime import make_runtime
     from moxie_sdk.app import MoxieApp
     from moxie_sdk.types import RobotContext

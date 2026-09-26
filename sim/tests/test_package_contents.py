@@ -1,29 +1,17 @@
-"""
-Packaging guards: what `pip install moxie-cloud-sdk` actually gets.
+"""Packaging guards: what `pip install moxie-cloud-sdk` actually gets.
 
-Two failures are invisible to every other test in this repo, because every other test
-runs against the *source tree*:
+Every other test runs against the source tree, so two failures are invisible to them:
 
-  1. **A new subpackage ships empty (or not at all).** `[tool.setuptools] packages` is a
-     hand-written list. Add `moxie_sdk/telehealth/` and forget the line and the module is
-     simply absent from the wheel — `import` works all day in the repo and fails on an
+  1. **A new subpackage ships empty or not at all.** `[tool.setuptools] packages` is a
+     hand-written list; forget a line and `import` works in the repo and fails on an
      appliance.
-  2. **A new data file does not ship.** `[tool.setuptools.package-data]` maps
-     `moxie_sdk = ["*.json"]` — one package, one glob. `safety_rules.json` is loaded at
-     runtime by the safety classifier; a sibling `moxie_sdk/apps/*.json` or a JSON in a
-     subpackage matches nothing and is dropped silently.
+  2. **A new data file does not ship.** `package-data` maps `moxie_sdk = ["*.json"]` — one
+     package, one glob; a JSON anywhere else (e.g. a subpackage) is dropped silently.
 
-The third guard is the SDK's own promise (`pyproject.toml`: "the SDK imports … with no
-heavy dependencies"), which is also playbook rule 9's rule: the fast CI tier runs the
-whole suite with none of the optional backends installed, so a module that imports
-`openai`/`numpy`/`jinja2`/`piper`/`faster_whisper` at module scope is a red push, not a
-caught bug. Here it is checked directly — in a subprocess where those imports are made
-to fail even when they *are* installed, so the full-fat venv catches it too.
-
-Verified against the real artifact on 2026-09-02 (v0.7.0 RC): `python -m build` →
-`moxie_cloud_sdk-0.7.0.{tar.gz,whl}`, the wheel carrying `moxie_sdk/safety_rules.json`,
-installed into a bare venv where `import moxie_sdk` and `from moxie_sdk.schedule import
-plan_day` both work with only `paho-mqtt` present.
+Third, the SDK's own promise (`pyproject.toml`: imports with no heavy dependencies): the
+fast CI tier runs without the optional backends, so a module-scope `openai`/`numpy`/
+`jinja2`/`piper`/`faster_whisper` import is a red push. Checked in a subprocess where those
+imports are made to fail even when installed, so a full venv catches it too.
 """
 import fnmatch
 import os

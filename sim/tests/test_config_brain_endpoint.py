@@ -1,33 +1,22 @@
 """
 The brain endpoint is CONFIGURATION, and an unset one is LOUD.
 
-`mqtt/config.py` used to read
-`os.environ.get("MOXIE_LLM_BASE_URL", "https://<the maintainer's gateway>/v1")`. This repo
-is public and its stated principle is that *any* Moxie sim and *any* OpenAI-compatible
-gateway work by configuration, so that default meant a stranger who cloned it got a
-supervisor silently pointed at someone else's server — and it never worked anyway, because
-that endpoint refuses unauthenticated calls, so the child heard "my brain got fuzzy"
-forever with nothing anywhere saying why. The hosted Functions already refuse to guess
-(`functions/api/_lib/env.js`: `DEMO_GATEWAY_BASE_URL` has no default;
-`backlog/live-sim-demo.md` C3 records the inconsistency).
+`mqtt/config.py` used to default `MOXIE_LLM_BASE_URL` to the maintainer's gateway: in a
+public repo that silently pointed a stranger's supervisor at someone else's server (which
+refused them, so the child heard "my brain got fuzzy" forever). The hosted Functions
+already refuse to guess (`DEMO_GATEWAY_BASE_URL` has no default).
 
-These tests assert **behaviour**, not the literal that used to be there — a test that only
-said `assert LLM_BASE_URL != "https://…"` would restate the code and would pass again the
-moment someone substituted a different deployment:
+Asserted as BEHAVIOUR, not the old literal (which a different deployment would pass):
 
-  * an unconfigured supervisor resolves NOTHING to a remote host (every URL-shaped value
-    the module exposes is empty or loopback);
-  * an app that needs a brain refuses to start, and the refusal NAMES the variable the
-    operator has to set — checked by pulling the `MOXIE_*` tokens out of the message, not
-    by matching prose;
-  * the help it offers points only at loopback, so the fix cannot smuggle a deployment
-    back in through the error text;
-  * a configured endpoint is used EXACTLY, with nothing substituted;
-  * `MOXIE_APP=echo` still needs no brain, which is what keeps the SIL smoke, the compose
-    smoke and every harness in `helpers_stack.py` running with no endpoint at all.
+  * unconfigured, every URL-shaped value the module exposes is empty or loopback;
+  * an app that needs a brain refuses to start, and the refusal NAMES the `MOXIE_*`
+    variable to set (tokens extracted, not prose matched);
+  * the help it offers points only at loopback;
+  * a configured endpoint is used EXACTLY;
+  * `MOXIE_APP=echo` needs no brain (keeps the SIL/compose smokes endpoint-free).
 
-The class-wide guard — no deployment hostname anywhere in shipped Python or JS — is
-`test_no_deployment_defaults.py`. This file is about the one variable's behaviour.
+The class-wide guard (no deployment hostname in shipped code) is
+`test_no_deployment_defaults.py`.
 """
 from helpers_runtime import reload_config                      # noqa: E402
 import os
@@ -69,13 +58,9 @@ def _remote_hosts(text: str) -> list:
 # ------------------------------------------------------- nothing points anywhere --
 
 def test_an_unconfigured_supervisor_names_no_remote_host(monkeypatch):
-    """With nothing set, no value this module exposes reaches out to anyone.
-
-    Deliberately not `assert LLM_BASE_URL == ""`: the defect was a *host* appearing where
-    the operator configured none, so the assertion sweeps every string the module exposes
-    and reports any that names one. It would fail just as loudly for a different vendor's
-    endpoint, or for a second variable that grew the same habit later.
-    """
+    """With nothing set, no value this module exposes reaches out to anyone — a sweep of
+    every exposed string, so a different vendor's host or a second variable with the same
+    habit fails too."""
     c = _fresh(monkeypatch)
     offenders = {name: value
                  for name, value in vars(c).items()
