@@ -16,7 +16,7 @@ windows and the budget's DAY — a separate file only because `test_demo_proxy.m
 reserved to another agent for the whole of that slice, as its own header explains. Nothing
 about the row format changes; the runner column was always per-row.
 
-Run it by hand after touching the cache tier in `functions/api/_lib/limits.js`:
+Run it by hand after touching `functions/api/_lib/limits.js`, `counters.js` or `sharedtier.js`:
 
     python3 sim/tools/unit_budget_mutation_check.py            # the whole table, ~45 s
     python3 sim/tools/unit_budget_mutation_check.py U3 D4      # two rows, ~1.5 s
@@ -92,11 +92,13 @@ TREES = ("functions", "sim", "mqtt")
 #: identical WRONG CHECK rows. (It did, on the first run of this table.)
 ROOT_FILES = ("wrangler.toml",)
 
-#: The one file this table mutates. Every guard in this slice lives in the admission
-#: module, which is the point: the shared budget is not a policy spread across routes, it
-#: is one function's arithmetic plus one isolate-local ledger — and the day/wide tier added
-#: on top of it is a second copy of exactly that, with its own ledger and its own key mark.
+#: The files this table mutates — the admission module and the two it was split into.
+#: Every guard lives in one of them: the shared budget is not a policy spread across
+#: routes, it is `admit()`'s arithmetic (LIMITS), an isolate-local ledger (COUNTERS), and
+#: the Cache API sub-tiers that publish it (SHARED).
 LIMITS = WT / "functions/api/_lib/limits.js"
+COUNTERS = WT / "functions/api/_lib/counters.js"
+SHARED = WT / "functions/api/_lib/sharedtier.js"
 
 #: The suite. Run whole (about 1.5 s), because running it whole is what lets the selector
 #: column check that the RIGHT assertion reddened.
@@ -131,13 +133,13 @@ MUTATIONS = [
      SUITE, "takes them straight back out again"),
 
     # ---- U3: the other rejected design — retry the unpublished units ---------
-    ("U3  keep the units after a write ATTEMPT, to retry them (a double charge)", LIMITS,
+    ("U3  keep the units after a write ATTEMPT, to retry them (a double charge)", SHARED,
      "    c.published += owed;\n    clearPending(b);",
      "    c.published += owed;",
      SUITE, "the colo holds 9 units, not 18"),
 
     # ---- U4: the hour roll ---------------------------------------------------
-    ("U4  carry last hour's unpublished units INTO this hour's entry", LIMITS,
+    ("U4  carry last hour's unpublished units INTO this hour's entry", COUNTERS,
      "  if (u.bucket !== b) {\n"
      "    if (u.pending > 0) state.stats.cache.units.dropped += u.pending;\n"
      "    u.bucket = b;\n"
@@ -152,13 +154,11 @@ MUTATIONS = [
     # The plausible tidy-up: fall through instead of returning early. `published` is then 0
     # and the publish RESETS a live hour to this isolate's share — a far larger undercount
     # than not writing, and the exact mistake the window sub-tier's own note warns about.
-    ("U5  a failed budget READ publishes anyway, resetting a live hour", LIMITS,
+    ("U5  a failed budget READ publishes anyway, resetting a live hour", SHARED,
      "  if (seen === CACHE_ERROR) {\n"
      "    c.errors += 1;\n"
      "    c.allowed += 1;\n"
-     "    // FAIL OPEN — and, like the timeout above, the ledger is KEPT: no write was attempted,\n"
-     "    // so nothing can have landed, so nothing can be published twice by keeping it.\n"
-     "    return null;\n"
+     "    return null; // FAIL OPEN; ledger KEPT (no write was attempted)\n"
      "  }",
      "  if (seen === CACHE_ERROR) {\n"
      "    c.errors += 1;\n"
@@ -166,11 +166,11 @@ MUTATIONS = [
      SUITE, "never reset to this isolate's share"),
 
     # ---- U6: fail open turned into fail closed -------------------------------
-    ("U6  a cache that HANGS refuses instead of admitting (fail closed)", LIMITS,
+    ("U6  a cache that HANGS refuses instead of admitting (fail closed)", SHARED,
      "  if (seen === CACHE_TIMEOUT) {\n"
      "    c.timeouts += 1;\n"
      "    c.allowed += 1;\n"
-     "    return null; // FAIL OPEN — and the ledger is KEPT, because nothing was written\n"
+     "    return null; // FAIL OPEN; ledger KEPT (nothing was written)\n"
      "  }",
      "  if (seen === CACHE_TIMEOUT) {\n"
      "    c.timeouts += 1;\n"
@@ -181,7 +181,7 @@ MUTATIONS = [
 
     # ---- U7: the comparison forgets what this isolate owes -------------------
     ("U7  compare only the PUBLISHED count, ignoring this isolate's unpublished spend",
-     LIMITS,
+     SHARED,
      "  if (published + owed >= ceiling) {",
      "  if (published >= ceiling) {",
      SUITE, "isolate B's SECOND is REFUSED"),
@@ -234,15 +234,15 @@ MUTATIONS = [
      SUITE, "sit in this isolate's ledger as a RECORDED fact"),
 
     # ---- U13: the namespace --------------------------------------------------
-    ("U13 the budget's key namespace collides with a route name", LIMITS,
+    ("U13 the budget's key namespace collides with a route name", SHARED,
      'const UNITS_PATH = "units";',
      'const UNITS_PATH = "chat";',
      SUITE, "is not a route name, so a window key can never spell a budget key by route"),
 
     # ---- U14: the entry outlives its own hour --------------------------------
-    ("U14 the budget entry given a MINUTE's max-age instead of its own hour's", LIMITS,
-     '            "Cache-Control": "max-age=" + SCALES.hour,',
-     '            "Cache-Control": "max-age=" + SCALES.min,',
+    ("U14 the budget entry given a MINUTE's max-age instead of its own hour's", SHARED,
+     "    await putEntry(c, store, key, { n: published + owed }, SCALES.hour, cfg);",
+     "    await putEntry(c, store, key, { n: published + owed }, SCALES.min, cfg);",
      SUITE, "an entry that outlives its own"),
 
     # ---- U16: the refusal's own housekeeping ---------------------------------
@@ -260,7 +260,7 @@ MUTATIONS = [
     # admission writes, including the 200 that were about to be refunded — which is the
     # op cost the latency note promises is not spent, and a stream of no-op writes on the
     # single hottest key in the colo.
-    ("U17 publish on every admission, even when the isolate owes nothing", LIMITS,
+    ("U17 publish on every admission, even when the isolate owes nothing", SHARED,
      "  if (owed > 0) {",
      "  if (owed >= 0) {",
      SUITE, "which is the structural half of the claim"),
@@ -292,51 +292,15 @@ MUTATIONS = [
     # hour then refused, so the stored count is ABOVE the truth. That is an OVERCOUNT, the
     # one direction §4.6.1 says this tier may never fail in.
     ("W1  the wide check moved back AFTER the minute write (a refusal that costs a write)",
-     LIMITS,
+     SHARED,
      "  const wider = await sharedWideWindow(store, request, { ip, route, cfg, nowS, tag });\n"
      "  if (wider) return wider;\n"
      "\n"
-     "  // ---- op 2: write back. Unlocked and on purpose — a lost update undercounts (2).\n"
-     "  // `max-age` is one window, so an entry outlives its own bucket by at most that and then\n"
-     "  // evicts itself; the key already carries the bucket, so nothing stale can be believed.\n"
-     "  const wrote = await withDeadline(cfg.cacheTimeoutMs, () =>\n"
-     "    store.put(\n"
-     "      key,\n"
-     "      new Response(JSON.stringify({ n: used + 1 }), {\n"
-     "        headers: {\n"
-     '          "Content-Type": "application/json",\n'
-     '          "Cache-Control": "max-age=" + SCALES.min,\n'
-     "        },\n"
-     "      }),\n"
-     "    ),\n"
-     "  );\n"
-     "  if (wrote === CACHE_TIMEOUT) c.timeouts += 1;\n"
-     "  else if (wrote === CACHE_ERROR) c.errors += 1;\n"
-     "  else {\n"
-     "    c.ops += 1;\n"
-     "    c.wrote += 1;\n"
-     "  }\n"
+     "  // The key carries the bucket, so one window of `max-age` is enough.\n"
+     "  await putEntry(c, store, key, { n: used + 1 }, SCALES.min, cfg);\n"
      "  c.allowed += 1;",
-     "  // ---- op 2: write back. Unlocked and on purpose — a lost update undercounts (2).\n"
-     "  // `max-age` is one window, so an entry outlives its own bucket by at most that and then\n"
-     "  // evicts itself; the key already carries the bucket, so nothing stale can be believed.\n"
-     "  const wrote = await withDeadline(cfg.cacheTimeoutMs, () =>\n"
-     "    store.put(\n"
-     "      key,\n"
-     "      new Response(JSON.stringify({ n: used + 1 }), {\n"
-     "        headers: {\n"
-     '          "Content-Type": "application/json",\n'
-     '          "Cache-Control": "max-age=" + SCALES.min,\n'
-     "        },\n"
-     "      }),\n"
-     "    ),\n"
-     "  );\n"
-     "  if (wrote === CACHE_TIMEOUT) c.timeouts += 1;\n"
-     "  else if (wrote === CACHE_ERROR) c.errors += 1;\n"
-     "  else {\n"
-     "    c.ops += 1;\n"
-     "    c.wrote += 1;\n"
-     "  }\n"
+     "  // The key carries the bucket, so one window of `max-age` is enough.\n"
+     "  await putEntry(c, store, key, { n: used + 1 }, SCALES.min, cfg);\n"
      "  const wider = await sharedWideWindow(store, request, { ip, route, cfg, nowS, tag });\n"
      "  if (wider) return wider;\n"
      "  c.allowed += 1;",
@@ -348,14 +312,14 @@ MUTATIONS = [
     # in the body, as a bucket stamped beside the count. Trusting the count without the
     # stamp believes an 03:00 count at 20:00 and refuses somebody who has spent nothing.
     ("W2  the wide entry's BUCKET STAMP ignored, so a closed hour's count is believed",
-     LIMITS,
+     SHARED,
      "    const stored = body && Number(body[bField]) === b ? Number(body[nField]) : 0;",
      "    const stored = body ? Number(body[nField]) : 0;",
      CEILINGS, "a count stamped with a DIFFERENT bucket reads as zero, not as this hour's"),
 
     # ---- W3: fail open turned into fail closed, in the wide half --------------
     ("W3  a store that HANGS refuses the wide window instead of admitting (fail closed)",
-     LIMITS,
+     SHARED,
      "  if (seen === CACHE_TIMEOUT) {\n"
      "    w.timeouts += 1;\n"
      "    w.allowed += 1;\n"
@@ -373,7 +337,7 @@ MUTATIONS = [
     # `windowArity` is 3 for BOTH shapes, so arity cannot tell them apart; the mark is the
     # whole of the separation, and it works only because a decimal integer cannot begin
     # with a letter. Empty it and a wide entry can spell a minute entry.
-    ("W4  the WIDE mark emptied, so a wide key can spell a narrow one", LIMITS,
+    ("W4  the WIDE mark emptied, so a wide key can spell a narrow one", SHARED,
      'const WIDE_MARK = "w";',
      'const WIDE_MARK = "";',
      CEILINGS, "the two wide shapes are marked by a LETTER"),
@@ -383,15 +347,9 @@ MUTATIONS = [
     # to be the day too. A shorter one is not wrong in the dangerous direction — it throws
     # the hour count away and admits — but a ceiling that quietly stops binding is the
     # failure this whole tier exists to make visible.
-    ("W5  the WIDE entry given a MINUTE's max-age instead of its own day's", LIMITS,
-     "      new Response(JSON.stringify(next), {\n"
-     "        headers: {\n"
-     '          "Content-Type": "application/json",\n'
-     '          "Cache-Control": "max-age=" + SCALES.day,',
-     "      new Response(JSON.stringify(next), {\n"
-     "        headers: {\n"
-     '          "Content-Type": "application/json",\n'
-     '          "Cache-Control": "max-age=" + SCALES.min,',
+    ("W5  the WIDE entry given a MINUTE's max-age instead of its own day's", SHARED,
+     "  await putEntry(w, store, key, next, SCALES.day, cfg);",
+     "  await putEntry(w, store, key, next, SCALES.min, cfg);",
      CEILINGS, "it lives exactly ONE DAY — the widest scale it holds"),
 
     # ---- W6: a failed READ that writes anyway ---------------------------------
@@ -400,7 +358,7 @@ MUTATIONS = [
     # stamp reads as NaN, both counts read as zero, and the `put` RESETS a live window to
     # this isolate's single turn. NOT CAUGHT until section F grew a case whose seeded entry
     # differs from what a fresh write produces — see that block's own note.
-    ("W6  a failed WIDE read publishes anyway, resetting a live window", LIMITS,
+    ("W6  a failed WIDE read publishes anyway, resetting a live window", SHARED,
      "  if (seen === CACHE_ERROR) {\n"
      "    w.errors += 1;\n"
      "    w.allowed += 1;\n"
@@ -415,7 +373,7 @@ MUTATIONS = [
     # `>=` and not `>`, for the reason the day budget states next door: the local request's
     # own cost is already accounted for by the in-isolate map that ran first, so a colo
     # standing exactly ON the ceiling has spent it.
-    ("W7  the wide window's ceiling comparison off by one (> instead of >=)", LIMITS,
+    ("W7  the wide window's ceiling comparison off by one (> instead of >=)", SHARED,
      "    if (used >= ceiling) {\n"
      "      w.refused += 1;",
      "    if (used > ceiling) {\n"
@@ -429,7 +387,7 @@ MUTATIONS = [
     # deep-equality on the stored body reddened, because the array order is also the JSON
     # field order, and a row caught by a serialization detail proves nothing about the
     # ordering it claims to be about.
-    ("W8  the wide scales built WIDEST-first, so the day answers before the hour", LIMITS,
+    ("W8  the wide scales built WIDEST-first, so the day answers before the hour", SHARED,
      '  if (limits.hour) scales.push(["hour", limits.hour, "h", "hb"]);\n'
      '  if (limits.day) scales.push(["day", limits.day, "d", "db"]);',
      '  if (limits.day) scales.push(["day", limits.day, "d", "db"]);\n'
@@ -464,14 +422,14 @@ MUTATIONS = [
     # units to retry them publishes them TWICE, and a double charge is an overcount, which
     # refuses somebody. The fake cache's `putStoresThenHangs` exists for exactly this shape.
     ("D2  keep the DAY units after a write ATTEMPT, to retry them (a double charge)",
-     LIMITS,
+     SHARED,
      "    d.published += owedDay;\n    clearDayPending(db);",
      "    d.published += owedDay;",
      CEILINGS, "a put that LANDS AND THEN HANGS still clears the ledger"),
 
     # ---- D3: the comparison forgets this isolate's day ledger -----------------
     ("D3  compare only the PUBLISHED day count, ignoring this isolate's unpublished spend",
-     LIMITS,
+     SHARED,
      "  if (spent + owedDay >= ceiling) {",
      "  if (spent >= ceiling) {",
      CEILINGS, "the colo has seen 12"),
@@ -489,22 +447,16 @@ MUTATIONS = [
      CEILINGS, "straight back out of the DAY ledger too"),
 
     # ---- D5: the entry outlives its own day ----------------------------------
-    ("D5  the DAY budget entry given a MINUTE's max-age instead of its own day's", LIMITS,
-     "        new Response(JSON.stringify({ n: spent + owedDay }), {\n"
-     "          headers: {\n"
-     '            "Content-Type": "application/json",\n'
-     '            "Cache-Control": "max-age=" + SCALES.day,',
-     "        new Response(JSON.stringify({ n: spent + owedDay }), {\n"
-     "          headers: {\n"
-     '            "Content-Type": "application/json",\n'
-     '            "Cache-Control": "max-age=" + SCALES.min,',
+    ("D5  the DAY budget entry given a MINUTE's max-age instead of its own day's", SHARED,
+     "    await putEntry(d, store, key, { n: spent + owedDay }, SCALES.day, cfg);",
+     "    await putEntry(d, store, key, { n: spent + owedDay }, SCALES.min, cfg);",
      CEILINGS, "the day entry's max-age is ONE DAY"),
 
     # ---- D6: the publish that always runs, day-side --------------------------
     # `owedDay > 0` is what makes a refused request cost ZERO day writes. Without it the
     # free drain is not closed structurally at all — it is 200 no-op writes on the single
     # hottest key in the colo, each one publishing `spent + 0`.
-    ("D6  publish the day on every admission, even when the isolate owes nothing", LIMITS,
+    ("D6  publish the day on every admission, even when the isolate owes nothing", SHARED,
      "  if (owedDay > 0) {",
      "  if (owedDay >= 0) {",
      CEILINGS, "zero writes attempted, which is the structural half of the claim"),
@@ -514,7 +466,7 @@ MUTATIONS = [
     # did not spend it, which refuses somebody TOMORROW. Dropping them undercounts, which
     # is the direction this tier is allowed to be wrong in; the `dropped` counter is what
     # keeps the drop from being silent.
-    ("D7  carry yesterday's unpublished units INTO today's entry", LIMITS,
+    ("D7  carry yesterday's unpublished units INTO today's entry", COUNTERS,
      "function pendingDayUnits(b) {\n"
      "  const u = state.unitsDay;\n"
      "  if (u.bucket !== b) {\n"
@@ -538,7 +490,7 @@ MUTATIONS = [
     # bad day answers every visitor `budget_exhausted` for a DAY rather than for an hour,
     # and the page paints SCRIPTED the whole time.
     ("D8  a cache that HANGS refuses the DAY budget instead of admitting (fail closed)",
-     LIMITS,
+     SHARED,
      "  if (seen === CACHE_TIMEOUT) {\n"
      "    d.timeouts += 1;\n"
      "    d.allowed += 1;\n"
@@ -556,7 +508,7 @@ MUTATIONS = [
     # mark is the whole separation. Empty it and `.../units/d0` becomes `.../units/0`,
     # which is the hour key of hour 0: the deployment's DAY spend and its 00:00 hour merge
     # into one counter.
-    ("D9  the DAY mark emptied, so the day key can spell an hour key", LIMITS,
+    ("D9  the DAY mark emptied, so the day key can spell an hour key", SHARED,
      'const DAY_MARK = "d";',
      'const DAY_MARK = "";',
      CEILINGS, "the day budget entry is origin + prefix + 'units' + d + the DAY bucket"),
@@ -565,7 +517,7 @@ MUTATIONS = [
     # U8's day. `sharedBudgetVerdict` ends by handing off to the day, and an hour refusal
     # returns above it — so deleting the hand-off leaves a deployment with an hour ceiling
     # and no day ceiling at all, silently, on a route whose hour never fills.
-    ("D10 the DAY budget sub-tier never consulted at all", LIMITS,
+    ("D10 the DAY budget sub-tier never consulted at all", SHARED,
      "  return sharedDayBudget(store, request, { cfg, nowS });\n}",
      "  return null;\n}",
      CEILINGS, "reads FOUR shared entries"),
