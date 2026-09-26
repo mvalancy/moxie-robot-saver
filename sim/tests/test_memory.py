@@ -68,6 +68,22 @@ def _robot(module_id="MCHAT", device_id=DEV):
                         module_id=module_id, content_id="default")
 
 
+def _one(tmp_path, text="has a dog", **prov):
+    """A store holding one fact, and that fact's id."""
+    mem = _store(tmp_path)
+    mem.merge(DEV, "mchat", {"facts": [text]}, provenance=provenance(**prov))
+    return mem, mem.load(DEV)["mchat"]["facts"][0]["id"]
+
+
+#: A transcript long enough to summarize (`min_volleys: 2`).
+THREE_TURNS = [{"role": "user", "content": "one"}, {"role": "assistant", "content": "a"},
+               {"role": "user", "content": "two"}]
+
+
+def _boom(messages):
+    raise ValueError("gateway exploded")
+
+
 def _chat(reply="ok", record=None):
     def chat(messages):
         if record is not None:
@@ -168,8 +184,7 @@ def test_erase_one_namespace_or_everything(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_every_item_gets_a_stable_id_and_its_own_provenance(tmp_path):
-    """The parent-facing half of BEYOND #4 starts here: without an id there is nothing
-    to erase or correct one line at a time."""
+    """Without an id there is nothing to erase or correct one line at a time."""
     mem = _store(tmp_path)
     mem.merge(DEV, "mchat", {"facts": ["has a dog", "is in year 2"]},
               provenance=provenance(module_id="MCHAT", turns=4, reason="exit"))
@@ -245,21 +260,15 @@ def test_erase_one_item_leaves_the_rest_of_the_activity(tmp_path):
 
 
 def test_erase_one_item_is_never_policy_gated(tmp_path):
-    mem = _store(tmp_path)
-    mem.merge(DEV, "mchat", {"facts": ["has a dog"]}, provenance=provenance())
-    one = mem.load(DEV)["mchat"]["facts"][0]["id"]
+    mem, one = _one(tmp_path)
     mem.policy = lambda device_id: 0                     # LoggingPolicy.NO_DATA
     assert mem.erase_item(DEV, "mchat", one) is True
     assert mem.load(DEV)["mchat"]["facts"] == []
 
 
 def test_edit_an_item_keeps_its_id_and_pins_it(tmp_path):
-    """PR #25's live run stored "Puppy sleeps on **his** bed" for "my bed". A parent
-    fixes the pronoun instead of losing the activity."""
-    mem = _store(tmp_path)
-    mem.merge(DEV, "mchat", {"facts": ["Puppy sleeps on his bed"]},
-              provenance=provenance(module_id="MCHAT"))
-    one = mem.load(DEV)["mchat"]["facts"][0]["id"]
+    """A mis-heard pronoun is fixed in place instead of losing the activity."""
+    mem, one = _one(tmp_path, "Puppy sleeps on his bed", module_id="MCHAT")
     edited = mem.edit_item(DEV, "mchat", one, "Puppy sleeps on my bed")
     assert edited["id"] == one and edited["pinned"] is True and edited["edited_at"] > 0
     stored = mem.load(DEV)["mchat"]["facts"][0]
@@ -271,9 +280,7 @@ def test_edit_refuses_what_may_never_be_remembered(tmp_path):
     """A text box that writes into every later prompt runs the same two rules the model's
     own summary does — otherwise the safety filter is one console field away from moot."""
     from moxie_sdk import safety as safety_seam
-    mem = _store(tmp_path)
-    mem.merge(DEV, "mchat", {"facts": ["has a dog"]}, provenance=provenance())
-    one = mem.load(DEV)["mchat"]["facts"][0]["id"]
+    mem, one = _one(tmp_path)
     unsafe = "I want to kill myself"
     assert safety_seam.default_classifier().assess(
         unsafe, role=safety_seam.MOXIE).action == safety_seam.BLOCK
@@ -294,10 +301,7 @@ def test_edit_refuses_what_may_never_be_remembered(tmp_path):
 def test_edit_works_even_when_writing_new_memories_is_off(tmp_path):
     """`NO_DATA` stops Moxie learning. It must not stop a parent fixing what it learned
     before — the only alternative would be deleting a line that is nearly right."""
-    mem = _store(tmp_path)
-    mem.merge(DEV, "mchat", {"facts": ["Puppy sleeps on his bed"]},
-              provenance=provenance())
-    one = mem.load(DEV)["mchat"]["facts"][0]["id"]
+    mem, one = _one(tmp_path, "Puppy sleeps on his bed")
     mem.policy = lambda device_id: 0
     assert mem.edit_item(DEV, "mchat", one, "Puppy sleeps on my bed")["pinned"] is True
     assert texts(mem.load(DEV)["mchat"]["facts"]) == ["Puppy sleeps on my bed"]
@@ -305,9 +309,7 @@ def test_edit_works_even_when_writing_new_memories_is_off(tmp_path):
 
 def test_a_relearned_fact_keeps_its_pin_and_its_use_count(tmp_path):
     """Moxie hearing the same thing again must not quietly undo a parent's correction."""
-    mem = _store(tmp_path)
-    mem.merge(DEV, "mchat", {"facts": ["has a dog"]}, provenance=provenance())
-    one = mem.load(DEV)["mchat"]["facts"][0]["id"]
+    mem, one = _one(tmp_path)
     mem.edit_item(DEV, "mchat", one, "has a beagle")
     mem.note_used(DEV, "FACTS:\n- has a beagle")
     mem.merge(DEV, "mchat", {"facts": ["has a beagle", "is in year 2"]},
@@ -417,8 +419,7 @@ def test_render_missing_namespace_is_blank_not_an_error():
 
 def test_render_exposes_persist_data_without_jinja2_installed():
     """`render.py` falls back to a dependency-free `{{ dotted.path }}` substitution when
-    jinja2 is absent — a bare `pip install moxie-cloud-sdk` with no `content` extra (the
-    container itself now ships jinja2). Memory must render on that path too."""
+    jinja2 is absent (a bare SDK install); memory must render on that path too."""
     from moxie_sdk.content import render as render_mod
     v = Volley(persist_data=wrap_facts({"mchat": {"facts": ["has a dog"]}}))
     out = render_mod._minimal_render("FACTS:\n{{ volley.persist_data.mchat.facts }}",
@@ -483,9 +484,7 @@ def test_session_summarize_returns_structured_facts():
 
 
 def test_session_summarize_returns_none_when_the_brain_fails():
-    def boom(messages):
-        raise ValueError("gateway exploded")
-    session = Session(history=[{"role": "user", "content": "hi"}], chat=boom)
+    session = Session(history=[{"role": "user", "content": "hi"}], chat=_boom)
     assert session.summarize() is None                   # no crash, nothing to write
 
 
@@ -527,12 +526,6 @@ def test_on_session_end_writes_a_summary_with_provenance(tmp_path):
     assert block["_provenance"][0]["turns"] == 2
 
 
-def test_on_session_end_skips_a_conversation_too_short_to_matter(tmp_path):
-    app = _app(tmp_path)
-    app.on_session_end(_robot(), [{"role": "user", "content": "hi"}], "exit")
-    assert app.memory.load(DEV) == {}
-
-
 def test_on_session_end_does_not_re_summarize_the_same_transcript(tmp_path):
     calls = []
     app = _app(tmp_path, record=calls)
@@ -544,32 +537,26 @@ def test_on_session_end_does_not_re_summarize_the_same_transcript(tmp_path):
     assert len(app.memory.load(DEV)["mchat"]["_provenance"]) == 1
 
 
-def test_on_session_end_writes_nothing_under_no_data(tmp_path):
-    app = _app(tmp_path)
+def _no_data(app):
     app.memory.policy = lambda device_id: 0              # LoggingPolicy.NO_DATA
-    app.on_session_end(_robot(), [{"role": "user", "content": "one"},
-                                  {"role": "assistant", "content": "a"},
-                                  {"role": "user", "content": "two"}], "exit")
-    assert app.memory.load(DEV) == {}
 
 
-def test_on_session_end_writes_nothing_when_the_brain_fails(tmp_path):
-    def boom(messages):
-        raise ValueError("gateway exploded")
-    app = ContentApp(load_module(MODULE), boom, memory=_store(tmp_path))
-    app.on_session_end(_robot(), [{"role": "user", "content": "one"},
-                                  {"role": "assistant", "content": "a"},
-                                  {"role": "user", "content": "two"}], "exit")
-    assert app.memory.load(DEV) == {}
+_PLAIN = {"conversations": [{"name": "Plain", "module_id": "MCHAT",
+                             "content_id": "default", "prompt": "hi"}]}
 
 
-def test_a_module_without_a_memory_block_remembers_nothing(tmp_path):
-    plain = {"conversations": [{"name": "Plain", "module_id": "MCHAT",
-                               "content_id": "default", "prompt": "hi"}]}
-    app = _app(tmp_path, module=plain)
-    app.on_session_end(_robot(), [{"role": "user", "content": "one"},
-                                  {"role": "assistant", "content": "a"},
-                                  {"role": "user", "content": "two"}], "exit")
+@pytest.mark.parametrize("case, history, chat, module, setup", [
+    ("too_short_to_matter", [{"role": "user", "content": "hi"}], None, None, None),
+    ("under_no_data", THREE_TURNS, None, None, _no_data),
+    ("when_the_brain_fails", THREE_TURNS, _boom, None, None),
+    ("without_a_memory_block", THREE_TURNS, None, _PLAIN, None),
+])
+def test_on_session_end_writes_nothing(tmp_path, case, history, chat, module, setup):
+    app = ContentApp(load_module(module or MODULE), chat or _chat(GOOD_SUMMARY),
+                     memory=_store(tmp_path))
+    if setup:
+        setup(app)
+    app.on_session_end(_robot(), history, "exit")
     assert app.memory.load(DEV) == {}
 
 
@@ -612,9 +599,7 @@ def test_memory_off_is_a_supported_configuration(tmp_path):
     app = ContentApp(load_module(MODULE), _chat(GOOD_SUMMARY), memory=False)
     assert app.memory is None
     assert app.persist_data(DEV) == {}
-    app.on_session_end(_robot(), [{"role": "user", "content": "one"},
-                                  {"role": "assistant", "content": "a"},
-                                  {"role": "user", "content": "two"}], "exit")
+    app.on_session_end(_robot(), THREE_TURNS, "exit")
 
 
 @pytest.mark.parametrize("path", ["content_modules/starter.json",

@@ -318,15 +318,10 @@ def test_cloud_tts_chunks_play_in_order_then_stop(page, server):
     for chunk in (0, 2, 1):
         page.evaluate(_INJECT_TTS, {"frames": 8820, "rate": 22050, "eventId": "evt-chunks",
                                     "chunk": chunk, "marks": []})
-    # Assert on what the page RECORDED, not on what is true when the question arrives.
-    # The old check sampled `ttsPending()` live at the instant `speaking` first went
-    # true, and lost that race ~50% of the time on a fast runner (CI 33629395950): four
-    # tenths of a second of audio can drain entirely inside one polling gap, and then
-    # "the chunks queued" is unprovable even though they did. audio.js now remembers the
-    # shape of each playback — chunk order and the deepest the queue got — so the same
-    # three facts are asserted once the utterance is safely over. The ORDER itself is no
-    # longer a matter of timing either: audio.js holds a chunk until its turn comes
-    # (see the chunk-ordering note there, and the jitter test below).
+    # Assert on what the page RECORDED once the utterance is over: sampling the queue
+    # live raced a fast runner (the audio can drain inside one polling gap). audio.js
+    # records each playback's chunk order and deepest queue, and holds a chunk until its
+    # turn, so ORDER is not a matter of timing either.
     done = page.wait_for_function(_PLAYED, arg={"event": "evt-chunks", "want": 3},
                                   timeout=20000).json_value()
     stats = done["stats"]
@@ -335,10 +330,8 @@ def test_cloud_tts_chunks_play_in_order_then_stop(page, server):
     assert stats["order"] == [0, 1, 2], f"chunks must play in chunk_num order ({stats})"
     assert stats["max_pending"] >= 1, f"later chunks must queue ({stats})"
     assert done["pending"] == 0, done
-    # no marks here: the mouth must have moved from the AUDIO ENVELOPE alone, which only
-    # happens if the PCM really rendered through the Web Audio graph. Read as the peak
-    # the page recorded over the utterance — the old live `getMouthOpen() > 0.05` wait
-    # had to catch a ~1.2 s animation mid-open and lost that race on a loaded runner.
+    # no marks here: the mouth must have moved from the AUDIO ENVELOPE alone (only if the
+    # PCM really rendered), read as the peak the page recorded, not a live sample.
     peak = page.evaluate("() => window.moxieAudio.lastMouthPeak()")
     assert peak > 0.05, f"the envelope never drove the mouth (peak {peak})"
 
@@ -378,9 +371,8 @@ def test_cloud_tts_chunks_stay_in_order_across_a_silent_gap(page, server):
     Sorting the queue orders only what is WAITING in it. Here chunk 0 is over and the
     queue is EMPTY before chunk 2 arrives, so there is nothing to sort it against: the
     old player started chunk 2 (order [0,2,1]) and the child heard the end of the
-    sentence before its middle. It was pure timing — the identical code passed on a
-    slower box the day before (CI 33632125915 vs 33629395950) — so the fix makes the
-    order structural: a chunk waits for its turn however idle the player is.
+    sentence before its middle. That was pure timing, so the fix makes the order
+    structural: a chunk waits for its turn however idle the player is.
     """
     _sim_ready(page, server)
     # 50 ms of audio: chunk 0 is finished long before the next round trip lands.

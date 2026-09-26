@@ -396,7 +396,7 @@ def test_post_voice_test_for_a_robot_that_is_not_there_is_a_404(served):
     assert e.value.code == 404
 
 
-# ------------------------------ the cold-supervisor race (found live 2026-09-02) ------
+# ------------------------------ the cold-supervisor race ------------------------------
 def test_a_save_asks_discovery_to_settle_but_the_card_never_does():
     """The live run's bug, pinned: three seconds after boot the gateway list is still in
     flight, and a `POST /voice` judged against it refused `gateway:piper-amy` with

@@ -14,9 +14,7 @@ from __future__ import annotations
 import json
 import os
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-import pytest  # noqa: E402
+import pytest
 
 from helpers_runtime import CHAT_TOPIC, LatchClient, make_runtime  # noqa: E402
 import moxie_runtime  # noqa: E402
@@ -74,6 +72,12 @@ def _turn(rt, did, speech=SAID, event_id="evt"):
         "no reply published"
 
 
+def _only_turn(rt, did):
+    """One turn, then drain the pool so every write has landed."""
+    _turn(rt, did)
+    rt._pool.shutdown(wait=True)
+
+
 def _files(memdir):
     """What is actually on disk. The whole point of this suite."""
     try:
@@ -96,34 +100,36 @@ def test_no_media_is_the_default_and_it_writes_the_transcript(memdir, tmp_path):
     rt, did = _runtime(tmp_path)
     assert rt.memory_policy(did) == moxie_runtime.MEMORY_POLICY == LoggingPolicy.NO_MEDIA
     assert rt.transcript_persists(did) is True
-    _turn(rt, did)
-    rt._pool.shutdown(wait=True)
+    _only_turn(rt, did)
 
     assert _files(memdir) == [f"{did}.json"]
     stored = json.load(open(memdir / f"{did}.json"))
     assert [m["content"] for m in stored] == [SAID, ANSWERED]
 
 
-def test_full_writes_the_transcript(memdir, tmp_path):
-    rt, did = _runtime(tmp_path)
+def _full(rt, did):
     rt._config_overrides[did] = {"logging_policy": int(LoggingPolicy.FULL)}
-    assert rt.transcript_persists(did) is True
-    _turn(rt, did)
-    rt._pool.shutdown(wait=True)
-    assert _files(memdir) == [f"{did}.json"]
 
 
-def test_no_data_leaves_nothing_on_disk(memdir, tmp_path):
-    """The defect, asserted from the filesystem: a `NO_DATA` robot writes no file.
+def _fleet_no_data(rt, did):
+    # the gate reads the EFFECTIVE fleet ⊕ robot config: one house rule covers every robot
+    rt.update_fleet_config(logging_policy=int(LoggingPolicy.NO_DATA))
 
-    RED before the gate landed — `_save_memory` was guarded by nothing but
-    `if not self._memory_dir`, so this directory held the child's turn."""
+
+@pytest.mark.parametrize("policy, persists", [
+    (_full, True),
+    # the defect, asserted from the filesystem: `_save_memory` was once guarded only by
+    # `if not self._memory_dir`, so a NO_DATA robot's turn landed on disk
+    (_no_data, False),
+    (_fleet_no_data, False),
+], ids=["full", "no_data", "fleet_no_data"])
+def test_the_policy_decides_whether_the_transcript_reaches_disk(memdir, tmp_path, policy,
+                                                               persists):
     rt, did = _runtime(tmp_path)
-    _no_data(rt, did)
-    assert rt.transcript_persists(did) is False
-    _turn(rt, did)
-    rt._pool.shutdown(wait=True)
-    assert _files(memdir) == []
+    policy(rt, did)
+    assert rt.transcript_persists(did) is persists
+    _only_turn(rt, did)
+    assert _files(memdir) == ([f"{did}.json"] if persists else [])
 
 
 def test_no_data_stops_the_notify_path_too(memdir, tmp_path):
@@ -140,17 +146,6 @@ def test_no_data_stops_the_notify_path_too(memdir, tmp_path):
     assert _files(memdir) == [f"{did}.json"]
 
 
-def test_a_fleet_wide_no_data_rule_also_stops_the_transcript(memdir, tmp_path):
-    """The gate resolves through `memory_policy`, which reads the **effective**
-    `fleet ⊕ per-robot` config — so one house rule covers every robot on the box."""
-    rt, did = _runtime(tmp_path)
-    rt.update_fleet_config(logging_policy=int(LoggingPolicy.NO_DATA))
-    assert rt.transcript_persists(did) is False
-    _turn(rt, did)
-    rt._pool.shutdown(wait=True)
-    assert _files(memdir) == []
-
-
 # ---------------------------------------------------------------------------
 # what happens to a file that is ALREADY there
 # ---------------------------------------------------------------------------
@@ -159,8 +154,7 @@ def test_flipping_to_no_data_removes_the_transcript_already_on_disk(memdir, tmp_
     """Refusing new writes while yesterday's transcript stays on disk is a half
     guarantee. Erase is never policy-gated, so closing the gate erases."""
     rt, did = _runtime(tmp_path)
-    _turn(rt, did)
-    rt._pool.shutdown(wait=True)
+    _only_turn(rt, did)
     assert _files(memdir) == [f"{did}.json"]
 
     rt.update_config(did, logging_policy=int(LoggingPolicy.NO_DATA))
@@ -175,8 +169,7 @@ def test_a_no_data_transcript_is_not_rehydrated_by_a_restart(memdir, tmp_path):
     store_root = str(tmp_path / "data")
     rt, did = make_runtime(_Echo(), store=JsonStore(store_root))
     rt.client = LatchClient(runtime=rt)
-    _turn(rt, did)
-    rt._pool.shutdown(wait=True)
+    _only_turn(rt, did)
     assert _files(memdir) == [f"{did}.json"]
     rt.update_fleet_config(logging_policy=int(LoggingPolicy.NO_DATA))
     assert _files(memdir) == []                    # gone the moment the rule was set
@@ -195,8 +188,7 @@ def test_an_ungated_transcript_is_still_restored_by_a_restart(memdir, tmp_path):
     store_root = str(tmp_path / "data")
     rt, did = make_runtime(_Echo(), store=JsonStore(store_root))
     rt.client = LatchClient(runtime=rt)
-    _turn(rt, did)
-    rt._pool.shutdown(wait=True)
+    _only_turn(rt, did)
 
     rt2, _ = make_runtime(_Echo(), store=JsonStore(store_root))
     assert [m["content"] for m in rt2.history[did]] == [SAID, ANSWERED]
@@ -246,8 +238,7 @@ def test_erasure_still_works_under_no_data(memdir, tmp_path):
     rt, did = _runtime(tmp_path)
     mem = rt.memory_store()
     mem.merge(did, "mchat", {"facts": ["a fact"]})
-    _turn(rt, did)
-    rt._pool.shutdown(wait=True)
+    _only_turn(rt, did)
     assert _files(memdir) == [f"{did}.json"] and mem.load(did)
 
     # the real parent path: the console edits the config, which pushes to the robot
@@ -267,7 +258,6 @@ def test_forgetting_a_transcript_survives_a_missing_file(memdir, tmp_path):
     rt, did = _runtime(tmp_path)
     _no_data(rt, did)
     assert rt._forget_transcript(did) is False     # nothing to remove
-    _turn(rt, did)
-    rt._pool.shutdown(wait=True)
+    _only_turn(rt, did)
     assert rt._forget_transcript(did) is False
     assert _files(memdir) == []

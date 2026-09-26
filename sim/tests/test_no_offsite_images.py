@@ -1,32 +1,22 @@
 """No tracked Markdown may embed an image from another origin.
 
-THIS GUARD IS WORTH MORE THAN THE IMAGE IT WAS WRITTEN FOR. `README.md` embedded its hero
-shot from `github.com/user-attachments/...` for months. Every load of the live docs explorer
-threw a `securitypolicyviolation` — `img-src 'self' data: blob:` refused it, correctly — and
-nothing in the repo noticed, because the only thing that could see it was a browser pointed
-at production. It was found by a hand measurement on 2026-09-04, not by a test. (The full
-account: `docs/architecture/backlog/vendor-the-readme-hero.md`.)
+An off-site image is three defects at once: the shipped CSP (`img-src 'self' data: blob:`)
+refuses it, so it is broken on the live site; it makes the public internet a dependency of
+the page and of any browser suite that renders it; and it breaks repo self-sufficiency (a
+GitHub user-attachment URL belongs to an upload, not the repo). The README hero did exactly
+this unnoticed, because only a browser pointed at production could see it
+(`docs/architecture/backlog/vendor-the-readme-hero.md`).
 
-An off-site image is three defects at once:
-  · the shipped CSP refuses it, so it is a broken image on the live site;
-  · it makes the public internet a dependency of a page — and of any browser suite that
-    renders that page (see the interception preamble in `sim/test_docs_explorer.mjs`);
-  · it breaks the standing repo-self-sufficiency rule. A GitHub user-attachment URL is not
-    even a stable address: it belongs to an upload, not to the repo.
+So, twice over:
 
-So the rule is checked twice over, and the second half is the one with teeth:
+  1. NO off-site image reference in any tracked Markdown.
+  2. Every image a doc references RESOLVES to an existing file under `sim/web/` — the
+     Pages site root. `sim/web/docs.js` maps the `sim/web/` prefix of a doc-relative path
+     onto the site root; an image anywhere else has no served URL and 404s in the explorer
+     while looking fine on GitHub.
 
-  1. NO off-site image reference, in any tracked Markdown.
-  2. Every image a doc references RESOLVES to a file that exists, and lives under
-     `sim/web/` — the Pages output directory (`wrangler.toml`), i.e. the site root. That is
-     not a stylistic preference: `sim/web/docs.js` renders a doc from `docs-bundle/` at a
-     different depth than the repo, so it resolves each `<img src>` against the doc's own
-     repo path and maps the `sim/web/` prefix onto the site root. An image anywhere else has
-     no served URL to map onto and 404s in the explorer while looking fine on GitHub.
-
-Fenced and inline code are NOT references — they are quotations. The backlog doc above
-quotes the exact bad URL in a ```html fence, and must stay green. That exemption is itself
-tested below, in both directions.
+Fenced and inline code are quotations, not references (the backlog doc quotes the bad URL
+in a fence and must stay green); that exemption is tested in both directions.
 
 Run:  MOXIE_LLM_API_KEY= .venv/bin/python -m pytest sim/tests/test_no_offsite_images.py -q
 """
