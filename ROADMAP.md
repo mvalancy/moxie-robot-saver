@@ -42,7 +42,7 @@ The live experience, powered entirely by local AI.
 - ⬜ **Local LLM** — any local model via an OpenAI-compatible endpoint (LiteLLM / vLLM / Ollama / LM Studio); OpenAI itself only as an optional fallback. **Never hard-wired to a vendor.**
 - ⬜ **Local TTS** — on-device voice synthesis.
 - 🔨 **Behavior markup** — the text→Moxie-expression engine so Moxie moves/emotes, not just speaks. The
-  SIL bridge ([`sim/web/bridge.js`](sim/web/bridge.js)) already parses the `cmd:` marks and drives the
+  SIL bridge ([`sim/web/bridge/`](sim/web/bridge/)) already parses the `cmd:` marks and drives the
   avatar: `playback-mood`→one of the 11 authentic Eyeseme faces, `Gesture_*`→arm poses, and the
   distinctive `Bht_*` behaviour trees (spin, greet, pickup/putdown, wake, search…). Server-side
   emission from the conversation engine is the remaining piece.
