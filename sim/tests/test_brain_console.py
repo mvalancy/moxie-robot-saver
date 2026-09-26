@@ -1,20 +1,12 @@
 """
-🧠 The brain picker's console layer — the normalizer between the supervisor and the card.
+🧠 The brain picker's console layer — `server/moxie_server/fleet/::normalize_brain`.
 
-`server/moxie_server/fleet/::normalize_brain` is the only thing standing between a
-runtime payload and a parent's screen, and its contract is defensive rather than clever:
-**a card must never be a 500, and it must never look empty when the truth is "unreachable"**
-— an empty dropdown reads as *"this appliance has no brains"*, which is a different and
-much worse claim than *"the supervisor is down"*.
-
-So this file feeds it the shapes the real world produces — a live payload, a refusal, a
-supervisor that never answered, a truncated body, a payload from a newer supervisor with
-fields this console has never heard of — and asserts the card can render every one.
-
-Pure: `fleet/` imports nothing from `fastapi` and nothing from `mqtt/`, which is what
-lets it be tested in the hermetic tier at all (the two processes do not share a path).
-The live end-to-end — console → supervisor → registry — is `test_brain_runtime.py`'s
-HTTP section plus the console round trip.
+Contract: **a card must never be a 500, and must never look empty when the truth is
+"unreachable"** — an empty dropdown claims "this appliance has no brains". Fed the shapes
+the real world produces (live, refusal, never answered, truncated, newer supervisor with
+unknown fields). Pure — `fleet/` imports neither fastapi nor `mqtt/` — so it runs in the
+hermetic tier. The live end-to-end is `test_brain_runtime.py`'s HTTP section plus the
+console round trip.
 """
 import os
 import sys
@@ -134,11 +126,8 @@ def test_the_shape_the_console_renders_covers_every_brain_the_registry_offers():
 
 
 # --------------------------------------------------- the card itself, structurally --
-# There is no browser harness for `server/static/`, so the classic failure here is a
-# silently dead card: the JS reaches for an id the HTML does not have (or the other way
-# round) and nothing renders, with nothing failing. `test_console_roundtrip.py` keeps the
-# same guards for its cards, but behind `importorskip("fastapi")` — CI's hermetic tier has
-# none, so these read the shipped files off disk instead and always run.
+# No browser harness covers `server/static/`, so a silently dead card (JS reaching for an
+# id the HTML lacks) fails nothing. Read off disk, so these run without fastapi.
 
 def _asset(name):
     with open(os.path.join(REPO, "server", "static", name)) as fh:

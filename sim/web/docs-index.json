@@ -25,7 +25,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap — end-to-end Moxie revival",
    "section": "_root",
-   "bytes": 8385,
+   "bytes": 8381,
    "mermaid": 0,
    "headings": [
     "Phase 0 — Reverse engineering  ✅",
@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 31492,
+   "bytes": 31482,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 285384,
+   "bytes": 285364,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -142,7 +142,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 285075,
+   "bytes": 285161,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -204,7 +204,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 78312,
+   "bytes": 78306,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -278,7 +278,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 37577,
+   "bytes": 37575,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -303,7 +303,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 66940,
+   "bytes": 66930,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -339,7 +339,7 @@
    "path": "architecture/sim-as-a-client.md",
    "title": "The SIM as a backend client — interchangeable with a real robot",
    "section": "architecture",
-   "bytes": 12830,
+   "bytes": 12828,
    "mermaid": 1,
    "headings": [
     "The interchangeability guarantee",
@@ -372,7 +372,7 @@
    "path": "architecture/moxie-ecosystem.md",
    "title": "The Moxie ecosystem — master build plan (~1 week)",
    "section": "architecture",
-   "bytes": 6620,
+   "bytes": 6618,
    "mermaid": 1,
    "headings": [
     "The stack (one backend, two robots)",
@@ -393,7 +393,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 198431,
+   "bytes": 198403,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -443,7 +443,7 @@
    "path": "architecture/backlog/expressiveness.md",
    "title": "Expressiveness — the markup floor (ADOPT #3) and the behavior planner (BEYOND #1)",
    "section": "architecture",
-   "bytes": 54122,
+   "bytes": 54116,
    "mermaid": 1,
    "headings": [
     "Why this is the next slice",
@@ -475,7 +475,7 @@
    "path": "architecture/backlog/security-broker-auth.md",
    "title": "Broker authentication — from service refusal to identity, in three phases",
    "section": "architecture",
-   "bytes": 44444,
+   "bytes": 44440,
    "mermaid": 2,
    "headings": [
     "Why this is the next slice",
@@ -510,7 +510,7 @@
    "path": "architecture/backlog/telehealth.md",
    "title": "Telehealth — \"Be Moxie\": the operator drives the body (ADOPT #7)",
    "section": "architecture",
-   "bytes": 36631,
+   "bytes": 36623,
    "mermaid": 1,
    "headings": [
     "Why this is worth building",
@@ -560,7 +560,7 @@
    "path": "architecture/backlog/content-packs.md",
    "title": "Content packs — export, import-with-review, and an upgrade that does not clobber (ADOPT #5)",
    "section": "architecture",
-   "bytes": 46117,
+   "bytes": 46113,
    "mermaid": 0,
    "headings": [
     "Why this is worth building",
@@ -641,7 +641,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions — a pack that can *do* something, written by someone you don't trust (BEYOND #6)",
    "section": "architecture",
-   "bytes": 94679,
+   "bytes": 94653,
    "mermaid": 0,
    "headings": [
     "0. The boundary, stated first — this is cloud-side, and only cloud-side",
@@ -748,7 +748,7 @@
    "path": "architecture/backlog/content-authoring.md",
    "title": "Content authoring — the verb packs did not ship (§4.4 #6)",
    "section": "architecture",
-   "bytes": 58616,
+   "bytes": 58610,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -797,7 +797,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 48417,
+   "bytes": 48397,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
@@ -820,7 +820,7 @@
    "path": "architecture/backlog/insights.md",
    "title": "Insights that mean something — the vocabulary this history does not have (BEYOND #5)",
    "section": "architecture",
-   "bytes": 51854,
+   "bytes": 51850,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -937,7 +937,7 @@
    "path": "architecture/backlog/visemes.md",
    "title": "TTSMark[]` visemes — the research slice, and what the row turns out to be about",
    "section": "architecture",
-   "bytes": 40357,
+   "bytes": 40331,
    "mermaid": 1,
    "headings": [
     "0. Why this row got a research slice",
@@ -951,7 +951,7 @@
     "3.1 `mqtt/moxie_sdk/tts.py` — the `Synthesizer` interface",
     "3.2 The wire — `functions/api/_lib/wire.js`",
     "3.3 The cache entry — `functions/api/_lib/ttscache.js`",
-    "3.4 `sim/web/audio.js` — the mouth driver",
+    "3.4 `sim/web/voice/` — the mouth driver",
     "3.5 `sim/web/moxie.js` — the renderer, and the second degree of freedom",
     "3.6 The viseme alphabet — the one new frozen artifact",
     "4. The finding: the consumer is built, and the renderer is the bottleneck",
@@ -1116,7 +1116,7 @@
    "path": "architecture/backlog/gamify-the-public-sim.md",
    "title": "Gamify the public sim — evidence for a decision the owner kept",
    "section": "architecture",
-   "bytes": 54032,
+   "bytes": 54028,
    "mermaid": 0,
    "headings": [
     "0. What the owner needs to decide",
@@ -1174,7 +1174,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 55732,
+   "bytes": 55728,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -2606,7 +2606,7 @@
    "path": "reverse-engineering/runtime/behavior-markup.md",
    "title": "Behavior markup — making Moxie move & emote while it talks",
    "section": "reverse-engineering",
-   "bytes": 15297,
+   "bytes": 15295,
    "mermaid": 0,
    "headings": [
     "Shape",

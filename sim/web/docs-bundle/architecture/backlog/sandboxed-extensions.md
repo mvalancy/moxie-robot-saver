@@ -2,7 +2,7 @@
 
 > ### ✅ P0 SHIPPED — 2026-09-03
 >
-> Built as specified, at [`mqtt/moxie_sdk/content/ext.py`](../../../mqtt/moxie_sdk/content/ext.py),
+> Built as specified, at [`mqtt/moxie_sdk/content/ext.py`](../../../mqtt/moxie_sdk/content/ext/),
 > behind [`sim/tests/test_ext_escapes.py`](../../../sim/tests/test_ext_escapes.py) (X1–X12) and
 > [`sim/tests/test_ext.py`](../../../sim/tests/test_ext.py) (T1–T18) — 150 tests — plus
 > [`sim/tools/ext_mutation_check.py`](../../../sim/tools/ext_mutation_check.py), which removes each
@@ -23,7 +23,7 @@
 > Verified against the code: [`volley.py`](../../../mqtt/moxie_sdk/content/volley.py):89
 > `self.subscriptions`, :100 `update_subscriptions`, :109 `add_subscriptions` (the asymmetry is
 > deliberate and documented at :112); `ACTION_WORDS` at
-> [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py):175 with `MAX_ACTIONS`:294. Guards:
+> [`ext.py`](../../../mqtt/moxie_sdk/content/ext/):175 with `MAX_ACTIONS`:294. Guards:
 > [`test_ext_act.py`](../../../sim/tests/test_ext_act.py),
 > [`test_ext_subscribe.py`](../../../sim/tests/test_ext_subscribe.py) and
 > [`sim/tools/subscribe_mutation_check.py`](../../../sim/tools/subscribe_mutation_check.py).
@@ -85,7 +85,7 @@ Three consequences a build agent must not blur:
 ## 1. Why this is the ceiling, right now
 
 Content packs shipped on 2026-09-02 ([`content-packs.md`](content-packs.md),
-[`packs.py`](../../../mqtt/moxie_sdk/content/packs.py)). A pack is a single file a parent, a teacher or
+[`packs.py`](../../../mqtt/moxie_sdk/content/packs/)). A pack is a single file a parent, a teacher or
 a speech therapist can hand to somebody else: it carries conversations, globals and schedules, it is
 digest-covered, it exports through a positive field allowlist, and its import is reviewed item by item
 in a 2×2 over `source_version` × `local_rev`.
@@ -144,13 +144,13 @@ is still a capability with no host, so it is still declared, rendered and refuse
 
 | # | Fact | Source |
 |---|---|---|
-| P1 | `SPEC` is a **positive, per-kind field allowlist** with a coercer and a default per field; `FIELDS` derives the plain names, and `test_the_allowlist_is_pinned_to_the_dataclass_fields` asserts them against `dataclasses.fields()` so a new field cannot silently start shipping in everybody's packs. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py) `SPEC` / `FIELDS` |
-| P2 | `pack_digest()` is `digest_of()` over the whole pack body minus `digest`/`signatures`, using one canonical serialization (`sort_keys`, no whitespace, `ensure_ascii=False`). Items are a **flat `items[]` keyed `kind:key`**, explicitly so a re-post between review and import cannot swap what you ticked. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py) `canonical()` / `pack_digest()` / docstring |
-| P3 | `review_pack(..., digest=...)` ticks **nothing** unless the digest verdict is `"ok"`. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py) `review_pack()` |
-| P4 | The review is a 2×2 over `source_version` (the author's counter) × `local_rev` vs `imported_rev` (did *this* appliance edit it?): `NEW`, `UPGRADE`, `CONFLICT`, `KEEP_LOCAL`, `DOWNGRADE`, `DOWNGRADE_CONFLICT`. `CONFLICT` and `DOWNGRADE_CONFLICT` default **un-ticked**. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py) review states |
-| P5 | The review already emits a per-item warning for a `code` block: *"carries a `code` block, which this appliance never runs"*. There is a place to put a capability list, and prose to change. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py) `review_pack()` |
-| P6 | Packs are **checksummed, deliberately not signed**, and the docstring gives the reason: a signature verified against a key that arrived in the same file *"is decoration that reads as a guarantee"*. `signatures: []` is reserved. **The security property packs actually rely on today is structural: an imported pack cannot execute anything.** | [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py) docstring |
-| P7 | `MAX_PATTERN_CHARS = 512` exists because *"a compiled Python regex has no timeout in the stdlib, so a pathological pattern can still stall the matching thread"* — a named, accepted risk. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py) |
+| P1 | `SPEC` is a **positive, per-kind field allowlist** with a coercer and a default per field; `FIELDS` derives the plain names, and `test_the_allowlist_is_pinned_to_the_dataclass_fields` asserts them against `dataclasses.fields()` so a new field cannot silently start shipping in everybody's packs. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs/) `SPEC` / `FIELDS` |
+| P2 | `pack_digest()` is `digest_of()` over the whole pack body minus `digest`/`signatures`, using one canonical serialization (`sort_keys`, no whitespace, `ensure_ascii=False`). Items are a **flat `items[]` keyed `kind:key`**, explicitly so a re-post between review and import cannot swap what you ticked. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs/) `canonical()` / `pack_digest()` / docstring |
+| P3 | `review_pack(..., digest=...)` ticks **nothing** unless the digest verdict is `"ok"`. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs/) `review_pack()` |
+| P4 | The review is a 2×2 over `source_version` (the author's counter) × `local_rev` vs `imported_rev` (did *this* appliance edit it?): `NEW`, `UPGRADE`, `CONFLICT`, `KEEP_LOCAL`, `DOWNGRADE`, `DOWNGRADE_CONFLICT`. `CONFLICT` and `DOWNGRADE_CONFLICT` default **un-ticked**. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs/) review states |
+| P5 | The review already emits a per-item warning for a `code` block: *"carries a `code` block, which this appliance never runs"*. There is a place to put a capability list, and prose to change. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs/) `review_pack()` |
+| P6 | Packs are **checksummed, deliberately not signed**, and the docstring gives the reason: a signature verified against a key that arrived in the same file *"is decoration that reads as a guarantee"*. `signatures: []` is reserved. **The security property packs actually rely on today is structural: an imported pack cannot execute anything.** | [`packs.py`](../../../mqtt/moxie_sdk/content/packs/) docstring |
+| P7 | `MAX_PATTERN_CHARS = 512` exists because *"a compiled Python regex has no timeout in the stdlib, so a pathological pattern can still stall the matching thread"* — a named, accepted risk. | [`packs.py`](../../../mqtt/moxie_sdk/content/packs/) |
 | P8 | Applying a pack calls `reload_content()`, an attribute swap — an import is live on the **next turn** with no restart. Effective content = shipped defaults ⊕ the imported overlay. | [content-module contract](../content-module-contract.md) "Storage, the overlay, and the reload" |
 
 **P6 is the load-bearing one.** Packs are unsigned *because* they are inert. Introducing execution
@@ -249,7 +249,7 @@ env = jinja2.Environment(undefined=jinja2.ChainableUndefined,
 return env.from_string(template).render(**context)
 ```
 
-`prompt` and `opener` are both **pack-importable fields** ([`packs.py`](../../../mqtt/moxie_sdk/content/packs.py)
+`prompt` and `opener` are both **pack-importable fields** ([`packs.py`](../../../mqtt/moxie_sdk/content/packs/)
 `SPEC["conversation"]`), and a plain Jinja `Environment` permits attribute access on the objects in its
 context. With `jinja2` importable, a template of the form
 `{{ volley.__init__.__globals__['__builtins__'] }}` reaches the builtins mapping, and from there
@@ -298,7 +298,7 @@ contains one**.
 | **Expresses** | The whole of §2.5, with no loops or user functions. Arithmetic, branching, string building, bounded list work. Not: iteration, recursion, general algorithms. | Trigger → canned response → named effect. **Cannot** express `count × ms_per[unit] + now`, nor the h/m/s sentence — those need arithmetic over a value. | Anything. It is a general-purpose machine. | Anything, in a language authors already know. |
 | **Build cost** | **~550 LOC of pure stdlib Python**, plus a validator and an English renderer. No parser (the program *is* JSON). | ~150 LOC, and then a new verb per feature forever. | Host embedding is small; the **toolchain, ABI, and the marshalling layer** are not. Authors need Rust/C/AssemblyScript. | Host embedding is small. Stripping the stdlib *correctly* is the whole job, and it is never finished. |
 | **Maintenance** | Every op is total and hand-audited; the op table is the audit surface and it is one screen long. | Trivial — but the roadmap is "add another verb", i.e. we ship features, not a platform. | Track a native runtime's CVEs; per-arch wheels. | Track an interpreter's CVEs **and** re-audit the deny-list on every upgrade. |
-| **Escape surface** | **Structurally none.** Values are JSON scalars/lists/maps only; there is no op that takes an object, no attribute access, no name that resolves to a host object. The evaluator's own module imports neither `os`, `time`, nor `random`. | None (nothing is evaluated). | Small and well-understood: linear memory, no ambient authority, imports are explicit. Historically the strongest of the four. | **The largest.** Every escape in this class comes from a reachable host object — Lua's string metatable, JS prototype pollution, a forgotten builtin. Stripping is a **deny-list**, and [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py) already rejects deny-lists for exactly this reason: *"a denylist … leaks the first time somebody adds a column."* |
+| **Escape surface** | **Structurally none.** Values are JSON scalars/lists/maps only; there is no op that takes an object, no attribute access, no name that resolves to a host object. The evaluator's own module imports neither `os`, `time`, nor `random`. | None (nothing is evaluated). | Small and well-understood: linear memory, no ambient authority, imports are explicit. Historically the strongest of the four. | **The largest.** Every escape in this class comes from a reachable host object — Lua's string metatable, JS prototype pollution, a forgotten builtin. Stripping is a **deny-list**, and [`packs.py`](../../../mqtt/moxie_sdk/content/packs/) already rejects deny-lists for exactly this reason: *"a denylist … leaks the first time somebody adds a column."* |
 | **Worker + supervisor?** | **Yes, cleanly.** The AST is JSON; a JS port of a 550-LOC total evaluator is mechanical and pinned by a shared conformance vector file. Neither host needs `eval`. | Yes trivially. | Yes — Workers run Wasm natively. **But not in the Python supervisor without a native wheel** (`wasmtime`/`wasmer`), which breaks the *"slim, pinned, no native deps"* Dockerfile and the multi-arch image promise. | **No.** A Worker cannot install a native QuickJS/Starlark wheel; using the Worker's own `eval`/`new Function` hands the extension the isolate's globals — `fetch`, the env bindings, **the gateway key** — which is precisely [`live-sim-demo.md`](live-sim-demo.md) §4.2's threat model. QuickJS-compiled-to-Wasm sidesteps this, and then you are in column (c) with an extra interpreter. |
 | **Parent-reviewable?** | **Yes.** A rule is `when … then …`; a pure `explain()` renders each rule as one English sentence — the same idiom as the 📅 card's *"why this activity today"*. | Yes, best of the four. | **No, and not by us either.** A digest over an opaque binary is provenance, not review. A `.wasm` blob in a pack's positive field allowlist is a base64 field nobody can read. | **No.** Reviewing a JS program for what it *does* is the task we are trying to spare a parent. |
 
@@ -690,7 +690,7 @@ of latency; it may not cost every turn's.
 
 ### 7.1 It rides inside a pack, as a field on an item
 
-Two lines change in [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py)'s `SPEC`:
+Two lines change in [`packs.py`](../../../mqtt/moxie_sdk/content/packs/)'s `SPEC`:
 
 ```python
 "conversation": (..., ("code", _s, ""), ("memory", _d, {}), ("extension", _d, {})),

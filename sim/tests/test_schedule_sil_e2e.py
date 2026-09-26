@@ -10,14 +10,10 @@ real status HTTP. (`test_schedule_planner.py` has the recommender unit tests.)
     parent → GET /schedule?device_id=…  {explanations:[{module_id, at, line, …}]}
 
 The binding claim: the ids the robot was served are exactly the ids the parent sees
-explained.
-
-Hermetic: an in-process loopback (`helpers_runtime.loopback`) stands in for the broker and
-the store is `tmp_path`. Bedtime and "due today" are wall-clock by contract, so every window
-is relative to now, and the `served` fixture reads the clock ONCE so everything agrees on
-the same instant (two reads can straddle midnight). The scenario is built to land today at
-every minute, so the pinning test has only its strict branch (the hold that keeps a pinned
-module for its slot lives in `schedule.plan_day`).
+explained. Hermetic: `helpers_runtime.loopback` stands in for the broker, the store is
+`tmp_path`. Bedtime and "due today" are wall-clock by contract, so windows are relative to
+now and `served` reads the clock ONCE (two reads can straddle midnight); the scenario lands
+today at every minute, so the pinning test has only its strict branch.
 """
 import datetime
 import json
@@ -81,9 +77,7 @@ def _stack(tmp_path, *, device_id=DEV):
     return rt, vm, dev
 
 
-#: How far apart the fixture's clock read and the runtime's own may drift and still agree
-#: about which calendar day the parent asked for. The two reads are milliseconds apart in
-#: practice; five minutes is slack, not a guess.
+#: Allowed drift between the fixture's clock read and the runtime's (ms apart in practice).
 CLOCK_SLACK_MINUTES = 5
 
 
@@ -132,9 +126,8 @@ def served(tmp_path):
     the parent reads the explanations back. Returns everything the assertions need."""
     rt, vm, dev = _stack(tmp_path)
     base = status_server(rt)
-    # ONE clock read for the whole fixture, handed back to the assertions: the config the
-    # parent posted and the question "was that request due today?" must be answered about
-    # the same instant (see `_bedtime_body`).
+    # ONE clock read, handed back: the posted config and "was it due today?" must be
+    # answered about the same instant.
     now = datetime.datetime.now()
     applied = http_json(f"{base}/config?scope=fleet", method="POST",
                         body=_bedtime_body(now=now))
@@ -302,8 +295,7 @@ def test_a_reported_completion_reaches_the_store_and_the_next_plan(tmp_path):
     first = [e["module_id"] for e in vm.query("schedule", timeout=5.0)["provided_schedule"]]
     played = next(m for m in first if m not in ("DM", "FREE_CHAT", "STORYTELLING"))
 
-    # Reported as a real robot does (ActivityUpdate.mentor_behavior), stamped with "now":
-    # the recency rule is about the stamp's age, never a calendar boundary.
+    # Reported as a robot does (ActivityUpdate.mentor_behavior); recency is the stamp's age.
     vm.report_mentor_behavior({"module_id": played, "action": "COMPLETED",
                                "timestamp": int(datetime.datetime.now().timestamp() * 1000)})
     stored = [r["module_id"] for r in rt.mentor_behaviors(dev)]

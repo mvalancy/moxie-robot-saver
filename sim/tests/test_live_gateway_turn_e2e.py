@@ -2,12 +2,10 @@
 Live ONE-TURN end-to-end on the assembled appliance: the gateway BRAIN and the gateway
 VOICE at the same time, through the shipped entry point.
 
-Everything that already exists proves half of this. `test_live_gateway.py` proves the
-brain answers. `test_live_gateway_tts.py` proves the voice speaks — but it builds the
-synthesizer in-process and never puts a robot on a broker. `sim/run_smoke.sh` puts a real
-robot on a real broker — with the echo app and the tone beep. Nothing asserted the thing
-an owner actually runs: `mqtt/run.py`, one process, `MOXIE_APP=llm` +
-`MOXIE_VOICE_BASE_URL`, a robot connecting over MQTT and hearing a real sentence back.
+The neighbours prove halves (`test_live_gateway.py` the brain, `test_live_gateway_tts.py`
+the voice in-process, `sim/run_smoke.sh` a real broker with echo + tone). This asserts
+what an owner runs: `mqtt/run.py`, `MOXIE_APP=llm` + `MOXIE_VOICE_BASE_URL`, a robot on
+MQTT hearing a real sentence back.
 
 So this file boots the REAL stack (`helpers_stack.Stack`: mosquitto on a free port,
 `mqtt/run.py` in a subprocess with its own scratch `MOXIE_DATA_DIR`) and lets the
@@ -18,13 +16,9 @@ take exactly ONE turn:
                            → commands/remote_chat  (the gateway's own words)
                            → commands/tts          (the gateway's own voice)
 
-**Budget: 1 chat completion + 1 `/audio/speech` request.** One stack boot, one turn, one
-module-scoped fixture; every test below reads that single result. Nothing here re-asks.
-
-The anti-tone guard is the point of the audio assertion: `ToneSynthesizer` also emits
-22050 Hz mono PCM, so a sample rate proves nothing. Real speech is separated from the
-placeholder by spectral flatness — six orders of magnitude apart — and that guard is
-tested creds-free below, so a green here cannot mean "the fallback spoke".
+**Budget: 1 chat completion + 1 `/audio/speech`** — one module-scoped turn that every test
+reads. `ToneSynthesizer` emits the same 22050 Hz PCM, so speech is told from the
+placeholder by spectral flatness, and that guard is tested creds-free below.
 
 Skips instantly without a gateway key, without a broker, or without numpy.
 
@@ -56,14 +50,8 @@ KEY = (os.environ.get("MOXIE_VOICE_API_KEY")
 CHAT_BASE = (os.environ.get("MOXIE_LLM_BASE_URL") or "").strip()
 MODEL = (os.environ.get("MOXIE_VOICE_MODEL") or "piper-amy").strip()
 
-#: Speech is broadband; the tone is one sine. Observed on this gateway: tone ~3.1e-12,
-#: piper-amy ~5.2e-02 — thirteen orders of magnitude. A floor of 1e-6 is nowhere near
-#: either, so it separates them without being tuned to today's numbers.
-#:
-#: Re-exported from `helpers_audio` rather than restated: this file used to carry its own
-#: literal `1e-6`, and two copies of a threshold are two thresholds. The predicate every
-#: assertion below actually calls is `helpers_audio.is_real_speech`, so the SIL suites,
-#: the telehealth-voice suite and this one can never disagree about what "speech" means.
+#: Speech is broadband, the tone one sine (~1e-12 vs ~5e-02 here). Re-exported from
+#: `helpers_audio`, never restated, so every suite agrees on what "speech" means.
 SPEECH_FLATNESS_FLOOR = A.SPEECH_FLATNESS_FLOOR
 
 

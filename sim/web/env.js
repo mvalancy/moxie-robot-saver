@@ -69,17 +69,9 @@
     pillEl.className = "mode-pill" + (msg ? " on level-" + ((snap && snap.level) || "ok") : "");
   }
 
-  /**
-   * @param {Element|null} btn
-   * @param {string} tip     what to tell a human, on hover and to a screen reader.
-   * @param {boolean} [on]   `false` UNMARKS (the mode can change mid-session, and a stale
-   *                         tooltip must not outlive its claim).
-   * @param {boolean} [dead] the control CANNOT work here — disable it, do not merely hint.
-   *                         A control whose only job is a cross-origin request (:8081,
-   *                         :9001) would just trip our CSP. Not implied by the mark:
-   *                         #mic-btn is marked on a scripted deploy but still plays a
-   *                         scripted child line.
-   */
+  /* `on === false` UNMARKS (the mode can change mid-session). `dead`: the control cannot
+   * work here (its only job is a cross-origin request CSP refuses) — disable it. Not implied
+   * by the mark: #mic-btn is marked on a scripted deploy but still plays a scripted line. */
   function needsBackend(btn, tip, on, dead) {
     if (!btn) return;
     var marked = on !== false;
@@ -92,21 +84,19 @@
   }
   function warn(el, html) { if (el) { el.innerHTML = html; el.classList.add("warn"); } }
 
-  // #tts-status is owned by audio.js (shared with its live "speaking" line), and this
-  // probe is async — so hand it a resting hint rather than writing it directly.
+  // #tts-status is owned by voice/cloud.js (its live "speaking" line), and this probe is
+  // async — so hand it a resting hint rather than writing it directly.
   function ttsHint(html, isWarn) {
     if (window.moxieAudio && window.moxieAudio.setTtsHint)
       return window.moxieAudio.setTtsHint({ html: html, warn: !!isWarn });
-    var el = $("tts-status");                       // audio.js absent: old behaviour
+    var el = $("tts-status");                       // voice/ absent
     if (!el) return;
     el.innerHTML = html;
     el.classList.toggle("warn", !!isWarn);
   }
 
-  /* ---- the Voice panel's standing note (#voice-note) ----
-   * Painted from the same two facts apply() uses for #speech-btn (did a local Piper
-   * answer; mode.js's snapshot), so the note and the button cannot disagree. Written
-   * directly: nothing else writes #voice-note. */
+  /* #voice-note: painted from the same facts apply() uses for #speech-btn (Piper answered;
+   * mode.js's snapshot), so the note and the button cannot disagree. */
   var VOICE_NOTE_PIPER =
     "Tap phrases above play shipped audio (no server). Free text uses your browser&#39;s " +
     "voice, or a local Piper service if you run one.";
@@ -119,11 +109,7 @@
     "press <b>Ask</b> &mdash; Moxie answers there with a pre&#8209;scripted line; this " +
     "deploy has no live brain.";
 
-  /**
-   * @param {boolean} piper  a local Piper sidecar answered — the box is still "Say".
-   * @param {boolean} asks   the box was adopted as the typed turn — it now says "Ask".
-   * @param {object|null} snap
-   */
+  // piper: a local sidecar answered (box is "Say"); asks: adopted as the typed turn ("Ask").
   function paintVoiceNote(piper, asks, snap) {
     var el = $("voice-note");
     if (!el) return;                                   // a fork that removed the note
@@ -152,10 +138,9 @@
     var opt = ("AbortSignal" in window && AbortSignal.timeout) ? { signal: AbortSignal.timeout(2500) } : {};
     return fetch(url, opt).then(function (r) { return r.ok; }).catch(function () { return false; });
   }
-  // Probe the optional sidecars only on a local origin; hosted, those ports cannot exist.
+  // Only on a local origin (hosted, those ports cannot exist). `ttsProbed`: nothing may
+  // decide #speech-btn ("Say" vs the typed turn) before the probe settles.
   var localTts = false, localStt = false;
-  // Has the sidecar question been ANSWERED? It decides whether #speech-btn stays Piper's
-  // "Say" or becomes the typed turn, so nothing may act before the probe settles.
   var ttsProbed = !isLocal;
   if (isLocal) {
     Promise.all([probe(origin + ":8081/health"), probe(origin + ":8082/health")])
@@ -190,10 +175,9 @@
       // the server itself just wrote, never arbitrary text.
       needsBackend($("tts-test"), "Needs the Piper TTS server (python3 sim/tts/server.py). Not available on the hosted demo.", true, !isLocal);
       needsBackend($("tts-base"), "Addresses the local Piper TTS server. A page served from another origin cannot reach it (CSP: connect-src 'self').", true, !isLocal);
-      /* #speech-btn has somewhere better to be: with no Piper (and only once the probe has
-       * settled — never a hostname test) it becomes the typed turn
-       * (cloud-transport.js::adoptSpeechControl); mode.js decides where the turn goes.
-       * Without the transport it can do nothing and is disabled. */
+      /* With no Piper (once the probe settled — never a hostname test) #speech-btn becomes
+       * the typed turn (cloud-transport.js::adoptSpeechControl); without the transport it
+       * can do nothing and is disabled. */
       var took = ttsProbed && typedTurn() && typedTurn().adopt(true);
       if (took)
         needsBackend($("speech-btn"),
@@ -233,7 +217,7 @@
         : "Addresses the local STT server (python3 sim/stt/server.py). A page served from another origin cannot reach it (CSP: connect-src 'self').",
       !(stt && isLocal), !isLocal);
     // Live bus: marked in EVERY mode (a real robot's broker is never on this origin), and
-    // dead off-localhost — bridge.js opens ws://host:9001, which CSP refuses.
+    // dead off-localhost — bridge/index.js opens ws://host:9001, which CSP refuses.
     needsBackend($("bus-connect"),
       "Links a REAL robot's MQTT broker over WebSocket (:9001). Needs your self-hosted backend — not available on the hosted demo.",
       true, !isLocal);
@@ -246,12 +230,10 @@
     }
   }
 
-  /* ---- the banner must never sit ON a control ----
-   * `#env-banner` is fixed to the bottom, and on phones it landed exactly on #rail-toggle
-   * (elementFromPoint at the toggle's centre hit the banner; taps were swallowed). The
-   * fix is LAYOUT, not z-index (raising the toggle would bury the banner's dismiss X): the
-   * banner is lifted clear of the MEASURED bottom stack — no constant fits a 48 px handle,
-   * a 42vh drawer and a growing composer. test_mobile_layout.mjs asserts the hit test. */
+  /* The banner must never sit ON a control (on phones it swallowed #rail-toggle's taps).
+   * LAYOUT, not z-index (that would bury the dismiss X): lift it clear of the MEASURED
+   * bottom stack — no constant fits a handle, a 42vh drawer and a growing composer.
+   * test_mobile_layout.mjs asserts the hit test. */
   var DRAWER_MQ = "(max-width: 899px)";       // must match the CSS drawer breakpoint
 
   // The bottom stack is #chat-dock at EVERY width, plus #panel in drawer mode. The lift

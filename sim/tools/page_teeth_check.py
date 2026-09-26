@@ -1,89 +1,47 @@
-"""Serve every browser suite a DELIBERATELY BROKEN site, and report which of its
-checks stay green.
+"""Serve every browser suite a DELIBERATELY BROKEN site, and report which checks stay green.
 
-The mutation checkers next to this file (`ext_mutation_check.py`,
-`brain_mutation_check.py`, …) delete a guard from the PRODUCT and require its test to
-redden. This is the same proof turned on the other half of the browser suites' world:
-it breaks the **page** — deletes a script, serves one 200 OK and inert, 404s a fetch,
-empties a document, stalls one resource past every wait — and requires the suites that
-load that page to notice.
+The mutation checkers beside this file break the PRODUCT and require a test to redden.
+This turns the same proof on the PAGE the browser suites load: delete a script, serve one
+200 OK and inert, 404 a fetch, empty a document, stall one resource past every wait — and
+require the suites that load it to notice.
 
-WHY IT EXISTS. On 2026-09-06 five checks in this repo were found to pass against a
-system that was actually broken, and **every one of them was found by luck** — a red on
-an unrelated diff, or someone noticing while measuring something else:
-
-  1. `test_bg_perf.mjs` sampled its "before" count from Node, charging a visible page's
-     work to a hidden window (rule 30).
-  2. `test_docs_explorer.mjs` read `img.naturalWidth` with no wait for decode.
-  3. `test_csp.mjs` had the same unwaited sample behind a fixed sleep.
-  4. `test_docs_explorer.mjs` asserted `article h1, article h2, article p` — and
-     `sim/web/docs.html:211` ships a static `<p class="muted">Loading docs…</p>`, so
-     `article p` matched the SPINNER. Abort the README fetch and the check stayed green.
-  5. `check_deployed.mjs` collected `failed` and `consoleErrs`, PRINTED them, and
-     asserted neither; deleting `qr.js` produced `fired: NOTHING` and exit 0.
-
-Four of the five are the same shape — *the check samples a page that has not finished
-being a page yet, or matches markup that is present whether or not the page worked.*
-Nobody had ever swept for them. This is that sweep.
+Why: several checks here were found passing against a genuinely broken system, each by
+luck. Most shared one shape — *the check samples a page that has not finished being a
+page, or matches markup present whether or not the page worked* (e.g. `article p`
+matching the static "Loading docs…" spinner; `naturalWidth` read before decode;
+`check_deployed` printing failed requests and asserting none). This is the sweep for them.
 
     python3 sim/tools/page_teeth_check.py --baseline-dir /tmp/teeth   # the full sweep
     python3 sim/tools/page_teeth_check.py --selftest      # prove the tool works, ~1 min
     python3 sim/tools/page_teeth_check.py --suite test_csp --breakage qr-inert
     python3 sim/tools/page_teeth_check.py --check-tree    # nothing was left mutated
+    python3 sim/tools/page_teeth_check.py --slow 6 --baseline-dir /tmp/teeth
 
-The full sweep takes a couple of hours: it runs every exposed suite once per breakage,
-and a suite whose waits all expire runs far longer broken than healthy (`test_mermaid`
-went 37 s -> 448 s with `docs.js` inert). `--baseline-dir` caches the healthy run so a
-single row can be re-read in a minute.
+The full sweep takes hours (a suite whose waits all expire runs far longer broken than
+healthy); `--baseline-dir` caches the healthy run so one row can be re-read in a minute.
 
-    python3 sim/tools/page_teeth_check.py --slow 6 --baseline-dir /tmp/teeth   # ← the OTHER half
+`--slow N` finds the OTHER member of the family, which no breakage can: an assertion that
+compares a live sample against recorded state (or two samples at different instants) —
+green because the page is faster than the suite guessed. `Emulation.setCPUThrottlingRate`
+slows everything inside the renderer while node's own timers keep full speed, which is
+what a busy CI runner does. A finding is a check GREEN at full speed and RED throttled,
+with the site untouched; checks whose own message is about time are set aside, not mixed
+in. Reproduce a race by CREATING it, never by waiting for it.
 
-THE OTHER HALF: `--slow`, AND WHY THE BREAKAGES ABOVE CANNOT FIND IT.
+How a finding is decided:
+  · **Exposure is measured.** `teeth_ledger.mjs` records every URL each suite requested
+    in its HEALTHY run; a suite is in scope for a breakage only if it fetched the target.
+    A green under a breakage the suite never touched is noise that sends someone to "fix"
+    a working test.
+  · TIER A — an exposed suite still exited 0. No judgement call.
+    TIER B — the suite reddened, but a check whose message CLAIMS to cover the broken thing
+    (`claims` regex) stayed green. Hand-verify every row before believing it.
+  · **Vanished ≠ green.** A check that stopped running is reported separately (absent,
+    not toothless).
 
-Every row in `BREAKAGES` sabotages the SITE — a file is gone, inert, hollow or late. That
-finds a check with no teeth. It cannot find the *other* member of the same family, the one
-this repo has now hit five times:
-
-    an assertion that compares a LIVE sample against RECORDED state, or two live samples
-    taken at different instants — green on a fast box, red on a loaded runner.
-
-Those checks are green here because the page is FASTER than the number the suite guessed.
-`--slow N` makes the page slower instead: `Emulation.setCPUThrottlingRate` slows everything
-inside the renderer (script, layout, rAF, transitions) while node's own `setTimeout` keeps
-full speed — which is exactly what a busy CI runner does to a suite, and is why
-`await sleep(600)` standing in for "the drawer finished opening" fails there and not here.
-Measured on the box it was written on: a 4e6-iteration in-page busy loop went 10.3 ms at
-rate 1 to 58.5 ms at rate 6.
-
-A `--slow` finding is a check that was GREEN in the healthy baseline and RED under the
-throttle, WITHOUT the site being touched. It is not automatically a bug — a check that
-deliberately measures time (`test_bg_perf`'s budgets) is *supposed* to notice a slow
-machine, and those are reported separately rather than mixed in. Everything else is a
-check whose truth depends on the machine, which is the definition of the family.
-Reproduce a race by CREATING it, never by waiting for it.
-
-HOW A FINDING IS DECIDED, and why it is not just "the suite passed".
-
-  · **Exposure is measured, not asserted.** `teeth_ledger.mjs` records every URL each
-    suite's browser requested during its HEALTHY run. A suite is in scope for "delete
-    `qr.js`" only if that suite actually fetched `qr.js`. A green under a breakage the
-    suite never touched is noise, and noise here is worse than a miss: it sends someone
-    to "fix" a working test.
-  · **Two tiers.**
-      TIER A — the suite was exposed to the breakage and still exited **0**. That is
-               defect 5's exact shape and needs no judgement call.
-      TIER B — the suite reddened overall, but a named check that CLAIMS to cover the
-               broken thing (`claims` regex on the check's own message) stayed green.
-               Curated, and every row must be hand-verified before it is believed.
-  · **Vanished ≠ green.** A check that stopped running under the breakage is reported
-    separately. It is not toothless; it is *absent*, which is its own smaller problem
-    (`finish()` prints a count, so a silent drop in coverage is at least visible).
-
-WHAT IT DOES NOT TOUCH. `sim/web/sim.html` and `sim/web/ambient.js` are RESERVED by
-other live sessions and are never mutated, even transiently — where a breakage needs the
-simulator's self-talk gone it deletes `ambient.json` (the data) instead, which kills it
-just as dead. Every mutation is reverted in a `finally`, and `--check-tree` verifies the
-worktree is byte-clean before and after.
+Never touched: the RESERVED files below (owned by other sessions), even transiently. Every
+mutation is reverted in a `finally`, journaled for SIGKILL recovery, and `--check-tree`
+verifies the worktree is byte-clean.
 """
 from __future__ import annotations
 
@@ -100,24 +58,10 @@ import time
 WT = pathlib.Path(__file__).resolve().parents[2]
 LEDGER_HOOK = WT / "sim" / "tools" / "teeth_ledger.mjs"
 
-# WHERE A MUTATION IN FLIGHT IS RECORDED, and why this file exists at all.
-#
-# Every breakage is reverted in a `finally` — which a SIGKILL does not run. On 2026-09-06
-# the first full sweep was killed by its supervisor part-way through `hudjs-inert` and left
-# `sim/web/hud.js` gutted in the worktree; `--check-tree` caught it, but only because
-# somebody thought to ask. That is exactly the shape playbook rule 22 warns about: cleanup
-# chained behind an action that can be interrupted.
-#
-# So the target is written here BEFORE it is touched and removed after it is restored, and
-# `--check-tree` reads it. Recovery is total and needs no saved bytes: every target is a
-# TRACKED file, so `git checkout -- <path>` is the whole repair, and `--restore` runs it.
-# It lives inside the real git directory deliberately — a journal in the worktree would
-# itself be an untracked file the audit then has to explain away. That path has to be
-# ASKED FOR, not composed: in a linked worktree (which is how every agent here works)
-# `WT/.git` is a FILE holding `gitdir: …`, so `WT/".git"/"page-teeth-active"` is a write
-# into a path under a regular file. The first draft did exactly that inside a bare
-# `except: pass`, so the journal silently never existed — the same swallowed-exception
-# defect this tool exists to hunt, twice in one afternoon.
+# The in-flight mutation journal: a SIGKILL skips the `finally`, so the target is written
+# here BEFORE it is touched and removed after restore; `--check-tree [--restore]` reads it
+# (every target is tracked, so `git checkout -- <path>` is the whole repair). It lives in
+# the real git dir — asked for, not composed, because in a linked worktree `.git` is a FILE.
 def _git_dir() -> pathlib.Path:
     r = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=WT,
                        capture_output=True, text=True)
@@ -128,8 +72,7 @@ def _git_dir() -> pathlib.Path:
 
 JOURNAL = _git_dir() / "page-teeth-active"
 
-# Reserved by other sessions (see the module docstring). Refused as mutation targets at
-# table-validation time rather than by convention, so a future row cannot quietly add one.
+# Reserved by other sessions; refused at mutation time so a future row cannot add one.
 RESERVED = {
     "sim/web/sim.html",
     "sim/web/ambient.js",
@@ -138,24 +81,13 @@ RESERVED = {
 }
 
 # ---------------------------------------------------------------------------
-# The suites. Every `sim/test_*.mjs` that launches a browser.
-#
-# `granular` records whether the suite routes its assertions through
-# `browser_harness.makeChecks` — the three that do not (`test_mermaid`,
-# `test_responsive`, `test_env_hosted`) roll their own counters, so the ledger sees no
-# individual checks for them and the audit can only speak about their EXIT CODE. That is
-# a real limitation of this tool and is printed in the report rather than hidden.
+# The suites: every browser-launching suite, as (module stem, uses makeChecks, argv).
+# The three without `makeChecks` roll their own counters, so only their EXIT CODE can be
+# audited — printed in the report rather than hidden. `check_deployed --selftest` is
+# hermetic and the most on-point target (it printed failures and asserted none); auditing
+# a reserved file is not editing it.
 # ---------------------------------------------------------------------------
 SUITES = [
-    # (module stem, does it use makeChecks, argv)
-    #
-    # `check_deployed --selftest` is here even though it is not a `test_*.mjs` and is a
-    # RESERVED file this pass may not edit. Auditing is not editing, and it is the most
-    # on-point target in the repo: defect 5 — the one that started this — was ITS printed
-    # `failed requests: 0  console errors: 0` with nothing asserting either. Its
-    # `--selftest` is hermetic (four loopback servers under the real `_headers`, no
-    # internet), so it can be swept like any other suite. If a fix belongs in it, this
-    # tool's job is to say so and stop.
     ("check_deployed", True, ["--selftest"]),
     ("test_a11y", True, []),
     ("test_ambient_guard", True, []),
@@ -174,39 +106,21 @@ SUITES = [
 ]
 
 # ---------------------------------------------------------------------------
-# The breakages.
+# The breakages: (id, kind, target, tier_a, why, claims).
 #
 #   kind    "delete"  the file is gone; every request for it 404s.
-#           "gut"     a .js file is served 200 OK and is INERT. Strictly subtler than
-#                     `delete`: the tag resolves, the network log is clean, and only a
-#                     check that looks at what the script DID can tell.
-#           "hollow"  an .html page keeps its <head> and loses its entire <body>,
-#                     replaced by the same "Loading…" placeholder that made defect 4
-#                     invisible. This is the "serve a placeholder document" breakage.
-#           "stall"   ONE resource arrives long after every wait in every suite, while
-#                     the rest of the page stays fast. This is the instrument for defects
-#                     2, 3 and 4 — a check that samples the DOM before the thing it names
-#                     has arrived passes on a fast loopback and can never fail there.
-#
-#                     It is done WITHOUT request interception, which matters: eleven of
-#                     these suites intercept requests themselves and a second interceptor
-#                     would change what they are testing. Instead the target file is
-#                     padded to ~24 MB of comment and the browser is throttled to 1 MB/s
-#                     (`emulateNetworkConditions`, from the ledger hook), so that one
-#                     resource takes ~24 s and everything else on the page stays quick.
-#                     The bytes are real and the response is a normal 200 — a suite
-#                     cannot notice this by watching for failures, only by WAITING.
-#
-#   claims  a regex over a CHECK'S OWN MESSAGE. A green check whose message matches is a
-#           TIER B finding — the check names the thing that is now broken. A green check
-#           that does not match is collateral and is never reported as a finding.
-#
-#   tier_a  whether a WHOLE SUITE exiting 0 under this breakage is a finding by itself.
-#           True where the breakage leaves the page objectively broken for everyone who
-#           loads it. FALSE for `stall`, and that distinction is the difference between
-#           an audit and a noise generator: one late asset leaves most of a suite
-#           legitimately passing, so "the suite was green" is not evidence of anything.
-#           Stall rows are read at TIER B instead, one named check at a time.
+#           "gut"     a .js file served 200 OK and INERT — the tag resolves and the
+#                     network log is clean; only a check on what the script DID can tell.
+#           "hollow"  an .html page keeps its <head> and its body becomes the same
+#                     "Loading…" placeholder that once hid a toothless check.
+#           "stall"   ONE resource arrives long after every wait: the file is padded to
+#                     ~24 MB of valid filler and the browser throttled to 1 MB/s by the
+#                     ledger hook. No request interception (most suites intercept
+#                     themselves), a normal 200 — a suite can only notice by WAITING.
+#   claims  regex over a check's own message; a green match is a TIER B finding.
+#   tier_a  whether a whole suite exiting 0 is itself a finding. False for `stall`: one
+#           late asset leaves most of a suite legitimately green, so stall rows are read
+#           one named check at a time.
 # ---------------------------------------------------------------------------
 BREAKAGES = [
     ("qr-gone", "delete", "sim/web/qr.js", True,
@@ -217,9 +131,7 @@ BREAKAGES = [
      r"\bQR\b|qr\.js|pairing|encode"),
     ("docsjs-inert", "gut", "sim/web/docs.js", True,
      "docs.js is served 200 OK and does nothing — the explorer never populates",
-     # Deliberately NOT `docs` on its own: every `test_csp.mjs` check about the docs PAGE
-     # is prefixed "docs.html:", including ones about HSTS, and matching those made the
-     # first sweep's report 80 % page-name collisions. A claims regex has to match a claim.
+     # not bare `docs`: every test_csp check on the page is prefixed "docs.html:"
      r"tree|markdown|search|highlight|renders?\b|populate|explorer|diagram"),
     ("readme-404", "delete", "sim/web/docs-bundle/_root/README.md", True,
      "the docs explorer's home document 404s (defect 4's breakage)",
@@ -248,21 +160,12 @@ BREAKAGES = [
     ("modejs-inert", "gut", "sim/web/mode.js", True,
      "mode.js is served 200 OK and does nothing — hosted/offline mode is never decided",
      r"mode|hosted|banner|offline|demo|capabilit"),
-    # Added 2026-09-06 with the clause that closes it. env.js paints EVERY mark the two
-    # rows above are read through (`body[data-mode]`, the badge, the needs-backend marks),
-    # so a row for it is what keeps those two honest: without it, a clause that reads a
-    # mark env.js writes could be satisfied by env.js alone and nobody would have measured
-    # the difference.
+    # env.js paints every mark the mode rows are read through; this row keeps them honest.
     ("envjs-inert", "gut", "sim/web/env.js", True,
      "env.js is served 200 OK and does nothing — no badge, no banner, no needs-backend marks",
      r"env\.js|badge|banner|needs-backend|hosted|local\b"),
-    # Added 2026-09-06 with the fix for docs/architecture/backlog/turnstile-layout-collision.md.
-    # `turnstile.js` is the ONLY file that creates `#turnstile-holder`, decides where the
-    # challenge lands and re-enables pointer events on it, and it is now the file two blocks
-    # of `test_mobile_layout.mjs` are aimed at — so it needs a row of its own. Gutted, the
-    # sitekey is still published, `/api.js` is still requested by nobody, and no holder is
-    # ever built: a check that only asks "is the page laid out" cannot tell, and one that
-    # asks "where is the challenge" must.
+    # turnstile.js alone builds `#turnstile-holder` and places the challenge; a layout
+    # check cannot tell it is gutted, one that asks "where is the challenge" must.
     ("turnstilejs-inert", "gut", "sim/web/turnstile.js", True,
      "turnstile.js is served 200 OK and does nothing — no holder, no widget, no token",
      r"turnstile|challenge|holder|sitekey|widget|bot control"),
@@ -298,14 +201,9 @@ STALL_THROUGHPUT = 1024 * 1024
 
 
 def _pad(path: pathlib.Path, raw: bytes) -> bytes:
-    """`raw`, grown to STALL_BYTES, still valid for its own type.
-
-    Markdown gets an HTML comment (marked renders nothing for it), JS/CSS a block
-    comment, JSON a long string field, and anything else — PNG included — trailing bytes
-    after its terminator, which every decoder in a browser ignores. The file has to stay
-    USABLE: a stall must be indistinguishable from a slow network, and a corrupt payload
-    would be caught by error handling that a late one is not.
-    """
+    """`raw`, grown to STALL_BYTES and still valid for its type (comment, JSON field, or
+    trailing bytes a decoder ignores) — a stall must look like a slow network, not a
+    corrupt payload that error handling would catch."""
     need = max(0, STALL_BYTES - len(raw))
     ext = path.suffix.lower()
     if ext in (".md", ".markdown"):
@@ -338,9 +236,7 @@ class Mutation:
         if not self.path.exists():
             raise SystemExit(f"page_teeth_check: anchor missing — {self.target}")
         self._backup = self.path.read_bytes()
-        # NOT in a try/except. If the journal cannot be written, an interrupted run leaves
-        # a mutated tree with nothing recording it, and the whole point of the file is
-        # gone. Refuse to mutate instead.
+        # NOT in a try/except: no journal, no mutation.
         JOURNAL.write_text(f"{self.kind} {self.target}\n")
         if self.kind == "delete":
             self.path.unlink()
@@ -386,10 +282,8 @@ def run_suite(suite: str, extra_env: dict, argv=(), timeout: int = 900) -> dict:
     env.pop("CI", None)          # a missing browser must SKIP here, not fail the audit
     env.update(extra_env)
     t0 = time.time()
-    # SIGTERM before SIGKILL, and the difference matters: `teeth_ledger.mjs` flushes the
-    # ledger from a SIGTERM handler, so a suite that runs long under a breakage still
-    # reports the checks it HAD reached. `subprocess.run(timeout=)` sends SIGKILL, which
-    # would hand back an empty ledger — indistinguishable from "nothing stayed green".
+    # SIGTERM before SIGKILL: the ledger flushes on SIGTERM, so a timed-out suite still
+    # reports the checks it reached (a SIGKILL would read as "nothing stayed green").
     p = subprocess.Popen(
         ["node", "--import", str(LEDGER_HOOK), f"sim/{suite}.mjs", *argv],
         cwd=WT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
@@ -423,36 +317,22 @@ def by_key(led: dict) -> dict:
 
 def exposed(base: dict, frags: list[str]) -> bool:
     """Did this suite's HEALTHY run actually fetch the file the breakage attacks?
-
-    The audit's whole defence against noise. A suite that never loads `qr.js` is not
-    "tolerating a broken QR renderer" when it passes with `qr.js` deleted — it simply has
-    nothing to do with it, and reporting that would send someone to fix a test that works.
-    Measured from the request log the ledger recorded, never inferred from file names.
-    """
+    Measured from the ledger's request log, never inferred from file names."""
     blob = "\n".join(base.get("requests", []))
     return any(f in blob for f in frags)
 
 
-# ---------------------------------------------------------------------------
-# the sweep
-# ---------------------------------------------------------------------------
-def sweep(only_suite=None, only_breakage=None, baseline_only=False,
-          baseline_dir=None) -> int:
-    suites = [s for s in SUITES if not only_suite or s[0] == only_suite]
-    breaks = [b for b in BREAKAGES if not only_breakage or b[0] == only_breakage]
-
+def _baseline(suites, baseline_dir, header: str, show_tail: bool):
+    """Run (or load from `baseline_dir`) every suite on the healthy page. Returns
+    `(ledgers, void)`, `void` being the suites already red. The cache is opt-in: a
+    baseline from a different tree compares a suite to a page it never saw."""
     print("=" * 78)
-    print("BASELINE — the healthy page. Every suite must be green here or the audit is void.")
+    print(header)
     print("=" * 78)
-    # `--baseline-dir` caches the healthy run. It is a convenience for re-reading ONE
-    # breakage without paying twelve minutes again, and it is deliberately opt-in: a
-    # cached baseline taken against a different tree would compare a suite to a page it
-    # never saw, which is the exact class of error this tool exists to find.
     cache = pathlib.Path(baseline_dir) if baseline_dir else None
     if cache:
         cache.mkdir(parents=True, exist_ok=True)
-    base = {}
-    void = []
+    base, void = {}, []
     for suite, granular, argv in suites:
         cached = cache / f"{suite}.json" if cache else None
         was_cached = bool(cached and cached.exists())
@@ -463,14 +343,36 @@ def sweep(only_suite=None, only_breakage=None, baseline_only=False,
             if cached:
                 cached.write_text(json.dumps(led))
         base[suite] = led
-        n = len(led["checks"])
         flag = "ok " if led["rc"] == 0 else "RED"
         note = " (cached)" if was_cached else ""
-        print(f"  {flag} {suite:<22} rc={led['rc']}  {n:>3} checks  "
+        print(f"  {flag} {suite:<22} rc={led['rc']}  {len(led['checks']):>3} checks  "
               f"{led['secs']:>6}s{note}")
         if led["rc"] != 0:
             void.append(suite)
-            print("      " + led["tail"].replace("\n", "\n      "))
+            if show_tail:
+                print("      " + led["tail"].replace("\n", "\n      "))
+    return base, void
+
+
+def _section(title: str, rows, fmt) -> None:
+    if title:
+        print(title)
+    for row in rows:
+        print(fmt(*row))
+    if not rows:
+        print("  (none)")
+
+
+# ---------------------------------------------------------------------------
+# the sweep
+# ---------------------------------------------------------------------------
+def sweep(only_suite=None, only_breakage=None, baseline_only=False,
+          baseline_dir=None) -> int:
+    suites = [s for s in SUITES if not only_suite or s[0] == only_suite]
+    breaks = [b for b in BREAKAGES if not only_breakage or b[0] == only_breakage]
+
+    base, void = _baseline(suites, baseline_dir, "BASELINE — the healthy page. Every "
+                           "suite must be green here or the audit is void.", True)
     if void:
         print(f"\n!! {len(void)} suite(s) already red on the healthy tree: {', '.join(void)}")
         print("   Findings against those are meaningless. Fix or exclude them first.")
@@ -499,11 +401,8 @@ def sweep(only_suite=None, only_breakage=None, baseline_only=False,
         with m:
             for suite, granular, argv in todo:
                 led = run_suite(suite, m.env, argv)
-                # An instrument that failed is not evidence of anything. `stall` depends on
-                # the browser actually being throttled; if `emulateNetworkConditions` threw
-                # (it did, silently, in this tool's first draft), every check would "stay
-                # green" against a page that was never slow and the row would manufacture
-                # a whole family of false findings.
+                # An instrument that failed is not evidence: an unthrottled `stall` would
+                # manufacture a whole family of false "stayed green" findings.
                 if m.kind == "stall" and not led.get("throttled"):
                     print(f"  SKIPPED      {suite:<22} the throttle never applied — "
                           f"{'; '.join(led.get('notes') or ['no pages were instrumented'])}")
@@ -523,13 +422,8 @@ def sweep(only_suite=None, only_breakage=None, baseline_only=False,
                     tier_a.append((bid, suite, why, len(green)))
                     if not granular:
                         print("      (no per-check ledger — this suite does not use makeChecks)")
-                # TIER B is read on EVERY run, red or green. On a red suite it is the
-                # detail view — which of the surviving checks name the broken thing. On a
-                # green one it is the whole readout, and it is the only thing `stall` can
-                # be read by: a stalled resource leaves most of a suite legitimately
-                # passing, so "the suite was green" says nothing and "the check that
-                # claims the hero DECODED was green while the hero was still on the wire"
-                # says everything.
+                # TIER B is read on EVERY run: on a red suite it is the detail view, on a
+                # green one (always, for `stall`) it is the whole readout.
                 for k in green:
                     if re.search(claims, a[k]["msg"], re.I):
                         tier_b.append((bid, suite, a[k]["msg"], why))
@@ -538,10 +432,7 @@ def sweep(only_suite=None, only_breakage=None, baseline_only=False,
                     vanished.append((bid, suite, len(gone)))
                     print(f"      vanished (did not run at all): {', '.join(gone[:4])}")
                 (caught if led["rc"] != 0 else missed).append(suite)
-        # WAS THE BREAKAGE DETECTABLE AT ALL? A row that NO exposed suite reddens is a
-        # far stronger statement than one suite tolerating it: it says nothing in the
-        # repository would notice this shipping. Printed per row rather than only in the
-        # summary, because that is the number a reader of one row needs.
+        # a row NO exposed suite reddens means nothing in the repo would notice it shipping
         print(f"  --> caught by {len(caught)}/{len(todo)} exposed suites"
               + (f"; MISSED BY: {', '.join(missed)}" if missed else ""))
         if not caught:
@@ -552,21 +443,12 @@ def sweep(only_suite=None, only_breakage=None, baseline_only=False,
     print("=" * 78)
     print("FINDINGS")
     print("=" * 78)
-    print(f"\nTIER A — suite was EXPOSED to the breakage and still exited 0 ({len(tier_a)}):")
-    for bid, suite, why, n in tier_a:
-        print(f"  · {suite:<22} survived [{bid}] {why}")
-    if not tier_a:
-        print("  (none)")
-    print(f"\nTIER B — a check that NAMES the broken thing stayed green ({len(tier_b)}):")
-    for bid, suite, msg, why in tier_b:
-        print(f"  · {suite:<22} [{bid}] {msg[:88]}")
-    if not tier_b:
-        print("  (none)")
-    print(f"\nCOVERAGE DROPS — checks that stopped running under a breakage ({len(vanished)}):")
-    for bid, suite, n in vanished:
-        print(f"  · {suite:<22} [{bid}] {n} check(s) never ran")
-    if not vanished:
-        print("  (none)")
+    _section(f"\nTIER A — suite was EXPOSED to the breakage and still exited 0 ({len(tier_a)}):",
+             tier_a, lambda bid, suite, why, n: f"  · {suite:<22} survived [{bid}] {why}")
+    _section(f"\nTIER B — a check that NAMES the broken thing stayed green ({len(tier_b)}):",
+             tier_b, lambda bid, suite, msg, why: f"  · {suite:<22} [{bid}] {msg[:88]}")
+    _section(f"\nCOVERAGE DROPS — checks that stopped running under a breakage ({len(vanished)}):",
+             vanished, lambda bid, suite, n: f"  · {suite:<22} [{bid}] {n} check(s) never ran")
     print(f"\nNOT EXPOSED (correctly skipped, not findings): {len(skipped)} suite/breakage pairs")
     return 1 if (tier_a or tier_b) else 0
 
@@ -575,46 +457,20 @@ def sweep(only_suite=None, only_breakage=None, baseline_only=False,
 # the slow sweep — the loaded runner, on this box, on purpose
 # ---------------------------------------------------------------------------
 #
-# A check whose OWN MESSAGE says it is about time. `test_bg_perf` asserts frame budgets and
-# `test_a11y` asserts a motion preference; a throttled renderer is *supposed* to move those,
-# and reporting them next to a drawer that never opened would bury the finding in the noise
-# the exposure filter above exists to prevent. Separated, never dropped: the count is
-# printed so a reader can see how much was set aside and on what grounds.
+# A check whose OWN MESSAGE is about time (frame budgets, motion) is SUPPOSED to move on
+# a throttled renderer; those are set aside and counted, never dropped.
 TIME_CLAIMS = re.compile(
     r"\bbudget|\bfps\b|frame time|\bms\b|milliseconds|\bslow(er|ly)?\b|"
     r"within \d|under \d|faster|latenc|throughput|elapsed|duration", re.I)
 
 
 def slow_sweep(rate: int, only_suite=None, baseline_dir=None, timeout: int = 1800) -> int:
-    """Run every suite against an UNTOUCHED site on a renderer throttled `rate`x.
-
-    The site is byte-identical to the healthy one — `git status` stays clean throughout,
-    and that is the point: anything that reddens here reddened because of the CLOCK.
-    """
+    """Run every suite against an UNTOUCHED site on a renderer throttled `rate`x; the
+    tree stays byte-clean, so anything that reddens reddened because of the CLOCK."""
     suites = [s for s in SUITES if not only_suite or s[0] == only_suite]
-    cache = pathlib.Path(baseline_dir) if baseline_dir else None
-    if cache:
-        cache.mkdir(parents=True, exist_ok=True)
 
-    print("=" * 78)
-    print("BASELINE — the healthy page at full speed.")
-    print("=" * 78)
-    base, void = {}, []
-    for suite, granular, argv in suites:
-        cached = cache / f"{suite}.json" if cache else None
-        if cached and cached.exists():
-            led = json.loads(cached.read_text())
-            note = " (cached)"
-        else:
-            led = run_suite(suite, {}, argv)
-            note = ""
-            if cached:
-                cached.write_text(json.dumps(led))
-        base[suite] = led
-        print(f"  {'ok ' if led['rc'] == 0 else 'RED'} {suite:<22} rc={led['rc']}  "
-              f"{len(led['checks']):>3} checks  {led['secs']:>6}s{note}")
-        if led["rc"] != 0:
-            void.append(suite)
+    base, void = _baseline(suites, baseline_dir,
+                           "BASELINE — the healthy page at full speed.", False)
     if void:
         print(f"\n!! already red on the healthy tree: {', '.join(void)} — findings there are void.")
 
@@ -658,21 +514,13 @@ def slow_sweep(rate: int, only_suite=None, baseline_dir=None, timeout: int = 180
     print("=" * 78)
     print("FINDINGS — green at full speed, RED on a slow renderer, same bytes on disk")
     print("=" * 78)
-    for suite, k, msg in findings:
-        print(f"  · {suite:<22} {k}\n      {msg[:110]}")
-    if not findings:
-        print("  (none)")
-    print(f"\nSET ASIDE — checks whose own message is about time ({len(timed)}):")
-    for suite, k, msg in timed:
-        print(f"  · {suite:<22} {k}  {msg[:80]}")
-    if not timed:
-        print("  (none)")
-    print(f"\nCOVERAGE DROPS — checks that stopped running when the page got slow "
-          f"({len(gone_all)} suite(s)):")
-    for suite, n, sample in gone_all:
-        print(f"  · {suite:<22} {n} check(s) never ran: {', '.join(sample)}")
-    if not gone_all:
-        print("  (none)")
+    _section("", findings, lambda suite, k, msg: f"  · {suite:<22} {k}\n      {msg[:110]}")
+    _section(f"\nSET ASIDE — checks whose own message is about time ({len(timed)}):",
+             timed, lambda suite, k, msg: f"  · {suite:<22} {k}  {msg[:80]}")
+    _section(f"\nCOVERAGE DROPS — checks that stopped running when the page got slow "
+             f"({len(gone_all)} suite(s)):", gone_all,
+             lambda suite, n, sample: f"  · {suite:<22} {n} check(s) never ran: "
+                                      f"{', '.join(sample)}")
     if notes_all:
         print(f"\n!! the throttle did not apply in: {', '.join(notes_all)} — those rows prove nothing.")
     return 1 if (findings or gone_all) else 0
@@ -682,21 +530,12 @@ def slow_sweep(rate: int, only_suite=None, baseline_dir=None, timeout: int = 180
 # selftest — the tool must find a check that is KNOWN to have no teeth
 # ---------------------------------------------------------------------------
 #
-# Defect 4 is the fixture, because it is the one that was reconstructible: until
-# 2026-09-06 `test_docs_explorer.mjs` asserted `article h1, article h2, article p` with no
-# wait, and `sim/web/docs.html:211` ships `<p class="muted">Loading docs…</p>` as static
-# markup — so the assertion matched the SPINNER and survived the home document never
-# arriving at all. The fix (an `h1, h2`-only selector plus a `waitForSelector`) is in the
-# tree; the selftest puts the defect back, runs the sweep's `readme-404` row against it,
-# and requires BOTH directions:
-#
-#   KNOWN POSITIVE — with the old assertion restored, the check must stay GREEN while the
-#                    home document 404s. If the tool cannot see that, it cannot see any of
-#                    this family and its "no findings" would mean nothing.
-#   KNOWN NEGATIVE — with the shipped assertion, the same check must go RED. Without this
-#                    half the tool could "detect" the defect by calling everything
-#                    toothless, which is the failure mode that matters most here: a false
-#                    positive sends someone to fix a test that works.
+# The fixture is a real, since-fixed toothless check: `test_docs_explorer.mjs` asserted
+# `article h1, article h2, article p` with no wait, matching docs.html's static
+# "Loading docs…" <p>. The selftest restores it, runs the `readme-404` row, and requires:
+#   KNOWN POSITIVE — the restored check stays GREEN while the home document 404s;
+#   KNOWN NEGATIVE — the shipped check goes RED (else the tool could "detect" by calling
+#                    everything toothless, the worse error).
 TOOTHLESS_ORIGINAL = '''  await page.waitForSelector("article h1, article h2", { timeout: 8000 }).catch(() => {});
   ok(await page.evaluate(() => {
     const a = document.querySelector("article");
@@ -722,9 +561,8 @@ def selftest() -> int:
     original = src_path.read_text()
     if original.count(TOOTHLESS_ORIGINAL) != 1:
         print("SELFTEST CANNOT RUN — the anchor in test_docs_explorer.mjs moved.")
-        print("  The fixture is defect 4's fix; if the fix was rewritten, re-anchor it here")
-        print("  rather than deleting the selftest. A tool with no selftest is a tool that")
-        print("  reports 'no findings' for free.")
+        print("  Re-anchor it here rather than deleting the selftest: a tool with no")
+        print("  selftest reports 'no findings' for free.")
         return 1
 
     _, kind, target = SELFTEST_BREAK
@@ -761,14 +599,8 @@ def selftest() -> int:
     print("   defect 4 restored + home document 404 -> the check stays GREEN (detected)")
     print("   defect 4 fixed    + home document 404 -> the check goes RED   (not reported)")
 
-    # ---- and the OTHER instrument, which has no breakage to be caught by ------------
-    #
-    # `--slow` reports a finding only when a check FLIPS, so a throttle that silently did
-    # not apply reports "no findings" — indistinguishable from a clean sweep and exactly
-    # the failure `emulateNetworkConditions` already produced once in this file's history.
-    # There is nothing on disk to inspect afterwards (the whole point of `--slow` is that
-    # the tree stays byte-clean), so the only proof available is the instrument's own
-    # count, taken on a real suite. `test_api_headers` is the cheapest browser suite here.
+    # The --slow instrument: a throttle that silently did not apply reports "no findings",
+    # and nothing on disk shows it, so prove the count on the cheapest real suite.
     print()
     print("── the --slow instrument ──")
     led = run_suite("test_api_headers", {"MOXIE_TEETH_CPU": "6"}, [])
@@ -796,10 +628,7 @@ def check_tree(restore: bool = False) -> int:
             print("   re-run with --restore, or `git checkout -- <path>` by hand")
     r = subprocess.run(["git", "status", "--porcelain"], cwd=WT,
                        capture_output=True, text=True)
-    # Only TRACKED files can be left behind by a breakage — every mutation edits a file
-    # that is already in the index and restores it in a `finally`. Untracked files are
-    # listed but are not a failure: a run leaves none, and refusing to run because someone
-    # has a scratch file open would make the guard something people skip.
+    # Only TRACKED files can be left behind by a breakage; untracked ones are listed only.
     lines = [l for l in r.stdout.splitlines() if l.strip()]
     tracked = [l for l in lines if not l.startswith("??")]
     untracked = [l for l in lines if l.startswith("??")]

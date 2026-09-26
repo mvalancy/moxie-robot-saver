@@ -1,12 +1,10 @@
 """
 Live GATEWAY EARS — real audio into our LiteLLM proxy's `/v1/audio/transcriptions`.
 
-`test_stt_gateway.py` proves the *shape* of the cloud transcriber against a fake client
-(the WAV wrapping, the request fields, the backoff, the latch, the `MOXIE_STT`
-precedence). Every one of those tests would still pass if the gateway transcribed
-everything as "banana". This file is the one that cannot: **the gateway must read back
-the sentence we made it say**, at word overlap ≥ 0.7, twice — once at the audio's own
-22050 Hz and once at the 16 kHz the robot's perception bus actually carries.
+`test_stt_gateway.py` proves the cloud transcriber's *shape* against a fake client, and
+would still pass if the gateway transcribed everything as "banana". Here **the gateway
+must read back the sentence we made it say**, at word overlap ≥ 0.7, at the audio's own
+22050 Hz and at the 16 kHz the robot's perception bus carries.
 
 Four tests, budgeted at **eight gateway calls total**:
 
@@ -22,11 +20,8 @@ Four tests, budgeted at **eight gateway calls total**:
    brain (1 chat) → a spec `RemoteChatResponse` → gateway TTS (1 TTS) → a
    `CloudTTSResponse` the SIM could play. Three backends, one turn, no local models.
 
-Everything is built by `config.build_transcriber()` / `build_synthesizer()` /
-`build_app()`, so what is under test is the shipped switch (`MOXIE_STT=gateway`), not a
-test-local client. Runs when a gateway base URL and key are present (`mqtt/.env` of this
-tree or of the main checkout) and skips cleanly and instantly otherwise, so the hermetic
-tier is unaffected.
+Everything is built by `config.build_*()`, so the shipped switch (`MOXIE_STT=gateway`) is
+under test, not a test-local client. Skips instantly without a gateway URL and key.
 
     MOXIE_STT=gateway .venv/bin/python -m pytest sim/tests/test_live_gateway_stt.py -q -s
 """
@@ -215,11 +210,9 @@ def test_a_child_utterance_through_the_runtime_on_gateway_ears_brain_and_voice()
     from helpers_runtime import assert_spec_response, drive_turn, make_runtime
     from moxie_sdk.tts import decode_cloud_tts_response
 
-    # BOTH sides pinned (#77). Nothing had proven a *pinned* engine still produces audio
-    # on the wire — the pin's own tests are hermetic, and every live test so far left
-    # `MOXIE_TTS` unset so `build_synthesizer`'s auto precedence chose. Here the operator's
-    # environment names the engine, a console pick naming another one is dropped, and the
-    # turn below is what that pin actually produced.
+    # BOTH sides pinned: the operator's environment names the engine, a console pick
+    # naming another is dropped, and the turn below proves a PINNED engine still speaks
+    # on the wire (the pin's own tests are hermetic).
     c = _config(MOXIE_STT="gateway", MOXIE_TTS="gateway", MOXIE_APP="llm",
                 MOXIE_VOICE_MODEL=TTS_MODEL, MOXIE_VOICE_FORMAT="wav")
     from moxie_sdk import voice_settings as _vs
@@ -288,20 +281,10 @@ def test_a_child_utterance_through_the_runtime_on_gateway_ears_brain_and_voice()
         f"  said : {CHILD_LINE!r}\n  heard: {transcript!r}")
     assert len(reply) > 10, f"suspiciously short live reply: {resp}"
     assert spoken["audio"] and spoken["sample_rate"] > 0
-    # The pinned voice must have produced SPEECH, not the placeholder tone. `ToneSynthesizer`
-    # emits the same mono PCM16 at the same rate, so only the spectrum separates them — and
-    # this is the assertion that makes "a pinned engine still speaks on the wire" a fact.
-    #
-    # `_stdlib`, and that is the whole point of this file. Until 2026-09-05 this line read
-    # `A.is_real_speech(...)`, which reaches numpy — a package this suite deliberately does
-    # NOT require, because the deployment it proves is a hosted box with nothing but
-    # `openai` (see test 2 and `helpers_audio.resample_pcm16_stdlib`). Measured that day:
-    # the turn itself was perfectly healthy — word overlap 1.00, a real reply, 203 612 B of
-    # audio @ 22050 Hz — and then this assertion died with `ModuleNotFoundError: No module
-    # named 'numpy'` from `helpers_audio.py:157`, four gateway calls in. Adding
-    # `importorskip("numpy")` at the top of the file would have hidden it by deleting the
-    # entire gateway-ears proof on exactly the machine shape it is about; the measurement
-    # grew a numpy-free twin instead, asserted verdict-equal by `test_speech_guard.py`.
+    # The pinned voice must have produced SPEECH, not the placeholder tone (same PCM16
+    # format, only the spectrum separates them). The `_stdlib` twin, because this suite
+    # must run on a hosted box with only `openai` — `is_real_speech` needs numpy, and
+    # `importorskip("numpy")` would delete the whole gateway-ears proof there.
     assert A.is_real_speech_stdlib(spoken["audio"]), (
         f"the pinned gateway voice put tone-shaped audio on the wire "
         f"(flatness {A.spectral_flatness_stdlib(spoken['audio']):.3e} <= "

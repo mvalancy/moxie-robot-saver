@@ -14,7 +14,7 @@
 >    for the *n*-th line of a session. Both are **0**, and the *line* is numbered inside the
 >    key instead (`turn_key`/`event_id` = `"{session_id}#{n}"`). Two reasons, both hard:
 >    `annotate` emits the mood mark **on chunk 0 only**, so numbering lines as chunks would
->    have left every line after the first with no face — and `sim/web/audio.js`'s ORDERING
+>    have left every line after the first with no face — and `sim/web/voice/`'s ORDERING
 >    rule requires an utterance's first chunk to be `chunk_num` 0, so a session-as-one-event
 >    stream would stall. Telehealth never streams: one `PLAY_OUTPUT` per line, one utterance
 >    per line. Pinned by `test_every_line_is_its_own_utterance_so_each_one_carries_its_mood`.
@@ -175,7 +175,7 @@ flowchart LR
 | Voice | same, `_maybe_synthesize` | renders a line to a `CloudTTSResponse` on `commands/tts` — how the SIM gets a voice |
 | Transcript | same, `feed_stt` → `_note("stt", "👂 heard: …")` | the child's words already reach the supervisor as text; they land in a **global** 60-entry `recent` ring, not a per-device one |
 | Console | [`server/moxie_server/main.py`](../../../server/moxie_server/main.py) + [`fleet.py`](../../../server/moxie_server/fleet/) + [`server/static/`](../../../server/static/) | the four-file card pattern: runtime handler → pure `normalize_*` → `/local/*` route → card + `refresh*()` |
-| SIM | [`sim/web/bridge.js`](../../../sim/web/bridge.js) | subscribes `commands/remote_chat`, `commands/tts`, `events/remote-chat`, `+/config`, `commands/motor`. **Not `commands/telehealth`.** |
+| SIM | [`sim/web/bridge/`](../../../sim/web/bridge/) | subscribes `commands/remote_chat`, `commands/tts`, `events/remote-chat`, `+/config`, `commands/motor`. **Not `commands/telehealth`.** |
 
 ### Prior art — OpenMoxie's puppet page
 
@@ -397,7 +397,7 @@ methods, one status verb, one proxy route, one card, one SIM handler, fourteen t
 - `server/moxie_server/fleet.py` — `normalize_telehealth`
 - `server/moxie_server/main.py` — `GET`/`POST /local/robots/{device_id}/telehealth`
 - `server/static/index.html` + `server/static/app.js` — the 🎭 card and `refreshTelehealth()`
-- `sim/web/bridge.js` — the `commands/telehealth` subscription and handler
+- `sim/web/bridge/` — the `commands/telehealth` subscription and handler
 - `sim/virtual_moxie.py` + `sim/run_smoke.sh` — the `--telehealth` mode
 - `sim/test_bridge.mjs` · `sim/tests/test_console_roundtrip.py`
 - Docs: `docs/architecture/mqtt-and-conversation.md` §3.5 · `docs/architecture/openmoxie-feature-audit.md`

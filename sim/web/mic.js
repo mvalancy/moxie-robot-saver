@@ -6,24 +6,18 @@
  *   • the local sidecar `POST <base>/stt` (`sim/stt/server.py`), answering the robot's
  *     `DeepgramResponse` shape. An explicit `moxie.sttBase` always wins.
  *
- * The hosted path ENCODES ITS OWN 16 kHz mono WAV: the gateway's STT answered 500 for
- * webm/Opus, ogg/Opus and mp4/AAC (evidence: `functions/api/_lib/env.js::sttFormats`), and
- * MediaRecorder never produces WAV. The local sidecar keeps MediaRecorder (ffmpeg decodes
- * anything).
+ * The hosted path ENCODES ITS OWN 16 kHz mono WAV: the gateway's STT refused webm/ogg/mp4
+ * (`functions/api/_lib/env.js::sttFormats`) and MediaRecorder never produces WAV. The local
+ * sidecar keeps MediaRecorder (ffmpeg decodes anything).
  *
- * A transcript is published as a child utterance on `/devices/<id>/events/remote-chat`, as
- * a real robot would. When the ears fail the page falls back to a scripted child line
- * (spec §6) — sent via `sendScriptedTurn`, so a line nobody spoke never spends a live
- * chat/speech turn. Only a REAL transcript may. A denied mic, a too-short clip and an empty
- * transcript get no consolation line at all.
- *
- * The hosted upload carries a Turnstile token for the `transcribe` action (the ears are
- * the costlier route, billed by duration) on a request header; the local sidecar asks for
- * nothing.
+ * A transcript is published as a child utterance on `events/remote-chat`, as a real robot
+ * would. When the ears fail, a scripted child line (spec §6) goes out via
+ * `sendScriptedTurn`, so a line nobody spoke never spends a live turn. A denied mic, a
+ * too-short clip and an empty transcript get no consolation line at all.
  *
  * THE 15-SECOND HARD STOP lives here because the server's byte cap is not a duration cap
- * for compressed audio and a Function only sees a finished upload (live-sim-demo.md §4.1).
- * `DEMO_MAX_RECORD_MS` arrives in `/api/health`'s `limits`; 15 s without a server.
+ * and a Function only sees a finished upload (live-sim-demo.md §4.1); `DEMO_MAX_RECORD_MS`
+ * arrives in `/api/health`'s `limits`.
  *
  * Exposes window.moxieMic = { start, stop, toggle, isRecording, setSttBase, getSttBase,
  *                             sttTarget, maxRecordMs, stats, setCapture, encodeWav }.
@@ -53,15 +47,10 @@
 
   var rec = null, chunks = [], stream = null, recording = false, capTimer = null;
 
-  /* ======================================================================== *
-   * SILENCE AUTO-STOP. Two rules, because it must never cut somebody off:
-   *   · SILENCE_END_MS — hang up only after speech was heard and then stopped; well past a
-   *     breath or a child's thinking pause.
-   *   · NO_SPEECH_MS — nothing loud at all: an accidental press or a muted mic.
-   * SPEECH_RMS is a generous level (room tone ~0.002-0.008, speech 0.05+): erring towards
-   * "speech" only lengthens a recording. It can only end a recording EARLIER; the hard cap
-   * remains the outer bound.
-   * ======================================================================== */
+  /* SILENCE AUTO-STOP, which must never cut somebody off: SILENCE_END_MS applies only after
+   * speech was heard (well past a breath or a thinking pause); NO_SPEECH_MS is an accidental
+   * press or a muted mic. SPEECH_RMS is generous (room tone ~0.005, speech 0.05+): erring to
+   * "speech" only lengthens a recording, and the hard cap stays the outer bound. */
   var SPEECH_RMS = 0.02;
   var SILENCE_END_MS = 1100;
   var NO_SPEECH_MS = 5000;
@@ -96,11 +85,10 @@
     }, wait);
   }
 
-  /** Recorded, never sampled (playbook rule 11). `speechDetected`/`silenceStops`/
-   *  `emptyStops` let a test assert WHY a recording ended. */
-  var stats = { starts: 0, stops: 0, autoStops: 0, speechDetected: 0, silenceStops: 0, emptyStops: 0, posts: 0, transcripts: 0, fallbacks: 0,
-                tooShort: 0, tooLong: 0, botUnavailable: 0, botTokens: 0,
-                reasons: [], lastUrl: "", lastBytes: 0,
+  /** Recorded, never sampled: tests assert WHY a recording ended from these. */
+  var stats = { starts: 0, stops: 0, autoStops: 0, speechDetected: 0, silenceStops: 0,
+                emptyStops: 0, posts: 0, transcripts: 0, fallbacks: 0, tooShort: 0, tooLong: 0,
+                botUnavailable: 0, botTokens: 0, reasons: [], lastUrl: "", lastBytes: 0,
                 lastMime: "", lastCapMs: 0, lastKind: "" };
 
   function mode() {
@@ -115,9 +103,7 @@
 
   function num(v, dflt, lo, hi) {
     var n = Number(v);
-    if (!isFinite(n)) return dflt;
-    if (n < lo || n > hi) return dflt;
-    return n;
+    return (!isFinite(n) || n < lo || n > hi) ? dflt : n;
   }
 
   /** The cap in force: the server's if usable, else `moxie.maxRecordMs`, else 15 s. */
@@ -135,12 +121,8 @@
   function minBytes() { return num(limits().min_audio_bytes, DEFAULT_MIN_BYTES, 1, 5e7); }
   function maxBytes() { return num(limits().max_audio_bytes, Infinity, 1, 5e7); }
 
-  /**
-   * Where this clip is going. The mode machine owns "is there a same-origin route"
-   * (`apiBase()` + `ears`); no hostname here (C3); an explicit `moxie.sttBase` always wins.
-   *
-   * @returns {{url: string, kind: "cloud"|"local"}}
-   */
+  /** Where this clip is going: {url, kind: "cloud"|"local"}. The mode machine owns "is there
+   *  a same-origin route" (never the hostname); an explicit `moxie.sttBase` always wins. */
   function sttTarget() {
     var m = mode();
     var base = m && m.apiBase ? m.apiBase() : null;
@@ -155,7 +137,7 @@
     var b = document.getElementById("bus-status"); if (b && t) b.textContent = t;
   }
 
-  /** The topic a child's utterance rides, exactly as `bridge.js` publishes it. */
+  /** The topic a child's utterance rides, exactly as `bridge/` publishes it. */
   var USER_TOPIC = "/devices/d_sim/events/remote-chat";
 
   /** Words the visitor actually said — the paid path on a live deployment, by design. */
@@ -168,12 +150,9 @@
     }
   }
 
-  /**
-   * A line THIS PAGE CHOSE (the consolation for a failed turn): reaches the page like a
-   * child's turn and costs nothing. `cloud-transport.js` owns `sendScriptedTurn` (it alone
-   * knows whether a turn would be paid for). Without it, `sendUserTurn` is bridge.js's own
-   * and already free; `canSpendLiveTurn` guards a future transport lacking the seam.
-   */
+  /** A line THIS PAGE CHOSE (a failed turn's consolation): costs nothing. cloud-transport.js
+   *  owns `sendScriptedTurn` (it alone knows what would be paid for); without it the bridge's
+   *  own turn is already free, and `canSpendLiveTurn` guards a transport lacking the seam. */
   function publishScripted(text) {
     var b = window.moxieBridge;
     if (b && typeof b.sendScriptedTurn === "function") { b.sendScriptedTurn(text); return; }
@@ -185,10 +164,8 @@
     publishUtterance(text);
   }
 
-  /**
-   * The transcript from either shape: house envelope `transcript`, or the sidecar's
-   * `channel.alternatives[0].transcript`. One parser so the two cannot drift.
-   */
+  /** The transcript from either shape: house envelope `transcript`, or the sidecar's
+   *  `channel.alternatives[0].transcript`. */
   function pickTranscript(body) {
     if (!body || typeof body !== "object") return "";
     if (typeof body.transcript === "string") return body.transcript.trim();
@@ -229,16 +206,11 @@
     turnstile_misconfigured: "Moxie’s visitor check isn’t set up right here — using a scripted line"
   };
 
-  /* ---- the bot control, in one line on the send path --------------------- *
-   * `turnstile.js` owns the widget; this file owns the upload. Outcomes:
-   *   ""      — nothing to prove (control not enforced, local sidecar, or no turnstile.js
-   *             loaded — the server is then not asking). Upload as-is.
-   *   "<tok>" — a fresh token for the `transcribe` action (not `chat`: a typed turn's token
-   *             must not pay for costly STT), sent as a HEADER since the body is raw audio.
-   *   null    — enforcement on, no token: do NOT upload; degrade to the scripted line.
-   * Returns a bare string (not a promise) when there is nothing to ask, so an unenforced
-   * page uploads on exactly the same tick as before — `.then()` defers by a microtask, and
-   * test_demo_ears.mjs observed the difference. */
+  /* ---- the bot control: "" (nothing to prove — unenforced, local sidecar, or no
+   * turnstile.js), a fresh `transcribe` token (never `chat`: a typed turn's token must not
+   * pay for costly STT) sent as a HEADER since the body is raw audio, or null (do NOT
+   * upload). A bare "" (not a promise) keeps an unenforced upload on the same tick —
+   * test_demo_ears.mjs observes the microtask. */
   function botToken(kind) {
     if (kind !== "cloud") return "";
     var t;
@@ -251,11 +223,8 @@
     } catch (e) { return Promise.resolve(null); }
   }
 
-  /**
-   * Upload one clip: `botToken()` first, then `upload()` plus one header (a wrapper, not a
-   * re-indentation). `stats.posts` counts here so a clip refused for want of a token still
-   * counts as an attempt.
-   */
+  /** Upload one clip: `botToken()`, then `upload()`. `stats.posts` counts here so a clip
+   *  refused for want of a token still counts as an attempt. */
   function transcribe(blob) {
     var target = sttTarget();
     status("transcribing…");
@@ -270,9 +239,8 @@
     if (typeof asked === "string") return upload(blob, target, asked);
     return asked.then(function (tok) {
       if (tok === null) {
-        /* No token, no upload: degrade to a free scripted line like every other ears
-         * failure, and count a transport strike so the badge stops claiming LIVE (as
-         * `cloud-transport.js::botUnavailable` does for typed turns). */
+        // No token, no upload: a free scripted line plus a transport strike, as
+        // `cloud-transport.js::botUnavailable` does for typed turns.
         stats.botUnavailable++;
         noteTransportError();
         return fallback("Moxie couldn’t finish her visitor check — using a scripted line");
@@ -290,8 +258,7 @@
       body: blob,
       headers: { "Content-Type": blob.type || "application/octet-stream" },
     };
-    // The token header the route reads. ABSENT rather than empty when not needed, so an
-    // unenforced deployment and a local sidecar see the request they always saw.
+    // ABSENT rather than empty when not needed: unenforced/local requests are unchanged.
     if (token) opt.headers["X-Turnstile-Response"] = token;
     try {
       if (typeof AbortSignal !== "undefined" && AbortSignal.timeout)
@@ -333,11 +300,8 @@
     });
   }
 
-  /**
-   * The degraded answer: a scripted child line (from the clips we have audio for) so the
-   * conversation still runs; the status line says why. Sent via `publishScripted` — a
-   * consolation prize must not cost a live turn.
-   */
+  /** The degraded answer: a scripted child line (one we have a clip for) so the
+   *  conversation still runs, via `publishScripted` so it never costs a live turn. */
   function fallback(why) {
     stats.fallbacks++;
     if (window.moxieStub && window.moxieStub.enabled) {
@@ -356,11 +320,8 @@
 
   /* ---- capture ----------------------------------------------------------- */
 
-  /**
-   * Open the microphone. Replaceable via `setCapture` so tests drive a FAKE recorder (no
-   * live mic, playbook rule 11). Contract: `{recorder, stream}`; `recorder` has `start()`,
-   * `stop()`, `state`, `mimeType`, `ondataavailable`, `onstop`; `stream` has `getTracks()`.
-   */
+  /** Open the microphone (replaceable via `setCapture` for tests). Contract: `{recorder,
+   *  stream}`; recorder has start/stop/state/mimeType/ondataavailable/onstop. */
   function defaultCapture() {
     if (!navigator.mediaDevices || !window.MediaRecorder) {
       return Promise.reject(new Error("unsupported"));
@@ -373,12 +334,9 @@
   /** The rate the gateway's ears want (docs/guides/litellm-stt-setup.md). */
   var TARGET_RATE = 16000;
 
-  /**
-   * Float32 mono at `fromRate` → a complete 16-bit RIFF/WAVE at `TARGET_RATE`, by
-   * nearest-neighbour decimation (fine for ASR). The header carries the TRUE rate: a wrong
-   * one pitch-shifts the audio and wrecks the transcript. Exported so test_demo_ears.mjs can
-   * parse it with the server's own RIFF walker (`functions/api/_lib/wav.js`).
-   */
+  /** Float32 mono at `fromRate` → 16-bit RIFF/WAVE at `TARGET_RATE` by nearest-neighbour
+   *  decimation (fine for ASR). The header carries the TRUE rate: a wrong one pitch-shifts
+   *  the audio and wrecks the transcript. */
   function encodeWav(chunks, total, fromRate) {
     var src = new Float32Array(total), at = 0, i, j;
     for (i = 0; i < chunks.length; i++) { src.set(chunks[i], at); at += chunks[i].length; }
@@ -417,10 +375,8 @@
     return bytes;
   }
 
-  /**
-   * The hosted capture: real frames, encoded as WAV on stop. Same `{recorder, stream}`
-   * contract as `defaultCapture`, so caps, gates, fallback and tests are identical.
-   */
+  /** The hosted capture: real frames, encoded as WAV on stop; same contract as
+   *  `defaultCapture`, so caps, gates, fallback and tests are identical. */
   function wavCapture() {
     var Ctx = window.AudioContext || window.webkitAudioContext;
     if (!navigator.mediaDevices || !Ctx) return Promise.reject(new Error("unsupported"));
@@ -435,9 +391,7 @@
       var mute = ctx.createGain();
       mute.gain.value = 0;
       var buffers = [], total = 0, running = false;
-      /* Level meter: RMS of each 4096-sample block this handler already has (~12/s), which
-       * drives the silence auto-stop for free. MediaRecorder never sees samples, so the
-       * local path keeps the hard cap alone. */
+      // RMS of each 4096-sample block (~12/s) drives the silence auto-stop for free.
       var onLevel = null;
 
       node.onaudioprocess = function (e) {
@@ -486,8 +440,7 @@
     });
   }
 
-  /** An explicit override (tests) wins; otherwise the capture follows the target, since
-   *  the two ears want different things on the wire. */
+  /** A test override wins; otherwise the capture follows the target (different wire). */
   var capture = null;
   function captureFor(kind) {
     if (capture) return capture();
@@ -534,7 +487,7 @@
       document.body.setAttribute("data-mic", "on");
       status("● listening…");
       if (window.moxieAudio) window.moxieAudio.sfx("listen");
-      // She notices the tap (`bridge.js::moxieAlive` owns the vocabulary).
+      // She notices the tap (`bridge/alive.js::moxieAlive` owns the vocabulary).
       if (window.moxieAlive) window.moxieAlive.listening();
 
       // THE HARD STOP (§4.1): this, not the byte cap, bounds what one visitor can spend.
@@ -578,18 +531,12 @@
       try { localStorage.setItem("moxie.sttBase", u); } catch (e) {}
     },
     getSttBase: function () { return STT_BASE; },
-    /** Where a clip would go right now, and in which shape. */
     sttTarget: sttTarget,
-    /** The hard stop in force, in ms — server-published when there is a server. */
-    maxRecordMs: maxRecordMs,
-    /** Recorded state for tests and for the console; never a live sample. */
+    maxRecordMs: maxRecordMs,             // the hard stop in force, server-published if any
     stats: function () { return JSON.parse(JSON.stringify(stats)); },
-    /** Swap the capture source. For tests and headless harnesses; pass nothing to
-     *  restore the real microphone (and the per-target choice of encoder). */
+    // Swap the capture source (tests); nothing restores the real microphone.
     setCapture: function (fn) { capture = typeof fn === "function" ? fn : null; },
-    /** Float32 frames -> a 16 kHz 16-bit mono RIFF/WAVE file. Exposed so a test can parse
-     *  the result with the server's own RIFF walker. */
-    encodeWav: encodeWav,
+    encodeWav: encodeWav,                 // parsed by test_demo_ears with the server's RIFF walker
   };
 
   // wire the HUD button if present

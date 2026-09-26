@@ -103,16 +103,10 @@
       <span id="bubble-text"></span>
     </div>
 
-    <!-- presence badge: what the robot's own eyes have told the server.
-         Recorded state (window.moxieBridge.presenceStats()), not an animation. -->
-    <!-- `hidden` from the start: this reports what the ROBOT'S camera sees, and on the
-         hosted site there is no robot, so it would otherwise read "PRESENCE UNKNOWN"
-         forever in the corner of a phone screen. `bridge.js::presenceBadge` reveals it the
-         moment a real face event arrives. -->
-    <div id="presence-badge" data-presence="unknown" hidden
-         style="position:absolute;top:12px;right:14px;display:flex;gap:8px;align-items:center;
-                padding:5px 10px;border-radius:4px;background:rgba(10,10,15,.72);
-                border:1px solid rgba(18,181,176,.45);font-size:11px;letter-spacing:.08em">
+    <!-- presence badge: what the robot's own eyes have told the server (recorded state,
+         window.moxieBridge.presenceStats()). `hidden` until a face event arrives — on the
+         hosted site none ever does; bridge/presence.js::presenceBadge reveals it. -->
+    <div id="presence-badge" data-presence="unknown" hidden>
       <span class="callout-label">PRESENCE</span>
       <span id="presence-state">UNKNOWN</span>
     </div>
@@ -448,11 +442,20 @@
 <script src="./vendor/qrcode.js"></script>
 <script src="qr.js?v=cute7"></script>
 <script src="stub.js?v=cute7"></script>
-<script src="bridge.js?v=cute7"></script>
+<script src="bridge/core.js?v=cute7"></script>
+<script src="bridge/body.js?v=cute7"></script>
+<script src="bridge/actions.js?v=cute7"></script>
+<script src="bridge/presence.js?v=cute7"></script>
+<script src="bridge/activity.js?v=cute7"></script>
+<script src="bridge/alive.js?v=cute7"></script>
+<script src="bridge/index.js?v=cute7"></script>
 <script src="mode.js?v=cute7"></script>
 <script src="turnstile.js?v=cute7"></script>
 <script src="cloud-transport.js?v=cute7"></script>
-<script src="audio.js?v=cute7"></script>
+<script src="voice/core.js?v=cute7"></script>
+<script src="voice/local.js?v=cute7"></script>
+<script src="voice/cloud.js?v=cute7"></script>
+<script src="voice/index.js?v=cute7"></script>
 <script src="diagram.js?v=cute7"></script>
 <script src="ambient.js?v=cute7"></script>
 <script src="life.js?v=cute7"></script>

@@ -1,30 +1,17 @@
 """
 "Nothing is configured" has to be able to MEAN nothing.
 
-`mqtt/config.py` loads `mqtt/.env` with `os.environ.setdefault(...)` at import. That is
-right for an appliance — an explicit variable still wins — and wrong for a test suite:
-every test that simulates an unset variable does it by deleting the variable and
-reloading the module, at which point the loader **refilled it from the file**. So on any
-machine that has a real `mqtt/.env` those tests asserted whatever that developer happened
-to have configured.
+`mqtt/config.py` loads `mqtt/.env` with `setdefault` at import — right for an appliance,
+wrong for a test suite: a test that deletes a variable and reloads the module had it
+**refilled from the file**, so on any machine with a real `mqtt/.env` those tests asserted
+that developer's configuration. Invisible where the suite normally runs (the file is
+git-ignored: no CI runner or worktree has it). Playbook rule 20.
 
-It was invisible because `.env` is git-ignored: it exists in a main checkout and in no CI
-runner and no git worktree, which is exactly where the suite normally runs. Measured on
-2026-09-03 in the main checkout: **12 failures** across `test_assemble.py`,
-`test_stt_gateway.py` and `test_voice_settings.py` (`build_synthesizer` returning a
-`FallbackSynthesizer` where the test asserts `None`, the gateway ears selected where the
-test asserts local whisper, …). Move the file aside: **3975 passed**. Orchestration
-playbook rule 20.
-
-The fix is an explicit opt-out, `MOXIE_SKIP_DOTENV`, checked before the file is opened,
-plus `MOXIE_DOTENV` to point the loader at another file. Both are read from the
-ENVIRONMENT only — a file cannot carry the flag that decides whether it is read — and the
-second is what lets this file test the loader against a real dotenv **without going
-anywhere near a developer's own `mqtt/.env`**, which no test may read, write or move.
-
-Why an env flag rather than an injectable path alone: the tests reload the *module*, and
-module-level `_load_env()` takes no arguments, so a parameter is unreachable from
-`importlib.reload`. The flag is the only opt-out that reaches the import-time call.
+The opt-out, `MOXIE_SKIP_DOTENV`, is checked before the file is opened, and `MOXIE_DOTENV`
+points the loader at another file — which lets this file test the loader against a real
+dotenv without touching a developer's own. Both are read from the ENVIRONMENT only (a file
+cannot carry the flag that decides whether it is read), and an env flag is the only
+opt-out `importlib.reload` can reach: module-level `_load_env()` takes no arguments.
 """
 import importlib
 import os
@@ -57,13 +44,9 @@ def _fresh(monkeypatch, *, dotenv=None, skip=None):
 
 
 def test_a_dotenv_the_loader_can_see_is_still_suppressible(monkeypatch, tmp_path):
-    """Both halves in ONE test, on purpose.
-
-    Half two alone ("with the flag, the variable is unset") passes trivially against a
-    loader that never read the file — which is precisely the state a worktree is in, and
-    precisely why this defect survived. Half one is the control that makes half two mean
-    something, so they have to fail together or not at all.
-    """
+    """Both halves in ONE test: "with the flag, the variable is unset" alone passes
+    against a loader that never read the file (a worktree's state), so the control half
+    must fail with it or not at all."""
     f = tmp_path / "dotenv"
     f.write_text(f"# a comment, and a blank line follow\n\n{PROBE}={FROM_FILE}\n")
 
@@ -121,10 +104,8 @@ def test_a_missing_file_is_not_an_error(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------------
-# The acceptance test, as code. It is the ONLY thing here that touches the repo's own
-# `mqtt/.env`, it only asks whether the file exists, and it never opens it. In a
-# worktree or on CI there is nothing to check and it skips — which is the whole reason
-# this class of defect was invisible, so the skip is reported rather than silent.
+# The acceptance test. The ONLY thing here that touches the repo's own `mqtt/.env`: it
+# asks whether the file exists and never opens it; elsewhere it skips, visibly.
 # ---------------------------------------------------------------------------------
 
 def test_the_repos_own_dotenv_is_invisible_to_a_test_that_opts_out(monkeypatch):

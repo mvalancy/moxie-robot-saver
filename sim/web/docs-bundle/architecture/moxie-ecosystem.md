@@ -83,7 +83,7 @@ offline) and **LiteLLM**. HUD polish. Everything version-stamped, self-contained
   LiteLLM guides; polish; release tag.
 
 ## Immediate queue (Phase 1)
-- [x] **Piper audible on the web** — `sim/tts/server.py` (Piper, amy voice) + `sim/web/audio.js`
+- [x] **Piper audible on the web** — `sim/tts/server.py` (Piper, amy voice) + `sim/web/voice/`
   (speech + synthesized SFX + envelope-driven mouth sync). ⏳ bubble restyle folded into the layout pass.
 - [x] **STT in** — `sim/stt/server.py` (faster-whisper → real `DeepgramResponse` shape) + `sim/web/mic.js`
   (MediaRecorder → STT → publishes a child utterance on the bus). TTS→STT round-trip verified.

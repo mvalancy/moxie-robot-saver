@@ -10,7 +10,7 @@ class ScheduleMixin:
     def plan_schedule_for(self, device_id, *, now=None) -> tuple:
         """Plan this robot's day -> `(ContentSchedule, explanations, inputs)`.
 
-        The recommender (`moxie_sdk/schedule.py`) is pure; this gathers its live inputs:
+        The recommender (`moxie_sdk/schedule/`) is pure; this gathers its live inputs:
         the content module's `schedules[]`, stored mentor behaviors, the effective config
         (parent requests, bedtime) and buffered telemetry (context only, not a score).
         """

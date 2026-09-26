@@ -8,7 +8,8 @@ one [`harness.mjs`](harness.mjs) (stubbed gateway, `fresh()`, `call()`, the `ass
 - [`03_speech.mjs`](03_speech.mjs) — §10–11: `/api/speech`, the Tunnel/Access path, the closed envelope.
 - [`04_deploy_only.mjs`](04_deploy_only.mjs) — §12: deploy-only failures converted into local ones.
 - [`05_queue_and_keys.mjs`](05_queue_and_keys.mjs) — §13–14: the admission queue, the rate-limit key, redirects.
-- [`06_cache_tier.mjs`](06_cache_tier.mjs) — §15: the Cache API tier (shared windows and unit budget).
+- [`06_cache_tier.mjs`](06_cache_tier.mjs) — §15a–h: the Cache API tier's shared per-IP windows.
+- [`06b_unit_budget_tier.mjs`](06b_unit_budget_tier.mjs) — §15i: the unit budget's shared hour.
 - [`07_turn_features.mjs`](07_turn_features.mjs) — §15j–15n: expressive envelope, expired context, diagrams, doc lookup.
 - [`08_tts_cache.mjs`](08_tts_cache.mjs) — §16: the synthesised-audio cache.
 - [`09_reroll_shape.mjs`](09_reroll_shape.mjs) — §17–18: the re-roll and the per-turn shape cue.

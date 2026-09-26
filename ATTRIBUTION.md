@@ -69,7 +69,7 @@ robot-cloud layer builds on its groundwork:
   drawing 20 random samples and keeping the least-clumpy one; ours is a deterministic, explainable
   recommender over the same goal — parent requests, completion history, recency, bedtime and time of
   day, with a "why this activity today" line per entry —
-  [`mqtt/moxie_sdk/schedule.py`](mqtt/moxie_sdk/schedule.py)`::plan_inputs`/`plan_day`,
+  [`mqtt/moxie_sdk/schedule/`](mqtt/moxie_sdk/schedule/)`::plan_inputs`/`plan_day`,
 - the **response action-tag** convention — `<exit>` / `<sleep>` / `<launch:MOD:CID>` written inline by the
   model and lifted into real robot actions (`volley.py::ingest_action_tags`); our own implementation lives
   in [`mqtt/moxie_sdk/actions.py`](mqtt/moxie_sdk/actions.py),

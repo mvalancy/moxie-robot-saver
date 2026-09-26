@@ -1,37 +1,24 @@
-"""
-The child's voice, in a REAL browser — the half of PR #82 that assertions could not reach.
+"""The child's voice in a REAL browser — what the file-reading assertions cannot reach.
 
-`speakClipOnly` shipped with 770 hermetic assertions behind it (`test_fallback_coverage.mjs`:
-the clips exist, the manifest lists them, the session leaves each line room to finish). Every
-one of those reads a FILE. Not one of them ever loaded the page, and Web Audio is stubbed in
-the node tests, so the claim that actually matters — *the browser plays her* — had no evidence
-at all: a `decodeAudioData` that rejects, a source node wired to nothing, an autoplay-suspended
-context, or a manifest key that no longer matches the session string would each leave the demo
-exactly as silent as it was before #82 and pass all 770.
-
-So this file drives the shipped `/sim.html` in the same real Chromium the rest of `test_sil*`
-uses, replays the demo, and asserts what the audio graph DID:
+The node suites check the clips exist, the manifest lists them and the session leaves
+each line room to finish, but Web Audio is stubbed there. A `decodeAudioData` that
+rejects, a source wired to nothing, an autoplay-suspended context or a stale manifest key
+would each leave the demo silent and pass them all. So this drives the shipped `/sim.html`
+in real Chromium, replays the demo, and asserts what the audio graph DID:
 
   1. both child MP3s are fetched over real HTTP, 200, with their real byte counts;
-  2. each decodes to a real AudioBuffer — non-zero duration, and a peak/RMS well above
-     silence, so a clip that decoded to a valid-but-empty buffer still fails;
-  3. each is `start()`ed on a node whose connect-graph REACHES `ctx.destination` — the
-     difference between "played" and "played into a disconnected analyser";
-  4. neither is cut off: `ended` fires naturally, `stop()` is never called on it, and the
-     wall-clock it occupied covers its own duration. This is the truncation regression the
-     asymmetric ordering in `speakClipOnly` exists to prevent (`speak()` calls `stop()`,
-     so Moxie answering too early would silence the child mid-word);
-  5. Moxie's reply clip starts only after the child's has finished — the same rule seen
-     from the other side, and the one `sessions/demo.json`'s timing has to keep true.
+  2. each decodes to a real AudioBuffer — non-zero duration, peak/RMS above silence;
+  3. each is `start()`ed on a node whose connect-graph REACHES `ctx.destination`;
+  4. neither is cut off: `ended` fires naturally, `stop()` is never called on it, and its
+     wall-clock covers its duration (`speak()` calls `stop()`, so Moxie answering too
+     early would silence the child mid-word);
+  5. Moxie's reply clip starts only after the child's has finished.
 
-WHAT THIS DOES NOT PROVE. A headless browser has no speaker, so nothing here is "verified by
-ear". What it proves is that real PCM with real amplitude reached `AudioDestinationNode` and
-ran for its full length. Everything between that node and a human ear — the OS mixer, the
-volume, the hardware — is outside any automated test, and the honest word for the remaining
-gap is *unverified*, not *verified*.
+Not proven: anything past `AudioDestinationNode` (mixer, volume, speaker) — a headless
+browser has no ear, so that gap is *unverified*, not *verified*.
 
-RULE 11 (orchestration-plan.md): every assertion below reads a RECORD the page accumulated
-and the test waits for the replay to COMPLETE first. Nothing samples a live value in a window.
+Every assertion reads a RECORD the page accumulated, after the replay COMPLETES; nothing
+samples a live value in a window.
 """
 import json
 import os
@@ -55,33 +42,21 @@ CHILD_LINES = {
 #: "no audio", it is not a quality metric.
 PEAK_FLOOR, RMS_FLOOR = 0.05, 0.005
 
-#: How far short of its own duration a clip may fall and still count as FINISHED.
-#:
-#: There has to be one, and the reason is a clock mismatch rather than slack. The recorder
-#: timestamps `startedAt`/`stoppedAt` with `performance.now()`, while the audio itself runs
-#: on the AudioContext clock, and `startedAt` is taken just BEFORE `src.start(0)` — which
-#: begins at the next render quantum, not instantly. So a clip that played in full can
-#: still measure a few ms short against `startedAt + duration`.
-#:
-#: 120 ms is far inside one phoneme: a stop that late cannot take a word off the end. It is
-#: also two orders of magnitude away from either case this test has actually seen — the
-#: real cut it caught was 282 ms EARLY on a 2519 ms clip, and CI's benign stop landed 58 ms
-#: AFTER a 1207 ms clip had finished. Nothing here needs fine tuning, and widening it to
-#: make a red run go green would destroy the only thing the test is for.
+#: How far short of its own duration a clip may fall and still count as FINISHED. Needed
+#: for a clock mismatch, not slack: the recorder stamps with `performance.now()` just
+#: BEFORE `src.start(0)`, while audio runs on the AudioContext clock from the next render
+#: quantum. 120 ms is inside one phoneme and far from both real cases (a cut 282 ms early;
+#: a benign stop 58 ms late). Widening it to turn a red run green defeats the test.
 COMPLETION_TOLERANCE_MS = 120
 
 
 def truncated_by(play, tol_ms=COMPLETION_TOLERANCE_MS):
     """How many ms of `play` never reached the speakers — 0.0 when it finished.
 
-    The distinction the first version of this test got wrong: `stop()` HAPPENING is not
-    truncation. `speak()` calls `stop()` unconditionally, so Moxie answering even a
-    moment after the child's clip ends still records a stop against it. What matters is
-    WHEN it landed relative to the clip's own length — the quantity the failure message
-    was already printing while the assertion ignored it.
-
-    Both the stop and the natural end are measured, and the worse (earlier) one is
-    reported, so a clip is "finished" only if it was neither cut short nor ended early.
+    `stop()` HAPPENING is not truncation: `speak()` calls it unconditionally, so a reply
+    even a moment after the clip ends records a stop. What matters is WHEN it landed
+    relative to the clip's length. Both the stop and the natural end are measured and the
+    earlier one is reported.
     """
     natural_ms = play["duration"] * 1000.0
     lost = 0.0
@@ -100,12 +75,12 @@ RECORDER = r"""
   const R = { fetches: [], decodes: [], plays: [], edges: [], destIds: [], status: [] };
   window.__childVoice = R;
 
-  // `bridge.js::replay` says when it is DONE — `status("replay done (N events)")` into
+  // `bridge/replay` says when it is DONE — `status("replay done (N events)")` into
   // #bus-status, set as `replaying` flips back to false. That is a fact the page states
   // about itself, and it is what the fixture waits on: a tally of side effects cannot
   // tell "not finished yet" from "this will never happen", so a missing clip used to be
   // a 30 s hang instead of an assertion. Recorded as it changes rather than read at the
-  // end, because audio.js writes its own playback text into the SAME element and would
+  // end, because voice/ writes its own playback text into the SAME element and would
   // overwrite it (rule 11: assert the record, never a live sample).
   (function watchStatus() {
     const el = document.getElementById("bus-status");
@@ -226,13 +201,9 @@ def _reaches_destination(edges, dest_ids, node_id):
 
 
 def _wait(page, expr, what, *, arg=None, timeout=30000, required=True):
-    """`page.wait_for_function`, but a timeout DUMPS THE RECORD instead of saying nothing.
-
-    A bare `TimeoutError` out of a module-scoped fixture is the least useful failure this
-    suite can produce: it errors every test that uses it and tells whoever reads the CI
-    log nothing about which of several causes happened. The record separates them — a clip
-    that never fetched, one that fetched but never decoded, one that decoded but never
-    started, and one that merely arrived late all look different here.
+    """`page.wait_for_function`, but a timeout DUMPS THE RECORD instead of saying nothing —
+    a bare timeout from a module fixture errors every test and hides which cause
+    (never fetched / never decoded / never started / merely late) happened.
     """
     try:
         page.wait_for_function(expr, arg=arg, timeout=timeout)
@@ -279,12 +250,9 @@ def _why(replayed):
 def replayed(browser, server):
     """Load `/sim.html`, replay the shipped demo to completion, hand back the record.
 
-    MODULE-scoped, and that is a performance decision worth naming: the shipped session
-    now runs 14.6 s, so a per-test fixture would replay it six times and add ~90 s to the
-    SIL job — the slowest tier and the one the merge gate waits on (rule 16). One replay,
-    six assertions over the record it left behind, which is also exactly the shape rule 11
-    asks for. `page` is function-scoped, so this makes its own and records console errors
-    the same way `conftest.page` does.
+    MODULE-scoped: the session runs ~15 s, and replaying it per test would add ~90 s to the
+    slowest tier. `page` is function-scoped, so this makes its own and records console
+    errors the same way `conftest.page` does.
     """
     page = browser.new_page()
     # Console capture, wired exactly as `conftest.page` wires it — including the
@@ -308,29 +276,16 @@ def replayed(browser, server):
     # scripted turns. (It is also a user gesture, which the autoplay policy is happy with.)
     page.click("#alive-toggle")
     page.click("#rec-demo")
-    # WAIT FOR THE PAGE'S OWN COMPLETION SIGNAL, then assert the record (rule 11).
-    #
-    # The first version of this waited for `plays.length >= 4` — a tally of side effects,
-    # which cannot distinguish "not finished yet" from "this will never happen". Anything
-    # that stopped a fourth qualifying clip being recorded (a Moxie reply falling back to
-    # the browser voice, a failed .mp3, the duration filter excluding one) became a 30 s
-    # hang and six fixture ERRORS rather than one assertion that named the problem. So:
-    # wait on `replay done (N events)`, which `bridge.js::replay` states about itself when
-    # the session ends, and let the assertions below decide whether what was recorded is
-    # what we require.
+    # Wait for the page's own completion signal (`bridge/replay` reports `replay done
+    # (N events)`), then let the assertions judge the record. Waiting on a tally of side
+    # effects cannot tell "not finished yet" from "will never happen" and turns every
+    # missing clip into an anonymous timeout.
     _wait(page, """() => (window.__childVoice ? window.__childVoice.status : [])
                            .some((s) => /^replay done \\(\\d+ events\\)$/.test(s))""",
           "the demo replay to report itself done")
-    # Then the one thing this file actually requires, waited on SEPARATELY so its failure
-    # names itself: both child clips finished. They end well before the replay does, so on
-    # a healthy run this returns immediately; on CI it is the check that would report a
-    # child clip that never played, instead of a timeout with no subject.
-    # …then the one thing this file actually requires: both child clips finished. They end
-    # well before the replay does, so on a healthy run this returns instantly. It is
-    # `required=False` ON PURPOSE — if a clip is missing, the right output is the ordinary
-    # assertion that names it ("nothing ever asked for…", "decoded but was never
-    # start()ed"), not a fixture error that kills all eight tests and says only "timeout".
-    # The dump is carried along and appended to whichever assertion fails.
+    # …then both child clips finished (instant on a healthy run). `required=False` ON
+    # PURPOSE: a missing clip should fail the assertion that names it, not error every
+    # test with "timeout"; the dump is appended to whichever assertion fails.
     note = _wait(page, """(sizes) => {
              const r = window.__childVoice; if (!r) return false;
              return sizes.every((n) => r.plays.some(
@@ -432,13 +387,9 @@ def test_moxie_answers_only_after_the_child_has_finished(replayed):
     recorded `endedAt`: the `ended` event fires on a `stop()` too, so an `endedAt`
     comparison would report "Moxie waited politely" about a clip she had just cut off.
 
-    It checks the pairs the record HAS, and says how many. The fixture now stops at the
-    page's own `replay done`, and Moxie's final reply starts a beat after that — so this
-    normally sees one pair, not two. That is not a hole: for the pair it cannot see, the
-    truncation test above asks the identical question from the child's side (if Moxie had
-    started early, `speak()`'s `stop()` would have cut that clip), and it covers BOTH
-    children unconditionally. The `checked` count is asserted so this can never quietly
-    verify nothing, which is the failure mode a `continue` invites.
+    It checks the pairs the record HAS (normally one: Moxie's final reply starts after
+    `replay done`); the truncation test covers both children from the other side
+    unconditionally. `checked` is asserted so a `continue` can never verify nothing.
     """
     sizes = {os.path.getsize(os.path.join(WEB, "audio", rel))
              for rel in CHILD_LINES.values()}
@@ -470,12 +421,9 @@ def test_moxie_answers_only_after_the_child_has_finished(replayed):
 # --------------------------------------------------------------------------- #
 # 4b. The predicate itself, in both directions — no browser, no timing luck.
 #
-# `truncated_by` has to separate two things that look identical in the record: a stop that
-# CUT the clip and a stop that merely landed after it finished. Whether a given replay
-# produces the second one is up to how fast the machine is, so a browser test cannot be
-# relied on to exercise it — this is exactly how the first version of this file passed
-# locally and went red in CI. These cases are the record shapes themselves, with the
-# numbers CI and this box actually produced, so both directions are covered on every run.
+# `truncated_by` must separate a stop that CUT the clip from one that landed after it
+# finished. Which one a replay produces depends on machine speed, so these are the record
+# shapes themselves, with real observed numbers, covering both directions on every run.
 # --------------------------------------------------------------------------- #
 def _play(duration_ms, *, stopped_at=0.0, ended_at=None):
     """One `plays` record as the recorder writes it, started at t=1000."""
@@ -486,9 +434,8 @@ def _play(duration_ms, *, stopped_at=0.0, ended_at=None):
 
 
 def test_a_stop_after_the_clip_ended_is_not_a_truncation():
-    """CI's real numbers: stop() 1265 ms into a 1207 ms clip — 58 ms AFTER the audio
-    finished. The old assertion (`not p["stoppedAt"]`) called that a cut and failed the
-    build; nothing was lost, and the message it printed said so."""
+    """Real numbers: stop() 1265 ms into a 1207 ms clip, 58 ms AFTER the audio finished —
+    nothing was lost, so it is not a cut."""
     assert truncated_by(_play(1207, stopped_at=1265, ended_at=1265)) == 0.0
     # …and an ordinary uncut play, this box's own: no stop at all.
     assert truncated_by(_play(2519)) == 0.0

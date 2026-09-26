@@ -37,9 +37,9 @@ from moxie_sdk import performance as perf          # noqa: E402
 from moxie_sdk import vocab                        # noqa: E402
 from moxie_sdk.tts import strip_markup             # noqa: E402
 from moxie_sdk.filler import FILLERS               # noqa: E402
+from helpers_web import script_group               # noqa: E402
 
 GOLDENS = os.path.join(HERE, "goldens", "performance.json")
-BRIDGE_JS = os.path.join(REPO, "sim", "web", "bridge.js")
 
 
 @pytest.fixture(autouse=True)
@@ -64,17 +64,58 @@ def staged(text, **ctx):
     return perf.validate(perf.plan(text, ctx=ctx))
 
 
-# =====================================================================================
+_GESTURE = re.compile(r"\+eventName\+:\+(Gesture_\w+)\+")
+
+
+def arm_gestures(markup):
+    """Every arm gesture in rendered markup; `Gesture_None` is the rest pose, not one."""
+    return [g for g in _GESTURE.findall(markup) if g != "Gesture_None"]
+
+
+def says(**reply):
+    """A brain that answers every turn with one fixed `Reply(**reply)`."""
+    from moxie_sdk.types import Reply
+
+    class Fixed:
+        name = "fixed"
+
+        def respond(self, turn):
+            return Reply(**reply)
+    return Fixed()
+
+
+def streams(parts):
+    """A brain that only streams: `parts` as ReplyChunks, the last one final."""
+    from moxie_sdk.types import ReplyChunk
+
+    class Streamer:
+        name = "streamer"
+
+        def respond(self, turn):                     # pragma: no cover - not used
+            raise AssertionError("the streaming path should have answered")
+
+        def respond_stream(self, turn):
+            for i, text in enumerate(parts):
+                yield ReplyChunk(text=text, final=(i == len(parts) - 1))
+    return Streamer()
+
+
+class Never:
+    """A brain the test asserts is never asked (preview must not call one)."""
+    name = "never"
+
+    def respond(self, turn):                         # pragma: no cover
+        raise AssertionError("preview must never call a brain")
+
+
 # (a) The 22 dialog-act goldens — the acceptance criterion, as readable JSON
-# =====================================================================================
 def _goldens() -> dict:
     with open(GOLDENS) as fh:
         return json.load(fh)
 
 
 def test_goldens_cover_every_dialog_act():
-    """All 22 `RemoteDialog.DialogAct`s, exactly once each. A taxonomy with a hole in it
-    is a taxonomy whose gaps nobody notices until a line lands in one."""
+    """All 22 `RemoteDialog.DialogAct`s, exactly once each — a hole goes unnoticed otherwise."""
     acts = [c["act"] for c in _goldens()["cases"]]
     assert len(acts) == len(set(acts)) == 22, acts
     assert set(acts) == set(vocab.DIALOG_ACTS), \
@@ -83,10 +124,8 @@ def test_goldens_cover_every_dialog_act():
 
 @pytest.mark.parametrize("case", _goldens()["cases"], ids=lambda c: c["act"])
 def test_golden_performance_is_byte_exact(case):
-    """The staged `Performance` for one line per act, pinned as JSON.
-
-    JSON rather than markup on purpose: a diff in review shows that an apology stopped
-    being Sad, not that a 240-character mark grew a field."""
+    """The staged `Performance` per act, pinned as JSON so a diff reads as meaning
+    ("the apology stopped being Sad"), not as a 240-character mark growing a field."""
     p = staged(case["line"], **(case.get("ctx") or {}))
     assert p is not None, case["line"]
     assert perf.to_json(p) == case["performance"], (
@@ -102,17 +141,14 @@ def test_golden_markup_is_byte_exact(case):
 
 
 def test_goldens_round_trip_through_json():
-    """`from_json(to_json(p)) == p` — the goldens file is a faithful representation, not
-    a lossy rendering of one. A tool that edits a golden must get the same object back."""
+    """`from_json(to_json(p)) == p`: the goldens are lossless, so an edited golden round-trips."""
     for case in _goldens()["cases"]:
         p = staged(case["line"], **(case.get("ctx") or {}))
         assert perf.from_json(perf.to_json(p)) == p, case["act"]
 
 
 def test_acts_are_distinguishable_on_the_wire():
-    """22 acts that all perform identically would pass everything above and be worthless,
-    so require real spread: many moods, and visibly different question/apology/praise/
-    backchannel bodies."""
+    """22 acts performing identically would pass everything above, so require real spread."""
     by_act = {c["act"]: staged(c["line"], **(c.get("ctx") or {}))
               for c in _goldens()["cases"]}
     moods = {p.mood for p in by_act.values()}
@@ -129,9 +165,7 @@ def test_acts_are_distinguishable_on_the_wire():
     assert by_act["apology"].signal == "apology"
 
 
-# =====================================================================================
 # The corpus — every line this appliance can actually say
-# =====================================================================================
 def _content_lines():
     """Every spoken line in the shipped content modules."""
     lines = []
@@ -187,9 +221,7 @@ def test_the_corpus_is_actually_a_corpus():
     assert len(set(CORPUS)) >= 200, "the corpus is mostly duplicates"
 
 
-# =====================================================================================
 # (b) ZERO unknown ids over the corpus
-# =====================================================================================
 def test_no_unknown_id_anywhere_in_the_corpus():
     """Every id in every staged line (and its rendered markup) is in the frozen catalog,
     and `validate()` dropped nothing — a drop means vocabulary we cannot justify."""
@@ -236,9 +268,7 @@ def test_authored_markup_is_left_alone():
     assert _seam().make_markup(rendered) == rendered
 
 
-# =====================================================================================
 # (b, again) The validator — a brain may suggest, it may never authorize
-# =====================================================================================
 BAD_IDS = {
     "gesture": ["AUTO_GESTURE_ME", "Gesture_We", "Gesture_Small", "Gesture_Discard",
                 "gesture_self", "Gesture_Wave"],
@@ -262,9 +292,8 @@ def test_an_empty_slot_is_not_a_dropped_id():
 
 @pytest.mark.parametrize("slot,bad", [(s, b) for s, ids in BAD_IDS.items() for b in ids])
 def test_validate_drops_every_non_catalog_id(slot, bad):
-    """The positive list, one slot at a time. Several of these are OpenMoxie's own ids —
-    real, working ids in *their* engine, and not in our recovered catalog, which is
-    exactly the class of mistake this gate exists to catch."""
+    """The positive list, one slot at a time. Several are OpenMoxie ids that work in *their*
+    engine but are not in our recovered catalog — the mistake this gate exists to catch."""
     p = perf.Performance(beats=(perf.Beat(text="hello", **{slot: bad}),))
     out = perf.validate(p)
     assert getattr(out.beats[0], slot) is None, (slot, bad)
@@ -275,8 +304,7 @@ def test_validate_drops_every_non_catalog_id(slot, bad):
 
 @pytest.mark.parametrize("bad", [11, -1, 99, "happy", 1.5, True])
 def test_validate_drops_a_bad_beat_mood(bad):
-    """A beat's mood is an `ePlaybackMood` **int** 0-10 and nothing else — not a name, not
-    a float, and (because `bool` is an `int` in Python) not `True`."""
+    """A beat's mood is an `ePlaybackMood` int 0-10 — not a name, a float, or `True`."""
     perf.reset_dropped()
     out = perf.validate(perf.Performance(beats=(perf.Beat(text="hi", mood=bad),)))
     assert out.beats[0].mood is None, bad
@@ -285,8 +313,7 @@ def test_validate_drops_a_bad_beat_mood(bad):
 
 
 def test_the_drop_counter_actually_counts():
-    """The counter is an acceptance criterion ("0 unknown ids over the corpus"), so a
-    counter stuck at zero would make that criterion vacuous. Assert it moves."""
+    """"0 unknown ids over the corpus" is vacuous unless the counter can move."""
     perf.reset_dropped()
     assert perf.dropped_ids() == 0
     perf.validate(perf.Performance(beats=(perf.Beat(text="hi", gesture="Gesture_Nope",
@@ -330,8 +357,7 @@ def test_validate_clamps_out_of_range_intensity_and_break():
 
 
 def test_a_brain_may_suggest():
-    """The other direction — a suggestion that IS in the catalog is honored, or the gate
-    would be indistinguishable from ignoring the brain entirely."""
+    """A catalogued suggestion is honored, or the gate is just ignoring the brain."""
     p = staged("Tell me about your day.", gesture="celebrate", mood="surprised",
                dialog_act="appreciation")
     assert p.mood == vocab.MOODS["surprised"]
@@ -350,17 +376,14 @@ def test_a_brain_may_not_authorize():
 
 
 def test_a_model_chosen_id_takes_the_same_path_as_a_rule_chosen_one():
-    """The whole point of C6: there is ONE validator, and a hint does not get to skip it.
-    A `Beat` built by hand with a model's id is dropped exactly as a `ctx` hint is."""
+    """C6: ONE validator — a hand-built `Beat` and a `ctx` hint are dropped alike."""
     handmade = perf.Performance(beats=(perf.Beat(text="hi", gesture="AUTO_GESTURE_YOU"),))
     assert perf.validate(handmade).beats[0].gesture is None
     from_hint = staged("Hi.", gesture="AUTO_GESTURE_YOU")
     assert all(b.gesture != "AUTO_GESTURE_YOU" for b in from_hint.beats)
 
 
-# =====================================================================================
 # The rendered grammar and the anti-twitch limits
-# =====================================================================================
 _MARK_DATA = re.compile(r'<mark name="cmd:[a-z0-9-]+,data:(\{.*?\})"\s*/>', re.S)
 
 
@@ -376,9 +399,7 @@ def test_every_rendered_payload_is_json_and_the_document_is_well_formed():
 
 
 def test_rate_limits_hold_on_a_long_paragraph():
-    """Twitchiness is the failure mode a child notices, so the caps are asserted, not
-    assumed: at most two mood marks (one face plus one transition), one whole-body tree,
-    six arm gestures, and never a `<break>` after the final word."""
+    """Anti-twitch caps: ≤2 mood marks, ≤1 tree, ≤6 arm gestures, no final `<break>`."""
     line = ("I looked out of the window and the whole sky had gone orange, and the birds "
             "were flying in a long line over the roof of the school, and I wanted to tell "
             "you about it because it was the best thing I saw all week and I think you "
@@ -386,18 +407,15 @@ def test_rate_limits_hold_on_a_long_paragraph():
     out = perf.render(staged(line, turn_key="long"))
     assert out.count("cmd:playback-mood") <= perf.MAX_MOOD_MARKS
     assert len(re.findall(r"\+behaviour\+:\+Bht_", out)) <= 1
-    gestures = [g for g in re.findall(r"\+eventName\+:\+(Gesture_\w+)\+", out)
-                if g != "Gesture_None"]
+    gestures = arm_gestures(out)
     assert len(gestures) <= 6, gestures
     assert not out.rstrip().endswith("/>" + "</usel>")
     assert "<break" not in out.split(line.split()[-1])[-1]
 
 
 def test_the_face_changes_at_most_once_per_line():
-    """M18's line: several clauses that each score a DIFFERENT mood. Without the cap the
-    face would flip on every comma, which is the twitchiness a child notices — so at most
-    one transition survives, and the beats prove the cap acted rather than the line being
-    uniform by luck."""
+    """M18: clauses that each score a DIFFERENT mood still yield at most one transition,
+    and the scores prove the cap acted rather than the line being uniform by luck."""
     line = ("I am so sorry about that, but wow, that is amazing, and I am confused, "
             "and oops, I did it again.")
     p = staged(line, turn_key="moods")
@@ -410,22 +428,18 @@ def test_the_face_changes_at_most_once_per_line():
 
 
 def test_the_gesture_caps_hold_on_a_many_clause_line():
-    """M20's line: more carrying clauses than the caps allow. Six per line and three per
-    sentence are the numbers; a line that offers ten must still emit at most six."""
+    """M20: a line offering ten carrying clauses still emits at most six gestures."""
     line = ("I want you, and me, and what is up there, and everything down here, and my "
             "big world, and your little one, and who is high, and how is low.")
     out = perf.render(staged(line, turn_key="caps"))
-    gestures = [g for g in re.findall(r"\+eventName\+:\+(Gesture_\w+)\+", out)
-                if g != "Gesture_None"]
+    gestures = arm_gestures(out)
     assert len(gestures) <= 6, gestures
     assert len(gestures) >= 3, f"the caps were never exercised: {gestures}"
 
 
 def test_a_whole_body_tree_gets_no_arm_gesture_stacked_on_it():
-    """M22: a sentence already playing a `Bht_*` must not also throw an arm — two
-    animation systems fighting over the same limbs is the failure mode the SIM renders as
-    a twitch. Each line here is ONE sentence with a carrying word in it, so a regression
-    that dropped the rule would produce a visible extra gesture rather than nothing."""
+    """M22: a sentence playing a `Bht_*` throws no arm too (two systems fighting over the
+    limbs). Each line carries a gesture word, so dropping the rule shows as an extra arm."""
     # line -> the SAME words with the tree cue swapped out, which must still gesture.
     controls = {
         "Hello, I am so happy to see you.": "Well, I am so happy to see you.",
@@ -439,11 +453,9 @@ def test_a_whole_body_tree_gets_no_arm_gesture_stacked_on_it():
         assert len(tree_beats) == 1, line
         out = perf.render(p)
         assert len(re.findall(r"\+behaviour\+:\+Bht_", out)) == 1, line
-        arms = [g for g in re.findall(r"\+eventName\+:\+(Gesture_\w+)\+", out)
-                if g != "Gesture_None"]
+        arms = arm_gestures(out)
         assert arms == [], f"{line}: tree + {arms}"
-        # …and the near-identical line WITHOUT a tree cue DOES gesture, so the assertion
-        # above is about the rule and not about the words happening to be gesture-free.
+        # The twin WITHOUT a tree cue does gesture, so the rule — not the words — decided.
         twin = staged(control, turn_key="tree")
         assert all(b.tree is None for b in twin.beats), control
         assert any(b.gesture for b in twin.beats), control
@@ -453,10 +465,8 @@ def test_a_whole_body_tree_gets_no_arm_gesture_stacked_on_it():
                                       ("look", "left"), ("icon", "Party"),
                                       ("dialog_act", "smalltalk"), ("mood", "ecstatic")])
 def test_an_uncatalogued_hint_falls_through_to_the_rules(slot, bad):
-    """M9b: a suggestion nobody can honor must cost **nothing**. Leaving a bad value in
-    for `validate` to drop later would take the line's emotion (or gaze, or icon) away
-    entirely, which is a worse outcome than ignoring the hint — and it is not what the
-    mood and gesture hints do."""
+    """M9b: an unhonorable hint costs nothing — left for `validate` to drop, it would take
+    the line's emotion/gaze/icon away entirely instead of letting the rules answer."""
     good = staged("Tell me about your day.", turn_key="hint")
     hinted = staged("Tell me about your day.", turn_key="hint", **{slot: bad})
     assert hinted == good, f"a bad {slot} hint changed the performance"
@@ -464,8 +474,7 @@ def test_an_uncatalogued_hint_falls_through_to_the_rules(slot, bad):
 
 
 def test_the_line_always_comes_back_to_rest():
-    """Every rendered line ends with a `Gesture_None`: the robot may pause between spoken
-    segments, and a body frozen mid-gesture is what that looks like on hardware."""
+    """Every line ends on `Gesture_None`, or a pause between segments freezes mid-gesture."""
     for line in CORPUS[:80]:
         p = staged(line, turn_key="rest")
         if p is None:
@@ -481,9 +490,7 @@ def test_an_icon_is_always_cleared():
     assert out.index('+command+:0') < out.index('+command+:2')
 
 
-# =====================================================================================
 # (c) Scored output on 100 % of published turns — single AND streamed
-# =====================================================================================
 SCORED_KEYS = ("mood", "mood_intensity", "dialog_act", "emotion")
 
 
@@ -492,19 +499,10 @@ def _outputs(replies):
 
 
 def test_every_published_turn_carries_scored_output():
-    """The single path. Before this slice `Reply.mood`/`dialog_act` were plumbed end to
-    end and no app ever set them, so the wire fields specified by ai-seam.md §② were
-    always empty."""
+    """The single path: the ai-seam.md §② wire fields are filled even when no app sets them."""
     from helpers_runtime import drive_once
-    from moxie_sdk.types import Reply
-
-    class Echo:
-        name = "echo"
-
-        def respond(self, turn):
-            return Reply(text="That is a wonderful idea! What should we do first?")
-
-    out = drive_once(Echo(), "hi")["output"]
+    out = drive_once(says(text="That is a wonderful idea! What should we do first?"),
+                     "hi")["output"]
     for key in SCORED_KEYS:
         assert out.get(key) not in (None, ""), (key, out)
     assert out["mood"] in vocab.MOODS
@@ -514,25 +512,11 @@ def test_every_published_turn_carries_scored_output():
 
 
 def test_every_streamed_chunk_carries_scored_output():
-    """C2/C4 — the gap PR #17 opened. `ReplyChunk` had none of these fields, so a streamed
-    answer could not be scored even in principle; now every chunk is."""
+    """C2/C4 — every streamed chunk is scored, not only the single-reply path."""
     from helpers_runtime import make_runtime, drive_turn
-    from moxie_sdk.types import ReplyChunk
-
     parts = ["I am so happy you asked!", "Let me think about that.",
              "What would you like to try first?", "We can start whenever you want."]
-
-    class Streamer:
-        name = "streamer"
-
-        def respond(self, turn):                     # pragma: no cover - not used
-            raise AssertionError("the streaming path should have answered")
-
-        def respond_stream(self, turn):
-            for i, text in enumerate(parts):
-                yield ReplyChunk(text=text, final=(i == len(parts) - 1))
-
-    rt, device_id = make_runtime(Streamer())
+    rt, device_id = make_runtime(streams(parts))
     drive_turn(rt, device_id, "tell me something")
     replies = rt.client.chat_replies(device_id)
     assert len(replies) == len(parts), replies
@@ -546,22 +530,9 @@ def test_a_streamed_answer_holds_one_face():
     """§2.5: one mood transition at most across a streamed answer. A face that flips on
     every sentence is the thing the per-chunk rule exists to stop."""
     from helpers_runtime import make_runtime, drive_turn
-    from moxie_sdk.types import ReplyChunk
-
     parts = ["Oh no, I am so sorry.", "That sounds really hard.",
              "Do you want to tell me what happened?", "I am listening."]
-
-    class Streamer:
-        name = "streamer"
-
-        def respond(self, turn):                     # pragma: no cover
-            raise AssertionError
-
-        def respond_stream(self, turn):
-            for i, text in enumerate(parts):
-                yield ReplyChunk(text=text, final=(i == len(parts) - 1))
-
-    rt, device_id = make_runtime(Streamer())
+    rt, device_id = make_runtime(streams(parts))
     drive_turn(rt, device_id, "hi")
     joined = "".join(r["output"]["markup"] for r in rt.client.chat_replies(device_id))
     assert joined.count("cmd:playback-mood") <= perf.MAX_MOOD_MARKS
@@ -569,8 +540,7 @@ def test_a_streamed_answer_holds_one_face():
 
 
 def test_no_publish_path_can_forget_to_score(monkeypatch):
-    """Coverage, read over the source: every `_publish_chat` call that carries words must
-    pass `scored=`, so a new publish path cannot ship unscored turns."""
+    """Every `_publish_chat` carrying words passes `scored=`: no new path ships unscored."""
     from helpers_runtime import runtime_source
     src = runtime_source()
     unscored, seen = [], 0
@@ -583,8 +553,7 @@ def test_no_publish_path_can_forget_to_score(monkeypatch):
             i += 1
         call, line = src[m.start():i], src[:m.start()].count("\n") + 1
         seen += 1
-        # A call with a literal empty `text` is an ACK / a modules answer: no words were
-        # spoken, so there is nothing to score and nothing to assert.
+        # A literal empty `text` is an ACK / modules answer: no words, nothing to score.
         if '"router", ""' in call or 'backend, ""' in call:
             continue
         if "scored=" not in call:
@@ -596,41 +565,23 @@ def test_no_publish_path_can_forget_to_score(monkeypatch):
 
 
 def test_an_apps_own_scoring_wins_over_the_seams():
-    """The precedence rule: a brain that knows its line is an apology is not overruled by
-    a rule engine — but a brain that says nothing still ships a scored turn."""
+    """An app's own (catalogued) scoring is not overruled by the rule engine."""
     from helpers_runtime import drive_once
-    from moxie_sdk.types import Reply
-
-    class Opinionated:
-        name = "opinionated"
-
-        def respond(self, turn):
-            return Reply(text="The sky is blue today.", mood="surprised",
-                         dialog_act="opinion", mood_intensity=2)
-
-    out = drive_once(Opinionated(), "hi")["output"]
+    out = drive_once(says(text="The sky is blue today.", mood="surprised",
+                          dialog_act="opinion", mood_intensity=2), "hi")["output"]
     assert out["mood"] == "surprised"
     assert out["dialog_act"] == "opinion"
     assert out["mood_intensity"] == 2
 
 
 def test_a_declined_plan_does_not_cost_the_app_its_own_scoring(monkeypatch):
-    """M28b: when the planner declines (or fails), the seam has nothing to score with —
-    and the app's own `Reply.mood`/`dialog_act` are then the ONLY scored output there is.
-    Degrading to the floor must not also degrade the wire."""
+    """M28b: with the planner declined, the app's own scoring is all there is — degrading
+    to the floor must not also degrade the wire."""
     from helpers_runtime import drive_once
-    from moxie_sdk.types import Reply
     monkeypatch.setattr(perf, "plan", lambda *a, **kw: None)
-
-    class Opinionated:
-        name = "opinionated"
-
-        def respond(self, turn):
-            return Reply(text="The sky is blue today.", mood="surprised",
-                         dialog_act="opinion", emotion="surprise", signal="interest",
-                         mood_intensity=2)
-
-    out = drive_once(Opinionated(), "hi")["output"]
+    out = drive_once(says(text="The sky is blue today.", mood="surprised",
+                          dialog_act="opinion", emotion="surprise", signal="interest",
+                          mood_intensity=2), "hi")["output"]
     assert out["mood"] == "surprised"
     assert out["dialog_act"] == "opinion"
     assert out["emotion"] == "surprise"
@@ -639,22 +590,12 @@ def test_a_declined_plan_does_not_cost_the_app_its_own_scoring(monkeypatch):
 
 
 def test_an_apps_invented_scoring_never_reaches_the_wire():
-    """M28's line, and a real hole this check found: an app's own scored fields used to be
-    overlaid onto `RemoteChatOutput` *without* passing the catalog, so a brain could have
-    authorized `dialog_act: "smalltalk"` simply by setting the field. An app is a brain by
-    another name and takes the same positive list."""
+    """M28: an app's own scored fields pass the same catalog as a brain's hints — else an
+    app could authorize `dialog_act: "smalltalk"` just by setting the field."""
     from helpers_runtime import drive_once
-    from moxie_sdk.types import Reply
-
-    class Inventive:
-        name = "inventive"
-
-        def respond(self, turn):
-            return Reply(text="The sky is blue today.", mood="ecstatic",
-                         dialog_act="smalltalk", emotion="curious",
-                         signal="agreement", mood_intensity=9)
-
-    out = drive_once(Inventive(), "hi")["output"]
+    out = drive_once(says(text="The sky is blue today.", mood="ecstatic",
+                          dialog_act="smalltalk", emotion="curious",
+                          signal="agreement", mood_intensity=9), "hi")["output"]
     assert out.get("dialog_act") in vocab.DIALOG_ACTS
     assert out["dialog_act"] != "smalltalk"
     assert out.get("mood") in vocab.MOODS
@@ -666,32 +607,19 @@ def test_an_apps_invented_scoring_never_reaches_the_wire():
 def test_an_apps_authored_markup_is_still_spoken_verbatim():
     """Scoring a line must not rewrite one that came with its own markup."""
     from helpers_runtime import drive_once
-    from moxie_sdk.types import Reply
-
     authored = vocab.mood_mark(3, 2) + "I made this myself."
-
-    class Author:
-        name = "author"
-
-        def respond(self, turn):
-            return Reply(text="I made this myself.", markup=authored)
-
-    out = drive_once(Author(), "hi")["output"]
+    out = drive_once(says(text="I made this myself.", markup=authored), "hi")["output"]
     assert out["markup"] == authored
     assert out.get("dialog_act")                    # …and it is scored anyway
 
 
-# =====================================================================================
 # (e) Fault injection — every failure lands on the floor
-# =====================================================================================
 BOOM_POINTS = ["plan", "validate", "render"]
 
 
 @pytest.mark.parametrize("where", BOOM_POINTS)
 def test_a_planner_failure_falls_back_to_the_floor(monkeypatch, where):
-    """§2.6: `plan()` returns a Performance, returns None, or blows up — and in every case
-    but the first the seam calls `annotate()` and the wire shape is identical. The child
-    never notices which one answered."""
+    """§2.6: whichever stage blows up, the seam answers with `annotate()`'s floor markup."""
     seam = _seam()
     from moxie_sdk.automarkup import annotate
 
@@ -707,8 +635,7 @@ def test_a_planner_failure_falls_back_to_the_floor(monkeypatch, where):
 
 
 def test_a_planner_that_declines_falls_back_to_the_floor(monkeypatch):
-    """The quiet failure — `plan()` returning None — is the common one (a line already
-    carrying markup, or one past the budget guard), and it must be indistinguishable."""
+    """The common, quiet failure — `plan()` returning None — is indistinguishable too."""
     seam = _seam()
     from moxie_sdk.automarkup import annotate
     monkeypatch.setattr(perf, "plan", lambda *a, **kw: None)
@@ -718,28 +645,19 @@ def test_a_planner_that_declines_falls_back_to_the_floor(monkeypatch):
 def test_a_failing_planner_still_publishes_a_turn(monkeypatch):
     """The end-to-end version: a broken planner must not cost a child their answer."""
     from helpers_runtime import drive_once
-    from moxie_sdk.types import Reply
 
     def boom(*a, **kw):
         raise RuntimeError("injected planner fault")
 
     monkeypatch.setattr(perf, "plan", boom)
-
-    class Echo:
-        name = "echo"
-
-        def respond(self, turn):
-            return Reply(text="I am still here and I can still talk.")
-
-    out = drive_once(Echo(), "hi")["output"]
+    out = drive_once(says(text="I am still here and I can still talk."), "hi")["output"]
     assert out["text"] == "I am still here and I can still talk."
     assert "cmd:playback-mood" in out["markup"]      # the floor answered
     assert not vocab.validate_markup(out["markup"])
 
 
 def test_an_over_budget_planner_latches_to_the_floor(monkeypatch):
-    """A planner that is slow once is noise; one that is slow every line must stop taxing
-    the hot path. The breaker is what turns "should never happen" into "cannot persist"."""
+    """A planner slow on every line trips the breaker and stops taxing the hot path."""
     seam = _seam()
     from moxie_sdk.automarkup import annotate
     real_plan = perf.plan
@@ -761,25 +679,20 @@ def test_an_over_budget_planner_latches_to_the_floor(monkeypatch):
 @pytest.mark.parametrize("hostile", ["", "   ", "\n", "<mark/>", "a>b",
                                     "a" * (perf.MAX_PLAN_CHARS + 1)])
 def test_plan_declines_rather_than_raising(hostile):
-    """`plan` is total: it answers **None** for anything it will not stage, so the seam's
-    fallback is reached by a return value and not only by an exception handler. The
-    length guard is the one that matters on the hot path — an unbounded line is unbounded
-    work between the first token and the first audio."""
+    """`plan` is total: None (not an exception) for what it will not stage. The length
+    guard bounds hot-path work between the first token and the first audio."""
     assert perf.plan(hostile) is None
 
 
 @pytest.mark.parametrize("odd", ["...", "!!!", "?", "—", "3.14", "ok"])
 def test_plan_still_stages_a_short_or_odd_line(odd):
-    """…and the other direction: `plan` must not decline everything unusual, or the
-    fallback test above would pass on a planner that never plans at all."""
+    """…and it does not decline everything odd, or the test above passes on a no-op planner."""
     p = perf.validate(perf.plan(odd))
     assert p is not None and p.beats
     assert strip_markup(perf.render(p)) == strip_markup(odd)
 
 
-# =====================================================================================
 # MOXIE_EXPRESSIVE — the one-variable rollback, in all three positions
-# =====================================================================================
 def test_expressive_off_is_the_v1_passthrough(monkeypatch):
     monkeypatch.setenv("MOXIE_EXPRESSIVE", "off")
     seam = _seam()
@@ -788,9 +701,7 @@ def test_expressive_off_is_the_v1_passthrough(monkeypatch):
 
 
 def test_expressive_floor_renders_with_the_floor_but_still_scores(monkeypatch):
-    """`floor` is a *rendering* rollback: the markup goes back to the word-level
-    generator, and the wire keeps its scored fields, because scoring and rendering are
-    different jobs and only one of them was ever in doubt."""
+    """`floor` rolls back rendering only; the wire keeps its scored fields."""
     monkeypatch.setenv("MOXIE_EXPRESSIVE", "floor")
     seam = _seam()
     from moxie_sdk.automarkup import annotate
@@ -815,34 +726,30 @@ def test_an_unknown_mode_falls_back_to_the_default(monkeypatch):
     assert _seam().expressive_mode() == "planner"
 
 
-# =====================================================================================
 # (d)'s prerequisite — every id we emit is one the SIM can actually render
-# =====================================================================================
 def test_every_emitted_id_is_rendered_by_the_browser_sim():
     """The SIM is the only renderer we can assert against (no hardware has ever played
     our markup), so an id it silently ignores is an id that does nothing anywhere we can
     see. Comment lines are ignored: citing an id in a comment is not rendering it."""
-    with open(BRIDGE_JS) as fh:
-        src = "\n".join(ln for ln in fh if not ln.strip().startswith("//"))
+    src = "\n".join(ln for ln in script_group("bridge").splitlines()
+                    if not ln.strip().startswith("//"))
     emitted_g, emitted_b = set(), set()
     for line in CORPUS:
         p = staged(line, turn_key="sim", icons=True, sfx=True)
         if p is None:
             continue
         out = perf.render(p)
-        emitted_g |= set(re.findall(r"\+eventName\+:\+(Gesture_\w+)\+", out))
+        emitted_g |= set(_GESTURE.findall(out))
         emitted_b |= set(re.findall(r"\+behaviour\+:\+(Bht_\w+)\+", out))
     missing = [i for i in sorted(emitted_g | emitted_b) if f'"{i}"' not in src]
     assert not missing, f"the SIM does not animate: {missing}"
     assert len(emitted_g | emitted_b) >= 8, sorted(emitted_g | emitted_b)
 
 
-# =====================================================================================
 # (f) Budget — measured against the floor, not against a round number
-# =====================================================================================
 def _interleaved_medians(a, b, n=400):
-    """Median cost (ms) of `a` and `b`, sampled ALTERNATELY in one loop so both absorb the
-    same scheduler noise (separate loops drift up to ~38% apart on a loaded box)."""
+    """Median cost (ms) of `a` and `b`, sampled ALTERNATELY so both absorb the same
+    scheduler noise (separate loops drift up to ~38% apart on a loaded box)."""
     xs, ys = [], []
     for i in range(n):
         t0 = time.perf_counter()
@@ -858,17 +765,10 @@ def _interleaved_medians(a, b, n=400):
 
 
 def test_the_planner_costs_about_what_the_floor_costs():
-    """(f) no first-audio latency regression: the seam runs per spoken chunk, so the planner
-    may cost at most 4x the floor generator it replaces, compared at the MEDIAN.
-
-    p95 under load measures the scheduler (one loaded run read 45x at p95 vs ~2x median),
-    and an absolute ms budget measures the machine, so neither is used.
-
-    Catches: a model call, socket, lock or algorithmic regression in the planner. Not
-    caught here: both halves regressing together
-    (`test_automarkup.py::test_the_floor_costs_about_what_one_pass_over_the_line_costs`) or
-    tiny I/O (`test_the_planner_makes_no_model_call_and_touches_no_io`).
-    """
+    """(f) The planner costs ≤4x the floor it replaces, at the MEDIAN (p95 measures the
+    scheduler; an absolute ms budget measures the machine). Catches a model call, socket,
+    lock or algorithmic regression; both halves regressing together is
+    `test_automarkup.py::test_the_floor_costs_about_what_one_pass_over_the_line_costs`."""
     from moxie_sdk.automarkup import annotate
     line = ("I looked out of the window and the sky had gone completely orange, and I "
             "wanted to tell you about it right away because it was so beautiful!")
@@ -887,10 +787,8 @@ def test_the_planner_costs_about_what_the_floor_costs():
 
 
 def test_the_planner_makes_no_model_call_and_touches_no_io(monkeypatch):
-    """Deterministic: no clock, `random`, socket or file — on both `perf.render` and
-    `markup.make_markup`, the seam the robot calls. A stray `open()` there is a ~10% blip
-    no timing budget resolves, so it is trapped directly here.
-    """
+    """No `random`, socket or file on `perf.render` or `markup.make_markup` — tiny I/O no
+    timing budget resolves, so it is trapped directly."""
     import builtins
     import random
     import socket
@@ -923,8 +821,7 @@ def test_the_planner_imports_only_the_stdlib_and_the_sdk():
 
 
 def test_the_same_line_renders_identically_under_different_hash_seeds(tmp_path):
-    """Never `hash()`: it is salted per process, so a salted planner would answer one way
-    on one worker and another way on the next. Three subprocesses, three seeds."""
+    """Never `hash()` (salted per process): three subprocesses, three seeds, one answer."""
     script = tmp_path / "render_once.py"
     script.write_text(
         "import sys\n"
@@ -941,25 +838,14 @@ def test_the_same_line_renders_identically_under_different_hash_seeds(tmp_path):
     assert len(outs) == 1, "the planner is not reproducible across hash seeds"
 
 
-# =====================================================================================
 # (d) The preview hook — rehearsal, through the ordinary contract
-# =====================================================================================
 def _preview_runtime():
     from helpers_runtime import make_runtime
-
-    class Never:
-        name = "never"
-
-        def respond(self, turn):                     # pragma: no cover
-            raise AssertionError("preview must never call a brain")
-
     return make_runtime(Never())
 
 
 def test_preview_publishes_an_ordinary_remote_chat():
-    """`sim-as-a-client.md`'s guarantee: there is no SIM-specific API and no
-    SIM-specific message. A preview is byte-shaped like a real turn, so whatever is
-    subscribed as that device performs it."""
+    """sim-as-a-client.md: no SIM-specific message — a preview is shaped like a real turn."""
     from helpers_runtime import assert_spec_response
     rt, device_id = _preview_runtime()
     out = rt.preview(device_id, "That is amazing! You did it!")
@@ -980,8 +866,8 @@ def test_preview_records_nothing():
 
 
 def test_preview_returns_the_staged_performance():
-    """The console shows the structure beside the SIM canvas, with any dropped id flagged
-    — otherwise an author is left guessing why a gesture never played."""
+    """The console shows the structure and any dropped id, so an author sees why a gesture
+    never played."""
     rt, device_id = _preview_runtime()
     out = rt.preview(device_id, "What do you want to play today?")
     p = out["performance"]
@@ -999,32 +885,22 @@ def test_preview_refuses_an_unknown_device_and_an_empty_line():
 
 
 def test_preview_refuses_a_robot_that_is_still_pending(tmp_path):
-    """A rehearsal is still speech reaching a robot, so it takes the device allowlist like
-    every other cloud→robot command. A pending robot is one nobody has let in yet."""
+    """A rehearsal is speech reaching a robot, so it takes the device allowlist."""
     from helpers_runtime import make_runtime
     from moxie_sdk.store import JsonStore
-
-    class Never:
-        name = "never"
-
-        def respond(self, turn):                     # pragma: no cover
-            raise AssertionError
-
     rt, device_id = make_runtime(Never(), allow_unverified_bots=False,
                                  store=JsonStore(str(tmp_path)))
     out = rt.preview(device_id, "Hello there!")
     assert out["ok"] is False and out["error"] == "robot is pending"
     assert not rt.client.published
-    # …and once it is permitted, the same call goes through — or the refusal above would
-    # be indistinguishable from a preview that never works.
+    # Once permitted it goes through, or the refusal is indistinguishable from "broken".
     rt.set_permit(device_id, permitted=True)
     assert rt.preview(device_id, "Hello there!")["ok"] is True
 
 
 def test_preview_is_gated_by_the_same_safety_classifier():
-    """A rehearsal line is still a line a child could hear. Like telehealth, a BLOCK comes
-    back to the author with its reason rather than being replaced by a redirect: there is
-    a human at the keyboard, and substituting for them helps nobody."""
+    """A rehearsal line is one a child could hear; a BLOCK returns to the author with its
+    reason (a human is at the keyboard) rather than being swapped for a redirect."""
     rt, device_id = _preview_runtime()
     if rt.safety is None:
         pytest.skip("safety classifier disabled in this environment")
@@ -1048,7 +924,7 @@ def test_preview_renders_at_least_ten_lines_on_the_sim_contract():
     """(d)'s Python half: the ten rehearsal lines the SIM harness plays all publish a
     valid, distinguishable performance. The browser half is
     `sim/test_performance_render.mjs`, which drives the same lines through the real
-    `bridge.js` and writes the contact sheet."""
+    `bridge/` and writes the contact sheet."""
     rt, device_id = _preview_runtime()
     lines = [c["line"] for c in _goldens()["cases"]][:12]
     faces = set()

@@ -97,7 +97,7 @@ def speech(tone) -> bytes:
 # --------------------------------------------------------------------------- #
 def test_the_placeholder_tone_fails_the_stdlib_speech_guard(tone):
     """The direction that matters: if the tone could pass, every live speech assertion in
-    the repo would be vacuous. Measured 2026-09-05: 8.968e-10 against a 1e-6 floor."""
+    the repo would be vacuous (measured ~9e-10 against a 1e-6 floor)."""
     flat = A.spectral_flatness_stdlib(tone)
     assert not A.is_real_speech_stdlib(tone), (
         f"ToneSynthesizer output scored {flat:.3e}, above the {A.SPEECH_FLATNESS_FLOOR:.0e} "
@@ -109,7 +109,7 @@ def test_the_placeholder_tone_fails_the_stdlib_speech_guard(tone):
 
 def test_speech_shaped_audio_passes_the_stdlib_speech_guard(speech):
     """The other direction, which a guard that simply returned False would also need to
-    fail. Measured 2026-09-05: 1.177e-01."""
+    fail (measured ~1.2e-01)."""
     flat = A.spectral_flatness_stdlib(speech)
     assert A.is_real_speech_stdlib(speech), (
         f"broadband voiced audio scored {flat:.3e}, below the floor — the guard would "
@@ -256,8 +256,8 @@ def test_a_real_recorded_voice_clears_the_floor_on_both_implementations():
 def test_the_recorded_fixture_clears_the_floor_by_orders_of_magnitude():
     """The anti-vacuity half, and the guard against a future trim. A shorter or quieter clip
     would still PASS the test above while creeping toward the floor, at which point "a real
-    voice is recognised as speech" stops being a measurement. Measured 2026-09-05: 30 727x
-    (stdlib) and 3 200x (numpy)."""
+    voice is recognised as speech" stops being a measurement (measured ~30 000x stdlib,
+    ~3 000x numpy)."""
     pcm = _recorded_voice()
     margins = [A.spectral_flatness_stdlib(pcm) / A.SPEECH_FLATNESS_FLOOR]
     try:
@@ -342,10 +342,8 @@ def test_a_numpy_free_suite_declares_itself_so(suite):
 
 @pytest.mark.parametrize("suite", NUMPY_FREE_SUITES)
 def test_a_numpy_free_suite_calls_no_numpy_only_helper(suite):
-    """Half two, and the assertion that fails on the pre-fix tree: on 2026-09-05
-    `test_live_gateway_stt.py`'s last line was `assert A.is_real_speech(...)` — a numpy-only
-    predicate in a suite that requires no numpy — and it cost a full live turn (four gateway
-    calls) to find out, every time."""
+    """Half two: a numpy-only predicate in a suite that requires no numpy fails only at
+    the END of a live turn (after the gateway calls are spent), so catch it statically."""
     numpy_only = _numpy_only_helpers()
     src = open(os.path.join(HERE, suite)).read()
     tree = ast.parse(src)

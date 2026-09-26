@@ -3,6 +3,7 @@
  *
  * Run: node sim/test_voice.mjs   [TTS_BASE=http://127.0.0.1:8081] [STT_BASE=...]
  */
+import { BRIDGE_SRC, VOICE_SRC } from "./bridge_harness.mjs";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -77,20 +78,20 @@ if (!sttHealth) {
   ok(hits >= 4, `TTS→STT round-trip lost too much: heard "${alt.transcript}"`);
 }
 
-// ---- 3. audio.js / mic.js public surface (static, no browser) ---------------
+// ---- 3. voice/ / mic.js public surface (static, no browser) ---------------
 const here = dirname(fileURLToPath(import.meta.url));
-const audioSrc = readFileSync(join(here, "web", "audio.js"), "utf8");
+const audioSrc = VOICE_SRC;
 const micSrc = readFileSync(join(here, "web", "mic.js"), "utf8");
-const bridgeSrc = readFileSync(join(here, "web", "bridge.js"), "utf8");
+const bridgeSrc = BRIDGE_SRC;
 for (const m of ["speak", "sfx", "setEnabled", "setTtsBase"])
-  ok(audioSrc.includes(m + ":") || audioSrc.includes(m + " ="), `audio.js missing ${m}`);
+  ok(audioSrc.includes(m + ":") || audioSrc.includes(m + " ="), `voice/ missing ${m}`);
 for (const m of ["start", "stop", "toggle", "setSttBase"])
   ok(micSrc.includes(m + ":") || micSrc.includes("function " + m), `mic.js missing ${m}`);
 ok(micSrc.includes("events/remote-chat"),
    "mic.js must publish the transcript as a child utterance on events/remote-chat");
-ok(bridgeSrc.includes("window.moxieBridge"), "bridge.js must expose window.moxieBridge");
-ok(bridgeSrc.includes("sendUserTurn"), "bridge.js must expose sendUserTurn");
-ok(audioSrc.includes("setMouthOpen"), "audio.js should drive lip-sync via setMouthOpen");
+ok(bridgeSrc.includes("window.moxieBridge"), "bridge/ must expose window.moxieBridge");
+ok(bridgeSrc.includes("sendUserTurn"), "bridge/ must expose sendUserTurn");
+ok(audioSrc.includes("setMouthOpen"), "voice/ should drive lip-sync via setMouthOpen");
 
 // ---- report -----------------------------------------------------------------
 for (const n of notes) console.log("ℹ️ ", n);

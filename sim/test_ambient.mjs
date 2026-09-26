@@ -6,6 +6,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { BRIDGE_SRC } from "./bridge_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const web = join(here, "web");
@@ -35,7 +36,7 @@ for (const ln of amb.lines || []) {
   if (rel) ok(existsSync(join(web, "audio", rel)), `ambient clip file missing: ${rel}`);
 }
 
-/* THE THINKING FILLERS — filler.py (source), bridge.js (speaks them) and audio/index.json
+/* THE THINKING FILLERS — filler.py (source), bridge/alive.js (speaks them) and audio/index.json
  * (clips keyed BY EXACT TEXT) must agree character for character, or she is silently mute
  * when she should fill. */
 {
@@ -43,18 +44,18 @@ for (const ln of amb.lines || []) {
   const pyLines = [...py.matchAll(/\("([^"]+)",\s*\n?\s*MOOD/g)].map((m) => m[1]);
   ok(pyLines.length === 8, `filler.py still defines 8 lines (got ${pyLines.length})`);
 
-  const bridge = readFileSync(join(web, "bridge.js"), "utf8");
+  const bridge = BRIDGE_SRC;
   const block = /var FILLERS = \[([\s\S]*?)\];/.exec(bridge);
-  ok(!!block, "bridge.js carries a FILLERS list");
+  ok(!!block, "bridge/ carries a FILLERS list");
   const jsLines = block ? [...block[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)]
     .map((m) => m[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")) : [];
 
   for (const t of pyLines) {
-    ok(jsLines.includes(t), `bridge.js speaks filler.py's line: ${JSON.stringify(t)}`);
+    ok(jsLines.includes(t), `bridge/ speaks filler.py's line: ${JSON.stringify(t)}`);
     ok(!!clips[t], `…and a clip is pre-rendered for it (run prerender_audio.py --ambient)`);
   }
   ok(jsLines.length === pyLines.length,
-     `bridge.js has no EXTRA fillers without clips (${jsLines.length} vs ${pyLines.length})`);
+     `bridge/ has no EXTRA fillers without clips (${jsLines.length} vs ${pyLines.length})`);
 }
 
 // wiring: sim.html loads ambient.js

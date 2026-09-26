@@ -20,9 +20,12 @@ browser at all and carry the hermetic suite CI actually runs.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -q -r sim/tests/requirements.txt
-.venv/bin/python -m pytest sim/tests -q -k "not test_sil and not test_docs" \
+.venv/bin/python -m pytest sim/tests -q -k "not test_sil and not test_docs and not test_live" \
   --ignore=sim/tests/test_live_gateway.py      # the hermetic suite
 ```
+
+`not test_live` matters locally: the `test_live_*` suites skip without a key, but a key in
+`mqtt/.env` (or the environment) makes them spend real gateway money.
 
 ## The two requirements files — and why there are exactly two
 
@@ -42,12 +45,20 @@ agent brief again; four separate defects came out of doing that, all in the same
 (a missing package makes the tests that need it `importorskip` themselves away, which is a
 skip that reads as a pass). Read either file's header for the whole post-mortem.
 
+- **`helpers_web.py`** — `script_group("bridge"|"voice")`: the SIM's split classic-script
+  groups as the page runs them (sim.html's parts, in order, concatenated) — the pytest twin
+  of `sim/bridge_harness.mjs::scriptGroup`, used by every guard that reads the bridge source.
 - **`helpers_runtime.py`** — the shared harness for anything that drives a turn
   through the real `MoxieRuntime`: a `FakeClient` that records publishes,
   `make_runtime` / `drive_turn` / `drive_once`, and `assert_spec_response` (the
   RemoteChatResponse conformance check). Import this rather than growing a fifth
   private copy of it. It also owns `LatchClient` (a fake transport a test can *wait on*
   instead of sleeping) and `CountingSynth`.
+- **`helpers_ext.py`** — `robot`, `app_with` and `CHAT_MODULE` for the `test_ext*.py`
+  sandboxed-extension suites (a ContentApp with memory and safety off, so only the
+  extension path is under test).
+- **`helpers_content.py`** — `boot_runtime`, `free_chat_pack`, `post_status` and
+  `recording_brain` for the `test_content*.py` pack/authoring suites.
 
   Four more pieces landed with the v0.7.0 integration pass, each replacing a hand-rolled
   copy: **`free_port()`** (bind `:0` — never a hard-coded 8930/1883, which a lab machine
@@ -80,8 +91,11 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   with it), and the runtime seam — one fleet edit re-pushes **every** connected robot, a
   per-robot override still wins, and the status snapshot stays JSON-safe.
 - **`test_console_roundtrip.py`** — the parent console ⇄ supervisor contract, driven
-  in-process against a status-server double whose payload keys are diffed against the
-  real runtime. Needs `fastapi` + `httpx`; skips cleanly without them (CI has neither).
+  in-process against a status-server double (`helpers_console_supervisor.py`, a REAL
+  `MoxieRuntime` behind most routes) whose hand-built payload keys are diffed against the
+  real runtime. Its per-card siblings share that double: `test_console_memory.py`,
+  `test_console_telehealth.py`, `test_console_voice.py`, `test_console_content.py`,
+  `test_console_devices.py`. Need `fastapi` + `httpx`; skip cleanly without them.
 - **`test_memory_view.py`** — the pure transform behind the console's 🧠 What Moxie
   remembers card (`moxie_server/fleet/memory.py::normalize_memory`): the runtime's namespaced
   `/memory` payload flattened into dated rows per activity, newest first, with counts —
@@ -170,7 +184,7 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   and no `openai` import. It is the **delivery** half only: that a SIM client then *acts* on
   what it was handed is asserted in `test_actions_reach_the_robot.py` (SIL, against
   `VirtualMoxie.action_stats()`) and `sim/test_bridge.mjs` (browser, against
-  `bridge.js::actionStats()`) — both clients have read `response_actions` since PR #52 /
+  `bridge/actions.js::actionStats()`) — both clients have read `response_actions` since PR #52 /
   PR #116, closing the DoD criterion-4 gap this entry used to describe.
 - **`test_launch_cards_sil.py`** — 🎴 T10, the launch-card round trip on a wire. The other two
   card suites are units: `test_launch_cards.py` is the decoder, `test_launch_cards_runtime.py`
@@ -548,10 +562,15 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
 
 ## [`edge/`](edge/README.md) — the Pages Functions suites' sections
 
-`sim/test_demo_proxy.mjs` and `sim/test_turnstile.mjs` are thin entry points (CI and the
-mutation checkers invoke them by those names); their sections live in
-`edge/demo_proxy/` and `edge/turnstile/`, with the harness they share in `edge/common.mjs`.
+`sim/test_demo_proxy.mjs`, `test_turnstile.mjs`, `test_mode.mjs`, `test_demo_ears.mjs`,
+`test_cloud_transport.mjs`, `test_fallback_coverage.mjs` and `helpers_shared_ceilings.mjs` are
+thin entry points (CI and the mutation checkers invoke them by those names); their sections
+live under `edge/<suite>/`, with the harness they share in `edge/common.mjs`.
 They are `.mjs`, so pytest never collects them.
+
+## [`hosted_mic/`](hosted_mic/README.md) — `sim/check_hosted_mic.mjs`'s modules
+
+The scorer and the browser probe behind `node sim/check_hosted_mic.mjs` (`--selftest` in CI).
 
 ## Two rules that keep this suite hermetic and green
 
@@ -561,7 +580,7 @@ the *code under test*, not of the assertions:
 - **Never assert on a live animation; assert on what the page recorded.** The mouth is
   driven by the audio envelope for the ~1 s an utterance lasts, so a test that samples
   `getMouthOpen()` has to catch it mid-open and loses that race on a loaded runner.
-  `audio.js` therefore remembers the loudest frame of each cloud-TTS utterance and keeps
+  `voice/` therefore remembers the loudest frame of each cloud-TTS utterance and keeps
   it after playback ends — `moxieAudio.lastMouthPeak()` — so the assertion happens once
   the utterance is *over*. It is 0 when no PCM rendered and ~1.0 when it did, so it still
   fails loudly if the Web Audio graph breaks. Same idea as reading the whole speaking

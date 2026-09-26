@@ -3,7 +3,7 @@
 A self-contained WebGL (three.js) model of the Moxie robot: teal teardrop shell,
 tilted oval face-screen with an animated canvas face, two-segment paddle arms,
 and a 7-DOF rig matching the real robot's motors. This is the visual half of the
-simulator; [`bridge.js`](bridge.js) drives it live over MQTT via the `window.moxie` API
+simulator; [`bridge/`](bridge/README.md) drives it live over MQTT via the `window.moxie` API
 (and the by-hand control panel works with no bus at all).
 
 ## Viewing it
@@ -17,7 +17,7 @@ python3 -m http.server 8080
 Any static server works, **fully offline** — three.js (r160) and MQTT.js (5.10.1)
 are vendored in [`vendor/`](vendor/) (no CDN).
 Drag to orbit the camera, scroll to zoom. The right-hand panel drives every
-API call by hand, so the model is demonstrable with no bus running; `bridge.js`
+API call by hand, so the model is demonstrable with no bus running; `bridge/`
 drives the same API live from MQTT when a broker + supervisor are connected.
 
 ## Files
@@ -34,9 +34,9 @@ drives the same API live from MQTT when a broker + supervisor are connected.
 | `moxie/liveness.js` | additive idle micro-motion + gaze drift (deliberate idle beats are `life.js`) |
 | `moxie/bubble.js` | speech bubble: typewriter, head/chest anchoring, `window.__bubbleAnchor` for tests |
 | `moxie/stage.js` | camera framing inside the part of the viewport the dock/rail leave free |
-| `moxie/panel.js` | the by-hand controls: motor sliders, expression chips, speech box, heart LED |
-| `bridge.js` | MQTT→avatar bridge: drives `window.moxie` from `remote_chat` markup, `commands/tts` (the server voice), motors, telehealth, `response_actions`; publishes the activity log |
-| `audio.js` | sound: UI SFX, pre-cached/Piper/browser voices, and `playCloudTTS` (base64 16-bit PCM with lip-sync) |
+| `moxie/panel.js` | the by-hand controls: motor sliders, expression chips (line-drawn from `EXPRESSIONS`, no emoji), speech box, heart LED |
+| [`bridge/`](bridge/README.md) | MQTT→avatar bridge (7 classic-script parts): drives `window.moxie` from `remote_chat` markup, `commands/tts` (the server voice), motors, telehealth, `response_actions`; publishes the activity log; `window.moxieAlive` |
+| [`voice/`](voice/README.md) | sound (4 parts): UI SFX, pre-cached/Piper/browser voices, and `playCloudTTS` (base64 16-bit PCM with lip-sync) |
 | `style.css` + `css/hud.css`, `css/dock.css`, `css/rail.css` | the mission-control HUD skin ([style guide](../../docs/design/style-guide.md)); sim.html links hud → dock → rail → style.css, and that order is the cascade |
 | `mode.js` | what this deployment can DO: polls same-origin `GET /api/health` and publishes `window.moxieMode` (`live` / `degraded` / `offline`, reason, capacity) — [spec §6.3/§7](../../docs/architecture/backlog/live-sim-demo.md) |
 | `turnstile.js` | browser half of the bot control: `window.moxieTurnstile.getToken(action)`, one widget per spending route, a fresh single-use token per send, inert unless `/api/health` reports a sitekey. Every failure resolves `null`, which `cloud-transport.js` turns into an honest sentence (never a silent dead Send) |
@@ -92,7 +92,7 @@ tests) and `sim/test_csp.mjs` (the shipped security headers, applied).
 ## The server voice (`CloudTTSResponse`)
 
 When a supervisor is linked, it publishes rendered audio on
-`/devices/{id}/commands/tts`. `bridge.js` routes it to
+`/devices/{id}/commands/tts`. `bridge/` routes it to
 `window.moxieAudio.playCloudTTS(payload)`, which **decodes the wire itself** — base64 →
 little-endian signed 16-bit PCM → Float32 → an `AudioBuffer` at the payload's
 `sample_rate`/`channels` (raw PCM has no container header, so `decodeAudioData` cannot be
@@ -114,7 +114,7 @@ chunk 2 — alone in the queue, therefore "first" — starts ahead of it. That i
 test caught (recorded order `[0,2,1]`), and it was pure timing: the identical code had
 passed on a slower box the day before. So the **player** owns the order, not the queue:
 
-| rule | what `audio.js` does |
+| rule | what `voice/cloud.js` does |
 |---|---|
 | **ordering** | Within one `event_id`, chunk *n+1* starts only after chunk *n* has started, and an event's first chunk is `chunk_num` 0. A chunk that arrives ahead of its turn **waits**, however idle the player is. |
 | **gap** | The wait is bounded by `TTS_GAP_MS` (1.2 s, measured from the moment the player ran dry). If the chunk it is waiting for has not arrived by then it is written off as lost and the lowest chunk in hand starts instead — a skipped sentence beats a robot that stops talking. A chunk that turns up *after* its slot has passed (a duplicate, or one already written off) is dropped as `{played:false, reason:"late"}` rather than played out of turn. |
@@ -125,7 +125,7 @@ construction**, not by luck, so `lastPlaybackStats().order` is a real assertion 
 timing bet. `sim/test_audio.mjs` §6 drives all four arrival shapes (in order, out of order
 across a silent gap, a shuffled burst, and a chunk that never arrives).
 
-Playback is a live pipeline, so `audio.js` also **records** each utterance for anyone who
+Playback is a live pipeline, so `voice/cloud.js` also **records** each utterance for anyone who
 has to reason about it after the fact: `moxieAudio.lastMouthPeak()` is the loudest mouth
 frame, and `moxieAudio.lastPlaybackStats()` returns
 `{event_id, chunks_played, order:[chunk_num…], max_pending}` — the chunks that played, the
@@ -138,13 +138,13 @@ still counts) — and are frozen once playback ends.
 `moxieAudio.ttsPending()` is the live gauge; the recorded stats are what the tests assert
 on, because a short chunk drains before an outside observer can sample it.
 
-**`#tts-status` has one owner: `audio.js`.** Two independent things want that line —
-the live `🔊 speaking — cloud TTS …` indicator and the async probe in `env.js` that
+**`#tts-status` has one owner: `voice/cloud.js`.** Two independent things want that line —
+the live `speaking — cloud TTS …` indicator and the async probe in `env.js` that
 reports whether the optional Piper sidecar is up. Writing it from both meant whichever
 landed last won, so a probe resolving mid-utterance wiped the speaking indicator (and
 was itself wiped when playback restored the pre-probe text). Anything else that wants
 to say something there calls `moxieAudio.setTtsHint(hint)` — a plain string, or
-`{text}`/`{html}` plus an optional `warn` — and `audio.js` paints it only while nothing
+`{text}`/`{html}` plus an optional `warn` — and `voice/cloud.js` paints it only while nothing
 is speaking. `moxieAudio.hasCloudVoice()` reports whether a `CloudTTSResponse` has ever
 arrived, so `env.js` stops claiming "no TTS server" when the server voice is the one
 talking.
@@ -159,7 +159,7 @@ moxie.setMotor(index, value)     // value 0..32767, animates smoothly to target
 moxie.getMotor(index)            // current (smoothed) position, rounded int
 moxie.setFace(expression)        // any of moxie.expressions (11 moods + sleep/thinking) or "blink"
 moxie.setSpeech(text)            // speech bubble + mouth "talking" animation
-moxie.setMouthOpen(0..1)         // external lip-sync drive (audio.js calls this while speaking)
+moxie.setMouthOpen(0..1)         // external lip-sync drive (voice/ calls this while speaking)
 moxie.getMouthOpen()             // current lip-sync drive (0..1)
 moxie.setHeartLED(on, "#ff5577") // chest LED on/off, optional color
 moxie.showIcons([...]) / clearIcons()  // up to 4 icon badges over the face

@@ -1,19 +1,14 @@
 """
 📅 Today's plan — the console's read of the recommender's "why this activity today".
 
-`normalize_schedule_view` is the whole of `server/`'s new logic: the route in `routes/console.py` is
-a thin proxy of the supervisor's `GET /schedule?device_id=…` (the same shape the 🎨 look
-and 🎭 Be Moxie cards use), and everything the card renders is decided here.
+`normalize_schedule_view` is all of `server/`'s logic here: `routes/console.py` is a thin
+proxy of the supervisor's `GET /schedule?device_id=…`, so everything the card renders is
+decided by it. `RECORDED` is a real `GET /schedule` body captured from mosquitto +
+`mqtt/run.py` + `sim/virtual_moxie.py --query schedule` (bedtime an hour out, one
+`ParentRequest`): an FTUE spine with no clock times, a drifted parent request, a scored
+pick, chat breaks, a bedtime-truncated day and `carries_module_signal: false`.
 
-`RECORDED` below is **not hand-written**: it is a real `GET /schedule` body, captured on
-2026-09-02 from a real mosquitto + `mqtt/run.py` + `sim/virtual_moxie.py --query schedule`
-on free ports, with a fleet bedtime an hour out and one `ParentRequest`. So this file
-tests against the payload the runtime actually emits — an FTUE spine with no clock times,
-a parent request that drifted to a later slot, a scored pick, chat breaks, a bedtime that
-truncated the day, and `telemetry.carries_module_signal: false`.
-
-Pure — no fastapi, no network — so it runs in CI's hermetic env. The seam itself (URL,
-query string, status codes) is covered in `test_console_roundtrip.py`.
+Pure (no fastapi, no network). The route seam is covered in `test_console_roundtrip.py`.
 """
 import os
 import sys
@@ -25,149 +20,65 @@ from moxie_server.fleet import (  # noqa: E402
     normalize_schedule_entry, normalize_schedule_view,
 )
 
-#: A real `GET /schedule?device_id=…` body (see the module docstring).
-RECORDED = {'day': '2026-09-02',
- 'device_id': 'd_schedcard',
- 'explanations': [{'at': None,
-                   'factors': {},
-                   'line': "Welcome is part of Moxie's first-week onboarding, which is "
-                           'still running.',
-                   'module_id': 'WELCOME',
-                   'reason_codes': ['ftue'],
-                   'score': None,
-                   'slot': None},
-                  {'at': None,
-                   'factors': {},
-                   'line': "TNT is part of Moxie's first-week onboarding, which is "
-                           'still running.',
-                   'module_id': 'TNT',
-                   'reason_codes': ['ftue'],
-                   'score': None,
-                   'slot': None},
-                  {'at': None,
-                   'factors': {},
-                   'line': "Systems Check is part of Moxie's first-week onboarding, "
-                           'which is still running.',
-                   'module_id': 'SYSTEMSCHECK',
-                   'reason_codes': ['ftue'],
-                   'score': None,
-                   'slot': None},
-                  {'at': None,
-                   'factors': {},
-                   'line': 'Daily Missions is a daily fixture — it runs every day.',
-                   'module_id': 'DM',
-                   'reason_codes': ['fixture'],
-                   'score': None,
-                   'slot': None},
-                  {'at': '09:03',
-                   'factors': {'affinity': 100,
-                               'category_spread': 0,
-                               'coverage': 0,
-                               'parent_request': 4000,
-                               'recency': 0,
-                               'tiebreak': 4,
-                               'time_of_day': 60},
-                   'line': 'Requested by a parent for 8:43 am — this session starts '
-                           'later than that, so Storytelling is queued at 9:03 am '
-                           'instead.',
-                   'module_id': 'STORYTELLING',
-                   'reason_codes': ['parent_request', 'unseen'],
-                   'score': 4164,
-                   'slot': 4},
-                  {'at': None,
-                   'factors': {},
-                   'line': 'A free chat, so friend gets a breather between activities.',
-                   'module_id': 'FREE_CHAT',
-                   'reason_codes': ['chat'],
-                   'score': None,
-                   'slot': None},
-                  {'at': '09:13',
-                   'factors': {'affinity': 100,
-                               'category_spread': 0,
-                               'coverage': 0,
-                               'recency': 0,
-                               'tiebreak': 22,
-                               'time_of_day': 120},
-                   'line': 'Friend has not tried Scavenger hunt yet — new for today in '
-                           'the morning slot.',
-                   'module_id': 'SCAVENGERHUNT',
-                   'reason_codes': ['unseen', 'time_of_day', 'variety'],
-                   'score': 242,
-                   'slot': 5},
-                  {'at': None,
-                   'factors': {},
-                   'line': 'A free chat, so friend gets a breather between activities.',
-                   'module_id': 'FREE_CHAT',
-                   'reason_codes': ['chat'],
-                   'score': None,
-                   'slot': None}],
- 'inputs': {'bedtime': {'enabled': True,
-                        'ends_at': '17:23',
-                        'kind': 'weekday',
-                        'starts_at': '09:23'},
-            'bucket': 'morning',
-            'child_name': 'friend',
-            'day': '2026-09-02',
-            'device_id': 'd_schedcard',
-            'ftue_skips': [],
-            'history': {},
-            'now': '2026-09-02T08:23:20',
-            'parent_requests': [{'at': '08:43',
-                                 'due_today': True,
-                                 'module_id': 'STORYTELLING',
-                                 'scheduled_at': 1788363799,
-                                 'slot': 0}],
-            'planned': {'activities': 2,
-                        'dropped_for_bedtime': 4,
-                        'entries': 8,
-                        'requested': 6},
-            'slot_minutes': 10,
-            'slots': [{'at': '09:03',
-                       'bucket': 'morning',
-                       'in_bedtime': False,
-                       'index': 0},
-                      {'at': '09:13',
-                       'bucket': 'morning',
-                       'in_bedtime': False,
-                       'index': 1},
-                      {'at': '09:23',
-                       'bucket': 'morning',
-                       'in_bedtime': True,
-                       'index': 2},
-                      {'at': '09:33',
-                       'bucket': 'morning',
-                       'in_bedtime': True,
-                       'index': 3},
-                      {'at': '09:43',
-                       'bucket': 'morning',
-                       'in_bedtime': True,
-                       'index': 4},
-                      {'at': '09:53',
-                       'bucket': 'morning',
-                       'in_bedtime': True,
-                       'index': 5}],
-            'telemetry': {'active_buckets': {},
-                          'by_event': {},
-                          'carries_module_signal': False,
-                          'count': 0,
-                          'note': 'Packet.event_name is a free string in the recovered '
-                                  'proto; no module launch/exit vocabulary is '
-                                  'established, so completion affinity comes from '
-                                  'mentor_behaviors only.',
-                          'sessions': 0}},
- 'ok': True,
- 'planned_at': '2026-09-02T08:23:20',
- 'schedule': {'chat_request': {'content_id': 'default', 'module_id': 'FREE_CHAT'},
-              'provided_schedule': [{'module_id': 'WELCOME'},
-                                    {'module_id': 'TNT'},
-                                    {'module_id': 'SYSTEMSCHECK'},
-                                    {'module_id': 'DM'},
-                                    {'module_id': 'STORYTELLING'},
-                                    {'content_id': 'default', 'module_id': 'FREE_CHAT'},
-                                    {'module_id': 'SCAVENGERHUNT'},
-                                    {'content_id': 'default',
-                                     'module_id': 'FREE_CHAT'}]},
- 'served': True}
+#: A real `GET /schedule?device_id=…` body (see the module docstring), shared parts factored.
+_FTUE = "is part of Moxie's first-week onboarding, which is still running."
+_CHAT = {"at": None, "factors": {}, "module_id": "FREE_CHAT", "reason_codes": ["chat"],
+         "line": "A free chat, so friend gets a breather between activities.",
+         "score": None, "slot": None}
+_SLOT = {"bucket": "morning", "in_bedtime": False}
+RECORDED = {
+    "ok": True, "served": True, "day": "2026-09-02", "device_id": "d_schedcard",
+    "planned_at": "2026-09-02T08:23:20",
+    "explanations": [
+        {"at": None, "factors": {}, "module_id": "WELCOME", "reason_codes": ["ftue"],
+         "line": f"Welcome {_FTUE}", "score": None, "slot": None},
+        {"at": None, "factors": {}, "module_id": "TNT", "reason_codes": ["ftue"],
+         "line": f"TNT {_FTUE}", "score": None, "slot": None},
+        {"at": None, "factors": {}, "module_id": "SYSTEMSCHECK", "reason_codes": ["ftue"],
+         "line": f"Systems Check {_FTUE}", "score": None, "slot": None},
+        {"at": None, "factors": {}, "module_id": "DM", "reason_codes": ["fixture"],
+         "line": "Daily Missions is a daily fixture — it runs every day.",
+         "score": None, "slot": None},
+        {"at": "09:03", "module_id": "STORYTELLING",
+         "factors": {"affinity": 100, "category_spread": 0, "coverage": 0,
+                     "parent_request": 4000, "recency": 0, "tiebreak": 4, "time_of_day": 60},
+         "line": "Requested by a parent for 8:43 am — this session starts later than that, "
+                 "so Storytelling is queued at 9:03 am instead.",
+         "reason_codes": ["parent_request", "unseen"], "score": 4164, "slot": 4},
+        dict(_CHAT),
+        {"at": "09:13", "module_id": "SCAVENGERHUNT",
+         "factors": {"affinity": 100, "category_spread": 0, "coverage": 0, "recency": 0,
+                     "tiebreak": 22, "time_of_day": 120},
+         "line": "Friend has not tried Scavenger hunt yet — new for today in the morning "
+                 "slot.",
+         "reason_codes": ["unseen", "time_of_day", "variety"], "score": 242, "slot": 5},
+        dict(_CHAT)],
+    "inputs": {
+        "bedtime": {"enabled": True, "ends_at": "17:23", "kind": "weekday",
+                    "starts_at": "09:23"},
+        "bucket": "morning", "child_name": "friend", "day": "2026-09-02",
+        "device_id": "d_schedcard", "ftue_skips": [], "history": {},
+        "now": "2026-09-02T08:23:20",
+        "parent_requests": [{"at": "08:43", "due_today": True, "module_id": "STORYTELLING",
+                             "scheduled_at": 1788363799, "slot": 0}],
+        "planned": {"activities": 2, "dropped_for_bedtime": 4, "entries": 8, "requested": 6},
+        "slot_minutes": 10,
+        "slots": [dict(_SLOT, at=f"09:{m}", index=i, in_bedtime=i >= 2)
+                  for i, m in enumerate(("03", "13", "23", "33", "43", "53"))],
+        "telemetry": {"active_buckets": {}, "by_event": {}, "carries_module_signal": False,
+                      "count": 0, "sessions": 0,
+                      "note": "Packet.event_name is a free string in the recovered proto; "
+                              "no module launch/exit vocabulary is established, so "
+                              "completion affinity comes from mentor_behaviors only."}},
+    "schedule": {
+        "chat_request": {"content_id": "default", "module_id": "FREE_CHAT"},
+        "provided_schedule": [
+            {"module_id": "WELCOME"}, {"module_id": "TNT"}, {"module_id": "SYSTEMSCHECK"},
+            {"module_id": "DM"}, {"module_id": "STORYTELLING"},
+            {"content_id": "default", "module_id": "FREE_CHAT"},
+            {"module_id": "SCAVENGERHUNT"},
+            {"content_id": "default", "module_id": "FREE_CHAT"}]},
+}
 
 
 # --------------------------------------------------------------------------- #

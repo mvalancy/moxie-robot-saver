@@ -7,7 +7,7 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
 - [`types.py`](types.py) — shared data types passed to/from apps.
 - [`actions.py`](actions.py) — parses robot-control tags (`<exit>`, `<launch:MOD:CID>`, …) out of a brain's own text into real `Reply.actions`, and the prompt paragraph that teaches a model to use them.
 - [`apps/`](apps/) — ready-made `MoxieApp` implementations (echo, LLM brain, webhook).
-- [`schedule.py`](schedule.py) — builds the day plan (`ContentSchedule`) the robot pulls at session
+- [`schedule/`](schedule/) — builds the day plan (`ContentSchedule`) the robot pulls at session
   start: onboarding, a rotation of on-board activities that skips what the child already finished,
   and interleaved chats. Pure + deterministic.
 - [`broker_acl.py`](broker_acl.py) — 🔐 renders a mosquitto ACL from the pairing gate's
@@ -64,7 +64,7 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
 - [`launch_cards.py`](launch_cards.py) — 🎴 **what a printed QR may do to a child's robot.**
   One scanned string in (`eb-qr-event` → `$eb_qr_value`), at most one launch out. A QR is an
   unauthenticated input any stranger can print, so the catalog is a **positive list derived from
-  [`schedule.py`](schedule.py)** — 24 ids today — and a card may start an activity and *nothing
+  [`schedule/`](schedule/)** — 24 ids today — and a card may start an activity and *nothing
   else*: `<sleep>`, `<exit>` and `<launch_if_confirmed:…>` are refused even though the shared
   action-tag grammar parses all three. `decode` is total and never raises; `encode` is its exact
   inverse and lives here rather than in the sheet so the printing side cannot emit a payload the

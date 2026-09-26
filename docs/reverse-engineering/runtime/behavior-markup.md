@@ -130,7 +130,7 @@ expression**: each value plays the matching **`Bht_Eyeseme_<name>` behavior tree
 `0,1,2,4,5` appear in the shipped content sampled, but **all 11 are valid** to emit. Note the earlier
 *inferred* reading mislabeled mood `4` as "embarrassed" — it is actually **`Shy`** (`Embarrassed` is
 `10`), which is exactly the kind of error the authoritative enum resolves. The **[SIL face](../../architecture/sil-and-cicd.md)
-now renders all 11 `Bht_Eyeseme_*` expressions 1:1** (`sim/web/bridge.js` `MOOD_TO_FACE`).
+now renders all 11 `Bht_Eyeseme_*` expressions 1:1** (`sim/web/bridge/` `MOOD_TO_FACE`).
 
 **`idlestate`**: `idleState` int (e.g. 7).
 

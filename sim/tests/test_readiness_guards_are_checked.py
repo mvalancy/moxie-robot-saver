@@ -1,29 +1,17 @@
 """🚦 A readiness gate whose verdict is discarded is not a gate.
 
-**The finding (2026-09-07).** `sim/readiness.sh::wait_for_log` is careful: on timeout it
-prints `❌ supervisor never logged '<needle>' in Ns`, dumps 20 lines of the supervisor log,
-and **returns 1**. Two of its three call sites threw that away:
+`sim/readiness.sh::wait_for_log` prints an accurate error, dumps the supervisor log and
+**returns 1** on timeout — and call sites once threw that away, launching the robot anyway
+into the QoS-0 race the readiness line exists to prevent (`test_sil_supervisor_readiness.py`).
+The run then failed twenty seconds later as `no config pushed within timeout`, which reads
+as *the appliance did not answer* when the truth was *we proceeded past a gate that said
+stop*.
 
-    sim/run_smoke.sh:238     ... || exit 1        # the status endpoint — checked
-    sim/run_smoke.sh:223     ...                  # the SUBACK        — NOT checked
-    sim/run_scenarios.sh:75  ...                  # the SUBACK        — NOT checked
+The race has its own wire-level test; this is the other half — not "is the gate correct"
+but "is the gate *obeyed*", a property of the call sites, checked there hermetically.
 
-So a supervisor that never acknowledged its subscriptions produced an accurate error
-message and then **the script launched the robot anyway** — into precisely the QoS-0
-race the readiness line exists to prevent (`test_sil_supervisor_readiness.py` explains
-that race at length). Twenty seconds later the run failed as `no config pushed within
-timeout`, which reads as *the appliance did not answer* when what actually happened is
-*we proceeded past a gate that told us not to*.
-
-**Why a ratchet rather than a process test.** The race itself already has a test that
-reproduces it on the wire by holding the SUBSCRIBE packet. This is the different half:
-not "is the gate correct" but "is the gate *obeyed*". That is a property of the call
-sites, so it is checked where it lives — cheaply, hermetically, and in a way that fails
-the moment someone adds a fourth unguarded caller.
-
-**What this file proves.** Every `wait_for_log` invocation in `sim/*.sh` either exits on
-failure or is used as a condition. It does not assert *how many* call sites there are: new
-waits are welcome, unguarded ones are not.
+**Proved here:** every `wait_for_log` invocation in `sim/*.sh` either exits on failure or
+is used as a condition. New waits are welcome; unguarded ones are not.
 """
 from __future__ import annotations
 

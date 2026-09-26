@@ -1,30 +1,16 @@
 """Every test file in `sim/` is run by some CI tier — a ratchet, not a wish.
 
-`live-sim-demo.md` §10 records the finding this exists for: `sim/test_ambient.mjs` and
-`sim/test_presence_bridge.mjs` are executed by **no** tier. Both pass locally today, so
-nothing is broken — but two green tests nobody runs are not evidence, and the failure
-mode is silent in the worst possible way: the file keeps passing on the author's machine
-for months while the code it guards drifts.
+Two green tests nobody runs are not evidence, and the failure is silent: the file keeps
+passing on its author's machine while the code it guards drifts. The tiers are
+hand-written step lists (`sim/ci/*.yml`, the version-controlled source of the installed
+workflows), and a file is "run" only if some step's command names it — so: enumerate the
+files, enumerate the references, compare.
 
-Nothing in the repo could notice that, because the tiers are hand-written YAML step
-lists (`sim/ci/*.yml`; pushing under `.github/workflows/` needs a token scope this
-project does not have, so the templates are the version-controlled source of truth and
-`test_ci_workflows.py` holds the installed copies byte-identical to them). A test file is
-"run" only if some step's command names it. So: enumerate the files, enumerate the
-references, and compare.
-
-**It is a ratchet, deliberately.** Wiring the two offenders in needs an edit to
-`sim/ci/ci.yml`, which this pass was not allowed to touch, so a hard assertion would just
-redden the tier. `KNOWN_UNRUN` names exactly the files nobody runs, with the date and the
-reason, and it is asserted from **both** sides:
-
-* a file that is neither referenced nor listed → **fail** (the gap can never reappear
-  silently in a new test);
-* a listed file that has become referenced, or has been deleted → **fail** (the list can
-  only ever shrink, so nobody inherits a stale exemption).
-
-That second direction is the whole design. An allowlist checked in one direction is how
-the original gap would have survived this guard too.
+`KNOWN_UNRUN` names exactly the files nobody runs yet (dated, with the reason) and is
+asserted from BOTH sides: an unlisted, unreferenced file fails (the gap cannot reappear
+silently), and a listed file that became referenced or was deleted fails (the list can only
+shrink, so nobody inherits a stale exemption). A one-directional allowlist is how the
+original gap would have survived this guard too.
 """
 from __future__ import annotations
 

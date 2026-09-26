@@ -28,7 +28,8 @@ import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from helpers_runtime import CHAT_TOPIC, LatchClient, drive_once, make_runtime  # noqa: E402
+from helpers_runtime import LatchClient, drive_once, make_runtime              # noqa: E402
+from helpers_web import script_group                                         # noqa: E402
 from moxie_sdk import automarkup, vocab                                       # noqa: E402
 from moxie_sdk.app import MoxieApp                                            # noqa: E402
 from moxie_sdk.automarkup import annotate                                     # noqa: E402
@@ -46,9 +47,7 @@ def _floor_on(monkeypatch):
     automarkup.reset_dropped()
 
 
-# --------------------------------------------------------------------------- #
 # the corpus — every kind of line this tree can put on the wire
-# --------------------------------------------------------------------------- #
 def _content_lines():
     """Every spoken-looking string in `mqtt/content_modules/*.json`."""
     out, root = [], os.path.join(REPO, "mqtt", "content_modules")
@@ -109,15 +108,11 @@ CORPUS = ([c["text"] for c in _goldens()]
           + _fuzz_lines())
 
 
-# --------------------------------------------------------------------------- #
 # T1 — the eight goldens, byte for byte
-# --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("case", _goldens(), ids=lambda c: c["id"])
 def test_goldens_render_byte_exact(case):
-    """The eight worked examples from the brief (§1.6), pinned to the byte.
-
-    A diff here is not a test failure to paper over: it is a change in what a child sees
-    the robot do. `case["why"]` cites the evidence for every id in the expected output."""
+    """The brief's eight worked examples (§1.6), to the byte. A diff is a change in what a
+    child sees the robot do; `case["why"]` cites the evidence for every id."""
     got = annotate(case["text"], **case["kwargs"])
     assert got == case["markup"], (
         f"{case['id']} drifted.\n  want: {case['markup']}\n   got: {got}\n"
@@ -138,9 +133,7 @@ def test_goldens_cover_the_documented_behaviours():
     assert moods == {"1", "2", "4", "5", "9"}, moods
 
 
-# --------------------------------------------------------------------------- #
 # T2 — never an unknown asset id
-# --------------------------------------------------------------------------- #
 def test_no_unknown_asset_id_anywhere_in_the_corpus():
     """Every mood, eventName, behaviour, icon value, SoundToPlay and usel genre the floor
     emits over the whole corpus is in the frozen catalog — and nothing was dropped."""
@@ -156,8 +149,7 @@ def test_no_unknown_asset_id_anywhere_in_the_corpus():
 
 
 def test_the_authored_markup_in_the_tree_also_validates():
-    """The floor is not the only place marks exist: the filler lines are hand-authored
-    and the safety redirects ship their own. Both pass the same catalog."""
+    """Hand-authored filler marks and safety-redirect marks pass the same catalog."""
     from moxie_sdk import safety as safety_seam
     for _text, markup in FILLERS:
         assert not vocab.validate_markup(markup), markup
@@ -174,9 +166,8 @@ def test_the_authored_markup_in_the_tree_also_validates():
 
 
 def test_an_unknown_hint_is_dropped_not_forwarded():
-    """A brain may *suggest* a mood or a gesture; it may never *authorize* one. An id we
-    cannot justify from our own evidence is dropped, counted, and never reaches the wire —
-    including OpenMoxie's own gesture names, which are not in our catalog."""
+    """A brain may suggest, never authorize: an uncatalogued id (OpenMoxie's gesture names
+    included) is dropped, counted, and never reaches the wire."""
     automarkup.reset_dropped()
     for bad in ("AUTO_GESTURE_ME", "Gesture_We", "Gesture_Small", "Gesture_Discard"):
         out = annotate("You and me are a team.", gesture_hint=bad)
@@ -191,8 +182,7 @@ def test_an_unknown_hint_is_dropped_not_forwarded():
 
 
 def test_the_catalog_matches_the_recovered_pages():
-    """Spot-check the sizes and the load-bearing values against the RE docs, so a careless
-    edit to `vocab.py` fails here rather than on a child's robot."""
+    """Sizes and load-bearing values vs the RE docs, so a careless `vocab.py` edit fails here."""
     assert vocab.MOODS["shy"] == 4 and vocab.MOODS["embarrassed"] == 10   # :121,:127
     assert vocab.MOODS["sad"] == 2 and vocab.MOODS["surprised"] == 5      # :119,:122
     assert len(vocab.MOODS) == 11 and vocab.MAX_INTENSITY == 2            # :107-133
@@ -207,20 +197,15 @@ def test_the_catalog_matches_the_recovered_pages():
     assert set(vocab.GAZE_TREES) <= set(vocab.TREES)
 
 
-# --------------------------------------------------------------------------- #
 # T3 / T4 — the words never change, and the floor is idempotent
-# --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("line", CORPUS, ids=lambda s: s[:32])
 def test_the_spoken_words_are_never_changed(line):
-    """S2. The floor may add marks and spans; it may not add, drop, reorder or substitute
-    a single spoken word. This is the invariant that makes it safe to turn on globally —
-    whatever it does, the child hears exactly the line the brain wrote."""
+    """S2: marks and spans only — never a word added, dropped, reordered or substituted."""
     assert strip_markup(annotate(line)) == strip_markup(line)
 
 
 def test_idempotent_and_never_touches_authored_markup():
-    """S1. Running the floor twice changes nothing, and a line that already carries markup
-    (an authored content line, a safety redirect) comes back exactly as written."""
+    """S1: twice == once, and already-marked lines (authored, redirects) come back as written."""
     for line in CORPUS[:60]:
         once = annotate(line)
         assert annotate(once) == once
@@ -231,13 +216,10 @@ def test_idempotent_and_never_touches_authored_markup():
     assert annotate("") == "" and annotate("   ") == "   "
 
 
-# --------------------------------------------------------------------------- #
 # T7 — the grammar: every payload is JSON, the whole line is well-formed XML
-# --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("line", CORPUS[::7], ids=lambda s: s[:32])
 def test_output_is_well_formed(line):
-    """No badly-nested spans — the floor mints marks only at token boundaries and wraps at
-    most one span level, so OpenMoxie's span-conflict pruner has nothing to do here."""
+    """Marks only at token boundaries, at most one span level: no badly-nested spans."""
     markup = annotate(line, icons=True)
     ElementTree.fromstring("<root>" + markup.replace("&", "&amp;") + "</root>")
     for _verb, body in vocab._MARK_RE.findall(markup):
@@ -245,13 +227,10 @@ def test_output_is_well_formed(line):
             assert json.loads(body.replace("+", '"')) is not None
 
 
-# --------------------------------------------------------------------------- #
 # T8 — the anti-twitch rate limits
-# --------------------------------------------------------------------------- #
 def test_rate_limits_on_a_long_paragraph():
-    """Twitchiness is the failure mode a child notices. A 120-word paragraph gets at most
-    one mood, one tree, six gestures plus the closing rest pose, and no `<break>` after
-    the final word (which would delay the robot's turn hand-back)."""
+    """T8: 120 words get ≤1 mood, ≤1 tree, ≤6 gestures + the rest pose, and no final
+    `<break>` (it would delay the robot's turn hand-back)."""
     para = ("I love how you asked me that question, because it is one of my very "
             "favourite things to think about with you. The stars are so far away that "
             "their light is old by the time it reaches your window at night. Some of "
@@ -281,9 +260,7 @@ def test_a_short_line_gets_no_talking_gesture():
     assert "Gesture_Talk" not in annotate("It borrows sunlight from the sun.")
 
 
-# --------------------------------------------------------------------------- #
 # T5 — per-chunk stability, through the REAL streaming loop
-# --------------------------------------------------------------------------- #
 class _StreamApp(MoxieApp):
     """A brain that streams a fixed four-sentence answer, markup left to the seam."""
     name = "stream-test"
@@ -311,18 +288,15 @@ def _stream_markups(app, device_id="d_test", event_id="evt-s"):
     rt.client = LatchClient()
     rt.streaming = True
     rt.brain_budget_s = 0                       # no filler noise in this test
-    import json as _json
-    rt._on_remote_chat(device_id, rt.robots[device_id], _json.dumps(
+    rt._on_remote_chat(device_id, rt.robots[device_id], json.dumps(
         dict(command="prompt", backend="router", event_id=event_id, speech="the moon?")))
     rt._pool.shutdown(wait=True)
     return [p["output"]["markup"] for p in rt.client.chat_replies(device_id)]
 
 
 def test_a_streamed_answer_carries_exactly_one_mood_and_rests_every_chunk():
-    """S3, end to end through `_handle_stream_turn`. A four-sentence answer used to be
-    able to flip its face on every sentence; now chunk 0 sets it and the later chunks add
-    gestures and cues only. Every chunk still ends with its own `Gesture_None`, because
-    the robot may pause between spoken segments."""
+    """S3 through `_handle_stream_turn`: chunk 0 sets the face, later chunks only gesture,
+    and every chunk ends on `Gesture_None` (the robot may pause between segments)."""
     markups = _stream_markups(_StreamApp(FOUR))
     assert len(markups) == 4
     assert sum(m.count("cmd:playback-mood") for m in markups) == 1
@@ -336,9 +310,8 @@ def test_a_streamed_answer_carries_exactly_one_mood_and_rests_every_chunk():
 
 
 def test_the_safety_gate_still_blocks_a_chunk_before_it_is_ever_annotated():
-    """PR #20's per-chunk gate is upstream of the floor and stays that way: annotation
-    happens AFTER a chunk passes safety and BEFORE it is published. A blocked sentence is
-    never annotated onto the wire — the child hears the redirect instead."""
+    """The per-chunk safety gate runs before annotation: a blocked sentence never reaches
+    the wire — the child hears the redirect instead."""
     bad = "I will tell you how to make a weapon at home."
     app = _StreamApp([FOUR[0], bad, FOUR[2]])
     markups = _stream_markups(app, device_id="d_gate", event_id="evt-gate")
@@ -351,9 +324,7 @@ def test_the_safety_gate_still_blocks_a_chunk_before_it_is_ever_annotated():
         assert not vocab.validate_markup(m)
 
 
-# --------------------------------------------------------------------------- #
 # every app path — nobody speaks flat any more
-# --------------------------------------------------------------------------- #
 class _FlatApp(MoxieApp):
     """The shape every non-LLM app has today: text out, `markup=None`."""
     name = "flat"
@@ -363,8 +334,7 @@ class _FlatApp(MoxieApp):
 
 
 def test_every_app_that_does_not_bring_markup_now_performs_its_line():
-    """Acceptance #1: the echo, content and webhook apps used to hand the runtime plain
-    text and the robot read it out like a speaker. The seam performs it now."""
+    """Acceptance #1: an app returning plain text is performed by the seam."""
     resp = drive_once(_FlatApp(), "tell me something")
     markup = resp["output"]["markup"]
     assert markup != resp["output"]["text"], "still flat"
@@ -374,9 +344,8 @@ def test_every_app_that_does_not_bring_markup_now_performs_its_line():
 
 
 def test_the_content_app_authored_markup_path_goes_through_the_floor():
-    """A content module that writes a plain line into `output_markup` bypasses the seam
-    (which fires on `markup is None`), so the floor runs on that path too — while markup
-    the module actually authored is passed through untouched."""
+    """A plain line in `output_markup` bypasses the seam (`markup is None`), so the floor runs
+    there too — while genuinely authored markup passes untouched."""
     from moxie_sdk.content.content_app import ContentApp
     from moxie_sdk.content.volley import Volley
 
@@ -395,8 +364,7 @@ def test_the_content_app_authored_markup_path_goes_through_the_floor():
 
 
 def test_the_llm_app_routes_through_the_one_generator():
-    """Acceptance #2: `LLMApp.build_markup` is `annotate` with hints, and `stream_style`
-    — the second, divergent generator — is gone."""
+    """Acceptance #2: `LLMApp.build_markup` is `annotate` with hints; no second generator."""
     from moxie_sdk.apps import llm_app
     assert not hasattr(llm_app, "stream_style")
     line = "That is amazing! You did it!"
@@ -407,22 +375,18 @@ def test_the_llm_app_routes_through_the_one_generator():
 
 
 def test_the_filler_lines_stay_hand_authored_and_pinned():
-    """Acceptance #2 again, from the other side: `filler.py`'s markup is written by hand
-    and must not drift into the floor's output (a `<break>` threaded through the line
-    would break the contiguity `test_brain_latency.py` pins)."""
+    """Filler markup stays hand-written: a `<break>` threaded through it would break the
+    contiguity `test_brain_latency.py` pins."""
     for text, markup in FILLERS:
         assert text in markup, "the spoken line stays one contiguous run"
         assert markup.startswith('<mark name="cmd:playback-mood')
         assert not vocab.validate_markup(markup)
 
 
-# --------------------------------------------------------------------------- #
 # the three gated slots — icons, SFX, gaze — and why they are gated
-# --------------------------------------------------------------------------- #
 def test_icons_are_off_by_default_and_paired_when_asked_for():
-    """All four confirmed `icons-v2` values are calendar/event assets, so emitting them
-    from free chat would be guessing. On request, a turn shows before the line and clears
-    after it, exactly as shipped content does (behavior-markup.md:155-157)."""
+    """Every confirmed `icons-v2` value is a calendar/event asset, so off unless asked; then
+    shown before the line and cleared after, as shipped content does (behavior-markup.md:155)."""
     line = "Your birthday is on Friday."
     assert "icons-v2" not in annotate(line)
     with_icons = annotate(line, icons=True)
@@ -439,9 +403,8 @@ def test_icons_are_off_by_default_and_paired_when_asked_for():
 
 
 def test_sfx_is_one_stinger_and_stays_off():
-    """We have exactly TWO confirmed `SoundToPlay` ids, and one of them is a looping
-    music bed for a cast segment — not something a spoken line should ever start. So SFX
-    is effectively one stinger on a celebration, and it is off by default."""
+    """Two confirmed `SoundToPlay` ids, one a looping music bed — so SFX is one celebration
+    stinger, off by default, and never the loop."""
     line = "You did it! I am so proud of you!"
     assert "playaudio" not in annotate(line)
     loud = annotate(line, sfx=True)
@@ -452,9 +415,8 @@ def test_sfx_is_one_stinger_and_stays_off():
 
 
 def test_gaze_is_a_closed_set_of_look_bearing_trees_not_a_direction():
-    """There is no gaze verb in the 24 recovered markup commands: gaze is on-device
-    (weighted interest points -> AttentionTarget -> IK look-at). The only cloud-side handle
-    is choosing a look-bearing tree, so `look=` takes one of four and invents nothing."""
+    """No gaze verb exists (gaze is on-device IK); the only handle is a look-bearing tree,
+    so `look=` takes one of four and invents nothing."""
     out = annotate("Where did it go?", look="Bht_Search")
     assert "+behaviour+:+Bht_Search+" in out
     assert not vocab.validate_markup(out)
@@ -464,12 +426,9 @@ def test_gaze_is_a_closed_set_of_look_bearing_trees_not_a_direction():
     assert not vocab.validate_markup(invented)
 
 
-# --------------------------------------------------------------------------- #
 # the knob — a one-variable rollback
-# --------------------------------------------------------------------------- #
 def test_the_knob_off_restores_the_previous_behaviour(monkeypatch):
-    """`MOXIE_AUTOMARKUP=0` gives back exactly what shipped before this slice: a
-    passthrough at the seam, one mood mark + one gesture in the LLM app."""
+    """`MOXIE_AUTOMARKUP=0`: passthrough at the seam, one mood + one gesture in the LLM app."""
     monkeypatch.setenv("MOXIE_AUTOMARKUP", "0")
     from importlib import import_module
     make_markup = import_module("markup").make_markup
@@ -485,9 +444,7 @@ def test_the_knob_off_restores_the_previous_behaviour(monkeypatch):
     assert resp["output"]["markup"] == resp["output"]["text"]
 
 
-# --------------------------------------------------------------------------- #
 # T6 — purity and reproducibility
-# --------------------------------------------------------------------------- #
 _SUBPROC = r"""
 import sys, os
 sys.path.insert(0, os.path.join(%r, "mqtt"))
@@ -513,8 +470,7 @@ def _run_with_seed(seed):
 
 
 def test_identical_bytes_across_python_hash_seeds():
-    """No `random`, no clock, and never Python's `hash()` — which is salted per process
-    and would make two workers disagree about the same answer."""
+    """No `random`, clock or salted `hash()`: two workers agree byte for byte."""
     a, b = _run_with_seed("0"), _run_with_seed("12345")
     assert a == b
     assert 'cmd:playback-mood' in a
@@ -522,8 +478,7 @@ def test_identical_bytes_across_python_hash_seeds():
 
 
 def test_annotate_imports_nothing_outside_the_stdlib():
-    """The floor must stay a dependency-free appliance part: OpenMoxie's engine pulls
-    `unidecode` and a 170 KB ML data table, which is exactly what we declined to vendor."""
+    """The floor stays dependency-free (no `unidecode`, no ML table, as OpenMoxie's pulls)."""
     import moxie_sdk.automarkup as am
     src = open(am.__file__).read()
     code = "\n".join(l for l in src.splitlines()
@@ -535,11 +490,8 @@ def test_annotate_imports_nothing_outside_the_stdlib():
         "annotate", "enabled", "dropped_ids", "reset_dropped"}
 
 
-# --------------------------------------------------------------------------- #
 # T10 — the budget, measured against THIS machine rather than against a constant
-# --------------------------------------------------------------------------- #
-#: A yardstick of the same kind of work as `annotate` (a regex sweep + rebuild), timed in
-#: the same interleaved loop so the ratio cancels machine and scheduler load.
+#: A yardstick of `annotate`'s kind of work, timed interleaved so the ratio cancels load.
 _CALIB_WORD = re.compile(r"[A-Za-z']+")
 
 
@@ -552,8 +504,7 @@ def _calibration_unit(line):
 
 
 def _interleaved_medians(subject, calibrate, n=400):
-    """Median cost of `subject` and `calibrate`, sampled ALTERNATELY in one loop so both
-    absorb the same scheduler noise (separate loops drift up to 38% apart under load)."""
+    """Medians of `subject` and `calibrate`, sampled ALTERNATELY to share scheduler noise."""
     subj, calib = [], []
     for i in range(n):
         t0 = time.perf_counter()
@@ -569,15 +520,9 @@ def _interleaved_medians(subject, calibrate, n=400):
 
 
 def test_the_floor_costs_about_what_one_pass_over_the_line_costs():
-    """The floor may not become the expensive part of the per-chunk hot path.
-
-    A RATIO to an in-run calibration at the MEDIAN, not an absolute p95 (a loaded box gave
-    7.3 ms p95 vs 0.34 ms median on unchanged code). Measured ratio 0.86-0.91 under load,
-    so 2.0 is ~2.2x headroom; an injected 0.5 ms sleep reads 6.4-8.8.
-
-    Not caught here: a single small `open()` (~10%, inside the noise band) — see
-    `test_the_hot_path_opens_no_file_and_reaches_no_socket`.
-    """
+    """T10: the floor is not the expensive part of the per-chunk hot path. A median RATIO
+    to an in-run calibration (p95 measures the box): ~0.9 measured, 2.0 budget, an
+    injected 0.5 ms sleep reads 6+. Tiny I/O is the next test's job."""
     line = ("I love that you asked me about the stars tonight, because they are my very "
             "favourite thing in the whole wide sky, and I think about them a lot when it "
             "gets dark outside. Some of them are far older than the Earth that you and I "
@@ -597,10 +542,8 @@ def test_the_floor_costs_about_what_one_pass_over_the_line_costs():
 
 
 def test_the_hot_path_opens_no_file_and_reaches_no_socket():
-    """"A regression that adds I/O fails loudly", asserted directly rather than by timing:
-    exact, instant and load-immune. `pytest.fail` raises `BaseException`, so a caller that
-    swallows `Exception` to fall back to the floor cannot hide it.
-    """
+    """Added I/O fails loudly, trapped directly (load-immune). `pytest.fail` raises
+    `BaseException`, so a fallback that swallows `Exception` cannot hide it."""
     import builtins
     import socket
     line = "Tell me about the stars tonight, because they are my favourite thing!"
@@ -617,35 +560,23 @@ def test_the_hot_path_opens_no_file_and_reaches_no_socket():
         "the floor still has to do its job with the trap installed"
 
 
-# --------------------------------------------------------------------------- #
 # T9 — the SIM is the only renderer we can assert against
-# --------------------------------------------------------------------------- #
 #: Ids the browser SIM does not animate, each with the reason it is still fine to emit.
 ROBOT_ONLY = {
-    "Bht_Sign_off": "bridge.js aliases it onto Bht_Gesture_Greet (a goodbye wave)",
+    "Bht_Sign_off": "bridge/body.js aliases it onto Bht_Gesture_Greet (a goodbye wave)",
 }
 
 
 def test_every_id_the_corpus_emits_is_one_the_sim_renders():
-    """No hardware has ever played our markup, so the browser SIM is the only renderer we
-    can assert against (docs/architecture/sim-as-a-client.md). Every id the floor can put
-    on the wire must reach a real branch of `sim/web/bridge.js`, or be listed above."""
-    bridge = open(os.path.join(REPO, "sim", "web", "bridge.js")).read()
+    """The SIM is the only renderer we can assert against (sim-as-a-client.md): every id the
+    floor can emit must reach a real branch of `sim/web/bridge/`, or be listed above."""
+    bridge = script_group("bridge")
     seen = set()
     for line in CORPUS:
-        markup = annotate(line, icons=True, sfx=True)
-        for token in ("Gesture_", "Bht_"):
-            at = 0
-            while True:
-                at = markup.find("+" + token, at)
-                if at < 0:
-                    break
-                end = markup.index("+", at + 1 + len(token))
-                seen.add(markup[at + 1:end])
-                at = end
+        seen |= set(re.findall(r"\+((?:Gesture_|Bht_)[^+]*)\+",
+                               annotate(line, icons=True, sfx=True)))
     assert seen, "the corpus emitted no behaviour ids at all"
     missing = [i for i in sorted(seen)
                if f'"{i}"' not in bridge and i not in ROBOT_ONLY]
     assert not missing, missing
-    for value in vocab.ICON_VALUES:
-        assert value in bridge or True     # icons render generically as named badges
+    # Icons need no per-value branch: the SIM renders every ICON_VALUES entry as a named badge.

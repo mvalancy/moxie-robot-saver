@@ -227,13 +227,10 @@ if (cards) {
 }
 
 // ---- 7. the printed sheet: modules on paper, read back and decoded (P0-c) ----
-// One layer below section 6: the browser's qrcode.js builds each card's module matrix at
-// the sheet's pinned version/EC level, and `sim/tests/helpers_qr_matrix.py` decodes it the
-// way a scanner does before the real `launch_cards.decode`. The matrices are deliberately
-// NOT compared byte for byte: segno and qrcode.js legitimately differ in terminator/pad
-// placement, so the invariant is semantic. Ceiling: the ink, not the optics.
-// Exactly one legitimate skip — no `segno` (the SDK's `cards` extra), reported BY NAME;
-// every other failure is red.
+// qrcode.js builds each card's module matrix at the pinned version/EC level, and
+// `sim/tests/helpers_qr_matrix.py` decodes it as a scanner would before `launch_cards.decode`.
+// Semantic, not byte-for-byte: segno and qrcode.js legitimately differ in pad placement.
+// The one legitimate skip (no `segno`) is reported BY NAME; every other failure is red.
 const SHEET_SCRIPT = [
   "import sys, json",
   "sys.path[:0] = ['mqtt', 'sim/tests']",
