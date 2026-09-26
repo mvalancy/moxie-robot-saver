@@ -122,8 +122,8 @@ def _shipped_templates():
 SHIPPED = _shipped_templates()
 
 #: The corpus has to be non-empty or every parametrized test below silently passes.
-#: 4 is what `content_modules/` carries on 2026-09-02 (starter: opener + prompt;
-#: memory_chat: opener + two prompts = 5 strings, of which the openers are one each).
+#: 4 is a floor under what `content_modules/` carries (starter: opener + prompt;
+#: memory_chat: opener + two prompts).
 MIN_SHIPPED_TEMPLATES = 4
 
 

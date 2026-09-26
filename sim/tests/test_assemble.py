@@ -20,24 +20,11 @@ sys.path.insert(0, os.path.join(MQTT, "supervisor"))
 def _no_env_escapes_this_file():
     """Every `MOXIE_*` variable this file touches, put back when the file is done.
 
-    `_fresh_config` below DELETES `MOXIE_LLM_BASE_URL`, `MOXIE_LLM_API_KEY`,
-    `MOXIE_VOICE_BASE_URL`, `MOXIE_APP` and `MOXIE_STT` from the process, and sets
-    `MOXIE_SKIP_DOTENV=1` so the deletions survive a reload. That is exactly right *here*
-    — it is what makes "nothing configured" mean nothing configured (playbook rule 20) —
-    and it used to be permanent, because nothing put any of it back.
-
-    On a machine with credentials that made the rest of the session a different machine.
-    `test_live_gateway_turn_e2e.py` boots a real supervisor with `MOXIE_APP=llm` and
-    inherits the brain endpoint and key from `os.environ`; by the time it ran, this file
-    had deleted both and set the one flag that stops the subprocess recovering them from
-    `mqtt/.env`. `config.require_llm_base_url` then exits at assembly, the supervisor
-    never comes up, and all four of that module's tests ERROR — while passing perfectly
-    when the file is run on its own. CI never saw it (no `.env`, so the live tier skips).
-
-    So the isolation stays and the escape closes: snapshot at module setup, restore at
-    module teardown. Module scope rather than function scope on purpose — several tests
-    here set a variable, call `_fresh_config`, and clean up in their own `finally`; a
-    per-test restore would race that, and the bug was never about this file's internals.
+    `_fresh_config` DELETES the brain/voice endpoints, key, `MOXIE_APP` and `MOXIE_STT`
+    and sets `MOXIE_SKIP_DOTENV=1` — right here (rule 20), but once permanent: a later
+    `test_live_gateway_turn_e2e.py` supervisor inherited neither endpoint nor key and
+    errored. Module scope, because several tests here clean up in their own `finally` and
+    a per-test restore would race them. `test_env_hygiene_live_suites.py` guards this.
     """
     before = {k: v for k, v in os.environ.items() if k.startswith("MOXIE_")}
     yield
@@ -49,14 +36,8 @@ def _no_env_escapes_this_file():
 
 def _fresh_config(env):
     """Import config with a controlled environment (echo app, no voice/whisper).
-
-    `MOXIE_SKIP_DOTENV` is what makes the popping below MEAN anything. `config._load_env`
-    reads `mqtt/.env` with `setdefault` at import, so on a machine that has a real one —
-    every developer's; never CI's, never a worktree's, because the file is git-ignored —
-    a reload put back every variable this function just deleted, and these tests asserted
-    nothing (orchestration playbook rule 20). The flag is checked before the file is
-    opened, so "unset" is unset. See `test_config_dotenv.py`.
-    """
+    `MOXIE_SKIP_DOTENV` makes the pops below mean "unset" even on a machine with a real
+    `mqtt/.env` (rule 20; see `test_config_dotenv.py`)."""
     os.environ["MOXIE_SKIP_DOTENV"] = "1"
     for k in ("MOXIE_APP", "MOXIE_VOICE_BASE_URL", "MOXIE_STT",
               "MOXIE_LLM_API_KEY", "MOXIE_LLM_BASE_URL",
@@ -135,10 +116,8 @@ def test_assemble_builds_runtime_with_configured_app():
 
 
 # --- the gateway voice: one env var, plus a standby behind it ----------------
-# `MOXIE_VOICE_BASE_URL` is the whole switch (live on our LiteLLM gateway since
-# 2026-09-02). These stay hermetic by swapping the constructor the config calls, so they
-# run in the openai-less venv too — the real endpoint is exercised in
-# sim/tests/test_live_gateway_tts.py.
+# `MOXIE_VOICE_BASE_URL` is the whole switch. Hermetic by swapping the constructor config
+# calls (runs without openai); the real endpoint is `test_live_gateway_tts.py`.
 
 def _stub_voice(monkeypatch, calls):
     """Replace moxie_sdk.tts.make_voice_synthesizer with a recorder + a dummy engine."""

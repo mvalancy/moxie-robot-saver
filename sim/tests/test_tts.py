@@ -38,7 +38,7 @@ def test_strip_markup_leaves_spoken_text():
 
 def test_strip_markup_drops_emoji_so_piper_never_reads_them_aloud():
     """A TTS engine speaks an emoji's Unicode NAME — Piper said "grinning face"
-    mid-sentence in the PR #12 talk-loop run. LLMs sprinkle them, so they come off
+    mid-sentence in a live talk-loop run. LLMs sprinkle them, so they come off
     before synthesis. Ordinary punctuation must survive untouched."""
     assert strip_markup("Sure! \U0001F600 Let's play.") == "Sure! Let's play."
     assert strip_markup("I love it \u2764\ufe0f\u2b50") == "I love it"

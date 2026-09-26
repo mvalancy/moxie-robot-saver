@@ -1,28 +1,16 @@
-"""The browser suites must actually RUN in CI — for months they silently did not.
+"""The browser suites must actually RUN in CI.
 
-`sim/browser_harness.mjs::loadPuppeteer` imports `puppeteer`, then falls back to scanning
-`~/Code/*/node_modules/puppeteer` — a developer-machine path that cannot exist on a GitHub
-runner. `skipper()` then called `process.exit(0)`. No workflow file installed puppeteer. So
-nine suites printed "skipped — puppeteer not found" on every run and the job stayed GREEN.
+`sim/browser_harness.mjs::loadPuppeteer` falls back to a developer-machine path, and its
+`skipper()` exits 0. With no workflow installing puppeteer, nine suites printed "skipped —
+puppeteer not found" on every run and the job stayed GREEN — including
+`test_typed_turn.mjs` (a real peak-amplitude assertion so a silent clip cannot pass) and
+`test_mic_spend.mjs` (a refused microphone must not spend the gateway). These tests are
+the ratchet.
 
-That deleted the repo's best guards without anyone seeing it. `test_typed_turn.mjs` exists
-*because* PR #82 shipped 770 assertions that all read a file while Web Audio was stubbed; its
-teeth are a real peak-amplitude assertion so a silent clip cannot pass. It had never executed
-in CI. Neither had `test_mic_spend.mjs`, which counts `/api/chat` calls to prove a refused
-microphone does not spend the gateway the owner's video game shares.
-
-A green badge over assertions that never fired is exactly what #82 taught, one layer up.
-These two tests are the ratchet.
-
-**Why this file is now PER-JOB.** The fix above (PR #120) loaded eleven Chrome-launching
-suites onto `sil`, which already runs ~5,000 pytest tests against a real mosquitto broker;
-the job went from ~7–8 min to ~17 min and started reddening unrelated tests through load
-contention (a documentation-only PR failed twice, on two different SIL tests that pass
-locally in under a second). The suites therefore moved to their own `browser` job, running
-in parallel. That restructure breaks a file-wide ordering check *silently*: with two jobs,
-`sil`'s install step "precedes" `browser`'s dispatches in byte order while doing absolutely
-nothing for them, so the old assertion would have gone on passing while meaning nothing.
-Every check below now resolves a dispatch to the job it lives in.
+PER-JOB, because the Chrome suites run in their own `browser` job (on `sil` they caused
+load contention that reddened unrelated tests). With two jobs a file-wide ordering check
+passes meaninglessly — `sil`'s install "precedes" `browser`'s dispatches in byte order
+while doing nothing for them — so every check resolves a dispatch to its own job.
 """
 import os
 import re
@@ -103,13 +91,9 @@ def test_the_scan_finds_both_the_suites_and_the_workflow():
 
 # --------------------------------------------------------- every suite is actually wired --
 def test_every_browser_suite_is_dispatched_by_the_fast_tier():
-    """A suite that exists and runs nowhere is the original bug in miniature.
-
-    The exemption list is `KNOWN_UNRUN` in `test_ci_test_coverage.py` — deliberately the
-    SAME list, imported rather than restated, so a file cannot be exempt from one guard and
-    forgotten by the other, and so the list still may only shrink (that file asserts both
-    directions of it).
-    """
+    """A suite that exists and runs nowhere is the original bug in miniature. Exemptions
+    are `test_ci_test_coverage.KNOWN_UNRUN`, imported rather than restated, so one list
+    governs both guards and may only shrink."""
     dispatched = set(_dispatch_map())
     exempt = {os.path.basename(p) for p in KNOWN_UNRUN}
     missing = sorted(set(_browser_suites()) - dispatched - exempt)
@@ -124,15 +108,9 @@ def test_every_browser_suite_is_dispatched_by_the_fast_tier():
 
 # ------------------------------------------- the install is in the SAME job, and before --
 def test_ci_installs_a_browser_before_it_runs_any_browser_suite():
-    """An install step must come BEFORE the first browser suite **of its own job**.
-
-    The original bug was subtle in exactly this way: the workflow DID install a browser
-    (`playwright install chromium`), but ~40 lines *after* every browser step had already
-    run and skipped. Order is half the assertion; JOB IDENTITY is the other half, and it
-    only became load-bearing when the suites moved to a second job — a `npm install
-    puppeteer` in `sil` does nothing whatsoever for a `node sim/test_csp.mjs` in `browser`,
-    however early in the file it appears.
-    """
+    """An install step must come BEFORE the first browser suite **of its own job**: the
+    original workflow DID install a browser, ~40 lines after every browser step had
+    skipped, and an install in `sil` does nothing for a suite in `browser`."""
     jobs = _jobs()
     offenders = []
     for suite, sites in sorted(_dispatch_map().items()):

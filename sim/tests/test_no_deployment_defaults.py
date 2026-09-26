@@ -1,33 +1,25 @@
-"""
-THE CLASS: no hostname belonging to a specific deployment may be a default in shipped code.
+"""THE CLASS: no hostname belonging to a specific deployment may be a default in shipped code.
 
-`mqtt/config.py` shipped `https://<the maintainer's gateway>/v1` as the fallback for
-`MOXIE_LLM_BASE_URL`, so a stranger who cloned this public repo got a supervisor pointed
-at someone else's server. Fixing that one line fixes one line. This file forbids the
-*shape* of it anywhere in the code and the configuration this repo ships:
+A fallback `MOXIE_LLM_BASE_URL` pointing at the maintainer's gateway once sent every
+stranger's clone at someone else's server. This forbids the *shape* everywhere the repo
+ships code or configuration:
 
-  * Python — every string literal that is not a docstring, in `mqtt/`, `server/`,
-    `scripts/`, `tools/` and the non-test parts of `sim/`;
+  * Python — every non-docstring string literal in `mqtt/`, `server/`, `scripts/`,
+    `tools/` and the non-test parts of `sim/`;
   * JavaScript — every line of `functions/` and `sim/web/` with comments removed
-    (`sim/web/vendor/` excluded: those are third-party bundles we do not author);
-  * the two compose files and `.env.example` — VALUES and `${VAR:-default}` defaults only,
-    which is where the same defect lived a second and third time.
+    (`sim/web/vendor/` excluded: third-party bundles);
+  * the two compose files and `.env.example` — VALUES and `${VAR:-default}` defaults only.
 
-**Comments and docstrings are stripped before scanning** (playbook rule 17: a guard that
-matches over a whole file fires on the prose explaining it — and the prose here has to be
-free to name the gateway it is warning about, as the docstring you are reading does).
+Comments and docstrings are stripped first: a whole-file guard would fire on the prose
+explaining it, and that prose must be free to name what it warns about.
 
-What is allowed: this machine (`127.0.0.1`, `localhost`, `0.0.0.0`,
-`host.docker.internal`), a single-label name with no dot (a compose service such as
-`http://supervisor:8931/status` cannot be a public DNS name), the reserved-for-docs
-suffixes of RFC 2606/6761 (`*.example`, `example.com`, `*.invalid`, `*.test`), and one
-named exception with its reason: `huggingface.co`, the public model registry the Piper
-voice is downloaded from — a registry anyone can fetch from, in the same class as PyPI,
-not anybody's appliance.
+Allowed: this machine (`127.0.0.1`, `localhost`, `0.0.0.0`, `host.docker.internal`), a
+single-label name (a compose service cannot be a public DNS name), the RFC 2606/6761
+documentation suffixes (`*.example`, `example.com`, `*.invalid`, `*.test`), and one named
+exception: `huggingface.co`, the public registry the Piper voice downloads from.
 
-The negative controls at the bottom plant each violation and require the checker to find
-it, and `test_the_scanners_actually_scanned_something` fails if the file lists ever come
-back empty — a guard that scans nothing passes forever.
+Negative controls plant each violation and require the checker to find it, and
+`test_the_scanners_actually_scanned_something` fails if a file list comes back empty.
 """
 import ast
 import os
@@ -51,23 +43,11 @@ _NOWHERE = re.compile(
 #: entry here is a decision someone has to argue for in review, which is the point.
 ALLOWED_HOSTS = {
     "huggingface.co": "the public Piper voice registry (a model download, like PyPI)",
-    # Added 2026-09-05 with the Turnstile bot control, and it is the `huggingface.co`
-    # class rather than the "somebody's appliance" class this file exists to catch:
-    #
-    #   * it is a PLATFORM ENDPOINT, not a deployment. Every Turnstile user on earth
-    #     posts to the same `/turnstile/v0/siteverify` and loads the same
-    #     `/turnstile/v0/api.js`; there is no per-account host and nothing here that
-    #     could name ours.
-    #   * IT CANNOT BE MADE CONFIGURABLE, which is the usual remedy this file pushes
-    #     towards. A challenge is only valid when the widget script is served from this
-    #     host, and the token can only be verified here — a `DEMO_TURNSTILE_URL`
-    #     variable would be a variable with exactly one legal value, and pointing it
-    #     anywhere else would silently switch the bot control off.
-    #   * the thing this file actually guards against is untouched: the SITEKEY and the
-    #     SECRET are deployment config and appear nowhere in the tree. The sitekey
-    #     reaches the browser from `/api/health` at runtime (see
-    #     `functions/api/_lib/env.js::publicTurnstile`), and `sim/test_turnstile.mjs`
-    #     §10 asserts no shipped page or script carries one.
+    # Turnstile: a PLATFORM endpoint identical for every user (no per-account host), and
+    # it cannot be made configurable — a challenge is only valid served from this host,
+    # so a URL variable would have one legal value and anything else silently disables
+    # the bot control. The sitekey/secret (the deployment config) appear nowhere in the
+    # tree; `sim/test_turnstile.mjs` asserts no shipped page carries one.
     "challenges.cloudflare.com":
         "Cloudflare Turnstile's own widget + siteverify endpoint — a platform endpoint "
         "identical for every user of the product, and one that cannot be substituted: a "
@@ -153,15 +133,9 @@ _TRAILING_COMMENT = re.compile(r"(?:^|\s)#.*$")
 def config_values(text: str) -> list:
     """The right-hand sides of a dotenv / compose-`environment:` file, comments dropped.
 
-    A `# note` — whole-line or trailing — is documentation and may name whatever it needs
-    to (`mqtt/.env.example` documents our own gateway that way, beside an EMPTY value). A
-    VALUE, including a `${VAR:-default}` default, is what a deployment actually runs with,
-    and that is what this guard is about.
-
-    (Trailing comments are dropped for SCANNING only. Whether the readers of these files
-    also drop them is a different question with a different answer per file — docker
-    compose does not, which is why `test_compose.py::test_env_example_has_no_trailing_comments`
-    forbids them in the root `.env.example` — and it is not this guard's business.)
+    A `# note` is documentation and may name anything; a VALUE (including a
+    `${VAR:-default}` default) is what a deployment runs with. Trailing comments are dropped
+    for SCANNING only — whether each file's reader drops them is `test_compose.py`'s concern.
     """
     values = []
     for line in text.splitlines():
@@ -175,17 +149,9 @@ def config_values(text: str) -> list:
     return values
 
 
-#: Directory names that are never OUR shipped code, pruned from the walk below.
-#:
-#: `.venv` / `site-packages` / `build` / `dist` / `.eggs` joined the list on 2026-09-05, and
-#: the trigger was a recipe this repo hands to its own agents: `cd mqtt && python3 -m venv
-#: .venv && .venv/bin/pip install build && python -m build` — the standard "does the SDK
-#: still package?" check. It leaves `mqtt/.venv/` and `mqtt/build/` behind (both git-ignored,
-#: so nothing else notices), and this guard then walked pip's vendored urllib3, rich and
-#: pygments and reported 37 files' worth of `github.com`, `numpy.org` and
-#: `urllib3.readthedocs.io` as shipped deployment defaults. One red test, zero defects, and
-#: the accusation was against third-party code we do not ship. `.gitignore` already knows
-#: all five names; this list is that knowledge, applied to the walk.
+#: Directory names that are never OUR shipped code, pruned from the walk below — the
+#: build/venv names included, because the standard `python -m build` packaging check
+#: leaves git-ignored `mqtt/.venv/` and `mqtt/build/` behind, full of third-party URLs.
 NOT_OUR_CODE = ("node_modules", "__pycache__", "docs-bundle", "vendor",
                 ".venv", "site-packages", "build", "dist", ".eggs")
 

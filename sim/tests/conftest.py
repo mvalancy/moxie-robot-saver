@@ -38,49 +38,22 @@ def pytest_addoption(parser):
     parser.addoption("--moxie-campaign-state-file", default="", metavar="PATH")
 
 # --------------------------------------------------------------------------- #
-# The dotenv fence — the suite decides ONCE, here, whether a deployment's
-# `mqtt/.env` is visible to it. Everything below happens at conftest *import*,
-# which is the only moment early enough to matter.
+# The dotenv fence: decided ONCE, at conftest import, before anything imports `config`.
 # --------------------------------------------------------------------------- #
 #
-# Playbook rule 20 found that a git-ignored `mqtt/.env` refills variables a test
-# deleted, so "nothing is configured" silently became "whatever this developer
-# configured" — invisible to CI and to every worktree, because that is exactly
-# where the file does not exist. The opt-out added for it, `MOXIE_SKIP_DOTENV`,
-# was then set inside each affected test helper. **That does not work, and this
-# block exists because it does not work.**
+# `config._load_env` promotes every key of a git-ignored `mqtt/.env` into `os.environ`
+# with `setdefault` on the FIRST `import config` of the session, permanently. A per-test
+# `MOXIE_SKIP_DOTENV` is therefore a first-import-wins switch that arrives too late, and
+# a denylist of variable names never covers the next knob — either way a developer's
+# deployment silently decides what the hermetic suite asserts, and a local run stops
+# being the CI run. So the fence goes here, the one file pytest imports before any test.
 #
-# `config._load_env` loads the file with `os.environ.setdefault(...)`. The first
-# `import config` anywhere in the session therefore promotes every key in the
-# file to a real environment variable, permanently — nothing ever removes them.
-# From that instant `MOXIE_SKIP_DOTENV` is a no-op: it stops the *file* being
-# re-read, and the values are no longer coming from the file. Measured on
-# 2026-09-05 with a fixture dotenv: `test_assemble.py` and `test_voice_settings.py`
-# pass when run ALONE (their helper sets the flag before anything else imports
-# `config`) and fail in the full suite (something imported `config` first). So the
-# flag is a **first-import-wins** switch that every existing caller sets too late,
-# and whether a given test asserts anything depends on collection order.
-#
-# The second, independent leak in the same fix: those helpers delete a
-# hand-maintained LIST of variable names. `test_assemble._fresh_config` lists nine
-# and `mqtt/.env.example` documents twenty-five, so `MOXIE_PIPER_MODEL` — absent
-# from the list — still reached `build_synthesizer()` and the "no voice configured"
-# assertion tested a machine with a voice. A denylist that must enumerate every
-# future knob is not a fence.
-#
-# Both are fixed by deciding before the first import instead of after it, in the
-# one file pytest guarantees to import before it collects anything. With this,
-# a local run and a CI run are the same run — which is the actual goal: a baseline
-# nobody can reproduce cannot catch a regression.
-#
-# It is deliberately NOT unconditional. Rule 20 was found *by* running the suite
-# against a real dotenv, and a fence that made that impossible would close the
-# only door the defect ever walked through. So an explicit opinion always wins:
+# An explicit opinion still wins, because running against a real dotenv is how this
+# class of defect is found:
 #   * `MOXIE_SKIP_DOTENV=0 pytest sim/tests`   → run it as this deployment sees it
 #   * `MOXIE_DOTENV=<file> pytest sim/tests`   → run it against a fixture
-# and `test_dotenv_cannot_perturb_the_suite.py` uses the second of those to prove,
-# in CI and with a throwaway file, that the fence is real and that removing it
-# turns the suite red. Never point either at a developer's own `mqtt/.env`.
+# `test_dotenv_cannot_perturb_the_suite.py` uses the second to prove the fence is real.
+# Never point either at a developer's own `mqtt/.env`.
 _SKIP_DOTENV = "MOXIE_SKIP_DOTENV"
 _DOTENV_PATH = "MOXIE_DOTENV"
 if _SKIP_DOTENV not in os.environ and _DOTENV_PATH not in os.environ:
@@ -117,11 +90,8 @@ def _free_port():
 
 @pytest.fixture(autouse=True, scope="session")
 def isolated_data_dir(tmp_path_factory):
-    """Keep the runtime's durable store (`moxie_sdk/store.py`) out of the working tree.
-
-    The supervisor persists per-robot state (mentor behaviors) under `MOXIE_DATA_DIR`,
-    default `mqtt/data/`. Point it at a throwaway directory for the whole test session so
-    the suite stays hermetic and never leaves files in the repo."""
+    """Point `MOXIE_DATA_DIR` (the runtime's durable store, default `mqtt/data/`) at a
+    throwaway directory for the session, so the suite never writes into the repo."""
     prev = os.environ.get("MOXIE_DATA_DIR")
     os.environ["MOXIE_DATA_DIR"] = str(tmp_path_factory.mktemp("moxie-data"))
     yield os.environ["MOXIE_DATA_DIR"]
@@ -131,10 +101,8 @@ def isolated_data_dir(tmp_path_factory):
         os.environ["MOXIE_DATA_DIR"] = prev
 
 
-#: `helpers_runtime.LIVE_KEYS`, imported once and lazily. Lazily because importing that
-#: module pulls in `moxie_sdk` and therefore `config`, and this file's whole subject is
-#: which import of `config` happens first — so the fixture below reaches for it when a
-#: test is about to run, long after the block at the top of this file has decided.
+#: `helpers_runtime.LIVE_KEYS`, imported lazily: that module imports `config`, which
+#: must not happen before the fence above has decided.
 _LIVE_KEYS = None
 
 
@@ -149,41 +117,19 @@ def _live_keys():
 
 @pytest.fixture(autouse=True)
 def hermetic_tier_sees_no_credentials(request):
-    """The second half of the fence — the one the block at the top of this file cannot do.
+    """The second half of the fence: hide live credentials from every hermetic test.
 
-    There are TWO dotenv loaders. `config._load_env` is fenced above, before the first
-    import. `helpers_runtime.load_repo_dotenv` is the other one, and it deliberately is
-    **not** fenced: ten `test_live_*.py` modules call it at import to find a real key,
-    and a fence there would turn every one of them into a silent skip — the exact
-    regression PR #157 was opened to close, and a green run that tested nothing.
+    `helpers_runtime.load_repo_dotenv` is deliberately NOT fenced — the `test_live_*.py`
+    suites call it at import to find a real key, and fencing it would turn them into
+    silent skips. It is narrowed instead to `LIVE_KEYS` (credentials, endpoints, model
+    names). But a credential and an endpoint ARE what "is a gateway configured?" means
+    (`MOXIE_STT=auto` resolves to the gateway when both are present), so a hermetic test
+    must not see even those. Live suites read their credentials at IMPORT, before any
+    fixture runs; hermetic tests read the environment while they run — so the keys stay
+    in `os.environ` for collection and are hidden for the duration of each non-live test.
 
-    So that loader was narrowed instead (`LIVE_KEYS`): a deployment's `mqtt/.env` can now
-    export credentials, endpoints and model names, and nothing else — no
-    `MOXIE_ALLOW_UNVERIFIED_BOTS`, no `MOXIE_APP`, no `MOXIE_STT`. That removed 16 of the
-    21 tests a maximal dotenv used to break. The remaining five cannot be fixed there, and
-    it is worth being clear about why: a credential and an endpoint **are** what "is a
-    gateway configured?" means. `MOXIE_STT=auto` resolves to the gateway exactly when an
-    STT URL and a key are present, so `test_assemble.py`'s "auto is None without whisper"
-    and three `test_voice_settings.py` defaults still moved — on the credentials the live
-    tier cannot do without. Narrowing further would take the key away from the live suites;
-    narrowing less leaves hermetic tests reading a developer's gateway.
-
-    The way out is that those are different tests. A live suite reads its credentials at
-    IMPORT, into module constants, before any fixture runs; a hermetic test reads the
-    environment while it runs. So the credentials stay in `os.environ` for collection and
-    are hidden for the duration of every non-live test. Together the two mechanisms are
-    total: the allowlist bounds what a dotenv can put into the process at all, and this
-    hides exactly that bound set from everything hermetic — so a hermetic test sees
-    nothing of the file, which is what makes a local run and a CI run the same run.
-
-    Deliberately keyed on the filename rather than a marker: `test_live_*` is already the
-    convention `test_ci_workflows.py` enforces for "this suite needs credentials", so
-    there is one definition of a live suite and not two. `test_env_hygiene_live_suites.py`
-    is hermetic despite its name and is correctly treated as such — its own docstring
-    explains why it refuses the prefix.
-
-    Restores whatever it removed, so a suite that asserts a module left the environment
-    as it found it still sees a symmetric picture.
+    Keyed on the `test_live_` filename prefix, the one definition of a live suite that
+    `test_ci_workflows.py` already enforces. Restores what it removed afterwards.
     """
     if Path(str(request.node.path)).name.startswith("test_live_"):
         yield
@@ -245,13 +191,10 @@ def browser():
         b.close()
 
 
-# Console errors that are benign for the STATIC site running with no backend.
-# The sim is designed to run bus-free (hand-control mode); when served from
-# localhost it probes the optional local sidecar/broker, and if nothing is
-# listening the browser's network layer emits `net::ERR_CONNECTION_REFUSED`
-# (unsuppressable from JS). That is expected here — CI runs the static server
-# only, no broker — so it is not a page defect. A genuinely missing asset is a
-# 404 ("...status of 404"), a different string, so real regressions still fail.
+# Console errors that are benign for the STATIC site with no backend: served from
+# localhost, the sim probes the optional sidecar/broker, and with nothing listening the
+# browser logs an unsuppressable `net::ERR_CONNECTION_REFUSED`. A genuinely missing asset
+# logs "...status of 404", a different string, so real regressions still fail.
 _BENIGN_CONSOLE = ("favicon", "ERR_CONNECTION_REFUSED")
 
 
@@ -261,27 +204,20 @@ def _is_benign(msg: str) -> bool:
 
 #: Chrome logs a 404 SUBRESOURCE as a console error, with no URL in the message text.
 _RESOURCE_404 = "status of 404"
-#: The one 404 the static test server is EXPECTED to produce: `sim/web/mode.js` probes the
-#: optional same-origin capability route `/api/health` on every load, and a static server
-#: has no Pages Functions behind it. That miss is the `offline` path working as designed
-#: (spec docs/architecture/backlog/live-sim-demo.md §6.3 — an absent route leaves the page
-#: byte-identical to the pre-Functions site), and it is the same category as
-#: ERR_CONNECTION_REFUSED above: an optional backend that is not there.
+#: The one EXPECTED 404: `sim/web/mode.js` probes the optional capability route
+#: `/api/health` on every load, and a static server has no Pages Functions behind it —
+#: the `offline` path working as designed (live-sim-demo.md §6.3).
 _CAPABILITY_PROBE = "/api/health"
 
 
 class ConsoleErrors(list):
-    """The console errors a test should care about.
+    """The console errors a test should care about, computed at ACCESS time.
 
-    A `list` so the existing assertion sites keep working unchanged, but the view is
-    computed at ACCESS time rather than at capture time — and that is the point. Whether
-    the capability probe's 404 line is benign depends on whether any OTHER 404 was seen,
-    which is only knowable once the page has finished loading. Filtering as each message
-    arrived would depend on the console event and the response event racing in the right
-    order; filtering when a test asserts cannot.
-
-    A genuinely missing asset therefore still fails: its 404 lands in `unexpected` and the
-    suppression switches off for the whole page, so every 404 line is reported.
+    Whether the capability probe's 404 line is benign depends on whether any OTHER 404
+    was seen, which is only knowable once the page has loaded; filtering at capture
+    would race the console and response events. A real missing asset lands in
+    `unexpected`, which switches the suppression off so every 404 line is reported.
+    A `list` subclass so existing assertion sites keep working.
     """
 
     def __init__(self, raw, unexpected):

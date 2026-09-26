@@ -1,18 +1,13 @@
 """
 Live content-module end-to-end — the shipped module, the real runtime, the real brain.
 
-`test_live_gateway.py` proves the gateway answers and that a turn survives the
-runtime. This file proves the thing DoD criterion 6 actually asks for: that
-`mqtt/content_modules/starter.json` — the module we ship, not a test fixture — driven
-by a REAL gateway completion, comes back on the wire as a **spec-conformant**
-`RemoteChatResponse` (result SUCCESS, non-empty `output.text` AND `output.markup`,
-`event_id` echoed), and that a `globals[]` entry short-circuits the turn **without
-spending an LLM call at all**.
+DoD criterion 6: `mqtt/content_modules/starter.json` (the shipped module, not a fixture),
+driven by a REAL gateway completion, comes back as a **spec-conformant**
+`RemoteChatResponse` (SUCCESS, non-empty `output.text` AND `output.markup`, `event_id`
+echoed), and a `globals[]` entry short-circuits the turn **without an LLM call**.
 
-Runs only when a gateway key is present (`MOXIE_LLM_API_KEY` / `LITELLM_MASTER_KEY`,
-e.g. from the git-ignored `mqtt/.env`); skips cleanly otherwise so CI stays green.
-Deliberately frugal: ONE live completion for the whole module — the global-handler
-test asserts the count stays at zero, so it costs nothing.
+Gateway-key only; skips otherwise. ONE live completion for the module — the
+global-handler test asserts the count stays at zero.
 """
 import json
 import os
