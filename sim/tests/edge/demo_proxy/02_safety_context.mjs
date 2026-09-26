@@ -61,19 +61,10 @@ import {
 /* =========================================================================== *
  * 8b. §4.1 — the floor cannot be walked past with an invisible character
  * =========================================================================== *
- * THE BUG THIS SECTION EXISTS FOR. `_lib/safety.js`'s `ALWAYS` stripped exactly four code
- * points (U+200B/C/D, U+FEFF). Everything else invisible reached the matcher intact, so
- * `"suicide"` blocked and the same word with a U+00AD SOFT HYPHEN or a U+2060 WORD JOINER
- * between each letter did NOT — while rendering identically to a reader. `self_harm` is the
- * FIRST blocking category and this floor runs BEFORE the gateway is called (§4.1), so one
- * pasted character defeated the whole pre-inference block on a live, child-facing demo.
- *
- * WHY THE TRIGGERS BELOW ARE THE MILD ONES. Every case here uses `suicide` /
- * `kill myself` — the same category, the same code path, the mildest phrasing that proves
- * the property. This repo is public and nothing is learned by writing a worse sentence.
- *
- * These run against `assess()` directly rather than through `/api/chat`: the route contract
- * (200, no ticket, no upstream call) is section 8's job and is not re-proved 60 times.
+ * The floor once stripped only four zero-width code points, so a U+00AD SOFT HYPHEN or a
+ * U+2060 WORD JOINER between letters defeated the pre-inference block while rendering
+ * identically. The triggers are deliberately the mildest phrasing of one category (this
+ * repo is public). Run against `assess()` directly: the route contract is §8's job.
  */
 {
   const safety = await import(join(repo, "functions", "api", "_lib", "safety.js"));
@@ -155,17 +146,11 @@ import {
   deep(safety.variants("s.u.i.c.i.d.e"), ["s.u.i.c.i.d.e", "suicide"],
        "the fourth variant is the de-punctuated form, and duplicates are not re-added");
 
-  // ---- THE FALSE-POSITIVE GUARD, and the reason the punctuation variant is the narrow
-  // one. A filter that blocks ordinary speech is its own failure: a child told "go talk to
-  // a grown-up" for saying something harmless is a real harm, not a safe default.
-  //
-  // The two sentences marked (*) are the ones that made the choice. The obvious transform
-  // — drop ALL non-alphanumerics — also deletes the boundary BETWEEN SENTENCES, folding
-  // `…what i want. To die of laughter…` onto `i want to die` and blocking it as self-harm.
-  // Requiring a letter or digit on both sides of the separator keeps every sentence
-  // boundary intact and still closes `s.u.i.c.i.d.e`. If either of these two ever starts
-  // blocking, the variant has been widened back to the version that was measured and
-  // rejected.
+  // ---- THE FALSE-POSITIVE GUARD: blocking ordinary speech is its own harm. The two (*)
+  // sentences are why the punctuation variant is narrow: dropping ALL non-alphanumerics
+  // folds `…what i want. To die of laughter…` into `i want to die`. Requiring a letter or
+  // digit on both sides of a separator keeps sentence boundaries and still closes
+  // `s.u.i.c.i.d.e`. If either starts blocking, the rejected wide variant is back.
   for (const text of [
     "that's what i want. To die of laughter would be great, honestly",   // (*)
     "i don't know what i want. To not be so shy would be nice",          // (*)

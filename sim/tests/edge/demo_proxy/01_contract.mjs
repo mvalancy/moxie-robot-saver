@@ -167,17 +167,11 @@ import {
   ok(!JSON.stringify(sent[0].opt.body).includes(KEY), "the key is not in the outbound body");
   eq(sent[0].url, BASE + "/chat/completions", "the upstream path is /chat/completions");
 
-  /* A configured persona replaces the default, and still sits at both ends.
-   *
-   * THE TRAILING COPY IS NO LONGER BYTE-IDENTICAL, and the assertion had to change shape
-   * rather than change number (2026-09-06). `chat.js` appends the expressive-envelope
-   * instruction to the SECOND system message, because a format rule is best obeyed when it
-   * is the last thing the model read. The security property this pair of checks exists for
-   * is unaffected and is what is now asserted: the persona is PRESENT at both ends, so a
-   * visitor's turn is bracketed by it and cannot be the last instruction in the prompt.
-   * Byte-equality was only ever a proxy for that, and the weaker-looking `startsWith` is
-   * the stronger check to write here — it would still fail if the trailing copy were
-   * dropped, replaced, or truncated. */
+  /* A configured persona replaces the default, and still sits at both ends. The trailing
+   * copy carries the envelope instruction appended after it (a format rule is obeyed best
+   * when read last), so `startsWith` asserts the security property — the visitor's turn is
+   * bracketed and cannot be the last instruction — and still fails if the copy is dropped,
+   * replaced or truncated. */
   fresh();
   await call(chat, "/api/chat", { text: "hi" }, null, { ...FULL, DEMO_PERSONA: "You are a test persona." });
   const up2 = JSON.parse(sent[0].opt.body);
@@ -447,13 +441,9 @@ import {
   eq(over.res.status, 503, "6 of 5 units: refused");
   eq(over.body.reason, "budget_exhausted", "…as budget_exhausted");
 
-  // The concurrency ceiling. `admit()` is the observable seam: hold four slots and the
-  // fifth request is `at_capacity` with §7's numbers on it.
-  //
-  // `DEMO_QUEUE_MAX_DEPTH: "0"` here on purpose. Since 2026-09-03 the default behaviour at
-  // the ceiling is to WAIT (block 13 proves that); zero is the documented escape hatch
-  // that restores the instant refusal, and pinning this block to it keeps it a test of the
-  // CEILING rather than of the queue, and keeps it instantaneous.
+  // The concurrency ceiling: hold four slots and the fifth is `at_capacity` with §7's
+  // numbers. `DEMO_QUEUE_MAX_DEPTH: "0"` restores the instant refusal (the default WAITS,
+  // block 13), keeping this a test of the CEILING, and instantaneous.
   fresh();
   const NOQ = { ...FULL, DEMO_QUEUE_MAX_DEPTH: "0" };
   const cfgNoQ = wire2.readConfig(NOQ);

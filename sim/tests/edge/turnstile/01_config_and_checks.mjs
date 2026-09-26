@@ -9,11 +9,8 @@ import {
 /* =========================================================================== *
  * 1. NOT CONFIGURED IS NOT ENFORCED (D4, and C5's fail-safe default)
  * =========================================================================== *
- * The property that keeps every branch preview and every self-hosted fork working. A
- * preview MUST be inert: Turnstile authorizes a hostname and all of its subdomains, and
- * `*.pages.dev` is not on this widget's list, so a challenge there could never pass. With
- * the Turnstile variables unset the check must be a synchronous no-op — not a lenient
- * check, not a check that phones home and forgives, but no call at all.
+ * Keeps previews and forks working: a preview hostname is not on the widget's list, so a
+ * challenge there could never pass. Unset variables mean NO call at all, not a lenient one.
  */
 {
   fresh();
@@ -21,12 +18,9 @@ import {
   eq(cfg.turnstile, false, "with no Turnstile variables, enforcement is OFF");
   eq(cfg.configured, true, "…and the gateway is still configured — the two are independent");
   eq(envlib.publicTurnstile(cfg), "", "…and no sitekey is published to the browser");
-  /* THE CASE THAT ACTUALLY TESTS `publicTurnstile`'s CONDITION: a deployment that HAS a
-   * sitekey but no secret. With the gateway-only config above, `turnstileSitekey` is empty
-   * anyway, so publishing unconditionally would still have produced "" — which is why
-   * mutation row D5 was NOT CAUGHT until this assertion existed. The browser must not be
-   * handed a sitekey the server is not going to check: it would render a widget, mint
-   * tokens, and have every one of them ignored. */
+  /* THE CASE THAT TESTS `publicTurnstile`'s CONDITION (mutation row D5): a sitekey but no
+   * secret. The browser must not be handed a sitekey the server will not check — it would
+   * render a widget and mint tokens that are all ignored. */
   const halfCfg = envlib.readConfig(Object.assign({}, GATEWAY, { DEMO_TURNSTILE_SITEKEY: SITEKEY }));
   eq(halfCfg.turnstileSitekey, SITEKEY, "a sitekey-only deployment has the sitekey in config…");
   eq(envlib.publicTurnstile(halfCfg), "",
@@ -61,11 +55,9 @@ import {
 /* =========================================================================== *
  * 2. HALF A PAIR IS A MISCONFIGURATION, NOT A PARTIAL CONTROL
  * =========================================================================== *
- * The same rule `ACCESS_VARS` already establishes for a Cloudflare Access service token,
- * and it is here because the two halves fail in opposite, equally silent directions: a
- * secret with no sitekey refuses every visitor (no browser can mint a token), and a
- * sitekey with no secret renders a widget nothing verifies — a bot control in appearance
- * only. Both read as unconfigured, which spends nothing.
+ * As with `ACCESS_VARS`: a secret with no sitekey refuses every visitor (no browser can
+ * mint a token); a sitekey with no secret renders a widget nothing verifies. Both read as
+ * unconfigured, which spends nothing.
  */
 {
   for (const [label, env, missing] of [
@@ -96,21 +88,10 @@ import {
   ok(cfg.missing.length === 0, "…with nothing missing");
 
   /* ---- AND `/api/health` ACTUALLY PUTS IT ON THE WIRE --------------------- *
-   * THE ONE GUARD IN THIS SLICE THAT HAD NO TEST AT ALL, and it is the load-bearing one:
-   * `/api/health` is the browser's ONLY source of the sitekey. `turnstile.js::sitekey()`
-   * reads `window.moxieMode.turnstile()`; `mode.js` assigns that variable in exactly one
-   * place (`applyEnvelope`), which has exactly one caller (`poll()`, the `/api/health`
-   * fetch). `note()` — the only thing that ever sees a `/api/chat` reply — is handed just
-   * `{reason, retry_after_s}`, so the copies of this field on the chat envelopes are the
-   * envelope's shape and NOT a second delivery path.
-   *
-   * Both of this file's existing probe calls passed an UNARMED env, so DELETING
-   * `health.js`'s `turnstile:` line left this suite green at 1886 checks — along with
-   * test_mode, test_cloud_transport, test_demo_proxy, test_env_hosted, test_typed_turn,
-   * test_mic_spend, test_api_headers, test_demo_tickets, test_demo_ears,
-   * test_fallback_coverage and test_bridge — while the live demo rendered no widget, sent
-   * no token, and answered `turnstile_failed` to every visitor on every turn under a LIVE
-   * badge. Mutation row H1 is this assertion's teeth. */
+   * `/api/health` is the browser's ONLY source of the sitekey (`mode.js::applyEnvelope`,
+   * called only from the health poll; chat envelopes carry the field for shape, not
+   * delivery). Deleting `health.js`'s `turnstile:` line once left every suite green while
+   * the live demo rendered no widget and refused every turn. Mutation row H1. */
   const armed = health.onRequestGet({ env: ARMED });
   const armedBody = JSON.parse(await armed.clone().text());
   await assertClean(armed, "health armed");
@@ -123,9 +104,8 @@ import {
 /* =========================================================================== *
  * 3. THE THREE MANDATORY CHECKS — each one, on its own
  * =========================================================================== *
- * Cloudflare's guide is explicit that `success: true` is not the whole answer. These are
- * asserted SEPARATELY so that a green run cannot be satisfied by two checks out of three:
- * each case below differs from the passing case in exactly one field.
+ * `success: true` is not the whole answer. Each case differs from the passing one in
+ * exactly one field, so two checks out of three cannot satisfy the suite.
  */
 {
   /* ---- the passing case, so the three refusals mean something ------------- */
@@ -154,13 +134,8 @@ import {
      "redirects are NOT followed — this request carries a secret in its body");
 
   /* ---- ON ALL THREE SHAPES, not only the successful one ------------------- *
-   * `publicTurnstile(cfg)` appears on the success envelope, the refusal envelope and the
-   * blocked envelope, and only the first was asserted — so removing it from either of the
-   * others left the suite green. The field is not a second delivery path (`mode.js` learns
-   * the sitekey from the `/api/health` poll and from nowhere else, which §2 pins); it is
-   * there because §3.2's envelope is ONE shape for every route and every outcome, and a
-   * field that appears only on success cannot later be relied on. An unasserted claim
-   * about the wire is not a claim about the wire. */
+   * §3.2's envelope is ONE shape for every outcome, so `publicTurnstile(cfg)` is asserted
+   * on the success, refusal and blocked envelopes alike. */
   fresh();
   P.plan = { turnstile: { body: { success: false, action: ACT.chat, hostname: HOSTNAME,
                                 "error-codes": ["invalid-input-response"] } } };
@@ -202,15 +177,9 @@ import {
   eq((await turn("hello")).body.reason, "turnstile_failed",
      "CHECK 2 — an ABSENT action is refused too (the field is required, not optional)");
 
-  /* THE COMPARISON IS EXACT, AND THAT IS ASSERTED SEPARATELY FROM ITS EXISTENCE.
-   *
-   * Check 3 always had two loosening cases (`.endsWith`, an empty hostname) and check 2
-   * had none — so both of the plausible relaxations of THIS line passed the whole suite
-   * green. Measured with the `startsWith` form applied: a verdict of
-   * `{success:true, action:"chat-newsletter", hostname:<ours>}` was SERVED, with a real
-   * gateway call. That is exactly the replay check 2 exists to close — a token minted by
-   * another widget flow on an authorized hostname becoming spendable on the expensive
-   * route — and it would have shipped green. Rows C2b/C2c are these two assertions' teeth. */
+  /* THE COMPARISON IS EXACT, asserted separately from its existence (rows C2b/C2c). With
+   * `startsWith`, a verdict for action `chat-newsletter` was SERVED: a token minted by
+   * another widget flow becoming spendable on the expensive route. */
   for (const [label, action] of [
     ["a PREFIX of ours (`chat-newsletter`) — a startsWith would serve it", "chat-newsletter"],
     ["a SUFFIX around ours (`x-chat`)", "x-chat"],
@@ -317,9 +286,8 @@ import {
 /* =========================================================================== *
  * 4. THE TWO REASONS ARE THE OPERATOR'S DIAGNOSIS (D8)
  * =========================================================================== *
- * "Our config is wrong" and "your token is bad" have opposite fixes, and the second
- * reason is the ONLY way the production secret gets validated without anyone reading it:
- * deploy, type one sentence, read the reason. This block pins the mapping code by code.
+ * "Our config is wrong" and "your token is bad" have opposite fixes; the reason is how the
+ * production secret is validated without reading it (deploy, type a sentence, read it).
  */
 {
   for (const [code, want] of [

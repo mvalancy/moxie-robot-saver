@@ -8,11 +8,8 @@ import {
 /* =========================================================================== *
  * 5. FAIL OPEN ON A TRANSPORT FAILURE — every shape of it
  * =========================================================================== *
- * The other half of the split, and the half a green suite would never notice going wrong:
- * a fail-open that quietly became a fail-closed takes the public demo down for every
- * visitor the moment a third-party endpoint has a bad ten minutes. Per-IP limits and the
- * unit budget already cap the spend, so the cost of failing open is bounded and the cost
- * of failing closed is the whole demo.
+ * A fail-open that became fail-closed would take the demo down whenever a third-party
+ * endpoint has a bad ten minutes. The spend is already capped, so failing open is bounded.
  */
 {
   for (const [label, p] of [
@@ -26,12 +23,9 @@ import {
     ["it answers a JSON array", { text: "[]" }],
     ["it answers `null`", { text: "null" }],
     ["it answers Cloudflare's own internal-error", { body: { success: false, "error-codes": ["internal-error"] } }],
-    /* THE ONE THAT LOOKS LIKE A VERDICT AND IS NOT. A 500 whose body happens to parse as
-     * `{"success": false}` is a Cloudflare failure wearing a verdict's clothes; without
-     * the `res.ok` check it would be read as "the visitor failed the challenge" and a
-     * Cloudflare outage would refuse every visitor. An earlier draft of this block had no
-     * such case, so deleting `if (!res.ok)` was NOT CAUGHT (mutation row D3c): a 500 with
-     * an EMPTY body simply threw in `res.json()` and fell open by accident. */
+    /* LOOKS LIKE A VERDICT AND IS NOT: a 500 whose body parses as `{"success": false}` is a
+     * Cloudflare failure, not a failed challenge (mutation row D3c — with an empty body the
+     * missing `res.ok` check fell open only by accident). */
     ["it answers 500 with a body that PARSES as a failed verdict",
      { status: 500, text: JSON.stringify({ success: false, "error-codes": ["invalid-input-response"] }) }],
   ]) {
@@ -54,22 +48,15 @@ import {
      500, "…while a sane override is honoured");
 
   /* ---- AND THE DEADLINE IS WIRED, not merely configured -------------------- *
-   * THE FAILURE THIS CATCHES IS A HANG, WHICH IS THE WORST ONE AVAILABLE HERE: the check
-   * runs with a concurrency slot held, so a siteverify that never answers would keep that
-   * slot — and everyone in the FIFO behind it — until the route's own 20 s timeout. A
-   * configured number nothing passes to `fetch` looks identical in every other assertion
-   * in this file, which is why mutation row D3e exists and why this stub HONOURS
-   * `opt.signal` rather than ignoring it the way a convenient stub would. */
+   * The check runs with a concurrency slot held, so a siteverify that never answers would
+   * keep the slot (and the FIFO behind it) for the route's 20 s timeout. The stub HONOURS
+   * `opt.signal`, so an unwired deadline hangs here (mutation row D3e). */
   fresh();
   const quick = Object.assign({}, ARMED, { DEMO_TURNSTILE_TIMEOUT_MS: "120" });
   P.plan = { turnstile: { hang: true } };
-  /* A REF'D TIMER, held only for the length of this one assertion, and it is not a hack —
-   * it is a property of `AbortSignal.timeout()` under node that has to be worked around
-   * HERE because it does not exist in the runtime the code ships to. Node's timeout signal
-   * uses an UNREF'D timer: with nothing else pending, the event loop drains and node exits
-   * `13` ("unsettled top-level await") BEFORE the 120 ms deadline can fire. A Cloudflare
-   * isolate always has the request itself pending, so the signal always fires there. This
-   * interval stands in for that pending request, and is cleared immediately after. */
+  /* A REF'D TIMER for the length of this assertion: node's `AbortSignal.timeout()` timer
+   * is unref'd, so with nothing else pending node would exit 13 before the 120 ms deadline
+   * fires. On Cloudflare the pending request plays this interval's role. */
   const keepAlive = setInterval(() => {}, 25);
   const started = Date.now();
   const hung = await turn("hello", quick);
@@ -85,10 +72,7 @@ import {
 /* =========================================================================== *
  * 5b. A WRONG SECRET IS **HTTP 400**, AND THAT IS NOT A TRANSPORT FAILURE
  * =========================================================================== *
- * THE BUG THIS BLOCK EXISTS FOR, and it switched the whole control off.
- *
- * Cloudflare answers `invalid-input-secret` and `missing-input-secret` with **status
- * 400** — measured against the real endpoint on 2026-09-05, not recalled:
+ * Measured against the real endpoint:
  *
  *     secret=<garbage>   -> 400 {"error-codes":["invalid-input-secret"],"success":false}
  *     (no secret field)  -> 400 {"error-codes":["missing-input-secret"],"success":false}
@@ -96,21 +80,10 @@ import {
  *     already-spent 3x…AA-> 200 {"error-codes":["timeout-or-duplicate"],…}
  *     missing response   -> 200 {"error-codes":["missing-input-response"],…}
  *
- * Every genuine VERDICT is a 200; the 400s are our own configuration. The first version
- * of `verify()` returned `{ok: true}` on any `!res.ok` WITHOUT READING THE BODY, so a
- * `DEMO_TURNSTILE_SECRET` wrong by one character meant: the sitekey published, the widget
- * rendered, every visitor minting a genuine token, every siteverify answering 400, every
- * request ALLOWED THROUGH, real money spent on all of them, a healthy LIVE badge on the
- * page — and `turnstile_misconfigured`, the reason whose entire purpose is to diagnose
- * exactly this without anyone printing the secret, unreachable. The operator's documented
- * validation procedure ("deploy, type one sentence, read the reason") returned a
- * perfectly healthy turn.
- *
- * §5's non-200 cases were 500/403/302 only, and this file's stub served every
- * `plan.turnstile.body` at status 200 — so the whole D8 mapping block exercised
- * `invalid-input-secret` at a status Cloudflare never uses for it. Both halves are fixed
- * here: the codes that mean OUR fault refuse at ANY status, and everything else still
- * fails open.
+ * Every genuine VERDICT is a 200; the 400s are our configuration. Failing open on any
+ * `!res.ok` without reading the body meant a secret wrong by one character switched the
+ * whole control off under a LIVE badge, with `turnstile_misconfigured` unreachable. So
+ * our-fault codes refuse at ANY status, and everything else still fails open.
  */
 {
   /* ---- our fault, at the status Cloudflare really uses -------------------- */
@@ -171,15 +144,9 @@ import {
 /* =========================================================================== *
  * 5c. AN UNKNOWN ROUTE NAME REFUSES (the client's `getToken(action)`, server side)
  * =========================================================================== *
- * `verify()` has NO DEFAULT action, deliberately: the default that reads best (`chat`)
- * would make a microphone turn payable with a typed turn's token, which is the exact
- * cross-route replay `TURNSTILE_ACTIONS` exists to refuse. So a route name the table does
- * not know fails CLOSED — and, because no visitor's token can fix a route name, it is
- * `turnstile_misconfigured` rather than `turnstile_failed`.
- *
- * AND IT STILL DOES NOTHING ON AN UNCONFIGURED DEPLOYMENT, which is why the check sits
- * after the config gate: a fork or a preview may not be broken by a programming error in
- * a route it does not run.
+ * `verify()` has NO DEFAULT action: defaulting to `chat` would let a typed turn's token pay
+ * for a microphone turn. An unknown route fails CLOSED as `turnstile_misconfigured` (no
+ * token can fix it) — but only after the config gate, so an unconfigured fork is unaffected.
  */
 {
   const cfg = envlib.readConfig(ARMED);

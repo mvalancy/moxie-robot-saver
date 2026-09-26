@@ -8,15 +8,9 @@ import {
 /* =========================================================================== *
  * 6. THE CONCURRENCY SLOT COMES BACK ON THE NEW REFUSAL PATH (D2)
  * =========================================================================== *
- * A new early return that forgets `slot.release()` leaks a slot FOR EVER: the in-flight
- * count drifts upward and the route starts refusing visitors who should be served. That
- * is failing CLOSED, and it is exactly the hazard that got a cache-backed concurrency
- * ceiling rejected in `_lib/limits.js` — an eventually-consistent counter cannot hold a
- * resource that must be given back.
- *
- * It is proven two ways, because the counter and the behaviour are different claims: the
- * recorded in-flight count returns to zero, AND a ceiling's worth of consecutive refusals
- * does not stop the next visitor being served.
+ * An early return that forgets `slot.release()` leaks a slot for ever and fails CLOSED.
+ * Proven two ways: the recorded in-flight count returns to zero, AND a ceiling's worth of
+ * consecutive refusals does not stop the next visitor being served.
  */
 {
   const CEIL = 2;
@@ -67,16 +61,10 @@ import {
 /* =========================================================================== *
  * 7. THE ORDER (D1) — cheapest refusal first, in BOTH directions
  * =========================================================================== *
- * Two claims, and they are not the same claim:
- *
- *   · every refusal CHEAPER than the bot check makes ZERO siteverify calls. Otherwise a
- *     hard-blocked utterance buys a round trip to prove the visitor is human before being
- *     told no, and — worse — `admit()` stops protecting siteverify from being turned into
- *     an amplifier by a flood.
- *   · a Turnstile refusal makes ZERO gateway calls. Otherwise the control is decorative.
- *
- * Both are read off RECORDED counters (`noteUpstreamCall()` and `__stats().calls`), not
- * inferred from a stub that may or may not have been reached.
+ *   · every refusal CHEAPER than the bot check makes ZERO siteverify calls (no round trip
+ *     for a blocked utterance; `admit()` keeps siteverify from becoming an amplifier);
+ *   · a Turnstile refusal makes ZERO gateway calls.
+ * Both read off RECORDED counters (`noteUpstreamCall()`, `__stats().calls`).
  */
 {
   const cases = [
