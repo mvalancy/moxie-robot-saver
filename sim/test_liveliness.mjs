@@ -393,7 +393,10 @@ async function dockGeometry(page) {
    * a viewport-pinned bubble cannot move at all). Head yaw is the wrong instrument — it moves
    * the head centre ~7 px. Waited on the placement counter `seq`, not a clock: a starved
    * runner may not have placed a new frame yet, and would truthfully answer "nowhere". */
-  const b = await page.evaluate((seq0) => {
+  const b = await page.evaluate(() => {
+    // The counter is read AT the pan, not reused from `a`: frames keep placing while the
+    // bubble is visible, so an older seq could already be two past and return a stale frame.
+    const seq0 = window.__bubbleAnchor().seq;
     // PAN, not orbit: orbiting keeps her dead centre; moving the target slides her across.
     window.__setCam(1.8, 2.1, 4.8, 1.5, 1.22, 0);
     return new Promise((r, reject) => {
@@ -410,7 +413,7 @@ async function dockGeometry(page) {
       };
       poll();
     });
-  }, a.seq);
+  });
   const be = b.exact;
   ok(b.seq > a.seq, `the anchor was re-placed after the camera moved (frame ${a.seq} -> ${b.seq})`);
   ok(Math.abs(be.head.x - e.head.x) > 40,
