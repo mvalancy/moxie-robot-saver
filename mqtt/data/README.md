@@ -19,7 +19,7 @@ One JSON file per (robot, collection), written atomically (temp file + `os.repla
 |---|---|---|
 | `mentor_behaviors` | `MoxieRuntime.ingest_mentor_behavior` — a robot's `mentor_behavior` report on `client-service-activity-log` | a list of `embodied.robotbrain.MentorBehavior` records (`module_id`, `content_id`, `content_day`, `timestamp`, `action`, `instance_id`, `ended_reason`), newest kept, capped at 500 |
 
-That history is what [`../moxie_sdk/schedule.py`](../moxie_sdk/schedule.py) reads so the
+That history is what [`../moxie_sdk/schedule/`](../moxie_sdk/schedule/) reads so the
 day plan skips activities the child already finished — and so first-time-user onboarding
 ends instead of repeating forever.
 

@@ -398,7 +398,7 @@ three.
 
 > **Why `NO_MEDIA` withholds *every* payload, not just the media ones.** `Packet.event_data` is
 > declared `bytes` and our corpus recovers **no** typed-payload vocabulary — the same gap
-> [`moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule.py)`::telemetry_signals` records for
+> [`moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule/)`::telemetry_signals` records for
 > `event_name`. Nothing available to us proves a given blob is not audio or video, and a store that
 > guessed would be a **privacy incident, not a bug**. So the rule is the payload, never the event's
 > name. ⚠️ **Flagged assumption:** we have never seen a real robot's `event_data`, so we do not know

@@ -211,7 +211,7 @@ Progress comes back the other way: the robot **reports** each finished or abando
 [`MentorBehavior`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/MentorBehavior.proto)
 `{module_id, content_id, content_day, timestamp, action, instance_id, ended_reason}`). The server stores
 that history per robot and answers `query:"mentor_behaviors"` with it — which is what lets the next day's
-plan skip what's already done. Where it lives: [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule.py)
+plan skip what's already done. Where it lives: [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule/)
 (the builder) and [`../../mqtt/moxie_sdk/store.py`](../../mqtt/moxie_sdk/store.py) (the history).
 
 #### The recommender: history + preferences + the clock → today's plan *(2026-09-02)*
@@ -219,7 +219,7 @@ plan skip what's already done. Where it lives: [`../../mqtt/moxie_sdk/schedule.p
 The builder used to be a `(device_id, day)` rotation. It is still **deterministic** — the same
 inputs produce byte-identical bytes, in any process, under any `PYTHONHASHSEED` — but it is now a
 *scored* recommender ([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2 row 7).
-Two pure functions, both in [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule.py):
+Two pure functions, both in [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule/):
 
 - **`plan_inputs(device_id, now, …)`** gathers the signals — the `schedules[]` template, the
   robot's `mentor_behaviors`, its effective config, its telemetry, the clock — into one JSON-safe
