@@ -8,51 +8,23 @@ import {
 /* =========================================================================== *
  * 16. THE SYNTHESISED-AUDIO CACHE — `/api/speech` stops paying twice for a line
  * =========================================================================== *
+ * Spec: live-sim-demo.md §4.8, §4.6.1, §3.2, §4.1, §4.5.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §4.8 (this tier), §4.6.1 (the Cache API
- * measurement it is built on), §3.2 (the route contract it may not change), §4.1 (the caps
- * it sits behind), §4.5 (the status table it must not add a status to).
- *
- * Synthesis is the most expensive thing this deployment does — 131 348 B and 1 091 ms for
- * one 30-character line, measured against the real gateway — and the audio for a given
- * (gateway, model, voice, format, rate, exact text) is the same audio every time. So
- * `_lib/ttscache.js` keeps it in `caches.default`.
- *
- * FIVE PROPERTIES, AND EVERY ONE OF THEM IS ASSERTED RATHER THAN INTENDED:
- *
- *   1. **A HIT IS BYTE-IDENTICAL TO A MISS.** Not "about the same length" — the same
- *      bytes, compared as bytes, with the same declared rate and channel count. 16b.
- *   2. **A HIT COSTS ZERO UPSTREAM CALLS.** Asserted on the intercepted request log, not
- *      on a counter that could itself be wrong. 16b.
- *   3. **EVERY FAILURE COSTS EXACTLY ONE SYNTHESIS — TODAY'S BEHAVIOUR.** Miss, stale, a
- *      `match` that throws / rejects / hangs, a body read that does the same, an entry
- *      that will not decode, a `put` that fails every way, a store with no methods, no
- *      `caches` global at all. Each by name, each driven through the WHOLE ROUTE, and each
- *      required to answer the identical 200 with the identical audio. 16e.
- *   4. **NOTHING BUT A SUCCESSFUL SYNTHESIS IS STORED.** An upstream 500, a 429, a
- *      redirect, a JSON error body, an Access login page, an empty body, a `text/plain`
- *      proxy error and a timeout: none of them leaves an entry behind, and the next good
- *      turn for the same text still synthesises. 16c.
- *   5. **THE CAPS DECIDE FIRST.** A cache hit is a cheaper way to serve a request that was
- *      already going to be served, never a way to serve one that was not: an over-length
- *      ticket, a forged one, a replayed one, a rate-limited visitor and a forbidden origin
- *      all refuse without touching the cache at all. 16f.
- *
- * And what this section deliberately does NOT assert, because it is not true: any hit
- * rate. The cache is per-colo, a cold colo pays full price, and the demo's scripted copy
- * never reaches this route in the first place (there is no text field — `chat.js`:150 is
- * the only place a ticket is minted, from a live gateway reply). What can be shown here is
- * that a repeat is free and that a miss costs one `match`; what a real hit rate would be
- * is not measurable from a preview, because a preview is keyless and this route refuses
- * before it reaches the cache.
+ * Synthesis is the most expensive thing this deployment does, and the audio for a given
+ * (gateway, model, voice, format, rate, exact text) never changes, so `_lib/ttscache.js`
+ * keeps it in `caches.default`. Asserted:
+ *   1. A HIT IS BYTE-IDENTICAL TO A MISS, same bytes, rate and channels (16b).
+ *   2. A HIT COSTS ZERO UPSTREAM CALLS, on the intercepted request log (16b).
+ *   3. EVERY FAILURE COSTS EXACTLY ONE SYNTHESIS — each failure shape of `match`, body
+ *      read, decode and `put`, and no `caches` at all — through the whole route (16e).
+ *   4. NOTHING BUT A SUCCESSFUL SYNTHESIS IS STORED (16c).
+ *   5. THE CAPS DECIDE FIRST: every refusal is made without touching the cache (16f).
+ * Not asserted, because it is not true: any hit rate. The cache is per-colo and a cold
+ * colo pays full price.
  */
 {
-  /** A fake `caches.default` that stores BYTES, because this tier stores audio.
-   *
-   *  The failure switches are the same three SHAPES `fakeCache` uses in §15 — a
-   *  synchronous throw, a rejected promise, a promise that never settles — plus the ones
-   *  only an audio cache can have: a body read that fails the same three ways, and an
-   *  entry whose bytes are not the WAV we wrote. */
+  /** A fake `caches.default` that stores BYTES, with §15's three failure shapes plus the
+   *  audio-only ones: a body read that fails those three ways, and a corrupt entry. */
   function audioCache(opts) {
     const o = opts || {};
     const store = new Map();
@@ -131,13 +103,9 @@ import {
   /** How many times the gateway was asked to SYNTHESISE, from the intercepted request log
    *  rather than from a counter — the same evidence the rest of this file uses. */
   const synths = () => sent.filter((s) => String(s.url).endsWith("/audio/speech")).length;
-  /** One whole turn: a chat reply with a fixed line, then that line spoken.
-   *
-   *  A THROW IS RECORDED, NOT PROPAGATED. On Cloudflare an unhandled exception out of a
-   *  Function handler is a 500 carrying the platform's own HTML error page — not a
-   *  degrade, no `reason` for `mode.js` to render, and a visitor who sees a broken site
-   *  rather than a quiet fallback. That is the WORST outcome this tier could produce, so
-   *  "the route did not throw" is an assertion here rather than a crashed test run. */
+  /** One whole turn: a chat reply with a fixed line, then that line spoken. A THROW IS
+   *  RECORDED, NOT PROPAGATED: on Cloudflare an escaping exception is a platform 500 page,
+   *  the worst outcome this tier could produce, so "did not throw" is an assertion. */
   async function turn(line, env, text) {
     P.plan = { chat: { content: line }, speech: P.plan.speech };
     const c = await call(chat, "/api/chat", { text: text || "say it" }, null, env);
@@ -155,13 +123,9 @@ import {
   const bytesOf = (t) => Buffer.from(audioOf(t).buffer || "", "base64");
 
   const LINE = "Twinkle, twinkle, little star.";
-  /** The working deployment for this section. `DEMO_CACHE_COUNTER=0` switches OFF the
-   *  OTHER tier that shares `caches.default` — §15's per-IP counter — for one reason only:
-   *  it keeps its own count in the same fake store across the `fresh()` calls that stand in
-   *  for isolate boundaries here, so leaving it on would rate-limit this section's own
-   *  fixtures and every op count below would be a count of two tiers. It is §15's subject,
-   *  not this one's. 16a runs the SHIPPED defaults with both tiers on, and 16g asserts the
-   *  two of them share one store without reading each other's entries. */
+  /** This section's deployment. `DEMO_CACHE_COUNTER=0` turns off §15's per-IP tier,
+   *  which shares the store and would otherwise rate-limit these fixtures and pollute the
+   *  op counts. 16a runs the shipped defaults with both tiers; 16g checks they coexist. */
   const VOICED = { ...FULL, DEMO_TTS_VOICE: "amy", DEMO_CACHE_COUNTER: "0" };
   /** The clamp floor, so a hang costs 50 ms per assertion rather than a whole second. */
   const FAST = { ...VOICED, DEMO_TTS_CACHE_TIMEOUT_MS: "50" };
@@ -276,11 +240,8 @@ import {
       eq(colo.store.get(key).maxAge, 86400, "the entry carries DEMO_TTS_CACHE_TTL_S as its max-age");
     });
 
-    // THE HEADER'S OWN RATE SURVIVES THE ROUND TRIP. `/api/speech` carries the WAV's rate,
-    // not the configured one (§2.2, §10) — a 16 kHz voice on a deployment configured for
-    // 22 050 must still play at 16 kHz on the SECOND visitor as well as the first, or the
-    // cache turns a correct answer into a chipmunk. The entry is the only place that rate
-    // can live, which is why the stored body is a WAV and not a bag of samples.
+    // THE HEADER'S OWN RATE SURVIVES THE ROUND TRIP (§2.2): a 16 kHz voice must play at
+    // 16 kHz on a hit too, which is why the stored body is a WAV, not bare samples.
     fresh();
     const odd = audioCache();
     await withCache(odd, async () => {
@@ -308,10 +269,8 @@ import {
   }
 
   // ---- 16c. NEVER CACHE ANYTHING BUT A SUCCESSFUL SYNTHESIS --------------- //
-  //
-  // Each of these is a way the gateway can answer badly. Not one of them may leave an
-  // entry behind: a cached refusal is a refusal every visitor to that colo inherits for a
-  // day, and a cached partial body is static in a child's ear on every future hit.
+  // A cached refusal would be inherited by every visitor to the colo for a day; a cached
+  // partial body would be static on every hit.
   {
     const badly = [
       ["an upstream 500", { status: 500 }],
@@ -349,11 +308,8 @@ import {
   }
 
   // ---- 16d. THE KEY: everything that changes the audio is in it ----------- //
-  //
-  // A key that ignores the voice serves one child a line in somebody else's voice, on
-  // every hit, for as long as the entry lives. So each component is varied ALONE, twice:
-  // once at the key itself, and once end to end, where the required answer is that the
-  // second configuration MISSES and pays for its own synthesis.
+  // A key ignoring the voice serves one child a line in another's voice. Each component is
+  // varied ALONE, at the key and end to end (the second configuration must MISS).
   {
     const R = req("/api/speech", { ticket: "x" });
     const keyFor = (env, text) => ttscache.ttsCacheKey(wire2.readConfig(env), R, text === undefined ? LINE : text);
@@ -427,11 +383,8 @@ import {
   }
 
   // ---- 16e. FAIL OPEN — every failure mode, through the whole route -------- //
-  //
-  // Each case is required to answer the SAME 200 with the SAME bytes a run with no cache
-  // at all produces, having synthesised exactly once. That is a stronger requirement than
-  // "does not crash": it is "costs nothing but a synthesis", which is the design
-  // constraint, asserted literally.
+  // Each case must answer the SAME 200 with the SAME bytes as no cache at all, having
+  // synthesised exactly once: "costs nothing but a synthesis", asserted literally.
   {
     // The reference: one turn with no cache in the picture at all.
     fresh();
@@ -513,12 +466,8 @@ import {
   }
 
   // ---- 16f. THE CAPS DECIDE FIRST — a hit is not a way past one ----------- //
-  //
-  // Every refusal on this route already costs zero upstream calls (§1, §10). It must also
-  // cost zero CACHE calls, for a stronger reason than latency: if the cache were consulted
-  // before the caps, a warm entry would be a way to be served audio while refused — and
-  // `DEMO_MAX_TTS_CHARS`, the ticket TTL and the replay set would all stop meaning what
-  // they say.
+  // Refusals must cost zero CACHE calls too: consulted before the caps, a warm entry would
+  // serve audio to a refused request and void `DEMO_MAX_TTS_CHARS`, the TTL and replay set.
   {
     fresh();
     const colo = audioCache();
@@ -589,12 +538,8 @@ import {
   }
 
   // ---- 16g. TWO TIERS, ONE STORE, THE SHIPPED DEFAULTS -------------------- //
-  //
-  // `caches.default` is not this tier's private store: `_lib/limits.js`'s per-IP counter
-  // writes into the same place on every admitted turn. Everything above switches that one
-  // off so its op counts are about one tier; this block turns both on, as a deployment
-  // ships them, and asserts they cannot read or overwrite each other. The two prefixes are
-  // what keeps them apart, and a prefix is only a separation if something checks it.
+  // `limits.js`'s per-IP counter writes into the same `caches.default`. With both on, as
+  // shipped, neither may read or overwrite the other; the key prefixes are the separation.
   {
     fresh();
     const shared = audioCache();

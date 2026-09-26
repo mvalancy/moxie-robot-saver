@@ -7,36 +7,16 @@ import {
 /* =========================================================================== *
  * 17. THE RE-ROLL — one turn, at most two calls, and never a worse answer
  * =========================================================================== *
- *
- * `chat.js` step 8b. The defect is the one the owner reported and `sim/eval_live.mjs` has
- * been measuring all along: over a real multi-turn conversation Moxie sometimes lands on a
- * line she has already said, WORD FOR WORD. The two free levers — the persona's initiative
- * rule and `frequency_penalty`/`presence_penalty` — took the affirmation spiral out and
- * left that residue behind, because a prompt cannot stop a model repeating a sentence the
- * prompt has already forbidden.
- *
- * This section is the hermetic half of the proof, and it exists because the live half
- * cannot make either claim: a real conversation cannot be made to duplicate on demand, and
- * `eval_live.mjs` cannot see the SERVER side at all — how many calls a turn made, which
- * ceiling paid for them, or what the first answer had been. Everything below is decided
- * with a stubbed gateway and no key, so the decision, the bound and the cost accounting are
- * checked facts rather than an inference from a number that went down.
- *
- * FOUR THINGS ARE PROVEN, in the order they matter:
- *
- *   1. THE DECISION IS EXACT AND FREE. `echoOf` is a pure function over the signed history;
- *      a near-match is not an echo, because a near-match needs a threshold and a threshold
- *      is what misled the previous pass.
- *   2. IT IS BOUNDED TO ONE, STRUCTURALLY. A gateway that repeats itself for ever costs two
- *      calls and then stops. There is no counter to raise.
- *   3. THE COST IS EXACTLY RIGHT IN BOTH DIRECTIONS. The visitor's per-IP window is charged
- *      ONCE — they typed one sentence — and the unit budget is charged TWICE, because two
- *      completions is two completions and an undercounted budget is money. A ceiling with
- *      no headroom cancels the re-roll instead of being spent past.
- *   4. IT CAN ONLY IMPROVE THE ANSWER. Every failure — a timeout, a 500, a second duplicate,
- *      an echo of a different old line — serves the reply the visitor already had, at 200,
- *      `mode: "live"`. A repetition fix that can paint the page SCRIPTED is not a fix, which
- *      is the same argument that shaped the penalty probe in §4b.
+ * `chat.js` step 8b: over a long conversation Moxie sometimes repeats a line WORD FOR
+ * WORD, which prompts and penalties cannot fully stop. The live eval cannot make a turn
+ * duplicate on demand or see the server side, so the hermetic half proves:
+ *   1. THE DECISION IS EXACT AND FREE: `echoOf` is a pure function over the signed
+ *      history; a near-match is not an echo (a threshold is what misled before).
+ *   2. IT IS BOUNDED TO ONE, STRUCTURALLY: a gateway that repeats for ever costs two calls.
+ *   3. THE COST IS RIGHT BOTH WAYS: the per-IP window is charged ONCE (one sentence typed),
+ *      the unit budget TWICE (two completions); no headroom cancels the re-roll.
+ *   4. IT CAN ONLY IMPROVE THE ANSWER: every failure serves the reply already in hand, at
+ *      200, `mode: "live"`.
  */
 {
   /** The reply text a turn actually served. */
@@ -81,11 +61,8 @@ import {
   }
 
   // ---- 2. THE LATENCY BOUND, as a pure function ----------------------------- //
-  //
-  // The bound is `DEMO_CHAT_TIMEOUT_MS` — the promise this route ALREADY made about the
-  // worst a visitor waits — and not a new constant. Two properties, both arithmetic:
-  // a re-rolled turn cannot outlast that timeout, and a slow first call cancels the
-  // re-roll rather than stretching it.
+  // The bound is the existing `DEMO_CHAT_TIMEOUT_MS`: a re-rolled turn cannot outlast it,
+  // and a slow first call cancels the re-roll rather than stretching it.
   {
     const cfg = wire2.readConfig(FULL);
     eq(cfg.chatTimeoutMs, 20000, "the timeout this bound is built on");
@@ -206,10 +183,8 @@ import {
   }
 
   // ---- 6. THE COST, IN BOTH DIRECTIONS -------------------------------------- //
-  //
-  // THE ONE PARAGRAPH THIS SECTION EXISTS FOR. A second gateway call inside one visitor
-  // request is the kind of thing that quietly doubles a bill or quietly halves a visitor's
-  // allowance, and the two ceilings must move in OPPOSITE ways.
+  // A second call inside one request must not double the bill unseen nor halve the
+  // visitor's allowance: the two ceilings move in OPPOSITE ways.
   {
     // (a) the per-IP window: ONE request, whatever the model did.
     fresh();
@@ -241,14 +216,9 @@ import {
   }
 
   // ---- 6b. NO HEADROOM, NO RE-ROLL — AND THE TURN IS STILL SERVED ----------- //
-  //
-  // The re-roll is a quality improvement that yields to every ceiling and is never a way
-  // to spend past one. The arithmetic is picked so that only the SECOND charge is refused:
-  // an hour of 8 units admits turn 1 (3) and turn 2 (3, taking it to 6), and the re-roll's
-  // 3 would make 9. So the second call is not made — and the visitor keeps the duplicate
-  // they would have had anyway. What must NOT happen is a refusal: they already have a
-  // reply in hand, and `budget_exhausted` here would paint the page SCRIPTED over a
-  // repeated sentence.
+  // An 8-unit hour admits turn 1 (3) and turn 2 (3 → 6); the re-roll's 3 would make 9, so
+  // it is not made and the visitor keeps the duplicate. `budget_exhausted` here would
+  // paint the page SCRIPTED over a repeated sentence.
   {
     fresh();
     const tight = { ...FULL, DEMO_UNIT_BUDGET_HOUR: "8", DEMO_UNIT_BUDGET_DAY: "0" };
@@ -268,12 +238,8 @@ import {
   }
 
   // ---- 6c. THE ACCOUNTING ITSELF, on a bare slot with no route around it ----- //
-  //
-  // `chat.js` cannot reach a refund after step 8b — every refusal that refunds is upstream
-  // of the gateway call — so the ordering "charge extra, then refund" is unreachable
-  // through the route and is exercised here directly. It is cheaper to be correct for a
-  // call sequence nothing performs today than to leave a comment asking future callers not
-  // to perform it.
+  // "Charge extra, then refund" is unreachable through `chat.js` today, so it is
+  // exercised on the slot directly rather than left to a comment.
   {
     fresh();
     const cfg = wire2.readConfig(FULL);
@@ -312,10 +278,7 @@ import {
   }
 
   // ---- 7. EVERY FAILURE KEEPS THE REPLY THE VISITOR ALREADY HAD -------------- //
-  //
-  // A re-roll may never turn a won turn into a `degraded` page. This is the same objection
-  // that shaped the penalty probe (§4b): a repetition fix that can take the demo down is
-  // not a fix.
+  // A re-roll may never turn a won turn into a `degraded` page.
   for (const [label, extra] of [
     ["a 500 on the second call", { failSecondAt: 2 }],
     ["a TIMEOUT on the second call", { failSecondAt: 2, secondThrows: "TimeoutError" }],
@@ -340,10 +303,8 @@ import {
   }
 
   // ---- 8. THE REFUSAL PATHS ARE UNHARMED ------------------------------------ //
-  //
-  // Step 8b sits AFTER the gateway call, so nothing it does can be reached without first
-  // passing every free refusal. Proven rather than argued: each refusal is re-run with a
-  // history that WOULD echo, and each one still makes zero calls and refunds its units.
+  // Step 8b is AFTER the gateway call. Each refusal is re-run with a history that WOULD
+  // echo, and still makes zero calls and refunds its units.
   {
     const ctx = await (async () => { fresh(); return historyWith(); })();
     for (const [label, payload, env, reason, status] of [
@@ -397,18 +358,13 @@ import {
 /* =========================================================================== *
  * 18. THE PER-TURN SHAPE CUE — `_lib/turnshape.js`, §4.10's fourth lever
  * ===========================================================================
- * WHAT IS BEING GUARDED, and why a stub can guard it at all. The QUALITY question — does
- * the conversation read better — is a live-model question and `sim/eval_live.mjs` is the
- * only thing that can answer it. What IS hermetic, and what this section holds, is the
- * MACHINERY underneath: that the cue is one of three fixed strings, that it is chosen from
- * the shapes of the assistant turns the server itself signed, that it never carries a
- * character a visitor wrote, that it cannot be the same move twice running, that the
- * switch really removes it, and that a turn still spends exactly one gateway call.
+ * Whether the conversation reads better is a live-model question (`eval_live.mjs`). This
+ * holds the machinery: the cue is one of three fixed strings, chosen from the shapes of
+ * the server-signed assistant turns, never carries visitor text, is never the same move
+ * twice running, the switch removes it, and a turn still makes one gateway call.
  *
- * THE LOAD-BEARING TEST IS THE LAST ONE, and it is the one a future edit is most likely to
- * break: **the cue must not be reachable from the request.** A per-turn instruction built
- * from history is one refactor away from being built from the visitor's sentence, and the
- * day it is, §3.3's "the final instruction the model reads is ours" stops being true.
+ * THE LOAD-BEARING TEST IS THE LAST: **the cue must not be reachable from the request**,
+ * or §3.3's "the final instruction the model reads is ours" stops being true.
  */
 {
   // ---- 17a. The classifier, on the exact lines a live run produced.
@@ -449,12 +405,9 @@ import {
        `every window of three turns uses all three moves (at ${i})`);
   }
 
-  /* ---- 17c. THE CLOSED LOOP, which is the whole reason this is not a fixed rotation.
-   * A model that IGNORES the cue and asks a question every single time must not be
-   * answered by the same rotation regardless: the cue is computed from what she actually
-   * said, so it must stop offering `ask` and keep pushing the move she is not making.
-   * If this ever failed, the feature would be an open-loop timer and a disobedient model
-   * would be cued to do the thing it is already doing. */
+  /* ---- 17c. THE CLOSED LOOP: the cue is computed from what she actually said, so a
+   * model that asks a question every time must stop being offered `ask` — otherwise the
+   * feature is an open-loop timer. */
   const stubborn = [];
   const cues = [];
   for (let i = 0; i < 8; i++) {
