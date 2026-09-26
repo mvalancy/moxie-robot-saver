@@ -578,5 +578,4 @@ def test_every_id_the_corpus_emits_is_one_the_sim_renders():
     missing = [i for i in sorted(seen)
                if f'"{i}"' not in bridge and i not in ROBOT_ONLY]
     assert not missing, missing
-    for value in vocab.ICON_VALUES:
-        assert value in bridge or True     # icons render generically as named badges
+    # Icons need no per-value branch: the SIM renders every ICON_VALUES entry as a named badge.
