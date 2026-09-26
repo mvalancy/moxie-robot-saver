@@ -1,41 +1,18 @@
 /* functions/api/_lib/safety.rules.js — the pre-inference safety rule table, as a module.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 ('Pre-inference safety') and §2.6.
- * Compiled and applied by ./safety.js, which is where every behavioural rule is explained.
- * This file is DATA ONLY: one frozen object, no logic, no imports, no side effects.
+ * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 and §2.6. Compiled and applied by
+ * ./safety.js. DATA ONLY: one frozen object, no logic, no imports.
  *
- * ============================================================================
- * WHY THIS IS A .js FILE AND NOT THE .json IT WAS.
+ * A `.js` module, not `.json`: the Cloudflare Pages build rejects
+ * `import … with { type: "json" }` (settled by a failed deploy, spec §10), though Node
+ * accepts it. The `.json` was deleted rather than kept alongside — one source of truth.
+ * `sim/test_demo_proxy.mjs` forbids any `.json` import under `functions/`.
  *
- * It shipped as `safety.json`, loaded with `import RULES from "./safety.json" with { type:
- * "json" }`. Node 20 accepts that attribute, so the whole hermetic suite was green — and
- * **the Cloudflare Pages build FAILED**, on a branch whose only structural change to the
- * Functions tree was that one line. The same check passed on `dev`, which already carried
- * the rest of the tree. So the Pages bundler does not accept import attributes.
- *
- * That is the spec's §10 ledger being settled by the only thing that could settle it: a
- * deploy. It was listed as unverified — "whether a Pages build accepts the `import ... with
- * { type: \"json\" }` attribute" — and the answer is **NO**. The documented fallback was
- * "inline the table", and this file is that fallback.
- *
- * The `.json` file is GONE rather than kept alongside. Two copies of a safety rule table
- * that nothing keeps in sync is a worse failure than the one being fixed: a reviewer would
- * read one and the Function would enforce the other. There is one source of truth, and it
- * is this file.
- *
- * The content is byte-for-byte the table that shipped: it was re-emitted from the JSON
- * mechanically and the parsed result compared, not retyped. `sim/test_demo_proxy.mjs`
- * carries a guard that no file under `functions/` may import a `.json` file or use an
- * import attribute again, so this cannot come back as a deploy-only failure.
- * ============================================================================
- *
- * WARNING, restated here because it is the first thing a reader meets: to filter offensive
- * words a filter has to list them. The `words` arrays below contain slurs and profanity on
- * purpose. That is the only reason they are here. The table's own `_readme` says the rest.
+ * WARNING: to filter offensive words a filter has to list them. The `words` arrays below
+ * contain slurs and profanity on purpose.
  */
 
-/** The whole table. Frozen shallowly — `safety.js` only reads it, and freezing the top
- *  level documents that intent without pretending to a deep freeze it does not do. */
+/** The whole table, frozen shallowly (`safety.js` only reads it). */
 export const RULES = Object.freeze({
   "_readme": [
     "The hosted demo's PRE-INFERENCE safety floor — the whole table, in one file anyone can read.",
