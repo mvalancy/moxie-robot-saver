@@ -59,6 +59,40 @@ export async function responseText(res) {
   return { text, headerText };
 }
 
+/**
+ * The §4.2 no-leak sweep shared by the proxy and ears suites: every forbidden string is
+ * absent from the body, every header, and any base64 audio buffer DECODED (`includes`
+ * cannot see inside base64, which once hid a raw-body passthrough in `/api/speech`).
+ * Missing pieces (non-JSON body, no audio) are skipped, never failures. `stripTopic`
+ * exempts the MQTT topic string from the no-URL check.
+ */
+export async function leakSweep(ok, res, forbidden, label, { stripTopic = false } = {}) {
+  const { text, headerText } = await responseText(res);
+  for (const secret of forbidden) {
+    ok(!text.includes(secret), `${label}: the response BODY leaked ${JSON.stringify(secret.slice(0, 12))}…`);
+    ok(!headerText.includes(secret), `${label}: a response HEADER leaked ${JSON.stringify(secret.slice(0, 12))}…`);
+  }
+  ok(!/\bBearer\b/i.test(text), `${label}: the body contains the word Bearer`);
+  ok(!/https?:\/\//.test(stripTopic ? text.replace(/"topic":"[^"]*"/g, "") : text),
+     `${label}: the body contains a URL`);
+  let envelope = null;
+  try { envelope = JSON.parse(text); } catch {}
+  const msgs = envelope && Array.isArray(envelope.messages) ? envelope.messages : [];
+  for (const m of msgs) {
+    let payload = null;
+    try { payload = JSON.parse(m && m.payload); } catch {}
+    const b64 = payload && payload.audio && typeof payload.audio.buffer === "string" ? payload.audio.buffer : "";
+    if (!b64) continue;
+    let decoded = "";
+    try { decoded = Buffer.from(b64, "base64").toString("latin1"); } catch {}
+    for (const secret of forbidden) {
+      ok(!decoded.includes(secret),
+         `${label}: the AUDIO BUFFER DECODES to bytes containing ${JSON.stringify(secret.slice(0, 12))}…`);
+    }
+    ok(!/https?:\/\//.test(decoded), `${label}: the audio buffer decodes to something carrying a URL`);
+  }
+}
+
 /** The response body as JSON, or `null`. */
 export async function jsonOf(res) {
   try { return JSON.parse(await res.clone().text()); } catch { return null; }

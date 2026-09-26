@@ -4,7 +4,7 @@
  */
 import { join } from "node:path";
 import {
-  repo, api, ledger, BASE, KEY, ORIGIN, post, responseText, jsonOf,
+  repo, api, ledger, BASE, KEY, ORIGIN, post, leakSweep, jsonOf,
 } from "../common.mjs";
 
 export { execFileSync } from "node:child_process";
@@ -128,39 +128,10 @@ export function fresh() {
   P.chatCalls = 0;
 }
 
-/**
- * The §4.2 sweep, run on EVERY response this suite produces: the body text and every
- * header value, for every forbidden substring.
- */
+/** The §4.2 sweep (`common.mjs::leakSweep`), run on EVERY response this suite produces. */
 export async function assertClean(res, label) {
   C.sweeps += 1;
-  const { text, headerText } = await responseText(res);
-  for (const secret of FORBIDDEN) {
-    ok(!text.includes(secret), `${label}: the response BODY leaked ${JSON.stringify(secret.slice(0, 12))}…`);
-    ok(!headerText.includes(secret), `${label}: a response HEADER leaked ${JSON.stringify(secret.slice(0, 12))}…`);
-  }
-  ok(!/\bBearer\b/i.test(text), `${label}: the body contains the word Bearer`);
-  ok(!/https?:\/\//.test(text.replace(/"topic":"[^"]*"/g, "")), `${label}: the body contains a URL`);
-
-  // The same sweep over the DECODED audio: `text.includes` cannot see inside base64, and
-  // a raw-body passthrough in `/api/speech` once hid there while every sweep read CLEAN.
-  // Every missing piece (non-JSON body, no audio) is skipped, never a failure.
-  let envelope = null;
-  try { envelope = JSON.parse(text); } catch {}
-  const msgs = envelope && Array.isArray(envelope.messages) ? envelope.messages : [];
-  for (const m of msgs) {
-    let payload = null;
-    try { payload = JSON.parse(m && m.payload); } catch {}
-    const b64 = payload && payload.audio && typeof payload.audio.buffer === "string" ? payload.audio.buffer : "";
-    if (!b64) continue;
-    let decoded = "";
-    try { decoded = Buffer.from(b64, "base64").toString("latin1"); } catch {}
-    for (const secret of FORBIDDEN) {
-      ok(!decoded.includes(secret),
-         `${label}: the AUDIO BUFFER DECODES to bytes containing ${JSON.stringify(secret.slice(0, 12))}…`);
-    }
-    ok(!/https?:\/\//.test(decoded), `${label}: the audio buffer decodes to something carrying a URL`);
-  }
+  await leakSweep(ok, res, FORBIDDEN, label, { stripTopic: true });
 }
 
 /** POST to a route, sweep the response, and hand back `{res, body}`. */

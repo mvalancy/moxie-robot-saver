@@ -36,42 +36,24 @@
  *   node sim/test_demo_ears.mjs
  */
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { repo, api, ledger, BASE, KEY, ORIGIN, GATEWAY, leakSweep, jsonOf } from "./tests/edge/common.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const repo = join(here, "..");
-
-const fails = [];
-let asserts = 0;
-const ok = (c, m) => { asserts++; if (!c) fails.push(m); };
-const eq = (a, b, m) => ok(a === b, `${m} — got ${JSON.stringify(a)}, want ${JSON.stringify(b)}`);
-const deep = (a, b, m) => eq(JSON.stringify(a), JSON.stringify(b), m);
+const { fails, C, ok, eq, deep } = ledger();
 
 /* =========================================================================== *
  * PART A — functions/api/transcribe.js
  * =========================================================================== */
 
-const route = await import(join(repo, "functions", "api", "transcribe.js"));
-const health = await import(join(repo, "functions", "api", "health.js"));
-const limits = await import(join(repo, "functions", "api", "_lib", "limits.js"));
-const envlib = await import(join(repo, "functions", "api", "_lib", "envelope.js"));
-const envmod = await import(join(repo, "functions", "api", "_lib", "env.js"));
-const wavlib = await import(join(repo, "functions", "api", "_lib", "wav.js"));
+const route = await api("transcribe.js");
+const health = await api("health.js");
+const limits = await api("_lib", "limits.js");
+const envlib = await api("_lib", "envelope.js");
+const envmod = await api("_lib", "env.js");
+const wavlib = await api("_lib", "wav.js");
 
-/* The fake deployment. These strings exist only inside this test: the host is
- * `.invalid.test` (RFC 6761 reserved and unresolvable, so a bug that actually fired a
- * request could not reach anything) and the key is shaped so the repo's own pre-commit
- * secret grep cannot mistake it for a real one. */
-const BASE = "https://gw.invalid.test/v1";
-const KEY = "sk-testonly-abcdefghijklmnopqrstuv";
-const ORIGIN = "https://demo.invalid.test";
-const FULL = {
-  DEMO_GATEWAY_BASE_URL: BASE,
-  DEMO_GATEWAY_API_KEY: KEY,
-  DEMO_CHAT_MODEL: "test-brain-model",
-  DEMO_STT_MODEL: "test-ears-model",
-};
+/* The fake deployment (see `sim/tests/edge/common.mjs`). */
+const FULL = { ...GATEWAY, DEMO_STT_MODEL: "test-ears-model" };
 
 /** Every secret-shaped string that must never appear in a response, anywhere. */
 const FORBIDDEN = [KEY, BASE, "gw.invalid.test", "test-brain-model", "test-ears-model"];
@@ -142,52 +124,15 @@ function fresh() {
   plan = {};
 }
 
-let sweeps = 0;
 async function assertClean(res, label) {
-  sweeps += 1;
-  const text = await res.clone().text();
-  let headerText = "";
-  for (const [k, v] of res.headers.entries()) headerText += k + ": " + v + "\n";
-  for (const secret of FORBIDDEN) {
-    ok(!text.includes(secret), `${label}: the response BODY leaked ${JSON.stringify(secret.slice(0, 12))}…`);
-    ok(!headerText.includes(secret), `${label}: a response HEADER leaked ${JSON.stringify(secret.slice(0, 12))}…`);
-  }
-  ok(!/\bBearer\b/i.test(text), `${label}: the body contains the word Bearer`);
-  ok(!/https?:\/\//.test(text), `${label}: the body contains a URL`);
-
-  // ---- AND THE SAME SWEEP OVER THE DECODED AUDIO. ---------------------------
-  // `text.includes(secret)` cannot see inside base64, and `messages[0].payload.audio.buffer`
-  // is ~175 KB of it. That blind spot is not hypothetical: it is how a raw-body passthrough
-  // in `/api/speech` survived every sweep in this file reporting CLEAN while returning an
-  // upstream 200 body verbatim to the caller (fixed 2026-09-03, `_lib/wav.js`). A sweep that
-  // stops at the encoding boundary is a sweep that proves the encoding, not the secrecy.
-  // Defensive throughout: a body that is not JSON, a payload that is not JSON, a message
-  // with no audio and an absent buffer are all NOT failures — most responses here have no
-  // audio at all, and this must never turn a refusal into a crash.
-  let __env = null;
-  try { __env = JSON.parse(text); } catch {}
-  const __msgs = __env && Array.isArray(__env.messages) ? __env.messages : [];
-  for (const m of __msgs) {
-    let payload = null;
-    try { payload = JSON.parse(m && m.payload); } catch {}
-    const b64 = payload && payload.audio && typeof payload.audio.buffer === "string" ? payload.audio.buffer : "";
-    if (!b64) continue;
-    let decoded = "";
-    try { decoded = Buffer.from(b64, "base64").toString("latin1"); } catch {}
-    for (const secret of FORBIDDEN) {
-      ok(!decoded.includes(secret),
-         `${label}: the AUDIO BUFFER DECODES to bytes containing ${JSON.stringify(secret.slice(0, 12))}…`);
-    }
-    ok(!/https?:\/\//.test(decoded), `${label}: the audio buffer decodes to something carrying a URL`);
-  }
+  C.sweeps += 1;
+  await leakSweep(ok, res, FORBIDDEN, label);
 }
 
 async function call(bytes, headers, env, label) {
   const res = await route.onRequestPost({ request: req(bytes, headers), env: env || FULL });
   await assertClean(res, label || "transcribe");
-  let body = null;
-  try { body = JSON.parse(await res.clone().text()); } catch {}
-  return { res, body };
+  return { res, body: await jsonOf(res) };
 }
 
 const upstreamCalls = () => limits.__state().stats.upstreamCalls;
@@ -618,7 +563,7 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     ok(typeof body.transcript === "string", "`transcript` is always a string, never absent");
   }
   ok(envlib.PUBLIC_KEYS.includes("transcript"), "`transcript` is in the envelope's key allowlist");
-  ok(sweeps > 60, `assertClean ran on every response (${sweeps} sweeps)`);
+  ok(C.sweeps > 60, `assertClean ran on every response (${C.sweeps} sweeps)`);
 }
 
 /* --------------------------------------------------------------------------- *
@@ -1490,12 +1435,12 @@ function bootMic(o) {
 
 /* --------------------------------------------------------------------------- */
 if (fails.length) {
-  console.error(`✗ test_demo_ears: ${fails.length} failure(s) of ${asserts}`);
+  console.error(`✗ test_demo_ears: ${fails.length} failure(s) of ${C.asserts}`);
   for (const f of fails) console.error("  - " + f);
   process.exit(1);
 }
 console.log(
-  `✓ test_demo_ears: the ears hold their contract (${asserts} assertions, ${sweeps} secret sweeps, 0 leaks) — ` +
+  `✓ test_demo_ears: the ears hold their contract (${C.asserts} assertions, ${C.sweeps} secret sweeps, 0 leaks) — ` +
   `both byte caps with the floor costing nothing, the per-IP windows, our own AbortSignal timeout, ` +
   `an unset DEMO_STT_MODEL making zero upstream calls, a hostile upstream degrading per-turn instead of ` +
   `taking the page down, the container allowlist keeping a webm/Opus 500 from degrading the whole page ` +
