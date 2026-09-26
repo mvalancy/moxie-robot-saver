@@ -188,6 +188,7 @@ and none may ever be required by a test:
 ```sh
 node sim/test_mode.mjs             # the mode machine + the probe
 node sim/test_demo_proxy.mjs       # the caps, the origin pin, the no-leak sweep
+                                   # (sections in sim/tests/edge/demo_proxy/)
 node sim/test_demo_tickets.mjs     # forgery, expiry, replay, tampering, constant-time
 node sim/test_wav_decode.mjs       # both halves of the audio contract, sample for sample
 node sim/test_turnstile.mjs        # the bot control: three checks, both halves of the

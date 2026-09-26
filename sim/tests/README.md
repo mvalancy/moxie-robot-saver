@@ -230,7 +230,7 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   `DECLARED_BINARIES` with their reason and their provider. Eleven mutants, 12/12 caught.
 - **`test_shared_ceilings.py` + `helpers_shared_ceilings.mjs`** — the per-IP **hour** and **day**
   windows and the unit budget's **day** ceiling on the shared Cache API tier of
-  `functions/api/_lib/limits.js` (live-sim-demo.md §4.6.3). A Python wrapper around a node
+  `functions/api/_lib/limits.js` / `sharedtier.js` (live-sim-demo.md §4.6.3). A Python wrapper around a node
   suite, because the code under test is JavaScript and the only honest way to test a Cache
   API tier is to drive the real module with a real injected store. It is a wrapper rather
   than a `sim/test_*.mjs` for a reason worth knowing: `test_ci_test_coverage.py` requires a
@@ -545,6 +545,13 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   `v1.0.0` URLs, sha256-verified, cached, idempotent). That step fails unless ≥3 of its 4
   tests really passed — only the live-brain one may legitimately skip, when the gateway
   degrades to its canned fallback.
+
+## [`edge/`](edge/README.md) — the Pages Functions suites' sections
+
+`sim/test_demo_proxy.mjs` and `sim/test_turnstile.mjs` are thin entry points (CI and the
+mutation checkers invoke them by those names); their sections live in
+`edge/demo_proxy/` and `edge/turnstile/`, with the harness they share in `edge/common.mjs`.
+They are `.mjs`, so pytest never collects them.
 
 ## Two rules that keep this suite hermetic and green
 
