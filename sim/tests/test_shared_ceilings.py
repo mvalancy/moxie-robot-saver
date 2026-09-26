@@ -7,15 +7,10 @@ tier is to drive the real module with a real injected store. This file's whole j
 make `pytest sim/tests` run that suite and to report a failure per SECTION rather than as
 one opaque non-zero exit.
 
-WHY A WRAPPER AND NOT A `sim/test_*.mjs`. The rest of this tier's proof is
-`sim/test_demo_proxy.mjs` §15/§15i, which was reserved to another agent for the whole of
-this slice. A NEW `sim/test_*.mjs` would have been worse than a wrapper, not better:
-`test_ci_test_coverage.py` enumerates `sim/test_*.mjs` and requires a CI tier to name each
-one, and wiring a step in needs `sim/ci/ci.yml`, which was reserved too — so a new node
-suite would have arrived RED or with a fresh `KNOWN_UNRUN` exemption, which is the one list
-in this repo that may only shrink. Python under `sim/tests/` is the family that guard
-records as never having gone silently unrun, because `pytest sim/tests` collects a new file
-with no wiring at all. That is the whole reason this file is Python.
+WHY A WRAPPER AND NOT A `sim/test_*.mjs`. `test_ci_test_coverage.py` requires a CI tier to
+name every `sim/test_*.mjs`, while `pytest sim/tests` collects a new Python file with no
+wiring at all — so a wrapper cannot go silently unrun. The rest of this tier's proof is in
+`sim/tests/edge/demo_proxy/` (run by `sim/test_demo_proxy.mjs`).
 
 THE SECTIONS, and each is a claim the slice would otherwise only be asserting:
 
