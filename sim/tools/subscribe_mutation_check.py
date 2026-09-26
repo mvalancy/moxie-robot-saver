@@ -61,6 +61,7 @@ XG = "mqtt/moxie_sdk/content/ext/grammar.py"
 XL = "mqtt/moxie_sdk/content/ext/validate.py"
 V = "mqtt/moxie_sdk/content/volley.py"
 C = "mqtt/moxie_sdk/content/content_app.py"
+HOST = "mqtt/moxie_sdk/content/ext_host.py"
 R_CONNECTION = "mqtt/supervisor/moxie_runtime/connection.py"
 R_PRESENCE = "mqtt/supervisor/moxie_runtime/presence.py"
 R_TURNS = "mqtt/supervisor/moxie_runtime/turns.py"
@@ -78,14 +79,14 @@ MUTATIONS = [
     ("S3  `subscribe` goes back to being refused at load (the P1 gate)", XG,
      'P1_CAPABILITIES = frozenset({"brain", "schedule.request"})',
      'P1_CAPABILITIES = frozenset({"brain", "schedule.request", "subscribe"})'),
-    ("S4  the host boundary stops bounding the name", C,
+    ("S4  the host boundary stops bounding the name", HOST,
      "        if name not in known:\n"
      '            print(f"[content] {name!r} is not a robot event this appliance names; "',
      "        if False:\n"
      '            print(f"[content] {name!r} is not a robot event this appliance names; "'),
 
     # ---- merged, never replaced: layer 1, inside one volley ----
-    ("S5  an extension REPLACES the volley's subscriptions instead of adding to them", C,
+    ("S5  an extension REPLACES the volley's subscriptions instead of adding to them", HOST,
      "            volley.add_subscriptions(events)",
      "            volley.update_subscriptions(events)"),
     ("S6  `add_subscriptions` stops de-duplicating", V,

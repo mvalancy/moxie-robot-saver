@@ -576,7 +576,7 @@ speech therapist can be handed, reviewed item by item before it changes anything
 afterwards. Design record and the full assumption ledger:
 [`backlog/content-packs.md`](backlog/content-packs.md) (audit
 [ADOPT #5](openmoxie-feature-audit.md)). Implementation:
-[`../../mqtt/moxie_sdk/content/packs.py`](../../mqtt/moxie_sdk/content/packs.py) — pure,
+[`../../mqtt/moxie_sdk/content/packs.py`](../../mqtt/moxie_sdk/content/packs/) — pure,
 stdlib only, no store and no clock except an injected `now`.
 
 ### The file

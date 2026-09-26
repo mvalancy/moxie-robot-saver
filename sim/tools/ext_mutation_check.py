@@ -2,7 +2,7 @@
 
 "A test for every feature, proven in BOTH directions": a green suite proves the guards
 are *present*, and this proves they are *load-bearing*. Run it by hand after touching
-`ext/`, `render.py`, `content_app.py`'s host half or `packs.py`'s pattern cap:
+`ext/`, `render.py`, `ext_host.py` or `packs/`'s pattern cap:
 
     python3 sim/tools/ext_mutation_check.py
 
@@ -25,8 +25,8 @@ EXT_V = WT / "mqtt/moxie_sdk/content/ext/values.py"
 EXT_L = WT / "mqtt/moxie_sdk/content/ext/validate.py"
 EXT_M = WT / "mqtt/moxie_sdk/content/ext/machine.py"
 REN = WT / "mqtt/moxie_sdk/content/render.py"
-CA  = WT / "mqtt/moxie_sdk/content/content_app.py"
-PK  = WT / "mqtt/moxie_sdk/content/packs.py"
+HOST = WT / "mqtt/moxie_sdk/content/ext_host.py"
+PK  = WT / "mqtt/moxie_sdk/content/packs/items.py"
 
 MUTATIONS = [
  # The anchor carries the `for` line above it because `if seg.startswith("_"):` occurs
@@ -42,7 +42,7 @@ MUTATIONS = [
  ("X1  add an `eval` operator", EXT_G,
   '    "has": (1, 2, None), "keys": (1, 1, None),',
   '    "has": (1, 2, None), "keys": (1, 1, None), "eval": (1, 1, None),', "frozen"),
- ("X2  leak the live Volley into the fact base", CA,
+ ("X2  leak the live Volley into the fact base", HOST,
   '        "presence": {},\n    }', '        "presence": {}, "volley": volley,\n    }',
   "x2_the_fact_base"),
  ("X3  swap the sandbox back to a plain jinja2 Environment", REN,
@@ -85,11 +85,11 @@ MUTATIONS = [
  ("X9  widen the memory-key grammar to anything", EXT_G,
   '_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$")',
   '_KEY = re.compile(r"^[^\\x00]+$")', "x9_a_traversal"),
- ("X9  let the effect choose its own namespace", CA,
+ ("X9  let the effect choose its own namespace", HOST,
   "                    got = memory.merge(device_id, namespace, {top: block[top]},",
   '                    got = memory.merge(eff.get("device_id", device_id), eff.get("namespace", namespace), {top: block[top]},',
   "x9_the_store_call"),
- ("X9  hand the whole persist_data to the evaluator", CA,
+ ("X9  hand the whole persist_data to the evaluator", HOST,
   '        memory = _ext_json(block) if isinstance(block, dict) else {}',
   '        memory = _ext_json(getattr(volley, "persist_data", None) or {})',
   "x9_an_extension_cannot_read"),
@@ -105,7 +105,7 @@ MUTATIONS = [
  # `name = str(...)` line above is unique to the functions gate, so the row now names the
  # block it is about. Note that S4 was written disambiguated from the start: its table
  # enforces a unique anchor, so its author was FORCED to. This one was not.
- ("X10 let a pack name a robot function the table does not", CA,
+ ("X10 let a pack name a robot function the table does not", HOST,
   '        name = str((entry or {}).get("name") or "")\n        if name not in known:',
   '        name = str((entry or {}).get("name") or "")\n        if False:',
   "x10_the_host_will_not_name"),

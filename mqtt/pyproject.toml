@@ -37,7 +37,8 @@ Homepage = "https://github.com/mvalancy/moxie-robot-saver"
 Documentation = "https://github.com/mvalancy/moxie-robot-saver/tree/main/docs/architecture"
 
 [tool.setuptools]
-packages = ["moxie_sdk", "moxie_sdk.apps", "moxie_sdk.content", "moxie_sdk.content.ext"]
+packages = ["moxie_sdk", "moxie_sdk.apps", "moxie_sdk.content", "moxie_sdk.content.ext",
+            "moxie_sdk.content.packs"]
 include-package-data = true
 
 # The safety rule table is data, not code — it must ship inside the wheel or the

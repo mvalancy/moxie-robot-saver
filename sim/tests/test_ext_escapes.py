@@ -292,8 +292,10 @@ def test_x3_ordinary_templating_still_works_in_both_shapes(monkeypatch):
 def test_x3_an_extension_is_the_only_other_execution_surface():
     """X3 — with the renderer sandboxed, the §5 capability model is the only execution
     surface; `code` round-trips as opaque data and is never exec/eval/compiled (§7.4)."""
-    names = ["content_app.py", "module.py", "packs.py", "render.py"]
-    for name in names + [os.path.relpath(f, CONTENT) for f in EXT_FILES]:
+    names = [os.path.relpath(os.path.join(d, f), CONTENT)
+             for d, _s, files in os.walk(CONTENT) for f in files if f.endswith(".py")]
+    assert {"content_app.py", "render.py", "ext/machine.py", "packs/review.py"} <= set(names)
+    for name in names:
         tree = pyast.parse(open(os.path.join(CONTENT, name)).read())
         for node in pyast.walk(tree):
             if isinstance(node, pyast.Call) and isinstance(node.func, pyast.Name):

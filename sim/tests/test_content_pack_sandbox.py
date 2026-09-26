@@ -164,7 +164,10 @@ def test_packs_py_handles_data_and_never_renders_it():
     `test_render_sandbox.py::test_the_renderer_uses_the_sandboxed_environment` sets).
     A future refactor that reached for the renderer — to preview a prompt in the review,
     say — would move the evaluation into the step this design promises is inert."""
-    src = open(os.path.join(REPO, "mqtt", "moxie_sdk", "content", "packs.py")).read()
+    pkg = os.path.join(REPO, "mqtt", "moxie_sdk", "content", "packs")
+    src = "\n".join(open(os.path.join(pkg, f)).read()
+                    for f in sorted(os.listdir(pkg)) if f.endswith(".py"))
+    assert "def review_pack" in src and "def apply_pack" in src
     code = "\n".join(l for l in src.splitlines()
                      if not l.strip().startswith(("#", '"', "'", "*", ":")))
     # `re.compile` is the one legitimate compile here — a pack's `pattern` is validated
