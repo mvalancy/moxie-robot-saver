@@ -7,22 +7,14 @@ import {
 /* =========================================================================== *
  * 9. THE BROWSER HALF — `sim/web/turnstile.js`, under a stub window
  * =========================================================================== *
- * Loaded as SOURCE under a fake window/document with a fake Cloudflare API, the idiom
- * `sim/test_bridge.mjs` established. No browser, no network, no widget.
- *
- * FOUR behaviours that matter and that nothing else can check:
- *
- *   · A FRESH TOKEN PER SEND. Tokens are single-use and live 300 s, so a module that
- *     minted one per page load would work for exactly the first turn of a conversation
- *     and then refuse every later one — a demo that breaks after one sentence, in a way
- *     that looks like the brain failing.
- *   · ONE WIDGET PER ACTION. The two spending routes require different actions back, so a
- *     token minted for a typed sentence must not be what the microphone sends.
- *   · A FAILED SCRIPT LOAD IS NEVER MEMOISED. One `onerror` — or one load that merely
- *     arrived after the 8 s deadline — used to disable every live turn for the rest of the
- *     page session while the page told the visitor to retry, which could never work.
- *   · A CHALLENGE ON SCREEN IS NEVER RESET OUT FROM UNDER THE VISITOR. The page says "try
- *     me once more"; doing that mid-challenge used to discard the half-finished puzzle.
+ * Loaded as SOURCE under a fake window/document and a fake Cloudflare API (the
+ * `sim/test_bridge.mjs` idiom). Four behaviours nothing else checks:
+ *   · A FRESH TOKEN PER SEND: tokens are single-use, so a per-page-load token breaks the
+ *     demo after one sentence.
+ *   · ONE WIDGET PER ACTION: a typed sentence's token is not what the microphone sends.
+ *   · A FAILED OR LATE SCRIPT LOAD IS NEVER MEMOISED: one `onerror` must not disable
+ *     live turns for the rest of the session.
+ *   · A CHALLENGE ON SCREEN IS NEVER RESET UNDER THE VISITOR.
  */
 {
   const SRC = readFileSync(join(repo, "sim", "web", "turnstile.js"), "utf8");
@@ -64,14 +56,9 @@ import {
     return made;
   }
 
-  /** Cloudflare's widget API, faked to the documented surface — and PER WIDGET, because
-   *  the module now renders one for each action and a single-widget fake could not tell a
-   *  chat token from a microphone one.
-   *
-   *  `held` is what `getResponse()` answers — the token a widget is sitting on. It is a
-   *  mutable field rather than a constant because the interactive case is precisely a
-   *  widget whose token appears LATER, and a fake that could only ever answer "" would
-   *  make that path untestable. */
+  /** Cloudflare's widget API, faked PER WIDGET (one per action). `held` is what
+   *  `getResponse()` answers, mutable because the interactive case is a widget whose
+   *  token appears LATER. */
   function fakeApi(behaviour) {
     const widgets = {};
     const calls = { render: 0, reset: 0, execute: 0, opts: {}, widgets, order: [] };
@@ -133,11 +120,8 @@ import {
     ok(t1 !== t2 && t2 !== t3, "…and they are DIFFERENT tokens — not one token reused");
 
     // The render options, which are the UX decision and the server contract in one object.
-    /* `|| {}` on purpose. With the client's action table drifted (mutation row D6e) there
-      * is no entry under `ACT.chat` at all, and a bare property read THREW — which exits
-      * node before a single `FAIL:` line is printed, so the mutation table saw an
-      * unattributable crash instead of a named red check. A guard's test must fail
-      * legibly; the same defensive read is applied everywhere below for the same reason. */
+    /* `|| {}` so a drifted action table (row D6e) fails a named check instead of crashing
+     * node before any `FAIL:` line; the same defensive read is used below. */
     const opts = calls.opts[ACT.chat] || {};
     eq(opts.sitekey, SITEKEY, "the widget is rendered with the PUBLISHED sitekey");
     eq(opts.action, ACT.chat,
@@ -209,23 +193,15 @@ import {
   }
 
   /* ---- THE INTERACTIVE CASE: a solve that lands past the deadline ---------- *
-   * The first of the two paths by which a visitor who actually had to click something ever
-   * gets a turn. Their solve arrives after `getToken()` already resolved `null` and the
-   * page already said "try me once more", so the widget is left holding a perfectly good
-   * unspent token — and the NEXT send must spend that rather than reset it and start the
-   * challenge over. An earlier draft called `reset()` unconditionally, which would have
-   * made the page unusable for exactly the visitors Turnstile decided to challenge. */
+   * The solve arrives after `getToken()` resolved `null`, leaving the widget holding a good
+   * unspent token; the NEXT send must spend it rather than reset and re-challenge. */
   {
     world(SITEKEY);
     const calls = fakeApi("silent");                 // execute() never calls back
     (0, eval)(SRC);
-    /* Mints are serialised (one `pending` resolver per widget), so the second send below
-     * queues behind the first until the first gives up — which is correct behaviour and,
-     * at the shipped 8 s, eight seconds of suite. Shortened here for the same reason as
-     * the rejoin case, with the shipped constant pinned from the source separately. It is
-     * 200 ms rather than 40 so that `soon()`'s own 50 ms race still observes the mint as
-     * PENDING — the assertion below is that it has not resolved a token, which a deadline
-     * shorter than the race would satisfy by resolving `null` instead. */
+    /* Mints are serialised per widget, so the second send queues behind the first. The
+     * deadline is shortened (the shipped constant is pinned from source separately) to
+     * 200 ms — longer than `soon()`'s 50 ms race, so "still PENDING" is really observed. */
     T().__deadlineMs(200);
     const first = await soon(T().getToken("chat"));
     eq(first, "__pending", "the first send is still waiting on an interactive challenge…");
@@ -246,22 +222,14 @@ import {
   }
 
   /* ---- A SEND DURING A LIVE CHALLENGE WAITS FOR IT; IT DOES NOT RESTART IT - *
-   * The second interactive path, and the one the page's own copy walks a visitor straight
-   * into: send #1's deadline fires, Moxie says "try me once more", and the visitor does
-   * exactly that WHILE still working through the challenge on screen. An unconditional
-   * `reset()` there discarded the half-finished puzzle and drew a new one — every single
-   * time they followed the instruction — so the only way to complete a turn was to ignore
-   * the page. Now the second send becomes the waiter for the challenge already running. */
+   * The page says "try me once more" when send #1's deadline fires; a visitor doing so
+   * mid-challenge must become the waiter for the running challenge, not discard it. */
   {
     world(SITEKEY);
     const calls = fakeApi("silent");
     (0, eval)(SRC);
-    /* THE REAL SEQUENCE, at 1/200th of the wall clock. The visitor's second Send happens
-     * AFTER the page told them to try again — which happens when the first mint's deadline
-     * fires — so this case is unreachable without waiting one deadline out. `__deadlineMs`
-     * is the test hook that buys that for 40 ms instead of 8 s; the shipped constant is
-     * pinned from the source at the end of this block, so shortening it here cannot hide a
-     * change to it. */
+    /* THE REAL SEQUENCE at 1/200th of the wall clock via the `__deadlineMs` hook; the
+     * shipped constant is pinned from source at the end of this block. */
     eq(T().__deadlineMs(40), 40, "the mint deadline is shortened for this one case");
     eq(await T().getToken("chat"), null, "send #1 gives up when its deadline fires…");
     eq(calls.reset, 1, "…after one reset");
@@ -293,13 +261,8 @@ import {
   }
 
   /* ---- Cloudflare's script cannot load, AND THE NEXT SEND MAY TRY AGAIN ---- *
-   * THE BUG THIS BLOCK EXISTS FOR. The first version memoised the promise, so ONE failed
-   * load — an ad-blocker rule, a captive portal, a cell handoff, a single edge 5xx — or a
-   * load that merely took longer than the 8 s deadline, disabled every live turn for the
-   * REST OF THE PAGE SESSION: the cached `false` was handed to every later caller, no
-   * second request was ever made, no widget was ever rendered, and the page kept telling
-   * the visitor to retry something that could not succeed. Only a reload recovered, and
-   * nothing said so. */
+   * Memoising the load promise meant one failed or slow load (ad-blocker, captive portal,
+   * one edge 5xx) disabled every live turn until a reload, while the page said "retry". */
   {
     const w = world(SITEKEY);
     (0, eval)(SRC);                       // no window.turnstile: nothing to render with
@@ -330,12 +293,9 @@ import {
   }
 
   /* ---- IT GIVES UP *ASKING*, AND STILL USES AN API THAT TURNS UP ANYWAY --- *
-   * The bound on the retry above is real — a host that is blocked permanently (an
-   * extension, a DNS filter, a corporate policy) must not get one `<script>` tag per Send.
-   * But "stop asking" and "give up" are different things: if `window.turnstile` is present
-   * for ANY reason once the budget is spent, a page that refuses to look is refusing turns
-   * it could serve. `loadApi()` answers from `api()` BEFORE it consults its own memo or its
-   * own counter, which is what makes both true at once. */
+   * A permanently blocked host must not get a `<script>` per Send, but if
+   * `window.turnstile` is present once the budget is spent it is still used: `loadApi()`
+   * answers from `api()` BEFORE consulting its memo or counter. */
   {
     const w = world(SITEKEY);
     (0, eval)(SRC);
@@ -361,22 +321,15 @@ import {
   }
 
   /* ---- A SCRIPT THAT LOADS *LATE* IS STILL USED --------------------------- *
-   * The other half of the same bug, and the sneakier half: the request SUCCEEDS but takes
-   * longer than the 8 s deadline, so the deadline resolved `false` while the API was on
-   * its way. The module's own stats read `scriptLoads: 1, renders: 0` — the script
-   * demonstrably loaded and was never used. What decides must be whether `window.turnstile`
-   * is HERE, not what a boolean said eight seconds ago. */
+   * The load succeeds after the 8 s deadline resolved `false`. What decides is whether
+   * `window.turnstile` is HERE, not what a boolean said eight seconds ago. */
   {
     const w = world(SITEKEY);
     (0, eval)(SRC);
     eq(w.scripts.length, 1, "the script was requested");
-    /* The load that goes quiet: the first request is settled as failed (so the memo is
-     * clear) and the SECOND is left to the deadline with neither `onload` nor `onerror`
-     * ever firing — which is what an extension or a proxy that swallows the events looks
-     * like, and what the slow-load case looks like from this module's point of view. The
-     * deadline is shortened for the same reason as the rejoin case above: reaching this
-     * state honestly costs eight seconds and the shipped constant is pinned from the
-     * source separately. */
+    /* The load that goes quiet: the first request fails (memo clear), the SECOND never
+     * fires `onload`/`onerror` (an extension or proxy swallowing the events). Deadline
+     * shortened as above. */
     w.scripts[0].onerror();
     // One tick, so the failed load clears its own memo before the next ask (the memo is
     // cleared in a `.then`, which is a microtask — a send issued in the very same tick as
@@ -397,12 +350,9 @@ import {
   }
 
   /* ---- THE HOLDER: it cannot swallow the control under the visitor's thumb - *
-   * The structural half of a defect measured in a real browser (the behavioural half is
-   * `sim/test_mobile_layout.mjs`): a 300x65 challenge at `bottom: 16px` sat exactly on top
-   * of `#rail-toggle`, the only way to open the drawer that holds the text box on a phone,
-   * and `elementFromPoint()` at the toggle's centre returned the widget. Two properties
-   * are asserted from the SOURCE here because they are cheap, they are the whole fix, and
-   * this suite runs in the fast tier with no browser at all. */
+   * A 300x65 challenge at `bottom: 16px` once sat exactly on `#rail-toggle` (the phone's
+   * only way to the text box). The two properties of the fix are asserted from SOURCE so
+   * the no-browser tier holds them; `sim/test_mobile_layout.mjs` has the behavioural half. */
   {
     const w = world(SITEKEY);
     const calls = fakeApi("ok");

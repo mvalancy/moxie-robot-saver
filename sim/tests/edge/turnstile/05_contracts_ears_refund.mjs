@@ -10,9 +10,8 @@ import {
 /* =========================================================================== *
  * 10. THE CONTRACTS THAT SPAN TWO FILES
  * =========================================================================== *
- * Each of these is a value that must be identical in two places and that nothing else
- * would notice drifting: the drift's symptom is every visitor being refused, on
- * production, with a reason that looks like somebody else's fault.
+ * Values that must be identical in two places; drift would refuse every visitor on
+ * production with a reason that looks like somebody else's fault.
  */
 {
   const clientSrc = readFileSync(join(repo, "sim", "web", "turnstile.js"), "utf8");
@@ -86,16 +85,10 @@ import {
   }
 
   /* ---- TRAP B, AS A CLASS AND NOT AS ONE FILENAME ------------------------- *
-   * The app-script no-cache list is THE WHOLE MECHANISM: a client script missing from it
-   * is served with Pages' default caching, so a redeploy can leave a visitor running
-   * yesterday's token minter against today's route.
-   *
-   * IT IS ENUMERATED rather than spot-checked, and that is this pass's fix. A guard that
-   * names `turnstile.js` proves only that THIS slice remembered; the next new client
-   * script gets nothing, which was demonstrated by adding a `zz-probe.js` to `sim.html`
-   * and watching every suite in the repo stay green. `sim/test_csp.mjs` block 9 asserts
-   * the same property against the same file in a real browser run; this copy is here so
-   * the fast tier (no Chrome) catches it too. */
+   * A client script missing from the app-script no-cache list gets Pages' default caching,
+   * so a redeploy can leave a visitor running yesterday's minter against today's route.
+   * ENUMERATED, so the next new script is covered too (`sim/test_csp.mjs` block 9 checks
+   * the same in a real browser; this copy keeps it in the fast tier). */
   {
     const listed = new Set();
     for (const m of headers.matchAll(/^\/([A-Za-z0-9._-]+\.js)\n\s+Cache-Control:\s*no-cache$/gm)) {
@@ -119,15 +112,9 @@ import {
   ok(!/frame-src\s+'none'/.test(csp),
      "frame-src is no longer 'none' — Turnstile draws its challenge in an iframe");
 
-  /* Load order: the module must exist before either send path can call it.
-   *
-   * MEASURED ON THE `<script src>` TAGS since 2026-09-05, not on the first mention of a
-   * filename anywhere in the document. `indexOf("mic.js")` was only ever a PROXY for load
-   * order, and it stopped being one the moment `sim.html`'s composer comment started
-   * naming the files whose listeners bind to the controls it moved — the prose now comes
-   * before the tags, so the proxy reported that `mic.js` loads first. A load-order check a
-   * COMMENT can flip is not measuring load order. `src="…"` is, and each file is asserted
-   * present first so a typo cannot pass as `-1 < n`. */
+  /* Load order: the module must exist before either send path can call it. Measured on
+   * the `<script src>` tags, not the first mention of a filename (a comment once flipped
+   * that proxy); each file is asserted present first so a typo cannot pass as `-1 < n`. */
   const loadsAt = (f) => simHtml.indexOf('src="' + f);
   for (const f of ["mode.js", "turnstile.js", "cloud-transport.js", "mic.js"])
     ok(loadsAt(f) > -1, `sim.html has a <script src> for ${f}`);
@@ -142,23 +129,11 @@ import {
 /* =========================================================================== *
  * 11. THE EARS — `/api/transcribe`, the OTHER route that spends money
  * =========================================================================== *
- * WHAT THIS BLOCK EXISTS FOR. The first version of this slice guarded `/api/chat` and
- * deferred the ears "to a later slice with its own widget action" — and the ears are the
- * MORE expensive half. Driven in-process against the shipped module, with production's
- * exact Turnstile variables set, a plain `curl` reached the paid gateway:
- *
- *     POST /api/transcribe, Origin: <ours>, Sec-Fetch-Site: same-origin,
- *     Content-Type: audio/wav, a 16 kHz mono RIFF body
- *     -> 200, ok:true, reason:null, a transcript, ONE upstream call, ZERO siteverify calls
- *
- * No browser, no widget, no token. What was left bounding it is what this tree itself says
- * is not a bot control: the forgeable origin pin, per-IP 10/min and 60/hour with NO daily
- * window, and a per-isolate unit budget. 60 x 15 s is 15 minutes of billable
- * speech-to-text per hour from one address, ~1,440 calls a day, for ever.
- *
- * So every property §3, §6 and §7 prove for the chat turn is proven here for the ears,
- * plus the one that only exists because there are two of them: A TOKEN MINTED FOR ONE
- * ROUTE IS NOT SPENDABLE ON THE OTHER.
+ * The ears are the MORE expensive half. Unguarded, a plain `curl` with a forged origin and
+ * a 16 kHz RIFF body reached the paid gateway (one upstream call, zero siteverify calls),
+ * bounded only by per-IP windows with no daily cap: 15 minutes of billable STT per hour
+ * per address. Every property §3, §6 and §7 prove for chat is proven here, plus: A TOKEN
+ * MINTED FOR ONE ROUTE IS NOT SPENDABLE ON THE OTHER.
  */
 {
   /* ---- the attack, refused ------------------------------------------------ */
@@ -244,11 +219,8 @@ import {
   eq(outcomes().skipped, 1, "…recorded as `skipped`");
 
   /* ---- THE ORDER: everything cheaper than the bot check is still free ----- *
-   * D1, on this route. The ears have three free local refusals of their own — the byte
-   * floor, the container sniff and the WAV duration ceiling — and not one of them may buy
-   * a round trip to Cloudflare first. `too_short` in particular is *the most common
-   * refusal a real demo will serve* (this route's own header says so), and it would have
-   * been the single biggest source of siteverify traffic if the order were wrong. */
+   * D1 on this route: the byte floor, container sniff and WAV duration ceiling never buy a
+   * siteverify round trip — `too_short` is the most common refusal a real demo serves. */
   for (const [label, body, ctype, want] of [
     ["a 300-byte accidental clip (the byte floor)", new Uint8Array(300), "audio/wav", "too_short"],
     ["500 KB of JPEG (not a container we know)",
@@ -302,21 +274,12 @@ import {
 /* =========================================================================== *
  * 12. A REFUSAL GIVES THE SHARED BUDGET BACK (and keeps the per-IP window)
  * =========================================================================== *
- * THE ATTACK THIS BLOCK EXISTS FOR, measured against the shipped code:
- *
- *   200 POSTs to /api/chat with body {"text":"hello moxie"}, no token, one per source IP
- *   (so nothing rate-limits). All 200 correctly refused 403 `turnstile_failed`, ZERO
- *   gateway calls, ZERO siteverify calls — and `DEMO_UNIT_BUDGET_HOUR` (600) GONE, because
- *   `admit()` charges `UNITS.chat` (3) before the route body runs and the refusal kept it.
- *   The next request — a real visitor whose token verifies — came back 503
- *   `budget_exhausted`, mode `degraded`, and `mode.js` painted SCRIPTED until the hour
- *   rolled. Cost to the attacker: 200 requests with an empty JSON body and no token.
- *
- * So the bot control had turned a PAID drain into a FREE drain and left the availability
- * outcome exactly as it was — while `_lib/turnstile.js`'s own header claimed it "removes
- * the cheapest attack from the set of things that can drain the demo's budget at all".
- * `slot.refundBudget()` is the fix, and `_lib/limits.js::grantedSlot` carries the argument
- * for refunding the budget and NOT the per-IP window.
+ * The attack: 200 tokenless POSTs to /api/chat, one per source IP. All correctly refused
+ * 403 with zero gateway and siteverify calls — yet `admit()` had charged `UNITS.chat` for
+ * each and the refusal kept it, so `DEMO_UNIT_BUDGET_HOUR` (600) was gone and the next
+ * real visitor got 503 `budget_exhausted` (SCRIPTED) until the hour rolled: a FREE drain.
+ * `slot.refundBudget()` is the fix; `_lib/limits.js::grantedSlot` argues why the budget is
+ * refunded and the per-IP window is not.
  */
 {
   const UNITS_CHAT = 3;
@@ -369,11 +332,8 @@ import {
      `…exactly ${UNITS_TRANSCRIBE} units, which is what the ears cost — not the chat turn's 3`);
 
   /* ---- AND SO DOES THE VOICE, WHICH HAS NO BOT CONTROL AT ALL ------------ *
-   * `/api/speech` needs no widget — it cannot be driven without a ticket `/api/chat`
-   * minted — but it charges `UNITS.speech` at admission and refuses a forged ticket for
-   * free, which is the SAME free drain reachable without a token at all. Closing it on the
-   * chat route and leaving it open one door along would have been theatre, so the helper is
-   * there too and this is the assertion that says so.
+   * `/api/speech` charges `UNITS.speech` at admission and refuses a forged ticket for free
+   * — the same drain, reachable without a token — so it refunds too.
    */
   {
     fresh();
@@ -395,12 +355,9 @@ import {
   }
 
   /* ---- THE PER-IP WINDOW IS DELIBERATELY *NOT* GIVEN BACK ---------------- *
-   * The one asymmetry with `refundCharges()`'s other two call sites, and it is a decision
-   * rather than an oversight: the unit budget is SHARED (its exhaustion is everybody
-   * else's problem) while the per-IP window is SELF-INFLICTED and is the only thing that
-   * makes a flood of free refusals from one address eventually go quiet. Refunding it
-   * would make a tokenless refusal unlimited per IP — a new abuse channel opened to close
-   * one. */
+   * The budget is SHARED (its exhaustion is everyone's problem); the per-IP window is
+   * SELF-INFLICTED and the only thing that quiets a flood of free refusals from one
+   * address. Refunding it would make tokenless refusals unlimited per IP. */
   fresh();
   const oneIp = Object.assign({}, ARMED, { DEMO_CHAT_PER_MIN: "3", DEMO_CACHE_COUNTER: "0",
                                            DEMO_QUEUE_MAX_WAIT_MS: "0" });
