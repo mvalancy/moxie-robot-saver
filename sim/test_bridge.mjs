@@ -1,4 +1,4 @@
-/* Unit test for sim/web/bridge.js — loads the REAL bridge with stubbed
+/* Unit test for sim/web/bridge/ — loads the REAL bridge with stubbed
  * window/document/mqtt and asserts it drives window.moxie correctly from firmware
  * markup. No browser, no network. Run: node sim/test_bridge.mjs
  */
@@ -6,7 +6,7 @@ import { loadBridge, audioSpy, readGolden } from "./bridge_harness.mjs";
 
 /* A RECORDING audio stub: `speakClipOnly` is how a child turn becomes audible, and plain
  * `speak()` for a child line would read a visitor's own words back at them
- * (audio.js::speakClipOnly), so both are spied and the WRONG one can fail the test.
+ * (voice/local.js::speakClipOnly), so both are spied and the WRONG one can fail the test.
  * The stub client is CONNECTED and records publishes: what the bridge puts on
  * `events/...` is under test too. */
 const { voice, audio } = audioSpy();

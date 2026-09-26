@@ -29,6 +29,7 @@ import pytest
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from helpers_runtime import CHAT_TOPIC, LatchClient, drive_once, make_runtime  # noqa: E402
+from helpers_web import script_group                                         # noqa: E402
 from moxie_sdk import automarkup, vocab                                       # noqa: E402
 from moxie_sdk.app import MoxieApp                                            # noqa: E402
 from moxie_sdk.automarkup import annotate                                     # noqa: E402
@@ -622,15 +623,15 @@ def test_the_hot_path_opens_no_file_and_reaches_no_socket():
 # --------------------------------------------------------------------------- #
 #: Ids the browser SIM does not animate, each with the reason it is still fine to emit.
 ROBOT_ONLY = {
-    "Bht_Sign_off": "bridge.js aliases it onto Bht_Gesture_Greet (a goodbye wave)",
+    "Bht_Sign_off": "bridge/body.js aliases it onto Bht_Gesture_Greet (a goodbye wave)",
 }
 
 
 def test_every_id_the_corpus_emits_is_one_the_sim_renders():
     """No hardware has ever played our markup, so the browser SIM is the only renderer we
     can assert against (docs/architecture/sim-as-a-client.md). Every id the floor can put
-    on the wire must reach a real branch of `sim/web/bridge.js`, or be listed above."""
-    bridge = open(os.path.join(REPO, "sim", "web", "bridge.js")).read()
+    on the wire must reach a real branch of `sim/web/bridge/`, or be listed above."""
+    bridge = script_group("bridge")
     seen = set()
     for line in CORPUS:
         markup = annotate(line, icons=True, sfx=True)

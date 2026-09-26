@@ -1,7 +1,7 @@
 /* Cloud-TTS playback tests — the browser SIM's half of AI seam ③.
  *
  * A `CloudTTSResponse` on `/devices/{id}/commands/tts` (base64 raw LE int16 PCM + marks[] +
- * event_id/chunk_num) is decoded by sim/web/audio.js ITSELF, like firmware. A drifted decode
+ * event_id/chunk_num) is decoded by sim/web/voice/ ITSELF, like firmware. A drifted decode
  * plays noise or nothing, silently, so the pure decode is tested against hand-built PCM and
  * the REAL server encoder (mqtt/moxie_sdk/tts.py), then the playback path on a fake
  * AudioContext: queueing, chunk order, autoplay policy, mouth, speaking state, mute.
@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { BRIDGE_SRC, VOICE_SRC } from "./bridge_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -21,7 +22,7 @@ const near = (a, b, eps = 1e-4) => Math.abs(a - b) <= eps;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // --------------------------------------------------------------------------- //
-// A fake Web Audio + DOM environment (audio.js is a classic-script IIFE).
+// A fake Web Audio + DOM environment (voice/ is a classic-script IIFE).
 // --------------------------------------------------------------------------- //
 class FakeBuffer {
   constructor(ch, len, rate) {
@@ -98,10 +99,10 @@ globalThis.cancelAnimationFrame = (id) => {
 const fire = (ev) => (listeners[ev] || []).slice().forEach((cb) => cb({ type: ev }));
 
 // ---- load the real module ---------------------------------------------------
-const audioSrc = readFileSync(join(here, "web", "audio.js"), "utf8");
+const audioSrc = VOICE_SRC;
 new Function(audioSrc)();
 const A = globalThis.window.moxieAudio;
-ok(!!A, "audio.js must expose window.moxieAudio");
+ok(!!A, "voice/ must expose window.moxieAudio");
 if (!A) { console.log("❌ audio tests FAILED:\n   - " + fails.join("\n   - ")); process.exit(1); }
 for (const fn of ["playCloudTTS", "decodeCloudTTS", "isSpeaking", "ttsPending",
                   "lastMouthPeak", "lastPlaybackStats"])
@@ -316,9 +317,9 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
 // a chunk that never arrives: the recorded order must always ascend.
 // --------------------------------------------------------------------------- //
 {
-  const TTS_GAP_MS = 1200;                    // audio.js's bounded wait for a lost chunk
+  const TTS_GAP_MS = 1200;                    // voice/'s bounded wait for a lost chunk
   ok(new RegExp("TTS_GAP_MS = " + TTS_GAP_MS + ";").test(audioSrc),
-     `this section's gap timings must match audio.js's TTS_GAP_MS (${TTS_GAP_MS})`);
+     `this section's gap timings must match voice/'s TTS_GAP_MS (${TTS_GAP_MS})`);
 
   const lastSrc = () => CTX.made.sources[CTX.made.sources.length - 1];
   const endLast = async () => { lastSrc().onended(); await sleep(3); };
@@ -427,7 +428,7 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
 }
 
 // --------------------------------------------------------------------------- //
-// 7. #tts-status ownership — one line, two writers. audio.js owns it; env.js's async
+// 7. #tts-status ownership — one line, two writers. voice/ owns it; env.js's async
 //    sidecar hints are deferred, never painted over a live "speaking" indicator.
 // --------------------------------------------------------------------------- //
 {
@@ -469,23 +470,23 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
 // 8. Wiring — the bridge routes /commands/tts here, and the SIM stays SDK-free
 // --------------------------------------------------------------------------- //
 {
-  const bridge = readFileSync(join(here, "web", "bridge.js"), "utf8");
+  const bridge = BRIDGE_SRC;
   ok(bridge.includes('client.subscribe("/devices/+/commands/tts")'),
-     "bridge.js must subscribe to /devices/+/commands/tts");
+     "bridge/ must subscribe to /devices/+/commands/tts");
   ok(/topic\.endsWith\("\/commands\/tts"\)/.test(bridge),
-     "bridge.js route() must dispatch /commands/tts");
-  ok(bridge.includes("playCloudTTS"), "bridge.js must hand the payload to moxieAudio.playCloudTTS");
+     "bridge/ route() must dispatch /commands/tts");
+  ok(bridge.includes("playCloudTTS"), "bridge/ must hand the payload to moxieAudio.playCloudTTS");
   ok(bridge.includes("speakLocally"),
-     "bridge.js must arbitrate the local voice so a turn is never spoken twice");
+     "bridge/ must arbitrate the local voice so a turn is never spoken twice");
 
   ok(/createBuffer\(/.test(audioSrc),
-     "audio.js must build the AudioBuffer by hand (raw PCM is not a container)");
+     "voice/ must build the AudioBuffer by hand (raw PCM is not a container)");
   ok(!/decodeAudioData[\s\S]{0,400}playCloudTTS/.test(audioSrc),
      "the CloudTTS path must not use decodeAudioData (raw PCM has no header)");
   // Client/server independence, checked against CODE, not comments: citing `moxie_sdk` in a
   // comment is fine; the token in code is the bug.
-  for (const f of ["audio.js", "bridge.js"]) {
-    const code = readFileSync(join(here, "web", f), "utf8")
+  for (const [f, src] of [["voice/", VOICE_SRC], ["bridge/", BRIDGE_SRC]]) {
+    const code = src
       .split("\n")
       .filter((l) => {
         const t = l.trim();
@@ -497,7 +498,7 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
   }
 
   const html = readFileSync(join(here, "web", "sim.html"), "utf8");
-  ok(/src="audio\.js(\?[^"]*)?"/.test(html), "sim.html must load audio.js");
+  ok(/src="voice\/index\.js(\?[^"]*)?"/.test(html), "sim.html must load voice/");
   ok(html.includes('id="tts-status"'), "sim.html must keep the #tts-status indicator");
   ok(html.includes('id="audio-on"'), "sim.html must keep the mute toggle the TTS path honors");
 

@@ -209,7 +209,7 @@ async function settleDegradedLine(page) {
   /* Then drive `tick()` explicitly instead of racing the free-running timer. The promise is
    * "ambient does not start while Moxie is SPEAKING"; a degraded reply's fetch/decode beat is
    * genuine silence (a recorded gap). The live path's equivalent loading gap is block 5,
-   * closed by audio.js's `floor`. */
+   * closed by voice/'s `floor`. */
   await page.evaluate(() => window.moxieAmbient.stop());   // idempotent; see the note above
 }
 
@@ -436,7 +436,7 @@ try {
    * 5. THE LOADING SEAM — a quip already FETCHING when the answer landed. The tick-time
    * `moxieBusy()` check and the answer-time `ttsPump` stop both miss it (no node yet). The
    * clip's fetch is stalled, the turn driven to real audio, then the clip released: without
-   * `floor` (audio.js, THE THIRD SEAM) it starts on top of the answer every time.
+   * `floor` (voice/, THE THIRD SEAM) it starts on top of the answer every time.
    * ===================================================================== */
   {
     const { page, errs, aborted, clipNet } = await open(HOSTED, { health: HEALTH_LIVE, chat: true });

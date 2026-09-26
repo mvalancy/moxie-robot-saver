@@ -1,26 +1,38 @@
-/* bridge_harness.mjs — load the REAL sim/web/bridge.js under bare node.
+/* bridge_harness.mjs — load the REAL sim/web/bridge/*.js under bare node.
  *
  * NOT a test (sim/tests/test_ci_test_coverage.py enumerates only `test_*.mjs`). The
  * node-only bridge suites (test_bridge, test_action_payload, test_automarkup_render,
  * test_performance_render, test_preview_render, test_presence_bridge) share these
  * window/document/mqtt shims instead of each carrying its own copy.
  *
- * `(0, eval)` runs the bridge IIFE in global scope, so every call resets the globals and
+ * `(0, eval)` runs the bridge parts in global scope, so every call resets the globals and
  * each load gets its own closure state.
+ *
+ * `scriptGroup()` is how EVERY node suite reads a split classic-script group (bridge/,
+ * voice/): the parts sim.html loads, in its order, as one source — what the page runs.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 export const here = dirname(fileURLToPath(import.meta.url));
-export const BRIDGE_SRC = readFileSync(join(here, "web", "bridge.js"), "utf8");
+
+/** sim.html's `<script src="{group}/*.js">` parts, in load order, concatenated. */
+export function scriptGroup(group) {
+  const html = readFileSync(join(here, "web", "sim.html"), "utf8");
+  const files = [...html.matchAll(new RegExp(`<script src="(${group}/[\\w-]+\\.js)`, "g"))].map((m) => m[1]);
+  if (!files.length) throw new Error(`sim.html loads no ${group}/*.js`);
+  return files.map((f) => readFileSync(join(here, "web", f), "utf8")).join("\n");
+}
+export const BRIDGE_SRC = scriptGroup("bridge");
+export const VOICE_SRC = scriptGroup("voice");
 export const readGolden = (name) => JSON.parse(readFileSync(join(here, "tests", "goldens", name), "utf8"));
 
 /**
  * @param {object} [o]
  * @param {string} [o.src]      bridge source (default: the shipped file) — a mutated copy
  *                              is how a suite proves it can fail
- * @param {object} [o.audio]    window.moxieAudio (omitted by default, like a page without audio.js)
+ * @param {object} [o.audio]    window.moxieAudio (omitted by default, like a page without voice/)
  * @param {object} [o.moxie]    overrides merged onto the recording window.moxie spy
  * @param {boolean} [o.connect] click #bus-connect and emit "connect" (default true)
  */

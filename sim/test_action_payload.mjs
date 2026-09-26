@@ -1,7 +1,7 @@
 /* Does the BROWSER SIM decode an `execute`'s payload the way the SIL robot does?
  *
  * `function_id` (RemoteChat.proto field 7), `function_args` (8) and `action_args` (10)
- * must be read by `sim/web/bridge.js::applyAction` exactly as `sim/virtual_moxie.py` reads
+ * must be read by `sim/web/bridge/actions.js::applyAction` exactly as `sim/virtual_moxie.py` reads
  * them. This drives the REAL bridge over `sim/tests/goldens/cloud_to_robot_actions.json`'s
  * `execute_script` and asserts the applied actions equal `execute_expected` entry by entry,
  * key by key — the same golden `sim/tests/test_sim_client_parity.py` holds VirtualMoxie to.
@@ -66,7 +66,7 @@ ok(got.some((a) => a.function === "eb_wins") && !got.some((a) => a.function === 
 // --------------------------------------------------------------------------------------
 const NAME_FIX = 'entry.function_id || entry.function || ""';
 const ARGS_FIX = /let args = entry\.function_args;\n(?:.*\n){2}\s*const recordedArgs =/;
-ok(SRC.includes(NAME_FIX), `negative control cannot run: ${NAME_FIX} is not in bridge.js`);
+ok(SRC.includes(NAME_FIX), `negative control cannot run: ${NAME_FIX} is not in bridge/`);
 ok(ARGS_FIX.test(SRC), "negative control cannot run: the args lookup is not where it was");
 
 let broken = SRC.replace(NAME_FIX, 'entry.function || ""');
@@ -86,7 +86,7 @@ try {
   controlErr = e && e.message;
 }
 ok(controlFailed,
-   `NEGATIVE CONTROL: bridge.js with the payload fix reverted still matched the golden` +
+   `NEGATIVE CONTROL: bridge/ with the payload fix reverted still matched the golden` +
    (controlErr ? ` (it threw instead: ${controlErr})` : "") +
    " — this suite would pass with the bug present and proves nothing");
 

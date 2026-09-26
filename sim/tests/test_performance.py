@@ -37,9 +37,9 @@ from moxie_sdk import performance as perf          # noqa: E402
 from moxie_sdk import vocab                        # noqa: E402
 from moxie_sdk.tts import strip_markup             # noqa: E402
 from moxie_sdk.filler import FILLERS               # noqa: E402
+from helpers_web import script_group               # noqa: E402
 
 GOLDENS = os.path.join(HERE, "goldens", "performance.json")
-BRIDGE_JS = os.path.join(REPO, "sim", "web", "bridge.js")
 
 
 @pytest.fixture(autouse=True)
@@ -822,8 +822,8 @@ def test_every_emitted_id_is_rendered_by_the_browser_sim():
     """The SIM is the only renderer we can assert against (no hardware has ever played
     our markup), so an id it silently ignores is an id that does nothing anywhere we can
     see. Comment lines are ignored: citing an id in a comment is not rendering it."""
-    with open(BRIDGE_JS) as fh:
-        src = "\n".join(ln for ln in fh if not ln.strip().startswith("//"))
+    src = "\n".join(ln for ln in script_group("bridge").splitlines()
+                    if not ln.strip().startswith("//"))
     emitted_g, emitted_b = set(), set()
     for line in CORPUS:
         p = staged(line, turn_key="sim", icons=True, sfx=True)

@@ -7,7 +7,7 @@
     "scanner, run a named on-robot function, subscribe to perception events (see",
     "docs/reverse-engineering/protocol/remote-chat-protocol.md, section RemoteChatAction).",
     "DoD criterion 4 says the two SIM clients are interchangeable; on this channel that",
-    "was false until 2026-09-03: `sim/web/bridge.js::applyAction` acted on actions and",
+    "was false until 2026-09-03: `sim/web/bridge/actions.js::applyAction` acted on actions and",
     "`sim/virtual_moxie.py` ignored them entirely (grep -c response_actions -> 0).",
     "",
     "`script` is the four remote_chat responses `sim/test_bridge.mjs` already emits at the",
@@ -25,7 +25,7 @@
     "",
     "`execute_script` / `execute_expected` are the second half, added 2026-09-04. PR #119",
     "put `function_id` (proto field 7), `function_args` (8) and `action_args` (10) on the",
-    "wire, and `sim/web/bridge.js::applyAction` read `entry.function` alone and no args at",
+    "wire, and `sim/web/bridge/actions.js::applyAction` read `entry.function` alone and no args at",
     "all -- so our own server's named `execute` rendered in the browser as `(unnamed)`",
     "while the SIL robot named it. The two clients disagreed about the one verb that had",
     "just gained a payload. `execute_script` drives BOTH clients over the four responses",
@@ -46,7 +46,7 @@
   ],
   "topic_suffix": "commands/remote_chat",
   "reference_client": "sim/virtual_moxie.py",
-  "peer_client": "sim/web/bridge.js",
+  "peer_client": "sim/web/bridge/",
   "peer_test": "sim/test_bridge.mjs",
 
   "action_kinds": ["launch", "exit", "sleep", "enable_qr", "execute"],
@@ -56,7 +56,7 @@
   "applied_keys": ["action", "module_id", "content_id", "function", "args"],
   "client_only_keys": {
     "sim/virtual_moxie.py": [],
-    "sim/web/bridge.js": ["applied[].t"]
+    "sim/web/bridge/actions.js": ["applied[].t"]
   },
 
   "script": [

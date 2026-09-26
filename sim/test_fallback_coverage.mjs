@@ -48,6 +48,7 @@
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { BRIDGE_SRC, VOICE_SRC } from "./bridge_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const web = join(here, "web");
@@ -276,13 +277,13 @@ const moxieSpeech = (ev) => {
  * --------------------------------------------------------------------------- */
 const stubSrc = readFileSync(join(web, "stub.js"), "utf8");
 const ambientSrc = readFileSync(join(web, "ambient.js"), "utf8");
-const audioSrc = readFileSync(join(web, "audio.js"), "utf8");
+const audioSrc = VOICE_SRC;
 {
   const html = readFileSync(join(web, "sim.html"), "utf8");
   // The files a degraded turn actually needs, in the order sim.html must load them:
   // stub.js publishes the offline brain, bridge.js consumes it, mode.js decides which
   // mode we are in, cloud-transport.js delegates to bridge.js when it is not `live`.
-  for (const f of ["stub.js", "bridge.js", "mode.js", "cloud-transport.js", "audio.js", "ambient.js"]) {
+  for (const f of ["stub.js", "bridge/index.js", "mode.js", "cloud-transport.js", "voice/index.js", "ambient.js"]) {
     ok(html.includes(f), `sim.html must load ${f} — the fallback is not wired without it`);
     ok(existsSync(join(web, f)), `${f} must exist`);
   }
@@ -293,10 +294,10 @@ const audioSrc = readFileSync(join(web, "audio.js"), "utf8");
    * reported the wrong order for a page whose script block had not changed at all. A
    * load-order check a COMMENT can flip is not measuring load order. */
   const loadsAt = (f) => html.indexOf('src="' + f);
-  for (const f of ["stub.js", "bridge.js", "cloud-transport.js"])
+  for (const f of ["stub.js", "bridge/core.js", "bridge/index.js", "cloud-transport.js"])
     ok(loadsAt(f) > -1, `sim.html has a <script src> for ${f}`);
-  ok(loadsAt("stub.js") < loadsAt("bridge.js"), "stub.js loads before bridge.js");
-  ok(loadsAt("bridge.js") < loadsAt("cloud-transport.js"),
+  ok(loadsAt("stub.js") < loadsAt("bridge/core.js"), "stub.js loads before bridge.js");
+  ok(loadsAt("bridge/index.js") < loadsAt("cloud-transport.js"),
      "cloud-transport.js loads after bridge.js (it wraps what bridge.js published)");
   // §7 below drives `ambient.js`'s degraded announcer through `window.moxieMode`, which
   // only exists because mode.js ran first. In the page that is load ORDER, not luck.
@@ -925,7 +926,7 @@ const probed = (log) => log.urls.some((u) => u.includes(":8081"));
      "speakClipOnly must be exported on window.moxieAudio — bridge.js calls it by name");
 
   // (i) …and the caller really is `handleUserTurn`, with the child group named.
-  const bridgeSrc = readFileSync(join(web, "bridge.js"), "utf8");
+  const bridgeSrc = BRIDGE_SRC;
   const turn = bridgeSrc.slice(bridgeSrc.indexOf("function handleUserTurn"));
   const turnBody = turn.slice(0, turn.indexOf("\n  }\n"));
   ok(/speakClipOnly\(\s*speech\s*,\s*"child"\s*\)/.test(turnBody),
@@ -1007,7 +1008,7 @@ const probed = (log) => log.urls.some((u) => u.includes(":8081"));
   };
 
   new Function(audioSrc)();                                    // the real audio.js
-  new Function(readFileSync(join(web, "bridge.js"), "utf8"))(); // the real bridge.js
+  new Function(BRIDGE_SRC)();                                  // the real bridge/
   ok(!!g.window.moxieBridge, "bridge.js must expose window.moxieBridge");
 
   // The demo's own child events, routed exactly as replay() routes them.

@@ -9,14 +9,13 @@ os.chdir(WEB)
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
 
 def bust(html: str) -> str:
-    def q(name):
-        p = os.path.join(WEB, name)
-        return str(int(os.path.getmtime(p))) if os.path.exists(p) else "0"
-    # add ?t=<mtime> to local moxie.js / bridge.js / style.css references
-    for f in ("moxie.js", "bridge.js", "style.css"):
-        html = re.sub(r'(["\'])' + re.escape(f) + r'(["\'])',
-                      lambda m, f=f: m.group(1) + f + "?t=" + q(f) + m.group(2), html)
-    return html
+    """Stamp every local <script src>/<link href> .js/.css with ?t=<mtime> (replacing any
+    ?v= the page ships), so an edited file is refetched even by an ES-module cache."""
+    def stamp(m):
+        p = os.path.join(WEB, m.group(2))
+        t = str(int(os.path.getmtime(p))) if os.path.exists(p) else "0"
+        return f'{m.group(1)}="{m.group(2)}?t={t}"'
+    return re.sub(r'\b(src|href)="((?!https?:|//)[\w./-]+\.(?:js|css))(?:\?[^"]*)?"', stamp, html)
 
 class H(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
@@ -25,9 +24,7 @@ class H(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
     def do_GET(self):
         path = self.path.split("?", 1)[0]
-        # Serve any HTML page with on-the-fly cache-busting. "/" is the hub
-        # (index.html); the simulator is sim.html (which is what actually loads
-        # moxie.js/bridge.js/style.css, so busting matters there).
+        # Serve any HTML page with on-the-fly cache-busting. "/" is the hub (index.html).
         rel = "index.html" if path == "/" else path.lstrip("/")
         if rel.endswith(".html") and os.path.isfile(os.path.join(WEB, rel)):
             body = bust(open(os.path.join(WEB, rel), encoding="utf-8").read()).encode("utf-8")

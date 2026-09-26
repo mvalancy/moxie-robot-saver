@@ -40,13 +40,14 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "sim"))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
+from helpers_web import script_group  # noqa: E402
+
 GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "goldens",
                            "robot_to_cloud_activity.json")
-BRIDGE_PATH = os.path.join(REPO, "sim", "web", "bridge.js")
 
 with open(GOLDEN_PATH) as _fh:
     GOLDEN = json.load(_fh)
-BRIDGE = open(BRIDGE_PATH, encoding="utf-8").read()
+BRIDGE = script_group("bridge")
 
 
 # --------------------------------------------------------------------------- #
@@ -62,7 +63,7 @@ def _balanced(src: str, start: int) -> str:
             depth -= 1
             if depth == 0:
                 return src[start:i + 1]
-    raise AssertionError("unbalanced object literal in bridge.js")
+    raise AssertionError("unbalanced object literal in sim/web/bridge/")
 
 
 def _literal(anchor: str, opener: str = "publishActivity({") -> str:
@@ -304,7 +305,7 @@ def test_both_clients_report_what_an_action_did_under_the_same_names():
     """`bridge.js::actionStats()` and `VirtualMoxie.action_stats()` are the surface every
     test reads. Same keys, or a test written against one client means something else
     against the other."""
-    at = BRIDGE.index("actionStats: function ()")
+    at = BRIDGE.index("actionStats = function ()")
     browser = set(_keys(_balanced(BRIDGE, BRIDGE.index("{", BRIDGE.index("return", at)))))
     vm = _sil().VirtualMoxie(host="127.0.0.1", port=1, device_id="d_keys", verbose=False)
     assert browser == set(vm.action_stats()) == set(ACTIONS_GOLDEN["stat_keys"]), (
@@ -439,7 +440,7 @@ def test_the_browser_sims_actionStats_does_not_drop_the_payload_on_the_way_out()
     had been taught to read the args and `actionStats()` still copied four keys, so every
     caller saw an unarmed `execute` and nothing said otherwise. The reader's shape is as
     much of the contract as the writer's — found by `sim/test_action_payload.mjs`."""
-    at = BRIDGE.index("actionStats: function ()")
+    at = BRIDGE.index("actionStats = function ()")
     projection = _balanced(BRIDGE, BRIDGE.index("({", BRIDGE.index("applied:", at)) + 1)
     assert _keys(projection) == ACTIONS_GOLDEN["applied_keys"], _keys(projection)
 

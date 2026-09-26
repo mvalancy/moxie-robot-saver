@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { BRIDGE_SRC } from "./bridge_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -44,7 +45,7 @@ const deep = (a, b, m) => eq(JSON.stringify(a), JSON.stringify(b), m);
 
 const SRC = {
   stub: readFileSync(join(repo, "sim", "web", "stub.js"), "utf8"),
-  bridge: readFileSync(join(repo, "sim", "web", "bridge.js"), "utf8"),
+  bridge: BRIDGE_SRC,
   mode: readFileSync(join(repo, "sim", "web", "mode.js"), "utf8"),
   transport: readFileSync(join(repo, "sim", "web", "cloud-transport.js"), "utf8"),
 };
@@ -329,9 +330,9 @@ async function say(text, ms) {
    * comment can flip was never measuring load order. */
   const html = readFileSync(join(repo, "sim", "web", "sim.html"), "utf8");
   const loadsAt = (f) => html.indexOf('src="' + f);
-  for (const f of ["bridge.js", "mode.js", "cloud-transport.js"])
+  for (const f of ["bridge/index.js", "mode.js", "cloud-transport.js"])
     ok(loadsAt(f) > -1, `sim.html has a <script src> for ${f}`);
-  ok(loadsAt("bridge.js") < loadsAt("mode.js"), "sim.html loads bridge.js before mode.js");
+  ok(loadsAt("bridge/index.js") < loadsAt("mode.js"), "sim.html loads bridge.js before mode.js");
   ok(loadsAt("mode.js") < loadsAt("cloud-transport.js"),
      "sim.html loads cloud-transport.js AFTER mode.js (it wraps what bridge.js published)");
 

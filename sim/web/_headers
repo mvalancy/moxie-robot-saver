@@ -51,10 +51,6 @@
 # sim/web/*.js (and each script subdirectory's rule) and fails on any omission.
 /moxie.js
   Cache-Control: no-cache
-/bridge.js
-  Cache-Control: no-cache
-/audio.js
-  Cache-Control: no-cache
 /diagram.js
   Cache-Control: no-cache
 /ambient.js
@@ -96,6 +92,10 @@
 /turnstile.js
   Cache-Control: no-cache
 /moxie/*
+  Cache-Control: no-cache
+/bridge/*
+  Cache-Control: no-cache
+/voice/*
   Cache-Control: no-cache
 /css/*
   Cache-Control: no-cache

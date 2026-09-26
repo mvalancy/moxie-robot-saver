@@ -2,7 +2,7 @@
 Does the ROBOT act on `response_actions`? — beyond what it was handed.
 
 `test_e2e_actions_to_robot.py` asserts the payload on the wire; this asserts the SIL robot
-(`sim/virtual_moxie.py`) acts on it, as `sim/web/bridge.js::applyAction` does (DoD
+(`sim/virtual_moxie.py`) acts on it, as `sim/web/bridge/actions.js::applyAction` does (DoD
 criterion 4, interchangeable clients):
 
 1. A real turn: the real `MoxieRuntime` + `LLMApp` (canned completion via `client=`)
@@ -200,7 +200,7 @@ def test_an_execute_is_recorded_by_name_and_never_run():
 
 def test_execute_reads_the_sims_spelling_too():
     """`RemoteChat.proto`:255-281 names the field `function_id`, and that is what our own
-    `build_chat_response` now emits; `sim/web/bridge.js`:258 reads `entry.function`. Both
+    `build_chat_response` now emits; `sim/web/bridge/actions.js::applyAction` read `entry.function`. Both
     spellings stay accepted — a client that only understood the one server it was written
     against would not be a client — and an unnamed execute records `""`, not a guess."""
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_exec2", verbose=False)
