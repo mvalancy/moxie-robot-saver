@@ -193,8 +193,8 @@ def test_s1c_every_publish_call_site_goes_through_the_helper():
     that fires on a comment is playbook rule 17's lesson.
     """
     import ast
-    path = os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py")
-    tree = ast.parse(open(path).read())
+    from helpers_runtime import runtime_sources
+    trees = [ast.parse(src) for src in runtime_sources().values()]
 
     def calls(node, dotted):
         for sub in ast.walk(node):
@@ -206,18 +206,18 @@ def test_s1c_every_publish_call_site_goes_through_the_helper():
                     and isinstance(f.value.value, ast.Name) and f.value.value.id == "self"):
                 yield sub
 
-    helper = next(n for n in ast.walk(tree)
+    helper = next(n for tree in trees for n in ast.walk(tree)
                   if isinstance(n, ast.FunctionDef) and n.name == "_publish")
-    inside = {c.lineno for c in calls(helper, ("client", "publish"))}
-    everywhere = {c.lineno for c in calls(tree, ("client", "publish"))}
+    inside = {id(c) for c in calls(helper, ("client", "publish"))}
+    everywhere = {id(c): c.lineno for tree in trees for c in calls(tree, ("client", "publish"))}
     assert len(inside) == 1, "the helper must publish exactly once"
-    stragglers = sorted(everywhere - inside)
+    stragglers = sorted(ln for k, ln in everywhere.items() if k not in inside)
     assert stragglers == [], (
         f"publish() call sites at lines {stragglers} still bypass `_publish()` and "
         f"ignore their return code — the bug PR #55 shipped to kill, in the places it "
         f"did not look")
 
-    routed = [c for c in ast.walk(tree)
+    routed = [c for tree in trees for c in ast.walk(tree)
               if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
               and c.func.attr == "_publish"
               and isinstance(c.func.value, ast.Name) and c.func.value.id == "self"]
@@ -281,7 +281,8 @@ def test_s8_a_drop_bumps_the_turn_sequence_for_every_known_robot():
     assert rt._turn_seq["d_two"] == 2
     assert rt._turn_seq["d_three"] == 1, "a robot with no turn yet must still be staled"
 
-    src = open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py")).read()
+    from helpers_runtime import runtime_source
+    src = runtime_source()
     assert "_turn_seq[device_id] = self._turn_seq.get(device_id, 0) + 1" in src, \
         "the turn path's increment moved; re-read the single-writer invariant"
 
@@ -426,8 +427,8 @@ def test_s2b_the_keepalive_is_thirty_and_is_a_choice():
     worst-case detection of the half-open socket a NAT or a Wi-Fi drop actually produces.
     Kept deliberately, and now a named number instead of a literal nobody chose."""
     assert moxie_runtime.KEEPALIVE_S == 30
-    src = open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py")).read()
-    assert "self.client.connect(self.host, self.port, 30)" not in src
+    from helpers_runtime import runtime_source
+    assert "self.client.connect(self.host, self.port, 30)" not in runtime_source()
 
 
 def test_s6_a_supervisor_started_with_no_broker_retries_instead_of_dying():

@@ -141,8 +141,8 @@ def test_the_readiness_line_is_the_one_the_runtime_actually_prints():
     A rename in `moxie_runtime.py` would otherwise leave every script waiting 40 s for a
     line nobody prints — a boot failure disguised as a slow boot, which is where this
     whole thread started."""
-    src = open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py"),
-               encoding="utf-8").read()
+    from helpers_runtime import runtime_source
+    src = runtime_source()
     # The needle, not the whole call — the call also carries `flush=True`, which the
     # behavioural test at the bottom of this file owns.
     assert '"[runtime] subscriptions acknowledged by the broker ' in src, (
@@ -263,8 +263,8 @@ def test_the_operator_can_choose_the_status_port_in_both_scripts():
 def test_the_runtime_still_prints_both_status_bind_outcomes():
     """The two needles above are only worth anything while the runtime prints them —
     and it must print BOTH, because a bind that fails silently is the original bug."""
-    src = open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py"),
-               encoding="utf-8").read()
+    from helpers_runtime import runtime_source
+    src = runtime_source()
     assert '"[runtime] status endpoint on http://127.0.0.1:{port}/status"' in src \
         or '[runtime] status endpoint on http://127.0.0.1:' in src, \
         "the success line moved; update run_smoke.sh's wait with it"

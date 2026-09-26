@@ -31,6 +31,24 @@ for _p in (MQTT_DIR, SUPERVISOR_DIR):
 from moxie_sdk.tts import Synthesizer          # noqa: E402  (needs the path above)
 
 CHAT_TOPIC = "/devices/{device_id}/commands/remote_chat"
+RUNTIME_PKG = os.path.join(SUPERVISOR_DIR, "moxie_runtime")
+
+
+def runtime_sources() -> dict:
+    """`{path: text}` for every module of the `moxie_runtime` package, for tests that
+    assert over the supervisor's source (a guard over one file would miss the others)."""
+    out = {}
+    for name in sorted(os.listdir(RUNTIME_PKG)):
+        if name.endswith(".py"):
+            path = os.path.join(RUNTIME_PKG, name)
+            with open(path, encoding="utf-8") as fh:
+                out[path] = fh.read()
+    return out
+
+
+def runtime_source() -> str:
+    """The whole supervisor package's source as one string (for substring guards)."""
+    return "\n".join(runtime_sources().values())
 
 
 # ---------------------------------------------------------------------------

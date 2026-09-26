@@ -590,7 +590,8 @@ def test_no_publish_path_can_forget_to_score(monkeypatch):
     pass `scored=`. A new path added later fails here rather than shipping an unscored
     turn nobody notices — this is the only assertion in the file that is about *coverage*
     rather than about behavior, which is exactly why it is written over the source."""
-    src = open(os.path.join(MQTT_DIR, "supervisor", "moxie_runtime.py")).read()
+    from helpers_runtime import runtime_source
+    src = runtime_source()
     unscored, seen = [], 0
     for m in re.finditer(r"_publish_chat\(", src):
         if src[max(0, m.start() - 4):m.start()].endswith("def "):

@@ -248,8 +248,8 @@ def test_the_connack_callback_is_the_only_place_that_subscribes():
     anywhere in the runtime would let an unrelated ack arm it early, so this pins the
     property rather than trusting the reviewer who added the second call.
     """
-    src = open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py"),
-               encoding="utf-8").read()
+    from helpers_runtime import runtime_source
+    src = runtime_source()
     calls = [ln.strip() for ln in src.splitlines()
              if ".subscribe(" in ln and not ln.strip().startswith("#")]
     assert calls == ["c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])"], (

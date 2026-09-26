@@ -566,8 +566,8 @@ def test_the_authoring_routes_are_declared():
     # as a route LITERAL rather than as a substring, so prose about P1 does not trip it.
     assert '@app.post("/local/content/try")' not in main, "`/content/try` is P1 (§9), not P0"
 
-    with open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py")) as fh:
-        runtime = fh.read()
+    from helpers_runtime import runtime_source
+    runtime = runtime_source()
     assert '"/content/item"' in runtime and '"/content/render"' in runtime
     assert '"/content/try"' not in runtime, "`/content/try` is P1 (§9), not P0"
 
@@ -576,8 +576,8 @@ def test_the_supervisor_route_owns_the_validation_not_the_proxy():
     """R6. `validate_item` belongs to the route that WRITES; a check in the console proxy
     would be bypassed by a direct `curl` at the supervisor. So the supervisor's source
     names it and the console's does not."""
-    with open(os.path.join(REPO, "mqtt", "supervisor", "moxie_runtime.py")) as fh:
-        runtime = fh.read()
+    from helpers_runtime import runtime_source
+    runtime = runtime_source()
     with open(os.path.join(REPO, "server", "moxie_server", "main.py")) as fh:
         main = fh.read()
     assert "content_packs.validate_item(" in runtime, \

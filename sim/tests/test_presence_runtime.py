@@ -608,8 +608,8 @@ def test_no_presence_lock_block_calls_something_that_retakes_it():
     Verified at the time of writing by the same walk, over all eight blocks: none of them
     calls out at all, and every one is one to fourteen lines long.
     """
-    import moxie_runtime
-    src = open(moxie_runtime.__file__).read().split("\n")
+    from helpers_runtime import runtime_source
+    src = runtime_source().split("\n")
     risky = ("_forget_robot_state", "_end_conversation", "_device_disconnect",
              "wake_robot", "_on_disconnect", "_vision_subscription")
     blocks = 0
@@ -629,7 +629,7 @@ def test_no_presence_lock_block_calls_something_that_retakes_it():
             if not stripped.startswith("#"):
                 for name in risky:
                     assert f"{name}(" not in stripped, (
-                        f"{moxie_runtime.__file__}:{j + 1} calls {name}() while holding "
+                        f"moxie_runtime line {j + 1} calls {name}() while holding "
                         "the non-reentrant _presence_lock — this self-deadlocks the MQTT "
                         f"loop:\n    {stripped}")
             j += 1
