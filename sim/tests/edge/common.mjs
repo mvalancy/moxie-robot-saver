@@ -118,3 +118,78 @@ export function wavBytes(ms, rate = 16000) {
 export async function runSections(dirUrl, names) {
   for (const n of names) await import(new URL(n, dirUrl));
 }
+
+/**
+ * A fake `caches.default` (`match`/`put` only) that logs what it was asked, for the Cache
+ * API tier of `_lib/limits.js` (node has no `caches`). The failure switches are distinct
+ * SHAPES — sync throw, rejection, a promise that never settles — because a naive
+ * `Promise.resolve(x()).catch()` misses the first. Options:
+ *   match/put{ThrowsSync,Rejects,Hangs}, putStoresThenHangs (the write that lands and then
+ *   never answers: what makes "retry the unpublished units" a double charge),
+ *   bodyOverride, only (aim every switch at keys containing this substring),
+ *   unitsCount (answer every `/units/` entry with this count, whatever bucket is asked —
+ *   so a suite never reads the clock), seedMaxAge (default max-age for `seed`, 60).
+ */
+export function fakeCache(opts) {
+  const o = opts || {};
+  const store = new Map();
+  const log = { match: 0, put: 0, keys: [], puts: [] };
+  const hang = () => new Promise(() => {});
+  const json = (body, maxAge, ageS) => {
+    const h = { "Content-Type": "application/json", "Cache-Control": "max-age=" + maxAge };
+    if (ageS !== undefined) h.Age = String(ageS);
+    return Promise.resolve(new Response(body, { headers: h }));
+  };
+  return {
+    log,
+    store,
+    /** Pre-load an entry as another isolate would have. A number seeds `{n}`; `ageS` past
+     *  `maxAge` is the stale entry a real cache would never serve. */
+    seed(key, body, ageS, maxAge) {
+      store.set(String(key), {
+        body: JSON.stringify(typeof body === "number" ? { n: body } : body),
+        maxAge: maxAge === undefined ? (o.seedMaxAge === undefined ? 60 : o.seedMaxAge) : maxAge,
+        ageS,
+      });
+      return this;
+    },
+    body(key) {
+      const e = store.get(String(key));
+      if (!e) return null;
+      try { return JSON.parse(e.body); } catch { return null; }
+    },
+    count(key) {
+      const b = this.body(key);
+      return b ? b.n : null;
+    },
+    match(key) {
+      log.match += 1;
+      log.keys.push(String(key));
+      const e = store.get(String(key));
+      if (o.only && String(key).indexOf(o.only) < 0) return e ? json(e.body, e.maxAge) : Promise.resolve(undefined);
+      if (o.matchThrowsSync) throw new Error("match threw synchronously");
+      if (o.matchHangs) return hang();
+      if (o.matchRejects) return Promise.reject(new Error("match rejected"));
+      if (o.unitsCount !== undefined && String(key).indexOf("/__moxie/rl/units/") >= 0) {
+        return json(JSON.stringify({ n: o.unitsCount }), 3600);
+      }
+      if (!e) return Promise.resolve(undefined);
+      return json(o.bodyOverride === undefined ? e.body : o.bodyOverride, e.maxAge, e.ageS);
+    },
+    put(key, res) {
+      log.put += 1;
+      log.puts.push(String(key));
+      if (o.only && String(key).indexOf(o.only) < 0) return Promise.resolve();
+      if (o.putThrowsSync) throw new Error("put threw synchronously");
+      if (o.putHangs) return hang();
+      if (o.putRejects) return Promise.reject(new Error("put rejected"));
+      const write = (async () => {
+        const body = await res.text();
+        const cc = /max-age=(\d+)/.exec(res.headers.get("Cache-Control") || "");
+        store.set(String(key), { body, maxAge: cc ? Number(cc[1]) : 0 });
+      })();
+      if (o.putStoresThenHangs) return write.then(() => hang());
+      return write;
+    },
+  };
+}

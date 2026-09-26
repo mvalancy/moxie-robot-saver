@@ -202,7 +202,7 @@ REVIEWED: dict = {
         "that jumped would redden the suite rather than hide a hang. NOTE the check was "
         "already unreviewed when this file arrived on 2026-09-05 — the guard was red at "
         "the commit that added the suite, and this row is the fix."),
-    "sim/test_mode.mjs": (
+    "sim/tests/edge/mode/03_mode_machine.mjs": (
         ("Date.now",),
         "DETERMINISTIC — it *overrides* `Date.now = () => clock` and steps `clock` by "
         "hand. This is the pinned-clock pattern the other rows aspire to, and the row "

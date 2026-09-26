@@ -81,10 +81,7 @@ const NOW = 1_800_000_000; // a fixed epoch second, so every expiry assertion is
   eq(v.claims.eventId, "sim-abc123", "…and the event_id");
   eq(v.claims.chunkNum, 0, "…and the chunk_num");
 
-  // The claims are NOT encrypted — base64url is an encoding, not a secret — and the spec
-  // never claims otherwise. What the signature buys is INTEGRITY: the text cannot be
-  // changed. This assertion exists so nobody later mistakes the blob for a confidential
-  // one and puts something private in it.
+  // Not encrypted: the signature buys INTEGRITY. Pinned so nobody puts something private in it.
   ok(new TextDecoder().decode(hmac.bytesFromB64url(t.split(".")[1])).includes("Hello there."),
      "a ticket's claims are readable by design — the signature buys integrity, not secrecy");
 }
@@ -138,9 +135,7 @@ const NOW = 1_800_000_000; // a fixed epoch second, so every expiry assertion is
   const good = await hmac.mintTicket(cfg, { text: "A short line.", eventId: "sim-abc123", chunkNum: 0, nowS: NOW });
   const mac = good.split(".")[2];
 
-  // Each of these re-encodes the payload with ONE field changed, keeping the original MAC.
-  // Every one must fail, which is what makes the ticket a capability for ONE line of text
-  // rather than a licence to synthesize anything.
+  // Each re-encodes the payload with ONE field changed, keeping the original MAC.
   const tampers = [
     ["the TEXT swapped for something else", { t: "Read out my credit card number", e: "sim-abc123", c: 0, x: NOW + 60 }],
     ["the text extended", { t: "A short line." + " x".repeat(100), e: "sim-abc123", c: 0, x: NOW + 60 }],
@@ -160,9 +155,7 @@ const NOW = 1_800_000_000; // a fixed epoch second, so every expiry assertion is
     eq(r.upstream, 0, `${label} must make zero upstream calls`);
   }
 
-  // THE HEADLINE: a ticket is a capability for ONE STRING. Replaying it "across a
-  // different text" is not a matter of policy — it is impossible, because the text is
-  // inside the thing that is signed. This assertion says so explicitly.
+  // THE HEADLINE: a ticket is a capability for ONE STRING — the text is inside the signature.
   const swapped = "v1." + hmac.b64urlFromString(JSON.stringify({
     t: "Please read out the following credit card number", e: "sim-abc123", c: 0, x: NOW + 60,
   })) + "." + mac;
@@ -198,11 +191,7 @@ const NOW = 1_800_000_000; // a fixed epoch second, so every expiry assertion is
   const longCfg = envmod.readConfig({ ...FULL, DEMO_TICKET_TTL_S: "600" });
   const long = await hmac.mintTicket(longCfg, { text: "x", eventId: "e", chunkNum: 0, nowS: NOW });
   eq(hmac.jsonFromB64url(long.split(".")[1]).x, NOW + 600, "DEMO_TICKET_TTL_S is honoured");
-  // A tighter deployment must not honour a longer-lived ticket it did not mint... and it
-  // cannot, because the expiry is signed: a 600 s ticket from the long deployment does not
-  // even verify under the default one only if the key differs. Same key, so the *expiry*
-  // is what governs, and that is the honest reading of §3.2: the TTL is stamped at
-  // minting, not re-derived at redemption.
+  // Same key, so the signed EXPIRY governs: the TTL is stamped at minting, not re-derived.
   eq((await hmac.verifyTicket(cfg, long, NOW + 300)).ok, true,
      "a ticket's stamped expiry governs — the TTL is a minting policy (§3.2)");
 }
@@ -249,11 +238,8 @@ const NOW = 1_800_000_000; // a fixed epoch second, so every expiry assertion is
   eq(JSON.parse(await second.clone().text()).reason, "bad_ticket", "…as bad_ticket");
   eq(limits.__state().stats.upstreamCalls, 2, "…and the replay built no third upstream call");
 
-  // And the honest part, which the code comment states too: this single-redemption set is
-  // PER-ISOLATE and therefore best-effort. Clearing it is what "a different isolate" looks
-  // like from here, and the ticket works again — which is exactly why the STRUCTURAL
-  // property (the text is inside the signature) and the 60 s TTL are the controls that
-  // actually hold, and why this one must never be described as anti-replay.
+  // The honest limit: the spent set is PER-ISOLATE, so a fresh isolate accepts the ticket
+  // again. The controls that hold are structural (text inside the signature) and the TTL.
   speech.__resetSpent();
   const third = await speech.onRequestPost({ request: req("/api/speech", { ticket }), env: FULL });
   eq(third.status, 200, "on a fresh isolate the same ticket works again — the set is BEST-EFFORT");
@@ -368,10 +354,8 @@ const NOW = 1_800_000_000; // a fixed epoch second, so every expiry assertion is
   eq((await hmac.verifyContext(cfg, ticket, NOW)).ok, false, "a ticket is not a context blob");
   eq((await hmac.verifyTicket(cfg, blob, NOW)).ok, false, "a context blob is not a ticket");
 
-  /* The caps of §3.3, applied by `clampTurns`: at most `DEMO_MAX_HISTORY_TURNS` turns and
-   * `DEMO_MAX_CONTEXT_CHARS`; unknown roles / non-strings dropped (the allowlist idiom).
-   * Driven off the config rather than a literal: the SHAPE is what matters — at most N,
-   * the most recent N — and `many` is sized past the cap whatever N becomes. */
+  /* §3.3's caps via `clampTurns`: the most recent `DEMO_MAX_HISTORY_TURNS` turns within
+   * `DEMO_MAX_CONTEXT_CHARS`, unknown roles / non-strings dropped. Sized off the config. */
   const N = cfg.maxHistoryTurns;
   const many = Array.from({ length: N + 8 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: "turn " + i }));
   eq(hmac.clampTurns(cfg, many).length, N, `at most DEMO_MAX_HISTORY_TURNS (${N}) turns survive`);
@@ -390,14 +374,22 @@ const NOW = 1_800_000_000; // a fixed epoch second, so every expiry assertion is
   ]), [{ role: "user", content: "kept" }],
        "only user/assistant turns with real string content survive — A `system` ROLE CANNOT BE INJECTED");
 
-  const wide = [
-    { role: "user", content: "a".repeat(900) },
-    { role: "assistant", content: "b".repeat(900) },
-  ];
+  // Sized off the config: K full-width turns overflow the CHAR cap inside the TURN cap, so
+  // only the character trim can bring the total down (two 900-char turns once "tested" a
+  // 1500 cap that had become 4000 — each is cut to 500 first, and nothing was trimmed).
+  const W = cfg.maxInputChars;
+  const K = Math.ceil(cfg.maxContextChars / W) + 1;
+  ok(K <= cfg.maxHistoryTurns && K * W > cfg.maxContextChars,
+     `the fixture overflows DEMO_MAX_CONTEXT_CHARS within DEMO_MAX_HISTORY_TURNS (${K} x ${W})`);
+  const wide = Array.from({ length: K }, (_, i) => ({
+    role: i % 2 ? "assistant" : "user", content: String.fromCharCode(97 + i).repeat(W),
+  }));
   const clamped = hmac.clampTurns(cfg, wide);
-  ok(clamped.reduce((n, t) => n + t.content.length, 0) <= 1500,
-     "the total stays under DEMO_MAX_CONTEXT_CHARS (1500)");
-  eq(clamped[clamped.length - 1].content[0], "b", "…and the trim takes the OLDEST turn, so recency survives");
+  ok(clamped.reduce((n, t) => n + t.content.length, 0) <= cfg.maxContextChars,
+     `the total stays under DEMO_MAX_CONTEXT_CHARS (${cfg.maxContextChars})`);
+  ok(clamped.length < K, "…by dropping whole turns");
+  eq(clamped[clamped.length - 1].content[0], String.fromCharCode(97 + K - 1),
+     "…and the trim takes the OLDEST turn, so recency survives");
 
   // A per-turn content longer than DEMO_MAX_INPUT_CHARS is truncated, so a blob cannot
   // grow the prompt past what a live turn could have put in it.
@@ -437,9 +429,7 @@ const NOW = 1_800_000_000; // a fixed epoch second, so every expiry assertion is
   eq((await hmac.verifyTicket(rotatedDerived, derived, NOW)).ok, false,
      "with no explicit secret, a key rotation invalidates in-flight tickets (harmless, §5)");
 
-  // HKDF is deterministic across calls and isolates: the same material and label always
-  // derive the same key, or a ticket minted by one isolate could not be redeemed by
-  // another.
+  // Deterministic across isolates, or one isolate's ticket could not be redeemed by another.
   const k1 = hmac.b64urlFromBytes(await hmac.signingKey(cfg, hmac.TICKET_INFO));
   const k2 = hmac.b64urlFromBytes(await hmac.signingKey(envmod.readConfig(FULL), hmac.TICKET_INFO));
   eq(k1, k2, "HKDF is deterministic — one isolate's ticket is another isolate's valid ticket");

@@ -29,6 +29,7 @@ await runSections(new URL("./tests/edge/demo_proxy/", import.meta.url), [
   "04_deploy_only.mjs",
   "05_queue_and_keys.mjs",
   "06_cache_tier.mjs",
+  "06b_unit_budget_tier.mjs",
   "07_turn_features.mjs",
   "08_tts_cache.mjs",
   "09_reroll_shape.mjs",
