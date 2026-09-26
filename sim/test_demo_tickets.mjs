@@ -1,55 +1,33 @@
 /* test_demo_tickets.mjs — the signed artefacts: forgery, expiry, replay, tampering, and
  * the constant-time compare.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §8.1 test 2, plus §3.2 (`POST
- * /api/speech` — the ticket format and why it exists), §3.3 (the context blob and the
- * injection hole it closes), §5 (`DEMO_TICKET_SECRET` and its HKDF default).
+ * Spec: live-sim-demo.md §8.1 test 2, §3.2 (the speech ticket), §3.3 (the context blob),
+ * §5 (`DEMO_TICKET_SECRET` and its HKDF default).
  *
- * WHAT IS ACTUALLY BEING PROVEN HERE, because it is easy to mistake this for a crypto
- * exercise: the ticket is what makes `/api/speech` STRUCTURALLY unable to become a free
- * text-to-speech API, and the context signature is what makes Moxie's side of a
- * conversation unforgeable. Both are properties of the wire format, not of a counter — so
- * they either hold or they do not, and that is exactly the kind of thing a test can settle.
- *
- * The constant-time claim is asserted as a RECORDED FACT, not measured: `_lib/hmac.js`
- * exports `compareStats.byteCompares`, the width its comparator actually walked. A
- * comparator that returned early on the first differing byte would walk a different width
- * for a first-byte mismatch than for a last-byte one. Timing a loaded CI runner would be
- * flaky; counting is not (playbook rule 11). The source is checked too, for the shape of
- * the loop itself.
+ * Not a crypto exercise: the ticket is what makes `/api/speech` STRUCTURALLY unable to
+ * become a free TTS API, and the context signature makes Moxie's side of a conversation
+ * unforgeable. The constant-time claim is a RECORDED fact — `_lib/hmac.js` exports
+ * `compareStats.byteCompares`, the width its comparator walked — not a timing measurement,
+ * and the loop's source shape is checked too.
  *
  *   node sim/test_demo_tickets.mjs
  */
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { repo, api, ledger, KEY, GATEWAY, post } from "./tests/edge/common.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const repo = join(here, "..");
+const { fails, ok, eq, deep } = ledger();
 
-const fails = [];
-const ok = (c, m) => { if (!c) fails.push(m); };
-const eq = (a, b, m) => ok(a === b, `${m} — got ${JSON.stringify(a)}, want ${JSON.stringify(b)}`);
-const deep = (a, b, m) => eq(JSON.stringify(a), JSON.stringify(b), m);
-
-const hmac = await import(join(repo, "functions", "api", "_lib", "hmac.js"));
-const envmod = await import(join(repo, "functions", "api", "_lib", "env.js"));
-const chat = await import(join(repo, "functions", "api", "chat.js"));
-const speech = await import(join(repo, "functions", "api", "speech.js"));
-const limits = await import(join(repo, "functions", "api", "_lib", "limits.js"));
-const wav = await import(join(repo, "functions", "api", "_lib", "wav.js"));
+const hmac = await api("_lib", "hmac.js");
+const envmod = await api("_lib", "env.js");
+const chat = await api("chat.js");
+const speech = await api("speech.js");
+const limits = await api("_lib", "limits.js");
+const wav = await api("_lib", "wav.js");
 
 const HMAC_SRC = readFileSync(join(repo, "functions", "api", "_lib", "hmac.js"), "utf8");
 
-const BASE = "https://gw.invalid.test/v1";
-const KEY = "sk-testonly-abcdefghijklmnopqrstuv";
-const ORIGIN = "https://demo.invalid.test";
-const FULL = {
-  DEMO_GATEWAY_BASE_URL: BASE,
-  DEMO_GATEWAY_API_KEY: KEY,
-  DEMO_CHAT_MODEL: "test-brain-model",
-  DEMO_TTS_MODEL: "test-voice-model",
-};
+const FULL = { ...GATEWAY, DEMO_TTS_MODEL: "test-voice-model" };
 const cfg = envmod.readConfig(FULL);
 
 /* --------------------------------------------------------------------------- *
@@ -69,18 +47,7 @@ globalThis.fetch = async (url, opt) => {
   });
 };
 
-function req(path, body) {
-  return new Request(ORIGIN + path, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Origin: ORIGIN,
-      "Sec-Fetch-Site": "same-origin",
-      "CF-Connecting-IP": "203.0.113.9",
-    },
-    body: JSON.stringify(body),
-  });
-}
+const req = (path, body) => post(path, body);
 
 async function redeem(ticket, env) {
   limits.__reset();
@@ -401,16 +368,10 @@ const NOW = 1_800_000_000; // a fixed epoch second, so every expiry assertion is
   eq((await hmac.verifyContext(cfg, ticket, NOW)).ok, false, "a ticket is not a context blob");
   eq((await hmac.verifyTicket(cfg, blob, NOW)).ok, false, "a context blob is not a ticket");
 
-  /* The caps of §3.3, applied by `clampTurns`: at most `DEMO_MAX_HISTORY_TURNS` turns, at
-   * most `DEMO_MAX_CONTEXT_CHARS`, and unknown roles / non-strings dropped rather than
-   * rejected (the repo's allowlist idiom).
-   *
-   * DRIVEN OFF THE CONFIG, not off a literal (2026-09-06). The count moved 4 -> 12 when the
-   * hosted persona was ported from the robot path, and a test that restates the number is a
-   * test that has to be edited every time the number moves — which is how a cap ends up
-   * asserted in two places that disagree. What matters here and does not change is the
-   * SHAPE: the clamp keeps at most N, and the N it keeps are the most recent. `many` is
-   * sized past the cap so the trim is always exercised whatever N becomes. */
+  /* The caps of §3.3, applied by `clampTurns`: at most `DEMO_MAX_HISTORY_TURNS` turns and
+   * `DEMO_MAX_CONTEXT_CHARS`; unknown roles / non-strings dropped (the allowlist idiom).
+   * Driven off the config rather than a literal: the SHAPE is what matters — at most N,
+   * the most recent N — and `many` is sized past the cap whatever N becomes. */
   const N = cfg.maxHistoryTurns;
   const many = Array.from({ length: N + 8 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: "turn " + i }));
   eq(hmac.clampTurns(cfg, many).length, N, `at most DEMO_MAX_HISTORY_TURNS (${N}) turns survive`);
