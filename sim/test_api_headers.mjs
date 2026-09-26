@@ -1,77 +1,26 @@
-/* test_api_headers.mjs — the hardening headers on `/api/*`, over a real socket, and in a
+/* test_api_headers.mjs — the hardening headers on `/api/*`, over a real socket and in a
  * real browser.
  *
- * THE HOLE THIS FILE CLOSES. `sim/test_csp.mjs` (PR #112) proved the STATIC pages' header
- * set by serving it and loading every page under it. The `/api/*` routes had no equivalent
- * — and they are the half where `sim/web/_headers` is INERT. Settled by a preview deploy on
- * 2026-09-03 (§10 assumption 27, first learned the hard way in PR #72): Cloudflare Pages
- * does not apply `_headers` to a Function response at all, so the only headers an API reply
- * carries are the ones `functions/api/_lib/envelope.js` sets in code. A measurement of the
- * live deployment that day found the routes carrying `nosniff`, `no-store` and
- * `Referrer-Policy` and NOTHING else — no HSTS, no CSP, no `Cross-Origin-*` — while the
- * pages had just gained a full set.
- *
- * WHY OVER A SOCKET AND NOT ON THE OBJECT. `sim/test_demo_proxy.mjs` asserts the header set
- * on the `Response` object `respond()` returns, on every status the route table can produce.
- * That is the right place for breadth. It cannot see anything that happens between the
- * object and the wire, and it cannot see what a browser DOES with the result. So this file
- * runs the REAL route handlers behind a real `node:http` server and fetches them like a
- * client, then hands the same origin to Chrome.
- *
- * IT HAS TEETH, in two independent places, each with a CONTROL so a green run cannot be
- * confused with "no header arrived":
- *
- *   · The API CSP: the browser NAVIGATES to `/api/health`, which is exactly the "a browser
- *     ends up treating the JSON body as a document" case the lockdown exists for, and a
- *     `fetch()` from inside that document must be REFUSED by `default-src 'none'`. The
- *     control is a twin route serving the identical body with the CSP stripped, where the
- *     same fetch must SUCCEED.
- *   · CORP: a cross-origin page embeds two identical PNGs, one with
- *     `Cross-Origin-Resource-Policy: same-origin` and one without. The bare one must load
- *     and the CORP one must fail. That demonstrates the mechanism has teeth in this browser
- *     on this origin pair; the API responses are then asserted to carry the same value.
- *     (A JSON body cannot be used for that demonstration: Chrome's Opaque Response Blocking
- *     already refuses a cross-origin no-cors JSON load on its own, so the two arms would be
- *     indistinguishable. CORP is the STANDARDISED, explicit form of the same refusal, which
- *     is why it is worth sending even where ORB happens to cover it.)
- *
- * AND THE HARMLESSNESS CLAIM IS TESTED, NOT ASSERTED. `Cross-Origin-Resource-Policy:
- * same-origin` is only worth adding if it cannot break the page's own calls, so the real
- * `index.html` is loaded from this origin under the real `_headers` page CSP and an in-page
- * `fetch("/api/health")` must succeed and parse. A header that breaks the product is worse
- * than a missing one.
- *
- * ZERO NETWORK. `globalThis.fetch` is stubbed for the fake gateway host and delegates
- * everything else (this suite's own loopback calls) to the real implementation. No
- * Cloudflare account, no gateway key, nothing leaves the machine.
- *
- * Skips cleanly (exit 0) for the browser half when no Chrome is available, like every other
- * browser suite here; the socket half always runs.
+ * Cloudflare Pages does not apply `_headers` to a Function response, so an API reply carries
+ * only what `functions/api/_lib/envelope.js` sets. The real handlers run behind a real
+ * `node:http` server (the object-level breadth lives in the demo-proxy suite); Chrome then
+ * proves the teeth, each with a CONTROL: a navigated `/api/health` document may not `fetch()`
+ * (twin route without the CSP must), a CORP-pinned image is refused cross-origin (a bare twin
+ * loads), and the page's own same-origin `fetch("/api/health")` still works under the real
+ * page CSP. `fetch` is stubbed for the fake gateway host; nothing leaves the machine.
  *
  *   node sim/test_api_headers.mjs
  */
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join, normalize, extname } from "node:path";
-import http from "node:http";
-import net from "node:net";
-import { loadPuppeteer, findChrome, pagesHeaders, makeChecks, finish } from "./browser_harness.mjs";
+import { join } from "node:path";
+import { loadPuppeteer, findChrome, pagesHeaders, makeChecks, finish, launchBrowser, serveStatic,
+         repo, web } from "./browser_harness.mjs";
+import { KEY } from "./tests/edge/common.mjs";
 
 const LABEL = "/api/* hardening headers";
-const here = dirname(fileURLToPath(import.meta.url));
-const repo = join(here, "..");
-const web = join(repo, "sim", "web");
-
 const { fails, ok, eq, count } = makeChecks();
 
-/* --------------------------------------------------------------------------- *
- * The fake deployment — the same shape sim/test_demo_proxy.mjs uses, and for the
- * same reasons: `.invalid.test` is unresolvable (RFC 6761) so a bug that really
- * fired a request could reach nothing, and the key is shaped so the repo's own
- * pre-commit secret grep cannot mistake it for a real one.
- * --------------------------------------------------------------------------- */
+/* The fake deployment: an unresolvable `.invalid.test` host and a test-shaped key. */
 const GW = "https://gw.invalid.test/v1";
-const KEY = "sk-testonly-abcdefghijklmnopqrstuv";
 const ENV = {
   DEMO_GATEWAY_BASE_URL: GW,
   DEMO_GATEWAY_API_KEY: KEY,
@@ -93,11 +42,8 @@ globalThis.fetch = async (url, opt) => {
 
 const envelope = await import(join(repo, "functions", "api", "_lib", "envelope.js"));
 
-/* The header NAMES this slice contracts for, written out rather than read back from the
- * module. Values still come from `API_SECURITY_HEADERS` — restating a policy value in a
- * test is how a suite ends up passing while the shipped header says something else — but
- * the NAMES are the contract itself, so a build that simply stopped exporting the set has
- * to fail as a named assertion here rather than crash on an undefined. */
+/* The header NAMES are the contract, written out; the VALUES come from `API_SECURITY_HEADERS`
+ * (restating a policy value is how a suite passes while the shipped header differs). */
 const REQUIRED = Object.freeze([
   "X-Content-Type-Options",
   "Referrer-Policy",
@@ -119,28 +65,16 @@ const health = await import(join(repo, "functions", "api", "health.js"));
 const chat = await import(join(repo, "functions", "api", "chat.js"));
 const limits = await import(join(repo, "functions", "api", "_lib", "limits.js"));
 
-/* --------------------------------------------------------------------------- *
- * A Pages-shaped server: real Functions on /api/*, the real static bundle with the
- * real `_headers` `/*` block everywhere else — i.e. the two halves of the origin,
- * served the way the deployment serves them.
- * --------------------------------------------------------------------------- */
-const MIME = {
-  ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8", ".png": "image/png", ".jpg": "image/jpeg",
-  ".svg": "image/svg+xml", ".woff2": "font/woff2", ".glb": "model/gltf-binary",
-  ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ico": "image/x-icon", ".txt": "text/plain",
-  ".webmanifest": "application/manifest+json", ".map": "application/json",
-};
+/* A Pages-shaped origin: real Functions on /api/*, the static bundle under the real
+ * `_headers` `/*` block everywhere else. */
 const PAGE_HEADERS = pagesHeaders();
 
-/** A 1x1 transparent PNG. Real image bytes, so the ONLY reason a load can fail is policy. */
+/** A 1x1 transparent PNG — real image bytes, so the ONLY reason a load can fail is policy. */
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64");
 
-/** A bare cross-origin page: NO `_headers`, so its own CSP can never be what refuses a
- *  load and the CORP arm is measuring CORP. */
+/** A bare cross-origin page: NO `_headers`, so its own CSP can never be what refuses a load. */
 const XORIGIN_HTML = `<!doctype html><meta charset="utf-8"><title>x</title>
 <script>
 window.probe = (src) => new Promise((res) => {
@@ -151,81 +85,53 @@ window.probe = (src) => new Promise((res) => {
 });
 </script>`;
 
-async function pipe(webRes, res, { drop } = {}) {
+async function pipe(webRes, res, drop = []) {
   const buf = Buffer.from(await webRes.arrayBuffer());
   const h = {};
-  for (const [k, v] of webRes.headers) {
-    if (drop && drop.includes(k.toLowerCase())) continue;
-    h[k] = v;
-  }
+  for (const [k, v] of webRes.headers) if (!drop.includes(k.toLowerCase())) h[k] = v;
   res.writeHead(webRes.status, h);
   res.end(buf);
 }
 
-function freePort() {
-  return new Promise((r) => {
-    const s = net.createServer();
-    s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => r(p)); });
-  });
-}
-
-const port = await freePort();
-const server = http.createServer(async (req, res) => {
+async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
-
-  // The two probe images: identical bytes, one CORP-pinned and one bare. The control.
+  // The two probe images: identical bytes, one CORP-pinned and one bare.
   if (p === "/probe/corp.png" || p === "/probe/plain.png") {
     const h = { "Content-Type": "image/png", "Cache-Control": "no-store" };
     if (p === "/probe/corp.png") h["Cross-Origin-Resource-Policy"] = "same-origin";
     res.writeHead(200, h);
-    return res.end(PNG);
+    res.end(PNG);
+    return true;
   }
   if (p === "/xorigin.html") {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    return res.end(XORIGIN_HTML);
+    res.end(XORIGIN_HTML);
+    return true;
   }
-
   if (p === "/api/health" || p === "/nocsp/health") {
     const request = new Request(url.href, { method: "GET", headers: req.headers });
-    // `await`: `pipe()` calls `webRes.arrayBuffer()`, so a handler that ever becomes async
-    // would throw here instead of failing an assertion. It works today only because
-    // functions/api/health.js happens to be synchronous — which is not a contract.
-    const out = await health.onRequestGet({ request, env: ENV });
     // `/nocsp/health` is the CONTROL for the CSP arm: byte-identical body, no policy.
-    return pipe(out, res, { drop: p === "/nocsp/health" ? ["content-security-policy"] : [] });
+    await pipe(await health.onRequestGet({ request, env: ENV }), res,
+               p === "/nocsp/health" ? ["content-security-policy"] : []);
+    return true;
   }
   if (p === "/api/chat" && req.method === "POST") {
     const chunks = [];
     for await (const c of req) chunks.push(c);
-    const request = new Request(url.href, {
-      method: "POST", headers: req.headers, body: Buffer.concat(chunks),
-    });
-    return pipe(await chat.onRequestPost({ request, env: ENV }), res);
+    const request = new Request(url.href, { method: "POST", headers: req.headers, body: Buffer.concat(chunks) });
+    await pipe(await chat.onRequestPost({ request, env: ENV }), res);
+    return true;
   }
+  return false;
+}
 
-  // Everything else: the static bundle, under the real page `_headers` `/*` block.
-  let f = decodeURIComponent(p);
-  if (f.endsWith("/")) f += "index.html";
-  if (!extname(f)) f += ".html";
-  const file = join(web, normalize(f).replace(/^(\.\.[/\\])+/, ""));
-  let body, code = 200;
-  try { body = readFileSync(file); } catch { code = 404; body = Buffer.from("not found"); }
-  res.writeHead(code, {
-    "Content-Type": MIME[extname(file)] || "application/octet-stream", ...PAGE_HEADERS,
-  });
-  res.end(body);
-});
-await new Promise((r) => server.listen(port, "127.0.0.1", r));
-const ORIGIN = `http://127.0.0.1:${port}`;
+const site = await serveStatic(web, { headers: PAGE_HEADERS, handle });
+const port = site.port;
+const ORIGIN = site.url;
 
-/* =========================================================================== *
- * 1. THE SET SURVIVES THE WIRE — every status, fetched like a client
- * =========================================================================== *
- * Not the object `respond()` returned: the bytes a client read off a socket. The
- * refusals are in here on purpose. A refusal is the reply a hostile caller sees
- * most often, and a header set that only applies when things go well is not one.
- */
+/* 1. THE SET SURVIVES THE WIRE — every status, refusals included (the reply a hostile
+ *    caller sees most), read off a socket. */
 {
   limits.__reset();
   const post = (body, extra) =>
@@ -273,31 +179,22 @@ const ORIGIN = `http://127.0.0.1:${port}`;
   ok(seen.has(200) && seen.has(400) && seen.has(403) && seen.has(429),
      `proved on 200/400/403/429 over the wire, saw ${[...seen].sort().join("/")}`);
 
-  /* HSTS is the one value that must AGREE with the pages: one origin, one policy. A
-   * shorter max-age on the API would quietly shorten the pin for a visitor whose only
-   * touch is a bookmarked probe. Read from the real `_headers`, never restated here. */
+  /* HSTS must AGREE with the pages (one origin, one pin), read from the real `_headers`. */
   eq(cases[0][1].headers.get("Strict-Transport-Security"),
      PAGE_HEADERS["Strict-Transport-Security"] || null,
      "the API's HSTS is byte-identical to the pages'");
 
-  /* …and the API CSP must NOT be the page CSP. `script-src`/`connect-src`/`img-src`
-   * describe what a DOCUMENT may load; a JSON body loads nothing, so copying the page
-   * policy here would be decoration. */
+  /* …and the API CSP is NOT the page CSP: a JSON body loads nothing. */
   ok(cases[0][1].headers.get("Content-Security-Policy") !== PAGE_HEADERS["Content-Security-Policy"],
      "the API CSP is its own lockdown, not a copy of the page policy");
 }
 
-/* =========================================================================== *
- * 2. THE BROWSER HALF — teeth, controls, and the harmlessness claim
- * =========================================================================== */
+/* 2. THE BROWSER HALF — teeth, controls, and the harmlessness claim */
 const puppeteer = await loadPuppeteer();
 const chrome = findChrome();
 if (!puppeteer || !chrome) {
-  server.close();
-  // The socket half genuinely ran, so this is a PARTIAL skip — but under CI it is still a
-  // failure. The browser half is the part that proves the page's own `fetch("/api/health")`
-  // survives CORP, which no socket test can show. A run that quietly drops it while the
-  // badge stays green is the hole this repo already fell into once (see browser_harness.mjs).
+  site.close();
+  // A PARTIAL skip: still a failure under CI, where the browser half must run.
   if (process.env.CI) {
     console.error(`❌ ${LABEL}: no Chrome under CI — the socket half ran (${count()} checks) but`);
     console.error(`   the browser half is the one that proves the page can still fetch its own API.`);
@@ -307,28 +204,14 @@ if (!puppeteer || !chrome) {
   process.exit(0);
 }
 
-/* A non-local hostname mapped to the loopback server, for the same reason test_csp.mjs
- * does it: `_headers` is a Pages artifact and Pages serves a public hostname, and on a
- * LOCAL host `env.js` additionally probes the :8081/:8082 sidecars, whose refusals would
- * be folded into every console assertion below. `other.test` is the second origin. */
+/* A public-looking hostname (a local one makes env.js probe the :8081/:8082 sidecars);
+ * `other.test` is the second origin. */
 const SITE = `http://moxie.hosted.test:${port}`;
 const OTHER = `http://other.test:${port}`;
-
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-         `--host-resolver-rules=MAP moxie.hosted.test 127.0.0.1:${port},` +
-         `MAP other.test 127.0.0.1:${port}`],
-});
+const browser = await launchBrowser(puppeteer, chrome, { hosts: { "moxie.hosted.test": port, "other.test": port } });
 
 try {
-  /* ---- 2a. HARMLESSNESS: the page's own fetch still works ------------------ *
-   * The whole case against `Cross-Origin-Resource-Policy: same-origin` would be that it
-   * breaks the site. It cannot — CORP is consulted only for a CROSS-origin response, and
-   * every call this site makes to these routes is same-origin by construction (the origin
-   * pin would already have refused anything else) — but "cannot" is worth a socket and a
-   * browser rather than a paragraph. Loaded under the REAL page CSP, so `connect-src
-   * 'self'` is in force at the same time. */
+  /* 2a. HARMLESSNESS: under the REAL page CSP, the page's own fetch still works with CORP. */
   {
     const page = await browser.newPage();
     const errs = [];
@@ -359,12 +242,8 @@ try {
     await page.close();
   }
 
-  /* ---- 2b. TEETH: the API CSP, on the case it exists for ------------------- *
-   * A direct NAVIGATION to `/api/health` is the "browser treats the JSON body as a
-   * document" class the lockdown is for. In that document `default-src 'none'` must
-   * refuse a `fetch()` (connect-src falls back to default-src). `/nocsp/health` serves the
-   * identical body with the policy stripped and must NOT be refused — without that arm a
-   * green result would be equally consistent with "the fetch failed for another reason". */
+  /* 2b. TEETH: a NAVIGATED `/api/health` document may not fetch (`default-src 'none'`);
+   *     the CSP-stripped twin must, or a refusal could be for any reason. */
   {
     const run = async (path) => {
       const page = await browser.newPage();
@@ -384,11 +263,8 @@ try {
        `default-src 'none' must refuse a fetch from a navigated /api/health document — got ${JSON.stringify(locked)}`);
   }
 
-  /* ---- 2c. TEETH: CORP blocks a cross-origin embed ------------------------- *
-   * Two identical PNGs from `moxie.hosted.test`, embedded by a page on `other.test`: the
-   * bare one must load, the `Cross-Origin-Resource-Policy: same-origin` one must not.
-   * Real image bytes, so policy is the only thing that can decide the outcome. This is the
-   * mechanism; block 1 already proved the /api/* replies carry the same value. */
+  /* 2c. TEETH: CORP refuses a cross-origin embed; the identical bare PNG loads. (A JSON
+   *     body cannot show this: Chrome's ORB already blocks it.) */
   {
     const page = await browser.newPage();
     await page.goto(`${OTHER}/xorigin.html`, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -400,7 +276,7 @@ try {
   }
 } finally {
   await browser.close();
-  server.close();
+  site.close();
 }
 
 eq(upstreamHits > 0, true, "the stub answered the live turns — and it is the ONLY thing that did");
