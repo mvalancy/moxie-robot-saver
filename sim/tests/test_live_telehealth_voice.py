@@ -1,27 +1,19 @@
 """
 Live 🎭 TELEHEALTH VOICE — the operator's line, in Moxie's real mouth, on the real stack.
 
-What already existed proves the *wire*: `sim/run_smoke.sh --telehealth` (and
-`test_telehealth_runtime.py`) drive enable → start → speak → interrupt → end through a
-real broker and assert every field of the recovered `TelehealthRobotCommand`. But the
-supervisor there synthesizes with the zero-dep `ToneSynthesizer`, so what the robot
-actually *played* was a beep. "A remote grown-up drives the body" is only true if the
-body says the grown-up's words out loud in the voice a child would recognise.
+`sim/run_smoke.sh --telehealth` and `test_telehealth_runtime.py` prove the wire, but with
+`ToneSynthesizer` the robot played a beep. "A remote grown-up drives the body" is only
+true if the body says the grown-up's words in a voice a child would recognise.
 
-So this file boots the SAME assembled appliance the owner runs — `helpers_stack.Stack`
-(mosquitto on a free port + `mqtt/run.py` in a subprocess) — with the **gateway voice**
-selected by `config.build_synthesizer()`'s own precedence, puts the protocol-faithful SIL
-robot (`sim/virtual_moxie.py`, in-process so the audio is readable) on the broker, and
-runs `run_telehealth()`. Then it asserts the `CloudTTSResponse` the robot received is
-real 22050 Hz speech, not the placeholder tone — the anti-tone guard being the whole
-point, since `ToneSynthesizer` emits the same rate and the same mono PCM16.
+So this boots the owner's appliance (`helpers_stack.Stack`: mosquitto + `mqtt/run.py`)
+with the **gateway voice** chosen by `config.build_synthesizer()`'s own precedence, puts
+the SIL robot (`sim/virtual_moxie.py`, in-process so the audio is readable) on the broker,
+runs `run_telehealth()`, and asserts the `CloudTTSResponse` it received is real 22050 Hz
+speech, not the same-format tone.
 
-**Budget: exactly ONE `/audio/speech` request.** One stack boot, one session, one
-`PLAY_OUTPUT`; there is no brain in this loop (`MOXIE_APP=echo`, and the runtime refuses
-remote-chat while a telehealth session is open) and no ears (`MOXIE_STT=off`), so a green
-run costs one gateway call. The count is asserted below rather than trusted.
-
-Skips instantly without a gateway voice URL + key, without a broker, or without numpy.
+**Budget: exactly ONE `/audio/speech` request** (no brain: `MOXIE_APP=echo` and remote chat
+is refused mid-session; no ears: `MOXIE_STT=off`) — asserted, not trusted. Skips instantly
+without a gateway voice URL + key, a broker, or numpy.
 
     .venv/bin/python -m pytest sim/tests/test_live_telehealth_voice.py -q -s
 """

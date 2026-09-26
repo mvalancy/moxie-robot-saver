@@ -1,10 +1,14 @@
-"""The durable per-robot store (`moxie_sdk/store.py`) under `mentor_behaviors`. Pure:
-a tmp directory, no MQTT."""
+"""
+Unit tests for the durable per-robot store (`mqtt/moxie_sdk/store.py`). Pure: a tmp
+directory, no MQTT. Cross-process locking is `test_store_concurrency.py`.
+"""
 import json
 import os
 import threading
 
-from moxie_sdk.store import JsonStore, data_dir, safe_name
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+from moxie_sdk.store import JsonStore, data_dir, safe_name   # noqa: E402
 
 
 def test_read_of_a_missing_store_returns_the_default(tmp_path):

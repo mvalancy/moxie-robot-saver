@@ -6,7 +6,7 @@ module makes that true per child, answering the same two questions `voice_settin
 answers for voice:
 
   1. **What can this appliance run?** A closed *positive list*, `BRAINS` (the codebase's
-     idiom: `content/packs.py::SPEC`, `content/ext/::OPS`, `vocab.py`). A name outside
+     idiom: `content/packs/::SPEC`, `content/ext/::OPS`, `vocab.py`). A name outside
      it is **refused, never guessed** — no deny-list, no silent fallback to `llm`.
   2. **Which one is in force for THIS robot?** `defaults ⊕ fleet ⊕ per-robot`, the same
      layering as every other parent-set value (`cloud_config.merge_config_layers`);

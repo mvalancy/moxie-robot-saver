@@ -19,67 +19,34 @@ What it actually does
 Real mosquitto (a container), a real `mqtt/run.py`, real virtual robots on a real broker,
 `MOXIE_APP=echo` so nothing reaches a gateway and the soak costs nothing.
 
-* **Turns**, from N concurrent `VirtualMoxie`s, each one stamped with whether the broker
-  was up when it was issued — because A1 is *"counting only turns issued while the broker
-  was up"* and a soak that counted the others would be marking its own homework.
-* **Broker restarts**, on a schedule, with the reconnect measured from *broker listening*
-  to *supervisor says connected* (A3).
-* **Supervisor restarts**, by **SIGTERM** — so the clean-shutdown path P1 added is
-  exercised by the harness rather than only by a unit test, and the roster resume that
-  follows is what A4 measures.
+* **Turns**, from N concurrent `VirtualMoxie`s, each filed by whether a fault was in
+  flight (A1 counts only turns issued while the broker was up).
+* **Broker restarts**, with the reconnect measured from *broker listening* to
+  *supervisor re-subscribed* (A3) and every robot re-onboarded (A12).
+* **Supervisor restarts**, by **SIGTERM**, exercising the clean-shutdown path and the
+  roster resume that A4 measures.
 * **Store contention**, deliberately (see below).
 * **`SIGKILL` mid-write**, to prove no reader ever sees a truncated record (A6).
-* **RSS and open file descriptors**, sampled from `/proc`, for A7 and A8 — the latter
-  existing precisely because a `flock` fd leaked once per write would kill the appliance
-  in week three (R7).
+* **RSS and open file descriptors**, sampled from `/proc`, for A7 and A8 (a `flock` fd
+  leaked per write would kill the appliance in week three).
 
 The contention measurement, and why it is deliberate
 ----------------------------------------------------
-A measurement handed to this slice, 4 processes × 250 appends contending on **one**
-record: **811 of 1 000 survived at the default 2.0 s timeout**, 999 of 1 000 at 30 s.
 `flock` has no queue — a `LOCK_NB` waiter takes whatever gap the holder leaves — so a
-starved waiter timing out is a real, disclosed limit (A21).
-
-**This harness did not reproduce those numbers, and the divergence is itself the finding.**
-Measured here, same 4 × 250 shape on one record at the default 2.0 s budget:
-
-    idle box                    0 refused of 1 000
-    12 CPU burners (24 cores)   1 refused of 1 000
-    inside a live 5-min soak    2 refused of 1 000
-    8 × 250                     2 refused of 2 000    (0.10 %)
-    4 × 1 000                   1 refused of 4 000    (0.03 %)
-    16 × 100                    7 refused of 1 600    (0.44 %)
-
-So the refusal rate is **load-dependent, not only contention-dependent**, which is why
-"the default carries 4 × 250" is not a portable claim and this harness reports a rate
-instead of asserting a count. What the default can carry, stated honestly: at household
-rates, everything; at these deliberately abusive rates, ~99.6 % or better, with every
-refusal **recorded**. What it cannot carry is a promise, because `flock` has no queue and
-the tail is geometric — more budget buys more polls, never certainty.
-
-**And the handed-down "one append still failed at 30 s" turned out not to be starvation
-at all.** Chasing it found an `OverflowError` in the backoff: `2 ** attempt` is an
-arbitrary-precision int, the loop runs ≈ `timeout / cap` times, and at attempt 1024 the
-product overflows a float and crashes the *writer* — reachable at any budget above ~2.05 s
-and hidden at the default by 24 polls. Fixed in `store.py` (A25); see
-`sim/tests/test_store_concurrency.py::test_t11_*`.
-
-This harness therefore **measures contention on purpose rather than discovering it**, and
-adds the one check that turns the number into a verdict:
+starved waiter timing out is a real, disclosed limit (A21). Its rate is load-dependent,
+not only contention-dependent (measured 0–7 refusals per ~1 000–4 000 appends at the
+default 2.0 s budget, from an idle box to 16 writers), so this harness reports a rate
+instead of asserting a count, and adds the one check that turns it into a verdict:
 
     attempted  ==  items_on_disk  +  refusals
 
-`items_on_disk + refusals < attempted` is a **silent loss**, which is the failure §3
-exists to prevent and which A5 sets at zero. `refusals > 0` with the identity holding is
-a **recorded refusal** — the bounded, observable failure §3.2 point 4 explicitly accepts
-and A11 asks to be recorded rather than to be absent. Those two are completely different
-outcomes and the raw survival count cannot tell them apart, which is why the count alone
-was never the interesting number.
+`items_on_disk + refusals < attempted` is a **silent loss**, which A5 sets at zero.
+`refusals > 0` with the identity holding is a **recorded refusal**, which §3.2 point 4
+accepts and A11 asks to be recorded rather than absent. The raw survival count cannot
+tell those two apart.
 
-Every duration here is a real elapsed second, because a soak *is* a wall-clock exercise —
-but no **assertion** is a stopwatch: each bar is a counter, a ratio or an identity.
-`sim/tests/test_clock_dependence.py`'s ratchet governs the test tree, and this is a tool
-rather than a test, run from the deep tier (K1) and never from the fast one (R5).
+Every duration here is a real elapsed second, but no **assertion** is a stopwatch: each
+bar is a counter, a ratio or an identity. This is a deep-tier tool (K1), never fast-tier.
 """
 from __future__ import annotations
 
@@ -109,9 +76,8 @@ BROKER_CONF = os.path.join(REPO, "sim", "broker", "ci-mosquitto.conf")
 # Profiles
 # --------------------------------------------------------------------------- #
 #
-# `week` is §5.2's table verbatim. The other two are the same harness at rates that fit a
-# laptop and a pre-push check — because a soak nobody can run is a soak nobody runs, and
-# the failure mode R5 names is not "it was too weak" but "it was flaky and got disabled".
+# `week` is §5.2's table. The other two are the same harness at rates that fit a laptop
+# and a pre-push check — a soak nobody can run is a soak nobody runs.
 PROFILES = {
     # ~1 minute. Everything happens at least once; nothing is measured well.
     "smoke": dict(minutes=1.0, robots=1, broker_restarts=1, supervisor_restarts=1,
@@ -120,20 +86,15 @@ PROFILES = {
     # contention level the handed-down measurement used (4 × 250 on one record).
     "quick": dict(minutes=5.0, robots=2, broker_restarts=4, supervisor_restarts=2,
                   turn_gap_s=0.5, writers=4, appends_per_writer=250, kills=10),
-    # §5.2's `week` profile, exactly. 60 min · ≥2 000 turns · 24 broker restarts ·
-    # 4 supervisor restarts · 3 robots · 20 SIGKILLs. The store-writer row of that table
-    # says "2 processes × 4 threads / 10 000 appends"; this runs 4 processes × 2 500,
-    # which is the same 10 000 at a strictly higher contention level, on one record.
-    # ~4 000 turns over the hour, i.e. twice §5.2's "≥ 2 000" bar rather than the ~50 000
-    # a zero gap would produce. The table asks for a heavy week's *rate*, not for a
-    # throughput benchmark: hammering the loop would change what the run is measuring.
+    # §5.2's `week`: 60 min · 24 broker / 4 supervisor restarts · 3 robots · 20 SIGKILLs.
+    # 4 processes × 2 500 appends is §5.2's 10 000 at a higher contention level; the gap
+    # gives ~4 000 turns (twice the ≥ 2 000 bar) — a heavy week's rate, not a benchmark.
     "week": dict(minutes=60.0, robots=3, broker_restarts=24, supervisor_restarts=4,
                  turn_gap_s=2.4, writers=4, appends_per_writer=2500, kills=20),
 }
 
-#: The collection the contention probe fights over. One record, deliberately: the
-#: interesting case is not "many writers" but "many writers on the *same* thing", which is
-#: the only case `flock` has to serialize and the only one that can starve a waiter.
+#: The collection the contention probe fights over. One record, deliberately: many writers
+#: on the *same* thing is the only case `flock` serializes and the only one that starves.
 PROBE_COLLECTION = "soak_probe"
 
 
@@ -155,11 +116,7 @@ def _port_open(port: int, host: str = "127.0.0.1") -> bool:
 
 
 def _wait_until(predicate, timeout: float, poll: float = 0.1) -> float | None:
-    """Seconds until `predicate()` is true, or None on timeout.
-
-    Polled rather than slept — `run_scenarios.sh`'s lesson, and the reason its two fixed
-    sleeps were wrong in both directions at once.
-    """
+    """Seconds until `predicate()` is true, or None on timeout. Polled, never slept."""
     started = time.monotonic()
     deadline = started + timeout
     while time.monotonic() < deadline:
@@ -182,20 +139,14 @@ def _http_json(url: str, timeout: float = 3.0):
 # The stack
 # --------------------------------------------------------------------------- #
 
-#: Container name prefix. Named rather than anonymous so a run that was killed hard —
-#: Ctrl-C, a session teardown, an OOM — leaves something *identifiable* behind instead of
-#: an anonymous `eclipse-mosquitto` a later operator dare not remove. Found by killing a
-#: 60-minute run: the `finally` never got to run and the broker outlived it.
+#: Container name prefix, so a run killed hard (its `finally` never ran) leaves something
+#: identifiable behind rather than an anonymous `eclipse-mosquitto` nobody dares remove.
 BROKER_NAME_PREFIX = "moxie-soak-broker-"
 
 
 def sweep_stale_brokers() -> list:
-    """Remove brokers left behind by a previous soak that died before its cleanup.
-
-    Scoped to this prefix and nothing else: a soak must never remove a container it did
-    not start, and `eclipse-mosquitto:2` is an image a developer may well be running for
-    something entirely unrelated on the same box.
-    """
+    """Remove brokers left behind by a previous soak that died before its cleanup —
+    scoped to this prefix only; never a container a soak did not start."""
     out = subprocess.run(["docker", "ps", "-aq", "--filter",
                           f"name=^{BROKER_NAME_PREFIX}"],
                          capture_output=True, text=True)
@@ -239,8 +190,8 @@ class Broker:
 
 
 class Supervisor:
-    """A real `mqtt/run.py`, stopped with **SIGTERM** so the harness exercises P1's clean
-    shutdown every time it restarts rather than only in a unit test."""
+    """A real `mqtt/run.py`, stopped with **SIGTERM** so every restart exercises the
+    clean-shutdown path."""
 
     def __init__(self, broker_port: int, data_dir: str, status_port: int, log_path: str):
         self.broker_port, self.data_dir = broker_port, data_dir
@@ -260,21 +211,17 @@ class Supervisor:
             MOXIE_MQTT_PORT=str(self.broker_port), MOXIE_STATUS_PORT=str(self.status_port),
             MOXIE_DATA_DIR=self.data_dir, MOXIE_ALLOW_UNVERIFIED_BOTS="1",
             PYTHONUNBUFFERED="1",
-            # Creds blanked explicitly. `find_repo_dotenv()` falls back to the *main*
-            # worktree's `mqtt/.env`, so a soak that did not do this would spend real
-            # gateway calls for an hour while proving nothing about a gateway.
+            # Creds blanked: `find_repo_dotenv()` falls back to the main worktree's
+            # `mqtt/.env`, and a soak must not spend real gateway calls.
             MOXIE_LLM_API_KEY="", MOXIE_LLM_BASE_URL="",
             MOXIE_VOICE_BASE_URL="", MOXIE_STT_BASE_URL="")
         self.log = open(self.log_path, "a", buffering=1)
         self.proc = subprocess.Popen([sys.executable, os.path.join(REPO, "mqtt", "run.py")],
                                      cwd=REPO, env=env, stdout=self.log,
                                      stderr=subprocess.STDOUT)
-        # SUBSCRIBED, not merely connected. `broker_connected` is the CONNACK; the
-        # drivers below announce robots the moment this returns, and between the CONNACK
-        # and the SUBACK the supervisor hears nothing — the `/state` is dropped and the
-        # QoS-0 config answering it is never sent (see `_on_subscribe` in
-        # moxie_runtime/connection.py). A soak that boots on the CONNACK measures its own startup
-        # race and calls it a lost turn.
+        # SUBSCRIBED, not merely connected: between CONNACK and SUBACK the supervisor
+        # hears nothing, so a robot announced then gets no config and the soak would
+        # count its own startup race as a lost turn.
         assert _wait_until(self.subscribed, 90) is not None, \
             "the supervisor never reported acknowledged subscriptions"
 
@@ -286,10 +233,7 @@ class Supervisor:
 
     def subscribed(self) -> bool:
         """CONNACK **and** SUBACK — the only state in which a robot can be heard.
-
-        Kept separate from `connected()` on purpose: A1's turn accounting samples
-        `connected` as *"was there a socket"*, and that question is unchanged.
-        """
+        (`connected()` stays separate: A1 samples it as "was there a socket".)"""
         try:
             return bool(_http_json(f"{self.status_url}/status",
                                    timeout=1)["broker_subscribed"])
@@ -314,11 +258,7 @@ class Supervisor:
             self.proc.wait(timeout=10)
 
     def restart(self) -> float:
-        """SIGTERM, restart, and return the seconds until it can be heard.
-
-        `start()` waits for the SUBACK, so this is the whole boot an operator cares about
-        — a supervisor that has connected but not subscribed cannot serve a robot.
-        """
+        """SIGTERM, restart, and return the seconds until it can be heard (SUBACK)."""
         self.stop(clean=True)
         started = time.monotonic()
         self.start()
@@ -350,28 +290,15 @@ class Supervisor:
 class Outages:
     """The windows in which an injected fault was in flight, recorded BY THE INJECTOR.
 
-    §5.3 defines A1 as *"counting only turns issued while the broker was up"* and A2 as
-    *"turns **lost** because of a drop"*. Deciding the first from `sup.connected` sampled
-    once before a turn and once after it cannot express that: a broker restart that opens
-    and closes inside one turn's 8 s reply window is invisible to both samples, so the
-    turn is filed as "issued while up" and its perfectly legitimate loss is charged
-    against a bar that is 100 % by definition. That is the whole of the intermittent
-    `❌ A1 = 100%` this gate produced on roughly half its runs — 1 or 2 turns of ~982, on
-    commits whose diffs were docs — and it is the same shape as the readiness bugs
-    recorded above: an interval inferred from its endpoints instead of observed.
+    A1 counts only turns issued while the broker was up. Sampling `sup.connected` before
+    and after a turn cannot see a restart that opens and closes inside the reply wait,
+    so the injector records what it did and each turn is checked against the actual
+    windows; the two samples are kept as a second signal for unscheduled outages.
 
-    So the fault injector records what it did. A turn is compared against the actual
-    windows rather than against a sample of them, and the two `sup.connected` reads are
-    kept as a SECOND signal — they still catch an outage nobody scheduled, which is a real
-    finding this must never stop noticing.
-
-    WHERE A WINDOW ENDS is a judgement, and widening it moves turns out of A1's reach, so
-    it is drawn at the first moment a turn could actually be answered: for a broker
-    restart, when the supervisor has resubscribed AND every robot has been re-onboarded
-    (a robot that has not been re-onboarded cannot converse, and how long that takes is
-    A12's bar, not A1's — charging it to A1 would be counting it twice); for a supervisor
-    restart, when it reports a connection. Nothing wider: an outage window is an excuse,
-    and every second of one is a second in which a real defect cannot be seen.
+    A window ends at the first moment a turn could be answered: for a broker restart,
+    when the supervisor has resubscribed AND every robot is re-onboarded (how long that
+    takes is A12's bar, not A1's); for a supervisor restart, when it reports a
+    connection. Nothing wider — every second of a window is a second a defect is excused.
     """
 
     def __init__(self):
@@ -412,12 +339,9 @@ class Outages:
 class RobotDriver(threading.Thread):
     """One virtual robot, talking until told to stop.
 
-    Every turn is stamped with **whether a fault was in flight for any part of it**, from
-    the injector's own record (see `Outages`) and from two `sup.connected` samples. A1
-    counts only the clean turns; A2 counts the ones a fault actually cost. A driver that
-    recorded a bare success/failure would be unable to tell a bug from an injected fault,
-    and one that sampled only the endpoints cannot tell a bug from a fault it slept
-    through.
+    Every turn is stamped with whether a fault was in flight for any part of it (the
+    injector's `Outages` record plus two `sup.connected` samples). A1 counts only the
+    clean turns; A2 counts the ones a fault actually cost.
     """
 
     def __init__(self, host, port, gap_s, up_probe, outages, device_id=None):
@@ -447,10 +371,8 @@ class RobotDriver(threading.Thread):
                 self._backoff(str(e))
                 continue
             try:
-                # Announce only once the broker has ACKED our subscriptions. A bare
-                # publish here raced the SUBSCRIBE, and the QoS-0 config that answers it
-                # is not replayed — so a lost race was counted below as a
-                # `session_failure` ("no config") that no fault injection had caused.
+                # Announce only once the broker ACKED our subscriptions: the QoS-0
+                # config answering the announce is not replayed if it races the SUBSCRIBE.
                 if not vm.announce():
                     self.session_failures += 1
                     self._backoff("no suback")
@@ -486,13 +408,10 @@ class RobotDriver(threading.Thread):
         answered = vm.got_reply.wait(8.0)
         t_end = time.monotonic()
         still_up = self._up()
-        # Three signals, unioned: the injector's own record of what it did, and the two
-        # endpoint samples that still catch an outage nobody scheduled.
+        # The injector's record, unioned with the two endpoint samples.
         if not was_up or not still_up or self._outages.overlaps(t_start, t_end):
-            # A fault touched this turn, so it says nothing about A1 either way. §5.3's A2
-            # is "turns **lost** because of a drop", so only the LOST ones spend its
-            # budget; one that was answered anyway is the system working through a fault,
-            # which is the opposite of a finding.
+            # A fault touched this turn: nothing for A1. Only a LOST one spends A2's
+            # budget; one answered anyway is the system working through a fault.
             self.turns_down += 1
             if not answered:
                 self.turns_down_lost += 1
@@ -532,13 +451,8 @@ def contention_probe(data_dir: str, *, writers: int, appends: int,
                      timeout_s: float | None = None) -> dict:
     """`writers` processes × `appends` appends, all on **one** record.
 
-    Returns the identity that distinguishes a recorded refusal from a silent loss:
-
-        attempted == on_disk + refused
-
-    A `refused` of zero is not the goal and never was — §3.2 point 4 accepts a bounded,
-    recorded refusal explicitly, and A11 asks for it to be *recorded*, not absent. What
-    must be zero is `lost`.
+    Returns the identity that distinguishes a recorded refusal from a silent loss,
+    `attempted == on_disk + refused`. What must be zero is `lost`, not `refused`.
     """
     device = "d_probe"
     env = dict(os.environ)
@@ -556,13 +470,8 @@ def contention_probe(data_dir: str, *, writers: int, appends: int,
     for p in procs:
         out, err = p.communicate(timeout=900)
         if p.returncode != 0:
-            # A crashed writer must NOT be quietly left out of `attempted`. It was, on the
-            # first version of this probe, and the identity below still balanced —
-            # `attempted` shrank by exactly the appends the dead writer never made, so
-            # `lost` read 0 and the run looked clean. That is the same disease as every
-            # other bug in this slice: a metric that reads green because a failure was
-            # excluded rather than counted. It is also how the `OverflowError` in
-            # `_wait_flock` hid: the writer died, the probe shrugged.
+            # A crashed writer must be counted, not left out of `attempted`: the identity
+            # would still balance and `lost` would read 0 on a run with a dead writer.
             crashed.append(err.strip()[-400:])
             unattempted += appends
             continue
@@ -611,9 +520,8 @@ while True:                       # append until somebody kills us mid-write
 def kill_probe(data_dir: str, *, kills: int) -> dict:
     """`SIGKILL` a writer while it is writing, `kills` times, then read the record back.
 
-    A6's bar is that **every** file parses as either the old or the new value — never a
-    truncated one. `os.replace` is what makes that true and this is what checks it, since
-    a patch that wrote in place would look completely fine until a machine lost power.
+    A6: every file parses as the old or the new value, never a truncated one — the
+    property `os.replace` provides and an in-place write would silently lose.
     """
     from moxie_sdk.store import JsonStore
     store = JsonStore(data_dir)
@@ -636,8 +544,7 @@ def kill_probe(data_dir: str, *, kills: int) -> dict:
             continue
         if any(not isinstance(x, str) for x in raw):
             unreadable += 1
-    # A `.tmp` left behind is not corruption — the record is whole either way — but it is
-    # unbounded growth if it happens every time, which A9 is about.
+    # A stray `.tmp` is not corruption, but it is unbounded growth if it recurs (A9).
     kill_dir = os.path.join(data_dir, "robots", "d_kill")
     if os.path.isdir(kill_dir):
         strays = sum(1 for n in os.listdir(kill_dir) if n.endswith(".tmp"))
@@ -687,9 +594,8 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
             d.start()
             drivers.append(d)
 
-        # The store contention probe runs *while* the robots talk, on the same data
-        # directory the supervisor is writing — which is the point. A probe run on an idle
-        # tree would be measuring `flock` rather than measuring this appliance.
+        # The contention probe runs while the robots talk, on the supervisor's own data
+        # dir — on an idle tree it would measure `flock`, not this appliance.
         probe_out: dict = {}
         probe_thread = threading.Thread(
             target=lambda: probe_out.update(contention_probe(
@@ -712,22 +618,14 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
                 baseline = {"rss_kb": sup.rss_kb(), "fds": sup.fds(),
                             "at_s": round(time.monotonic() - t0, 1)}
             if what == "broker":
-                # The window covers the restart AND the recovery, because a turn issued
-                # in either part is a turn the fault cost. It closes at re-onboarding,
-                # not at `sup.connected`: an un-re-onboarded robot cannot converse, and
-                # how long that takes is A12's bar (asserted below) rather than A1's.
+                # The window covers the restart AND the recovery, closing at
+                # re-onboarding (see `Outages`).
                 with outages.window():
                     listening = broker.restart()
-                    # `resubscribed_after_s` below is this number's name, and until
-                    # 2026-09-05 it was measured with `sup.connected` — the CONNACK, one
-                    # handshake short of what the field claimed. `subscribed` is the ack.
+                    # `resubscribed_after_s`: the SUBACK, not the CONNACK
                     took = _wait_until(sup.subscribed, 90)
-                    # A12 — the robots are talking continuously, so every one of them
-                    # should be re-onboarded within a few seconds of the broker coming
-                    # back. Before the `_device_connect` fix this NEVER became true: the
-                    # robot was already in `self.robots`, so it was never re-onboarded and
-                    # `/status` listed it as present while it had had no config push and
-                    # no `app.on_connect`.
+                    # A12 — the robots talk continuously, so every one should be
+                    # re-onboarded (config push + `app.on_connect`) within seconds.
                     reonboard = _wait_until(lambda: _all_robots_seen(sup), 15.0)
                 reconnects.append({"listening_after_s": round(listening, 2),
                                    "resubscribed_after_s": None if took is None else round(took, 2),
@@ -741,9 +639,8 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
                 # SIGTERM'd: it cannot answer until it reports a connection again.
                 with outages.window():
                     took = sup.restart()
-                # A4: after a supervisor restart every robot it has ever seen is re-pushed
-                # config **without waiting for an event**. The roster resume is on a 1 s
-                # settle timer, so the window here is the bar (5 s) plus that.
+                # A4: every robot ever seen is re-pushed config without waiting for an
+                # event. The resume has a 1 s settle timer: the bar (5 s) plus that.
                 pushed = _wait_until(
                     lambda: _resumed(sup, known_before), 8.0)
                 resumes.append({"restart_s": round(took, 2), "known_before": known_before,
@@ -792,12 +689,8 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
 
 
 def _all_robots_seen(sup) -> bool:
-    """Is every robot `/status` lists confirmed on the CURRENT broker connection?
-
-    `seen_since_connect` is the field the fix added, and this is the property it exists
-    for: after a broker restart a returning robot must be re-onboarded, not merely
-    remembered. A supervisor with no robots yet is vacuously true — and `_ghosts()` prints
-    the ones that are not, so a green A12 cannot hide an empty one.
+    """Is every robot `/status` lists confirmed on the CURRENT broker connection
+    (re-onboarded, not merely remembered)? False with no robots; `_ghosts()` names the rest.
     """
     try:
         robots = sup.status().get("robots") or []
@@ -816,12 +709,9 @@ def _ghosts(sup) -> list:
 
 
 def _resumed(sup, known_before: int) -> bool:
-    """Has the restarted supervisor re-pushed config from its roster yet?
-
-    Read from the connection history rather than from a log grep: the resume publishes
-    config, and the `recent` ring carries the line. A restart with an empty roster has
-    nothing to prove and passes trivially — which is honest, and is why `known_before` is
-    recorded beside the verdict rather than hidden inside it.
+    """Has the restarted supervisor re-pushed config from its roster yet (the `recent`
+    ring carries the line)? An empty roster passes trivially, which is why `known_before`
+    is recorded beside the verdict.
     """
     if known_before <= 0:
         return True
@@ -833,12 +723,8 @@ def _resumed(sup, known_before: int) -> bool:
 
 
 def _schedule(duration: float, broker_restarts: int, supervisor_restarts: int) -> list:
-    """Fault times, evenly spread over the middle 80% of the run.
-
-    Not the first 10%: the stack has to settle and the RSS baseline is taken there. Not
-    the last 10%: every injected fault needs room for its recovery to be *observed*, and a
-    restart at t-2s would be measuring the teardown.
-    """
+    """Fault times, evenly spread over the middle 80% of the run: the first 10% settles
+    and takes the RSS baseline, the last 10% leaves room to observe the recovery."""
     events = []
     span = duration * 0.8
     start = duration * 0.1
@@ -856,11 +742,8 @@ def _sleep_until(deadline: float):
 
 
 def _scan_log(path: str) -> dict:
-    """A10 — unhandled exceptions or tracebacks in the supervisor log.
-
-    Counted rather than grepped-for-zero, and the offending lines are kept: "there were
-    three" is a bug report and "the grep failed" is not.
-    """
+    """A10 — unhandled exceptions or tracebacks in the supervisor log, counted, with
+    the offending lines kept (a count is a bug report; a failed grep is not)."""
     tracebacks, errors = 0, []
     try:
         with open(path, errors="replace") as fh:
@@ -901,21 +784,10 @@ def grade(r: dict) -> list:
     drops = int(by_kind.get("publish_drop", 0))
     recorded = int(by_kind.get("disconnect", 0))
     outages = r["broker_restarts"]
-    # Two halves, and the second is the one §5.3 says is the real bar: *"an unrecorded loss
-    # is a failure even if the count is 0"*. So a green A2 needs BOTH a bounded number of
-    # turns LOST to an outage — at most one per robot per injected fault, since a robot
-    # can only lose the turn it was mid-way through — AND a `disconnect` row for every
-    # broker restart. A run that lost nothing because nothing was injected fails the
-    # second half, which is exactly what it should do.
-    #
-    # THE BUDGET IS SPENT BY LOSSES, NOT BY CROSSINGS, and that sentence above is why:
-    # "a robot can only lose the turn it was mid-way through" is a statement about losing.
-    # This used to be fed `during_outage`, every turn that *touched* a fault whether it was
-    # answered or not, which the budget's own reasoning cannot bound — a several-second
-    # window simply contains several turns, and answering them all is the system working.
-    # With the exact windows of `Outages` that mismatch became unmissable; with sampled
-    # endpoints it merely made A1 and A2 trade failures back and forth, which is what the
-    # gate had been doing.
+    # A green A2 needs BOTH at most one turn LOST per robot per injected fault (a robot
+    # can only lose the turn it was mid-way through — so losses spend the budget, not
+    # crossings) AND a `disconnect` row for every broker restart: §5.3 says "an
+    # unrecorded loss is a failure even if the count is 0".
     budget = r["config"]["robots"] * (outages + r["supervisor_restarts"])
     bars.append(("A2", f"turns lost to a drop ≤ 1 per robot per fault (≤{budget}), each recorded",
                  f"{t['lost_during_outage']} lost of {t['during_outage']} that crossed an "
@@ -999,10 +871,7 @@ def grade(r: dict) -> list:
                         "and if non-zero, each one RECORDED",
                  f"{c.get('refused')} refused ({c.get('refusal_rate', 0):.2%}) · "
                  f"supervisor's own store_lock_timeouts={st.get('store_lock_timeouts')}",
-                 # The bar that is not "zero". §3.2 point 4 accepts a bounded, recorded
-                 # refusal explicitly; what must never happen is one that vanishes. So the
-                 # verdict is the identity, not the count — and the count is printed beside
-                 # it so nobody can quote a green A11 as "there were none".
+                 # the verdict is the identity (nothing vanished), not a zero count
                  None if not c else c.get("lost") == 0))
     return bars
 
@@ -1085,8 +954,7 @@ def main():
         finally:
             shutil.rmtree(data_dir, ignore_errors=True)
         print(json.dumps(out, indent=2))
-        # `lost` is the failure. `refused` is a disclosed, recorded limit (A21) and must
-        # not be reported as one — that is the whole distinction this probe draws.
+        # `lost` is the failure; `refused` is a disclosed, recorded limit (A21).
         return 0 if out["lost"] == 0 and not out["crashed"] else 1
 
     result = run_soak(args.profile, minutes=args.minutes, port=args.port,

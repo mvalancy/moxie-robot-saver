@@ -1,51 +1,19 @@
 """
-Why a full `pytest sim/tests` run was red on a machine with credentials and green
-everywhere else — and the fence that keeps it from coming back.
+Live suites must leave the process environment as they found it — hermetic guards.
 
-**The finding.** For a day, `docs/architecture/implementation-plan.md` carried this as an
-open, unexplained gap: `python3 -m pytest sim/tests -q` — the SIL tier's *own documented
-command* — gave 9 failures and 4 errors on a developer box, while every one of the files
-involved passed **in isolation**, and CI never saw any of it because CI has no `mqtt/.env`
-to find. Rule 20 one level deeper than it was written.
+The failure this fences: a full `pytest sim/tests` on a machine WITH credentials went red
+(9 failures, 4 errors) while every file passed alone and CI (no key, live tier skipped)
+never saw it. `test_live_gateway.py` set the engine selectors `MOXIE_APP=content` and
+`MOXIE_STT=off` without restoring them, and every later live suite reloads `config`
+against the live environment — so the voice picker two files later was judged against a
+deployment told it has no ears. Since `MOXIE_APP` also became a brain pin, the same leak
+now costs the next suite its brain too.
 
-**The mechanism, reproduced 2026-09-03 (2 gateway calls).** `test_live_gateway.py`'s
-assembled-stack test used to set two variables straight into `os.environ` with no restore:
-
-    os.environ["MOXIE_APP"] = "content"
-    os.environ["MOXIE_STT"] = "off"
-
-Both are **engine selectors**, and every later live suite reads them by reloading `config`
-against the live process environment. So the next live file in the same session — the
-voice picker — asked the gateway for its real model list and then judged it against a
-deployment that had been told it has no ears. Three of its assertions are about exactly
-that (`pins == {"": ""}`, `gateway:stt-whisper` present, the speech/listening split), and
-all three failed:
-
-    [picker] 1 listening entries: off
-    assert {'listening': 'off'} == {'listening': ''}
-
-Nothing was wrong with the picker, with the gateway, or with the config layer. One test
-had left the room untidy, and the failure surfaced two files later.
-
-**Why it could only ever be seen there.** In CI the whole live tier skips (no key), so the
-polluting test never runs. Run alone, the picker is the only live file in the session, so
-there is nothing to pollute it. It takes a *machine with credentials running the whole
-suite* — which is the developer's box and nothing else — for the two to meet.
-
-**What this file is.** The fix (a save-and-restore context manager) lives in the file that
-needs it, but that file is `skipif`-ed away on every machine without a key — that is, on
-every machine that could otherwise notice the restore breaking. So the guard lives here,
-hermetic, and asserts three things: the helper restores in both directions, and each of
-the two leaked variables really does change what a reloaded `config` reports. The second
-half matters because it is what turns "a test changed an environment variable" from
-tidiness into a bug — and because the blast radius grew when PR #88 made `MOXIE_APP` a
-brain pin, so a leak that used to cost a listening engine now costs a brain as well.
-
-No gateway, no key, no network: everything below is the config layer read against an
-environment this file sets and puts back itself. It is deliberately NOT named
-`test_live_*` — that prefix is the naming convention `test_ci_workflows.py` uses to
-insist every live suite is dispatched by some CI tier, and a hermetic guard that
-asked to be dispatched as a live suite would be a lie about what it needs.
+The fix (`test_live_gateway._assembly_env`) lives in a file that skips wherever there is
+no key, i.e. everywhere that could notice it breaking — so it is guarded here,
+hermetically: the helper restores in both directions, and each leaked variable really
+does change what a reloaded `config` reports. Deliberately NOT named `test_live_*`: that
+prefix means "needs credentials" to `test_ci_workflows.py` and `conftest.py`.
 """
 from __future__ import annotations
 
@@ -74,8 +42,7 @@ def env_sandbox():
             os.environ.pop(k, None)
             if v is not None:
                 os.environ[k] = v
-        # …and `config` with it. This file reloads that module on purpose; a file about
-        # not leaving state behind that left state behind would be its own punchline.
+        # …and `config` with it, which this file reloads on purpose
         if "config" in sys.modules:
             try:
                 importlib.reload(sys.modules["config"])
@@ -89,8 +56,7 @@ def env_sandbox():
 
 
 def _config(**env):
-    """`mqtt/config.py` reloaded against `env` — the same move every live suite makes,
-    and therefore the same move that reads whatever a previous test left behind."""
+    """`mqtt/config.py` reloaded against `env`, as every live suite does."""
     for k, v in env.items():
         if v is None:
             os.environ.pop(k, None)
@@ -115,9 +81,7 @@ def test_it_puts_back_a_variable_that_was_already_set(env_sandbox):
 
 
 def test_it_REMOVES_a_variable_that_was_not_set(env_sandbox):
-    """The direction the bug was in. Restoring a saved value is the obvious half; putting
-    back *nothing* — deleting the key rather than leaving ours — is the half that decides
-    whether the next suite sees a pin."""
+    """The direction the bug was in: putting back *nothing* means deleting our key."""
     os.environ.pop("MOXIE_STT", None)
     with _assembly_env():
         assert os.environ["MOXIE_STT"] == "off"
@@ -125,8 +89,7 @@ def test_it_REMOVES_a_variable_that_was_not_set(env_sandbox):
 
 
 def test_it_restores_even_when_the_body_raises(env_sandbox):
-    """A live test that fails mid-turn must not leave the environment behind it — that is
-    a red run turning into two red runs, in a different file, for a different reason."""
+    """A live test failing mid-turn must not turn into a second red run elsewhere."""
     os.environ.pop("MOXIE_STT", None)
     os.environ["MOXIE_APP"] = "sentinel-app"
     with pytest.raises(RuntimeError):
@@ -137,10 +100,8 @@ def test_it_restores_even_when_the_body_raises(env_sandbox):
 
 
 def test_the_environment_is_restored_before_config_is_left_alone(env_sandbox):
-    """The other half of the leak: the body reloads `config`, so putting the environment
-    back is not enough — `config`'s own constants would still hold ours until somebody
-    reloaded it again. The helper reloads it on the way out, so a suite that reads
-    `config` *without* reloading first still sees the truth."""
+    """The body reloads `config`, so restoring the environment is not enough — its
+    constants would still hold ours. The helper reloads it on the way out."""
     _config(MOXIE_APP="echo", MOXIE_STT=None)
     with _assembly_env():
         importlib.reload(sys.modules["config"])
@@ -151,9 +112,8 @@ def test_the_environment_is_restored_before_config_is_left_alone(env_sandbox):
 
 # ------------------------------------- why a leak of THESE two variables is a bug --
 def _listing(cfg):
-    """`VoiceEngines.available()` over a FAKE gateway listing — the same seam
-    `sim/run_compose_smoke.sh` step 3c uses, so no network is involved. What is under
-    test is the environment's effect on the answer, never the gateway's."""
+    """`VoiceEngines.available()` over a FAKE gateway listing (no network): what is under
+    test is the environment's effect on the answer."""
     from moxie_sdk import voice_settings as vs
     cat = vs.GatewayCatalog(lambda: ["piper-amy", "piper-ryan", "stt-whisper"],
                             submit=lambda fn: fn())
@@ -161,8 +121,7 @@ def _listing(cfg):
 
 
 def test_a_leaked_MOXIE_STT_off_is_what_broke_the_voice_picker(env_sandbox):
-    """The reproduction, hermetically: the picker's three failing assertions, as facts
-    about a reloaded `config` rather than as a mystery in someone else's file."""
+    """The picker's three failing assertions, reproduced as facts about `config`."""
     from moxie_sdk import voice_settings as vs
     clean = _listing(_config(MOXIE_STT=None, MOXIE_VOICE_BASE_URL="http://gw.invalid/v1"))
     assert clean["pins"][vs.LISTENING] == ""                       # the picker's #3
@@ -176,9 +135,7 @@ def test_a_leaked_MOXIE_STT_off_is_what_broke_the_voice_picker(env_sandbox):
 
 
 def test_a_leaked_MOXIE_APP_now_pins_the_BRAIN_too(env_sandbox):
-    """PR #88 widened the blast radius: `MOXIE_APP` was a choice, and is now also a pin.
-    A leak that used to cost the next suite its ears now costs it its brain — which is
-    why the restore is a fence and not a tidy-up."""
+    """`MOXIE_APP` is also a brain pin, so a leak costs the next suite its brain."""
     from moxie_sdk import brains
     cfg = _config(MOXIE_APP="content")
     assert cfg.brain_pin() == "content"
@@ -192,24 +149,12 @@ def test_a_leaked_MOXIE_APP_now_pins_the_BRAIN_too(env_sandbox):
 
 
 # ------------------------ the OTHER half of the same finding, and its fence --
-# `test_assemble.py` is hermetic and runs long before any live file, and it used to
-# DELETE `MOXIE_LLM_BASE_URL` / `MOXIE_LLM_API_KEY` / `MOXIE_VOICE_BASE_URL` from the
-# process and set `MOXIE_SKIP_DOTENV=1` so the deletion survived a reload. Right for that
-# file (rule 20: "nothing configured" has to mean nothing configured), fatal for the
-# session: `test_live_gateway_turn_e2e.py` boots a real supervisor with `MOXIE_APP=llm`
-# and inherits the endpoint and key from `os.environ`. Both were gone, and the one flag
-# that would let the subprocess recover them from `mqtt/.env` was set — so
-# `require_llm_base_url` exited at assembly, the supervisor never came up, and that
-# module's 4 tests ERRORED. Which is exactly the "4 errors" the gap recorded.
-#
-# The fence is a module-scoped autouse fixture in that file. This guard is the fence's
-# fence, and it is a real one: it runs the file in a SUBPROCESS with sentinel values and
-# reads the environment back afterwards, so a fixture that stopped restoring fails here
-# rather than two files later in somebody else's suite.
-#: Runs the file under test through `pytest.main` IN a subprocess and then dumps what is
-#: left of `os.environ`. In-process rather than as a second test file, because a probe
-#: file outside the repo moves pytest's rootdir to `/` and turns a 0.3 s collection into
-#: an 18 s one — the guard has to be cheap enough that nobody is tempted to delete it.
+# `test_assemble.py` (hermetic, runs early) used to DELETE the LLM/voice endpoint + key and
+# set `MOXIE_SKIP_DOTENV=1`, so `test_live_gateway_turn_e2e.py`'s supervisor inherited
+# neither and its 4 tests errored. Its fence is a module-scoped autouse fixture; this is
+# the fence's fence: run the file in a SUBPROCESS with sentinels and read the environment
+# back. `pytest.main` in-process rather than a probe file outside the repo, which would move
+# the rootdir to `/` and make collection ~60x slower.
 _PROBE = """
 import json, os, sys
 import pytest
@@ -219,14 +164,8 @@ with open(sys.argv[2], "w") as fh:
 sys.exit(int(rc))
 """
 
-#: Written by `conftest` for the whole session, so the probe sees them whatever the file
-#: under test did. Not leaks, and not this guard's business.
-#:
-#: `MOXIE_DATA_DIR` comes from `isolated_data_dir`; `MOXIE_SKIP_DOTENV` from the dotenv
-#: fence at the top of `conftest.py`, which the probe's own subprocess re-applies because
-#: this test deliberately unsets it before launching. Without this entry the fence would
-#: read as `test_assemble.py` having added a variable — a guard failing on the presence of
-#: another guard, which says nothing about the file under test.
+#: Set by `conftest` for every session (`isolated_data_dir` and the dotenv fence, which
+#: the probe re-applies because this test unsets it) — not leaks by the file under test.
 _PROBE_IGNORED = ("MOXIE_DATA_DIR", "MOXIE_SKIP_DOTENV")
 
 
@@ -260,8 +199,7 @@ def test_test_assemble_py_leaves_the_environment_exactly_as_it_found_it(tmp_path
 
 
 def test_that_guard_would_notice_a_deletion():
-    """Mutation control: the comparison above must fail when a variable really does go
-    missing. Without it, a probe that silently wrote an empty file would pass forever."""
+    """Mutation control: the comparison above must fail when a variable goes missing."""
     before = {"MOXIE_LLM_BASE_URL": "x", "MOXIE_APP": "echo"}
     after = {"MOXIE_APP": "echo"}
     assert after != before

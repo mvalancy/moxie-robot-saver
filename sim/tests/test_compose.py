@@ -1,14 +1,12 @@
 """
-One-command-stack tests (M7 / DoD criterion 5) — assert the repo-root docker-compose.yml
-declares the stack we document: the three long-running services plus the cert one-shot,
-healthchecks on all three, a restart policy, named volumes for every piece of persistent
-state, and profiles that are strictly opt-in.
+One-command-stack tests — the repo-root docker-compose.yml declares the stack we document:
+the three long-running services plus the cert one-shot, healthchecks, a restart policy,
+named volumes for all persistent state, and strictly opt-in profiles.
 
 The second half is PARITY: the repo ships the same appliance twice (build-from-clone
 `docker-compose.yml` and self-contained `docker-compose.images.yml`), and the second one
-copies what it cannot reference. Those copies drift — see helpers_compose.py for the
-v0.6.0 promotion that a drifted copy stalled. Until now only the deep tier's PR-to-main
-docker smokes could see it; these guards see it in milliseconds on every PR.
+copies what it cannot reference. Copies drift (see helpers_compose.py); these guards see
+it in milliseconds instead of only in the deep tier's docker smokes.
 
 Hermetic: parses YAML, never talks to Docker. The end-to-end proof (build → up → virtual
 robot round-trip → fleet view → down -v) is sim/run_compose_smoke.sh.
@@ -35,33 +33,14 @@ BROKER_CONF = os.path.join(REPO, "mqtt", "broker", "compose-mosquitto.conf")
 ENV_EXAMPLE = os.path.join(REPO, ".env.example")
 SMOKE_ENV = os.path.join(REPO, "sim", "compose-smoke.env")
 
-#: A key-shaped literal. **The `\b` is the whole point of this constant existing.**
-#:
-#: The pattern shipped for months as a bare `sk-[A-Za-z0-9_]{12}` with no left word
-#: boundary, so ANY word ending in "sk" followed by a hyphen and twelve more word characters
-#: matched it. That is not a theoretical hazard: on 2026-09-05 the phrase
-#: "task-notification" — twelve characters after "sk-", exactly on the nose — appeared in
-#: the generated full-text index `sim/web/docs-search.json` and produced two false positives
-#: on a real PR review. The same shape is one edit away everywhere else: "task-scheduler",
-#: "Zendesk-styled", "kiosk-locked", "disk-formatted" all begin the same way.
-#:
-#: WHY THIS IS WORTH A NAMED CONSTANT AND A PARAGRAPH, rather than a two-character fix in
-#: place. A secret scanner's cost of being wrong is asymmetric in a direction that is easy
-#: to get backwards. A miss is one leaked key. A false positive is cheap ONCE — and then it
-#: teaches every reviewer who meets it that this particular red is noise, which is how a
-#: scanner stops being read at all. **A guard that cries wolf on ordinary English is one
-#: people learn to wave through**, and a waved-through scanner catches nothing, so the
-#: false-positive rate is a *security* property of the check and not a tidiness one.
-#: Measured before and after: `\b` gives 0 hits on that prose and still matches a synthetic
-#: `sk-AbCdEfGhIjKlMnOpQr`. `test_the_key_scan_does_not_cry_wolf` pins both directions.
-#:
-#: This is playbook rule 17's shape ("a guard must assert over code, not over the whole
-#: file") one level down: the guard must assert over a KEY, not over anything key-shaped.
+#: A key-shaped literal. The left `\b` is load-bearing: without it any word ending in
+#: "sk" plus a hyphen and twelve word characters matches ("task-notification" did, in the
+#: generated docs index). A secret scanner that cries wolf on ordinary English is one
+#: people learn to wave through, so its false-positive rate is a security property.
+#: `test_the_key_scan_does_not_cry_wolf` pins both directions.
 KEY_SHAPED = re.compile(r"\bsk-[A-Za-z0-9_]{12}")
 
-#: The prose that broke it, and the synthetic key that must still be caught. Kept as data
-#: next to the pattern so the two-direction test below reads as a table, and so a future
-#: widening of the pattern has to look at what it is allowed to match.
+#: Real prose that must NOT match, and a synthetic key that must.
 _NOT_KEYS = ("task-notification", "a task-notification arrives", "task-scheduler",
              "Zendesk-styled", "kiosk-locked-down", "disk-formatted_x", "risk-assessment")
 #: Deliberately not a real key: shaped like one, valid nowhere.
@@ -78,51 +57,46 @@ IMAGES = "docker-compose.images.yml"
 SINGLE_FILE = BUILD_ONLY_KNOBS | IMAGE_ONLY_KNOBS | PROFILE_ONLY_KNOBS
 
 
-@pytest.fixture(scope="module")
-def compose():
-    with open(COMPOSE_PATH) as fh:
-        return yaml.safe_load(fh)
+def _read(path):
+    with open(path) as fh:
+        return fh.read()
 
 
 @pytest.fixture(scope="module")
 def raw():
-    with open(COMPOSE_PATH) as fh:
-        return fh.read()
-
-
-@pytest.fixture(scope="module")
-def images():
-    with open(IMAGES_PATH) as fh:
-        return yaml.safe_load(fh)
+    return _read(COMPOSE_PATH)
 
 
 @pytest.fixture(scope="module")
 def images_raw():
-    with open(IMAGES_PATH) as fh:
-        return fh.read()
+    return _read(IMAGES_PATH)
 
 
-def _env_keys(path):
-    keys = set()
-    with open(path) as fh:
-        for line in fh:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                keys.add(line.split("=", 1)[0].strip())
-    return keys
+@pytest.fixture(scope="module")
+def compose(raw):
+    return yaml.safe_load(raw)
+
+
+@pytest.fixture(scope="module")
+def images(images_raw):
+    return yaml.safe_load(images_raw)
+
+
+def _both(compose, images):
+    return ((CLONE, compose), (IMAGES, images))
 
 
 # ---- shape -------------------------------------------------------------------------
 
 def test_project_name_and_services(compose):
     assert compose.get("name") == "moxie"
-    for svc in ("certs",) + CORE:
+    for svc in SHARED:
         assert svc in compose["services"], f"missing service {svc}"
 
 
 def test_core_services_have_no_profile(compose):
     """`docker compose up` with no flags must bring the whole stack up."""
-    for svc in ("certs",) + CORE:
+    for svc in SHARED:
         assert not compose["services"][svc].get("profiles"), \
             f"{svc} is profile-gated — plain `docker compose up` would skip it"
 
@@ -208,14 +182,14 @@ def test_defaults_are_zero_dependency(compose):
 
 
 def test_every_interpolated_knob_is_documented(raw):
-    used = set(re.findall(r"\$\{(MOXIE_[A-Z0-9_]+)", raw))
-    documented = _env_keys(ENV_EXAMPLE)
+    used = interpolated(raw)
+    documented = env_file_keys(_read(ENV_EXAMPLE))
     assert used - documented == set(), \
         f".env.example does not document: {sorted(used - documented)}"
 
 
 def test_env_example_ships_no_secret():
-    text = open(ENV_EXAMPLE).read()
+    text = _read(ENV_EXAMPLE)
     assert not KEY_SHAPED.search(text), ".env.example must never hold a key"
     for line in text.splitlines():
         if line.startswith("MOXIE_LLM_API_KEY") or line.startswith("MOXIE_VOICE_API_KEY"):
@@ -223,22 +197,14 @@ def test_env_example_ships_no_secret():
 
 
 def test_the_key_scan_does_not_cry_wolf():
-    """`KEY_SHAPED` must catch a key AND stay silent on English. Both, or it is worthless.
-
-    The positive half is the obvious one and was never in doubt. The negative half is the
-    one that had actually regressed, and it is the half that decides whether anyone still
-    reads the positive half a year from now — see the constant's own note. Every string in
-    `_NOT_KEYS` is real prose from this repo's docs or its generated search index.
-    """
+    """`KEY_SHAPED` must catch a key AND stay silent on English. Both, or it is worthless."""
     assert KEY_SHAPED.search(_IS_A_KEY), "a key-shaped literal must still be caught"
     assert KEY_SHAPED.search("MOXIE_LLM_API_KEY=" + _IS_A_KEY), "…including after a `=`"
     for prose in _NOT_KEYS:
         assert not KEY_SHAPED.search(prose), (
             f"{prose!r} is ordinary English, not a key — a scanner that reds on it is a "
             f"scanner people learn to wave through")
-    # And the exact regression: the boundaryless form DOES fire on the prose, which is why
-    # the `\b` is load-bearing rather than decorative. If this ever stops being true the
-    # constant above can be simplified; until then it is the measurement behind the comment.
+    # the boundaryless form DOES fire on the prose — the measurement behind the `\b`
     assert re.search(r"sk-[A-Za-z0-9_]{12}", "task-notification"), \
         "the boundaryless pattern is what this test exists to rule out"
 
@@ -286,35 +252,20 @@ def test_smoke_env_uses_free_ports():
 
 # ---- environment parity ------------------------------------------------------------
 
-def test_supervisor_env_parity(compose, images):
-    """The exact bug that stalled v0.6.0: `MOXIE_ALLOW_UNVERIFIED_BOTS` was added to the
-    clone compose by the PR that closed the pairing gate, and the images compose — written
-    in parallel — never got it. Both branches' own smokes were green; the prebuilt-image
-    stack came up refusing to pair."""
-    problems = env_parity(compose, images, "supervisor",
+@pytest.mark.parametrize("service", ["supervisor", "console", "certs"])
+def test_env_parity(compose, images, service):
+    """One file forwarding a knob the other never got is how a prebuilt-image stack once
+    came up refusing to pair. (certs: MOXIE_BROKER_HOST lands in the broker cert's SAN.)"""
+    problems = env_parity(compose, images, service,
                           a_name=CLONE, b_name=IMAGES, ignore=SINGLE_FILE)
-    assert not problems, "supervisor env has drifted:\n  " + "\n  ".join(problems)
-
-
-def test_console_env_parity(compose, images):
-    problems = env_parity(compose, images, "console",
-                          a_name=CLONE, b_name=IMAGES, ignore=SINGLE_FILE)
-    assert not problems, "console env has drifted:\n  " + "\n  ".join(problems)
-
-
-def test_certs_env_parity(compose, images):
-    """The cert one-shot bakes MOXIE_BROKER_HOST into the broker cert's SAN — a robot
-    cannot connect to a stack whose cert names the wrong host."""
-    problems = env_parity(compose, images, "certs",
-                          a_name=CLONE, b_name=IMAGES, ignore=SINGLE_FILE)
-    assert not problems, "certs env has drifted:\n  " + "\n  ".join(problems)
+    assert not problems, f"{service} env has drifted:\n  " + "\n  ".join(problems)
 
 
 def test_pairing_gate_knob_reaches_both_stacks(compose, images):
-    """Named regression for the v0.6.0 promotion. Redundant with the parity check above
-    on purpose: this one names the knob, so a future deletion says what broke."""
+    """Named regression, redundant with the parity check on purpose: it names the knob,
+    so a future deletion says what broke."""
     key = "MOXIE_ALLOW_UNVERIFIED_BOTS"
-    for name, doc in ((CLONE, compose), (IMAGES, images)):
+    for name, doc in _both(compose, images):
         env = moxie_env(doc, "supervisor")
         assert key in env, (
             f"{name} does not forward {key} to the supervisor — a robot on that stack "
@@ -330,7 +281,7 @@ def test_single_file_knobs_are_really_single_file(raw, images_raw, compose, imag
         assert knob in raw, f"{knob} is allowlisted as build-time but {CLONE} never uses it"
         assert knob not in images_raw, \
             f"{knob} appears in {IMAGES} — a prebuilt image cannot have wheels added"
-        for name, doc in ((CLONE, compose), (IMAGES, images)):
+        for name, doc in _both(compose, images):
             assert knob not in "".join(moxie_env(doc, "supervisor").values()), \
                 f"{knob} is in {name}'s supervisor RUNTIME env — it is a build arg"
     for knob in IMAGE_ONLY_KNOBS:
@@ -344,13 +295,10 @@ def test_single_file_knobs_are_really_single_file(raw, images_raw, compose, imag
 # ---- the inlined broker config -----------------------------------------------------
 
 def test_inlined_broker_config_matches_the_file(images):
-    """`sim/run_compose_smoke.sh` makes this same assertion at runtime by slicing the
-    literal block by indentation (it must stay dependency-free). This reads it through
-    PyYAML's own folding instead — two independent readings, one truth — and runs on
-    every PR instead of only in the deep tier."""
-    with open(BROKER_CONF) as fh:
-        drift = broker_conf_drift(images, fh.read(), inline_name=IMAGES,
-                                  file_name="mqtt/broker/compose-mosquitto.conf")
+    """`sim/run_compose_smoke.sh` asserts this at runtime by slicing the block by
+    indentation; this reads it through PyYAML — two independent readings, every PR."""
+    drift = broker_conf_drift(images, _read(BROKER_CONF), inline_name=IMAGES,
+                              file_name="mqtt/broker/compose-mosquitto.conf")
     assert not drift, "the inlined broker config has DRIFTED:\n" + drift
 
 
@@ -425,10 +373,8 @@ KNOWN_ENV_FILE_ONLY = frozenset({"MOXIE_AUTOMARKUP", "MOXIE_EXPRESSIVE"})
 def test_every_forwarded_knob_is_documented(name, path):
     """An owner can only set a knob they can find. `.env.example` is the only place they
     look, and it is the file the images path tells them to download beside the compose."""
-    with open(path) as fh:
-        used = interpolated(fh.read())
-    with open(ENV_EXAMPLE) as fh:
-        documented = env_file_keys(fh.read())
+    used = interpolated(_read(path))
+    documented = env_file_keys(_read(ENV_EXAMPLE))
     missing = used - documented - KNOWN_UNDOCUMENTED
     assert not missing, \
         f".env.example does not document what {name} forwards: {sorted(missing)}"
@@ -438,8 +384,7 @@ def test_documented_knobs_reach_the_supervisor(raw, images_raw):
     """The other direction: a knob documented in .env.example that neither file
     interpolates is a knob an owner sets and nothing reads (unless env_file carries it —
     see KNOWN_ENV_FILE_ONLY)."""
-    with open(ENV_EXAMPLE) as fh:
-        documented = env_file_keys(fh.read())
+    documented = env_file_keys(_read(ENV_EXAMPLE))
     unwired = documented - interpolated(raw) - interpolated(images_raw)
     assert not unwired - KNOWN_ENV_FILE_ONLY, \
         f".env.example documents knobs no compose file forwards: {sorted(unwired)}"
@@ -448,11 +393,8 @@ def test_documented_knobs_reach_the_supervisor(raw, images_raw):
 
 
 def test_inlined_config_escapes_every_literal_dollar(images):
-    """`broker_conf_drift` (and the runtime guard in sim/run_compose_smoke.sh) normalize
-    `$$` → `$` before comparing, so a config that FORGOT to double its `$` would compare
-    equal while docker compose silently substituted an empty variable — the broker would
-    watch `SYS/broker/log` instead of `$SYS/broker/log` and the supervisor would never
-    notice a robot connecting."""
+    """The drift guards normalize `$$` → `$`, so a forgotten `$$` compares equal while
+    compose substitutes an empty variable (see `helpers_compose.unescaped_dollars`)."""
     offenders = unescaped_dollars(images)
     assert not offenders, \
         "inlined broker config has an un-escaped `$` (write it `$$`):\n  " + \
@@ -481,7 +423,7 @@ services:
       MOXIE_MQTT_HOST: broker
 """
 
-# The v0.6.0 bug, in miniature: the images side simply never got the line.
+# The original drift, in miniature: the images side simply never got the line.
 _SUP_MISSING = """
 services:
   supervisor:
@@ -498,7 +440,7 @@ _SUP_EXTRA = _SUP_A + "      MOXIE_NEW_KNOB: ${MOXIE_NEW_KNOB:-}\n"
 
 
 @pytest.mark.parametrize("label,body,expected", [
-    ("the images file never got the key (the v0.6.0 bug)", _SUP_MISSING,
+    ("the images file never got the key", _SUP_MISSING,
      ["MOXIE_ALLOW_UNVERIFIED_BOTS", "MISSING from " + IMAGES]),
     ("a default drifted", _SUP_DEFAULT_DRIFT,
      ["MOXIE_BRAIN_BUDGET_S", "DEFAULT differs", "'6'", "'30'"]),
@@ -621,12 +563,9 @@ def test_shape_parity_passes_when_identical():
 
 
 # ====================================================================================
-# BROKER HARDENING — security-broker-auth.md §2 (P0), row T8.
-#
-# The slice is three lines of broker config, two ACL files and one credential, and
-# every one of them has to reach BOTH stacks or the prebuilt-image appliance quietly
-# ships the open broker while the clone ships the closed one. That is exactly the
-# v0.6.0 shape of bug the parity guards above exist for, so these name it directly.
+# BROKER HARDENING (security-broker-auth.md §2): broker config lines, two ACL files and
+# one credential must reach BOTH stacks, or the prebuilt-image appliance quietly ships
+# the open broker while the clone ships the closed one.
 # ====================================================================================
 
 ACL_CONFIGS = (("mosquitto-acl", "acl"), ("mosquitto-acl-robot", "acl-robot"))
@@ -636,10 +575,9 @@ ACL_CONFIGS = (("mosquitto-acl", "acl"), ("mosquitto-acl-robot", "acl-robot"))
 def test_inlined_acls_match_the_files(images, config_name, filename):
     """Same guard as the broker config, for the two ACLs the images file must also
     inline — it cannot bind-mount them, and an owner downloads that one file."""
-    with open(os.path.join(REPO, "mqtt", "broker", filename)) as fh:
-        drift = broker_conf_drift(images, fh.read(), inline_name=IMAGES,
-                                  file_name=f"mqtt/broker/{filename}",
-                                  config_name=config_name)
+    drift = broker_conf_drift(images, _read(os.path.join(REPO, "mqtt", "broker", filename)),
+                              inline_name=IMAGES, file_name=f"mqtt/broker/{filename}",
+                              config_name=config_name)
     assert not drift, f"the inlined {filename} has DRIFTED:\n" + drift
 
 
@@ -679,10 +617,9 @@ def test_the_inlined_broker_config_actually_loads_the_acls(images):
 
 
 def test_the_supervisor_credential_reaches_both_stacks(compose, images):
-    """Named regression, in the shape of `test_pairing_gate_knob_reaches_both_stacks`:
-    a supervisor that cannot authenticate loses `$SYS/broker/log` and stops noticing
+    """A supervisor that cannot authenticate loses `$SYS/broker/log` and stops noticing
     robots connecting — on the stack whose compose file missed the line, only."""
-    for name, doc in ((CLONE, compose), (IMAGES, images)):
+    for name, doc in _both(compose, images):
         env = moxie_env(doc, "supervisor")
         assert env.get("MOXIE_MQTT_USER") == "${MOXIE_MQTT_USER:-supervisor}", name
         assert env.get("MOXIE_MQTT_PASSWORD_FILE") == \
@@ -705,7 +642,7 @@ def test_the_plain_listener_is_loopback_by_default(compose, images):
     """§2.4. 1883 is the one listener with a fleet-wide identity behind it, so it is not
     a LAN door unless an owner says so. 8883 (the robot) and 9001 (the browser UI) keep
     MOXIE_BIND_HOST — a robot and a phone are on the LAN by definition."""
-    for name, doc in ((CLONE, compose), (IMAGES, images)):
+    for name, doc in _both(compose, images):
         ports = doc["services"]["broker"]["ports"]
         plain = [p for p in ports if p.endswith(":1883")]
         assert plain == ["${MOXIE_BIND_HOST_PLAIN:-127.0.0.1}:${MOXIE_PORT_MQTT:-1883}:1883"], \
@@ -719,24 +656,19 @@ def test_the_certs_one_shot_still_owns_the_shared_volume(compose, images):
     """The credential is minted by the service that already mints the certs, into the
     volume both the broker and the supervisor already mount — which is what keeps
     `docker compose up` the whole install."""
-    for name, doc in ((CLONE, compose), (IMAGES, images)):
+    for name, doc in _both(compose, images):
         assert "moxie-certs:/certs" in (doc["services"]["certs"]["volumes"] or []), name
         assert "moxie-certs:/mosquitto/config/keys:ro" in \
             doc["services"]["broker"]["volumes"], name
 
 
 def test_the_defaulted_voice_knobs_do_not_pin_the_pickers_engine(compose, images):
-    """The 🎚️ picker reads `MOXIE_TTS`/`MOXIE_STT` as an engine PIN when they name an
-    engine outright (`voice_settings.pin_for_env`). Both files ship a default for both
-    knobs, so a default that pinned would quietly cut every `docker compose up`
-    deployment's dropdown down to one engine — a coupling neither file can see.
-
-    `tone` is a permission (the last rung under the gateway and Piper) and `auto` is the
-    absence of a choice; both must keep pinning nothing.
-    """
+    """The voice picker reads `MOXIE_TTS`/`MOXIE_STT` as an engine PIN when they name an
+    engine (`voice_settings.pin_for_env`); a compose default that pinned would cut every
+    `docker compose up` deployment's dropdown to one engine. `tone` and `auto` pin nothing."""
     sys.path.insert(0, os.path.join(REPO, "mqtt"))
     from moxie_sdk import voice_settings as vs
-    for name, doc in ((CLONE, compose), (IMAGES, images)):
+    for name, doc in _both(compose, images):
         env = doc["services"]["supervisor"]["environment"]
         for var, kind in (("MOXIE_TTS", vs.SPEECH), ("MOXIE_STT", vs.LISTENING)):
             m = re.match(r"^\$\{%s:-(.*)\}$" % var, str(env[var]))

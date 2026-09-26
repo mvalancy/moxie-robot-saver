@@ -1,9 +1,8 @@
-"""The parent-app REST surface itself: login, the account, children, pairing, robots.
+"""The parent-app REST surface: login, the account, children, pairing, robots.
 
-`test_console_roundtrip.py` covers the `/local/*` supervisor proxies; this file covers
-the half that needs no supervisor at all — the clean-room `client-service-api` contract
-(`docs/architecture/rest-api-contract.md`) and the local pairing helpers, driven
-in-process with a throwaway database.
+The half that needs no supervisor (`test_console_*.py` cover the `/local/*` proxies):
+the clean-room `client-service-api` contract (`docs/architecture/rest-api-contract.md`)
+and the local pairing helpers, in-process with a throwaway database.
 """
 import hashlib
 import sys
@@ -110,8 +109,8 @@ def test_pairing_refuses_another_parents_child(client):
 
 
 def test_deleting_the_account_removes_its_keys_and_pairing_secrets(client):
-    """Regression: account deletion left the sealed secret keys, the pairing rows (which
-    hold the seed AND the recovery phrase in clear) and the push registrations behind."""
+    """Account deletion must take the sealed keys, the pairing rows (seed AND recovery
+    phrase in clear) and the push registrations with it."""
     from moxie_server import db
     auth, _ = _login(client, "gone@example.lan")
     uid = client.get("/local/state", headers=auth).json()["user"]["id"]
@@ -148,9 +147,8 @@ def test_reboot_is_501_and_the_stub_surface_answers(client):
 
 
 def test_the_console_escapes_quotes_in_attribute_values():
-    """Regression: `escapeHtml` escaped only `& < >`, but its output lands inside
-    `data-id="…"` / `title="…"` attributes, and a device id is whatever connected to an
-    anonymous broker — `x" onmouseover="…` broke out of the attribute."""
+    """`escapeHtml` output lands inside `data-id="…"`/`title="…"` attributes, and a device
+    id is whatever connected to an anonymous broker — quotes must be escaped too."""
     import json
     import re
     import shutil

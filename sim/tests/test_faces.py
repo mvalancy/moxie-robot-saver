@@ -177,7 +177,7 @@ def test_the_data_file_carries_the_citation_it_was_ingested_under():
     assert "no code" in src["what_we_took"]
 
 
-def test_the_loader_has_a_seam_and_refuses_a_table_it_cannot_trust():
+def test_the_loader_has_a_seam():
     """`build_face_slots(catalog=)` is how a test substitutes its own table — and the
     same door a bad ingest would come through, so it is checked rather than trusted."""
     tiny = {"slots": {"Hair": [{"id": "X_1", "label": "One",
@@ -188,19 +188,20 @@ def test_the_loader_has_a_seam_and_refuses_a_table_it_cannot_trust():
     assert [o["id"] for o in hair["options"]] == ["X_1"]
     assert all(not s["options"] for s in slots if s["id"] != "hair")
 
-    for bad, why in (
-        ({"slots": {"Eyebrows": []}}, "a slot name our docs do not have"),
-        ({"slots": {"Hair": [{"id": "A", "label": "a", "origin": "guessed"}]}},
-         "an option with unknown provenance"),
-        ({"slots": {"Hair": [{"id": "A", "label": "", "origin": "recovered-enum"}]}},
-         "an option with no label"),
-        ({"slots": {"Hair": [{"id": "A", "label": "a", "origin": "recovered-enum"},
-                             {"id": "A", "label": "b", "origin": "recovered-enum"}]}},
-         "a duplicate id"),
-    ):
-        with pytest.raises(ValueError):
-            faces.build_face_slots(bad)
-        assert why                                            # documents the case
+
+@pytest.mark.parametrize("bad", [
+    pytest.param({"slots": {"Eyebrows": []}}, id="slot-name-not-in-docs"),
+    pytest.param({"slots": {"Hair": [{"id": "A", "label": "a", "origin": "guessed"}]}},
+                 id="unknown-provenance"),
+    pytest.param({"slots": {"Hair": [{"id": "A", "label": "", "origin": "recovered-enum"}]}},
+                 id="no-label"),
+    pytest.param({"slots": {"Hair": [{"id": "A", "label": "a", "origin": "recovered-enum"},
+                                     {"id": "A", "label": "b", "origin": "recovered-enum"}]}},
+                 id="duplicate-id"),
+])
+def test_the_loader_refuses_a_table_it_cannot_trust(bad):
+    with pytest.raises(ValueError):
+        faces.build_face_slots(bad)
 
 
 def test_the_recovered_twelve_are_untouched_by_the_widening():

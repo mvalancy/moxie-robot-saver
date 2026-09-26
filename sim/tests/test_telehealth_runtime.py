@@ -17,16 +17,13 @@ gate, safety classifier and markup floor. Pinned:
 Assumptions are flagged in `mqtt/moxie_sdk/telehealth.py`; not run on a physical robot.
 """
 import json
-import os
-import threading
 import urllib.error
 import urllib.request
 
 import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-from helpers_runtime import CountingSynth, FakeClient, make_runtime   # noqa: E402
+from helpers_runtime import (CountingSynth, FakeClient, make_runtime,  # noqa: E402
+                             status_server)
 from moxie_sdk import safety as safety_seam                           # noqa: E402
 from moxie_sdk import telehealth as th                                # noqa: E402
 from moxie_sdk import vocab                                           # noqa: E402
@@ -84,24 +81,22 @@ def test_the_markup_validates_against_the_frozen_catalog(rt):
     assert vocab.validate_markup(out["markup"]) == []
 
 
-def test_the_mood_the_operator_picked_is_the_mood_on_the_wire(rt):
+@pytest.mark.parametrize("name, value", [("sad", 2), ("curious", 9), ("embarrassed", 10)])
+def test_the_mood_the_operator_picked_is_the_mood_on_the_wire(rt, name, value):
     """The whole point of the picker: what a human chose reaches the robot's face."""
     runtime, device_id = rt
-    for name, value in (("sad", 2), ("curious", 9), ("embarrassed", 10)):
-        runtime.client = FakeClient()
-        runtime.telehealth_speak(device_id, "Something happened.", mood=name)
-        markup = _telehealth_msgs(runtime, device_id)[0]["output"]["markup"]
-        assert '+mood+:%d' % value in markup, markup
+    runtime.telehealth_speak(device_id, "Something happened.", mood=name)
+    markup = _telehealth_msgs(runtime, device_id)[0]["output"]["markup"]
+    assert '+mood+:%d' % value in markup, markup
 
 
-def test_intensity_reaches_the_wire_as_the_recovered_0_to_2(rt):
+@pytest.mark.parametrize("asked, expected",
+                         [(0, 0), (1, 1), (2, 2), (9, vocab.MAX_INTENSITY)])
+def test_intensity_reaches_the_wire_as_the_recovered_0_to_2(rt, asked, expected):
     runtime, device_id = rt
-    for asked, expected in ((0, 0), (1, 1), (2, 2), (9, vocab.MAX_INTENSITY)):
-        runtime.client = FakeClient()
-        runtime.telehealth_speak(device_id, "Here we go.", mood="happy",
-                                 intensity=asked)
-        markup = _telehealth_msgs(runtime, device_id)[0]["output"]["markup"]
-        assert '+intensity+:%d' % expected in markup, markup
+    runtime.telehealth_speak(device_id, "Here we go.", mood="happy", intensity=asked)
+    markup = _telehealth_msgs(runtime, device_id)[0]["output"]["markup"]
+    assert '+intensity+:%d' % expected in markup, markup
 
 
 def test_every_line_is_its_own_utterance_so_each_one_carries_its_mood(rt):
@@ -306,27 +301,27 @@ def test_a_safety_stage_that_is_off_does_not_silence_the_operator(tmp_path):
 # --------------------------------------------------------------------------- #
 # T8 — no brain during a session (B3)
 # --------------------------------------------------------------------------- #
+def _remote_chat(runtime, device_id, event_id):
+    runtime._on_remote_chat(device_id, runtime.robots[device_id], json.dumps(
+        {"command": "prompt", "backend": "router", "event_id": event_id,
+         "speech": "hello Moxie"}))
+    runtime._pool.shutdown(wait=True)
+    return runtime.client.on(CHAT_TOPIC.format(d=device_id))
+
+
 def test_a_remote_chat_during_a_session_gets_no_brain_reply(rt):
     """Whether a brain-less robot still emits `events/remote-chat` is unknown; the design
     has to be correct either way, and a brain reply racing the operator is the one failure
     a child would see as broken."""
     runtime, device_id = rt
-    runtime._on_remote_chat(device_id, runtime.robots[device_id], json.dumps(
-        {"command": "prompt", "backend": "router", "event_id": "e1",
-         "speech": "hello Moxie"}))
-    runtime._pool.shutdown(wait=True)
-    assert runtime.client.on(CHAT_TOPIC.format(d=device_id)) == []
+    assert _remote_chat(runtime, device_id, "e1") == []
     assert any("ignored a remote-chat" in n["text"] for n in runtime.recent)
 
 
 def test_the_brain_answers_again_once_the_session_ends(rt):
     runtime, device_id = rt
     runtime.telehealth_session(device_id, "END_SESSION")
-    runtime._on_remote_chat(device_id, runtime.robots[device_id], json.dumps(
-        {"command": "prompt", "backend": "router", "event_id": "e2",
-         "speech": "hello Moxie"}))
-    runtime._pool.shutdown(wait=True)
-    replies = runtime.client.on(CHAT_TOPIC.format(d=device_id))
+    replies = _remote_chat(runtime, device_id, "e2")
     assert replies and replies[-1]["output"]["text"] == "the brain answered"
 
 
@@ -504,20 +499,8 @@ def test_the_bedtime_warning_is_reported_and_the_line_is_still_sent(rt):
 @pytest.fixture()
 def served(rt):
     """The runtime's real `_start_status_server` on a free port."""
-    import socket
     runtime, device_id = rt
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    runtime._start_status_server(port)
-    base = f"http://127.0.0.1:{port}"
-    for _ in range(50):                       # the server starts on a thread
-        try:
-            urllib.request.urlopen(f"{base}/status", timeout=1).read()
-            break
-        except Exception:
-            threading.Event().wait(0.05)
-    return runtime, device_id, base
+    return runtime, device_id, status_server(runtime)
 
 
 def _call(base, device_id, payload=None):

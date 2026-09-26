@@ -51,10 +51,9 @@ import helpers_stack as S                                            # noqa: E40
 import first_audio_ab as AB                                          # noqa: E402
 from moxie_sdk import vocab                                          # noqa: E402
 
-#: The five fields `RemoteChatOutput` carries for a scored line (ai-seam.md §2,
-#: backlog/expressiveness.md §2.3 C1/C3). `signals` is plural on the wire and singular in
-#: the planner's own `scored` dict; that mismatch is exactly what this file is here to
-#: catch if it ever becomes a drop.
+#: The five fields `RemoteChatOutput` carries for a scored line (ai-seam.md §2). `signals`
+#: is plural on the wire and singular in the planner's `scored` dict — a rename this file
+#: catches if it ever becomes a drop.
 SCORED_FIELDS = ("mood", "mood_intensity", "dialog_act", "emotion", "signals")
 
 
@@ -83,10 +82,9 @@ class WireRobot:
         self.c.on_message = self._on_message
         self.c.connect("127.0.0.1", port, 30)
         self.c.loop_start()
-        # Announce only once the broker has ACKed the subscription that carries the answer:
-        # `_on_connect` subscribes on paho's thread, and the supervisor answers `/state`
-        # with a QoS-0, non-retained `/config`, so losing that race deletes the config.
-        # See `virtual_moxie.VirtualMoxie.announce`.
+        # Announce only once the broker ACKed our subscriptions: the `/config` answer is
+        # QoS 0 and not retained, so losing that race deletes it (see
+        # `virtual_moxie.VirtualMoxie.announce`).
         if not self.subscribed.wait(timeout):
             raise RuntimeError(
                 f"{self.device_id}: the broker never acknowledged our subscriptions")
@@ -96,9 +94,7 @@ class WireRobot:
             raise RuntimeError("no paired config pushed within timeout")
 
     def _on_connect(self, c, u, flags, rc, props=None):
-        # Mids first, `subscribed` armed second — paho dispatches both callbacks on one
-        # network thread, so no SUBACK can land while this is still deciding what to wait
-        # for.
+        # mids first, then arm `subscribed` — both callbacks run on paho's one thread
         pending = set()
         for topic in (f"/devices/{self.device_id}/config",
                       f"/devices/{self.device_id}/commands/#"):
@@ -187,10 +183,8 @@ def _base_env(**extra) -> dict:
         "MOXIE_STREAMING": "1",          # the path C2/C4 changed
         "MOXIE_TTS": "off",              # the audio round trip has its own smokes
         "MOXIE_STT": "off",
-        # `MOXIE_TTS=off` does return None from `build_synthesizer` before the auto
-        # precedence runs, so these are belt and braces — but the precedence is
-        # voice-server > Piper > tone, and a base URL inherited from a developer's
-        # `mqtt/.env` has cost this project real gateway calls before now.
+        # belt and braces over `MOXIE_TTS=off`: an inherited voice base URL from a
+        # developer's `mqtt/.env` must never spend a real gateway call
         "MOXIE_VOICE_BASE_URL": "", "MOXIE_VOICE_API_KEY": "",
         "MOXIE_BRAIN_BUDGET_S": "300",   # no filler line racing a measured turn
         "MOXIE_SKIP_DOTENV": "1",        # never find a developer's real key
@@ -353,9 +347,8 @@ def test_no_message_a_robot_received_referenced_an_uncatalogued_id(lab, plain, c
 # 4. all four slices at once (risk 4)
 # --------------------------------------------------------------------------- #
 def test_three_brains_three_robots_one_supervisor_all_scored(lab, plain, chatty, clock):
-    """The combination nothing had ever run: the sandboxed extension (#86) under a brain
-    chosen per robot (#88), beside a robot on `echo` and a robot streaming from a model,
-    with the behavior planner (#92) scoring every one of them, on one broker."""
+    """The sandboxed extension under a per-robot brain, beside a robot on `echo` and one
+    streaming from a model, with the behavior planner scoring every one, on one broker."""
     before = lab["stub"].calls
     ext = clock.ask("what time is it")
     assert lab["stub"].calls == before, "the clock extension cost a model call"

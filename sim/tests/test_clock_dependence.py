@@ -1,73 +1,40 @@
-"""Every test that reads the WALL CLOCK is listed here with a verdict — a ratchet.
+"""Every test that reads the clock is listed here with a verdict — a ratchet.
 
-Three flakes in two days came from the same disease, each found the hard way by a red
-gate rather than by anything in the repo:
-
-* PR #60 — `test_schedule_sil_e2e` asked for an activity 20 minutes out and asserted it
-  was in *today's* plan. True for 1420 minutes a day, false for the last 20.
-* PR #63 — a bedtime window of `["00:00", "23:59"]` reads as "all day" and is not:
-  `in_bedtime` compares `start <= cur < end`, so it was false for exactly 23:59. One
-  guaranteed CI failure a night.
-* This pass — `test_telemetry_runtime.TODAY = int(time.time())`, with packets stamped
-  `TODAY - 30`: an import at 00:00:10 filed them under *yesterday's* roll-up row while
-  `history_view`'s "today" was the new day. ~30 red seconds a night, never seen yet.
-
-A fourth, on 2026-09-04, wore the same costume and was a different disease, which is
-worth a line here because this ledger will keep catching the costume: `test_schedule_sil_
-e2e`'s pinning assertion failed on three unrelated PRs at once and passed locally every
-way it was run. Nothing about the *test* was wrong. The **planner** was hour-dependent —
-a parent request pinned to a later slot could be eaten by the scored fill in an earlier
-one whenever `time_of_day` put that module top of the board, which it does in the
-afternoon and not the morning, so a runner in UTC saw it and a developer in PDT did not.
-The verdict for a case like that is neither of the three below: it is *fix the product*,
-and the test was doing its job. Ask which of the two read the hour before reaching for a
-row.
+Several flakes came from one disease: a test asked for an activity 20 minutes out and
+asserted it was in *today's* plan (false for the last 20 minutes of a day); a bedtime of
+`["00:00", "23:59"]` read as "all day" and was false at 23:59; packets stamped
+`TODAY - 30` at import filed under yesterday for 30 s after midnight. (A look-alike can
+be a product bug instead: an hour-dependent PLANNER once failed only on UTC runners. Ask
+which of the two read the hour before reaching for a row.)
 
 The shared shape is not "a test used the clock" — plenty must, and the runtime reads its
 own clock so pinning the test's would prove nothing. It is **a test that reads the clock
-and nobody wrote down why that is safe**. So the fix is a reviewed ledger, not a ban:
-`REVIEWED` names every wall-clock read in the test tree with the verdict and its reason,
-and is asserted from **both** sides —
+and nobody wrote down why that is safe**. So `REVIEWED` names every clock read in the
+test tree with a verdict and reason, asserted from **both** sides:
 
-* a clock read that is not listed → **fail** (a new one can never arrive unreviewed);
-* a listed entry that no longer exists, or whose set of constructs changed → **fail**
-  (the list can only shrink, so nobody inherits a stale exemption, and adding a
-  `datetime.now()` to an already-reviewed deadline loop is still caught).
+* a clock read that is not listed → **fail** (nothing new arrives unreviewed);
+* a listed entry that no longer exists, or whose constructs changed → **fail** (the list
+  can only shrink, and a `datetime.now()` added to a reviewed deadline loop is caught).
 
-That second direction is the whole design; it is the same ratchet
-`test_ci_test_coverage.py` uses, and for the same reason.
+**What counts.** `time.time`, `time.localtime`, `time.gmtime`, `time.strftime`,
+`time.ctime`, `time.asctime`, `datetime.now`, `datetime.utcnow`, `datetime.today`,
+`date.today`, plus the monotonic `time.monotonic`/`time.perf_counter` (see
+`PY_CLOCK_CALLS`); in the node suites `Date.now`, a no-argument `new Date()`, the
+`get{Hours,Minutes,Day,Date,FullYear}` readers and `toISOString`. `time.sleep` is a
+wait, not a read.
 
-**What counts as a wall-clock read.** `time.time`, `time.localtime`, `time.gmtime`,
-`time.strftime`, `time.ctime`, `time.asctime`, `datetime.now`, `datetime.utcnow`,
-`datetime.today`, `date.today` — and in the node suites `Date.now`, a no-argument
-`new Date()`, the `get{Hours,Minutes,Day,Date,FullYear}` readers and `toISOString`.
+**When this fails on you.** It names the file and scope. Pick a verdict, do the work,
+then add the row — never one that says "looks fine":
 
-**What deliberately does not.** `time.monotonic`, `time.perf_counter` and
-`performance.now()` cannot see a date by construction — they are durations, and a
-duration means the same thing at 03:00 as at 15:00. (They *can* make a test load-flaky,
-which is a real disease with a real cure — playbook rule 11, "assert recorded state,
-never live samples" — but it is a different one, and folding it in here would bury the
-signal this guard exists for.) `time.sleep` is not a read at all.
+* `DETERMINISTIC` — the read was removable and was removed (no row needed).
+* `RELATIVE` — the clock is genuinely the subject (a freshness stamp, a window the
+  runtime evaluates against its own `now`, an age). Say what makes the answer the same at
+  all 1440 minutes of a day, and prove it if that is not obvious.
+* `BOTH BRANCHES` — the scenario cannot be built at some hours. Assert whichever branch
+  is real, the other still strict, and never `pytest.skip`.
 
-**When this fails on you.** Read the failure: it names the file and the function. Decide
-which of the three verdicts your test deserves, do the work, then add the row. Do not add
-a row that says "looks fine".
-
-* `DETERMINISTIC` — the read was removable and was removed. No row needed; there is
-  nothing left to list.
-* `RELATIVE` — the clock is genuinely part of the subject (a freshness stamp; a window
-  the *runtime* evaluates against its own `now`; an age like `greet_after_s`). Say what
-  makes the answer the same at every one of the 1440 minutes of a day, and prove it if
-  the property is not obvious — `test_presence_runtime` asserts its synthetic windows
-  exhaustively rather than claiming they hold.
-* `BOTH BRANCHES` — the scenario genuinely cannot be built at some hours. Assert whichever
-  branch is real, with the other still strict, and never `pytest.skip`: a silent skip is
-  how a regression gets through in the tail of a day.
-
-One clock read per *scope* is the unit, because a scope is what a reader reviews at once.
-Two reads in one function are one row; two reads in two functions are two rows — and two
-reads that must agree about the same instant belong in one place anyway, which is exactly
-the bug `test_schedule_sil_e2e::served` now avoids by reading once and passing it down.
+The unit is one row per *scope* (function/class): two reads that must agree about the
+same instant belong in one place anyway — read once and pass it down.
 """
 from __future__ import annotations
 
@@ -76,24 +43,15 @@ import glob
 import os
 import re
 
+import pytest
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-#: Wall-clock calls, by their dotted tail — and, since 2026-09-06, the MONOTONIC ones
-#: too. They were left out on purpose at first, and the reasoning was sound as far as it
-#: went: `perf_counter` reads no date, so it cannot make a test that passes at 09:00 fail
-#: at 23:59, which is the disease the first three rows of this file were written for.
-#:
-#: A second disease wears the same costume. A monotonic clock cannot tell you the hour,
-#: but subtracting two reads gives a DURATION, and asserting that a duration is under a
-#: constant asks the machine a question instead of the product. `test_automarkup.py`'s
-#: `p95 < 1.0` ms passed 3/3 on a quiet box and failed 3/3 at load average 88, where the
-#: same unchanged code measured a p95 of 7.3 ms against a median of 0.34 ms — the tail
-#: was the scheduler preempting the process, and the green depended on who else was
-#: running. That is the same defect this ledger exists to name: a test whose answer comes
-#: from somewhere other than the code under test, with nobody having written down why it
-#: is safe. So durations are scanned too, and the verdicts below say what makes each one
-#: honest — a timeout that only ever waits longer, a lower bound a slow box pushes
-#: further from failure, or a ratio whose halves are preempted alike.
+#: Clock calls by dotted tail. Monotonic clocks are included because a DURATION
+#: asserted under a constant asks the machine a question instead of the product (an
+#: absolute `p95 < 1.0` ms passed on a quiet box and failed at load 88). The duration
+#: rows below say what keeps each honest: a timeout that only waits longer, a lower bound
+#: a slow box pushes further from failure, or a ratio whose halves are preempted alike.
 PY_CLOCK_CALLS = {
     ("time", "perf_counter"): "time.perf_counter",
     ("time", "monotonic"): "time.monotonic",
@@ -127,23 +85,17 @@ JS_CLOCK_PATTERNS = (
 #: answer the same at every minute of a day — or which branch is asserted when it is not.
 REVIEWED: dict = {
 
-    # ---- the entry this ledger predicted, and then earned ------------------------
+    # ---- import-time state vs call-time state ----------------------------------------
     "sim/tests/test_telemetry_runtime.py::test_telemetry_survives_a_supervisor_restart": (
         ("datetime.now",),
         "RELATIVE — two reads of the SAME clock at the same moment, never a fixed date. "
-        "It reads the clock at ASSERTION time on purpose. "
-        "`history_view` counts back from today at CALL time, while the fixture's `TODAY` "
-        "is fixed at MODULE IMPORT. Comparing the two is what broke on 2026-09-07 at "
-        "00:03:58 UTC (run 34068212046, imported 23:57): the 09-06 roll-up row was present "
-        "and correct, but the window had advanced and `history[-1]['day']` was 09-07. "
-        "Pinning the stamp to noon stops a +/-30s OFFSET crossing a boundary; it cannot "
-        "stop the WINDOW moving under a run that itself spans midnight. So the tail is "
-        "compared against the view's own notion of today -- the same clock, read at the "
-        "same moment -- which is the only comparison that is true at every hour. Proved by "
-        "simulation rather than by waiting a day: with `TODAY` pinned to YESTERDAY noon the "
-        "old assertion fails and this one passes. GENERAL SHAPE for the next entry: a "
-        "boundary-safe fixture stamp is not sufficient -- any assertion comparing "
-        "IMPORT-time state to CALL-time state is clock-dependent however it is stamped."),
+        "`history_view` counts back from today at CALL time while the fixture's `TODAY` is "
+        "fixed at IMPORT; a run spanning midnight once saw the window advance under it. "
+        "Pinning the stamp to noon stops an offset crossing a boundary but not the WINDOW "
+        "moving, so the tail is compared against the view's own notion of today. Proved by "
+        "simulation: with `TODAY` pinned to yesterday noon the old assertion fails and this "
+        "one passes. General shape: any assertion comparing import-time to call-time state "
+        "is clock-dependent however it is stamped."),
 
     # ---- node suites (file-level: these have no scope the scanner can name) ----------
     "sim/test_audio.mjs": (
@@ -153,55 +105,39 @@ REVIEWED: dict = {
         "reads the value."),
     "sim/test_csp.mjs": (
         ("Date.now",),
-        "RELATIVE — a CEILING on a wait, and nothing else. `until()` stamps `t0` and then\n        compares `Date.now() - t0` against a fixed budget purely to stop polling; the value\n        is never asserted and never reaches a check. It exists because puppeteer's console\n        listeners fill their arrays in THIS process, so \"a refusal was logged\" has to be\n        waited for in node rather than in the renderer.\n        Added 2026-09-07, by this ratchet catching PR #209 the day after PR #206 taught it\n        to scan monotonic clocks at all — which is the point of a ratchet: the entry was\n        not written because someone remembered, it was written because the check refused\n        the merge."),
+        "RELATIVE — a CEILING on a wait, and nothing else: `until()` compares "
+        "`Date.now() - t0` against a fixed budget purely to stop polling for puppeteer's "
+        "console listeners, which fill in THIS process. The value never reaches a check."),
     "sim/test_console_insights.mjs": (
         ("Date.now",),
-        "RELATIVE — an ORDERING of two reads of the same clock, never a date. The suite "
-        "stamps each intercepted DELETE with `Date.now()` and asserts it landed at or "
-        "after the `Date.now()` taken immediately before the SECOND click, which is how "
-        "\"the two-click arming held\" is proved on the wire instead of from a label. "
-        "`a >= b` for two reads of one monotone-in-practice clock is true at every one of "
-        "the 1440 minutes of a day; no assertion reads either value, and a clock that "
-        "stepped BACKWARDS between them would redden the suite rather than hide a bug."),
+        "RELATIVE — an ORDERING of two reads of the same clock, never a date: each "
+        "intercepted DELETE must land at or after the stamp taken just before the SECOND "
+        "click, proving the two-click arming on the wire. `a >= b` holds at every minute; "
+        "a clock stepping backwards would redden the suite rather than hide a bug."),
     "sim/eval_live.mjs": (
         ("Date.now", "new Date()", "toISOString"),
-        "RELATIVE — and NOT A TEST, the only row here that is not. `sim/eval_live.mjs` drives REAL "
-        "conversations at a REAL deployment, spends real gateway calls, refuses to start "
-        "without `--yes`, and is run by hand. It contains no assertions at all, so there is "
-        "nothing here that a clock could make pass or fail. All three reads are MEASUREMENT "
-        "rather than logic: `Date.now()` twice around a `fetch` is a latency in "
-        "milliseconds (a duration, never a date), and `new Date().toISOString()` names the "
-        "artifact file it writes. Kept in the ledger rather than excluded from the scan "
-        "because a glob exception is invisible and this row is not — if this file ever "
-        "grows a real assertion, the reasoning above is right where somebody will read it."),
+        "RELATIVE — and NOT A TEST: a hand-run live evaluation (`--yes` required) with no "
+        "assertions. `Date.now()` around a `fetch` is a latency and `new Date()."
+        "toISOString()` names the artifact file. Kept as a visible row rather than a glob "
+        "exception, so a future assertion here meets this reasoning."),
     "sim/tests/edge/demo_proxy/07_turn_features.mjs": (
         ("Date.now",),
-        "RELATIVE — an AGE, never a date. §15k mints a context blob stamped "
-        "`now - CONTEXT_TTL_S - 60` and asserts the route treats it as expired, and mints "
-        "a second at `now` and asserts it is still carried. The clock cannot be injected "
-        "here on purpose: `chat.js` calls `verifyContext(cfg, blob)` with no `nowS`, so it "
-        "reads the real clock, and pinning a fixed timestamp in the test would prove the "
-        "expiry check against a clock the code under test does not use. One hour and one "
-        "minute before any instant is expired at every one of the 1440 minutes of a day, "
-        "and no assertion reads either value."),
+        "RELATIVE — an AGE, never a date: a context blob stamped `now - CONTEXT_TTL_S - 60` "
+        "must be expired and one at `now` carried. `chat.js` verifies against the real "
+        "clock (no injectable `nowS`), so a pinned stamp would test a clock the code does "
+        "not use. Expired/fresh holds at every minute; no assertion reads either value."),
     "sim/test_demo_tickets.mjs": (
         ("Date.now",),
         "RELATIVE — a ticket is aged `Date.now()/1000 - 61` to make it one second past a "
         "60 s expiry. The subject IS the age, and 61 s from any instant is expired at "
-        "every hour. (RESERVED file: owned by the live-Sim ears slice, 2026-09-03.)"),
+        "every hour."),
     "sim/tests/edge/turnstile/02_fail_open.mjs": (
         ("Date.now",),
-        "RELATIVE — an ELAPSED TIME, and it is the subject of the assertion rather than "
-        "an input to it. §5 stubs a `siteverify` that NEVER answers and requires the "
-        "route's own `DEMO_TURNSTILE_TIMEOUT_MS` deadline to end the wait: `elapsed = "
-        "Date.now() - started` must be at least the 120 ms deadline that was configured "
-        "and well under the route's 20 s upstream timeout. A configured deadline that is "
-        "never passed to `fetch` looks identical in every other assertion in that file, "
-        "which is what the row is for (mutation row D3e). Both bounds are durations "
-        "between two reads of one clock, so they hold at every minute of a day; a clock "
-        "that jumped would redden the suite rather than hide a hang. NOTE the check was "
-        "already unreviewed when this file arrived on 2026-09-05 — the guard was red at "
-        "the commit that added the suite, and this row is the fix."),
+        "RELATIVE — an ELAPSED TIME that is the subject: with a `siteverify` that never "
+        "answers, `Date.now() - started` must be at least the configured 120 ms deadline "
+        "and well under the 20 s upstream timeout (mutation row D3e — a deadline never "
+        "passed to `fetch` looks identical otherwise). Both bounds are durations between "
+        "two reads of one clock; a jump would redden rather than hide a hang."),
     "sim/test_mode.mjs": (
         ("Date.now",),
         "DETERMINISTIC — it *overrides* `Date.now = () => clock` and steps `clock` by "
@@ -237,29 +173,25 @@ REVIEWED: dict = {
         "the rendered `{% if %}` branch and never reads the stamp."),
     "sim/tests/test_presence_runtime.py::test_bedtime_hours_suppress_the_hello": (
         ("datetime.now",),
-        "RELATIVE by necessity — the subject `rt._in_bedtime` reads the real clock itself "
-        "(moxie_runtime/presence.py), so pinning the test's clock would test a different "
-        "function. A now±30 min window contains now at all 1440 minutes; asserted "
-        "exhaustively by `test_the_synthetic_windows_the_two_tests_above_build_hold_at_"
-        "every_minute`. Both bedtime keys are written so a Fri→Sat midnight between the "
-        "test's read and the runtime's cannot pick the other one."),
+        "RELATIVE by necessity — `rt._in_bedtime` reads the real clock itself, so pinning "
+        "the test's clock would test a different function. A now±30 min window contains "
+        "now at all 1440 minutes (asserted exhaustively by `test_the_synthetic_windows_the_"
+        "two_tests_above_build_hold_at_every_minute`), and both bedtime keys are written so "
+        "a Fri→Sat midnight between the two reads cannot pick the other one."),
     "sim/tests/test_presence_runtime.py::test_outside_the_bedtime_window_the_hello_is_allowed": (
         ("datetime.now",),
         "RELATIVE by necessity — the mirror of the row above; a now+2h…+4h window excludes "
-        "now at all 1440 minutes, asserted by the same exhaustive test. Its "
-        "`pytest.skip(\"the synthetic window wrapped onto now\")` was removed here: it "
-        "could never fire, and a skip that cannot fire is an escape hatch for a regression."),
+        "now at all 1440 minutes, asserted by the same exhaustive test. No `pytest.skip`: "
+        "a skip that cannot fire is an escape hatch for a regression."),
 
     # ---- the day plan ----------------------------------------------------------------
     "sim/tests/test_schedule_sil_e2e.py::_bedtime_body": (
         ("datetime.now",),
         "RELATIVE — bedtime and 'due today' are wall-clock by contract, so every window is "
-        "built relative to now rather than pinned to a literal hour. It takes `now` as a "
-        "parameter so the fixture and the assertions reason about ONE instant; two "
-        "independent reads either side of local midnight answer for different days. The "
-        "hour cannot change the answer any more: `_request_offset` asks for the activity "
-        "two slots ahead, or two slots behind in the tail of a day, so the request lands "
-        "today at all 1440 minutes and the pinning test has one strict branch, not two."),
+        "built relative to a `now` PARAMETER, letting the fixture and the assertions reason "
+        "about ONE instant. `_request_offset` asks two slots ahead (or behind, late in the "
+        "day), so the request lands today at all 1440 minutes and the pinning test has one "
+        "strict branch."),
     "sim/tests/test_schedule_sil_e2e.py::_seed_behaviors": (
         ("datetime.now",),
         "RELATIVE — records are placed a whole number of days before now and the "
@@ -277,18 +209,16 @@ REVIEWED: dict = {
         "compares it to a calendar boundary."),
     "sim/tests/test_schedule_sil_e2e.py::_request_lands_today": (
         (),
-        "DETERMINISTIC — kept as a row only to record the fix: it used to read the clock "
-        "a second time, independently of the config it was asking about. It now takes the "
-        "fixture's instant, and its only caller is `_request_offset`, which uses it to "
-        "*build* a request that always lands today rather than to branch on whether one "
-        "did. If this row ever gains a construct, that regressed."),
+        "DETERMINISTIC — a tombstone recording the fix: it used to read the clock a second "
+        "time, independently of the config it asked about. It now takes the fixture's "
+        "instant and is used to BUILD a request that always lands today. If this row ever "
+        "gains a construct, that regressed."),
     "sim/tests/test_schedule_sil_e2e.py::test_a_request_for_tomorrow_is_not_pinned_into_today": (
         ("datetime.now",),
-        "RELATIVE — one read, handed to `_bedtime_body` as both the bedtime anchor and the "
-        "base for a request stamped a whole day out. 'A whole day out' is the same "
-        "statement at every hour (naive +1 day always changes the calendar date, DST "
-        "included), so this replaces a branch that used to be reachable only in the last 20 "
-        "minutes of a day — i.e. only ever in CI, unwatched, at 23:4x."),
+        "RELATIVE — one read, used as both the bedtime anchor and the base for a request "
+        "stamped a whole day out. Naive +1 day always changes the calendar date (DST "
+        "included), so this holds at every hour instead of a branch reachable only in the "
+        "last 20 minutes of a day."),
 
     # ---- telemetry -------------------------------------------------------------------
     "sim/tests/test_sil_durable_telemetry.py::_wait": (
@@ -335,24 +265,22 @@ REVIEWED: dict = {
         ("datetime.now",),
         "RELATIVE by necessity — `telehealth_view` reads its own clock. A now±1h window "
         "contains now at every minute including the wrap, and both bedtime keys are "
-        "written so the weekday never matters (PR #63). A fully deterministic pair sits "
-        "beside it pinning the helper's real semantics."),
+        "written so the weekday never matters. A fully deterministic pair sits beside it "
+        "pinning the helper's real semantics."),
 
-    # ---- DURATIONS (monotonic clocks), scanned from 2026-09-06 -------------------
+    # ---- DURATIONS (monotonic clocks) ------------------------------------------------
     # A duration reads no date, so none of these can fail at 23:59. The question each
     # row answers is the other one: does a BUSY machine change the answer? A timeout
     # that only ever waits longer does not; a lower bound a slow box pushes further
     # from failure does not; a ratio whose halves are preempted alike does not. An
-    # upper bound on a measured duration DOES, and that is the one defect fixed here.
+    # upper bound on a measured duration DOES.
 
     "sim/tests/helpers_audio.py::Stage.__enter__": (
         ("time.perf_counter",),
-        "RELATIVE — and asserted on by nothing. `Stage` is a stopwatch whose `seconds` "
-        "is only ever interpolated into a `print()` by the live suites "
-        "(`test_live_talk_e2e.py`, `test_live_hosted_ears.py`, `test_live_gateway_stt.py`), "
-        "which is why a slow box makes the number bigger and no test redder. Checked "
-        "across the tree on 2026-09-06: there is no `assert` anywhere on `.seconds` or on "
-        "`timing_line`. If one is ever added it must be a RATIO, not a ceiling."),
+        "RELATIVE — and asserted on by nothing. `Stage` is a stopwatch whose `seconds` is "
+        "only interpolated into `print()` by the live suites, so a slow box makes the "
+        "number bigger and no test redder. If an assert on `.seconds` or `timing_line` is "
+        "ever added it must be a RATIO, not a ceiling."),
     "sim/tests/helpers_audio.py::Stage.__exit__": (
         ("time.perf_counter",),
         "RELATIVE — the closing read of the pair above, same reason. The subtraction of "
@@ -361,56 +289,40 @@ REVIEWED: dict = {
 
     "sim/tests/test_automarkup.py::_interleaved_medians": (
         ("time.perf_counter",),
-        "RELATIVE — a RATIO, and the row this ledger grew a duration section for. The "
-        "assertion used to be `p95 < 1.0` ms absolute: it passed 3/3 on a quiet box and "
-        "failed 3/3 at load average 88, where the same unchanged code gave a p95 of "
-        "7.252 ms against a median of 0.337 ms. A median that steady with a tail that "
-        "wild is not slower code, it is the scheduler, so the number was measuring the "
-        "MACHINE. It is now the median cost of `annotate` divided by the median cost of "
-        "a fixed calibration pass, the two timed ALTERNATELY in one loop so a preemption "
-        "lands on both alike. Measured clean band 0.86-0.91 over five trials at load "
-        "88-104, gate at 2.0. Sampling the two in SEPARATE loops was tried first and "
-        "rejected by measurement: the halves drifted up to 38% apart."),
+        "RELATIVE — a RATIO. An absolute `p95 < 1.0` ms passed on a quiet box and failed "
+        "at load 88 (p95 7.3 ms vs median 0.34 ms: the scheduler, not the code). It is now "
+        "the median cost of `annotate` over the median of a fixed calibration pass, timed "
+        "ALTERNATELY in one loop so a preemption lands on both alike (clean band 0.86-0.91 "
+        "at load 88-104, gate 2.0). Separate loops drifted up to 38% apart."),
     "sim/tests/test_performance.py::_interleaved_medians": (
         ("time.perf_counter",),
-        "RELATIVE — the same ratio, against a better yardstick: the planner is divided by "
-        "the FLOOR it replaces, which is a real alternative implementation rather than a "
-        "synthetic one. This test already had that idea and still failed under load, for "
-        "two reasons now fixed. It also asserted the floor's absolute `planner < 1.0` ms "
-        "(6.390 ms observed at load 104) — deleted, it measured the machine. And the "
-        "ratio itself was taken at p95, which under load compares one scheduler tail "
-        "against another: five trials at load 104 gave median ratios of 1.999-2.025 "
-        "(stable to ~1%) while the p95 ratios over the SAME samples read 1.80, 2.03, "
-        "2.20, 2.91 and 45.48. A 4x gate would have called that last one a regression. "
-        "The lesson for the next row: a ratio is only load-immune at a percentile where "
-        "the signal, not the scheduler, decides the value."),
+        "RELATIVE — the same ratio, against the FLOOR the planner replaces (a real "
+        "alternative implementation). Taken at the MEDIAN: at load 104 median ratios held "
+        "1.999-2.025 while p95 ratios over the same samples read 1.80 to 45.48. A ratio "
+        "is only load-immune at a percentile where the signal, not the scheduler, decides "
+        "the value."),
 
     "sim/tests/test_brain_latency.py::test_slow_brain_speaks_a_filler_then_the_real_answer": (
         ("time.monotonic",),
         "RELATIVE — `0.2 <= heard_at < 5.0`, and both halves are honest. The lower bound "
         "is the subject (the filler must NOT precede the budget) and a busy box only "
-        "raises `heard_at`, away from it. The upper bound is 25x the 0.2 s budget under "
-        "test: it asks 'did this land inside the window', not 'how fast was it', and the "
-        "file's own header says so. A ceiling that loose cannot be reached by preemption "
-        "without the runtime being genuinely broken."),
+        "raises `heard_at`, away from it. The upper bound is 25x the budget: 'did it land "
+        "inside the window', which preemption cannot reach without a genuinely broken "
+        "runtime."),
 
     "sim/tests/test_clean_shutdown.py::_Tail.wait_for": (
         ("time.monotonic",),
         "DETERMINISTIC — `deadline = monotonic() + timeout`, then poll until a needle is "
-        "printed. This is a bounded WAIT, not a measurement: a slow box waits longer and "
-        "the test still passes, and it reddens only if the line genuinely never appears. "
-        "The callers pass 180 s / 30 s. Note this file already fixed one instance of the "
-        "defect class in its own way — deciding 'did not stop' from `poll()` sampled at "
-        "stdout EOF, replaced with a blocking `waitpid` and guarded by "
-        "`test_a_closed_stdout_is_not_proof_that_the_process_has_exited`."),
+        "printed. A bounded WAIT, not a measurement: a slow box waits longer and still "
+        "passes; it reddens only if the line genuinely never appears (callers pass "
+        "180 s / 30 s)."),
 
     "sim/tests/test_sil_handshake.py::test_the_announcement_really_did_wait_for_the_suback": (
         ("time.monotonic",),
         "RELATIVE — a LOWER bound: `waited >= LATE_SUBSCRIBE_S * 0.5` proves `announce()` "
         "blocked for the SUBACK instead of returning early. Preemption inflates `waited`, "
         "which pushes the assertion further from failure, so load can only make this "
-        "greener. The direction is what makes it safe; the same expression as an upper "
-        "bound would be the defect."),
+        "greener. The same expression as an upper bound would be the defect."),
     "sim/tests/test_sil_supervisor_readiness.py::test_a_supervisor_whose_subscribe_is_late_still_serves_the_robot": (
         ("time.monotonic",),
         "RELATIVE — the same shape and the same direction: `booted >= HOLD_SUBSCRIBE_S * "
@@ -495,24 +407,10 @@ _JS_COMMENT_LINE = re.compile(r"^\s*(?://|\*|/\*)")
 def js_constructs(src: str) -> tuple:
     """The clock constructs a `.mjs` suite READS, ignoring the ones it merely NAMES.
 
-    **THE GUARD MUST ASSERT OVER CODE, NOT OVER THE WHOLE FILE** — orchestration-plan
-    rule 17, which this file had the same defect as. It was recorded for the fast tier's
-    audio test (`!src.includes("moxie_sdk")` over all of `bridge.js`, which failed on a
-    comment *citing* where a wire shape came from) and the shape here is identical: a
-    comment explaining *why a block does not read the clock* would itself be counted as a
-    clock read, so the house style of saying why — the whole reason these files are
-    readable — was penalised.
-
-    It surfaced on 2026-09-05 in `sim/test_demo_proxy.mjs` §15i-g, whose fake cache
-    answers the shared budget entry for whatever hour the ROUTE's own clock names,
-    precisely so the suite reads no clock. The comment saying so named the construct, and
-    this scanner reported the suite as an unreviewed clock reader.
-
-    Verified in BOTH directions, which is the other half of rule 17 and is what
-    `test_the_comment_strip_does_not_hide_a_real_clock_read` below exists for: a genuine
-    read on a code line — including one with a trailing comment — is still found, and
-    stripping comment-only lines changes the verdict for **no other file in `sim/*.mjs`**
-    (checked across the tree when this was written).
+    A guard must assert over code, not the whole file: a comment explaining why a block
+    does NOT read the clock would otherwise count as a read. Only whole-comment lines are
+    stripped, so a real read with a trailing comment is still found
+    (`test_the_comment_strip_does_not_hide_a_real_clock_read`).
     """
     code = "\n".join(ln for ln in src.splitlines() if not _JS_COMMENT_LINE.match(ln))
     return tuple(sorted(n for n, p in JS_CLOCK_PATTERNS if p.search(code)))
@@ -528,8 +426,7 @@ def _scan() -> dict:
             scan.visit(ast.parse(fh.read(), rel))
         for scope, constructs in scan.hits.items():
             found[f"{rel}::{scope}"] = tuple(sorted(constructs))
-    # `sim/tests/edge/` holds the section modules of the edge suites; a clock read moved
-    # there must not escape the ledger by leaving `sim/*.mjs`.
+    # the edge suites' section modules too, so a read cannot escape by moving there
     mjs = glob.glob(os.path.join(REPO, "sim", "*.mjs")) + glob.glob(
         os.path.join(REPO, "sim", "tests", "edge", "**", "*.mjs"), recursive=True)
     for path in sorted(mjs):
@@ -556,30 +453,26 @@ def test_every_wall_clock_read_in_the_test_tree_has_been_reviewed():
           "the reason written down — then add the row. See this module's docstring.")
 
 
-def test_the_comment_strip_does_not_hide_a_real_clock_read():
-    """Direction 2 for `js_constructs`: the strip must not become a way to smuggle one in.
+_JS_SNIPPETS = {"Date.now": "const t = Date.now();",
+                "new Date()": "const d = new Date();",
+                "getHours/getMinutes": "const h = d.getHours();",
+                "toISOString": "const s = d.toISOString();"}
 
-    A guard that was loosened is a guard that has to prove it still bites. All four
-    constructs are checked on a code line, one is checked on a code line that CARRIES a
-    trailing comment, and the negative case is a line that is nothing but prose.
-    """
-    for name, snippet in (
-        ("Date.now", "const t = Date.now();"),
-        ("new Date()", "const d = new Date();"),
-        ("getHours/getMinutes", "const h = d.getHours();"),
-        ("toISOString", "const s = d.toISOString();"),
-    ):
-        assert js_constructs(snippet) == (name,), f"{name} on a bare code line must be found"
-    assert js_constructs("const t = Date.now(); // a trailing comment hides nothing") == ("Date.now",)
-    assert js_constructs("  // this block deliberately never calls Date.now()") == ()
-    assert js_constructs(" * the route derives its hour from Date.now(), we do not") == ()
+
+@pytest.mark.parametrize("src, want", [
+    *((snippet, (name,)) for name, snippet in _JS_SNIPPETS.items()),
+    ("const t = Date.now(); // a trailing comment hides nothing", ("Date.now",)),
+    ("  // this block deliberately never calls Date.now()", ()),
+    (" * the route derives its hour from Date.now(), we do not", ()),
+])
+def test_the_comment_strip_does_not_hide_a_real_clock_read(src, want):
+    """The loosened guard must still bite: every construct on a code line (even one
+    carrying a trailing comment) is found; a line of pure prose is not."""
+    assert js_constructs(src) == want
 
 
 def test_the_reviewed_list_can_only_shrink():
-    """Direction 2: a row that no longer describes reality is a stale exemption.
-
-    Without this the ledger rots exactly the way the bug it guards does — quietly, while
-    everything stays green."""
+    """Direction 2: a row that no longer describes reality is a stale exemption."""
     found = _scan()
     gone = sorted(k for k in REVIEWED if k not in found and k not in _TOMBSTONES)
     assert not gone, (
@@ -604,8 +497,7 @@ def test_a_reviewed_row_still_matches_what_the_test_actually_does():
 
 
 def test_every_row_carries_a_verdict_and_a_reason():
-    """A row that says nothing is worse than no row: it launders an unreviewed test into
-    a reviewed-looking one. Each must name one of the three verdicts and explain it."""
+    """A row that says nothing launders an unreviewed test into a reviewed-looking one."""
     verdicts = ("DETERMINISTIC", "RELATIVE", "BOTH BRANCHES")
     for key, (_, reason) in sorted(REVIEWED.items()):
         assert any(reason.startswith(v) for v in verdicts), \
@@ -614,9 +506,8 @@ def test_every_row_carries_a_verdict_and_a_reason():
 
 
 def test_the_scanner_sees_a_clock_read_that_is_deliberately_planted():
-    """The guard's own guard. A scanner that silently matched nothing would pass every
-    assertion above forever — the exact failure mode `test_ci_test_coverage` was written
-    against. So parse a synthetic file and require each family to be found."""
+    """The guard's own guard: a scanner that silently matched nothing would pass every
+    assertion above forever."""
     src = ("import datetime, time\n"
            "def a():\n"
            "    return datetime.datetime.now()\n"
@@ -635,16 +526,11 @@ def test_the_scanner_sees_a_clock_read_that_is_deliberately_planted():
     assert scan.hits["b"] == {"time.strftime", "time.localtime"}
     assert scan.hits["C.d"] == {"date.today", "time.time"}
     assert scan.hits["dur"] == {"time.monotonic", "time.perf_counter"}, \
-        "durations are scanned too from 2026-09-06 — see PY_CLOCK_CALLS for why"
+        "durations are scanned too — see PY_CLOCK_CALLS for why"
     assert "safe" not in scan.hits, (
-        "`time.sleep` is deliberately NOT flagged: it is a WAIT, not a measurement. It "
-        "yields no value an assertion can be built on, so it cannot carry this defect by "
-        "itself — the read that TIMES the wait is the one that can, and that is scanned. "
-        "11 more scopes would need rows for no verdict anyone could act on.")
+        "`time.sleep` is deliberately NOT flagged: a WAIT yields no value to assert on; "
+        "the read that TIMES it is the one that can carry the defect, and it is scanned.")
     for name, pattern in JS_CLOCK_PATTERNS:
-        assert pattern.search({"Date.now": "const t = Date.now();",
-                               "new Date()": "const d = new Date();",
-                               "getHours/getMinutes": "d.getHours()",
-                               "toISOString": "d.toISOString()"}[name]), name
+        assert pattern.search(_JS_SNIPPETS[name]), name
     assert not JS_CLOCK_PATTERNS[1][1].search("new Date(1756800000000)"), \
         "a pinned instant is the cure, not the disease"

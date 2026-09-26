@@ -20,9 +20,12 @@ browser at all and carry the hermetic suite CI actually runs.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -q -r sim/tests/requirements.txt
-.venv/bin/python -m pytest sim/tests -q -k "not test_sil and not test_docs" \
+.venv/bin/python -m pytest sim/tests -q -k "not test_sil and not test_docs and not test_live" \
   --ignore=sim/tests/test_live_gateway.py      # the hermetic suite
 ```
+
+`not test_live` matters locally: the `test_live_*` suites skip without a key, but a key in
+`mqtt/.env` (or the environment) makes them spend real gateway money.
 
 ## The two requirements files — and why there are exactly two
 
@@ -85,8 +88,11 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   with it), and the runtime seam — one fleet edit re-pushes **every** connected robot, a
   per-robot override still wins, and the status snapshot stays JSON-safe.
 - **`test_console_roundtrip.py`** — the parent console ⇄ supervisor contract, driven
-  in-process against a status-server double whose payload keys are diffed against the
-  real runtime. Needs `fastapi` + `httpx`; skips cleanly without them (CI has neither).
+  in-process against a status-server double (`helpers_console_supervisor.py`, a REAL
+  `MoxieRuntime` behind most routes) whose hand-built payload keys are diffed against the
+  real runtime. Its per-card siblings share that double: `test_console_memory.py`,
+  `test_console_telehealth.py`, `test_console_voice.py`, `test_console_content.py`,
+  `test_console_devices.py`. Need `fastapi` + `httpx`; skip cleanly without them.
 - **`test_memory_view.py`** — the pure transform behind the console's 🧠 What Moxie
   remembers card (`moxie_server/fleet/memory.py::normalize_memory`): the runtime's namespaced
   `/memory` payload flattened into dated rows per activity, newest first, with counts —
