@@ -1,15 +1,39 @@
 // The by-hand control panel: motor sliders, expression chips, speech box, heart LED.
 import { MOTOR_DEFS, MOTOR_MAX, MOTOR_REST } from './config.js';
 import { liveness, noteCommand } from './liveness.js';
+import { EXPRESSIONS } from './face.js';
 
 const sliderEls = [];
 
-// Glyph per expression: the 11 Bht_Eyeseme_* moods + sleep + thinking + blink.
-const EXPR_EMOJI = {
-  neutral: '😐', happy: '😄', sad: '😢', angry: '😠', shy: '☺️', surprised: '😮',
-  afraid: '😨', concerned: '😟', confused: '😕', curious: '🧐', embarrassed: '😳',
-  sleep: '😴', thinking: '🤔', blink: '😉',
-};
+/* A mini line-drawing of each expression, built from the SAME parameters the canvas face
+ * uses (face.js::drawFace geometry, simplified), so a chip always looks like what it does.
+ * `currentColor` lets the chip's CSS theme it. `blink` is neutral with one eye shut. */
+function faceGlyph(name) {
+  const P = EXPRESSIONS[name] || EXPRESSIONS.neutral;
+  const r = (v) => Math.round(v);
+  const eyeY = 258 + P.pupilY * 10, ry = Math.max(6, 50 * P.eyeH), rx = 40 * P.eyeW;
+  let g = '';
+  for (const s of [-1, 1]) {
+    const ex = 256 + s * 86 + P.pupilX * 10;
+    g += (name === 'blink' && s < 0) || ry < 10
+      ? `<path d="M${r(ex - rx)} ${r(eyeY)}h${r(2 * rx)}" stroke-width="18"/>`
+      : `<ellipse cx="${r(ex)}" cy="${r(eyeY)}" rx="${r(rx)}" ry="${r(ry)}" fill="currentColor" stroke="none"/>`;
+    if (Math.min(1, P.browRaise + Math.abs(P.browTilt) + P.browAsym) > 0.05) {
+      const by = eyeY - ry - 28 - P.browRaise * 18 - P.browAsym * (s < 0 ? 16 : -2);
+      const tilt = P.browTilt * 14 * -s;
+      g += `<path d="M${r(256 + s * 58)} ${r(by + 5 - tilt)}Q${r(256 + s * 86)} ${r(by - 8 + tilt * 0.4)} ` +
+           `${r(256 + s * 116)} ${r(by + tilt)}" stroke-width="14"/>`;
+    }
+  }
+  const mx = 256 + P.mouthX * 40, my = 378, mw = 66 * P.mouthWidth, c = P.mouthCurve;
+  const endY = my - c * 16;
+  g += P.mouthOpen < 0.1
+    ? `<path d="M${r(mx - mw)} ${r(endY)}Q${r(mx)} ${r(my + c * 34)} ${r(mx + mw)} ${r(endY)}" stroke-width="18"/>`
+    : `<path d="M${r(mx - mw)} ${r(endY)}Q${r(mx)} ${r(my + c * 26 - P.mouthOpen * 10)} ${r(mx + mw)} ${r(endY)}` +
+      `Q${r(mx)} ${r(my + c * 26 + P.mouthOpen * 88 + 14)} ${r(mx - mw)} ${r(endY)}Z" fill="currentColor" stroke="none"/>`;
+  return `<svg viewBox="126 150 260 260" aria-hidden="true" focusable="false" fill="none" ` +
+         `stroke="currentColor" stroke-linecap="round">${g}</svg>`;
+}
 
 export function syncSlider(i, target) {
   const s = sliderEls[i];
@@ -47,8 +71,9 @@ export function buildPanel(api, motorTargets) {
   const facesEl = document.getElementById('faces');
   api.expressions.forEach(name => {
     const b = document.createElement('button');
-    b.className = 'face-emoji';
-    b.textContent = EXPR_EMOJI[name] || name;
+    b.type = 'button';
+    b.className = 'face-chip';
+    b.innerHTML = faceGlyph(name);
     b.title = name;
     b.setAttribute('aria-label', name);
     b.dataset.expr = name;

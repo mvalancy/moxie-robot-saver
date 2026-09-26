@@ -26,7 +26,7 @@
   }catch(e){}
 
   var esc=function(s){return String(s).replace(/[&<>]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});};
-  var SUBSECTION_LABEL={ "":"Overview", "phone":"📱 Phone side", "protocol":"🔌 Protocol", "runtime":"🧠 Runtime (brain & face)", "firmware":"🧱 Firmware", "hardware":"🦾 Hardware", "keys":"Keys", "manifests":"Manifests", "recovered-proto":"Recovered protos" };
+  var SUBSECTION_LABEL={ "":"Overview", "phone":"Phone side", "protocol":"Protocol", "runtime":"Runtime (brain & face)", "firmware":"Firmware", "hardware":"Hardware", "keys":"Keys", "manifests":"Manifests", "recovered-proto":"Recovered protos" };
   var SUB_ORDER=["","phone","protocol","runtime","firmware","hardware","recovered-proto","manifests","keys"];
   var SECTION_LABEL={ "_root":"Start here","reverse-engineering":"Reverse engineering","architecture":"Architecture",
     "guides":"Guides","features":"Features","design":"Design","debugging":"Debugging","docs":"Reference" };

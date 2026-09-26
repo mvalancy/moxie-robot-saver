@@ -396,7 +396,7 @@ async function probe(browser, url, { settleMs = 2000 } = {}) {
       ran: {
         stage: document.querySelectorAll("#app canvas").length,
         motors: document.querySelectorAll("#motors .motor").length,
-        faces: document.querySelectorAll("#faces .face-emoji").length,
+        faces: document.querySelectorAll("#faces .face-chip").length,
         named: document.querySelectorAll('#motors input[type="range"][aria-label]').length,
         mode: document.body ? document.body.getAttribute("data-mode") : null,
         badge: (document.querySelector("#topbar .env-badge") || {}).textContent || "",
@@ -537,7 +537,7 @@ function assertReachable(c, p, tag, { expectBeacon }) {
    * script, which is the whole value over a screenshot diff.
    *
    * WHAT THIS DOES NOT COVER, said out loud so nobody reads a green here as "every script
-   * ran": `sw-reset.js`, `stub.js`, `bridge.js`, `audio.js`, `life.js`, `mic.js`,
+   * ran": `sw-reset.js`, `stub.js`, `bridge/*.js`, `voice/*.js`, `life.js`, `mic.js`,
    * `rail.js`, `turnstile.js`, `cloud-transport.js` and `ambient.js` are all loaded by
    * sim.html and none is asserted here. Some have no observable effect on an untouched
    * page (`stub.js` and `cloud-transport.js` answer a turn that has not been taken;
