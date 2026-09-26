@@ -1,21 +1,12 @@
 """
-Audio helpers for the LIVE speech tests (`test_live_talk_e2e.py`).
+Audio helpers for the LIVE speech tests (`test_live_talk_e2e.py` and friends).
 
-Everything here is dependency-light on purpose: numpy (already needed by the Whisper
-backend) plus the standard library. Three groups:
-
-NUMPY IS OPTIONAL HERE, AND THAT IS LOAD-BEARING — read `_np()` below before changing it.
-Two of the callers (`test_live_gateway_stt.py`, `test_live_hosted_ears.py`) exist to prove
-the CLOUD ears and voice work on a box that installed nothing but `openai`, because that is
-what a hosted deployment is. So every measurement in here that a numpy-free caller needs
-has a stdlib twin — `resample_pcm16` / `resample_pcm16_stdlib`, and (since 2026-09-05)
-`is_real_speech` / `is_real_speech_stdlib` — and the numpy import is named in exactly one
-place so a missing wheel says which twin to call instead of dying with a bare
-`ModuleNotFoundError` from the middle of a live turn. It did exactly that, once: measured
-2026-09-05, `test_live_gateway_stt.py` ran a complete healthy live turn (word overlap 1.00,
-203 612 B of real audio) and then failed at `helpers_audio.py:157` on the last assertion in
-the file, because `is_real_speech` had no numpy-free form and that suite deliberately
-`importorskip`s no numpy.
+NUMPY IS OPTIONAL HERE, AND THAT IS LOAD-BEARING. `test_live_gateway_stt.py` and
+`test_live_hosted_ears.py` prove the cloud ears/voice on a box that installed nothing
+but `openai` — the shape of a hosted deployment — so every measurement a numpy-free
+caller needs has a stdlib twin (`resample_pcm16_stdlib`, `spectral_flatness_stdlib`,
+`is_real_speech_stdlib`), and numpy is named in exactly one place (`_np()`) so a
+missing wheel says which twin to call instead of dying mid-turn.
 
 * **PCM maths** — `resample_pcm16` (the robot's mic is 16 kHz; Piper's medium voices
   render at 22050 Hz, so the round-trip has to resample), plus `spectral_flatness` and
@@ -48,27 +39,13 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 # ------------------------------------------------------------- the one numpy --
 def _np():
-    """numpy, imported at the point of use — and the ONLY place this module names it.
+    """numpy, imported at the point of use — the ONLY place this module names it.
 
-    THREE choices are baked in here, and all three were made the wrong way first.
-
-    *Why not a module-scope `import numpy`.* This module must import on a box that has
-    only `openai` installed, because `test_live_gateway_stt.py` and
-    `test_live_hosted_ears.py` exist to prove the cloud ears/voice work on exactly such a
-    box (see `resample_pcm16_stdlib`). A module-scope import would fail their collection.
-
-    *Why not `pytest.importorskip("numpy")`.* This is a library — the file's own docstring
-    has said "no pytest imports here" since it was written — and, more importantly, a skip
-    decided down here is a skip nobody reads. This repo has now been bitten four times by
-    a missing package making the tests that need it importorskip themselves away, which is
-    a skip that reads as a pass. The right place for that decision is the test file, and
-    the right *answer* for a numpy-free suite is the stdlib twin, not a skip.
-
-    *Why not five separate in-function imports* — which is what this was until 2026-09-05.
-    Five copies of a dependency are five chances to be inconsistent, and the failure they
-    produced was a bare `ModuleNotFoundError: No module named 'numpy'` from
-    `helpers_audio.py:157`, six frames below a live test, AFTER four gateway calls had been
-    spent. One accessor, one message, and the message names the way out.
+    Not module-scope: numpy-free live suites must be able to import this module.
+    Not `pytest.importorskip`: this is a library, and a skip decided down here reads as a
+    pass nobody notices — a numpy-free suite should call the stdlib twin instead.
+    One accessor rather than per-function imports, so the failure is one message that
+    names the way out, not a bare `ModuleNotFoundError` deep inside a live turn.
     """
     try:
         import numpy as np                                  # noqa: PLC0415 (deliberate)
@@ -228,9 +205,7 @@ def spectral_flatness(pcm: bytes) -> float:
 #: this instead. Observed on this gateway: tone ~3.1e-12, piper-amy ~5.2e-02, i.e. ten
 #: orders of magnitude apart; 1e-6 sits between them and is tuned to neither.
 #:
-#: Lives here rather than in one test file because more than one live suite needs it
-#: (the turn e2e and the telehealth voice), and a floor that drifts per-file is a floor
-#: that stops meaning anything.
+#: Shared here so the live suites cannot drift to per-file floors.
 SPEECH_FLATNESS_FLOOR = 1e-6
 
 
@@ -289,29 +264,15 @@ _STDLIB_FLATNESS_FRAMES = 8
 
 
 def spectral_flatness_stdlib(pcm: bytes) -> float:
-    """`spectral_flatness` with **no numpy** — standard library only.
+    """`spectral_flatness` with **no numpy** — standard library only, for the same reason
+    as `resample_pcm16_stdlib`: the gateway-ears suites must run where only `openai` is
+    installed, and `importorskip("numpy")` there would silently delete that proof.
 
-    WHY THIS EXISTS, and it is the same reason `resample_pcm16_stdlib` does: the gateway
-    ears and the hosted-ears route must be provable on a box that installed nothing but
-    `openai`, because that is precisely what a hosted deployment is, and numpy arrives
-    only with faster-whisper. `test_live_gateway_stt.py` was written that way on purpose —
-    and then closed with `assert A.is_real_speech(...)`, the one measurement in this file
-    that had no numpy-free form. Measured 2026-09-05: that suite ran a complete, healthy
-    live turn (overlap 1.00, a real reply, 203 612 B @ 22050 Hz) and then died with
-    `ModuleNotFoundError` on its last line, four gateway calls in. The alternative fix —
-    `importorskip("numpy")` at the top of that file — would have deleted the entire
-    gateway-ears proof on exactly the deployment shape it exists to cover, and turned a
-    loud red into a silent pass. So the measurement grew a twin instead.
-
-    NOT bit-identical to the numpy version, and it does not claim to be: that one windows
-    the whole buffer in one transform, this one averages the flatness of up to eight
-    2048-sample frames (skipping any that are pure digital silence, which has no spectrum
-    to be flat or peaky). What matters is the VERDICT, and the verdict has ten orders of
-    magnitude of headroom on both sides of `SPEECH_FLATNESS_FLOOR` — measured 2026-09-05,
-    a tone lands at 9e-10 and a real recorded voice at 1e-2 on this implementation (5e-16
-    and 7e-03 on the numpy one). `sim/tests/test_speech_guard.py` asserts the two agree in
-    both directions, on a tone, on synthetic broadband audio and on a real clip, rather
-    than leaving that as a claim.
+    Not bit-identical to the numpy version (that one transforms the whole buffer; this
+    averages up to eight 2048-sample frames, skipping pure digital silence). What matters
+    is the VERDICT, which has orders of magnitude of headroom on both sides of
+    `SPEECH_FLATNESS_FLOOR` (a tone ~1e-9, a real voice ~1e-2);
+    `test_speech_guard.py` asserts the two implementations agree in both directions.
     """
     samples = array("h")
     samples.frombytes(pcm[:len(pcm) - (len(pcm) % 2)])
