@@ -24,7 +24,8 @@ const ENV_SRC = readFileSync(join(here, "web", "env.js"), "utf8");
 const GROUNDING_SRC = readFileSync(join(here, "tools", "grounding_probe.mjs"), "utf8");
 
 const fails = [];
-const ok = (c, m) => { if (!c) fails.push(m); };
+let asserts = 0;
+const ok = (c, m) => { asserts++; if (!c) fails.push(m); };
 const eq = (a, b, m) => ok(a === b, `${m} — got ${JSON.stringify(a)}, want ${JSON.stringify(b)}`);
 const deep = (a, b, m) => eq(JSON.stringify(a), JSON.stringify(b), m);
 
@@ -1027,7 +1028,7 @@ if (fails.length) {
   for (const f of fails) console.log("   -", f);
   process.exit(1);
 }
-console.log("✅ mode tests OK — /api/health answers gateway_not_configured with no variables set "
+console.log(`✅ mode tests OK (${asserts} assertions) — /api/health answers gateway_not_configured with no variables set `
   + "(one request, no poll storm, page byte-identical to today); the envelope is a fixed key allowlist "
   + "with no URL, key or model id in any body or header; boot→offline on an absent/malformed route; "
   + "live/degraded/busy/budget badges and copy per §7; 429 soft-degrades without leaving live; "

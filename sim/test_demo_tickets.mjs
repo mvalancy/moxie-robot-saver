@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { repo, api, ledger, KEY, GATEWAY, post } from "./tests/edge/common.mjs";
 
-const { fails, ok, eq, deep } = ledger();
+const { fails, C, ok, eq, deep } = ledger();
 
 const hmac = await api("_lib", "hmac.js");
 const envmod = await api("_lib", "env.js");
@@ -489,4 +489,4 @@ if (fails.length) {
   process.exit(1);
 }
 console.log(`✓ test_demo_tickets: forgery, expiry, replay, tampering and the constant-time compare all hold ` +
-            `(${hmac.compareStats.calls} compares, ${hmac.compareStats.mismatches} rejected)`);
+            `(${C.asserts} assertions, ${hmac.compareStats.calls} compares, ${hmac.compareStats.mismatches} rejected)`);

@@ -39,4 +39,4 @@ if (fails.length) {
   for (const f of fails) console.error("  - " + f);
   process.exit(1);
 }
-console.log(`✓ test_demo_proxy: the two spending routes hold their contract (${C.sweeps} secret sweeps, 0 leaks)`);
+console.log(`✓ test_demo_proxy: the two spending routes hold their contract (${C.asserts} assertions, ${C.sweeps} secret sweeps, 0 leaks)`);
