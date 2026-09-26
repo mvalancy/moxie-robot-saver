@@ -406,8 +406,8 @@ MUTATIONS = [
     # it now anchors on the `if (!upstream.ok)` block alone, which is the thing the row is
     # actually about and does not move when the call's arguments do.
     ("R3  the upstream-failure path refunds too, so real spend is credited back", CHAT,
-     "    if (!upstream.ok) {\n      return refusal(cfg, \"chat\", upstream.reason, {",
-     "    if (!upstream.ok) {\n      slot.refundBudget();\n      return refusal(cfg, \"chat\", upstream.reason, {",
+     "    if (!upstream.ok) {\n      return refusal(cfg, upstream.reason, {",
+     "    if (!upstream.ok) {\n      slot.refundBudget();\n      return refusal(cfg, upstream.reason, {",
      SUITE, "its units stay spent"),
     ("R4  the ears' refusals keep their charge (the same drain, 2 units at a time)", TRANSCRIBE,
      "    const spentNothing = (reason, extra) => {\n      slot.refundBudget();",
@@ -430,8 +430,8 @@ MUTATIONS = [
     # shape. `str.replace(..., 1)` would hit the success shape first, so each anchor
     # carries the line after it to make it unique.
     ("D5c the sitekey dropped from the REFUSAL envelope", CHAT,
-     "      turnstile: publicTurnstile(cfg),\n      messages: [],",
-     '      turnstile: "",\n      messages: [],',
+     "{ turnstile: publicTurnstile(cfg) }",
+     '{ turnstile: "" }',
      SUITE, "a REFUSAL envelope carries the sitekey too"),
     ("D5d the sitekey dropped from the BLOCKED envelope", CHAT,
      "      turnstile: publicTurnstile(cfg),\n      messages,",

@@ -174,7 +174,7 @@ REVIEWED: dict = {
         "artifact file it writes. Kept in the ledger rather than excluded from the scan "
         "because a glob exception is invisible and this row is not — if this file ever "
         "grows a real assertion, the reasoning above is right where somebody will read it."),
-    "sim/test_demo_proxy.mjs": (
+    "sim/tests/edge/demo_proxy/07_turn_features.mjs": (
         ("Date.now",),
         "RELATIVE — an AGE, never a date. §15k mints a context blob stamped "
         "`now - CONTEXT_TTL_S - 60` and asserts the route treats it as expired, and mints "
@@ -189,7 +189,7 @@ REVIEWED: dict = {
         "RELATIVE — a ticket is aged `Date.now()/1000 - 61` to make it one second past a "
         "60 s expiry. The subject IS the age, and 61 s from any instant is expired at "
         "every hour. (RESERVED file: owned by the live-Sim ears slice, 2026-09-03.)"),
-    "sim/test_turnstile.mjs": (
+    "sim/tests/edge/turnstile/02_fail_open.mjs": (
         ("Date.now",),
         "RELATIVE — an ELAPSED TIME, and it is the subject of the assertion rather than "
         "an input to it. §5 stubs a `siteverify` that NEVER answers and requires the "
@@ -528,7 +528,11 @@ def _scan() -> dict:
             scan.visit(ast.parse(fh.read(), rel))
         for scope, constructs in scan.hits.items():
             found[f"{rel}::{scope}"] = tuple(sorted(constructs))
-    for path in sorted(glob.glob(os.path.join(REPO, "sim", "*.mjs"))):
+    # `sim/tests/edge/` holds the section modules of the edge suites; a clock read moved
+    # there must not escape the ledger by leaving `sim/*.mjs`.
+    mjs = glob.glob(os.path.join(REPO, "sim", "*.mjs")) + glob.glob(
+        os.path.join(REPO, "sim", "tests", "edge", "**", "*.mjs"), recursive=True)
+    for path in sorted(mjs):
         rel = os.path.relpath(path, REPO)
         with open(path) as fh:
             constructs = js_constructs(fh.read())

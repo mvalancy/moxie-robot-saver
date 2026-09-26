@@ -275,7 +275,7 @@ async function probe(env) {
 }
 
 /** The smallest thing `limits.admit()` will accept: `Sec-Fetch-Site: same-origin` is what the
- *  origin pin asks for when there is no `Origin` header (limits.js::checkOrigin), and a fixed
+ *  origin pin asks for when there is no `Origin` header (clientip.js::checkOrigin), and a fixed
  *  IP keeps every admission in ONE per-IP window so the windows are not what refuses us. */
 function admissible(url) {
   return { url: url || "https://probe.invalid.test/api/chat",

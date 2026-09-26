@@ -12,7 +12,7 @@
 > [`server/moxie_server/main.py`](../../../server/moxie_server/main.py):1153; the editor panel is
 > [`server/static/index.html`](../../../server/static/index.html):404 (*"✍️ The editor
 > (docs/architecture/backlog/content-authoring.md §4.1)"*) driving
-> [`server/static/app.js`](../../../server/static/app.js):1588 and :1862
+> [`server/static/app.js`](../../../server/static/js/):1588 and :1862
 > (`fetch('/local/content/item', {method:'POST'…})`); the validator it must call is
 > [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py):272. Guarded by
 > [`sim/tests/test_content_authoring.py`](../../../sim/tests/test_content_authoring.py).

@@ -8,7 +8,7 @@ several of them *two guards each hiding the other's absence*.
 
 Run it by hand after touching `moxie_sdk/{roster,conn_telemetry}.py`, the connection or
 shutdown region of `supervisor/moxie_runtime/`, `moxie_sdk/store.py::_append_path`, or
-`server/moxie_server/fleet.py`'s connection normalizer:
+`server/moxie_server/fleet/activity.py`'s connection normalizer:
 
     python3 sim/tools/hardening_p1_mutation_check.py
 
@@ -47,7 +47,7 @@ RT_CONNECTION = WT / "mqtt/supervisor/moxie_runtime/connection.py"
 RT_LIFECYCLE = WT / "mqtt/supervisor/moxie_runtime/lifecycle.py"
 RT_MEMORY = WT / "mqtt/supervisor/moxie_runtime/memory.py"
 RT___INIT__ = WT / "mqtt/supervisor/moxie_runtime/__init__.py"
-FLEET = WT / "server/moxie_server/fleet.py"
+FLEET = WT / "server/moxie_server/fleet/activity.py"
 
 T_CONN = "sim/tests/test_conn_telemetry.py"
 T_ROSTER = "sim/tests/test_roster.py"
@@ -381,12 +381,12 @@ MUTATIONS = [
      '    "recovered": "Connected, with nothing to report",',
      T_CONSOLE, "recovered_is_not_rendered_as_healthy"),
     ("K3  a missing gap is flattened to a zero-second outage", FLEET,
-     '    if e.get("gap_s") is not None:\n        row["gap_s"] = float(_num(e.get("gap_s")) or 0.0)',
-     '    row["gap_s"] = float(_num(e.get("gap_s")) or 0.0)',
+     '        if e.get(k) is not None:\n            row[k] = float(_num(e.get(k)) or 0.0)',
+     '        row[k] = float(_num(e.get(k)) or 0.0)',
      T_CONSOLE, "without_a_gap"),
     ("K4  a row from a newer runtime raises instead of rendering", FLEET,
-     "    e = e if isinstance(e, dict) else {}",
-     "    e = e if isinstance(e, dict) else None",
+     "    e = _dict(e)\n    kind = ",
+     "    e = e if isinstance(e, dict) else None\n    kind = ",
      T_CONSOLE, "newer_runtime"),
     ("K5  every kind renders as its own wire name", FLEET,
      '           "label": CONNECTION_LABELS.get(kind, kind.replace("_", " ")),',

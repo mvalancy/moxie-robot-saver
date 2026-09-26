@@ -588,7 +588,7 @@ def test_status_snapshot_publishes_the_catalog_and_the_texture_key(tmp_path):
 
 
 def test_the_console_normalizer_carries_the_catalog_and_the_key(tmp_path):
-    """`server/moxie_server/fleet.py` is the console's half of the seam: it must pass the
+    """`server/moxie_server/fleet/` is the console's half of the seam: it must pass the
     catalog through without inventing rows, and survive a supervisor that has none."""
     sys.path.insert(0, os.path.join(REPO, "server"))
     from moxie_server.fleet import normalize_fleet

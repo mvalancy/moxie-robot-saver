@@ -102,7 +102,7 @@ def test_missing_shared_record_reads_the_default(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# the console's pure view of the layers (server/moxie_server/fleet.py)
+# the console's pure view of the layers (server/moxie_server/fleet/)
 # --------------------------------------------------------------------------- #
 
 def _console_fleet():

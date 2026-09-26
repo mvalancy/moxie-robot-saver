@@ -23,7 +23,7 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-# `server/moxie_server/fleet.py` is deliberately dependency-free (no fastapi here), so the
+# `server/moxie_server/fleet/` is deliberately dependency-free (no fastapi here), so the
 # console's normalizer is unit-testable in the same hermetic run as the runtime.
 sys.path.insert(0, os.path.join(REPO, "server"))
 
@@ -379,7 +379,7 @@ def test_the_enforced_flag_and_the_stored_flag_are_reported_separately(tmp_path,
 
 
 def test_the_fleet_normalizer_surfaces_pending_robots():
-    """`server/moxie_server/fleet.py` is pure, so the console shape tests here."""
+    """`server/moxie_server/fleet/` is pure, so the console shape tests here."""
     from moxie_server.fleet import normalize_fleet
     out = normalize_fleet({
         "ok": True, "app": "echo", "uptime_s": 3,

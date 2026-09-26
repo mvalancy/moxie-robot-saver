@@ -174,7 +174,7 @@ flowchart LR
 | Safety | `moxie_runtime.py` `_assess` / `_record_safety` | a `MOXIE`-role classifier for text about to be spoken, plus the parent's review journal |
 | Voice | same, `_maybe_synthesize` | renders a line to a `CloudTTSResponse` on `commands/tts` — how the SIM gets a voice |
 | Transcript | same, `feed_stt` → `_note("stt", "👂 heard: …")` | the child's words already reach the supervisor as text; they land in a **global** 60-entry `recent` ring, not a per-device one |
-| Console | [`server/moxie_server/main.py`](../../../server/moxie_server/main.py) + [`fleet.py`](../../../server/moxie_server/fleet.py) + [`server/static/`](../../../server/static/) | the four-file card pattern: runtime handler → pure `normalize_*` → `/local/*` route → card + `refresh*()` |
+| Console | [`server/moxie_server/main.py`](../../../server/moxie_server/main.py) + [`fleet.py`](../../../server/moxie_server/fleet/) + [`server/static/`](../../../server/static/) | the four-file card pattern: runtime handler → pure `normalize_*` → `/local/*` route → card + `refresh*()` |
 | SIM | [`sim/web/bridge.js`](../../../sim/web/bridge.js) | subscribes `commands/remote_chat`, `commands/tts`, `events/remote-chat`, `+/config`, `commands/motor`. **Not `commands/telehealth`.** |
 
 ### Prior art — OpenMoxie's puppet page
@@ -313,7 +313,7 @@ the operator is the one failure mode that would look broken to a child, and one 
 
 A new card in the ✅ Your Moxie tab, following the `permits-card` / `memory-card` pattern exactly
 (markup in [`server/static/index.html`](../../../server/static/index.html), a `refreshTelehealth(deviceId)`
-in [`app.js`](../../../server/static/app.js) wired into `refreshLive()`'s chain):
+in [`app.js`](../../../server/static/js/) wired into `refreshLive()`'s chain):
 
 | Element | Behavior |
 |---|---|

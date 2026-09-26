@@ -347,7 +347,7 @@ of unnamed ids on the page is derived, not transcribed.
 **Where it does NOT live yet — the parent console.** This brief said the sheet belongs in
 `server/static/index.html` behind a `?print=1` view. It is a CLI instead, and that is a deliberate
 deferral rather than an oversight: `server/` **does not import `moxie_sdk` anywhere today** — see
-[`fleet.py`](../../../server/moxie_server/fleet.py):1104, which re-states a shape rather than importing
+[`fleet.py`](../../../server/moxie_server/fleet/):1104, which re-states a shape rather than importing
 it — so a console route would be the first crossing of that boundary, and that decision is bigger than a
 print sheet. The follow-up slice is a console card that shells the generator or a route that owns the
 import explicitly; a static page under [`sim/web/`](../../../sim/web/) driven by

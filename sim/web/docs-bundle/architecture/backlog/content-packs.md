@@ -448,7 +448,7 @@ import-another gap their hidden form field leaves open.
 ### 2.6 The console — 📦 Content packs (P1)
 
 Pure normalizer `normalize_content_view(payload)` in
-[`../../../server/moxie_server/fleet.py`](../../../server/moxie_server/fleet.py) — same defensive
+[`../../../server/moxie_server/fleet.py`](../../../server/moxie_server/fleet/) — same defensive
 contract as `normalize_schedule_view`: never raises, a payload it cannot read renders as
 `{ok: false, error: …}` with an empty-but-renderable view, so the card shows the reason rather than a
 blank list that looks like "no content". Thin proxies in
@@ -457,7 +457,7 @@ blank list that looks like "no content". Thin proxies in
 `POST /local/content/import`, `POST /local/content/undo`.
 
 The card in [`../../../server/static/index.html`](../../../server/static/index.html) +
-[`app.js`](../../../server/static/app.js) + `style.css`, mirroring the 📅/🎨 fetch-and-render idiom:
+[`app.js`](../../../server/static/js/) + `style.css`, mirroring the 📅/🎨 fetch-and-render idiom:
 
 - **Inventory** — one row per installed item: kind glyph, key, `v3`, the pack it came from, an
   *"edited here"* badge when `local_rev != imported_rev`, and a ⚠️ when it carries `code`.
@@ -550,7 +550,7 @@ with the honest caveat of §2.2); detached signatures, if a publisher identity e
 | `mqtt/content_modules/*.json` + `README.md` | add `source_version` to the shipped records; document the overlay |
 | `sim/tests/test_content_packs.py`, `test_content_packs_runtime.py` | **new** — tests 1-11 |
 | `sim/tests/test_content_app.py` | extend test 8 |
-| [`../../../server/moxie_server/fleet.py`](../../../server/moxie_server/fleet.py), [`main.py`](../../../server/moxie_server/main.py), [`server/static/`](../../../server/static/) | P1: normalizer, five proxies, the 📦 card |
+| [`../../../server/moxie_server/fleet.py`](../../../server/moxie_server/fleet/), [`main.py`](../../../server/moxie_server/main.py), [`server/static/`](../../../server/static/) | P1: normalizer, five proxies, the 📦 card |
 | `sim/tests/test_console_roundtrip.py` | P1: test 12 |
 | [`../content-module-contract.md`](../content-module-contract.md) | a "Packs" section: the file format, `source_version`, the overlay, the conformance line |
 | [`../openmoxie-feature-audit.md`](../openmoxie-feature-audit.md) | flip ADOPT #5's Status in the same PR (backlog house rule) |

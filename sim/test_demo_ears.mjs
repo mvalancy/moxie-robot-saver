@@ -1,77 +1,40 @@
 /* test_demo_ears.mjs — the ears, both halves, under bare node.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §3.2 (`POST /api/transcribe`), §4.1
- * (`DEMO_MAX_AUDIO_BYTES`, `DEMO_MIN_AUDIO_BYTES`, the per-IP windows, the timeout, and
- * the paragraph that says a byte cap is NOT a duration cap), §4.2 (what the browser may
- * know), §4.3 (the origin pin), §4.5 (the status table), §6 (never a dead button),
- * §10 assumptions 15 and 16.
+ * Spec: live-sim-demo.md §3.2 (`POST /api/transcribe`), §4.1 (the byte caps — a byte cap
+ * is NOT a duration cap — the per-IP windows, the timeout), §4.2, §4.3, §4.5, §6 (never a
+ * dead button), §10 assumptions 15 and 16.
  *
- * TWO HALVES, ONE FILE, because they are one contract:
+ *   PART A — `functions/api/transcribe.js`, called with a synthetic `Request` and a stubbed
+ *   `fetch`. No Cloudflare account, network or gateway key.
+ *   PART B — the REAL `sim/web/mic.js` under a stubbed window, a VIRTUAL CLOCK and a FAKE
+ *   RECORDER. No live microphone is ever opened; assertions read recorded state, which is
+ *   the only way to prove the 15 s hard stop really stops a recorder.
  *
- *   PART A — `functions/api/transcribe.js`, imported as an ES module and called with a
- *   synthetic `Request` and a plain object as `context.env`, with `fetch` stubbed. No
- *   Cloudflare account, no network, and NO GATEWAY KEY — as with every other test here,
- *   and it must stay that way.
- *
- *   PART B — the REAL `sim/web/mic.js`, evaluated as source under a stubbed window with a
- *   VIRTUAL CLOCK and a FAKE RECORDER. **No live microphone is ever opened**: every
- *   assertion is on recorded state (`window.moxieMic.stats()`, the fetch log, the fake
- *   recorder's own call log), never on a sampled device (playbook rule 11). That is the
- *   only way to prove the 15-second hard stop actually stops a recorder, which is the
- *   single control that bounds what the ears can cost.
- *
- * THE THREE PROPERTIES THIS FILE EXISTS TO PROVE:
- *
- *   1. **THE KEY AND THE GATEWAY URL NEVER APPEAR IN A RESPONSE.** Every response object
- *      produced anywhere in Part A — success, refusal, timeout, a hostile upstream error
- *      body naming the model and a key prefix — is swept for both, in the BODY and in
- *      EVERY HEADER, by `assertClean()`.
- *   2. **A REFUSAL MAKES ZERO UPSTREAM CALLS**, recorded by
- *      `_lib/limits.js::noteUpstreamCall()` rather than inferred from a stub that may or
- *      may not have been reached.
- *   3. **THE PAGE NEVER GOES DEAD.** Every refusal reason a visitor can provoke ends in a
- *      scripted child line and an honest status string, never an error dialog and never a
- *      button that does nothing.
+ * Proven: the key and gateway URL never appear in any response (`assertClean`); a refusal
+ * makes zero upstream calls (`noteUpstreamCall()`); and the page never goes dead — every
+ * refusal ends in a scripted child line and an honest status string.
  *
  *   node sim/test_demo_ears.mjs
  */
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { repo, api, ledger, BASE, KEY, ORIGIN, GATEWAY, leakSweep, jsonOf } from "./tests/edge/common.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const repo = join(here, "..");
-
-const fails = [];
-let asserts = 0;
-const ok = (c, m) => { asserts++; if (!c) fails.push(m); };
-const eq = (a, b, m) => ok(a === b, `${m} — got ${JSON.stringify(a)}, want ${JSON.stringify(b)}`);
-const deep = (a, b, m) => eq(JSON.stringify(a), JSON.stringify(b), m);
+const { fails, C, ok, eq, deep } = ledger();
 
 /* =========================================================================== *
  * PART A — functions/api/transcribe.js
  * =========================================================================== */
 
-const route = await import(join(repo, "functions", "api", "transcribe.js"));
-const health = await import(join(repo, "functions", "api", "health.js"));
-const limits = await import(join(repo, "functions", "api", "_lib", "limits.js"));
-const envlib = await import(join(repo, "functions", "api", "_lib", "envelope.js"));
-const envmod = await import(join(repo, "functions", "api", "_lib", "env.js"));
-const wavlib = await import(join(repo, "functions", "api", "_lib", "wav.js"));
+const route = await api("transcribe.js");
+const health = await api("health.js");
+const limits = await api("_lib", "limits.js");
+const envlib = await api("_lib", "envelope.js");
+const envmod = await api("_lib", "env.js");
+const wavlib = await api("_lib", "wav.js");
 
-/* The fake deployment. These strings exist only inside this test: the host is
- * `.invalid.test` (RFC 6761 reserved and unresolvable, so a bug that actually fired a
- * request could not reach anything) and the key is shaped so the repo's own pre-commit
- * secret grep cannot mistake it for a real one. */
-const BASE = "https://gw.invalid.test/v1";
-const KEY = "sk-testonly-abcdefghijklmnopqrstuv";
-const ORIGIN = "https://demo.invalid.test";
-const FULL = {
-  DEMO_GATEWAY_BASE_URL: BASE,
-  DEMO_GATEWAY_API_KEY: KEY,
-  DEMO_CHAT_MODEL: "test-brain-model",
-  DEMO_STT_MODEL: "test-ears-model",
-};
+/* The fake deployment (see `sim/tests/edge/common.mjs`). */
+const FULL = { ...GATEWAY, DEMO_STT_MODEL: "test-ears-model" };
 
 /** Every secret-shaped string that must never appear in a response, anywhere. */
 const FORBIDDEN = [KEY, BASE, "gw.invalid.test", "test-brain-model", "test-ears-model"];
@@ -142,52 +105,15 @@ function fresh() {
   plan = {};
 }
 
-let sweeps = 0;
 async function assertClean(res, label) {
-  sweeps += 1;
-  const text = await res.clone().text();
-  let headerText = "";
-  for (const [k, v] of res.headers.entries()) headerText += k + ": " + v + "\n";
-  for (const secret of FORBIDDEN) {
-    ok(!text.includes(secret), `${label}: the response BODY leaked ${JSON.stringify(secret.slice(0, 12))}…`);
-    ok(!headerText.includes(secret), `${label}: a response HEADER leaked ${JSON.stringify(secret.slice(0, 12))}…`);
-  }
-  ok(!/\bBearer\b/i.test(text), `${label}: the body contains the word Bearer`);
-  ok(!/https?:\/\//.test(text), `${label}: the body contains a URL`);
-
-  // ---- AND THE SAME SWEEP OVER THE DECODED AUDIO. ---------------------------
-  // `text.includes(secret)` cannot see inside base64, and `messages[0].payload.audio.buffer`
-  // is ~175 KB of it. That blind spot is not hypothetical: it is how a raw-body passthrough
-  // in `/api/speech` survived every sweep in this file reporting CLEAN while returning an
-  // upstream 200 body verbatim to the caller (fixed 2026-09-03, `_lib/wav.js`). A sweep that
-  // stops at the encoding boundary is a sweep that proves the encoding, not the secrecy.
-  // Defensive throughout: a body that is not JSON, a payload that is not JSON, a message
-  // with no audio and an absent buffer are all NOT failures — most responses here have no
-  // audio at all, and this must never turn a refusal into a crash.
-  let __env = null;
-  try { __env = JSON.parse(text); } catch {}
-  const __msgs = __env && Array.isArray(__env.messages) ? __env.messages : [];
-  for (const m of __msgs) {
-    let payload = null;
-    try { payload = JSON.parse(m && m.payload); } catch {}
-    const b64 = payload && payload.audio && typeof payload.audio.buffer === "string" ? payload.audio.buffer : "";
-    if (!b64) continue;
-    let decoded = "";
-    try { decoded = Buffer.from(b64, "base64").toString("latin1"); } catch {}
-    for (const secret of FORBIDDEN) {
-      ok(!decoded.includes(secret),
-         `${label}: the AUDIO BUFFER DECODES to bytes containing ${JSON.stringify(secret.slice(0, 12))}…`);
-    }
-    ok(!/https?:\/\//.test(decoded), `${label}: the audio buffer decodes to something carrying a URL`);
-  }
+  C.sweeps += 1;
+  await leakSweep(ok, res, FORBIDDEN, label);
 }
 
 async function call(bytes, headers, env, label) {
   const res = await route.onRequestPost({ request: req(bytes, headers), env: env || FULL });
   await assertClean(res, label || "transcribe");
-  let body = null;
-  try { body = JSON.parse(await res.clone().text()); } catch {}
-  return { res, body };
+  return { res, body: await jsonOf(res) };
 }
 
 const upstreamCalls = () => limits.__state().stats.upstreamCalls;
@@ -483,14 +409,10 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
 /* --------------------------------------------------------------------------- *
  * A7b. §10 assumption 15 — the container allowlist, and why it is not optional
  * --------------------------------------------------------------------------- *
- * Settled live on 2026-09-03 (`sim/tools/probe_demo_gateway.mjs`, four containers, one
- * utterance): the gateway transcribes 16 kHz mono RIFF/WAVE word-perfect and answers
- * **HTTP 500** to webm/Opus, ogg/Opus and mp4/AAC alike.
- *
- * 500 maps to `upstream_down`, which is a 503, and `mode.js` degrades the WHOLE PAGE on a
- * 503. So without this allowlist one press of the microphone would take the brain and the
- * voice down with the ears — after paying for the call. That is what these assertions
- * exist to prevent regressing, and the first one is the one that matters.
+ * Probed live: the gateway transcribes 16 kHz mono WAV and answers HTTP 500 to webm/Opus,
+ * ogg/Opus and mp4/AAC. A 500 is `upstream_down` (503), which degrades the WHOLE PAGE, so
+ * without the allowlist one microphone press would take down brain and voice too — after
+ * paying for the call.
  * --------------------------------------------------------------------------- */
 {
   fresh();
@@ -618,28 +540,19 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     ok(typeof body.transcript === "string", "`transcript` is always a string, never absent");
   }
   ok(envlib.PUBLIC_KEYS.includes("transcript"), "`transcript` is in the envelope's key allowlist");
-  ok(sweeps > 60, `assertClean ran on every response (${sweeps} sweeps)`);
+  ok(C.sweeps > 60, `assertClean ran on every response (${C.sweeps} sweeps)`);
 }
 
 /* --------------------------------------------------------------------------- *
  * A-DUR. THE DURATION CEILING, ENFORCED SERVER-SIDE FOR THE ONE CONTAINER THAT ALLOWS IT
  * --------------------------------------------------------------------------- *
- * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 (the byte caps and the paragraph
- * that says a byte cap is not a duration cap), §4.5 (`too_long`).
+ * Spec: live-sim-demo.md §4.1, §4.5 (`too_long`).
  *
- * THE HOLE. `DEMO_MAX_AUDIO_BYTES` (500 000) was reasoned about as "≈ 15 s", which is true
- * of 16 kHz 16-bit mono and of nothing else. **STT is billed by duration**, and the same
- * 500 KB is 62 s at 8 kHz 8-bit — a perfectly ordinary, perfectly well-formed WAV that
- * this route forwarded and paid for. `DEMO_MAX_RECORD_MS`, the number that is supposed to
- * bound it, lived only in `sim/web/mic.js`: a browser control, which a caller who is not
- * using our page simply does not run.
- *
- * THE FIX, AND ITS HONEST EDGE. A RIFF header declares its own playing time, so for WAV
- * the cap is now real and server-side. For webm/Opus and the rest it still is not — the
- * duration is in a bitstream and reading it means shipping a decoder at a hostile upload.
- * What makes that acceptable is `DEMO_STT_FORMATS`, which defaults to `wav` ALONE, so on
- * the shipped configuration nothing else reaches the gateway at all. Both halves are
- * asserted below, including the uncomfortable one.
+ * STT is billed by DURATION: 500 KB is ≈15 s only at 16 kHz 16-bit mono, and 62 s at
+ * 8 kHz 8-bit, while `DEMO_MAX_RECORD_MS` lived only in the browser. A RIFF header
+ * declares its playing time, so for WAV the cap is server-side. Other containers would
+ * need a decoder; `DEMO_STT_FORMATS` defaults to `wav` ALONE, so on the shipped config
+ * nothing else reaches the gateway. Both halves are asserted, the uncomfortable one too.
  * --------------------------------------------------------------------------- */
 {
   /** A WAV of a chosen rate/width/length. Not `wav.writeWav`, which only emits 16-bit —
@@ -728,14 +641,9 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
 /* --------------------------------------------------------------------------- *
  * A-RDR. The credential does not chase a `Location`
  * --------------------------------------------------------------------------- *
- * The upload rides an `Authorization` header (and the `CF-Access-*` pair when a service
- * token is configured). Fetched with `redirect` unset — the default `follow` — a 3xx would
- * have this route re-issue the whole multipart body at whatever host the `Location` names.
- * `manual` removes the question, and the 3xx is answered as what it actually is: a tunnel,
- * an Access login flow, or a base URL that bounces — **a door problem, not a brain
- * problem**, which is the operator signal `gateway_unreachable_or_gated` carries. Left to
- * `reasonForUpstreamStatus` it would fall through to `upstream_down` (a 503, which degrades
- * the whole page under §6.3) and send an operator to restart a model server.
+ * With `redirect: "manual"` the multipart body (and its `Authorization`) is never re-sent
+ * to a `Location`, and a 3xx answers `gateway_unreachable_or_gated` — a door problem —
+ * rather than falling through to `upstream_down`, which degrades the whole page.
  * --------------------------------------------------------------------------- */
 {
   fresh();
@@ -858,13 +766,9 @@ function bootMic(o) {
    * the fake AudioContext below feeds `encodeWav` a synthesised tone. No device is ever
    * opened, and `MediaRecorder` throws if anything tries to construct a real one. */
   const gum = [];
-  // `Object.defineProperty`, not assignment: `globalThis.navigator` became a
-  // **getter-only** accessor in Node 21, so `globalThis.navigator = …` throws
-  // `TypeError: Cannot set property navigator of #<Object> which has only a getter`.
-  // Local Node 20 accepts the assignment and CI runs Node 24, so this passed here and
-  // failed there — the same shape as the Pages JSON-import finding (rule 19): a runtime
-  // difference between where a test runs and where it is validated.
-  // `sim/tests/test_node_global_stubs.py` now fails on the assignment form.
+  // `Object.defineProperty`, not assignment: `globalThis.navigator` is getter-only from
+  // Node 21, so assignment passed on Node 20 and threw in CI
+  // (`sim/tests/test_node_global_stubs.py` fails on the assignment form).
   Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: {
     mediaDevices: {
       getUserMedia: (c) => {
@@ -977,12 +881,8 @@ function bootMic(o) {
 /* --------------------------------------------------------------------------- *
  * B1b. THE SILENCE AUTO-STOP — "the user pressed the button and it never resets"
  * --------------------------------------------------------------------------- *
- *
- * Before this, the only things that ended a recording were a second tap and the 15 s hard
- * cap: say four words and the microphone stayed open for another fourteen seconds. The
- * requirement pulls in two directions at once — end the turn promptly, NEVER cut a child
- * off mid-sentence — so both directions are asserted here, and the mid-sentence pause is
- * the case that matters most.
+ * End the turn promptly, but NEVER cut a child off mid-sentence: both directions are
+ * asserted, and the mid-sentence pause is the case that matters most.
  * --------------------------------------------------------------------------- */
 {
   const w = bootMic();
@@ -1007,12 +907,8 @@ function bootMic(o) {
   eq(w.mic.isRecording(), false, "1.1 s of silence AFTER speech ends the recording");
   eq(w.mic.stats().silenceStops, 1, "…recorded as a silence stop, not a cap stop");
   eq(w.mic.stats().speechDetected, 1, "…having actually heard speech first");
-  /* NO ASSERTION ON THE STATUS TEXT HERE, and that is playbook rule 11 rather than an
-   * omission: stopping starts the transcribe, which overwrites `#mic-status` with
-   * `heard: "…"` a tick later. The first draft asserted "got it" and read the transcript
-   * instead — a live sample racing the thing that replaces it. `silenceStops` is the
-   * RECORDED fact that the recording ended because the room went quiet, and it cannot be
-   * overwritten by whatever happens next. */
+  /* No assertion on the status text: the transcribe overwrites `#mic-status` a tick later.
+   * `silenceStops` is the RECORDED fact that the room going quiet ended the recording. */
   eq(pendingTimers(), 0, "…leaving no timer behind");
 }
 {
@@ -1241,12 +1137,10 @@ function bootMic(o) {
 /* --------------------------------------------------------------------------- *
  * B5b. THE CONSOLATION LINE MAY NOT SPEND A LIVE TURN
  * --------------------------------------------------------------------------- *
- * The scripted child line is a line THE PAGE CHOSE. Published through
- * `moxieBridge.sendUserTurn` it is indistinguishable from a transcript, and on a hosted
- * live page `cloud-transport.js` takes it to `POST /api/chat` and `POST /api/speech` —
- * a full paid turn on words nobody said. Here we prove `mic.js` sends it down the free
- * seam instead; `sim/test_cloud_transport.mjs` block 6b proves the seam costs nothing, and
- * `sim/test_mic_spend.mjs` proves the whole thing in Chrome by counting real requests.
+ * The scripted child line published via `moxieBridge.sendUserTurn` would be a full paid
+ * `/api/chat` + `/api/speech` turn on words nobody said. `mic.js` must use the free seam
+ * (`sim/test_cloud_transport.mjs` 6b prices the seam; `sim/test_mic_spend.mjs` counts
+ * real requests in Chrome).
  * --------------------------------------------------------------------------- */
 {
   const liveBridge = (rec) => ({ sendScriptedTurn: (t) => rec.scripted.push(t) });
@@ -1376,12 +1270,9 @@ function bootMic(o) {
 /* --------------------------------------------------------------------------- *
  * B7b. §10 assumption 15's CONSEQUENCE — the browser encodes WAV for the hosted ear
  * --------------------------------------------------------------------------- *
- * The gateway answers HTTP 500 to webm/Opus, ogg/Opus and mp4/AAC and transcribes a
- * 16 kHz mono RIFF/WAVE word-perfect (probed live, 2026-09-03). A `MediaRecorder` cannot
- * produce a WAV, so the hosted path builds one itself. THE ASSERTION THAT MATTERS is the
- * one that parses `mic.js`'s output with the SERVER's own RIFF walker — one test pinning
- * both halves of the contract with no server and no browser, exactly as
- * `sim/test_wav_decode.mjs` does for the voice.
+ * `MediaRecorder` cannot produce WAV, so the hosted path builds one. The assertion that
+ * matters parses `mic.js`'s output with the SERVER's own RIFF walker: both halves of the
+ * contract, no server and no browser.
  * --------------------------------------------------------------------------- */
 {
   // ---- the encoder, against functions/api/_lib/wav.js -----------------------
@@ -1490,12 +1381,12 @@ function bootMic(o) {
 
 /* --------------------------------------------------------------------------- */
 if (fails.length) {
-  console.error(`✗ test_demo_ears: ${fails.length} failure(s) of ${asserts}`);
+  console.error(`✗ test_demo_ears: ${fails.length} failure(s) of ${C.asserts}`);
   for (const f of fails) console.error("  - " + f);
   process.exit(1);
 }
 console.log(
-  `✓ test_demo_ears: the ears hold their contract (${asserts} assertions, ${sweeps} secret sweeps, 0 leaks) — ` +
+  `✓ test_demo_ears: the ears hold their contract (${C.asserts} assertions, ${C.sweeps} secret sweeps, 0 leaks) — ` +
   `both byte caps with the floor costing nothing, the per-IP windows, our own AbortSignal timeout, ` +
   `an unset DEMO_STT_MODEL making zero upstream calls, a hostile upstream degrading per-turn instead of ` +
   `taking the page down, the container allowlist keeping a webm/Opus 500 from degrading the whole page ` +

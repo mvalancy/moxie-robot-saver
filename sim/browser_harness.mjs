@@ -185,7 +185,7 @@ async function freePort() {
  *
  * WHY IT IS SEPARATE FROM `serveWeb`. Every browser suite in this repo until now loaded
  * `sim/web` — the public simulator — and `grep -rln "server/static" sim/test_*.mjs` came
- * back empty, so the PARENT CONSOLE (`server/static/index.html` + `app.js`, ~2,470 lines
+ * back empty, so the PARENT CONSOLE (`server/static/index.html` + `js/*.js`, ~2,400 lines
  * of the thing a parent actually uses) had no headless coverage at all. Its cards are
  * asserted only through Python route tests, which cannot see a button that never wires
  * up. `serveWeb` is now a thin call to this with `web` and the Pages headers.

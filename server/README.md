@@ -15,9 +15,13 @@ python run.py                 # HOST/PORT env vars override (default 0.0.0.0:808
 Open `http://<ip>:8080` from a phone on the same LAN/Tailscale.
 
 ## Layout
-| File | Role |
+| Path | Role |
 |------|------|
-| `moxie_server/main.py` | FastAPI app: the REST API, `/local/*` helpers, serves the web client |
+| `moxie_server/main.py` | The FastAPI app: no-cache middleware, the routers, the static client at `/` |
+| `moxie_server/routes/` | One router per surface — [index](moxie_server/routes/README.md) |
+| `moxie_server/supervisor.py` | Server-side calls to the MQTT supervisor (every `/local/*` card proxy) |
+| `moxie_server/fleet/` | Pure card views over supervisor payloads — [index](moxie_server/fleet/README.md) |
+| `moxie_server/auth.py` | Bearer-token dependency + token minting |
 | `moxie_server/crypto.py` | Deterministic seed/keys (Argon2id → Ed25519/X25519/secretbox) |
 | `moxie_server/diceware.py` | Recovery-phrase generation (EFF short wordlist) |
 | `moxie_server/db.py` | SQLite persistence (zero-knowledge: opaque blobs) |
@@ -39,5 +43,6 @@ Open `http://<ip>:8080` from a phone on the same LAN/Tailscale.
 
 ## Notes
 - The DB (`moxie.db`) is gitignored. Delete it to reset all state.
-- Production OAuth client credentials from the original app are accepted, so a *repointed* original
-  APK also works — but the primary client is the bundled web app.
+- OAuth client credentials are not checked, so a *repointed* original APK also works — but the
+  primary client is the bundled web app. There is no password: anyone on the LAN can log in as
+  any email (by design for a single-household appliance; keep it off the open internet).

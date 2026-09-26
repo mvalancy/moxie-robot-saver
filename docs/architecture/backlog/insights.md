@@ -12,7 +12,7 @@
 > > rows 1, 2, 4, 7, 9 or 10 exist. `grep -rn 'RESERVED_EVENTS\|bucket_events\|buckets'` over
 > > [`telemetry.py`](../../../mqtt/moxie_sdk/telemetry.py),
 > > [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) and
-> > [`fleet.py`](../../../server/moxie_server/fleet.py) returns **nothing**; there is no `_mint`, no
+> > [`fleet.py`](../../../server/moxie_server/fleet/) returns **nothing**; there is no `_mint`, no
 > > `normalize_activity`, and **no `sim/tests/test_insights.py`**. What exists is the durable half this
 > > brief already credits — `roll_up_packet`:380, `reconcile_rollup`:495, `history_view`:520,
 > > `rollup_totals`:547, `summarize_events`:88 — over a **free-string** `event_name` (:105, :403), which
@@ -79,7 +79,7 @@ PR #55 (2026-09-02) shipped the **durable half**, and it is real:
 | Two per-robot collections — a 500-envelope ring and 35 days of daily roll-ups | [`moxie_sdk/telemetry.py`](../../../mqtt/moxie_sdk/telemetry.py) `PACKETS_COLLECTION` / `DAILY_COLLECTION` | [`test_telemetry.py`](../../../sim/tests/test_telemetry.py) — 29 collected |
 | The `LoggingPolicy` gate applied **on the way to disk**, not only on the way off the robot | `telemetry.py::storable_packet` → `moxie_runtime.py::_persist_telemetry` | [`test_telemetry_runtime.py`](../../../sim/tests/test_telemetry_runtime.py) — 21 test functions |
 | Hydration on first touch, so a restart does not erase the answer | `moxie_runtime.py::_telemetry_buffer` | [`test_sil_durable_telemetry.py`](../../../sim/tests/test_sil_durable_telemetry.py) — 8 functions, 10 collected (one 3-way `parametrize`) |
-| A 📈 card rendering a zero-filled week, its real retention window and the lifetime total | [`server/static/app.js`](../../../server/static/app.js) `weekBars` / `refreshInsights`; [`fleet.py::normalize_telemetry`](../../../server/moxie_server/fleet.py) | `test_console_roundtrip.py` |
+| A 📈 card rendering a zero-filled week, its real retention window and the lifetime total | [`server/static/app.js`](../../../server/static/js/) `weekBars` / `refreshInsights`; [`fleet.py::normalize_telemetry`](../../../server/moxie_server/fleet/) | `test_console_roundtrip.py` |
 
 What is **not** shipped is everything the row was actually about: *sessions, activity mix, mood trend,
 time-of-day patterns, "what did we talk about this week"*. And the reason is not effort. It is that
@@ -121,7 +121,7 @@ in the `event_name` — the only field that survives the gate and the only field
 
 ### 2.2 The card
 
-[`app.js::refreshInsights`](../../../server/static/app.js) already renders a zero-filled week
+[`app.js::refreshInsights`](../../../server/static/js/) already renders a zero-filled week
 (`weekBars`), the by-event table, the newest envelopes, and a footer stating the true retention
 window. Under `persisted:false` it says *"nothing is being saved"* rather than drawing an empty week
 as if it were a quiet one. That honesty is load-bearing and §4.2 extends it rather than replacing it.
@@ -623,9 +623,9 @@ consent surface separate from `logging_policy`.
 | 4 | `sim/tests/test_insights.py` | **New.** T2, T5, T6, T9-T13 |
 | 5 | `sim/tests/test_clock_dependence.py` | Register every new clock-reading test with its justification (both-directions ratchet) |
 | 6 | `sim/ci/ci.yml` **and** `.github/workflows/*` | Wire the new test file into a tier — **template and installed copy in the same commit** |
-| 7 | [`server/moxie_server/fleet.py`](../../../server/moxie_server/fleet.py) | `normalize_telemetry` carries `buckets`, `sessions`, `turns`, `activity`, and the refusal sentence; `normalize_activity` (new, pure) folds `mentor_behaviors` into rows |
+| 7 | [`server/moxie_server/fleet.py`](../../../server/moxie_server/fleet/) | `normalize_telemetry` carries `buckets`, `sessions`, `turns`, `activity`, and the refusal sentence; `normalize_activity` (new, pure) folds `mentor_behaviors` into rows |
 | 8 | [`server/moxie_server/main.py`](../../../server/moxie_server/main.py) | `DELETE /local/robots/{id}/telemetry` proxy, same shape as the existing telemetry proxy |
-| 9 | [`server/static/app.js`](../../../server/static/app.js) | The three new rows, the empty state, the refusal sentence, the ✕ with its confirmation |
+| 9 | [`server/static/app.js`](../../../server/static/js/) | The three new rows, the empty state, the refusal sentence, the ✕ with its confirmation |
 | 10 | `sim/tests/test_console_roundtrip.py` | The card payload end to end, including T12's sentence |
 | 11 | [`docs/architecture/config-and-telemetry-contract.md`](../config-and-telemetry-contract.md) | §③: the reserved vocabulary, `buckets`, the no-payload rule, erasure |
 | 12 | [`docs/architecture/openmoxie-feature-audit.md`](../openmoxie-feature-audit.md) | Flip BEYOND #5's status in the same PR (the backlog README's house rule) |
