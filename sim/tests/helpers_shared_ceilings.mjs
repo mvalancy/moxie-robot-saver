@@ -1,51 +1,26 @@
 /* helpers_shared_ceilings.mjs — the per-IP HOUR and DAY windows, and the unit budget's
  * DAY ceiling, on the shared Cache API tier of `functions/api/_lib/limits.js`.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §4.6.1 (the measurement that cleared
- * this tier to exist, and the latency objection this slice answers), §4.6.2 (the refund
- * argument the budget half must honour), §4.6.3 (this slice), §4.1 (every ceiling and its
- * starting number), §4.5 (the status and `Retry-After` table).
+ * Spec: live-sim-demo.md §4.6.1–§4.6.3, §4.1, §4.5. The rest of this tier's proof is
+ * `sim/test_demo_proxy.mjs` §15/§15i; this file is run by `sim/tests/test_shared_ceilings.py`
+ * (so by `pytest sim/tests`), and its fake store keeps §15's exact failure shapes.
  *
- * ============================================================================
- * WHY THIS FILE IS NOT A SECTION OF `sim/test_demo_proxy.mjs`, WHICH IS WHERE THE REST OF
- * THIS TIER'S PROOF LIVES (§15 and §15i).
+ *   A. THE FALLBACK: with no store (absent, `null`, `DEMO_CACHE_COUNTER=0`) `admit()` is
+ *      the in-isolate function, across all four sub-tiers.
+ *   B/C. THE PER-IP HOUR AND DAY BIND ACROSS ISOLATES: two isolates, one store, a refusal
+ *      neither `Map` could make — and the same sequence admitted with the tier off.
+ *   D. THE BUDGET'S DAY, by charge-on-completion: the colo never hears of a charge that
+ *      might be given back.
+ *   E. A REFUSED REQUEST PUBLISHES NOTHING to the day.
+ *   F/G. EVERY FAILURE MODE ADMITS (hang, sync throw, reject, stale, unparseable, wrong
+ *      bucket), each against an entry a WORKING store would refuse on.
+ *   H. THE KEYS: no address or route in the budget key; a wide entry's mark no decimal
+ *      integer can spell.
+ *   I. THE COST, as a count of round trips.
+ *   J. THE LEDGER: a day boundary DROPS what is owed; a `put` that lands then hangs is not
+ *      retried.
  *
- * That file was RESERVED to another agent for the whole of this slice, so this one exists
- * rather than a diff to it. Being a separate file has one real cost and it is stated here
- * rather than discovered later: §15's fixtures (`fakeCache`, `fresh`, `admitWith`) are
- * duplicated below instead of shared. The duplication is deliberate and the shapes are
- * copied faithfully — a fake whose failure switches differ from §15's would be a fake that
- * proves something about ITSELF rather than about the tier.
- *
- * It is run by `sim/tests/test_shared_ceilings.py`, i.e. by `pytest sim/tests`, which is
- * the one family `test_ci_test_coverage.py` records as never having gone silently unrun.
- * A new `sim/test_*.mjs` would have needed a step in `sim/ci/ci.yml`, and that file was
- * reserved too.
- * ============================================================================
- *
- * WHAT IT PROVES, and each one is a claim somebody could otherwise only assert:
- *
- *   A. THE FALLBACK. With no store — no `caches.default`, an explicit `null`, or
- *      `DEMO_CACHE_COUNTER=0` — `admit()` is the function it was before this tier existed,
- *      and that now covers FOUR sub-tiers rather than two.
- *   B/C. THE PER-IP HOUR AND DAY REALLY BIND ACROSS ISOLATES. Two isolates, one injected
- *      store, and a visitor refused on a count neither isolate's own `Map` has seen —
- *      with the same sequence admitted when the tier is off, which is what makes the
- *      assertion about the TIER and not about the arithmetic.
- *   D. THE UNIT BUDGET'S DAY, the same way, and by charge-on-completion: the colo is never
- *      told about a charge that might have to be given back.
- *   E. A REFUSED REQUEST PUBLISHES NOTHING to the day, structurally.
- *   F/G. EVERY FAILURE MODE ADMITS. A store that hangs, throws synchronously, rejects,
- *      serves a stale entry, serves an unparseable body, or serves a body stamped with
- *      another bucket — each one against an entry a WORKING store would have refused on.
- *   H. THE KEYS. No address, no route in the budget key, and a one-character mark that no
- *      decimal integer can spell, so a wide entry can never be read as a narrow one.
- *   I. WHAT IT COSTS, as a count of round trips rather than as an intention.
- *   J. THE LEDGER. What this isolate owes today is a recorded fact; a day boundary DROPS
- *      it rather than moving it; and a `put` that lands and then hangs is not retried.
- *
- * NO WALL CLOCK. Every admission is given an explicit `nowS`, so every bucket in this file
- * is a constant and the result is the same at all 1440 minutes of a day.
+ * NO WALL CLOCK: every admission gets an explicit `nowS`.
  *
  *   node sim/tests/helpers_shared_ceilings.mjs          # human-readable
  *   node sim/tests/helpers_shared_ceilings.mjs --json   # one JSON object, for pytest
@@ -119,13 +94,9 @@ function req(path, headers) {
 const fresh = () => limits.__reset();
 
 /**
- * A fake `caches.default` — `match`/`put` only, plus a log of what it was actually asked,
- * so every assertion is on a RECORDED fact rather than on an inference from behaviour.
- *
- * The failure switches are the same three SHAPES §15 uses, on purpose: a synchronous throw
- * (before any promise exists), a rejected promise, and a promise that never settles. The
- * first is the one a naive `try { await x() }` still catches and a naive
- * `Promise.resolve(x()).catch()` does not.
+ * A fake `caches.default` (`match`/`put` only) with a log of what it was asked. The
+ * failure switches are §15's three SHAPES — a synchronous throw, a rejection, a promise
+ * that never settles — because a naive `Promise.resolve(x()).catch()` misses the first.
  */
 function fakeCache(opts) {
   const o = opts || {};
@@ -478,19 +449,10 @@ section("E");
   eq(unitsDay().wrote, 0, "…and zero writes attempted, which is the structural half of the claim");
   deep(st().unitsDay, { pending: 0, bucket: DAY0 }, "…and the ledger is empty, because nothing ever settled");
 
-  // `release()` THEN `refundBudget()` — the ordering the drain above can never reach.
-  // Refunding BEFORE the release means `release()`'s `if (!refunded && !settled)` never
-  // settles, so there is nothing to un-say and `unaccrueDayPending()` is never called.
-  // That function exists ONLY for this ordering (no route in this repo performs it today
-  // and nothing structurally prevents it), so without a case that settles first it is dead
-  // code as far as this suite is concerned — and "a refunded request publishes nothing to
-  // the shared day" would be proven for one of the two orderings while claiming both.
-  //
-  // MEASURED 2026-09-06, which is why this exists: deleting the `unaccrueDayPending()`
-  // call from `refundBudget()` left this suite at 151/151 green AND `sim/test_demo_proxy.mjs`
-  // green. The HOUR's identical branch is caught immediately, by §15's "a refund AFTER the
-  // release takes them straight back out again". The day inherited the hour's design
-  // without inheriting the hour's proof; this is that proof.
+  // `release()` THEN `refundBudget()`: the ordering no route performs today, and the only
+  // one that reaches `unaccrueDayPending()`. Without it, deleting that call left every
+  // suite green; this proves "a refunded request publishes nothing to the shared day" for
+  // both orderings, as §15 does for the hour.
   fresh();
   const late = fakeCache();
   const l = await admitWith(ON, late, "203.0.113.8", T0);
@@ -595,13 +557,9 @@ section("F");
     if (r.ok) r.release();
   }
 
-  // WHICH SCALE ANSWERS WHEN BOTH ARE SPENT. `scales` is built narrowest-first so the
-  // refusal a visitor meets carries the SHORTEST `Retry-After` that applies to them —
-  // "come back tomorrow" when the hour would have let them in at the top of the hour is a
-  // worse answer, not a safer one. Asserted directly because the order is otherwise
-  // visible only as the FIELD ORDER of a JSON body, and a body's key order proves nothing
-  // about a refusal: measured 2026-09-06, reversing `scales` was caught by §H's
-  // deep-equality on the stored shape and by nothing that names the Retry-After at all.
+  // WHICH SCALE ANSWERS WHEN BOTH ARE SPENT: `scales` is narrowest-first, so a visitor
+  // gets the SHORTEST `Retry-After` that applies. Asserted directly — reversing `scales`
+  // was otherwise visible only as a JSON field order.
   {
     const BOTH = cfgOf({ DEMO_CHAT_PER_MIN: "60", DEMO_CHAT_PER_HOUR: "1", DEMO_CHAT_PER_DAY: "1" });
     fresh();
@@ -615,13 +573,9 @@ section("F");
        + r.retryAfterS);
   }
 
-  // A READ THAT FAILED MUST NOT WRITE, and the entry has to hold something OTHER than what
-  // a fresh write would produce for the difference to be visible at all. The cases above
-  // are seeded with exactly the body an admitted first turn writes, so a fall-through that
-  // published after a failed read would store the identical bytes and prove nothing —
-  // measured 2026-09-06 while adding `unit_budget_mutation_check.py` row W6, which was NOT
-  // CAUGHT until this block existed. `sharedWindowVerdict`'s own note names the mistake:
-  // writing after a failed read RESETS a live window to this isolate's share.
+  // A READ THAT FAILED MUST NOT WRITE (mutation row W6). The entry is seeded with bytes a
+  // fresh write would NOT produce, so a publish after a failed read — which RESETS a live
+  // window to this isolate's share — is actually visible.
   {
     fresh();
     const LIVE = { h: 5, hb: 2, d: 5, db: 0 };
@@ -909,12 +863,9 @@ section("J");
 /* =========================================================================== *
  * K. WHICH DIRECTION EACH REFUSAL ERRS IN — the overcount, bounded and named
  * =========================================================================== *
- *
- * The tier's licence to exist is the sentence "every error is an undercount, so it can
- * only ever admit somebody it might have refused". A refusal that leaves a counter
- * INCREMENTED breaks that sentence, so both cases are measured here rather than reasoned
- * about: the one this slice removed, and the one it inherits and must not be read as
- * having removed.
+ * The tier exists on "every error is an undercount". A refusal that leaves a counter
+ * INCREMENTED breaks that, so both cases are measured: the one removed, and the residual
+ * inherited.
  */
 section("K");
 {
@@ -939,13 +890,10 @@ section("K");
   eq(c.count(minKey), 1, "…the minute count is still 1, not 2 — a refusal may not leave a counter ABOVE the truth");
   deep(c.body(wideKey), { h: 1, hb: 2, d: 1, db: 0 }, "…and the wide entry is untouched");
 
-  // (2) THE INHERITED RESIDUAL, asserted so nobody has to take the comment's word for it.
-  //     A BUDGET refusal happens after both window entries have been written, so the
-  //     visitor's windows are one higher than they earned. It is bounded at exactly one
-  //     increment per refused request, it predates this slice (the hour budget has been
-  //     ordered after the window write since 2026-09-05), and it only bites while the
-  //     deployment is already answering everybody `budget_exhausted`. Named in
-  //     live-sim-demo.md §4.6.3 with the fix.
+  // (2) THE INHERITED RESIDUAL: a BUDGET refusal happens after both window entries were
+  //     written, so the visitor's windows are one higher than earned — bounded at one
+  //     increment per refused request, and only while everyone is already answered
+  //     `budget_exhausted`. Named in live-sim-demo.md §4.6.3 with the fix.
   const SPENT = cfgOf({
     DEMO_CHAT_PER_MIN: "60", DEMO_CHAT_PER_HOUR: "1000", DEMO_CHAT_PER_DAY: "1000",
     DEMO_UNIT_BUDGET_HOUR: "100000", DEMO_UNIT_BUDGET_DAY: "12",
