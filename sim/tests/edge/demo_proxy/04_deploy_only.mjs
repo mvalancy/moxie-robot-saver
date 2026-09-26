@@ -7,18 +7,10 @@ import {
 /* =========================================================================== *
  * 12. THE DEPLOY-ONLY FAILURE, CONVERTED INTO A LOCAL ONE
  * =========================================================================== *
- * On 2026-09-03 the Cloudflare Pages build FAILED on this slice's branch while the same
- * check was green on `dev`. The only structural difference in the Functions tree was one
- * line — `import RULES from "./safety.json" with { type: "json" }`. Node 20 accepts the
- * import-attribute syntax, so all 1637 hermetic tests were green and the failure was
- * visible ONLY to a real deploy. The spec's §10 ledger had listed exactly that as
- * unverified; it is now settled as **false**, and the table lives in `_lib/safety.rules.js`
- * as a plain data module.
- *
- * This block is the part that matters going forward: it turns a deploy-only failure into a
- * local one. A `.json` import or an import attribute anywhere under `functions/` fails here,
- * in about a second, on a bare runner — instead of after a push, in a build log, on a
- * branch someone is waiting to merge.
+ * The Pages build rejects `import … from "./x.json" with { type: "json" }` while node
+ * accepts it, so a JSON import under `functions/` was once visible ONLY to a real deploy.
+ * Data lives in plain `.js` modules (`_lib/safety.rules.js`); this block fails a JSON
+ * import or import attribute anywhere under `functions/` locally, in about a second.
  */
 {
   const { readdirSync, statSync } = await import("node:fs");
@@ -108,22 +100,10 @@ import {
 /* --------------------------------------------------------------------------- *
  * `_headers` IS INERT FOR FUNCTIONS — the code must carry every /api/* header.
  * ===========================================================================
- * Settled by a real preview deploy on 2026-09-03. `sim/web/_headers` declares an
- * `/api/*` block, and for a long time the repo could not say whether Pages applied it
- * to a Function response. It does not:
- *
- *   GET /sim.html    -> referrer-policy: strict-origin-when-cross-origin   (the /* block)
- *   GET /api/health  -> no referrer-policy at all
- *
- * …while `cache-control: no-store` and `x-content-type-options: nosniff` WERE present on
- * the Function — and those are exactly the two `envelope.js` sets itself. The static page
- * proves `_headers` works on that deployment, so the Function's missing header is not a
- * misconfigured file; it is Pages not applying `_headers` to Functions.
- *
- * The failure mode this guards is silent: someone adds a header to the `/api/*` block,
- * sees it in the file, and believes every API response carries it. So: every header named
- * in that block must ALSO be set in code. The file may keep documenting intent; it may not
- * be the only place a header lives.
+ * Settled on a real preview: Pages applies `sim/web/_headers` to static files but not to
+ * Function responses (`/sim.html` carried the `/*` block's referrer-policy, `/api/health`
+ * only the headers `envelope.js` sets itself). So every header the `/api/*` block names
+ * must ALSO be set in code; the file may document intent but not be the only source.
  */
 {
   const headersFile = readFileSync(join(repo, "sim", "web", "_headers"), "utf8");
@@ -145,14 +125,9 @@ import {
   ok(declared.length >= 3,
      `the /api/* block names at least 3 headers, found ${declared.length}`);
 
-  /* THE CHECK IS ON A REAL RESPONSE, NOT ON THE SOURCE TEXT.
-   *
-   * It used to be a regex for `"Name":` over the comment-stripped file, and that was
-   * fine until `envelope.js` gained `REJECTED_SECURITY_HEADERS` — a map whose KEYS are
-   * header names in exactly that syntax. A rejected header would then have satisfied the
-   * regex while never being sent, i.e. the guard would have passed on the precise
-   * situation it exists to catch. Asking a built `Response` what headers it carries is
-   * immune to that, and to every other way source text can lie about behaviour. */
+  /* THE CHECK IS ON A REAL RESPONSE, NOT ON THE SOURCE TEXT: a regex over the source was
+   * satisfied by the header-name KEYS of `REJECTED_SECURITY_HEADERS`, i.e. by a header
+   * that is never sent. */
   const sample = env0.respond({ ok: true, mode: "live" });
   const sent = [...sample.headers.keys()].map((h) => h.toLowerCase());
   const missing = declared.filter((h) => !sent.includes(h.toLowerCase()));
@@ -168,12 +143,8 @@ import {
   /* ---------------------------------------------------------------------------- *
    * EVERY SECURITY HEADER THE PAGES SHIP IS EITHER SENT HERE OR EXPLAINED AWAY.
    * ---------------------------------------------------------------------------- *
-   * The failure this closes is the one that produced a page CSP with no `script-src`
-   * for months: a header list nobody could explain. `/api/*` is a JSON API, not a
-   * document tree, so several page headers are genuinely pointless here — but
-   * "pointless" has to be WRITTEN DOWN and machine-held, or it is indistinguishable
-   * from "forgotten". So: for each security header in the `/*` block, envelope.js must
-   * either send it or carry a reason in `REJECTED_SECURITY_HEADERS`.
+   * Some page headers are pointless on a JSON API, but "pointless" must be machine-held
+   * (a reason in `REJECTED_SECURITY_HEADERS`) or it is indistinguishable from "forgotten".
    */
   const pageBlock = {};
   {
@@ -241,10 +212,8 @@ import {
 /* --------------------------------------------------------------------------- *
  * THE HARDENING SET RIDES A REFUSAL, NOT JUST A SUCCESS
  * ===========================================================================
- * A refusal is the response a hostile caller sees MOST, so a header set that only
- * applies on the happy path is not a header set. Every status the route table can
- * produce is checked here — 200, the 403 origin pin, the 429 window, the 503 upstream
- * failure and the 400 malformed request — through the REAL route handlers.
+ * A refusal is what a hostile caller sees most. Checked on 200, 403, 429, 503 and 400,
+ * through the REAL route handlers.
  */
 {
   fresh();

@@ -8,20 +8,14 @@ import {
 /* =========================================================================== *
  * 13. THE ADMISSION QUEUE — a bounded FIFO behind the concurrency ceiling
  * =========================================================================== *
- * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 (the two queue variables), §4.5
- * (`at_capacity` keeps its 503 and its `Retry-After: 15`), §4.6 (per-isolate, and what
- * that costs), §7 (the capacity signal is unchanged).
+ * Spec: live-sim-demo.md §4.1 (the queue variables), §4.5 (`at_capacity` keeps its 503 and
+ * `Retry-After: 15`), §4.6, §7.
  *
- * THE THING BEING PROVED. Before 2026-09-03, `DEMO_MAX_CONCURRENT_CHAT` refused the
- * instant it was reached, so ten visitors colliding for one second got scripted lines.
- * `admit()` now waits, briefly and in arrival order, behind that ceiling — WITHOUT raising
- * it, because the ceiling is matched to an upstream key shared with a neighbour service.
- *
- * Every assertion below is on a RECORDED fact — `__state().waiting`, `__state().stats.queue`,
- * an envelope, a counter — rather than on how long something happened to take, with one
- * deliberate exception (the wait-expired test asserts that time genuinely passed, because
- * "it waited" is the whole claim). Waits are configured in the tens of milliseconds so the
- * block runs in well under a second.
+ * `admit()` waits, briefly and in arrival order, behind `DEMO_MAX_CONCURRENT_CHAT` instead
+ * of refusing at once — WITHOUT raising the ceiling, which matches an upstream key shared
+ * with a neighbour service. Assertions are on recorded facts (`__state().waiting`,
+ * `stats.queue`, envelopes), except the wait-expired case, where "time passed" IS the
+ * claim. Waits are tens of milliseconds.
  */
 {
   /** The queue's own deployment: a short wait, a small depth, and per-IP windows wide
@@ -163,12 +157,9 @@ import {
   eq(limits.__state().inflight.chat, 0, "no slot leaked by the expiry");
 
   // ---- 13e. THE CHARGE/REFUND DECISION ------------------------------------ //
-  // `admit()` charges the per-IP window and the unit budget BEFORE the concurrency slot,
-  // and that ordering is deliberate (see the file header). Once a request can WAIT and
-  // then be refused, that ordering makes a timed-out visitor pay a rate-limit unit and a
-  // budget unit for a turn they never received — at `chat_per_min: 5`, two timeouts burn
-  // 40 % of their minute on nothing. The fix chosen was a REFUND rather than reordering,
-  // and `_lib/limits.js::refundCharges` carries the argument. This is that decision, tested.
+  // `admit()` charges the window and the budget BEFORE the slot, so a visitor who waits
+  // and times out would pay for a turn never received. The chosen fix is a REFUND
+  // (`_lib/limits.js::refundCharges`), not a reordering.
   fresh();
   const cfgRef = wire2.readConfig(SHORT);
   const holdRef = await fillCeiling(cfgRef);
@@ -197,11 +188,8 @@ import {
   }
 
   // ---- 13f. …AND THE ORDERING IT PRESERVES -------------------------------- //
-  // The rejected alternative was to move the wait BEFORE the charge. This is why it was
-  // rejected, made executable: a request that today is refused for free must still be
-  // refused for free, and must never occupy a queue slot it has not earned. Under the
-  // reordering, this rate-limited request would sit in the FIFO for the full wait,
-  // displacing a legitimate visitor.
+  // Why the wait was not moved before the charge: a request refused for free must stay
+  // free and never occupy a queue slot, displacing a legitimate visitor.
   fresh();
   const cfgRl = wire2.readConfig({ ...SHORT, DEMO_CHAT_PER_MIN: "3" });
   const FLOOD_IP = "198.51.100.50";
@@ -275,31 +263,19 @@ import {
 /* =========================================================================== *
  * 14. WHO IS ASKING — the rate-limit KEY, and the redirect the key rides on
  * =========================================================================== *
- * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 (the per-IP rows and what they are
- * keyed on), §4.2 (nothing upstream is trusted), §4.6 (per-isolate).
+ * Spec: live-sim-demo.md §4.1, §4.2, §4.6.
  *
- * THREE CLAIMS, ALL OF WHICH WERE FALSE BEFORE 2026-09-03:
+ *   A. AN IPv6 VISITOR IS ONE VISITOR: the key is the /64 (a residential allocation), not
+ *      the raw address. The table pins every awkward form — get the IPv4-mapped row wrong
+ *      and the whole v4 internet shares one bucket.
+ *   B. A HEADER THE CALLER TYPES IS NOT AN IDENTITY: `X-Forwarded-For` is only trusted
+ *      behind `DEMO_TRUST_XFF`; without `CF-Connecting-IP` callers share one `unknown`
+ *      bucket, throttled together rather than each given a lane.
+ *   C. THE CREDENTIAL DOES NOT CHASE A `Location`: upstream fetches use
+ *      `redirect: "manual"` and read a 3xx as `gateway_unreachable_or_gated`.
  *
- *   A. **AN IPv6 VISITOR IS ONE VISITOR.** The windows were keyed on the raw address
- *      string, and a residential IPv6 allocation is a /64 or wider — so one person held
- *      18 quintillion buckets and every per-IP row in §4.1 was, for them, unlimited. The
- *      key is now the /64, and the table below pins every awkward form the internet
- *      actually produces, because THAT is where this kind of fix breaks: get the
- *      IPv4-mapped row wrong and the entire v4 internet collapses into one bucket.
- *
- *   B. **A HEADER THE CALLER TYPES IS NOT AN IDENTITY.** With `CF-Connecting-IP` absent
- *      the code fell back to `X-Forwarded-For`, which any client sets to anything. That is
- *      not a weaker limit, it is no limit. It is now behind `DEMO_TRUST_XFF` (unset in
- *      production), and the default is one SHARED `unknown` bucket — deliberately shared,
- *      so unidentifiable callers are throttled together rather than each given a lane.
- *
- *   C. **THE CREDENTIAL DOES NOT CHASE A `Location`.** All three routes fetched with
- *      `redirect` unset, i.e. `follow`, carrying the deployment's only key. They now set
- *      `manual` and read a 3xx as `gateway_unreachable_or_gated` — the door, not the brain.
- *
- * Claim A is proved TWICE on purpose: once as a pure table over `ipKey`, and once through
- * the real windows, because "the function returns the right string" and "two addresses
- * actually share a bucket" are different claims and only the second one is the control.
+ * A is proved twice: as a pure table over `ipKey`, and through the real windows, because
+ * only "two addresses actually share a bucket" is the control.
  */
 {
   fresh();
@@ -363,11 +339,8 @@ import {
   eq(neighbour.res.status, 200, "a DIFFERENT /64 is a different visitor and is served normally");
 
   // ---- 14c. The refund credits the bucket the charge took ----------------- //
-  // `refundCharges()` puts back exactly the keys `chargeWindows()` incremented, and those
-  // keys embed the derived ip. Changing how the key is derived changes what a refund
-  // credits, so this is asserted rather than assumed: an IPv6 visitor who queues and times
-  // out must get their /64's unit back — and must get back exactly one, not one per
-  // address they happened to use.
+  // Refund keys embed the derived ip, so an IPv6 visitor who times out gets exactly one
+  // unit back on their /64 — not one per address used.
   fresh();
   const QQ = { ...FULL, DEMO_QUEUE_MAX_WAIT_MS: "40", DEMO_QUEUE_MAX_DEPTH: "4" };
   const cfgQ = wire2.readConfig(QQ);

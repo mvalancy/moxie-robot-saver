@@ -52,13 +52,8 @@ import {
   eq(up.response_format, "wav", "the format comes from DEMO_TTS_FORMAT");
   eq(up.input, "Hi there! Want to hear a joke?", "the input is the text WE wrote");
 
-  // `voice` IS ALWAYS SENT, and this assertion is the inverse of what it first said.
-  // Rule 17, and the code was wrong: the first version of this test asserted no `voice`
-  // field was sent, reading §5's note on `config.py`:91-92 as "our gateway encodes the
-  // voice in the model id, so omit it". The four-call gateway probe answered **HTTP 500 on
-  // both speech calls**, and `mqtt/moxie_sdk/tts.py`:80-90 says why in its own docstring:
-  // the gateway REQUIRES the field and IGNORES its value. A guard that had passed would
-  // have shipped a hosted demo whose voice never worked once.
+  // `voice` IS ALWAYS SENT: the gateway REQUIRES the field and ignores its value
+  // (`mqtt/moxie_sdk/tts.py`), and omitting it was measured to answer HTTP 500.
   // `test-voice-model` → tail `model`, which is a word, so that is the derived voice.
   eq(up.voice, "model", "a `voice` field is ALWAYS sent — omitting it is an upstream 500");
   eq(wire2.voiceForModel("piper-amy"), "amy", "piper-amy derives the voice `amy` (tts.py:80-90)");
@@ -95,20 +90,12 @@ import {
   /* ------------------------------------------------------------------------- *
    * 10c. THE RAW-BODY PASSTHROUGH — a 200 that is not the format we asked for
    * ------------------------------------------------------------------------- *
-   * Closed 2026-09-03. `_lib/wav.js` sniffed exactly three shapes — empty, `{`/`[`, `<` —
-   * and handed EVERYTHING ELSE back as `container:"raw"`, which `speech.js` base64'd
-   * into `messages[0].payload.audio.buffer` and shipped at **status 200, `reason: null`,
-   * `degraded: false`**. Under the shipped `DEMO_TTS_FORMAT=wav` default that is an
-   * upstream body returned verbatim to a visitor, and with an mp3 it is several seconds
-   * of full-scale static in a child's ear.
-   *
-   * Every case below carries the model id and the base URL INSIDE the body, so
-   * `assertClean` — which now decodes the buffer — is the leak half of the assertion and
-   * the `reason` checks are the correctness half.
-   *
-   * The `data: ` frame is the one worth naming: it is what a streaming-capable LiteLLM
-   * front end emits, and its four-character prefix is exactly why the `{` sniff never
-   * fired.
+   * `_lib/wav.js` once passed any unrecognised body through as `container:"raw"`, which
+   * shipped an upstream body verbatim at status 200 (or seconds of static, for an mp3).
+   * Every case carries the model id and base URL INSIDE the body, so `assertClean` (which
+   * decodes the buffer) is the leak half and the `reason` checks the correctness half.
+   * The `data: ` frame is what a streaming LiteLLM front end emits; its prefix is why a
+   * `{` sniff alone never fired.
    * ------------------------------------------------------------------------- */
   const HOSTILE = "model test-voice-model missing at " + BASE + " key " + KEY;
   const withMagic = (magic, n) => {
@@ -152,13 +139,10 @@ import {
   ok(Buffer.from(pPcm.audio.buffer, "base64").equals(Buffer.from(headerless)),
      "…carrying the bytes verbatim, byte for byte");
 
-  // THE CASE THAT ONLY THE FORMAT GATE CATCHES, and therefore the assertion that fails if
-  // `speech.js` ever stops passing `format`. An even-length, high-entropy body with no
-  // magic number and no printable-text signature: under `pcm` that is precisely the audio
-  // we ordered, and under `wav` it is a gateway that ignored `response_format` or an
-  // opaque error blob. NOTHING ABOUT THE BYTES DISTINGUISHES THE TWO — only the format we
-  // asked for does. The magic-number and printable-text guards are real, but they are
-  // defence in depth; this is the gate.
+  // ONLY THE FORMAT GATE CATCHES THIS: an even-length, high-entropy body with no magic
+  // number is exactly the audio ordered under `pcm` and an opaque blob under `wav`. Only
+  // the format we asked for tells them apart, so this fails if `speech.js` stops passing
+  // `format`; the magic-number and printable-text guards are defence in depth.
   const opaque = withMagic([0x00, 0x01, 0xfe, 0xff], 512);
   fresh();
   const cOp = await call(chat, "/api/chat", { text: "hi" });
@@ -208,12 +192,9 @@ import {
   /* ------------------------------------------------------------------------- *
    * 10d. THE SPENT SET KEYS ON BYTES, NOT ON A SPELLING
    * ------------------------------------------------------------------------- *
-   * base64url is not a canonical encoding. An HMAC-SHA-256 is 32 bytes = 43 base64url
-   * characters = 258 bits, so the LAST CHARACTER carries two bits nothing reads, and four
-   * spellings of one ticket all verify (`_lib/hmac.js::timingSafeEqual` compares decoded
-   * BYTES). The set used to key on the raw string, so one paid chat turn bought four TTS
-   * calls per isolate. `+`/`/`/`=` re-encoding never worked — `bytesFromB64url` refuses
-   * anything outside `[A-Za-z0-9_-]` — so the bypass was exactly 4x, and it was real.
+   * A 32-byte HMAC is 43 base64url characters, so the last character carries two unread
+   * bits and four spellings of one ticket verify. Keyed on the raw string, one paid chat
+   * turn bought four TTS calls per isolate.
    * ------------------------------------------------------------------------- */
   fresh();
   const cRep = await call(chat, "/api/chat", { text: "hi" });
@@ -245,10 +226,8 @@ import {
   /* ------------------------------------------------------------------------- *
    * 10e. THE SWEEP ITSELF — does `assertClean` actually see inside base64?
    * ------------------------------------------------------------------------- *
-   * The guard that hid 10c for a thousand sweeps. Proven by feeding the REAL sweep a
-   * response whose buffer decodes to the key and checking it fails, then dropping that
-   * expected failure from the ledger. A test of the test is worth writing exactly once,
-   * and this is the once.
+   * Feed the REAL sweep a buffer that decodes to the key, check it fails, then drop that
+   * expected failure from the ledger.
    * ------------------------------------------------------------------------- */
   {
     const poison = (s) => JSON.stringify({
@@ -319,12 +298,9 @@ import {
 /* =========================================================================== *
  * 10b. The Cloudflare Tunnel / Cloudflare Access path
  * =========================================================================== *
- * The gateway is expected to sit behind a Cloudflare Tunnel. A plain public tunnel
- * hostname is just a base URL and needs nothing. But a tunnel protected by Cloudflare
- * Access answers an unauthenticated server-side fetch with an HTML LOGIN PAGE AT STATUS
- * 200 — the worst possible failure shape, because it looks exactly like a broken gateway.
- * So: a service token can be configured, half a token is a refusal, and a non-JSON reply
- * gets its own reason.
+ * A tunnel behind Cloudflare Access answers an unauthenticated server fetch with an HTML
+ * LOGIN PAGE AT STATUS 200 — indistinguishable from a broken gateway. So a service token
+ * can be configured, half a token is a refusal, and a non-JSON reply has its own reason.
  */
 {
   const ID = "abcdef0123456789.access";
