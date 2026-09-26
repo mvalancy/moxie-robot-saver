@@ -548,10 +548,15 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
 
 ## [`edge/`](edge/README.md) — the Pages Functions suites' sections
 
-`sim/test_demo_proxy.mjs` and `sim/test_turnstile.mjs` are thin entry points (CI and the
-mutation checkers invoke them by those names); their sections live in
-`edge/demo_proxy/` and `edge/turnstile/`, with the harness they share in `edge/common.mjs`.
+`sim/test_demo_proxy.mjs`, `test_turnstile.mjs`, `test_mode.mjs`, `test_demo_ears.mjs`,
+`test_cloud_transport.mjs`, `test_fallback_coverage.mjs` and `helpers_shared_ceilings.mjs` are
+thin entry points (CI and the mutation checkers invoke them by those names); their sections
+live under `edge/<suite>/`, with the harness they share in `edge/common.mjs`.
 They are `.mjs`, so pytest never collects them.
+
+## [`hosted_mic/`](hosted_mic/README.md) — `sim/check_hosted_mic.mjs`'s modules
+
+The scorer and the browser probe behind `node sim/check_hosted_mic.mjs` (`--selftest` in CI).
 
 ## Two rules that keep this suite hermetic and green
 
