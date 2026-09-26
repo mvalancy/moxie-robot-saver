@@ -17,7 +17,7 @@ import {
 {
   const vocab = wire.expressiveVocab();
   eq(vocab.moods.length, 11, "the prompt offers all ELEVEN ePlaybackMood faces…");
-  eq(vocab.gestures.length, 10, "…and the ten gesture names bridge.js implements");
+  eq(vocab.gestures.length, 10, "…and the ten gesture names bridge/ implements");
   ok(vocab.moods.includes("angry") && vocab.moods.includes("shy") &&
      vocab.moods.includes("embarrassed"),
      "…including the ones the regex floor can never pick");
@@ -76,7 +76,7 @@ import {
   }
 
   // ---- 3. a bad mood or gesture NAME is dropped, not passed through ---------- //
-  // `bridge.js` would silently do nothing with an unknown gesture, which reads as a broken
+  // `bridge/` would silently do nothing with an unknown gesture, which reads as a broken
   // robot rather than an absent one. Each field validates independently, so a good mood
   // beside a nonsense gesture keeps the mood.
   {

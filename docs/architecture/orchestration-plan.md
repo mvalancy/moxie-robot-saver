@@ -70,7 +70,7 @@ integration:  push feat branch → PR into dev (fast CI) → merge → milestone
   `piper-tts faster-whisper` only for local-voice work (≈2 GB).
   `sim/tests/test_ci_workflows.py::test_the_agent_brief_protocol_points_at_the_declared_test_list`
   fails if this bullet drifts back into a list.
-- **Quality gates:** a test for every feature; hermetic suite green (`python -m pytest sim/tests -q -k "not test_sil and not test_docs" --ignore=sim/tests/test_live_gateway.py`); doc guards (`build_docs_bundle` + `check-doc-links` + `check-doc-consistency` + `node sim/test_docs.mjs`); SIL smoke on a **free** port when the runtime changed (`MOXIE_SIL_PORT=19xx bash sim/run_smoke.sh`); never kill processes you didn't start.
+- **Quality gates:** a test for every feature; hermetic suite green (`python -m pytest sim/tests -q -k "not test_sil and not test_docs and not test_live" --ignore=sim/tests/test_live_gateway.py` — `not test_live` keeps a visible key from spending gateway money); doc guards (`build_docs_bundle` + `check-doc-links` + `check-doc-consistency` + `node sim/test_docs.mjs`); SIL smoke on a **free** port when the runtime changed (`MOXIE_SIL_PORT=19xx bash sim/run_smoke.sh`); never kill processes you didn't start.
 - **Report:** branch, commits, what shipped, tests/counts, guard + smoke results, live observations, honest gaps — under 400 words.
 
 **Integration rules (orchestrator):** review the diff before pushing; one PR per slice into `dev`; merge only

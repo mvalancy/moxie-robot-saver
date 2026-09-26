@@ -95,33 +95,18 @@ def test_live_turn_through_the_runtime():
     assert msgs[-1]["output"]["text"].strip(), "empty reply from the live gateway turn"
 
 
-#: The variables this file has to set to assemble a production-shaped appliance — and
-#: therefore the ones it has to put back. Every one of them is an ENGINE SELECTOR that a
-#: later `importlib.reload(config)` reads straight out of `os.environ`:
-#:
-#:   * `MOXIE_STT=off` **pins** the listening engine (`voice_settings.ENV_PIN`), and
-#:   * `MOXIE_APP=content` **pins** the brain since PR #88 (`brains.pin_for_env`).
-#:
-#: Leaving either behind is invisible in CI (no `mqtt/.env`, so every live file skips)
-#: and invisible when this file runs alone — it only bites the NEXT live suite in the
-#: same session, which reloads `config` and reads what we left. That is exactly what it
-#: did: `test_live_voice_picker.py` reported 3 failures inside a full run and 0 in
-#: isolation for a day, because this test left `MOXIE_STT=off` in the process. See
-#: docs/architecture/implementation-plan.md, Known gaps.
+#: What this file sets to assemble a production-shaped appliance, and so must put back:
+#: both are ENGINE SELECTORS a later `importlib.reload(config)` reads — `MOXIE_STT=off`
+#: pins the ears, `MOXIE_APP=content` pins the brain. A leak only bites the NEXT live suite
+#: in a credentialed full run (see `test_env_hygiene_live_suites.py`).
 _ASSEMBLY_ENV = {"MOXIE_APP": "content", "MOXIE_STT": "off"}
 
 
 @contextlib.contextmanager
 def _assembly_env():
-    """`_ASSEMBLY_ENV` for the duration, and the process left exactly as we found it.
-
-    `monkeypatch` cannot do this job here: the values have to survive an
-    `importlib.reload(config)` *inside* the test, and the restore has to happen even when
-    the body raises — which is what a context manager gives and a bare assignment does
-    not. The sibling live suites (`test_live_gateway_tts._config`,
-    `test_live_gateway_stt._config`) already save-and-restore this way; this file was the
-    one that did not.
-    """
+    """`_ASSEMBLY_ENV` for the duration, and the process left exactly as we found it —
+    even when the body raises. Not `monkeypatch`: the values must survive an
+    `importlib.reload(config)` inside the test."""
     keep = {k: os.environ.get(k) for k in _ASSEMBLY_ENV}
     os.environ.update(_ASSEMBLY_ENV)
     try:

@@ -1,6 +1,6 @@
 """
 S1–S8 — the supervisor stops dying when the broker is late, and stops lying when the
-socket is dead (`production-hardening.md` §4, §6). The defects fenced:
+socket is dead. The defects fenced:
 
 1. `_on_connect` ignored `rc`, logging "broker connected" for a CONNACK refusal and then
    subscribing into a closing socket (S4).
@@ -9,8 +9,8 @@ socket is dead (`production-hardening.md` §4, §6). The defects fenced:
 3. `connect_async` alone is a no-op under `loop_forever()`: paho re-raises the first
    `OSError` unless `retry_first_connection=True` (S6 fails on a half-done fix too).
 
-Hermetic: no broker, one refused loopback connection, no wall clock. S5 reads paho's own
-`_reconnect_wait` ladder with the client parked so its sleep is skipped.
+Hermetic: no broker, one refused loopback connection, no wall clock. Test ids (`s1`…
+`s8`) are `-k` selectors in `sim/tools/hardening_mutation_check.py` — keep them.
 """
 from __future__ import annotations
 
@@ -42,8 +42,7 @@ class EchoApp(MoxieApp):
 
 
 class GateApp(MoxieApp):
-    """An app that parks inside `respond` until a test lets it out — how a turn is held
-    open across a disconnect without anybody sleeping."""
+    """Parks inside `respond` until released: a turn held open across a disconnect."""
     name = "test-gate"
 
     def __init__(self):
@@ -57,12 +56,12 @@ class GateApp(MoxieApp):
 
 
 # --------------------------------------------------------------------------- #
-# S1 — nothing claims a publish succeeded when the socket was down (C5)
+# S1 — nothing claims a publish succeeded when the socket was down
 # --------------------------------------------------------------------------- #
 
 def test_s1_a_publish_during_a_drop_is_not_ok_and_is_recorded(tmp_path):
-    """S1 — every `publish()` while the broker is away reports failure and leaves a record:
-    at QoS 0 paho returns `MQTT_ERR_NO_CONN` and does not queue (A3)."""
+    """S1 — at QoS 0 paho does not queue, so a publish while the broker is away must report
+    failure and leave a record."""
     rt, device_id = make_runtime(EchoApp())
     rt.client.up()
     ok, reason = rt._publish(CHAT.format(d=device_id), {"hello": 1}, device_id=device_id)
@@ -71,8 +70,8 @@ def test_s1_a_publish_during_a_drop_is_not_ok_and_is_recorded(tmp_path):
     rt.client.drop()
     ok, reason = rt._publish(CHAT.format(d=device_id), {"hello": 2}, device_id=device_id)
     assert ok is False
-    # The exact sentence pins WHICH guard refused: the `is_connected()` pre-flight, which
-    # would otherwise be shadowed by the rc check behind it (mutation check).
+    # the exact sentence pins WHICH guard refused: the `is_connected()` pre-flight, not
+    # the rc check behind it
     assert reason == rt.NO_BROKER_REASON, reason
     assert rt.publish_drops == 1
     dropped = [n for n in rt.recent if n["kind"] == "drop"]
@@ -81,8 +80,7 @@ def test_s1_a_publish_during_a_drop_is_not_ok_and_is_recorded(tmp_path):
 
 
 def test_s1d_a_transport_that_says_it_is_connected_and_is_not(tmp_path):
-    """C5's second half: the socket dies BETWEEN `is_connected()` and the write, so the only
-    way to know is `info.rc`. Proves each of the two guards on its own."""
+    """The socket dies BETWEEN `is_connected()` and the write; only `info.rc` knows."""
     from helpers_runtime import FakeInfo, MQTT_ERR_NO_CONN
 
     class LyingClient(FakeClient):
@@ -103,7 +101,7 @@ def test_s1d_a_transport_that_says_it_is_connected_and_is_not(tmp_path):
     assert rt.publish_drops == 1
     assert [n for n in rt.recent if n["kind"] == "drop"]
 
-    # And the route on top of it stays honest — this is the wakeup button's real race.
+    # and the route on top stays honest — the wakeup button's real race
     out = rt.wake_robot(device_id)
     assert out["ok"] is False and out["published"] is False, out
     assert out["error"] == "publish failed", out
@@ -111,9 +109,7 @@ def test_s1d_a_transport_that_says_it_is_connected_and_is_not(tmp_path):
 
 
 def test_s1e_a_transport_that_raises_is_a_drop_not_a_crash():
-    """A transport that throws (a closed socket object, a broken pipe) must not take the
-    turn down with it. The reply is lost either way; the difference is whether the
-    supervisor knows."""
+    """A throwing transport loses the reply either way; the supervisor must still know."""
     class ThrowingClient(FakeClient):
         def publish(self, topic, payload):
             raise OSError("Broken pipe")
@@ -126,10 +122,8 @@ def test_s1e_a_transport_that_raises_is_a_drop_not_a_crash():
 
 
 def test_s1b_the_wakeup_route_refuses_instead_of_claiming_success(tmp_path):
-    """S1 — `wake_robot` must not report `published: true` into a dead socket. The command
-    has no acknowledgement, so `published` is the only true thing the route can say; a
-    refusal carries a reason a parent can act on.
-    """
+    """S1 — the command has no acknowledgement, so `published` is the only true claim;
+    into a dead socket it must be a refusal with a reason a parent can act on."""
     rt, device_id = make_runtime(EchoApp())
     rt.client.up()
     out = rt.wake_robot(device_id)
@@ -143,15 +137,14 @@ def test_s1b_the_wakeup_route_refuses_instead_of_claiming_success(tmp_path):
     assert out["published"] is False, "reported a publish into a dead socket"
     assert out.get("acknowledged") is not True
     assert out["reason"] == rt.NO_BROKER_REASON, out
-    # `error` names the guard: the route must refuse on the connection before it writes,
-    # not rely on `_publish` refusing a moment later (mutation check).
+    # `error` names the guard: refuse on the connection before writing
     assert out["error"] == "no broker connection", out
     assert len(rt.client.on(WAKEUP.format(d=device_id))) == 1, "it published anyway"
 
 
 def test_s1c_every_publish_call_site_goes_through_the_helper():
-    """The eight §4.1 C5 publish sites, asserted over the runtime source: every
-    `client.publish` goes through `_publish`. Comment lines are ignored."""
+    """Every `client.publish` in the runtime source goes through `_publish` (AST, so
+    comments are ignored)."""
     import ast
     from helpers_runtime import runtime_sources
     trees = [ast.parse(src) for src in runtime_sources().values()]
@@ -174,26 +167,23 @@ def test_s1c_every_publish_call_site_goes_through_the_helper():
     stragglers = sorted(ln for k, ln in everywhere.items() if k not in inside)
     assert stragglers == [], (
         f"publish() call sites at lines {stragglers} still bypass `_publish()` and "
-        f"ignore their return code — the bug PR #55 shipped to kill, in the places it "
-        f"did not look")
+        f"ignore their return code")
 
     routed = [c for tree in trees for c in ast.walk(tree)
               if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
               and c.func.attr == "_publish"
               and isinstance(c.func.value, ast.Name) and c.func.value.id == "self"]
-    assert len(routed) >= 8, f"only {len(routed)} sites go through the helper; §4.1 C5 lists 8"
+    assert len(routed) >= 8, f"only {len(routed)} sites go through the helper; expected >= 8"
 
 
 # --------------------------------------------------------------------------- #
-# S2 — a turn that spanned a drop is never spoken afterwards (§4.2)
+# S2 — a turn that spanned a drop is never spoken afterwards
 # --------------------------------------------------------------------------- #
 
 def test_s2_a_turn_started_before_a_drop_never_publishes_after_the_reconnect():
-    """S2 — a turn spanning a drop is abandoned (marked stale), never replayed: a late chunk
-    would answer a question the child gave up on after the robot re-prompted with a new
-    `event_id`. The client comes back UP before the worker is released, so merely dropping
-    the publish would not pass.
-    """
+    """S2 — a turn spanning a drop is abandoned, never replayed: a late chunk would answer
+    a question the child gave up on. The client is UP again before the worker is
+    released, so merely dropping the publish would not pass."""
     app = GateApp()
     rt, device_id = make_runtime(app)
     rt.brain_budget_s = 0          # no filler: this test is about the ANSWER, not latency
@@ -217,9 +207,8 @@ def test_s2_a_turn_started_before_a_drop_never_publishes_after_the_reconnect():
 
 
 def test_s8_a_drop_bumps_the_turn_sequence_for_every_known_robot():
-    """S8 — every robot's `_turn_seq` is bumped on disconnect. `on_disconnect` runs on the
-    network loop, the documented single writer of `_turn_seq`, so this adds no race; both
-    halves are pinned."""
+    """S8 — every robot's `_turn_seq` is bumped on disconnect, from the network loop (the
+    single writer of `_turn_seq`), so this adds no race."""
     rt, device_id = make_runtime(EchoApp())
     for extra in ("d_two", "d_three"):
         rt.robots[extra] = RobotContext(device_id=extra, child=rt.child)
@@ -238,7 +227,7 @@ def test_s8_a_drop_bumps_the_turn_sequence_for_every_known_robot():
 
 
 # --------------------------------------------------------------------------- #
-# S3/S4 — CONNACK honesty (C3, C4)
+# S3/S4 — CONNACK honesty
 # --------------------------------------------------------------------------- #
 
 def test_s3_subscriptions_are_installed_once_per_successful_reconnect():
@@ -262,10 +251,9 @@ def test_s3_subscriptions_are_installed_once_per_successful_reconnect():
 
 
 def test_s4_a_connack_refusal_subscribes_nothing_and_says_what_happened(capsys):
-    """S4 — no "broker connected" line for a refused CONNACK (e.g. `rc=5`, not authorised,
-    reachable since the supervisor has broker credentials). Behaviour ported from Fork A's
-    `moxie_server.py`:206-215 (MIT, © Justin Beghtol — behaviour only, no code).
-    """
+    """S4 — no "broker connected" line for a refused CONNACK (e.g. `rc=5`, not authorised).
+    Behaviour ported from Fork A's `moxie_server.py` (MIT, © Justin Beghtol — behaviour
+    only, no code)."""
     rt, _device_id = make_runtime(EchoApp())
     rt.client.refuse(rc=5)
 
@@ -286,9 +274,7 @@ def test_s4_a_connack_refusal_subscribes_nothing_and_says_what_happened(capsys):
 
 
 def test_s4b_the_status_endpoint_reports_the_connection_it_really_has():
-    """C4 + file 8 of §8: `broker_connected`, `last_broker_connect`,
-    `last_broker_disconnect`, `last_connect_error` on `/status`, so the console's existing
-    connection monitor renders them with **no console change**."""
+    """`/status` carries the live connection scalars the console's monitor renders."""
     rt, _device_id = make_runtime(EchoApp())
     base = status_server(rt)
 
@@ -309,23 +295,18 @@ def test_s4b_the_status_endpoint_reports_the_connection_it_really_has():
 
 
 def test_s4c_a_failed_connect_attempt_is_visible(capsys):
-    """`on_connect_fail` — the socket never opened at all (broker down, DNS gone), which
-    is a different event from a CONNACK refusal and from a disconnect. Without it the
-    retry loop C1 adds is invisible, and *"it is just sitting there"* is the bug report."""
+    """The socket never opened (broker down, DNS gone) — neither a refusal nor a
+    disconnect. Without it the retry loop is invisible: "it is just sitting there"."""
     rt, _device_id = make_runtime(EchoApp())
     rt._on_connect_fail(rt.client, None)
     assert rt.broker_connected is False
     assert rt.last_connect_error
     assert any(n["kind"] == "error" for n in rt.recent), list(rt.recent)
-    # ...on **stdout** as well, not only in `recent`. Found live: a real supervisor
-    # started before a real broker retried four times, recorded all four, and printed
-    # nothing — so `docker logs` showed a process that said "connecting to broker" and
-    # then went quiet, which reads exactly like the hang this change removes.
+    # ...on stdout too, or `docker logs` shows a process that went quiet — like a hang
     assert "retrying" in capsys.readouterr().out
 
-    # ...and it is actually installed on the real client. A callback nothing calls is the
-    # same silence it was written to remove, and neither this test nor S6 would notice —
-    # S6 installs its own counter on top. (Hole found by hardening_mutation_check.py.)
+    # ...and actually installed on the real client (S6 installs its own counter on top,
+    # so it would not notice a callback nothing calls)
     fresh = moxie_runtime.MoxieRuntime(app=EchoApp())
     client = fresh._build_client()
     assert client.on_connect_fail == fresh._on_connect_fail
@@ -334,21 +315,19 @@ def test_s4c_a_failed_connect_attempt_is_visible(capsys):
 
 
 # --------------------------------------------------------------------------- #
-# S5/S6 — the connect itself (C1, C2)
+# S5/S6 — the connect itself
 # --------------------------------------------------------------------------- #
 
 def test_s5_the_reconnect_delay_ladder_is_1_2_4_capped_at_60():
-    """S5 — `reconnect_delay_set(min_delay=1, max_delay=60)`: 60 s bounds a router reboot's
-    silence without hammering a long-dead broker (chosen, not measured — A14). Read from
-    paho's own `_reconnect_wait` with the client parked in `DISCONNECTED`, no clock.
-    """
+    """S5 — 60 s bounds a router reboot's silence without hammering a dead broker (chosen,
+    not measured). Read from paho's own `_reconnect_wait`, client parked, no clock."""
     import paho.mqtt.client as mqtt
     rt = moxie_runtime.MoxieRuntime(app=EchoApp())
     client = rt._build_client()
     assert client._reconnect_min_delay == 1
     assert client._reconnect_max_delay == 60, (
         f"the reconnect ceiling is {client._reconnect_max_delay}s — paho's default is 120 "
-        f"and C1 chose 60")
+        f"and we chose 60")
 
     client._state = mqtt._ConnectionState.MQTT_CS_DISCONNECTED    # skip the sleep
     ladder = []
@@ -360,19 +339,17 @@ def test_s5_the_reconnect_delay_ladder_is_1_2_4_capped_at_60():
 
 
 def test_s2b_the_keepalive_is_thirty_and_is_a_choice():
-    """C2 — `connect()`'s third argument is the keepalive, not a timeout (A1). 30 s halves
-    worst-case detection of a half-open socket (NAT/Wi-Fi drop) vs paho's 60."""
+    """`connect()`'s third argument is the keepalive, not a timeout; 30 s halves the
+    worst-case detection of a half-open socket vs paho's 60."""
     assert moxie_runtime.KEEPALIVE_S == 30
     from helpers_runtime import runtime_source
     assert "self.client.connect(self.host, self.port, 30)" not in runtime_source()
 
 
 def test_s6_a_supervisor_started_with_no_broker_retries_instead_of_dying():
-    """S6 — catches `connect_async` without `retry_first_connection`: `loop_forever()`
-    re-raises the first `OSError` otherwise (A2; `loop_start()` passes the flag, which is
-    why the fork's version works). Runs the real `run()` against a dead port and requires a
-    SECOND attempt — one is what a dying blocking `connect()` does.
-    """
+    """S6 — without `retry_first_connection`, `loop_forever()` re-raises the first
+    `OSError`. Runs the real `run()` against a dead port and requires a SECOND attempt —
+    one is what a dying blocking `connect()` does."""
     dead = free_port()                       # bound, read, and released — nothing listens
     with socket.socket() as probe:
         probe.settimeout(2)
@@ -397,7 +374,7 @@ def test_s6_a_supervisor_started_with_no_broker_retries_instead_of_dying():
         assert attempts.acquire(timeout=30), "the supervisor never even tried to connect"
         assert attempts.acquire(timeout=30), (
             "the supervisor tried exactly once and then stopped: `connect_async` without "
-            "`retry_first_connection=True` is a no-op under loop_forever() (A2)")
+            "`retry_first_connection=True` is a no-op under loop_forever()")
         assert thread.is_alive(), f"run() died instead of retrying: {crashed}"
     finally:
         rt.client._thread_terminate = True
@@ -414,15 +391,13 @@ def _run_and_capture(rt, status_port):
 
 
 # --------------------------------------------------------------------------- #
-# S7 — the two ingress paths, made symmetric (C6)
+# S7 — the two ingress paths, made symmetric
 # --------------------------------------------------------------------------- #
 
 def test_s7_an_event_from_an_unregistered_device_registers_it_and_pushes_config():
-    """S7 — after a supervisor restart the broker log has nothing to replay (A15) and the
-    robot sends `/state` only on ITS connect, so `_on_event` must register an unknown
-    robot (config push, `app.on_connect`, presence, `/status`) rather than answer it with
-    an ephemeral context.
-    """
+    """S7 — after a restart the broker log replays nothing and `/state` comes only on the
+    robot's connect, so `_on_event` must fully register an unknown robot, not answer it
+    from an ephemeral context."""
     rt, _known = make_runtime(EchoApp(), allow_unverified_bots=True)
     rt.client = LatchClient()
     rt.client.runtime = rt
@@ -445,8 +420,7 @@ def test_s7_an_event_from_an_unregistered_device_registers_it_and_pushes_config(
 
 
 def test_s7b_the_two_ingress_paths_agree():
-    """The point of C6 is *symmetry*: `_on_state` and `_on_event` must reach the same
-    registration. Asserted as behaviour on both paths rather than as a shape."""
+    """`_on_state` and `_on_event` must reach the same registration."""
     rt, _known = make_runtime(EchoApp())
     rt.client.up()
     rt._on_state("d_via_state", b"{}")
@@ -458,9 +432,8 @@ def test_s7b_the_two_ingress_paths_agree():
 
 
 def test_s7c_an_unpermitted_stranger_is_still_refused():
-    """C6 must not become a way past the pairing gate. Registration makes a robot
-    **visible as pending**; it does not let it in. The gate lives on the transport boundary
-    (`_on_message`), so this asserts the gate is still the thing that decides."""
+    """Registration makes a robot visible as pending, never a way past the pairing gate on
+    the transport boundary (`_on_message`)."""
     rt = moxie_runtime.MoxieRuntime(app=EchoApp())           # default: closed policy
     rt.client = FakeClient()
     rt.client.runtime = rt

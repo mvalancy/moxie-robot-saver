@@ -1,7 +1,8 @@
 /* browser_harness.mjs — shared plumbing for the headless-browser suites.
  *
  * NOT a test (`sim/tests/test_ci_test_coverage.py` enumerates only `test_*.mjs`). One copy
- * of puppeteer/Chrome discovery, the static server, and the console-error "eyes".
+ * of puppeteer/Chrome discovery, the static server, the console-error "eyes", and the
+ * hosted-page instruments shared by the deployed-site checkers and hosted-page suites.
  *
  * Its own static server rather than `sim/serve.py`: `serveWeb({ headers: true })` sends the
  * REAL `sim/web/_headers` `/*` block, so suites test the CSP we ship (only Cloudflare Pages
@@ -107,7 +108,11 @@ const MIME = {
   ".mp3": "audio/mpeg",
   ".wav": "audio/wav",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".ico": "image/x-icon",
   ".svg": "image/svg+xml",
+  ".webmanifest": "application/manifest+json",
+  ".map": "application/json",
   ".woff2": "font/woff2",
   ".glb": "model/gltf-binary",
 };
@@ -173,7 +178,11 @@ async function freePort() {
  * `/sim.html` the way Cloudflare's `_redirects` does.
  *
  * @param {string} dir absolute path of the directory to serve
- * @param {{headers?: Record<string,string>, extIsHtml?: boolean}} [opts]
+ * `handle(req, res)` runs first and returns true when it answered the request itself (e.g.
+ * real Pages Functions mounted on `/api/*` beside the static bundle).
+ *
+ * @param {{headers?: Record<string,string>, extIsHtml?: boolean,
+ *          handle?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<boolean>|boolean}} [opts]
  * @returns {Promise<{port:number, url:string, close:()=>void, hits:string[]}>}
  */
 export async function serveStatic(dir, opts = {}) {
@@ -181,7 +190,8 @@ export async function serveStatic(dir, opts = {}) {
   const extra = opts.headers || {};
   const extIsHtml = opts.extIsHtml !== false;
   const hits = [];
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
+    if (opts.handle && await opts.handle(req, res)) return;
     let p = decodeURIComponent((req.url || "/").split("?")[0]);
     hits.push(p);
     if (p.endsWith("/")) p += "index.html";
@@ -238,14 +248,16 @@ export const REFUSED_NOISE =
  * @param {{n?:number, refused?:number}} [aborted]
  *   `n` requests this fixture aborted at the network layer; `refused` requests it
  *   answered with an error status on purpose (or knowingly let 404 at the static server).
+ * @param {{abortedRe?:RegExp, refusedRe?:RegExp}} [patterns] a suite that knows exactly
+ *   which noise it provokes passes the narrow pattern, so a DIFFERENT failure is not forgiven.
  * @returns {string[]} the ones nobody asked for.
  */
-export function notable(errs, aborted) {
+export function notable(errs, aborted, { abortedRe = ABORTED_NOISE, refusedRe = REFUSED_NOISE } = {}) {
   let budget = aborted ? (aborted.n || 0) : 0;
   let refused = aborted ? (aborted.refused || 0) : 0;
   return errs.filter((e) => {
-    if (budget > 0 && ABORTED_NOISE.test(e)) { budget--; return false; }
-    if (refused > 0 && REFUSED_NOISE.test(e)) { refused--; return false; }
+    if (budget > 0 && abortedRe.test(e)) { budget--; return false; }
+    if (refused > 0 && refusedRe.test(e)) { refused--; return false; }
     return true;
   });
 }
@@ -324,4 +336,164 @@ export function pcmToneBase64({ seconds = 0.25, rate = 22050, freq = 440, amp = 
   for (let i = 0; i < n; i++)
     buf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * freq * i) / rate) * amp * 32767), i * 2);
   return { base64: buf.toString("base64"), rate, frames: n, amp };
+}
+
+/* ---- the hosted page: shared by check_deployed, check_hosted_mic, test_mic_spend -------- */
+
+/** The phone the composer defects were measured on (iPhone 12-14 class) and a real iOS UA —
+ *  `env.js` and Cloudflare's beacon injection both read the UA, and `HeadlessChrome` is not a phone. */
+export const PHONE = { width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 3 };
+export const IOS_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 " +
+  "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+
+/** Routes that cost money on a live deployment. `/api/health` is deliberately absent: it
+ *  makes no gateway call, and it is what tells the page it is live at all. */
+export const SPENDING = /\/api\/(chat|speech|transcriptions|transcribe)\b/;
+
+/**
+ * The site's own origin, read from `<link rel="canonical">` in `sim/web/index.html` rather
+ * than typed here (`test_no_deployment_defaults.py`: no deployment hostname as a default).
+ * A fork that re-points that line re-points every tool with it.
+ */
+export function canonicalOrigin() {
+  const html = readFileSync(join(web, "index.html"), "utf8");
+  const m = html.match(/<link\s+rel=["']canonical["']\s+href=["']([^"']+)["']/i);
+  if (!m) return null;
+  try { return new URL(m[1]).origin; } catch { return null; }
+}
+
+/** The URL a deployed-site check aims at: argv, then `MOXIE_DEPLOYED_URL`, then the canonical
+ *  `/sim`. No target is a FAILURE, never a silent exit(0). */
+export function deployedTarget(cliUrl, label) {
+  const origin = canonicalOrigin();
+  const target = cliUrl || process.env.MOXIE_DEPLOYED_URL || (origin ? origin + "/sim" : null);
+  if (!target) {
+    console.error(`❌ ${label}: no target. Pass a URL, set MOXIE_DEPLOYED_URL, or restore the ` +
+                  `<link rel="canonical"> in sim/web/index.html.`);
+    process.exit(1);
+  }
+  return target;
+}
+
+/** PAGE-SIDE (pass to `evaluateOnNewDocument`): record every `securitypolicyviolation`
+ *  EVENT into `window.__csp` — the event fires even for refusals that log nothing. */
+export function recordCspViolations() {
+  window.__csp = [];
+  document.addEventListener("securitypolicyviolation", (e) => {
+    window.__csp.push({ directive: e.effectiveDirective || e.violatedDirective,
+                        blocked: e.blockedURI, sample: (e.sample || "").slice(0, 80) });
+  });
+}
+
+/**
+ * PAGE-SIDE (pass to `evaluateOnNewDocument`): instrument Web Audio where sound is MADE.
+ * Every scheduled buffer lands in `window.__audio.plays` with its peak, and with the byte
+ * length of the file `decodeAudioData` built it from — so `bytes == null` is a buffer built
+ * by hand from gateway PCM (her live voice), and `bytes` names a pre-rendered clip.
+ */
+export function instrumentWebAudio() {
+  window.__audio = { created: 0, decoded: 0, started: 0, peak: 0, rate: 0, frames: 0, plays: [] };
+  const C = window.AudioContext || window.webkitAudioContext;
+  if (!C) return;
+  const src = new WeakMap();                 // AudioBuffer -> bytes of the file it decoded from
+  const cb = C.prototype.createBuffer;
+  C.prototype.createBuffer = function (...a) { window.__audio.created++; return cb.apply(this, a); };
+  const da = C.prototype.decodeAudioData;
+  C.prototype.decodeAudioData = function (...a) {
+    window.__audio.decoded++;
+    const bytes = a[0] && a[0].byteLength;   // read BEFORE decode detaches it
+    const p = da.apply(this, a);
+    return p && p.then ? p.then((b) => { try { src.set(b, bytes); } catch (e) {} return b; }) : p;
+  };
+  const cbs = C.prototype.createBufferSource;
+  C.prototype.createBufferSource = function () {
+    const node = cbs.call(this);
+    const start = node.start.bind(node);
+    node.start = function (...a) {
+      const b = node.buffer;
+      if (b) {
+        const A = window.__audio;
+        A.started++; A.rate = b.sampleRate; A.frames = b.length;
+        const d = b.getChannelData(0);
+        let p = 0;
+        for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > p) p = v; }
+        if (p > A.peak) A.peak = p;
+        let bytes = null;
+        try { bytes = src.has(b) ? src.get(b) : null; } catch (e) {}
+        A.plays.push({ bytes, frames: b.length, rate: b.sampleRate, peak: p });
+      }
+      return start(...a);
+    };
+    return node;
+  };
+}
+
+/**
+ * PAGE-SIDE (pass to `page.evaluate` with a list of selectors): each element's box, and
+ * whether a tap at its centre reaches it (`self` counts a descendant: a tap on a button's
+ * `<span>` is a tap on the button). Written as a function, never an `eval()` string — the
+ * shipped CSP has no 'unsafe-eval', and a refused eval would fire the violation we watch for.
+ */
+export function measureBoxes(sels) {
+  const measure = (sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return { found: false };
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    const out = { found: true, w: Math.round(r.width), h: Math.round(r.height),
+                  top: Math.round(r.top), bottom: Math.round(r.bottom),
+                  left: Math.round(r.left), right: Math.round(r.right),
+                  display: cs.display, visibility: cs.visibility, pointerEvents: cs.pointerEvents,
+                  disabled: !!el.disabled };
+    if (r.width <= 0 || r.height <= 0) return { ...out, sized: false };
+    const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+    return { ...out, sized: true,
+             self: !!hit && (hit === el || el.contains(hit)),
+             hit: hit ? (hit.id ? "#" + hit.id : hit.tagName.toLowerCase() +
+                         (hit.className ? "." + String(hit.className).trim().split(/\s+/)[0] : "")) : "null" };
+  };
+  const out = {};
+  for (const s of sels) out[s] = measure(s);
+  return out;
+}
+
+/** The fake deployment every hosted fixture's `/api/health` is built from. */
+const FAKE_LIVE_ENV = {
+  DEMO_GATEWAY_BASE_URL: "https://gw.invalid.test/v1",
+  DEMO_GATEWAY_API_KEY: "sk-testonly-abcdefghijklmnop",
+  DEMO_CHAT_MODEL: "test-brain-model", DEMO_TTS_MODEL: "test-voice-model",
+  DEMO_STT_MODEL: "test-ears-model",
+};
+
+/**
+ * Canned `/api/*` answers for a LIVE hosted page, built by the REAL Functions so a fixture
+ * can never drift from what the routes answer: `health` (text), `limits`, and `chat` /
+ * `speech` bodies for one turn whose voice is `tone` (a `pcmToneBase64` result).
+ */
+export async function liveFixture({ eid, reply, tone, ticket = "v1.TESTTICKET.MAC" }) {
+  const health = await import(join(repo, "functions", "api", "health.js"));
+  const envelope = await import(join(repo, "functions", "api", "_lib", "envelope.js"));
+  const healthText = await (await health.onRequestGet({ env: FAKE_LIVE_ENV })).text();
+  const live = { ok: true, mode: "live", voice: true, ears: true };
+  const env = (o) => JSON.stringify(envelope.envelope({ ...live, ...o }));
+  return {
+    envelope: envelope.envelope,
+    health: healthText,
+    limits: JSON.parse(healthText).limits,
+    env,
+    chat: env({
+      messages: [{ topic: "/devices/d_sim/commands/remote_chat",
+                   payload: JSON.stringify({ command: "remote_chat", result: "SUCCESS", backend: "router",
+                     event_id: eid, output: { text: reply, markup: reply }, end_turn: false }) }],
+      speech: [{ ticket, event_id: eid, chunk_num: 0 }],
+      context: "v1.CTX.MAC",
+    }),
+    speech: env({
+      messages: [{ topic: "/devices/d_sim/commands/tts",
+                   payload: JSON.stringify({ request_source: "ROBOT_TTS_REQUEST",
+                     audio: { buffer: tone.base64, channels: 1, sample_rate: tone.rate },
+                     marks: [], event_id: eid, chunk_num: 0 }) }],
+    }),
+  };
 }

@@ -20,9 +20,12 @@ browser at all and carry the hermetic suite CI actually runs.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -q -r sim/tests/requirements.txt
-.venv/bin/python -m pytest sim/tests -q -k "not test_sil and not test_docs" \
+.venv/bin/python -m pytest sim/tests -q -k "not test_sil and not test_docs and not test_live" \
   --ignore=sim/tests/test_live_gateway.py      # the hermetic suite
 ```
+
+`not test_live` matters locally: the `test_live_*` suites skip without a key, but a key in
+`mqtt/.env` (or the environment) makes them spend real gateway money.
 
 ## The two requirements files — and why there are exactly two
 
@@ -83,8 +86,11 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   with it), and the runtime seam — one fleet edit re-pushes **every** connected robot, a
   per-robot override still wins, and the status snapshot stays JSON-safe.
 - **`test_console_roundtrip.py`** — the parent console ⇄ supervisor contract, driven
-  in-process against a status-server double whose payload keys are diffed against the
-  real runtime. Needs `fastapi` + `httpx`; skips cleanly without them (CI has neither).
+  in-process against a status-server double (`helpers_console_supervisor.py`, a REAL
+  `MoxieRuntime` behind most routes) whose hand-built payload keys are diffed against the
+  real runtime. Its per-card siblings share that double: `test_console_memory.py`,
+  `test_console_telehealth.py`, `test_console_voice.py`, `test_console_content.py`,
+  `test_console_devices.py`. Need `fastapi` + `httpx`; skip cleanly without them.
 - **`test_memory_view.py`** — the pure transform behind the console's 🧠 What Moxie
   remembers card (`moxie_server/fleet/memory.py::normalize_memory`): the runtime's namespaced
   `/memory` payload flattened into dated rows per activity, newest first, with counts —
@@ -551,10 +557,15 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
 
 ## [`edge/`](edge/README.md) — the Pages Functions suites' sections
 
-`sim/test_demo_proxy.mjs` and `sim/test_turnstile.mjs` are thin entry points (CI and the
-mutation checkers invoke them by those names); their sections live in
-`edge/demo_proxy/` and `edge/turnstile/`, with the harness they share in `edge/common.mjs`.
+`sim/test_demo_proxy.mjs`, `test_turnstile.mjs`, `test_mode.mjs`, `test_demo_ears.mjs`,
+`test_cloud_transport.mjs`, `test_fallback_coverage.mjs` and `helpers_shared_ceilings.mjs` are
+thin entry points (CI and the mutation checkers invoke them by those names); their sections
+live under `edge/<suite>/`, with the harness they share in `edge/common.mjs`.
 They are `.mjs`, so pytest never collects them.
+
+## [`hosted_mic/`](hosted_mic/README.md) — `sim/check_hosted_mic.mjs`'s modules
+
+The scorer and the browser probe behind `node sim/check_hosted_mic.mjs` (`--selftest` in CI).
 
 ## Two rules that keep this suite hermetic and green
 
@@ -564,7 +575,7 @@ the *code under test*, not of the assertions:
 - **Never assert on a live animation; assert on what the page recorded.** The mouth is
   driven by the audio envelope for the ~1 s an utterance lasts, so a test that samples
   `getMouthOpen()` has to catch it mid-open and loses that race on a loaded runner.
-  `audio.js` therefore remembers the loudest frame of each cloud-TTS utterance and keeps
+  `voice/` therefore remembers the loudest frame of each cloud-TTS utterance and keeps
   it after playback ends — `moxieAudio.lastMouthPeak()` — so the assertion happens once
   the utterance is *over*. It is 0 when no PCM rendered and ~1.0 when it did, so it still
   fails loudly if the Web Audio graph breaks. Same idea as reading the whole speaking

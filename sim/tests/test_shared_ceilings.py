@@ -1,18 +1,10 @@
 """The shared per-IP HOUR/DAY windows and the unit budget's DAY ceiling, run by pytest.
 
-WHAT THIS FILE IS. A wrapper. Every assertion lives in
-`sim/tests/helpers_shared_ceilings.mjs`, because the code under test
-(`functions/api/_lib/limits.js`) is JavaScript and the only honest way to test a Cache API
-tier is to drive the real module with a real injected store. This file's whole job is to
-make `pytest sim/tests` run that suite and to report a failure per SECTION rather than as
-one opaque non-zero exit.
-
-WHY A WRAPPER AND NOT A `sim/test_*.mjs`. `test_ci_test_coverage.py` requires a CI tier to
-name every `sim/test_*.mjs`, while `pytest sim/tests` collects a new Python file with no
-wiring at all — so a wrapper cannot go silently unrun. The rest of this tier's proof is in
-`sim/tests/edge/demo_proxy/` (run by `sim/test_demo_proxy.mjs`).
-
-THE SECTIONS, and each is a claim the slice would otherwise only be asserting:
+A wrapper: every assertion lives in `sim/tests/helpers_shared_ceilings.mjs`, because the
+code under test (`functions/api/_lib/limits.js`) is JavaScript and a Cache API tier is only
+honestly tested by driving the real module with a real injected store. This file makes
+`pytest sim/tests` run that suite (a new Python file cannot go silently unrun, unlike a
+`sim/test_*.mjs` that a CI tier must name) and reports one failure per SECTION:
 
   A  the fallback — with no store, `admit()` is the function it was before the tier
   B  the per-IP HOUR really binds across isolates
@@ -28,9 +20,8 @@ THE SECTIONS, and each is a claim the slice would otherwise only be asserting:
   J  an uncapped ceiling costs nothing at all
   K  which direction each refusal errs in, including the inherited overcount it does NOT fix
 
-NO CREDENTIALS, NO NETWORK, NO BROWSER. The suite injects a fake store and never calls
-`fetch`; the gateway key it builds a config with is `sk-testonly-…`, which exists only
-inside that file.
+No credentials, network or browser: the suite injects a fake store and never calls
+`fetch`; its gateway key `sk-testonly-…` exists only inside that file.
 """
 from __future__ import annotations
 
@@ -51,12 +42,9 @@ NODE = "node"
 #: failure, and a section the suite grew that nobody listed is a failure too. A green
 #: number that quietly got smaller is exactly how a proof rots.
 #:
-#: F, G, H and J were raised to their exact counts on 2026-09-06, which is a stronger claim
-#: than the slack the others carry and is deliberate: five assertions added that day are the
-#: ONLY thing that reddens for `sim/tools/unit_budget_mutation_check.py` rows W5, W6, W8, D2
-#: and D11. Delete one and that row stops failing for the reason it claims — it starts reporting
-#: WRONG CHECK, or worse, keeps saying "caught" because some unrelated assertion happened to
-#: redden. A floor is the cheapest guard against a proof being quietly unhooked from its row.
+#: F, G, H and J are pinned to their EXACT counts deliberately: specific assertions there
+#: are the only thing that reddens for `unit_budget_mutation_check.py` rows W5, W6, W8, D2
+#: and D11, and deleting one would unhook a row's proof while it kept saying "caught".
 SECTIONS = {
     "A": (10, "the fallback: with no store, admit() is the function it was before the tier"),
     "B": (10, "the per-IP HOUR binds across isolates"),

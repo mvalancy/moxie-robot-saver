@@ -129,11 +129,9 @@ import {
 /* =========================================================================== *
  * 11. THE EARS — `/api/transcribe`, the OTHER route that spends money
  * =========================================================================== *
- * The ears are the MORE expensive half. Unguarded, a plain `curl` with a forged origin and
- * a 16 kHz RIFF body reached the paid gateway (one upstream call, zero siteverify calls),
- * bounded only by per-IP windows with no daily cap: 15 minutes of billable STT per hour
- * per address. Every property §3, §6 and §7 prove for chat is proven here, plus: A TOKEN
- * MINTED FOR ONE ROUTE IS NOT SPENDABLE ON THE OTHER.
+ * The more expensive half: unguarded, a `curl` with a forged origin and a RIFF body reaches
+ * paid STT. Every property §3, §6 and §7 prove for chat is proven here, plus: A TOKEN MINTED
+ * FOR ONE ROUTE IS NOT SPENDABLE ON THE OTHER.
  */
 {
   /* ---- the attack, refused ------------------------------------------------ */
@@ -274,12 +272,10 @@ import {
 /* =========================================================================== *
  * 12. A REFUSAL GIVES THE SHARED BUDGET BACK (and keeps the per-IP window)
  * =========================================================================== *
- * The attack: 200 tokenless POSTs to /api/chat, one per source IP. All correctly refused
- * 403 with zero gateway and siteverify calls — yet `admit()` had charged `UNITS.chat` for
- * each and the refusal kept it, so `DEMO_UNIT_BUDGET_HOUR` (600) was gone and the next
- * real visitor got 503 `budget_exhausted` (SCRIPTED) until the hour rolled: a FREE drain.
- * `slot.refundBudget()` is the fix; `_lib/limits.js::grantedSlot` argues why the budget is
- * refunded and the per-IP window is not.
+ * The attack: 200 tokenless POSTs from 200 IPs, each refused for free — but if `admit()`'s
+ * charge were kept, the hour's unit budget would drain and real visitors get
+ * `budget_exhausted`: a FREE drain. `slot.refundBudget()` gives it back; the per-IP window is
+ * kept (`_lib/limits.js::grantedSlot` argues why).
  */
 {
   const UNITS_CHAT = 3;

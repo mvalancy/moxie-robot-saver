@@ -294,7 +294,7 @@ def test_the_naming_defects_p0a_still_owns_are_pinned_here_not_fixed():
       * `ENABLE_QR = "enable_qr"` — not a verb at all; the contract arms the scanner with
         `execute` + `function_id: "eb_enable_qr"`.
 
-    Renaming a wire value is its own contract change (bridge.js `ACTION_KINDS` agrees with
+    Renaming a wire value is its own contract change (bridge/actions.js `ACTION_KINDS` agrees with
     us; `test_sim_client_parity.py` holds the vocabularies equal), owned by
     qr-launch-cards.md §P0-a / §7 R3. The fix must turn this red."""
     from moxie_sdk.types import Action, ActionType

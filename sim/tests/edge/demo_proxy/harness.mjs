@@ -4,14 +4,14 @@
  */
 import { join } from "node:path";
 import {
-  repo, api, ledger, BASE, KEY, ORIGIN, post, leakSweep, jsonOf,
+  repo, api, ledger, BASE, KEY, ORIGIN, post, leakSweep, jsonOf, fakeCache,
 } from "../common.mjs";
 
 export { execFileSync } from "node:child_process";
 export { existsSync, readFileSync } from "node:fs";
 export { fileURLToPath } from "node:url";
 export { dirname, join } from "node:path";
-export { repo, BASE, KEY, ORIGIN };
+export { repo, BASE, KEY, ORIGIN, fakeCache };
 
 /** `sim/` — kept under its old name so section paths read as before. */
 export const here = join(repo, "sim");
@@ -142,3 +142,16 @@ export async function call(route, path, payload, headers, env) {
 }
 
 export const upstreamCalls = () => limits.__state().stats.upstreamCalls;
+
+/* ---- the Cache API tier (§15) ---- */
+export const cacheStats = () => limits.__state().stats.cache;
+/** One admission straight at `admit()` with a cache injected. `cache: null` is "there is
+ *  no cache here", NOT the same as omitting the key. */
+export const admitWith = (cfg, cache, ip, route, nowS) =>
+  limits.admit({
+    request: req("/api/" + (route || "chat"), { text: "x" }, { "CF-Connecting-IP": ip || "203.0.113.9" }),
+    cfg,
+    route: route || "chat",
+    cache,
+    nowS,
+  });

@@ -9,12 +9,9 @@ The repo ships the same appliance twice:
     **copies** things instead of referencing them (the broker config is inlined), and
     it repeats the supervisor's whole environment block.
 
-Copies drift. v0.6.0's promotion caught one the hard way: PR #27 closed the pairing gate
-and forwarded `MOXIE_ALLOW_UNVERIFIED_BOTS` in `docker-compose.yml`, PR #31's parent
-(#28) wrote `docker-compose.images.yml` in parallel and never got that line, and each
-branch's own smoke was green because each smoke only ran the file that branch touched.
-The prebuilt-image stack came up with `pairing_status='unpairing'` and only the deep
-tier's PR-to-main docker smokes noticed.
+Copies drift: `MOXIE_ALLOW_UNVERIFIED_BOTS` was once forwarded by `docker-compose.yml`
+only, each branch's smoke ran only the file it touched, and the prebuilt-image stack came
+up refusing to pair.
 
 Every function here takes already-parsed data and returns a list of human-readable
 problems (empty == in sync), so the guards in `test_compose.py` can be pointed at the
@@ -152,9 +149,8 @@ def broker_conf_drift(compose: dict, on_disk: str, *,
                       config_name: str = "mosquitto-conf") -> str:
     """`""` when in sync, else a unified diff (on-disk → inlined).
 
-    `config_name` selects which inlined block to compare: broker hardening
-    (security-broker-auth.md §2) added `mosquitto-acl` and `mosquitto-acl-robot` beside
-    the broker config, and all three drift the same way.
+    `config_name` selects the inlined block (`mosquitto-conf`, `mosquitto-acl`,
+    `mosquitto-acl-robot` all drift the same way).
     """
     inlined = inlined_broker_conf(compose, config_name)
     disk = _normalize_conf(on_disk)
