@@ -40,7 +40,7 @@ TESTS = ["sim/tests/test_launch_cards.py", "sim/tests/test_launch_cards_runtime.
 
 L = "mqtt/moxie_sdk/launch_cards.py"
 A = "mqtt/moxie_sdk/actions.py"
-R = "mqtt/supervisor/moxie_runtime.py"
+R_PRESENCE = "mqtt/supervisor/moxie_runtime/presence.py"
 V = "sim/virtual_moxie.py"
 
 MUTATIONS = [
@@ -95,13 +95,13 @@ MUTATIONS = [
      "            if m.group(1).lower() in KNOWN_TAGS]"),
 
     # ---- the call site ----
-    ("M12 the runtime decodes the card and then drops it on the floor", R,
+    ("M12 the runtime decodes the card and then drops it on the floor", R_PRESENCE,
      "                           actions=[card] if card is not None else None,",
      "                           actions=[],"),
-    ("M13 a refused card answers SUCCESS instead of NOREPLY_ACK", R,
+    ("M13 a refused card answers SUCCESS instead of NOREPLY_ACK", R_PRESENCE,
      "        if greeting is None and card is None:",
      "        if greeting is None and card is None and False:"),
-    ("M14 the card is decoded as if every vision event were the QR one", R,
+    ("M14 the card is decoded as if every vision event were the QR one", R_PRESENCE,
      "        card = cards_seam.decode_event(name, input_vars)",
      "        card = cards_seam.decode_event(\"eb-qr-event\", input_vars)"),
 

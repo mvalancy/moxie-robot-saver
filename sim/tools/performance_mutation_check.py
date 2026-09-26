@@ -30,7 +30,8 @@ TESTS = ["sim/tests/test_performance.py", "sim/tests/test_automarkup.py"]
 
 P = "mqtt/moxie_sdk/performance.py"
 M = "mqtt/supervisor/markup.py"
-R = "mqtt/supervisor/moxie_runtime.py"
+R_FLEET = "mqtt/supervisor/moxie_runtime/fleet.py"
+R_TURNS = "mqtt/supervisor/moxie_runtime/turns.py"
 W = "mqtt/moxie_sdk/wire.py"
 
 MUTATIONS = [
@@ -124,18 +125,18 @@ MUTATIONS = [
      '    if flat.rstrip().endswith("?"):',
      "    if False:"),
     # ---- the scored wire ------------------------------------------------------------
-    ("M27 the runtime stops scoring published turns", R,
+    ("M27 the runtime stops scoring published turns", R_TURNS,
      "        staged = perform(text, turn_key=turn_key, chunk_index=chunk_index, **hints)\n"
      "        scored = dict(staged.scored)",
      "        staged = perform(text, turn_key=turn_key, chunk_index=chunk_index, **hints)\n"
      "        scored = {}"),
-    ("M28 an app's own scored fields skip the positive list", R,
+    ("M28 an app's own scored fields skip the positive list", R_TURNS,
      "            if value and value in catalog:\n                scored[key] = value",
      "            if value:\n                scored[key] = value"),
-    ("M28b an app's own scoring is dropped instead of winning", R,
+    ("M28b an app's own scoring is dropped instead of winning", R_TURNS,
      "            value = getattr(obj, key, None)\n            if value and value in catalog:",
      "            value = None\n            if value and value in catalog:"),
-    ("M28c an out-of-range mood_intensity reaches the wire", R,
+    ("M28c an out-of-range mood_intensity reaches the wire", R_TURNS,
      "        if strength and 0 < int(strength) <= vocab_seam.MAX_INTENSITY:",
      "        if strength:"),
     ("M35 validate lets a bool through as a mood", P,
@@ -145,33 +146,35 @@ MUTATIONS = [
     # (a content pack's event subscription), so `scored=scored` is no longer the last one
     # and the old anchor stopped matching. Repaired rather than deleted — a stale row
     # proves nothing, and `sim/tests/test_mutation_tables.py` is what noticed.
-    ("M37 a publish path forgets to score (the coverage guard)", R,
+    ("M37 a publish path forgets to score (the coverage guard)", R_TURNS,
      '                           is_completed=None if chunk is None else True,\n'
      "                           scored=scored,\n",
      "                           is_completed=None if chunk is None else True,\n"),
-    ("M29 a streamed chunk publishes without its score", R,
+    ("M29 a streamed chunk publishes without its score", R_TURNS,
      "                           is_completed=None if solo else bool(final),\n"
      "                           scored=scored)",
      "                           is_completed=None if solo else bool(final))"),
-    ("M30 an authored markup line is regenerated instead of spoken verbatim", R,
+    ("M30 an authored markup line is regenerated instead of spoken verbatim", R_TURNS,
      "        return (staged.markup if markup is None else markup), scored",
      "        return staged.markup, scored"),
     ("M31 build_chat_response drops emotion/signals again", W,
      '    if emotion:\n        output["emotion"] = emotion\n    if signals:',
      "    if False:\n        output[\"emotion\"] = emotion\n    if signals:"),
     # ---- the preview hook -----------------------------------------------------------
-    ("M32 preview serves an unknown device", R,
-     '                    "reason": "Let this robot in first (Permit it in the fleet panel)."}\n'
-     '        line = str(text or "").strip()',
-     '                    "reason": "..."} if False else None\n'
-     '        line = str(text or "").strip()'),
-    ("M32b preview accepts an empty line", R,
+    ("M32 preview serves a pending device (shared _command_refusal)", R_FLEET,
+     "        if not self.is_permitted(device_id):\n"
+     '            return {"ok": False, "device_id": device_id, "published": False,\n'
+     '                    "error": "robot is pending",',
+     "        if False:\n"
+     '            return {"ok": False, "device_id": device_id, "published": False,\n'
+     '                    "error": "robot is pending",'),
+    ("M32b preview accepts an empty line", R_FLEET,
      '                    "error": "empty line", "reason": "Type a line to rehearse."}',
      '                    "error": "empty line", "reason": "..."} if False else None'),
-    ("M33 preview speaks even when nobody asked it to", R,
+    ("M33 preview speaks even when nobody asked it to", R_FLEET,
      "        if speak:\n            self._maybe_synthesize(device_id, staged.markup, event_id, chunk_num=0)",
      "        if True:\n            self._maybe_synthesize(device_id, staged.markup, event_id, chunk_num=0)"),
-    ("M34 preview skips the output-side safety classifier", R,
+    ("M34 preview skips the output-side safety classifier", R_FLEET,
      "        if verdict and verdict.action == safety_seam.BLOCK:",
      "        if False and verdict.action == safety_seam.BLOCK:"),
 ]

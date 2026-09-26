@@ -6,7 +6,7 @@
 and it exists for the same reason every one of those did: each of them found a real hole.
 
 Run it by hand after touching `moxie_sdk/store.py` or the connection region of
-`supervisor/moxie_runtime.py`:
+`supervisor/moxie_runtime/`:
 
     python3 sim/tools/hardening_mutation_check.py
 
@@ -30,7 +30,11 @@ import subprocess
 
 WT = pathlib.Path(__file__).resolve().parents[2]
 STORE = WT / "mqtt/moxie_sdk/store.py"
-RT = WT / "mqtt/supervisor/moxie_runtime.py"
+RT_CONNECTION = WT / "mqtt/supervisor/moxie_runtime/connection.py"
+RT_CONSTANTS = WT / "mqtt/supervisor/moxie_runtime/constants.py"
+RT_FLEET = WT / "mqtt/supervisor/moxie_runtime/fleet.py"
+RT_LIFECYCLE = WT / "mqtt/supervisor/moxie_runtime/lifecycle.py"
+RT_TURNS = WT / "mqtt/supervisor/moxie_runtime/turns.py"
 CFG = WT / "mqtt/config.py"
 TESTS = WT / "sim/tests/test_store_concurrency.py"
 
@@ -134,17 +138,17 @@ MUTATIONS = [
      STORE_TESTS, "t4b"),
 
     # ---- the connection --------------------------------------------------------
-    ("R2  connect_async WITHOUT retry_first_connection (the half-done fix)", RT,
+    ("R2  connect_async WITHOUT retry_first_connection (the half-done fix)", RT_LIFECYCLE,
      "        self.client.loop_forever(retry_first_connection=True)",
      "        self.client.loop_forever()", CONN_TESTS, "s6"),
-    ("S6  go back to the blocking connect()", RT,
+    ("S6  go back to the blocking connect()", RT_LIFECYCLE,
      "        self.client.connect_async(self.host, self.port, KEEPALIVE_S)",
      "        self.client.connect(self.host, self.port, KEEPALIVE_S)", CONN_TESTS, "s6"),
-    ("S4  subscribe on a CONNACK refusal anyway", RT,
+    ("S4  subscribe on a CONNACK refusal anyway", RT_CONNECTION,
      "            return                            # and subscribe to nothing",
      "            pass                              # and subscribe to nothing",
      CONN_TESTS, "s4_a_connack"),
-    ("S4  print 'broker connected' before checking rc", RT,
+    ("S4  print 'broker connected' before checking rc", RT_CONNECTION,
      "        if self._connack_failed(rc):",
      '        print(f"[runtime] broker connected rc={rc}")\n        if self._connack_failed(rc):',
      CONN_TESTS, "s4_a_connack"),
@@ -155,7 +159,7 @@ MUTATIONS = [
     # also invisible to `test_mutation_tables.py`'s captured-mutation half: it left the
     # anchor still matching at the OTHER site, so `old in src` stayed true with the
     # mutation sitting in the tree. An ambiguous anchor breaks the ratchet too.)
-    ("S4  treat every reason code as success", RT,
+    ("S4  treat every reason code as success", RT_CONNECTION,
      "        failed = getattr(rc, \"is_failure\", None)\n"
      "        if failed is not None:\n"
      "            return bool(failed)\n"
@@ -167,37 +171,37 @@ MUTATIONS = [
      "        try:\n"
      "            return int(rc) != 0",
      CONN_TESTS, "s4_a_connack"),
-    ("S5  go back to paho's 120 s reconnect ceiling", RT,
+    ("S5  go back to paho's 120 s reconnect ceiling", RT_CONSTANTS,
      "RECONNECT_MAX_DELAY_S = 60", "RECONNECT_MAX_DELAY_S = 120", CONN_TESTS, "s5"),
-    ("S5  never call reconnect_delay_set", RT,
+    ("S5  never call reconnect_delay_set", RT_CONNECTION,
      "        self.client.reconnect_delay_set(min_delay=RECONNECT_MIN_DELAY_S,",
      "        None and self.client.reconnect_delay_set(min_delay=RECONNECT_MIN_DELAY_S,",
      CONN_TESTS, "s5"),
-    ("S1  ignore info.rc again, the way all eight sites did", RT,
+    ("S1  ignore info.rc again, the way all eight sites did", RT_CONNECTION,
      "        rc = getattr(info, \"rc\", 0)           # a double that returns None means success",
      "        rc = 0", CONN_TESTS, "s1_a_publish or s1b or s1d"),
-    ("S1b wakeup guards on `client is None` again (the PR #55 regression)", RT,
+    ("S1b wakeup guards on `client is None` again (the PR #55 regression)", RT_FLEET,
      "        if not self._broker_connected():\n            return {\"ok\": False, \"device_id\": device_id, \"published\": False,\n                    \"acknowledged\": False, \"error\": \"no broker connection\",",
      "        if self.client is None:\n            return {\"ok\": False, \"device_id\": device_id, \"published\": False,\n                    \"acknowledged\": False, \"error\": \"no broker connection\",",
      CONN_TESTS, "s1b"),
-    ("S1  `_broker_connected` trusts object existence", RT,
+    ("S1  `_broker_connected` trusts object existence", RT_CONNECTION,
      "        checker = getattr(client, \"is_connected\", None)",
      "        return True\n        checker = None",
      CONN_TESTS, "s1_a_publish or s1b"),
-    ("S1  record the drop nowhere", RT,
+    ("S1  record the drop nowhere", RT_CONNECTION,
      "        self.publish_drops += 1", "        self.publish_drops += 0",
      CONN_TESTS, "s1_a_publish"),
-    ("S2  a disconnect no longer stales the in-flight turn", RT,
+    ("S2  a disconnect no longer stales the in-flight turn", RT_CONNECTION,
      "        for device_id in set(self._turn_seq) | set(self.robots):",
      "        for device_id in []:", CONN_TESTS, "s2_a_turn or s8"),
-    ("S8  stale only the robots that already had a turn", RT,
+    ("S8  stale only the robots that already had a turn", RT_CONNECTION,
      "        for device_id in set(self._turn_seq) | set(self.robots):",
      "        for device_id in set(self._turn_seq):", CONN_TESTS, "s8"),
     # Anchor updated 2026-09-05: the four per-topic `subscribe()` calls became ONE list
     # subscribe, so that one SUBSCRIBE is answered by one SUBACK and `_on_subscribe` has a
     # single unambiguous event to gate readiness on. The mutation is the same one — do not
     # re-subscribe when the session comes back.
-    ("S3  subscribe once and never again on reconnect", RT,
+    ("S3  subscribe once and never again on reconnect", RT_CONNECTION,
      "        c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])",
      "        if not self.last_broker_disconnect:\n            c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])",
      CONN_TESTS, "s3"),
@@ -205,34 +209,34 @@ MUTATIONS = [
     # `[runtime] broker connected` meant "we asked", never "the broker agreed", and a
     # robot announcing in that gap lost its `/state` and the QoS-0 config answering it.
     # These three are what a plausible half-fix looks like.
-    ("S9  arm readiness inside the CONNACK instead of on the SUBACK", RT,
+    ("S9  arm readiness inside the CONNACK instead of on the SUBACK", RT_CONNECTION,
      "        c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])",
      "        c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])\n"
      "        self._on_subscribe(c, None, 0, None, None)",
      READY_TESTS, "not_printed_by_the_connack"),
-    ("S9b subscribe topic by topic again (four SUBACKs, readiness on the first)", RT,
+    ("S9b subscribe topic by topic again (four SUBACKs, readiness on the first)", RT_CONNECTION,
      "        c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])",
      "        [c.subscribe(t) for t in self.SUBSCRIPTIONS]",
      READY_TESTS, "one_subscribe_call"),
-    ("S9c latch the SUBACK across a disconnect", RT,
+    ("S9c latch the SUBACK across a disconnect", RT_CONNECTION,
      "        self.subscriptions_acked.clear()\n        self.last_broker_disconnect = time.time()",
      "        self.last_broker_disconnect = time.time()",
      READY_TESTS, "disconnect_disarms"),
-    ("S4c drop on_connect_fail, so the retry loop is invisible", RT,
+    ("S4c drop on_connect_fail, so the retry loop is invisible", RT_CONNECTION,
      "        self.client.on_connect_fail = self._on_connect_fail",
      "        pass", CONN_TESTS, "s4c"),
-    ("S4b drop the connection fields from /status", RT,
+    ("S4b drop the connection fields from /status", RT_LIFECYCLE,
      '                "broker_connected": self.broker_connected,',
      '                "broker_connected": True,', CONN_TESTS, "s4b"),
     # Anchor updated 2026-09-03: the `if device_id not in self.robots:` guard is gone —
     # `_device_connect` is idempotent per broker connection now (it has to be, or a robot
     # returning after a broker restart is never re-onboarded), so `_on_event` calls it
     # unconditionally. Deleting the call is still exactly C6 undone.
-    ("S7  _on_event goes back to an ephemeral RobotContext (C6 undone)", RT,
+    ("S7  _on_event goes back to an ephemeral RobotContext (C6 undone)", RT_TURNS,
      "        self._device_connect(device_id)\n        robot = self.robots.get(device_id) or RobotContext(device_id=device_id, child=self.child)",
      "        robot = self.robots.get(device_id) or RobotContext(device_id=device_id, child=self.child)",
      CONN_TESTS, "s7"),
-    ("S2b keepalive back to a literal nobody chose", RT,
+    ("S2b keepalive back to a literal nobody chose", RT_CONSTANTS,
      "KEEPALIVE_S = 30", "KEEPALIVE_S = 60", CONN_TESTS, "s2b"),
 ]
 

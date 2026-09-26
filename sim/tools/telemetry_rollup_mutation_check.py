@@ -42,10 +42,10 @@ TESTS = ["sim/tests/test_telemetry_rollup_repair.py",
          "sim/tests/test_telemetry_runtime.py"]
 
 T = "mqtt/moxie_sdk/telemetry.py"
-R = "mqtt/supervisor/moxie_runtime.py"
+R_TELEMETRY = "mqtt/supervisor/moxie_runtime/telemetry.py"
 
 MUTATIONS = [
-    ("M1  the ring is written before the roll-up again (the 2026-09-05 red)", R,
+    ("M1  the ring is written before the roll-up again (the 2026-09-05 red)", R_TELEMETRY,
      "                counted = self.store.write(\n"
      "                    device_id, telemetry_seam.DAILY_COLLECTION,\n"
      "                    telemetry_seam.roll_up_packet(\n"
@@ -58,19 +58,19 @@ MUTATIONS = [
      "                    device_id, telemetry_seam.DAILY_COLLECTION,\n"
      "                    telemetry_seam.roll_up_packet(\n"
      "                        telemetry_seam.reconcile_rollup(stored, ring), row))"),
-    ("M2  the two writes stop being one critical section", R,
+    ("M2  the two writes stop being one critical section", R_TELEMETRY,
      "            with self.store.transaction(device_id, telemetry_seam.PACKETS_COLLECTION):",
      "            if True:"),
-    ("M3  the read path stops reconciling the roll-up against the ring", R,
+    ("M3  the read path stops reconciling the roll-up against the ring", R_TELEMETRY,
      "        rollup = telemetry_seam.reconcile_rollup(stored, ring)",
      "        rollup = telemetry_seam.reconcile_rollup(stored, [])"),
-    ("M4  a repair is answered but never written back", R,
+    ("M4  a repair is answered but never written back", R_TELEMETRY,
      "        if missing:\n            try:",
      "        if False:\n            try:"),
-    ("M5  the stored envelope is not stamped with its sequence", R,
+    ("M5  the stored envelope is not stamped with its sequence", R_TELEMETRY,
      "                row = telemetry_seam.with_seq(row, telemetry_seam.next_seq(ring, stored))",
      "                row = dict(row)"),
-    ("M6  the insights view reads the raw roll-up instead of the reconciled one", R,
+    ("M6  the insights view reads the raw roll-up instead of the reconciled one", R_TELEMETRY,
      "        rollup = self.telemetry_rollup(device_id)",
      "        rollup = self.store.read(device_id, telemetry_seam.DAILY_COLLECTION,\n"
      "                                 telemetry_seam.new_rollup())"),
@@ -97,7 +97,7 @@ MUTATIONS = [
     ("M11 a robot's own `seq` survives the privacy gate and forges the watermark", T,
      "    out = {k: v for k, v in pkt.items() if k in _PACKET_FIELDS}",
      "    out = dict(pkt)"),
-    ("M12 an ingest stops repairing on its way past, so only a reader can heal", R,
+    ("M12 an ingest stops repairing on its way past, so only a reader can heal", R_TELEMETRY,
      "                    telemetry_seam.roll_up_packet(\n"
      "                        telemetry_seam.reconcile_rollup(stored, ring), row))",
      "                    telemetry_seam.roll_up_packet(\n"
