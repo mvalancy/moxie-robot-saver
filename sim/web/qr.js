@@ -1,17 +1,11 @@
-/* qr.js — generate Moxie revival QR codes IN THE BROWSER.
+/* qr.js — generate Moxie revival QR codes IN THE BROWSER (a phone, no install).
  *
- * The QR types that matter for reviving a robot are plain JSON (no protobuf), so
- * they can be built client-side — meaning a static page (phone, no install) can
- * produce the exact codes the robot's setup app parses:
- *
+ * The setup app's codes are plain JSON, so they can be built client-side:
  *   endpoint_update : re-home the robot to YOUR server   {"debug":{"command","param"}}
  *   wifi            : push Wi-Fi credentials             {"wifi":{...}}
  *   debug           : factory/debug commands             {"debug":{...}}
- *
- * ...and one that is NOT a setup code and NOT JSON — a launch card, read by the
- * robot's runtime QR reader and answered by our cloud, not by its setup app:
- *
- *   launch card     : start one on-board activity            GO<launch:MODULE>
+ * ...plus a launch card (NOT JSON; read by the runtime QR reader, answered by our cloud):
+ *   launch card     : start one on-board activity        GO<launch:MODULE>
  *
  * Grammar: docs/reverse-engineering/qr-commands.md (firmware v24.10.803).
  * Byte-for-byte the same strings as tools/robot-toolkit's encoders.

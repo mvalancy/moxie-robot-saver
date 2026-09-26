@@ -11,7 +11,7 @@
  *
  *   node sim/test_liveliness.mjs
  */
-import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable, launchBrowser }
+import { requireBrowser, serveWeb, makeChecks, finish, pageEyes, launchBrowser }
   from "./browser_harness.mjs";
 
 const LABEL = "liveliness + chat layout";
@@ -22,19 +22,15 @@ const site = await serveWeb();
 const browser = await launchBrowser(puppeteer, chrome);
 
 /* ---- WAIT FOR THE LAYOUT, NOT FOR A NUMBER OF MILLISECONDS ---------------- *
- * No fixed sleeps: a starved runner drops frames and a sleep can hand a mid-flight
- * rectangle to a check. Fonts first (a late webfont re-flows every box), then the measured
- * widths must read IDENTICALLY on three consecutive animation frames. Bounded: a layout
- * that never settles fails loudly.
- */
+ * Fonts first (a late webfont re-flows every box), then the widths must read IDENTICALLY on
+ * three consecutive frames. Bounded: a layout that never settles fails loudly. */
 async function layoutSettled(page, sels = ["#chat-dock", "#panel"], timeout = 30000) {
   return page.evaluate(async (sels, timeout) => {
     await Promise.race([document.fonts.ready,
                         new Promise((r) => setTimeout(r, 5000))]);
     const read = () => sels.map((sel) => {
       const el = document.querySelector(sel);
-      // Hundredths of a pixel: sub-pixel widths are real, and rounding them away here
-      // would call a still-moving layout "stable".
+      // Hundredths of a px: rounding would call a still-moving layout "stable".
       return el ? Math.round(el.getBoundingClientRect().width * 100) : -1;
     }).join("/");
     const t0 = performance.now();
@@ -50,27 +46,17 @@ async function layoutSettled(page, sels = ["#chat-dock", "#panel"], timeout = 30
   }, sels, timeout);
 }
 
-/* ---- EYES, and the hermeticity they required ------------------------------ *
- * `watchPage()` makes a 404'd or throwing page script visible instead of a silent timeout.
- * The two optional-sidecar probes (a 127.0.0.1 origin is LOCAL to env.js) are refused and
- * COUNTED here, so every machine sees the same page whatever happens to be listening on
- * :8081/:8082 — that decides what #speech-btn is.
- */
-const EYES = new WeakMap();
-const eyes = (label, page) => {
-  const seen = EYES.get(page) || { errs: [], aborted: null };
-  const left = notable(seen.errs, seen.aborted);
-  eq(left.length, 0,
-     `${label}: the page raised console errors nobody asked for — ${left.length}, ` +
-     `first: ${left.slice(0, 3).join(" | ")}`);
-};
+/* EYES: a 404'd or throwing page script fails a block instead of timing out silently.
+ * The optional sidecar probes (127.0.0.1 is LOCAL to env.js) are refused and COUNTED, so
+ * every machine sees the same page whatever listens on :8081/:8082. */
+const EYES = pageEyes(eq);
+const eyes = EYES.check;
 
 async function open(width, height, isMobile) {
   const page = await browser.newPage();
   await page.setViewport({ width, height, isMobile: !!isMobile, hasTouch: !!isMobile,
                            deviceScaleFactor: 1 });
-  const seen = watchPage(page);
-  EYES.set(page, seen);
+  const seen = EYES.watch(page);
   await page.setRequestInterception(true);
   page.on("request", (r) => {
     if (r.isInterceptResolutionHandled()) return;
@@ -104,9 +90,8 @@ async function open(width, height, isMobile) {
   eq(idleBefore, true, "liveness starts ON (the visitor's own switch)");
 
   /* ---- a REAL turn puts the hold on ------------------------------------- *
-   * Polls for `chatting`, the marker `reflectHold()` paints inside `noteTurn()`, instead of
-   * sleeping: the hold is only 4 s wide, and a late timer on a starved runner could read it
-   * after it had already lapsed. */
+   * Polls for `chatting` (painted by `noteTurn()`) rather than sleeping: the hold is only 4 s
+   * wide and a late timer could read it after it lapsed. */
   const held = await page.evaluate(() => {
     window.__ambient.quietMs(4000);            // 45 s is unwatchable in a test
     const el = document.getElementById("transcript");
@@ -140,10 +125,9 @@ async function open(width, height, isMobile) {
      "…and the visitor's OWN liveness switch is NOT flipped: a hold is not a setting");
 
   /* ---- and it lifts on its own once the conversation goes quiet ---------- *
-   * Waited on the recorded condition, not Node's clock: the lapse runs on the page's own
-   * `setTimeout(reflectHold, …)`. All three markers are waited for TOGETHER (`conversing` is
-   * derived live and would return before `reflectHold()` had repainted the other two), then
-   * each is asserted separately so a half-lapse names the half that did not happen. */
+   * All three markers are waited for TOGETHER (`conversing` is derived live and would
+   * return before `reflectHold()` repaints the others), then asserted separately so a
+   * half-lapse names the half that did not happen. */
   const HOLD_LAPSE_MS = 30000;              // 7x the shortened 4 s hold: generous, bounded
   let lapseTimedOut = false;
   try {
@@ -159,7 +143,6 @@ async function open(width, height, isMobile) {
     hudChatting: document.getElementById("hud").classList.contains("chatting"),
     hintShown: !document.getElementById("liveness-hold").hidden,
   }));
-  /* A wait that gives up says so: the still-wrong check carries the timeout in its message. */
   const late = lapseTimedOut
     ? ` [the wait for the lapse TIMED OUT after ${HOLD_LAPSE_MS}ms — THIS is what never arrived]`
     : "";
@@ -189,9 +172,8 @@ async function open(width, height, isMobile) {
      "…and NOT a `.turn`: that class is what addTranscript() appends streamed replies into");
 
   /* ---- and she cannot silence herself with her own voice ----------------- *
-   * Deliberately a DURATION: this asserts that nothing happens (a `.mutter` is not a `.turn`,
-   * so never reaches `noteTurn()`), so there is no condition to wait for. 250 ms is the window
-   * the observer would fire in; starving the runner can only make the check more certain. */
+   * Deliberately a DURATION: an absence has no event to wait for. 250 ms is the window the
+   * observer would fire in; a starved runner only makes the check more certain. */
   const selfHold = await page.evaluate(() => new Promise((r) => setTimeout(
     () => r(window.__ambient.state().conversing), 250)));
   eq(selfHold, false,
@@ -224,8 +206,7 @@ async function dockGeometry(page) {
 
   // …and closing the panel really does hand it the rest of the window.
   await page.click("#rail-toggle");
-  // The class flips synchronously but the re-frame is two animation frames away, so wait
-  // for the widths to stop moving; the checks below decide whether the width is right.
+  // The re-frame is two animation frames away: wait for the widths to stop moving.
   await layoutSettled(page);
   const closedRail = await dockGeometry(page);
   eq(closedRail.closed, true, "desktop: the engineering panel can now be CLOSED at all");
@@ -271,8 +252,7 @@ async function dockGeometry(page) {
     window.moxieAlive.listening();
     return { faces: window.__seen.faces.slice(), state: window.moxieAlive.__state() };
   });
-  /* Asserted on the layer's own recorded pick (`__state().last`), not a count of `setFace`
-   * calls — blinking and ambient self-talk share that channel. */
+  // The layer's own recorded pick, not a `setFace` count (blinks and self-talk share it).
   ok(["curious", "happy"].includes(listened.state.last.listen),
      `opening the mic picks an attentive face at once (got ${listened.state.last.listen})`);
   ok(listened.faces.length >= 1, "…and it really did reach the avatar");
@@ -336,43 +316,37 @@ async function dockGeometry(page) {
   eq(a.offStage, false, "…with her head in front of the camera");
 
   /* ---- ONE INSTANT, WHICH IS WHY THE TOLERANCES BELOW ARE TENTHS ---------- *
-   * `a.exact` is the frame stash `updateBubbleAnchor` wrote when it placed the box: the
-   * head/crown/chest it actually projected, unrounded, in viewport px. Re-projecting the head
-   * at readout time would compare frame N's box with frame N+1's head (up to 15.6 px while
-   * she leans; 0.06 px against the stash). */
+   * `a.exact` is the frame stash `updateBubbleAnchor` placed the box from (unrounded px).
+   * Re-projecting at readout time would compare frame N's box with frame N+1's head (up to
+   * 15.6 px while she leans; 0.06 px against the stash). */
   const e = a.exact;
   eq(a.stamped, true, "…and the page recorded the frame it placed the bubble from");
   eq(a.frozen, false, "…a CURRENT frame, not a stash frozen behind a hidden bubble");
 
-  /* When the bubble is at her chest it anchors on the CHEST, which projects a few px off the
-   * head once she is off the camera axis; 8 px covers it and the next check pins the rest. */
+  // At her chest it anchors on the CHEST, a few px off the head off-axis; 8 px covers it.
   ok(Math.abs(e.bubble.cx - e.head.x) <= 8,
      `…horizontally centred on her head (bubble ${e.bubble.cx.toFixed(1)} vs head ${e.head.x.toFixed(1)})`);
   const anchorX = e.above ? e.head.x : e.chest.x;
   ok(Math.abs(e.bubble.cx - anchorX) <= 0.5,
      `…and centred on the anchor it placed from (bubble ${e.bubble.cx.toFixed(1)} vs anchor ${anchorX.toFixed(1)})`);
-  // CSS honoured the arithmetic: `--bx`/`--by` are written `.toFixed(1)`, so 0.1 px is the
-  // whole budget a correct stylesheet needs. Measured worst case 0.06.
+  // CSS honoured the arithmetic: `--bx`/`--by` are `.toFixed(1)`, so 0.1 px is the budget.
   ok(Math.abs(e.bubble.top - e.box.top) <= 0.1 &&
      Math.abs(e.bubble.cx - (e.box.left + e.box.width / 2)) <= 0.1,
      `…and CSS put the box where the anchor computed it (top ${e.bubble.top.toFixed(2)} vs ${e.box.top.toFixed(2)})`);
-  /* THE INVARIANT IS THAT IT NEVER COVERS HER FACE — asserted as a rule, not a placement.
-   * Above her head where the framing leaves room, at her chest on a leader where it does not;
-   * either way the box may not overlap the head anchor. */
+  /* THE INVARIANT: it never covers her face — above her head where there is room, at her
+   * chest on a leader where there is not. */
   const overlapsHead = e.bubble.top <= e.head.y && e.bubble.bottom >= e.head.y;
   eq(overlapsHead, false,
      `the bubble never covers her face (head ${e.head.y.toFixed(1)}, bubble ${e.bubble.top.toFixed(1)}..${e.bubble.bottom.toFixed(1)})`);
   if (e.leader > 0) {
     ok(e.bubble.top > e.head.y,
        `…at her chest, below the head (bubble top ${e.bubble.top.toFixed(1)} vs head ${e.head.y.toFixed(1)})`);
-    /* The leader spans the gap to 0.2 px: both sides come from one instant, and the only
-     * residual is `--by`'s `.toFixed(1)` (measured worst case 0.05). */
+    // Both sides come from one instant; the only residual is `--by`'s `.toFixed(1)`.
     const gap = e.bubble.top - e.head.y;
     ok(Math.abs(e.leader - gap) <= 0.2,
        `…on a leader that spans exactly the gap (${e.leader.toFixed(2)}px for ${gap.toFixed(2)}px)`);
-    /* …AND THE LINE ON SCREEN IS THAT LEADER. The corner-tick `#bubble::before { top: -1px;
-     * border-left: 2px }` once survived into the leadered rule and drew a cyan bar DOWN through
-     * the text. The pseudo-element must end at the bubble's top edge with no tick borders. */
+    /* …AND THE LINE ON SCREEN IS THAT LEADER, not the corner tick (`::before` with
+     * border-left) stretched down through the text. */
     const drawn = await page.evaluate(() => {
       const cs = getComputedStyle(document.getElementById("bubble"), "::before");
       return { top: parseFloat(cs.top), h: parseFloat(cs.height), bl: cs.borderLeftWidth, bt: cs.borderTopWidth };
@@ -390,13 +364,10 @@ async function dockGeometry(page) {
   ok(a.bubble.top > 0 && a.bubble.left >= 0 && a.bubble.right <= 1280,
      "…entirely on screen");
 
-  /* MOVE THE CAMERA and the bubble stays on her head (`window.__setCam`, a real re-placement;
-   * a viewport-pinned bubble cannot move at all). Head yaw is the wrong instrument — it moves
-   * the head centre ~7 px. Waited on the placement counter `seq`, not a clock: a starved
-   * runner may not have placed a new frame yet, and would truthfully answer "nowhere". */
+  /* MOVE THE CAMERA (`window.__setCam`) and the bubble stays on her head; a viewport-pinned
+   * bubble cannot move at all. Waited on the placement counter `seq`, not a clock. */
   const b = await page.evaluate(() => {
-    // The counter is read AT the pan, not reused from `a`: frames keep placing while the
-    // bubble is visible, so an older seq could already be two past and return a stale frame.
+    // Read AT the pan: an older seq could already be two past and return a stale frame.
     const seq0 = window.__bubbleAnchor().seq;
     // PAN, not orbit: orbiting keeps her dead centre; moving the target slides her across.
     window.__setCam(1.8, 2.1, 4.8, 1.5, 1.22, 0);
@@ -425,8 +396,7 @@ async function dockGeometry(page) {
      `…which the old viewport-pinned bubble could not have done (${e.bubble.cx.toFixed(0)} -> ${be.bubble.cx.toFixed(0)})`);
 
   /* ---- AND THE READOUT IS HONEST ABOUT BEING STALE ------------------------ *
-   * Hidden, the anchor deliberately stops updating (no forced layout for an invisible box),
-   * so the readout must SAY it is frozen rather than look current. */
+   * Hidden, the anchor stops updating, so the readout must SAY it is frozen. */
   const frozen = await page.evaluate(() => {
     document.getElementById("bubble").classList.add("hidden");     // what the hold timer does
     const first = window.__bubbleAnchor();

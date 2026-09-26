@@ -1,7 +1,6 @@
-/* hud.js — the SIM page's HUD glue: panel wiring, typed turns, transcript, controls.
- * Loaded without defer/async where its old inline block sat, so execution order is
- * unchanged. Also mirrors #bus-status (bridge.js) onto body[data-bus] so CSS can color the
- * status line, link lamp and REC button. */
+/* hud.js — the SIM page's HUD glue: panel wiring, openers, audio + QR controls. Also
+ * mirrors #bus-status (bridge/) onto body[data-bus] so CSS can color the status line, link
+ * lamp and REC button. */
 (function () {
   "use strict";
   var el = document.getElementById("bus-status");
@@ -39,9 +38,8 @@
         window.moxie.setSceneLight(v);
       });
     }
-    // Unified ALIVE control — the prominent topbar button and the panel "liveness"
-    // checkbox both drive the same state: window.moxie.setIdle (additive liveness) +
-    // window.moxieLife (the autonomous motor loop). ON by default; OFF = full manual.
+    // ALIVE: the topbar button and the panel checkbox drive one state — moxie.setIdle
+    // (additive liveness) + moxieLife (the motor loop). ON by default; OFF = full manual.
     var aliveBtn = document.getElementById("alive-toggle");
     function setAlive(on) {
       on = !!on;
@@ -72,10 +70,9 @@
   if (window.moxie) wireScene();
   else window.addEventListener("moxie-ready", wireScene, { once: true });
 
-  /* Name the motor sliders. moxie/panel.js renders `<label><span>4 · Head tilt</span>…`
-   * beside the input without wrapping it or a `for`, so each slider reached the a11y tree as
-   * `slider ""`. The name is copied from the rendered text (no second source of truth), from
-   * a MutationObserver because `moxie-ready` fires BEFORE the panel is built. */
+  /* Name the motor sliders (panel.js's <label> does not wrap the input, so they were
+   * `slider ""`), copied from the rendered text; observed because `moxie-ready` fires
+   * BEFORE the panel is built. */
   (function labelMotors() {
     var host = document.getElementById("motors");
     if (!host) return;
@@ -85,9 +82,7 @@
         var input = rows[i].querySelector('input[type="range"]');
         var name = rows[i].querySelector("label span");
         if (!input || !name || input.getAttribute("aria-label")) continue;
-        // "4 · Head tilt (nod)" -> "Head tilt (nod), motor 4" — the joint first, because
-        // that is what the control does; the index second, because it is how the docs and
-        // the window.moxie API address it.
+        // "4 · Head tilt (nod)" -> "Head tilt (nod), motor 4": what it does, then its index.
         var txt = name.textContent.replace(/\s+/g, " ").trim();
         var m = /^(\d+)\s*·\s*(.+)$/.exec(txt);
         input.setAttribute("aria-label", m ? (m[2] + ", motor " + m[1]) : txt);
@@ -106,9 +101,8 @@
     var test = document.getElementById("tts-test");
     var st = document.getElementById("tts-status");
     function speak(t) { if (t && window.moxieAudio) window.moxieAudio.speak(t); }
-    /* On a page with no local Piper sidecar, cloud-transport.js adopts this box as the "ask
-     * Moxie" control (adoptSpeechControl). These listeners STAND DOWN rather than being removed:
-     * the phrase chips below hold a reference to `inp`. */
+    /* With no Piper, cloud-transport.js adopts this box as "ask Moxie"; these listeners
+     * STAND DOWN rather than being removed (the phrase chips hold `inp`). */
     function typedTurnOwnsBox() {
       try { return !!(window.moxieTypedTurn && window.moxieTypedTurn.adopted()); } catch (e) { return false; }
     }
@@ -124,13 +118,9 @@
           b.className = "chip"; b.type = "button";
           b.textContent = p.length > 30 ? p.slice(0, 28) + "…" : p;
           b.title = p;
-          // The visible label is truncated to fit the chip, and a truncated label is a
-          // truncated accessible name ("Happy birthday! I hope your …"). The name is the
-          // whole line; the ellipsis is a layout constraint, not part of the phrase.
-          b.setAttribute("aria-label", p);
-          // Chips always play their pre-cached clip. They only pre-fill the box when the
-          // box is still the TTS control — dropping Moxie's own line into an "ask Moxie"
-          // input would read as the visitor's question.
+          b.setAttribute("aria-label", p);       // the whole line, not the truncated label
+          // Pre-fill only while the box is the TTS control: Moxie's line in "ask Moxie"
+          // would read as the visitor's question.
           b.addEventListener("click", function () { if (inp && !typedTurnOwnsBox()) inp.value = p; speak(p); });
           chips.appendChild(b);
         });
@@ -139,9 +129,8 @@
     if (on) on.addEventListener("change", function () { window.moxieAudio && window.moxieAudio.setEnabled(on.checked); });
     if (base && window.moxieAudio) base.value = window.moxieAudio.getTtsBase();
     if (base) base.addEventListener("change", function () { window.moxieAudio && window.moxieAudio.setTtsBase(base.value.trim()); });
-    // #tts-status is owned by audio.js (the cloud-voice indicator lives there too),
-    // so hand it a resting hint rather than writing the element: an async probe
-    // result can then never wipe a live "speaking" line, or be wiped by one.
+    // #tts-status is owned by voice/cloud.js: hand it a resting hint, so an async probe
+    // can never wipe a live "speaking" line (or be wiped by one).
     function ttsHint(t) {
       if (window.moxieAudio && window.moxieAudio.setTtsHint) window.moxieAudio.setTtsHint(t);
       else if (st) st.textContent = t;
@@ -158,14 +147,9 @@
     });
   })();
 
-
-  /* THE THREE OPENERS (#chat-openers): each sends a whole first turn through
-   * `window.moxieTypedTurn.send` — cloud-transport.js's one typed path — so the spend guards
-   * (canSpendLiveTurn, Turnstile, the FIFO queue, server admit()), the length cap and the
-   * status line all apply unchanged. A synthetic click on #speech-btn would NOT be
-   * equivalent: with a live Piper sidecar that button means "say this aloud".
-   * Delegated from the container; `closest("button.opener")` because a tap can land on a text
-   * node. The visible label IS the message (no data-text to drift). */
+  /* THE OPENERS (#chat-openers) send a first turn through `moxieTypedTurn.send`, the one
+   * typed path, so every spend guard applies (a click on #speech-btn would not: with Piper
+   * it means "say this aloud"). The visible label IS the message. */
   (function wireOpeners() {
     var box = document.getElementById("chat-openers");
     if (!box) return;
@@ -174,10 +158,8 @@
       if (!t) return false;
       var typed = window.moxieTypedTurn;
       if (typed && typeof typed.send === "function") return !!typed.send(t);
-      /* No transport at all — a fork that dropped `cloud-transport.js`. The bridge still
-       * echoes the turn and `stub.js` still answers it, which is the scripted behaviour
-       * this site had before the gateway existed. A dead chip would be worse than a free
-       * one, and this is the same fallback `mic.js` keeps for the same reason. */
+      // No transport (a fork without cloud-transport.js): the bridge + stub.js still
+      // answer, like mic.js's fallback — a dead chip would be worse.
       if (window.moxieBridge && typeof window.moxieBridge.sendUserTurn === "function") {
         window.moxieBridge.sendUserTurn(t);
         return true;
@@ -192,10 +174,8 @@
     });
   })();
 
-  /* Revive QR — the codes that re-home a real robot are plain JSON, so we can
-   * build them client-side: a phone loading the static site can revive a Moxie
-   * with nothing installed. Byte-identical to moxie_toolkit's encoders.
-   * Grammar: docs/reverse-engineering/qr-commands.md */
+  /* Revive QR, built client-side (byte-identical to moxie_toolkit's encoders), so a phone
+   * on the static site can re-home a Moxie. Grammar: docs/reverse-engineering/qr-commands.md */
   (function () {
     var kind = document.getElementById("qr-kind");
     var btn = document.getElementById("qr-make");

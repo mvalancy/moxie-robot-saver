@@ -34,10 +34,8 @@
 
   function grouped(filter){
     var by={}; idx.files.forEach(function(f){ if(filter&&!matches(f,filter)) return; (by[f.section]=by[f.section]||[]).push(f); });
-    // When searching, order each section's hits by relevance (title/heading match +
-    // full-text hit count) so the doc that actually documents the term floats to the
-    // top of its section instead of whatever sorts first (e.g. the section README).
-    // With no filter, keep the curated README reading order untouched.
+    // Searching: order each section's hits by relevance (title/heading match + hit count).
+    // No filter: keep the curated reading order.
     if(filter){ var q=filter.toLowerCase();
       Object.keys(by).forEach(function(s){ by[s].sort(function(a,b){ return score(b,q)-score(a,q); }); }); }
     return Object.keys(by).sort(function(a,b){ return (SECTION_ORDER[a]==null?9:SECTION_ORDER[a])-(SECTION_ORDER[b]==null?9:SECTION_ORDER[b])||a.localeCompare(b); })
@@ -93,8 +91,7 @@
       // bucket a section's docs by their subfolder (path segment [1]); "" = docs at the section root.
       var buckets={}, hasSub=false;
       g.items.forEach(function(f){ var seg=f.path.split("/"); var sub=(seg.length>=3)?seg[1]:"";
-        // route known nested containers (manifests/, recovered-proto/, keys/) to their own sub-group
-        // instead of lumping them into the parent subfolder (e.g. firmware/manifests/*.tsv → "Manifests")
+        // known nested containers (manifests/, recovered-proto/, keys/) get their own sub-group
         if(seg.length>=4 && /^(manifests|recovered-proto|keys)$/.test(seg[2])) sub=seg[2];
         if(sub) hasSub=true; (buckets[sub]=buckets[sub]||[]).push(f); });
       if(filter||!hasSub){
@@ -242,9 +239,7 @@
       });
       return Promise.all(ps);
     }
-    // Render only once the webfont (Inter) has loaded, so Mermaid measures node
-    // boxes with the SAME metrics it renders with — otherwise it sizes boxes with
-    // the fallback font and the real font reflows taller, clipping label text.
+    // Wait for the webfont, or Mermaid sizes boxes with the fallback font and labels clip.
     return (document.fonts&&document.fonts.ready) ? document.fonts.ready.then(doRender) : doRender();
   }
   function heroHtml(){
@@ -301,8 +296,7 @@
         var t=code.textContent;
         function legacy(){ try{ var ta=document.createElement("textarea"); ta.value=t; ta.style.position="fixed"; ta.style.opacity="0";
           document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }catch(e){} }
-        // async Clipboard API first; on unavailable/denied, fall back to execCommand
-        // (and always catch the rejection so it never logs a console error)
+        // Clipboard API, else execCommand; always catch so nothing logs a console error
         if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).catch(legacy); }
         else legacy();
         btn.textContent="Copied"; btn.classList.add("copied");

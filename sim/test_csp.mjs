@@ -30,6 +30,9 @@ const TURNSTILE = "https://challenges.cloudflare.com";
 
 const site = await serveWeb({ headers: true });
 const H = pagesHeaders();
+const CSP = H["Content-Security-Policy"] || "";
+/** One directive of the shipped CSP, e.g. `directive("script-src")` → "script-src 'self' …". */
+const directive = (name) => (CSP.split(";").find((d) => d.trim().startsWith(name)) || "").trim();
 
 /* Served under a NON-local hostname mapped to loopback — the configuration Pages ships
  * into. On a local host env.js also probes the :8081/:8082 sidecars, a dev-only refusal
@@ -51,17 +54,10 @@ const isKnown = (e) => KNOWN_REFUSALS.some((k) => k.test(e));
 /** Console lines that are a POLICY refusal we have NOT already accounted for. */
 const cspErrors = (errs) => errs.filter((e) => POLICY_LINE.test(e) && !isKnown(e));
 
-/* ---------------------------------------------------------------------------
- * WAITING. Nothing here races a clock against an event: every injection resolves on the
- * browser's own `load`/`error`/violation event. Interception is local and fast, so a timer
- * expiring only ever meant "the renderer had not dispatched yet" (under CDP throttling a
- * frame violation took 2-7 s). `CEILING` only stops a hung renderer from hanging the suite,
- * and an expiry yields a SENTENCE naming what never arrived — never comparable to
- * "loaded", "refused" or `null`, so it cannot be read as a verdict.
- * ------------------------------------------------------------------------- */
-
-/** The give-up ceiling — a deadlock stop, not a budget; far past the slowest wait measured
- *  (~6.7 s at 20x throttle). Every expiry is reported loudly. */
+/* WAITING: every injection resolves on the browser's own `load`/`error`/violation event.
+ * `CEILING` only stops a hung renderer from hanging the suite (slowest measured ~6.7 s at
+ * 20x throttle); an expiry yields a SENTENCE naming what never arrived, never comparable to
+ * "loaded", "refused" or `null`, so it cannot be read as a verdict. */
 const CEILING = 30000;
 
 /** Poll a NODE-side predicate (puppeteer's console/`errs` arrays live in this process). */
@@ -160,7 +156,7 @@ try {
     /* connect-src: `'self'` plus exactly Turnstile's host — the exfiltration half of XSS, and
      * the directive that refused the port-8081 fetch. Exhaustive list, so any widening is a
      * diff to this line. */
-    const connectSrc = (csp.split(";").find((d) => d.trim().startsWith("connect-src")) || "").trim();
+    const connectSrc = directive("connect-src");
     deep(connectSrc.split(/\s+/).slice(1), ["'self'", TURNSTILE],
        "connect-src is 'self' plus EXACTLY the Turnstile host — nothing else may exfiltrate");
 
@@ -171,7 +167,7 @@ try {
        "script-src allows Cloudflare's injected analytics beacon host");
     ok(/(^|;\s*)script-src\s[^;]*\bhttps:\/\/challenges\.cloudflare\.com\b/.test(csp),
        "script-src allows Turnstile's widget host (without it the widget never renders)");
-    const scriptSrc = (csp.split(";").find((d) => d.trim().startsWith("script-src")) || "").trim();
+    const scriptSrc = directive("script-src");
     const hosts = scriptSrc.split(/\s+/).slice(1).filter((t) => /:/.test(t) && !/^'/.test(t));
     eq(JSON.stringify(hosts), JSON.stringify(["https://static.cloudflareinsights.com", TURNSTILE]),
        "…and script-src names EXACTLY those two off-origin hosts, no other");
@@ -179,7 +175,7 @@ try {
        "connect-src does NOT name the beacon: it reports to a SAME-ORIGIN /cdn-cgi/rum (see _headers)");
     /* frame-src is exactly Turnstile's host: with `'none'` the widget silently never produces a
      * token. No page frames anything else. */
-    const frameSrc = (csp.split(";").find((d) => d.trim().startsWith("frame-src")) || "").trim();
+    const frameSrc = directive("frame-src");
     deep(frameSrc.split(/\s+/).slice(1), [TURNSTILE],
        "frame-src is EXACTLY the Turnstile host — nothing else on this site may be framed");
     for (const d of ["object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'none'"])
@@ -306,7 +302,7 @@ try {
    * =================================================================== */
   {
     const csp = H["Content-Security-Policy"] || "";
-    const scriptSrc = (csp.split(";").find((d) => d.trim().startsWith("script-src")) || "").trim();
+    const scriptSrc = directive("script-src");
     ok(!/'unsafe-inline'/.test(scriptSrc),
        `script-src must NOT carry 'unsafe-inline' (got ${JSON.stringify(scriptSrc)})`);
     /* `'unsafe-hashes'` is not needed (no inline handler attributes; block 6 proves it), and is
@@ -361,7 +357,7 @@ try {
     const want = blocks.map((b) =>
       "'sha256-" + createHash("sha256").update(b.body, "utf8").digest("base64") + "'").sort();
     const csp = H["Content-Security-Policy"] || "";
-    const scriptSrc = (csp.split(";").find((d) => d.trim().startsWith("script-src")) || "").trim();
+    const scriptSrc = directive("script-src");
     const have = scriptSrc.split(/\s+/).filter((t) => t.startsWith("'sha256-")).sort();
     eq(JSON.stringify(have), JSON.stringify(want),
        "script-src's hashes must equal a fresh SHA-256 of every inline block on disk — " +
@@ -422,7 +418,7 @@ try {
    * `securitypolicyviolation` EVENT listener installed before any page script runs.
    * =================================================================== */
   {
-    /* Violations the page recorded — ALL of them, with no carve-outs: ZERO. */
+    // Violations the page recorded — ALL of them, no carve-outs: ZERO.
     const violations = (p) => p.evaluate(() => window.__cspViolations || []);
     const show = (vs) => vs.map((v) => `${v.directive} ⟵ ${v.blocked}${v.sample ? " «" + v.sample + "»" : ""}`).join(" | ");
 
@@ -441,9 +437,7 @@ try {
       const qr = await page.evaluate(() => {
         const c = document.getElementById("qr-canvas");
         const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
-        let dark = 0;
-        /* OPAQUE **and** dark: an untouched canvas is rgba(0,0,0,0), so red < 128 alone counts
-         * all 45000 px of a canvas nobody drew on. The alpha term measures INK. */
+        let dark = 0;   // OPAQUE and dark: an untouched canvas is rgba(0,0,0,0), not ink
         for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i] < 128) dark++;
         return { dark, status: (document.getElementById("qr-status") || {}).textContent || "" };
       });
@@ -457,9 +451,8 @@ try {
     /* --- docs.html: search, then open a hit ----------------------------------- */
     {
       const { page } = await load("docs.html");
-      /* The README hero image: assert PIXELS, not markup (a 404 or refusal still yields an
-       * `<img>`). Waited on `complete`, which flips on load AND error, so `naturalWidth > 0` still
-       * separates the two. Checked before the search navigates away. */
+      /* The README hero image, asserted as PIXELS (a 404 or refusal still yields an `<img>`).
+       * `complete` flips on load AND error; `naturalWidth > 0` separates the two. */
       await page.waitForFunction(() => {
         const i = document.querySelector("article img");
         return !!i && i.complete;
@@ -468,22 +461,18 @@ try {
         const i = document.querySelector("article img");
         return i ? { src: i.getAttribute("src"), complete: i.complete, w: i.naturalWidth, h: i.naturalHeight } : null;
       });
-      /* `complete` is part of the assertion: Chrome fills `naturalWidth` from the PNG header long
-       * before decode, so an expired wait must fail loud rather than pass on a half-loaded image. */
+      // `complete` too: Chrome fills `naturalWidth` from the PNG header long before decode.
       ok(hero && hero.complete && hero.w > 0 && hero.h > 0,
          `docs.html: the README hero image actually DECODED (${JSON.stringify(hero)})`);
       ok(hero && /^img\//.test(hero.src || ""),
          `docs.html: …from this origin, the repo-relative src remapped onto the site root (${hero && hero.src})`);
-      /* The search corpus (docs-search.json, ~3 MB) is fetched on the first keystroke, so on a
-       * slow link the filtered tree can take >10 s. `#tree a > 0` is true instantly (the unfiltered
-       * tree), so the condition is the CLAIM: filtered (fewer than before) and not empty. An
-       * expired wait falls through, so a search that matches nothing still fails. */
+      /* The ~3 MB search corpus loads on the first keystroke. `#tree a > 0` is true instantly
+       * (the unfiltered tree), so the wait is the CLAIM: filtered (fewer) and not empty. */
       const allDocs = await page.evaluate(() => document.querySelectorAll("#tree a").length);
       await page.type("#q", "projectorfanpid");        // a body-only term: search must have run
       await page.waitForFunction(
         (n) => { const k = document.querySelectorAll("#tree a").length; return k > 0 && k < n; },
-        // Sized for the 7 MB this page pulls on a cold cache, not for a warm laptop. It
-        // costs nothing when the corpus is already there, which is every healthy run.
+        // Sized for a cold cache (~7 MB); free when the corpus is already there.
         { timeout: 60000 }, allDocs,
       ).catch(() => {});
       await new Promise((r) => setTimeout(r, 1200));
@@ -510,9 +499,7 @@ try {
       const out = await page.evaluate(() => {
         const c = document.getElementById("cv-wifi");
         const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
-        let dark = 0;
-        /* OPAQUE **and** dark: an untouched canvas is rgba(0,0,0,0), so red < 128 alone counts
-         * all 45000 px of a canvas nobody drew on. The alpha term measures INK. */
+        let dark = 0;   // OPAQUE and dark: an untouched canvas is rgba(0,0,0,0), not ink
         for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i] < 128) dark++;
         return { dark, payload: (document.getElementById("pl-wifi") || {}).textContent || "" };
       });
@@ -537,8 +524,7 @@ try {
       await page.close();
 
       const { page: ip } = await load("index.html");
-      // The sparkles are built by home.js and by nothing else, so their presence is a
-      // direct witness that the extracted file ran (the CSS alone paints none).
+      // Only home.js builds the sparkles: a direct witness that it ran.
       const n = await ip.evaluate(() => document.querySelectorAll("#bg .spark").length);
       ok(n > 0, `index.html: home.js ran — it built ${n} sparkles`);
       const v2 = await violations(ip);
@@ -601,7 +587,6 @@ try {
       return r.continue();
     });
     await page.goto(`${HOST}/sim.html`, { waitUntil: "domcontentloaded", timeout: 20000 });
-    // The sim being up is the condition 1500 ms was standing in for — see block 4.
     await untilPage(page, () => !!window.moxie || null);
 
     const turnstile = await injectTag(page,
@@ -612,15 +597,13 @@ try {
     const bareScript = await injectTag(page, "https://cloudflare.com/turnstile/v0/api.js");
     eq(bareScript, "refused",
        "…while the BARE cloudflare.com is still refused: the allowance is host-exact");
-    // Anchored to the refusal event, for the reason spelled out in block 4: an absence
-    // read before the browser has decided is an absence of nothing.
+    // Anchored to the refusal (see block 4): an absence before the browser decided is nothing.
     const bareRan = await page.evaluate(() => window.__bareCloudflare || null);
     eq(bareScript === "refused" ? bareRan : bareScript, null, "…and never ran");
 
     /* The iframe half: `frame-src` refusals never fire `onerror`, so the witness is the
-     * violation EVENT. Both checks are anchored to one barrier — the refusal we REQUIRE has been
-     * observed — before asking whether the ALLOWED host is absent from the same set; if the
-     * barrier never arrives, both go red. */
+     * violation EVENT, anchored to a barrier (the REQUIRED refusal observed) before asking
+     * whether the ALLOWED host is absent; no barrier, both go red. */
     await page.evaluate((allowed, refused) => {
       window.__frameV = [];
       document.addEventListener("securitypolicyviolation", (e) => {
@@ -636,8 +619,7 @@ try {
     const barrier = await untilPage(page, () =>
       (window.__frameV || []).some((x) => /frame/.test(x.d || "") &&
         /^https:\/\/cloudflare\.com/.test(x.u || "")) ? window.__frameV : null);
-    /* An honest duration: the allowed iframe was appended FIRST, so its refusal would have
-     * queued ahead of the one just observed; this window is margin on that ordering. */
+    // Margin only: the allowed iframe was appended FIRST, so its refusal would queue ahead.
     if (barrier) await new Promise((r) => setTimeout(r, 400));
     const framed = barrier ? await page.evaluate(() => window.__frameV) : null;
     const gaveUp = `GAVE UP: no frame-src violation for the bare host within ${CEILING} ms — ` +
@@ -666,9 +648,8 @@ try {
    * =================================================================== */
   {
     const csp = H["Content-Security-Policy"] || "";
-    const styleSrc = (csp.split(";").find((d) => d.trim().startsWith("style-src")) || "").trim();
-    /* EXHAUSTIVE, like `connect-src` in block 1: a widening is a diff to this line, not a
-     * regex that quietly keeps passing. */
+    const styleSrc = directive("style-src");
+    // EXHAUSTIVE, like `connect-src` in block 1: a widening is a diff to this line.
     deep(styleSrc.split(/\s+/).slice(1), ["'self'", "'unsafe-inline'"],
          `style-src is 'self' plus 'unsafe-inline' and nothing else (got ${JSON.stringify(styleSrc)})`);
 
@@ -700,9 +681,8 @@ try {
          * governs <style>, <link rel=stylesheet> and the `style` ATTRIBUTE only. */
         const box = document.createElement("div");
         document.body.appendChild(box);
-        /* Quiesce first: under the strict policy docs.js is still rendering mermaid, whose refusals
-         * would be charged to the transform. Wait for 250 ms with no NEW style-src refusal (`styleV()`,
-         * not `v.length` — the :8081 connect-src probe has its own schedule), then count. */
+        /* Quiesce first: docs.js may still be rendering mermaid, whose refusals would be
+         * charged to the transform. Wait for 250 ms with no NEW style-src refusal. */
         let last = -1, stable = 0;
         for (let i = 0; i < 400 && stable < 5; i++) {
           await settle(50);

@@ -77,12 +77,9 @@
   }
 
   /** Bank `ms` of elapsed time and spawn whatever that buys. Called once per frame.
-   *
-   * A HIDDEN TAB BANKS NOTHING and the accumulators are zeroed across the boundary, because
-   * rAF is not reliably paused everywhere (headless Chrome never truly backgrounds a tab) and
-   * `document.hidden` is the part we control. Zeroing, not freezing: a returning visitor gets
-   * the animation from now, not a burst. The guard lives here rather than at the `spawn(...)`
-   * call site because sim/test_bg_perf.mjs greps step() for that call's shape. */
+   * A HIDDEN TAB BANKS NOTHING (rAF is not reliably paused everywhere) and the accumulators
+   * are zeroed, so a returning visitor gets no burst. The guard lives here, not at the
+   * `spawn(...)` call, because sim/test_bg_perf.mjs greps step() for that call's shape. */
   function spawn(ms) {
     if (typeof document !== "undefined" && document.hidden) { packetAcc = 0; pingAcc = 0; return; }
     packetAcc += ms; pingAcc += ms;
@@ -137,9 +134,8 @@
 
     // --- radar pings from hubs ---
     for (var r = pings.length - 1; r >= 0; r--) {
-      /* Alpha decays PER FRAME while the radius advances with `dt`, so rings are smaller on
-       * slow machines. `Math.pow(0.972, dt)` was tried and REVERTED: it visibly shrank the rings
-       * below 60 fps and this page's look is the constraint; MAX_PINGS already bounds the array. */
+      /* Alpha decays PER FRAME (radius uses `dt`), deliberately: dt-scaled decay visibly
+       * shrank the rings below 60 fps; MAX_PINGS already bounds the array. */
       var pg = pings[r]; pg.r += 0.6 * dt; pg.a *= 0.972;
       if (pg.a < 0.02) { pings.splice(r, 1); continue; }
       g.strokeStyle = "rgba(5,255,161," + pg.a.toFixed(3) + ")";

@@ -118,7 +118,7 @@ configs:
       pattern read  /devices/%c/config
       pattern read  /devices/%c/commands/#
 
-      # The browser SIM (sim/web/bridge/) is a console-side OBSERVER as much as a robot
+      # The browser SIM (sim/web/bridge.js) is a console-side OBSERVER as much as a robot
       # double: it renders whichever robot is talking, so it subscribes `/devices/+/…`. A page
       # served to a browser cannot hold a secret, so this grant is anonymous and read-only, and
       # it is why 9001 stays the appliance's one LAN-visible bus door. It writes as the fixed

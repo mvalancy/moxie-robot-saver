@@ -90,13 +90,11 @@ const browser = await launchBrowser(puppeteer, chrome,
 /** Open sim.html with `/api/*` answered at the browser and Web Audio fully instrumented. */
 async function open(url, opts) {
   const page = await browser.newPage();
-  // >=900px so the rail is a side column; below that sim.html starts with the drawer
-  // CLOSED and no control in it is clickable (see sim/test_mobile_layout.mjs).
+  // >=900px: below that the rail starts as a CLOSED drawer and nothing in it is clickable.
   await page.setViewport({ width: 1440, height: 900 });
   const { errs, aborted } = watchPage(page);
-  /* Hold clip FETCHES open on demand. Block 5 needs a clip that is still in flight at the
-   * instant the answer starts; racing the real network for that would be a test that fails
-   * a few runs in ten, so the fixture creates the condition instead of hoping for it. */
+  /* Hold clip FETCHES open on demand: block 5 needs a clip still in flight when the answer
+   * starts, so the fixture creates that condition instead of racing the network for it. */
   const clipNet = { stall: false, held: [] };
 
   /* THE RECORDER: every buffer source started or stopped, tagged by how its buffer was
@@ -171,12 +169,11 @@ async function open(url, opts) {
   return { page, errs, aborted, clipNet };
 }
 
-/* Console errors minus fixture-provoked noise: `watchPage()` + `notable()` from
- * browser_harness.mjs. */
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const starts = (evs, src) => evs.filter((e) => e.ev === "start" && (!src || e.src === src));
 const timeline = (page) => page.evaluate(() => window.__rec.events);
+/** `stop()` events that cut `node` more than 50 ms before its audio ran out. */
+const cutsOf = (evs, node) => evs.filter((e) => e.ev === "stop" && e.id === node.id && e.t < node.t + node.dur - 50);
 
 /** Fire one ambient tick the way the scheduler does, recording what the guard could see. */
 const tickAmbient = (page) => page.evaluate(() => {
@@ -206,11 +203,9 @@ async function settleDegradedLine(page) {
    * measured an ambient line as "the reply". `stop()` only prevents FUTURE ticks. */
   await page.evaluate(() => window.moxieAmbient.stop());
   await page.waitForFunction("!window.moxieAudio.isMoxieBusy(1600)", { timeout: 25000 });
-  /* Then drive `tick()` explicitly instead of racing the free-running timer. The promise is
-   * "ambient does not start while Moxie is SPEAKING"; a degraded reply's fetch/decode beat is
-   * genuine silence (a recorded gap). The live path's equivalent loading gap is block 5,
-   * closed by voice/'s `floor`. */
-  await page.evaluate(() => window.moxieAmbient.stop());   // idempotent; see the note above
+  /* Callers then drive `tick()` explicitly instead of racing the free-running timer. A
+   * degraded reply's fetch/decode beat is genuine silence (a recorded gap); the live path's
+   * loading gap is block 5, closed by voice/'s `floor`. */
 }
 
 try {
@@ -242,7 +237,6 @@ try {
     /* --- 1b/1c. THE ANSWER IS NEVER INTERRUPTED -----------------------
      * Drive a real turn and tick ambient twice while the answer is in the air — at ~0.6 s
      * and ~2.4 s into 4.78 s of speech, both squarely inside it. */
-    const mark = (await timeline(page)).length;
     await type(page, "hello moxie");
     await page.waitForFunction(
       `window.__rec.events.some(e => e.ev === "start" && e.src === "pcm")`, { timeout: 20000 });
@@ -252,8 +246,7 @@ try {
     await sleep(1800);
     const mid2 = await tickAmbient(page);
 
-    /* Wait for the answer's audio to RUN OUT rather than sleeping a computed duration, so
-     * evaluate overhead cannot walk the probe past the 1.6 s grace beat. */
+    // Wait for the audio to RUN OUT (not a computed sleep) so the probe stays inside the grace beat.
     await sleep(Math.max(0, ANSWER_MS - 2400 - 900));
     await page.waitForFunction("!window.moxieAudio.isMoxieSpeaking()", { timeout: 20000 });
     evs = await timeline(page);
@@ -268,7 +261,7 @@ try {
        `…and it was AUDIBLE, not a silent buffer (peak ${(ans.peak || 0).toFixed(3)} of ${TONE.amp})`);
 
     // THE ASSERTION THAT MATTERS: one uninterrupted utterance.
-    const cut = evs.filter((e) => e.ev === "stop" && e.id === ans.id && e.t < ans.t + ans.dur - 50);
+    const cut = cutsOf(evs, ans);
     eq(cut.length, 0,
        `the answer's own node was never stop()ed before its audio ran out — ` +
        `it played as ONE uninterrupted utterance (${(ans.dur / 1000).toFixed(2)} s)`);
@@ -349,7 +342,7 @@ try {
 
     const evs = await timeline(page);
     const ans = starts(evs, "pcm")[0] || {};
-    const cut = evs.filter((e) => e.ev === "stop" && e.id === ans.id && e.t < ans.t + ans.dur - 50);
+    const cut = cutsOf(evs, ans);
     ok(cut.length >= 1,
        "NEGATIVE CONTROL: an UNGUARDED ambient line does cut the answer's node — " +
        "so block 1's silence is the guard working, not the fixture failing to fire");
@@ -387,11 +380,10 @@ try {
 
     const reply = starts((await timeline(page)).slice(mark), "clip")[0] || {};
     ok(reply.peak > 0.01, `the scripted reply is audible (peak ${(reply.peak || 0).toFixed(3)})`);
-    // The probe above already re-armed the scheduler (say() sets running); its next tick is
-    // 11–24 s out, well past this ~4.3 s reply, so what follows is the guard and nothing else.
+    // say() re-armed the scheduler, but its next tick is 11–24 s out, past this ~4.3 s reply.
     await sleep(Math.max(600, reply.dur - 200) + 400);
     const after = await timeline(page);
-    const cut = after.filter((e) => e.ev === "stop" && e.id === reply.id && e.t < reply.t + reply.dur - 50);
+    const cut = cutsOf(after, reply);
     eq(cut.length, 0,
        `the scripted reply also plays as one uninterrupted utterance ` +
        `(${(reply.dur / 1000).toFixed(2)} s, never stop()ed)`);
@@ -469,7 +461,7 @@ try {
     // And the answer itself was not collateral damage.
     const evs5 = await timeline(page);
     const ans5 = starts(evs5, "pcm")[0] || {};
-    eq(evs5.filter((e) => e.ev === "stop" && e.id === ans5.id && e.t < ans5.t + ans5.dur - 50).length, 0,
+    eq(cutsOf(evs5, ans5).length, 0,
        "…and the answer still played as one uninterrupted utterance");
 
     eq(notable(errs, aborted).length, 0, "…with no unexplained console errors");

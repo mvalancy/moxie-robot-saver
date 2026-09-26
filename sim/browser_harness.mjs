@@ -274,6 +274,25 @@ export function eyesMsg(label, left) {
          `${left.length} of them, first: ${left.slice(0, 3).join(" | ")}`;
 }
 
+/**
+ * Per-page eyes for suites whose loaders hand back a bare `page`: `watch(page)` wires
+ * `watchPage()` and remembers it; `check(label, page)` asserts (via `eq`) that nothing
+ * `notable()` was raised on that page.
+ */
+export function pageEyes(eq) {
+  const seenBy = new WeakMap();
+  return {
+    watch(page) { const s = watchPage(page); seenBy.set(page, s); return s; },
+    check(label, page) {
+      const seen = seenBy.get(page) || { errs: [], aborted: null };
+      const left = notable(seen.errs, seen.aborted);
+      eq(left.length, 0,
+         `${label}: the page raised console errors nobody asked for — ${left.length}, ` +
+         `first: ${left.slice(0, 3).join(" | ")}`);
+    },
+  };
+}
+
 /* ---- assertions ----------------------------------------------------------- */
 export function makeChecks() {
   const fails = [];

@@ -1,7 +1,5 @@
-/* The behavior planner, seen from the only renderer we can assert against.
- *
- * No hardware has played our markup; the browser SIM is where the inference is executable.
- * This drives the planner's 22 dialog-act goldens (one per `RemoteDialog.DialogAct`,
+/* The behavior planner, seen from the only renderer we can assert against (no hardware has
+ * played our markup). Drives the planner's 22 dialog-act goldens (one per `RemoteDialog.DialogAct`,
  * written by sim/tools/build_performance_goldens.py and pinned by sim/tests/test_performance.py)
  * through the REAL bridge/ as the ordinary `commands/remote_chat` that
  * `MoxieRuntime.preview` publishes, and asserts each act performs differently —

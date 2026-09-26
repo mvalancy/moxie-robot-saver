@@ -1,5 +1,4 @@
-/* Responsive UI tests for the static site across phone, tablet, laptop, desktop and
- * ultrawide viewports in real Chrome:
+/* Responsive UI across phone → ultrawide viewports in real Chrome:
  *   - NO horizontal page scroll and NO uncaught console errors,
  *   - the SIMULATOR: the WebGL canvas fills the viewport, window.moxie comes up, and every
  *     control is reachable (side rail on wide screens, working drawer on phones),
