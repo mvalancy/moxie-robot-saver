@@ -1,64 +1,28 @@
-/* eval_live.mjs — drive REAL conversations at a REAL deployment and score how much they
- * sound like Moxie rather than like a model in a loop.
+/* eval_live.mjs — drive REAL multi-turn conversations at a REAL deployment and score how
+ * much they sound like Moxie rather than a model in a loop.
  *
- * ============================================================================
- * THIS SPENDS MONEY AND IT IS NOT A TEST. Nothing in CI runs it, it is not a `test_*.mjs`,
- * and it refuses to start without `--yes`. Every other suite in this directory is
- * hermetic by construction; this one exists precisely because the thing being measured —
- * whether a conversation goes round in circles — cannot be seen with a stubbed gateway.
- * A stub returns what you told it to. The failure the owner reported ("Moxie gets stuck
- * in a loop repeating the same things") is a property of the real model, the real prompt
- * and the real history, and it only appears over SEVERAL turns.
+ * SPENDS MONEY; NOT A TEST. Nothing in CI runs it and it refuses to start without `--yes`.
+ * Looping is a property of the real model, prompt and history over SEVERAL turns, which a
+ * stubbed gateway cannot show. It paces itself under `DEMO_CHAT_PER_MIN` (5/IP) so it
+ * measures Moxie, not the limiter — a full run is slow on purpose.
  *
- *   node sim/eval_live.mjs --yes                       # the live site, all scenarios
+ *   node sim/eval_live.mjs --yes                       # the canonical site, all scenarios
  *   node sim/eval_live.mjs --yes --only=loop,memory    # two of them
  *   node sim/eval_live.mjs --yes --base=http://localhost:8788
- *   node sim/eval_live.mjs --yes --pace=13000          # ms between turns
+ *   node sim/eval_live.mjs --yes --pace=15000          # ms between turns
  *
- * WHY IT PACES ITSELF. `DEMO_CHAT_PER_MIN` is 5 per IP, so a run that fired as fast as it
- * could would measure the rate limiter instead of Moxie — every reply after the fifth
- * would be a 429 and the scores would be noise. The default pace is one turn every 13 s,
- * which is under the cap with room for clock skew. A run of the full set is therefore
- * SLOW ON PURPOSE (~7 minutes); that is the price of measuring the real thing.
- *
- * WHAT IT MEASURES, and why each number is here rather than a vibe:
- *
- *   · repeatOpening  — replies that begin with the same four words as an earlier reply in
- *                      the same conversation. THE HEADLINE NUMBER FOR THE REPORTED BUG:
- *                      looping usually shows up first as every turn starting "That's so
- *                      cool! ..." long before whole sentences repeat.
- *   · maxOverlap     — the highest word-trigram Jaccard between any two replies in one
- *                      conversation. Catches "same sentence, reordered", which an exact
- *                      duplicate check misses entirely.
- *   · exactDupes     — identical replies. The end state of a loop.
- *   · moods/gestures — how many DISTINCT faces and arm movements she used. A companion
- *                      that answers everything with one face is looping visually even when
- *                      the words vary, and this repo has shipped exactly that before (the
- *                      regex floor's happy + Gesture_Talk default).
- *   · shapes/runMax  — how many of the three MOVES a turn can make (`_lib/turnshape.js`:
- *                      tell, ask, offer) appeared, and the longest run of a single one.
- *                      READ THIS COLUMN FIRST. It is the only number here that cannot be
- *                      improved by doing less: `questionRate` goes to zero if she stops
- *                      asking anything and becomes a monologue, and `runMax` calls that
- *                      exactly as loudly as it calls an interrogation. See `score()`.
- *   · refusals       — non-200s, so a run degraded by rate limiting or an outage is never
- *                      silently scored as bad conversation.
- *
- * NO PASS/FAIL THRESHOLDS. It prints numbers and a per-scenario transcript. Inventing a
- * "repetition must be under 0.3" line would be a made-up constant with no measurement
- * behind it, and this file's whole point is to produce the measurements such a constant
- * would one day have to come from.
- * ============================================================================
+ * Per scenario: repeatOpening (same first four words), maxOverlap (trigram Jaccard),
+ * exactDupes, moods/gestures (distinct faces and moves), shapes/runMax (the longest run of
+ * one move from `_lib/turnshape.js` — READ FIRST: the one number that cannot be improved by
+ * doing less), refusals. Each scenario's named checks, plus two run-level range checks,
+ * decide the exit code; a scenario with an unanswered turn is NOT graded either way.
  */
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-/* THE SAME CLASSIFIER THE ROUTE USES, imported rather than reimplemented. `chat.js` picks
- * the next turn's move by classifying the previous ones; this file scores whether the
- * moves actually varied. If the two ever disagreed about what an "offer" is, the
- * instrument would be marking the route's own homework with a different pen — and the one
- * thing this file exists to be is a check on the route rather than an echo of it. */
+// The route's OWN move classifier, imported so the instrument and the route cannot disagree.
 import { shapeOf } from "../functions/api/_lib/turnshape.js";
+import { canonicalOrigin } from "./browser_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -72,21 +36,22 @@ if (!flag("yes", false)) {
   console.error(
     "eval_live.mjs drives a REAL deployment and SPENDS REAL GATEWAY CALLS.\n" +
     "Re-run with --yes if that is what you want.\n" +
-    "  node sim/eval_live.mjs --yes [--base=URL] [--only=a,b] [--pace=13000]");
+    "  node sim/eval_live.mjs --yes [--base=URL] [--only=a,b] [--pace=15000]");
   process.exit(2);
 }
 
-const BASE = String(flag("base", "https://moxie.mattvalancy.com")).replace(/\/+$/, "");
-/* 15 s, not 13. `DEMO_CHAT_PER_MIN` is 5 per IP, so 12 s is the exact edge and 13 left no
- * room for clock skew or a slow turn overlapping the next window — a 20-turn run lost two
- * turns to the limiter. The margin is cheap: this file is already slow on purpose. */
+// Default: the site's own `<link rel="canonical">`, never a hostname typed here.
+const BASE = String(flag("base", canonicalOrigin() || "")).replace(/\/+$/, "");
+if (!BASE) {
+  console.error("eval_live.mjs: no --base and no <link rel=\"canonical\"> in sim/web/index.html");
+  process.exit(2);
+}
+/* 15 s: 12 s is the exact edge of 5/min, and 13 s still lost turns to skew. */
 const PACE = Number(flag("pace", 15000));
 const ONLY = String(flag("only", "")).split(",").map((s) => s.trim()).filter(Boolean);
 
-/* A real desktop UA is REQUIRED, not cosmetic: Cloudflare's browser integrity check
- * answers a default `node`/`curl` agent with 403 `browser_signature_banned` from the edge,
- * so the Function never runs and every turn would score as a refusal. Recorded as §10
- * assumption 30 in live-sim-demo.md. */
+/* A real desktop UA is REQUIRED: Cloudflare's browser integrity check 403s a default
+ * `node`/`curl` agent at the edge (live-sim-demo.md §10 assumption 30). */
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
            "Chrome/128.0.0.0 Safari/537.36";
 
@@ -95,14 +60,8 @@ const FACE = ["neutral", "happy", "sad", "angry", "shy", "surprised",
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/* --------------------------------------------------------------------------- *
- * The scenarios
- * --------------------------------------------------------------------------- *
- * Each is a CONVERSATION, not a list of prompts: the context blob is threaded from one
- * turn to the next exactly as `sim/web/cloud-transport.js` threads it, because a
- * repetition bug that only appears with history is invisible to single-shot probing.
- */
-/* Helpers the checks are written in. `r(i)` is the i-th reply, lower-cased. */
+/* The scenarios: CONVERSATIONS, with the context blob threaded turn to turn exactly as
+ * `cloud-transport.js` threads it. `checks(t, s)` gets the reply texts and the scores. */
 const has = (t, ...words) => words.some((w) => String(t).toLowerCase().includes(w));
 const allDiffer = (texts) => new Set(texts.map((t) => t.trim().toLowerCase())).size === texts.length;
 
@@ -146,11 +105,7 @@ const SCENARIOS = [
       ["survives a conversation longer than the window", s.answered === s.turns],
       ["never refuses mid-conversation", s.refusals === 0],
       ["still answers the final question with something", t[7] && t[7].length > 0],
-      /* AND DOES NOT CONFABULATE. Measured 2026-09-07: she answered "I heard you saw a
-       * bird!" to "what was my secret word?" — a fact that had legitimately fallen off the
-       * window. Forgetting is inevitable at any window size and is fine; pretending not to
-       * have forgotten is what makes a companion untrustworthy. Either she still has the
-       * word, or she says she does not — anything else fails. */
+      // Forgetting past the window is fine; a confident wrong answer is not.
       ["either recalls the word or admits forgetting — never confabulates",
        has(t[7], "pineapple") || has(t[7], "don't remember", "do not remember", "can't remember",
                                      "cannot remember", "forgot", "remind me", "tell me again")],
@@ -209,9 +164,7 @@ const SCENARIOS = [
   },
 ];
 
-/* --------------------------------------------------------------------------- *
- * Scoring
- * --------------------------------------------------------------------------- */
+/* ---- scoring ---- */
 const words = (s) => String(s).toLowerCase().replace(/[^a-z0-9' ]+/g, " ").split(/\s+/).filter(Boolean);
 const trigrams = (s) => {
   const w = words(s), out = new Set();
@@ -241,31 +194,11 @@ function score(replies) {
     }
   }
   const exactDupes = texts.length - new Set(texts).size;
-  /* QUESTION RATE, added after the first fix (2026-09-06) because the first fix's own
-   * numbers were misleading. Breaking the affirmation loop took trigram overlap from 1.0
-   * to 0.2 and exact duplicates to zero — and the conversation still read as a loop,
-   * because six of seven turns were "Did you ... today?". Same shape, different words: a
-   * lexical metric cannot see it, and a child would feel nothing but the interrogation.
-   * A companion that ends every turn with a question is interviewing, not talking. */
+  // An interrogation in different words is still a loop no lexical metric sees.
   const questions = texts.filter((t) => /\?\s*$/.test(t)).length;
-  /* TURN SHAPE, added 2026-09-06 after `questionRate` misled a THIRD pass — and it is the
-   * number to read first, because it is the only one here that cannot be improved by doing
-   * less.
-   *
-   * The measurement that forced it: six seven-turn `loop` conversations against the real
-   * gateway, and the run with the LOWEST `questionRate` in the whole set (0.14, the best
-   * score anything produced) was six consecutive "Let's ...!" proposals — an activity list
-   * read at a child who was never once reacted to. Zero exact duplicates, zero repeated
-   * openings, trigram overlap 0. Every lexical number said the loop was fixed.
-   *
-   * `maxShapeRun` is how many turns in a row made the SAME move (`_lib/turnshape.js`), and
-   * it is symmetric in the way `questionRate` is not: seven questions in a row and seven
-   * statements in a row both score 7. An interrogation and a monologue are the two ways to
-   * fail this, and driving `questionRate` to zero walks straight into the second one.
-   *
-   * IT IS STILL NOT A VERDICT. Three fixed lines answering three cues in rotation would
-   * score `maxShapeRun` 1 and read as three loops braided together; `maxOverlap` and
-   * `repeatOpening` are what would catch that. Read the transcript. */
+  /* TURN SHAPE: the longest run of one move. Symmetric where `questionRate` is not — the
+   * lowest question rate ever measured was six "Let's …!" proposals in a row, a monologue
+   * every lexical number called fixed. Still not a verdict: read the transcript. */
   const shapeSeq = texts.map(shapeOf);
   let maxShapeRun = 0, run = 0;
   for (let i = 0; i < shapeSeq.length; i++) {
@@ -293,9 +226,7 @@ function score(replies) {
   };
 }
 
-/* --------------------------------------------------------------------------- *
- * One turn
- * --------------------------------------------------------------------------- */
+/* ---- one turn ---- */
 async function turn(text, context) {
   const t0 = Date.now();
   let res, body;
@@ -330,9 +261,7 @@ async function turn(text, context) {
   };
 }
 
-/* --------------------------------------------------------------------------- *
- * Run
- * --------------------------------------------------------------------------- */
+/* ---- the run ---- */
 const chosen = SCENARIOS.filter((s) => !ONLY.length || ONLY.includes(s.name));
 if (!chosen.length) {
   console.error("no scenario matched --only; names: " + SCENARIOS.map((s) => s.name).join(", "));
@@ -349,14 +278,8 @@ for (const sc of chosen) {
   let context = "";
   const replies = [];
   for (const line of sc.turns) {
-    /* A RATE-LIMITED TURN IS RETRIED, NOT RECORDED.
-     *
-     * Being throttled says nothing about the conversation, and a gap in the middle of one
-     * corrupts every turn after it — the history is short by a turn, so what is measured
-     * afterwards is a different conversation from the one the scenario describes. The
-     * limiter tells us exactly how long to wait, so the honest move is to wait and ask
-     * again rather than to score around the hole. Bounded at two extra attempts so a
-     * genuinely exhausted budget still ends the run instead of looping. */
+    /* A RATE-LIMITED turn is retried (twice at most), not recorded: a hole corrupts every
+     * later turn's history. */
     let r = await turn(line, context);
     for (let attempt = 0; attempt < 2 && r.reason === "rate_limited"; attempt++) {
       const wait = Math.max(PACE, (Number(r.retryAfterS) || 20) * 1000 + 1500);
@@ -368,17 +291,13 @@ for (const sc of chosen) {
     replies.push(r);
     const face = r.mood === null ? "—" : FACE[r.mood] || String(r.mood);
     console.log(`   you   > ${line}`);
-    // The MOVE is printed next to the words on purpose. The whole lesson of this file's
-    // last three revisions is that the summary table is not where a loop is seen.
+    // The MOVE beside the words: a loop is seen in the transcript, not the summary.
     if (r.text) console.log(`   moxie < ${r.text}   [${shapeOf(r.text)} / ${face} / ${r.gesture || "—"} / ${r.ms}ms]`);
     else console.log(`   moxie < (no answer: ${r.reason})`);
     await sleep(PACE);
   }
   const s = score(replies);
-  /* THE QUALITY GATE. Each scenario states what "working" means for it, in its own terms,
-   * and a failing check is a named sentence rather than a number a reader has to
-   * interpret. `texts` is padded so a check that indexes a turn which never answered gets
-   * "" rather than throwing — a scenario that fell over must still produce a verdict. */
+  // Padded, so a check indexing an unanswered turn gets "" rather than throwing.
   const texts = sc.turns.map((_, i) => (replies[i] && replies[i].text) || "");
   let checks = [];
   try {
@@ -387,17 +306,8 @@ for (const sc of chosen) {
   } catch (e) {
     checks = [{ name: "checks ran without throwing (" + (e && e.message) + ")", ok: false }];
   }
-  /* A SCENARIO WITH A HOLE IN IT IS NOT GRADED — IN EITHER DIRECTION.
-   *
-   * If any turn went unanswered after the retries above, this conversation is not the one
-   * the scenario describes: the history is short, so every later turn was asked in a
-   * different context. Its checks are reported INCONCLUSIVE and counted as neither passed
-   * nor failed.
-   *
-   * Marking them FAILED would be just as wrong as passing them — it would blame the model
-   * for an outage and train whoever reads this to ignore red. The only honest verdict on
-   * an unmeasured conversation is that it was not measured, and the run still exits
-   * non-zero so nothing downstream mistakes it for a clean bill of health. */
+  /* A scenario with an unanswered turn is NOT GRADED in either direction — blaming the
+   * model for an outage is as wrong as passing it — and the run still exits non-zero. */
   const inconclusive = s.refusals > 0;
   const failed = inconclusive ? 0 : checks.filter((c) => !c.ok).length;
   const passed = inconclusive ? 0 : checks.filter((c) => c.ok).length;
@@ -444,10 +354,7 @@ console.log("moods used overall   : " + (allMoods.map((m) => FACE[m] || m).join(
             `   (${allMoods.length} of 11)`);
 console.log("gestures used overall: " + (allGest.join(", ") || "none") + `   (${allGest.length} of 12)`);
 console.log("total refusals       : " + results.reduce((n, r) => n + r.refusals, 0));
-/* THE HEADLINE, and it is deliberately the last line printed. `runMax` is the longest run
- * of a single move in any one conversation: 1 means she never made the same move twice in
- * a row anywhere, and a large number means a loop whatever the lexical columns say — an
- * interrogation and a monologue both land here and nowhere else. */
+// THE HEADLINE: the longest run of one move anywhere in the study.
 console.log("worst single-move run: " +
             Math.max(0, ...results.map((r) => r.maxShapeRun)) +
             "  (in " + (results.slice().sort((a, b) => b.maxShapeRun - a.maxShapeRun)[0] || {}).scenario + ")");
@@ -458,31 +365,15 @@ const outFile = join(outDir, "eval-live-" + new Date().toISOString().replace(/[:
 writeFileSync(outFile, JSON.stringify({ base: BASE, at: new Date().toISOString(), pace: PACE, results }, null, 2));
 console.log("\nfull transcripts -> " + outFile);
 
-/* THE VERDICT. This is what makes the file a study rather than a readout: it exits
- * non-zero when a named quality check failed, so it can gate a release, be run after a
- * prompt change, or be pointed at a preview URL before a promotion.
- *
- * REFUSALS ARE REPORTED SEPARATELY AND DO NOT PASS AS QUALITY. A run throttled by the
- * rate limiter or hit by an outage has not measured the conversation at all, and calling
- * that a pass would be the worst failure this file could have. */
-/* RUN-LEVEL CHECKS — properties of the WHOLE study, which no single scenario can see.
- *
- * Expressive range is the one that matters and the one that was silently failing: every
- * individual conversation looked fine (warm, on-topic, non-repetitive) while she used two
- * of eleven faces across all of them. A per-scenario check cannot catch that — four turns
- * about feelings using two faces is defensible; TWENTY turns across six scenarios using
- * two is a channel that is not working. The floor is deliberately low: four of eleven says
- * the face tracks the sentence at all, not that it is used artfully. */
-const allMoodsUsed = [...new Set(results.flatMap((r) => r.moods))];
-const allGestUsed = [...new Set(results.flatMap((r) => r.gestures))];
+/* Run-level range: every conversation can look fine while the whole study uses two faces.
+ * Floors are deliberately low (4 of 11 faces, 4 of 12 gestures). */
 const runChecks = [
-  { name: `uses at least 4 of the 11 faces across the whole study (used ${allMoodsUsed.length})`,
-    ok: allMoodsUsed.length >= 4 },
-  { name: `uses at least 4 of the 12 gestures (used ${allGestUsed.length})`,
-    ok: allGestUsed.length >= 4 },
+  { name: `uses at least 4 of the 11 faces across the whole study (used ${allMoods.length})`,
+    ok: allMoods.length >= 4 },
+  { name: `uses at least 4 of the 12 gestures (used ${allGest.length})`,
+    ok: allGest.length >= 4 },
 ];
-// Only meaningful over a broad run; a single-scenario invocation cannot fairly be held to
-// a range check, so they are skipped rather than failed.
+// Only meaningful over a broad run: skipped, not failed, for fewer than three scenarios.
 if (chosen.length >= 3) {
   for (const c of runChecks) console.log(`\n${c.ok ? "PASS" : "FAIL"}  ${c.name}`);
   results.push({ scenario: "(whole run)", checks: runChecks, refusals: 0, inconclusive: false,

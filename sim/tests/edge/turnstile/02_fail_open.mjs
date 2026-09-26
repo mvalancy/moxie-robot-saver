@@ -80,10 +80,9 @@ import {
  *     already-spent 3x…AA-> 200 {"error-codes":["timeout-or-duplicate"],…}
  *     missing response   -> 200 {"error-codes":["missing-input-response"],…}
  *
- * Every genuine VERDICT is a 200; the 400s are our configuration. Failing open on any
- * `!res.ok` without reading the body meant a secret wrong by one character switched the
- * whole control off under a LIVE badge, with `turnstile_misconfigured` unreachable. So
- * our-fault codes refuse at ANY status, and everything else still fails open.
+ * Every genuine VERDICT is a 200; the 400s are our configuration. Failing open on `!res.ok`
+ * would let a mistyped secret switch the control off silently, so our-fault codes refuse at
+ * ANY status and everything else still fails open.
  */
 {
   /* ---- our fault, at the status Cloudflare really uses -------------------- */

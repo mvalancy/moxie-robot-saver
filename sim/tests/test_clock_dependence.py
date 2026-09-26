@@ -138,7 +138,7 @@ REVIEWED: dict = {
         "and well under the 20 s upstream timeout (mutation row D3e — a deadline never "
         "passed to `fetch` looks identical otherwise). Both bounds are durations between "
         "two reads of one clock; a jump would redden rather than hide a hang."),
-    "sim/test_mode.mjs": (
+    "sim/tests/edge/mode/03_mode_machine.mjs": (
         ("Date.now",),
         "DETERMINISTIC — it *overrides* `Date.now = () => clock` and steps `clock` by "
         "hand. This is the pinned-clock pattern the other rows aspire to, and the row "

@@ -1,66 +1,23 @@
 /* test_mic_spend.mjs — a refused microphone must not spend a live turn. In Chrome.
  *
- * THE DEFECT, as an adversarial security audit of the live demo put it (medium, under the
- * availability lens): *"a refused or failed microphone press spends a full chat + speech
- * turn on a line the visitor never said."*
+ * `mic.js` consoles a visitor whose ears failed with a SCRIPTED child line; that line once
+ * went out through the live transport and bought a paid `/api/chat` + `/api/speech` nobody
+ * said. Billing is a claim about requests that really left a page, so this counts them
+ * (`page.on("request")`) — and pairs every "spends nothing" with proof the visitor was still
+ * consoled OUT LOUD (the shipped clips, identified by byte size, audibly scheduled), so the
+ * fix cannot be "delete the consolation line". `/api/*` is answered at the browser and the
+ * recorder injected via `moxieMic.setCapture`: no gateway, no network, no live microphone.
  *
- * `mic.js` consoles a visitor whose ears failed with a SCRIPTED CHILD LINE, so the button
- * is never dead (spec §6). That line is a line the page chose — and it used to go out
- * through `window.moxieBridge.sendUserTurn`, which on a hosted live deployment is
- * `cloud-transport.js`'s wrapper. So a clip the route refused as `bad_request`, or one
- * `mic.js` refused itself for being over `max_audio_bytes` **without ever uploading it**,
- * still bought a `POST /api/chat` AND a `POST /api/speech` out of a budget the whole demo
- * shares. Nobody said the words.
- *
- * WHY THIS SUITE IS A BROWSER SUITE AND NOT A THIRD FAKE-DOM ONE. Two other files already
- * cover the halves under a stubbed window — `sim/test_demo_ears.mjs` B5b (mic.js chooses
- * the free seam) and `sim/test_cloud_transport.mjs` 6b (the seam costs nothing) — and both
- * are worth having, because they are deterministic on a virtual clock. But a claim about
- * what the gateway is BILLED FOR is a claim about requests that actually left a page, and
- * the only honest way to count those is to count them:
- *
- *   · `page.on("request")` — every request the browser really made, and
- *   · a wrapped `AudioBufferSourceNode.start()` — the sample data that really reached the
- *     speakers, with its PEAK AMPLITUDE, because a silent clip passes every structural
- *     check while making no sound (PR #82's 770 assertions read a FILE while Web Audio was
- *     stubbed; #87 corrected it, and `sim/test_typed_turn.mjs` established this shape).
- *
- * That second instrument is what makes this more than a "no requests" test. The fix would
- * be trivially satisfiable by deleting the consolation line — and that would be a WORSE
- * product, a dead button with an honest status line. So every "spends nothing" assertion
- * here is paired with one that the visitor was still consoled OUT LOUD: the child's line
- * on the page, its pre-rendered clip audible, and Moxie's answer after it.
- *
- * WHAT THE FIRST REAL CI RUN OF THIS FILE FOUND, having never once executed before it.
- * "Consoled out loud" was written as `started >= 2` — two AudioBufferSourceNodes, counted.
- * That was wrong twice over. It could not say WHICH two sounds happened, so an ambient
- * quip standing in for Moxie's answer satisfied it (demonstrated: abort her clip and the
- * old assertion still passed); and the count was read after a fixed 3 s sleep, so on a
- * runner where this suite takes 122 s against 53 s here, her clip had not finished
- * fetching yet and the count read 1. Both are now fixed at the root: `settleAudio` waits
- * for the sound instead of assuming the machine was quick, and `spoke()` asserts the two
- * SHIPPED CLIPS by identity. See those two functions for the measurements.
- *
- * SIX SCENARIOS, all on the same hosted+live page:
- *   1. a transcription REFUSED by the route  — consoled, audible, ZERO chat/speech
- *   2. a clip over max_audio_bytes           — consoled, audible, ZERO of everything,
- *                                              not even the upload
- *   3. a transcription that never answers    — consoled, audible, ZERO chat/speech
- *   4. A REAL TRANSCRIPT                     — exactly one chat + one speech, and Moxie's
- *                                              own gateway voice really plays
- *   5. a clip under min_audio_bytes          — "(too short)", zero requests, no line burnt
- *   6. a microphone that will not open       — explicit typed recovery on desktop and
- *                                              phone, then response, second turn, goodbye
- *
- * No gateway, no Cloudflare account, no network, and NO LIVE MICROPHONE: `/api/*` is
- * answered at the browser and the recorder is injected through `moxieMic.setCapture`, the
- * seam that exists for exactly this (playbook rule 11).
+ *   1 refused transcription · 2 clip over max_audio_bytes · 3 transcriber unreachable
+ *   4 a real transcript (exactly one chat + speech) · 5 clip under min_audio_bytes
+ *   6 a microphone that will not open → typed recovery on desktop and phone
  *
  *   node sim/test_mic_spend.mjs
  */
 import { join } from "node:path";
 import { readFileSync, statSync } from "node:fs";
-import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo, launchBrowser,
+         watchPage, notable, instrumentWebAudio, liveFixture } from "./browser_harness.mjs";
 
 const LABEL = "mic-spend test";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
@@ -69,38 +26,15 @@ const { fails, ok, eq, count } = makeChecks();
 const site = await serveWeb();
 const HOSTED = `http://moxie.hosted.test:${site.port}/sim.html`;
 
-/* The real Function builds the health envelope, so this suite can never drift from what
- * the route answers (the trick `sim/test_env_hosted.mjs` established). */
-const health = await import(join(repo, "functions", "api", "health.js"));
-const envelope = await import(join(repo, "functions", "api", "_lib", "envelope.js"));
-const HEALTH_LIVE = await (await health.onRequestGet({
-  env: {
-    DEMO_GATEWAY_BASE_URL: "https://gw.invalid.test/v1",
-    DEMO_GATEWAY_API_KEY: "sk-testonly-abcdefghijklmnop",
-    DEMO_CHAT_MODEL: "test-brain-model",
-    DEMO_TTS_MODEL: "test-voice-model",
-    DEMO_STT_MODEL: "test-ears-model",
-  },
-})).text();
-/** The limits the page is actually operating under — read from the envelope, never guessed. */
-const LIMITS = JSON.parse(HEALTH_LIVE).limits;
-
-const EID = "sim-micspend01";
 const REPLY = "That sounds like a wonderful day!";
 const TONE = pcmToneBase64({ seconds: 0.3, rate: 22050, freq: 440, amp: 0.8 });
+const FX = await liveFixture({ eid: "sim-micspend01", reply: REPLY, tone: TONE });
+/** The limits the page is actually operating under — read from the envelope, never guessed. */
+const LIMITS = FX.limits;
 
-/* ---- the two utterances a consoled visitor must actually HEAR ------------- *
- *
- * `mic.js::fallback` publishes a scripted CHILD line and `stub.js` answers it, and BOTH
- * are spoken the same way: `audio.js::playUrl` fetches the pre-rendered clip this site
- * ships for that exact sentence, decodes it, and schedules it. Neither goes near the
- * :8081 Piper sidecar or `speechSynthesis` — the page is served from a hosted origin here,
- * where `audio.js::skipProbe` refuses to probe a localhost port at all.
- *
- * The files are looked up in the SHIPPED MANIFEST rather than named here, so re-rendering
- * the clips (`sim/tools/prerender_audio.py`) moves the assertion with them instead of
- * quietly rotting it, and a line that loses its clip fails loudly rather than going mute.
- * Their byte sizes are what `spoke()` matches on — see the instrument in `open()`. */
+/* The two utterances a consoled visitor must HEAR: `mic.js::fallback`'s child line and
+ * `stub.js`'s answer, both played from the pre-rendered clip the SHIPPED MANIFEST names
+ * (so re-rendering moves the assertion with it). Their byte sizes are what `spoke()` matches. */
 const CHILD_LINE = "Thank you Moxie!";
 const MOXIE_LINE = "You're so welcome. I love celebrating with you!";
 const MANIFEST = JSON.parse(readFileSync(join(repo, "sim", "web", "audio", "index.json"), "utf8"));
@@ -114,134 +48,42 @@ const CHILD_CLIP = shippedClip("child", CHILD_LINE);
 const MOXIE_CLIP = shippedClip("moxie", MOXIE_LINE);
 const CLIP_NAME = new Map([[CHILD_CLIP.bytes, "the child's line"], [MOXIE_CLIP.bytes, "Moxie's answer"]]);
 
-const chatBody = JSON.stringify(envelope.envelope({
-  ok: true, mode: "live", voice: true, ears: true,
-  messages: [{
-    topic: "/devices/d_sim/commands/remote_chat",
-    payload: JSON.stringify({
-      command: "remote_chat", result: "SUCCESS", backend: "router", event_id: EID,
-      output: { text: REPLY, markup: REPLY }, end_turn: false,
-    }),
-  }],
-  speech: [{ ticket: "v1.TESTTICKET.MAC", event_id: EID, chunk_num: 0 }],
-  context: "v1.CTX.MAC",
-}));
-const speechBody = JSON.stringify(envelope.envelope({
-  ok: true, mode: "live", voice: true, ears: true,
-  messages: [{
-    topic: "/devices/d_sim/commands/tts",
-    payload: JSON.stringify({
-      request_source: "ROBOT_TTS_REQUEST",
-      audio: { buffer: TONE.base64, channels: 1, sample_rate: TONE.rate },
-      marks: [], event_id: EID, chunk_num: 0,
-    }),
-  }],
-}));
+const browser = await launchBrowser(puppeteer, chrome,
+  { autoplay: true, hosts: { "moxie.hosted.test": site.port } });
 
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-         "--autoplay-policy=no-user-gesture-required",
-         `--host-resolver-rules=MAP moxie.hosted.test 127.0.0.1:${site.port}`],
-});
+const json = (body, status = 200) => ({ status, contentType: "application/json", body });
 
 /**
- * Open the hosted, live sim with `/api/*` answered at the browser.
- *
- * @param {{transcribe?: "ok"|"refused"|"dead", viewport?: {width:number,height:number}}} opts
- *   — what `POST /api/transcribe` does and the visitor viewport to exercise.
- *   `/api/chat` and `/api/speech` ALWAYS answer successfully here, on purpose: if the
- *   page spends a turn it must be able to complete it, so a request that should never
- *   have happened shows up as a real answer on the page and not as a second failure.
+ * Open the hosted, live sim with `/api/*` answered at the browser. `transcribe` is
+ * "ok" | "refused" | "dead". `/api/chat` and `/api/speech` ALWAYS succeed, so a turn that
+ * should never have been spent shows up as a real answer rather than a second failure.
  */
 async function open(opts) {
   const page = await browser.newPage();
   await page.setViewport(opts.viewport || { width: 1440, height: 900 });
-  const errs = [], reqs = [], bodies = [], aborted = { n: 0 };
-  page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
-  page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
+  const { errs, aborted } = watchPage(page);
+  const reqs = [], bodies = [];
   page.on("request", (r) => {
     reqs.push(r.url());
     if (/\/api\/(chat|speech|transcribe)\b/.test(r.url()))
       bodies.push({ url: r.url(), body: r.postData() || "" });
   });
-
-  /* Web Audio, instrumented where sound is actually made. `createBuffer` + a wrapped
-   * `start()` is where the GATEWAY voice lands (`audio.js` builds the buffer by hand from
-   * int16 PCM), `decodeAudioData` is where a pre-rendered CLIP lands — the child's
-   * consolation line and Moxie's stubbed answer both arrive that way. The peak amplitude
-   * of every buffer that was scheduled is recorded, so a silent one cannot pass.
-   *
-   * EVERY SCHEDULED BUFFER IS ALSO TAGGED WITH THE FILE IT CAME FROM, and that is what
-   * makes the "both were consoled OUT LOUD" claim checkable rather than countable. See
-   * `spoke()` below: `decodeAudioData` is handed the exact bytes `playUrl` fetched, so
-   * recording `byteLength` before the call (the ArrayBuffer is DETACHED by it, so after is
-   * too late) and carrying it to the AudioBuffer through a WeakMap names the clip — the
-   * child's `audio/child/*.mp3` and Moxie's `audio/moxie/*.mp3` have different sizes, and
-   * this suite reads both from the shipped manifest rather than hard-coding them. */
-  await page.evaluateOnNewDocument(() => {
-    window.__audio = { created: 0, decoded: 0, started: 0, peak: 0, rate: 0, frames: 0, plays: [] };
-    const C = window.AudioContext || window.webkitAudioContext;
-    if (!C) return;
-    const src = new WeakMap();               // AudioBuffer -> bytes of the file it decoded from
-    const cb = C.prototype.createBuffer;
-    C.prototype.createBuffer = function (...a) { window.__audio.created++; return cb.apply(this, a); };
-    const da = C.prototype.decodeAudioData;
-    C.prototype.decodeAudioData = function (...a) {
-      window.__audio.decoded++;
-      const bytes = a[0] && a[0].byteLength;               // read BEFORE decode detaches it
-      const p = da.apply(this, a);
-      return p && p.then ? p.then((b) => { try { src.set(b, bytes); } catch (e) {} return b; }) : p;
-    };
-    const cbs = C.prototype.createBufferSource;
-    C.prototype.createBufferSource = function () {
-      const node = cbs.call(this);
-      const start = node.start.bind(node);
-      node.start = function (...a) {
-        const b = node.buffer;
-        if (b) {
-          window.__audio.started++;
-          window.__audio.rate = b.sampleRate;
-          window.__audio.frames = b.length;
-          const d = b.getChannelData(0);
-          let p = 0;
-          for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > p) p = v; }
-          if (p > window.__audio.peak) window.__audio.peak = p;
-          let bytes = null;
-          try { bytes = src.has(b) ? src.get(b) : null; } catch (e) {}
-          window.__audio.plays.push({ bytes: bytes, frames: b.length, rate: b.sampleRate, peak: p });
-        }
-        return start(...a);
-      };
-      return node;
-    };
-  });
+  await page.evaluateOnNewDocument(instrumentWebAudio);
 
   await page.setRequestInterception(true);
   page.on("request", (r) => {
     if (r.isInterceptResolutionHandled()) return;
     const u = r.url();
-    if (/\/api\/health\b/.test(u))
-      return r.respond({ status: 200, contentType: "application/json", body: HEALTH_LIVE });
+    if (/\/api\/health\b/.test(u)) return r.respond(json(FX.health));
     if (/\/api\/transcribe\b/.test(u)) {
       if (opts.transcribe === "dead") { aborted.n++; return r.abort("connectionrefused"); }
       if (opts.transcribe === "refused")
-        return r.respond({ status: 400, contentType: "application/json",
-                           body: JSON.stringify(envelope.envelope({
-                             ok: false, degraded: true, reason: "bad_request", mode: "live",
-                             voice: true, ears: true })) });
-      return r.respond({ status: 200, contentType: "application/json",
-                         body: JSON.stringify(envelope.envelope({
-                           ok: true, mode: "live", voice: true, ears: true,
-                           transcript: "I went to the park today" })) });
+        return r.respond(json(FX.env({ ok: false, degraded: true, reason: "bad_request" }), 400));
+      return r.respond(json(FX.env({ transcript: "I went to the park today" })));
     }
-    if (/\/api\/chat\b/.test(u))
-      return r.respond({ status: 200, contentType: "application/json", body: chatBody });
-    if (/\/api\/speech\b/.test(u))
-      return r.respond({ status: 200, contentType: "application/json", body: speechBody });
-    // The local sidecars cannot exist on a hosted origin. `_headers`' own CSP refuses them
-    // and `env.js` disables the controls that would ask; a fixture that answered would be
-    // testing a deployment nobody has.
+    if (/\/api\/chat\b/.test(u)) return r.respond(json(FX.chat));
+    if (/\/api\/speech\b/.test(u)) return r.respond(json(FX.speech));
+    // The local sidecars cannot exist on a hosted origin (the CSP refuses them).
     if (/:808[12]\//.test(u)) { aborted.n++; return r.abort("connectionrefused"); }
     return r.continue();
   });
@@ -249,7 +91,6 @@ async function open(opts) {
   await page.goto(HOSTED, { waitUntil: "domcontentloaded", timeout: 20000 });
   await page.waitForFunction("!!window.moxieMic && !!window.moxieBridge && !!window.moxieMode",
                              { timeout: 15000 });
-  // mode.js's first /api/health, and env.js's sidecar probe, both settle well inside this.
   await page.waitForFunction("window.moxieMode.canSpendLiveTurn() === true", { timeout: 15000 })
     .catch(() => {});
   await new Promise((r) => setTimeout(r, 500));
@@ -264,16 +105,11 @@ const spend = (reqs) => ({
 });
 
 /**
- * Press the microphone button, hold it, and press it again — with a FAKE recorder that
- * yields a clip of exactly `size` bytes.
- *
- * `moxieMic.setCapture` is the seam `mic.js` documents for precisely this: no device is
- * ever opened, and the caps, the size gates and the fallback are the REAL ones. Passing
- * `size: null` opens nothing at all, which is what a denied permission looks like from
- * `start()`'s point of view.
- *
- * @param {{utterances?: number}} [opts] — how many sounds this scenario expects. Given,
- *   the fixed settle below is followed by a WAIT for them; see `settleAudio`.
+ * Press, hold and release `#mic-btn` with a FAKE recorder (the `moxieMic.setCapture` seam)
+ * that yields exactly `size` bytes; the caps, size gates and fallback are the REAL ones.
+ * 3 s is the floor a request that should never happen has to appear; `utterances` then
+ * WAITS for that many sounds — a slow runner once snapshotted before Moxie's clip arrived.
+ * The wait only extends the window, so the spend assertions lose nothing.
  */
 async function press(page, size, opts) {
   await page.evaluate((n) => {
@@ -295,44 +131,10 @@ async function press(page, size, opts) {
   await page.click("#mic-btn");
   await new Promise((r) => setTimeout(r, 250));
   await page.click("#mic-btn");
-  // The whole degraded turn is bounded by cloud-transport's 450 ms stub beat plus the
-  // clip fetch; the live one by the 2.5 s speech wait. 3 s is the floor for the SPEND
-  // assertions — a request that should never have happened has this long to appear.
   await new Promise((r) => setTimeout(r, 3000));
-  if (opts && opts.utterances) await settleAudio(page, opts.utterances);
-}
-
-/**
- * Wait until the sound has actually been scheduled, instead of assuming a fast machine
- * made it in time.
- *
- * WHY THIS EXISTS — the third suite on this branch to be green only by local accident,
- * and the only one of the three whose accident was not a listening port. `test_responsive`
- * and `test_env_hosted` passed because :8081 and :8082 happen to answer on the author's
- * box. This one passed because the author's box is FAST.
- *
- * Measured, by delaying `audio/*` delivery by 1 s against an otherwise untouched suite:
- * `mic.js`'s scripted child line is spoken at once, and `stub.js`'s answer follows one
- * `FALLBACK_MS` (450 ms) later and then pays for its OWN manifest lookup, clip fetch and
- * `decodeAudioData` before `start()` fires. On this machine Moxie's clip started ~2.5 s
- * after the second click, inside the 3 s settle with ~1.4 s to spare. On the CI runner —
- * where the same suite takes 122 s against 53 s here — it landed AFTER the snapshot, so
- * `window.__audio.started` read 1 and the "BOTH were spoken" assertion failed. The clip
- * that made it was the child's; Moxie's answer was still being fetched. Scenario 1 is the
- * only one that pays that cold: it is the first page to touch `audio/index.json` and both
- * mp3s, and scenarios 2-6 inherit a warm HTTP cache from it. That is exactly why the
- * IDENTICAL assertion in scenario 2 stayed green while this one went red.
- *
- * The wait does NOT weaken anything, and that is the point of putting it here rather than
- * lowering the count to `>= 1`. If the sound never comes the wait simply expires and the
- * assertion below still fails — now with a message naming what WAS heard. What it removes
- * is the machine-speed term: a real regression fails on every box, and a slow box does
- * not invent one. It only ever EXTENDS the settle, so the "spends nothing" assertions
- * paired with it get more time to catch a stray request, never less.
- */
-async function settleAudio(page, n, ms = 15000) {
-  await page.waitForFunction((k) => window.__audio.started >= k, { timeout: ms }, n)
-    .catch(() => {});
+  if (opts && opts.utterances)
+    await page.waitForFunction((k) => window.__audio.started >= k, { timeout: 15000 }, opts.utterances)
+      .catch(() => {});
 }
 
 /** Everything that actually reached the speakers, as a visitor would have heard it. */
@@ -341,20 +143,20 @@ const heard = (s) => ((s.audio && s.audio.plays) || [])
               (p.bytes == null ? "(synthesized)" : `(${CLIP_NAME.get(p.bytes) || p.bytes + "B, unknown clip"})`))
   .join(" + ") || "SILENCE";
 
-/**
- * That EXACT shipped clip reached Web Audio, and was audible when it did.
- *
- * This replaced `started >= 2`, which was both too weak and too fragile: it could not tell
- * "the child spoke twice" from "both spoke", it paired with a single global `peak` that
- * one loud clip satisfied for all of them, and it was the assertion the runner broke. The
- * bytes come from the manifest on disk and are carried to the AudioBuffer by the
- * instrument, so this says which UTTERANCE was heard rather than how many sounds happened
- * — the distinction PR #82 cost us, where 770 assertions read a file while Web Audio was
- * stubbed and a silent clip passed every one.
- */
+/** That EXACT shipped clip reached Web Audio, audibly — which UTTERANCE, not how many sounds
+ *  (a count once let an ambient quip stand in for Moxie's answer). */
 function spoke(s, clip, why) {
   const hit = ((s.audio && s.audio.plays) || []).find((p) => p.bytes === clip.bytes && p.peak > 0.05);
   ok(!!hit, `${why} — heard: ${heard(s)}`);
+}
+
+/** No console errors beyond the ones this fixture provoked (forgiven one for one). */
+function quiet(errs, aborted, label, refused = 0) {
+  const left = notable(errs, { n: aborted.n, refused }, {
+    abortedRe: /Failed to load resource: net::ERR_(CONNECTION_REFUSED|FAILED|BLOCKED_BY_CLIENT)/,
+    refusedRe: /Failed to load resource: the server responded with a status of 400/,
+  });
+  eq(left.length, 0, `${label}: ${left.slice(0, 3).join(" | ")}`);
 }
 
 /** What a visitor would see and hear. */
@@ -366,29 +168,9 @@ const snapshot = () => ({
   audio: window.__audio,
 });
 
-const ABORTED = /Failed to load resource: net::ERR_(CONNECTION_REFUSED|FAILED|BLOCKED_BY_CLIENT)/;
-const REFUSED_400 = /Failed to load resource: the server responded with a status of 400/;
-/** Console errors, minus the ones this fixture caused on purpose (the trick
- *  `sim/test_typed_turn.mjs` uses: forgive exactly as many as we provoked, and no more). */
-function notable(errs, aborted, refusals) {
-  let budget = aborted ? aborted.n : 0;
-  let four = refusals || 0;
-  return errs.filter((e) => {
-    if (budget > 0 && ABORTED.test(e)) { budget--; return false; }
-    if (four > 0 && REFUSED_400.test(e)) { four--; return false; }
-    return true;
-  });
-}
-
 try {
-  /* =======================================================================
-   * 1. THE DEFECT'S EXACT SCENARIO — the route REFUSES the clip.
-   *
-   * `bad_request` is chosen deliberately: `mode.js::note` treats it as an input outcome
-   * and changes NO mode, so `canSpendLiveTurn()` is still true when the fallback runs.
-   * (`rate_limited`, `at_capacity`, `budget_exhausted` and `upstream_down` were free
-   * before this fix only by accident — they happen to shut the gate on their way past.)
-   * ===================================================================== */
+  /* 1. THE DEFECT — the route REFUSES the clip. `bad_request` changes NO mode, so the live
+   *    gate is still open when the fallback runs (the other refusals shut it on the way). */
   {
     const { page, errs, reqs, aborted } = await open({ transcribe: "refused" });
     const live = await page.evaluate(() => window.moxieMode.canSpendLiveTurn());
@@ -410,18 +192,11 @@ try {
     spoke(s, MOXIE_CLIP, "…and so was Moxie's answer — BOTH of them, audibly, not one");
     eq(s.transport && s.transport.scriptedFree, 1, "…recorded as a scripted line answered for free");
     eq(s.transport && s.transport.live, 0, "…and no live turn was ever opened");
-    eq(notable(errs, aborted, 1).length, 0,
-       `no unexpected console errors: ${notable(errs, aborted, 1).slice(0, 3).join(" | ")}`);
+    quiet(errs, aborted, "no unexpected console errors", 1);
     await page.close();
   }
 
-  /* =======================================================================
-   * 2. THE PUREST CASE — a clip over `max_audio_bytes`, refused CLIENT-side.
-   *
-   * No upload happens at all: `mic.js` knows the route would refuse it, so it never asks.
-   * And yet, before this fix, that free refusal bought a chat AND a speech turn. One
-   * over-long recording, two paid requests, nothing said.
-   * ===================================================================== */
+  /* 2. A clip over `max_audio_bytes`, refused CLIENT-side: no upload, so nothing may be paid. */
   {
     const { page, errs, reqs, aborted } = await open({ transcribe: "ok" });
     await press(page, LIMITS.max_audio_bytes + 1, { utterances: 2 });
@@ -437,17 +212,12 @@ try {
     ok(s.chatText.includes("Thank you Moxie!"), "…with the scripted line on the page");
     spoke(s, CHILD_CLIP, "…spoken aloud, from its own clip");
     spoke(s, MOXIE_CLIP, "…and answered aloud too");
-    eq(notable(errs, aborted).length, 0,
-       `no console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    quiet(errs, aborted, `no console errors`);
     await page.close();
   }
 
-  /* =======================================================================
-   * 3. THE EARS ARE UNREACHABLE — no envelope at all.
-   *
-   * `noteTransportError` is a STRIKE, and it takes three to degrade the page — so on the
-   * first two the gate is still open and the old code paid, twice, for silence.
-   * ===================================================================== */
+  /* 3. The ears are UNREACHABLE — a transport error is one strike of three, so the gate is
+   *    still open. */
   {
     const { page, reqs } = await open({ transcribe: "dead" });
     await press(page, 40000, { utterances: 2 });
@@ -462,13 +232,8 @@ try {
     await page.close();
   }
 
-  /* =======================================================================
-   * 4. A REAL TRANSCRIPT — unchanged, and it had better be.
-   *
-   * A fix that quietly stopped the microphone from spending would pass every assertion
-   * above. This is the one that says the ears still work: the words a visitor SAID are
-   * exactly what the demo exists to spend on.
-   * ===================================================================== */
+  /* 4. A REAL TRANSCRIPT still spends exactly one turn — a fix that stopped the microphone
+   *    spending at all would pass everything above. */
   {
     const { page, errs, reqs, aborted } = await open({ transcribe: "ok" });
     await press(page, 40000, { utterances: 1 });
@@ -487,18 +252,11 @@ try {
     eq(s.audio.rate, TONE.rate, "…at the sample rate the wire declared");
     ok(s.audio.peak > 0.5,
        `…AUDIBLY, not a silent clip (peak ${s.audio.peak.toFixed(3)} of ${TONE.amp})`);
-    eq(notable(errs, aborted).length, 0,
-       `no console errors on the live spoken turn: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    quiet(errs, aborted, `no console errors on the live spoken turn`);
     await page.close();
   }
 
-  /* =======================================================================
-   * 5. A CLIP UNDER `min_audio_bytes` — a slipped button, not a turn.
-   *
-   * This path never consoled anybody and never spent anything, before or after. It is
-   * asserted so that "the fallback is free" can never be mistaken for "everything now
-   * fires a fallback": a scripted line is not the answer to every mishap.
-   * ===================================================================== */
+  /* 5. A clip under `min_audio_bytes` is a slipped button: no spend AND no consolation line. */
   {
     const { page, errs, reqs, aborted } = await open({ transcribe: "ok" });
     await press(page, Math.max(1, LIMITS.min_audio_bytes - 1));
@@ -511,21 +269,13 @@ try {
     eq(s.stats.tooShort, 1, "…recorded as too short");
     eq(s.stats.fallbacks, 0, "…and burns NO scripted line — nothing was said to console about");
     eq(s.status, "(too short)", "…the status says exactly that");
-    eq(notable(errs, aborted).length, 0,
-       `no console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    quiet(errs, aborted, `no console errors`);
     await page.close();
   }
 
-  /* =======================================================================
-   * 6. A MICROPHONE THAT WILL NOT OPEN — the complete first-visitor recovery path.
-   *
-   * A denied permission takes `start()`'s `catch`. The old line stopped at "mic permission
-   * denied", even though the working typed composer was already on screen. Drive the same
-   * stranger path at desktop and phone widths: denial must cost nothing, name the exact
-   * recovery controls, and leave those controls usable for a response, a context-bearing
-   * second turn, and goodbye. This is hermetic Sim behavior evidence, not physical-device
-   * evidence and not a claim about current upstream inference.
-   * ===================================================================== */
+  /* 6. A microphone that will NOT OPEN, at desktop and phone widths: costs nothing, names
+   *    the typed recovery, and that recovery carries a response, a context-bearing second
+   *    turn and goodbye. Hermetic Sim evidence, not a physical-device claim. */
   for (const visit of [
     { label: "desktop", viewport: { width: 1440, height: 900 } },
     { label: "phone", viewport: { width: 390, height: 844 } },
@@ -533,8 +283,7 @@ try {
     const { page, errs, reqs, bodies, aborted } = await open({
       transcribe: "ok", viewport: visit.viewport,
     });
-    // One click is the actual denial. `press()` deliberately clicks twice for recorder
-    // start/stop scenarios, which would ask for permission twice and is not this journey.
+    // One click is the denial (`press()` clicks twice, which would ask twice).
     await page.evaluate(() => window.moxieMic.setCapture(
       () => Promise.reject(new Error("NotAllowedError"))));
     await page.click("#mic-btn");
@@ -588,8 +337,7 @@ try {
        `${visit.label}: typed recovery never retries the denied microphone behind the visitor's back`);
     ok(after.chatText.includes("goodbye moxie") && after.chatText.includes(REPLY),
        `${visit.label}: goodbye and Moxie's response are visible in the conversation`);
-    eq(notable(errs, aborted).length, 0,
-       `${visit.label}: no console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    quiet(errs, aborted, `${visit.label}: no console errors`);
     await page.close();
   }
 } catch (e) {
