@@ -6,8 +6,6 @@ handling, and the opener greeting.
 """
 import os
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
 from moxie_sdk.content import load_module, ContentApp  # noqa: E402
 from moxie_sdk.types import Turn, RobotContext, ChildProfile  # noqa: E402
 
@@ -93,9 +91,7 @@ def test_empty_brain_reply_is_graceful():
     assert reply.text == "Tell me more!"
 
 
-# --------------------------------------------------------------------------- #
-# 📦 A module's `code` string is DATA — never behaviour (backlog/content-packs.md §2.2)
-# --------------------------------------------------------------------------- #
+# --- 📦 A module's `code` string is DATA — never behaviour (backlog/content-packs.md §2.2) ---
 # An imported pack cannot execute anything, which is what lets an unsigned pack be safe on a
 # child's appliance. The cost: upstream's `MoxieTime`/`MoxieTimers` import as globals that
 # match and do nothing (the review says so; sandboxed extensions are the answer).

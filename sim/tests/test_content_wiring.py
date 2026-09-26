@@ -60,13 +60,9 @@ def test_is_offline_error_classification():
     assert is_offline_error(ValueError()) is False
 
 
-# --------------------------------------------------------------------------- #
-# The always-listening commands
-# --------------------------------------------------------------------------- #
-# The robot's ten any-time phrases (content-and-conversation.md:136-138). A global answers
-# BEFORE the brain, so over-matching is silent (a real sentence gets a canned line); both
-# directions are asserted — the command fires with NO llm call, a sentence merely containing
-# its words does not. `Hello` is deliberately not authored: greeting is what free chat does well.
+# --- The always-listening commands ---
+# A global answers BEFORE the brain, so over-matching is silent; both directions are
+# asserted (content-and-conversation.md:136-138). `Hello` is deliberately free chat's.
 def _counting_app():
     calls = []
 
@@ -106,21 +102,16 @@ def test_an_ordinary_sentence_is_not_hijacked_by_a_global():
 
 
 def test_earmuffs_promises_only_what_it_actually_does():
-    """It says the line but cannot stop the microphone (the sim has no such wiring), so the
-    copy is pinned to the honest half — a global claiming to stop listening would lie to a
-    child."""
+    """It cannot stop the microphone, so the copy is pinned to the honest half."""
     app, _ = _counting_app()
     reply = app.respond(Turn(robot=_robot(), speech="earmuffs")).text.lower()
     assert "not listening" in reply
     assert "say earmuffs off" in reply, "the child is told how to undo it"
 
 
-# --------------------------------------------------------------------------- #
-# No shipped global may fire and do nothing
-# --------------------------------------------------------------------------- #
-# A global that matches but has no handler or extension falls through to free chat, which
-# looks identical to never matching — no assertion on the REPLY can tell. So this guard is
-# structural: every shipped global must have some way to act.
+# --- No shipped global may fire and do nothing ---
+# A matched global with no way to act falls through to free chat, indistinguishable from
+# never matching — so this guard is structural.
 def _shipped_globals():
     with open(STARTER) as fh:
         return json.load(fh)["globals"]
@@ -139,7 +130,6 @@ def test_every_shipped_extension_actually_runs_under_its_shipped_grants():
     """Declaring a capability is not being granted one: a shipped extension (digest in the
     baseline) gets `SHIPPED_EXTRA_GRANTS` + defaults; anything else fails open at runtime and
     lands in free chat like a dead global."""
-    from moxie_sdk.content import packs as P
     from moxie_sdk.content.content_app import SHIPPED_EXTRA_GRANTS
     from moxie_sdk.content import ext as E
 

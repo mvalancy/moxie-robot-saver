@@ -8,7 +8,7 @@ from moxie_sdk.content import render
 
 class ContentMixin:
     # ---- content packs (backlog/content-packs.md) ----
-    # The logic is in the pure `moxie_sdk/content/packs.py`; this is the store, the clock
+    # The logic is in the pure `moxie_sdk/content/packs/`; this is the store, the clock
     # and the live swap. Review writes nothing; import snapshots first (one-slot undo, one
     # atomic write). Only the overlay is written (effective = shipped defaults + overlay),
     # so a release's improved starter content still upgrades. The swap is one attribute

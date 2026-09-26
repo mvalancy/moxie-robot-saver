@@ -1,13 +1,8 @@
 """
-The adaptive day-planner (mqtt/moxie_sdk/schedule.py) — audit §4.2 BEYOND #7.
-
-A scored recommender over history, parent preferences, the clock and the robot's config,
-with a parent-readable "why" per entry. The wire is unchanged: the recovered
-`ContentSchedule` (Cloud.proto:343) of `Recommendation`s (RemoteChat.proto:26-34), guarded
-by `test_schedule.py`.
-
-Each test isolates ONE scoring factor by flattening its neighbours, so a failure names the
-factor. The clock is always injected; nothing sleeps.
+The adaptive day-planner (`moxie_sdk/schedule/`): a scored recommender over history, parent
+preferences, the clock and config, with a parent-readable "why" per entry (the wire shape
+is `test_schedule.py`'s). Each test isolates ONE factor by flattening its neighbours, so a
+failure names the factor. The clock is always injected; nothing sleeps.
 """
 import datetime
 import json
@@ -103,8 +98,8 @@ def test_an_unseen_activity_outranks_one_the_child_has_already_had():
 
 
 def test_coverage_outranks_affinity_so_nothing_repeats_while_fresh_ones_remain():
-    """The PR #7 invariant survives the recommender: a module the child adores still
-    waits its turn behind one they have never seen."""
+    """Nothing repeats while fresh ones remain: a module the child adores still waits
+    behind one they have never seen."""
     catalog = [{"module_id": "LOVED", "category": "LISTENING"},
                {"module_id": "NEW", "category": "LISTENING"}]
     history = [_mbh("LOVED") for _ in range(3)]
@@ -266,10 +261,8 @@ def test_the_requested_module_is_held_for_its_slot_not_eaten_by_an_earlier_one()
 
 
 def test_a_held_module_is_released_when_there_is_nothing_else_left_to_plan():
-    """The hold is a preference between candidates, never a reason to ship a shorter day.
-
-    With one module in the catalog and a request two slots out there is no way to both
-    honour the pin and fill slot 0; the day still gets planned rather than truncated."""
+    """The hold is a preference, never a reason to ship a shorter day: with one module and
+    a request two slots out, slot 0 still gets it rather than the day truncating."""
     now = datetime.datetime(2026, 9, 2, 15, 0)
     cfg = {"schedule_preferences": {"parent_requests": [
         {"module_id": "STORY",
@@ -283,13 +276,10 @@ def test_a_held_module_is_released_when_there_is_nothing_else_left_to_plan():
 
 
 def test_a_parent_request_survives_every_hour_the_planner_could_run_at():
-    """Swept, not claimed: every hour of a fixed day across several device ids (the
-    per-device tiebreak decides the race), since an earlier slot eating the request
-    depended on the hour — green in one timezone, red in another.
-
-    Scenario as `test_schedule_sil_e2e`: FTUE done, bedtime an hour out, one activity asked
-    for two slots ahead. In the last 20 minutes of a day the request belongs to tomorrow
-    and must NOT be pinned into today."""
+    """Swept over a fixed day and several device ids (the tiebreak decides the race), since
+    an earlier slot eating the request depends on the hour. Scenario as
+    `test_schedule_sil_e2e`: FTUE done, bedtime an hour out, one activity asked for two
+    slots ahead; in a day's last 20 minutes it belongs to tomorrow and must NOT pin today."""
     day = datetime.datetime(2026, 9, 2)
     seeded = ([_mbh("WELCOME")] + [_mbh("TNT", content_id=f"tnt{i}") for i in range(9)]
               + [_mbh("SYSTEMSCHECK") for _ in range(4)])

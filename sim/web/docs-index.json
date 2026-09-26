@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 31492,
+   "bytes": 31486,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 285384,
+   "bytes": 285380,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -278,7 +278,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 37577,
+   "bytes": 37575,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -303,7 +303,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 66940,
+   "bytes": 66930,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -393,7 +393,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 198431,
+   "bytes": 198407,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -560,7 +560,7 @@
    "path": "architecture/backlog/content-packs.md",
    "title": "Content packs — export, import-with-review, and an upgrade that does not clobber (ADOPT #5)",
    "section": "architecture",
-   "bytes": 46117,
+   "bytes": 46113,
    "mermaid": 0,
    "headings": [
     "Why this is worth building",
@@ -641,7 +641,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions — a pack that can *do* something, written by someone you don't trust (BEYOND #6)",
    "section": "architecture",
-   "bytes": 94679,
+   "bytes": 94653,
    "mermaid": 0,
    "headings": [
     "0. The boundary, stated first — this is cloud-side, and only cloud-side",
@@ -748,7 +748,7 @@
    "path": "architecture/backlog/content-authoring.md",
    "title": "Content authoring — the verb packs did not ship (§4.4 #6)",
    "section": "architecture",
-   "bytes": 58616,
+   "bytes": 58610,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -797,7 +797,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 48417,
+   "bytes": 48403,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
@@ -820,7 +820,7 @@
    "path": "architecture/backlog/insights.md",
    "title": "Insights that mean something — the vocabulary this history does not have (BEYOND #5)",
    "section": "architecture",
-   "bytes": 51854,
+   "bytes": 51850,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -1116,7 +1116,7 @@
    "path": "architecture/backlog/gamify-the-public-sim.md",
    "title": "Gamify the public sim — evidence for a decision the owner kept",
    "section": "architecture",
-   "bytes": 54032,
+   "bytes": 54028,
    "mermaid": 0,
    "headings": [
     "0. What the owner needs to decide",

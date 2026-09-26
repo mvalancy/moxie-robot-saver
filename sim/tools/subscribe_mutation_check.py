@@ -57,34 +57,36 @@ TESTS = ["sim/tests/test_ext_subscribe.py",     # the chain, the merge, the wire
          "sim/tests/test_ext.py",               # the G6 conformance row
          "sim/tests/test_ext_escapes.py"]       # the three load gates
 
-X = "mqtt/moxie_sdk/content/ext.py"
+XG = "mqtt/moxie_sdk/content/ext/grammar.py"
+XL = "mqtt/moxie_sdk/content/ext/validate.py"
 V = "mqtt/moxie_sdk/content/volley.py"
 C = "mqtt/moxie_sdk/content/content_app.py"
+HOST = "mqtt/moxie_sdk/content/ext_host.py"
 R_CONNECTION = "mqtt/supervisor/moxie_runtime/connection.py"
 R_PRESENCE = "mqtt/supervisor/moxie_runtime/presence.py"
 R_TURNS = "mqtt/supervisor/moxie_runtime/turns.py"
 
 MUTATIONS = [
     # ---- the closed vocabulary: refused at load, and again at each boundary ----
-    ("S1  the load-time event allowlist is gone — a pack may name any string", X,
+    ("S1  the load-time event allowlist is gone — a pack may name any string", XL,
      "            if not isinstance(e, str) or e not in SUBSCRIBE_EVENTS:",
      "            if not isinstance(e, str):"),
-    ("S2  the event vocabulary grows an entry the recovered catalog does not have", X,
+    ("S2  the event vocabulary grows an entry the recovered catalog does not have", XG,
      'SUBSCRIBE_EVENTS = ("eb-found-face", "eb-lost-target", "eb-lost-face",\n'
      '                    "eb-qr-event", "eb-dr-event", "eb-br-event")',
      'SUBSCRIBE_EVENTS = ("eb-found-face", "eb-lost-target", "eb-lost-face",\n'
      '                    "eb-qr-event", "eb-dr-event", "eb-br-event", "eb-shell")'),
-    ("S3  `subscribe` goes back to being refused at load (the P1 gate)", X,
+    ("S3  `subscribe` goes back to being refused at load (the P1 gate)", XG,
      'P1_CAPABILITIES = frozenset({"brain", "schedule.request"})',
      'P1_CAPABILITIES = frozenset({"brain", "schedule.request", "subscribe"})'),
-    ("S4  the host boundary stops bounding the name", C,
+    ("S4  the host boundary stops bounding the name", HOST,
      "        if name not in known:\n"
      '            print(f"[content] {name!r} is not a robot event this appliance names; "',
      "        if False:\n"
      '            print(f"[content] {name!r} is not a robot event this appliance names; "'),
 
     # ---- merged, never replaced: layer 1, inside one volley ----
-    ("S5  an extension REPLACES the volley's subscriptions instead of adding to them", C,
+    ("S5  an extension REPLACES the volley's subscriptions instead of adding to them", HOST,
      "            volley.add_subscriptions(events)",
      "            volley.update_subscriptions(events)"),
     ("S6  `add_subscriptions` stops de-duplicating", V,

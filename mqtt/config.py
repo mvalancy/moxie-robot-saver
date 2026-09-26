@@ -215,7 +215,7 @@ def _env_float(name, default):
 BRAIN_BUDGET_S = _env_float("MOXIE_BRAIN_BUDGET_S", 6.0)
 
 # --- sandboxed content extensions (backlog/sandboxed-extensions.md §6.2) ---
-# Budget for a pack's `extension` program (`moxie_sdk/content/ext.py`). Chosen, not
+# Budget for a pack's `extension` program (`moxie_sdk/content/ext/`). Chosen, not
 # measured — hence env vars.
 EXT_MAX_STEPS = _env_int("MOXIE_EXT_MAX_STEPS", 10000)
 EXT_MAX_VALUE_BYTES = _env_int("MOXIE_EXT_MAX_VALUE_BYTES", 16384)

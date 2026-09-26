@@ -51,6 +51,11 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   RemoteChatResponse conformance check). Import this rather than growing a fifth
   private copy of it. It also owns `LatchClient` (a fake transport a test can *wait on*
   instead of sleeping) and `CountingSynth`.
+- **`helpers_ext.py`** — `robot`, `app_with` and `CHAT_MODULE` for the `test_ext*.py`
+  sandboxed-extension suites (a ContentApp with memory and safety off, so only the
+  extension path is under test).
+- **`helpers_content.py`** — `boot_runtime`, `free_chat_pack`, `post_status` and
+  `recording_brain` for the `test_content*.py` pack/authoring suites.
 
   Four more pieces landed with the v0.7.0 integration pass, each replacing a hand-rolled
   copy: **`free_port()`** (bind `:0` — never a hard-coded 8930/1883, which a lab machine
