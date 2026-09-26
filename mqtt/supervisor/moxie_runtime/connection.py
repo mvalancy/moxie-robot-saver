@@ -359,6 +359,10 @@ class ConnectionMixin:
         same promise `fleet_config()` already makes."""
         return self.store.read_shared(roster_seam.COLLECTION, roster_seam.new_roster())
 
+    def _is_known(self, device_id: str) -> bool:
+        """Connected now, or in the durable roster (served before, maybe offline)."""
+        return device_id in self.robots or device_id in roster_seam.device_ids(self.roster())
+
     def _roster_seen(self, device_id: str) -> bool:
         """Record that we are serving `device_id`. Read-modify-write under the record's
         own lock, so two supervisors on one data directory cannot lose each other's

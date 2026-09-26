@@ -615,6 +615,17 @@ def test_schedule_view_plans_on_demand_for_a_robot_that_has_not_pulled_one(tmp_p
     assert rt.schedule_view("d_never_seen")["ok"] is False
 
 
+def test_schedule_view_plans_for_an_offline_robot_the_roster_knows(tmp_path):
+    """Regression: after a supervisor restart a robot that has talked but reported no
+    mentor behaviors is offline and absent from `self.robots`. The durable roster still
+    knows it, so the card must plan its day rather than call it an unknown device."""
+    rt = _activity_runtime("d_offline", tmp_path)
+    rt.robots.pop("d_offline", None)
+    assert rt._roster_seen("d_offline")
+    view = rt.schedule_view("d_offline")
+    assert view["ok"] and view["explanations"], view
+
+
 def test_a_parent_requested_activity_lands_at_the_hour_they_asked_for(tmp_path):
     """`SchedulePreferences.parent_requests[]` (RobotCloudConfig field 28) is honored by
     the planner, not just stored: a 16:00 request is pinned to the 16:00 slot.

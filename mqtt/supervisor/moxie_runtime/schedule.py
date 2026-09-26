@@ -1,5 +1,6 @@
 """The day plan: schedule building and its explanation for the console."""
 from __future__ import annotations
+from .constants import MENTOR_BEHAVIORS_COLLECTION
 
 
 
@@ -75,8 +76,8 @@ class ScheduleMixin:
         run) it plans one on the spot rather than answering empty."""
         stored = self.store.read(device_id, self.SCHEDULE_EXPLAIN_COLLECTION, None)
         if refresh or not isinstance(stored, dict) or not stored.get("explanations"):
-            if device_id not in self.robots and not self.store.read(
-                    device_id, "mentor_behaviors", None):
+            if not self._is_known(device_id) and not self.store.read(
+                    device_id, MENTOR_BEHAVIORS_COLLECTION, None):
                 return {"ok": False, "error": f"unknown device_id {device_id!r}"}
             sched, explanations, inputs = self.plan_schedule_for(device_id)
             stored = {"day": inputs.get("day"), "planned_at": inputs.get("now"),
