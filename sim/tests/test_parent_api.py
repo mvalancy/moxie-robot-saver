@@ -145,3 +145,23 @@ def test_reboot_is_501_and_the_stub_surface_answers(client):
     assert client.get("/api/help/faq", headers=auth).json() == {"data": [], "path": "faq"}
     assert client.get("/api/notifications").status_code == 401
     assert client.get("/healthz").json() == {"ok": True}
+
+
+def test_the_console_escapes_quotes_in_attribute_values():
+    """Regression: `escapeHtml` escaped only `& < >`, but its output lands inside
+    `data-id="…"` / `title="…"` attributes, and a device id is whatever connected to an
+    anonymous broker — `x" onmouseover="…` broke out of the attribute."""
+    import json
+    import re
+    import shutil
+    import subprocess
+    from helpers_console import console_js
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    fn = re.search(r"function escapeHtml\(s\)\{.*?\}\n", console_js()).group(0)
+    evil = 'd_x" onmouseover="alert(1)\'<b>'
+    out = subprocess.run([node, "-e", fn + f"process.stdout.write(escapeHtml({json.dumps(evil)}))"],
+                         capture_output=True, text=True, check=True).stdout
+    assert '"' not in out and "'" not in out and "<" not in out
+    assert out == "d_x&quot; onmouseover=&quot;alert(1)&#39;&lt;b&gt;"

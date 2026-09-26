@@ -2223,9 +2223,16 @@ def _static(client, path):
     return r.text
 
 
+def _console_js(client):
+    """Every script index.html loads, fetched through the app — the console's whole JS."""
+    import re
+    html = _static(client, "/index.html")
+    return "\n".join(_static(client, src) for src in re.findall(r'<script src="([^"]+)"', html))
+
+
 def test_the_console_serves_the_ids_the_insights_and_device_code_drives(client):
     html = _static(client, "/index.html")
-    js = _static(client, "/app.js")
+    js = _console_js(client)
     for element_id in ("robot-insights", "btn-wake", "btn-reboot", "dev-status"):
         assert f'id="{element_id}"' in html, f"#{element_id} vanished from the page"
         assert f"'#{element_id}'" in js or f"#{element_id}" in js, \
@@ -2244,14 +2251,14 @@ def test_the_voice_card_reads_the_environments_pin(client):
     """Structural, like its neighbours: a `pin_notes` the card never renders would pass
     every API assertion above and still leave a parent staring at a dropdown that lost
     its gateway voices for no visible reason."""
-    js = _static(client, "/app.js")
+    js = _console_js(client)
     assert "pin_notes" in js, "the 🎚️ card never reads the environment's pin"
 
 
 def test_the_insights_card_renders_the_week_and_the_retention_footer(client):
     """The 📈 card must actually consume the durable half of the payload — a card that
     fetched `history`/`retention` and ignored them would pass every API test above."""
-    js = _static(client, "/app.js")
+    js = _console_js(client)
     for token in ("weekBars", "t.history", "ret.packets", "ret.days",
                   "tot.first_day", "t.persisted"):
         assert token in js, f"the insights card never reads {token}"
@@ -2349,7 +2356,7 @@ def test_the_connection_view_survives_a_payload_from_a_newer_runtime():
 def test_the_insights_card_renders_the_connection_strip(client):
     """Structural, like its neighbours: a route the card never reads would pass every API
     assertion above and leave the parent's page unchanged."""
-    js = _static(client, "/app.js")
+    js = _console_js(client)
     for token in ("/local/connection", "connectionStrip", "c.verdict", "c.gaps",
                   "e.waited_s", "roster"):
         assert token in js, f"the connection strip never reads {token}"

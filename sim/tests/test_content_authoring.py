@@ -33,6 +33,8 @@ import urllib.error
 
 import pytest
 
+from helpers_console import console_js
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
@@ -595,7 +597,7 @@ def test_the_chip_list_is_closed_to_the_two_portable_forms():
     Asserted over the chip table's own source: every fragment it can insert is run through
     `_minimal_render` and must come back with `STRIPPED` unmoved."""
     import re
-    js = _asset("app.js")
+    js = console_js()
     m = re.search(r"const ED_CHIPS\s*=\s*\[(.*?)\n\];", js, re.S)
     assert m, "app.js has no ED_CHIPS table"
     fragments = re.findall(r"insert:\s*'((?:[^'\\]|\\.)*)'", m.group(1))
@@ -616,7 +618,7 @@ def test_the_editor_never_offers_a_verb_p0_refuses():
     no `merge_items` operation at all (§3.3), schedules are §0, and `code`/`extension` are
     read-only windows."""
     html = _asset("index.html")
-    js = _asset("app.js")
+    js = console_js()
     assert "ed-panel" in html, "the editor panel is not on the page"
     assert "readonly" in html.lower() or "readOnly" in js, \
         "the raw surface must be read-only in P0 (R1)"
@@ -628,7 +630,7 @@ def test_the_card_grew_the_four_functions_the_brief_names():
     `renderDraftPrompt` / `renderChips` are the four seams the brief hands a later agent,
     and a rename that silently split one of them would leave that agent reading a plan
     that no longer describes the file."""
-    js = _asset("app.js")
+    js = console_js()
     for fn in ("function openEditor(", "async function saveItem(",
                "async function renderDraftPrompt(", "function renderChips("):
         assert fn in js, f"app.js has no {fn}…)"
@@ -644,7 +646,7 @@ def test_no_timer_in_the_editor_can_reach_a_model():
     later pass adds a *Try it*, this assertion is what stops it from being wired to the
     same debounce — the mistake upstream's harness makes, where every keypress-to-answer
     is a real model call with no budget and no counter."""
-    js = _asset("app.js")
+    js = console_js()
     editor = js[js.index("const ED_CHIPS"):]
     timers = [ln for ln in editor.splitlines()
               if "setTimeout(" in ln or "setInterval(" in ln]

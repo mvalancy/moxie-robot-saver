@@ -11,7 +11,7 @@ So this file feeds it the shapes the real world produces — a live payload, a r
 supervisor that never answered, a truncated body, a payload from a newer supervisor with
 fields this console has never heard of — and asserts the card can render every one.
 
-Pure: `fleet.py` imports nothing from `fastapi` and nothing from `mqtt/`, which is what
+Pure: `fleet/` imports nothing from `fastapi` and nothing from `mqtt/`, which is what
 lets it be tested in the hermetic tier at all (the two processes do not share a path).
 The live end-to-end — console → supervisor → registry — is `test_brain_runtime.py`'s
 HTTP section plus the console round trip.
@@ -23,6 +23,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "server"))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
+from helpers_console import console_js                                # noqa: E402
 from moxie_sdk import brains                                          # noqa: E402
 from moxie_server.fleet import (normalize_brain,                      # noqa: E402
                                 normalize_brain_option,
@@ -145,7 +146,7 @@ def _asset(name):
 
 
 def test_every_id_the_brain_card_drives_exists_in_the_page():
-    html, js = _asset("index.html"), _asset("app.js")
+    html, js = _asset("index.html"), console_js()
     for element_id in ("brain-card", "brain-pick", "brain-scope", "brain-note",
                        "brain-robots", "brain-status", "btn-brain-save",
                        "btn-brain-clear", "btn-brain-refresh"):
@@ -156,7 +157,7 @@ def test_every_id_the_brain_card_drives_exists_in_the_page():
 def test_the_card_is_refreshed_with_the_others_and_cleared_when_no_robot_is_live():
     """A card that is never called renders nothing, and a card that is never *cleared*
     keeps showing the last robot's brain after it goes offline."""
-    js = _asset("app.js")
+    js = console_js()
     assert "refreshBrain(liveDevice)" in js
     assert "refreshBrain(null)" in js
 
@@ -165,7 +166,7 @@ def test_the_card_reads_the_environments_pin_and_the_deciding_layer():
     """Two fields a parent cannot do without: the pin note is the reason the dropdown
     looks short, and `source` is the answer to "why is my child on that brain".
     Both would pass every API assertion above while never reaching the page."""
-    js = _asset("app.js")
+    js = console_js()
     assert "pin_note" in js, "the 🧠 card never reads the environment's pin"
     assert "BRAIN_SOURCE_TEXT" in js and "house rule" in js, \
         "the card never says which layer chose a robot's brain"
