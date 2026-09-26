@@ -1,10 +1,5 @@
 /* docs.js — the docs explorer: tree, full-text search, Markdown + Mermaid rendering,
- * deep links, keyboard shortcuts.
- *
- * Lived inline in `docs.html` until 2026-09-04 and was the single largest inline block on
- * the site (405 lines, 25 KB). Moved out for `script-src 'self'` (see `sim/web/_headers`):
- * hashing a block this size means every one-character edit to the explorer must be paired
- * with a regenerated header or the page goes blank. A file needs no hash at all.
+ * deep links, keyboard shortcuts. (A file rather than inline, for `script-src 'self'`.)
  */
 (function(){
   "use strict";
@@ -268,13 +263,8 @@
     h+= next?('<a class="next" href="#'+next+'" data-go="'+next+'"><small>Next</small>'+label(next)+'</a>'):'<span></span>';
     return h+'</div>';
   }
-  /* Read from `<template id="docfoot">` in docs.html rather than built here.
-   *
-   * The other four pages keep this footer in MARKUP; only the explorer built it in code,
-   * and that was invisible while the code lived in an inline <script>. Moving the block to
-   * `docs.js` on 2026-09-04 put it in front of `sim/tests/test_no_deployment_defaults.py`,
-   * which scans shipped JS for hostnames and correctly flagged the two links. The honest
-   * fix is not an exemption — it is to keep branding where the rest of the site keeps it. */
+  /* Read from `<template id="docfoot">` in docs.html: branding stays in markup like the
+   * other pages (sim/tests/test_no_deployment_defaults.py scans shipped JS for hostnames). */
   function footHtml(){
     var t=document.getElementById("docfoot");
     return t?t.innerHTML:"";

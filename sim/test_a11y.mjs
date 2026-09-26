@@ -27,7 +27,7 @@
  * (a concurrent pass owns sim/ci/ci.yml). Run it directly:
  *     PUPPETEER_PATH=~/Code/valancy-resume node sim/test_a11y.mjs
  */
-import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable }
+import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable, launchBrowser }
   from "./browser_harness.mjs";
 
 const LABEL = "a11y";
@@ -43,11 +43,7 @@ const HEALTH_LIVE = JSON.stringify({
   limits: { max_input_chars: 500, max_tts_chars: 300 },
 });
 
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-         "--autoplay-policy=no-user-gesture-required"],
-});
+const browser = await launchBrowser(puppeteer, chrome, { autoplay: true });
 
 /**
  * A loaded /sim.html.

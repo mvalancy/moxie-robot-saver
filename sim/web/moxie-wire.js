@@ -1,18 +1,11 @@
-/* moxie-wire.js — a faint, slowly-rotating WIREFRAME Moxie, built from the same
- * proportions as the simulator model (moxie.js). Used as a "blueprint" background
- * decoration. Self-contained ES module; degrades silently if WebGL is unavailable.
+/* moxie-wire.js — a faint, slowly-rotating WIREFRAME Moxie with the simulator model's
+ * proportions, used as a "blueprint" background. Degrades silently without WebGL.
  *
  *   import { mountMoxieWire } from "./moxie-wire.js";
  *   mountMoxieWire(document.getElementById("wire"), { opacity: 0.18 });
- */
-/* The VENDORED path, not the bare specifier `"three"`, and that is load-bearing.
- * index/setup/cloud used to carry a `<script type="importmap">` whose only job was to
- * resolve that one word — an inline block, so it could only run under
- * `script-src 'unsafe-inline'` or a SHA-256 hash that blanks the page when it drifts.
- * Naming the file deletes all three maps. (`sim.html` still needs its own importmap:
- * `moxie.js` pulls three/addons, and the vendored addons import bare `"three"`
- * themselves — see `sim/web/_headers`.)
- */
+ *
+ * Imports the VENDORED three path rather than bare "three", so these pages need no inline
+ * importmap (which CSP would have to hash). */
 import * as THREE from "./vendor/three/three.module.js";
 
 // Body silhouette (lathe profile), simplified from moxie.js bodyProfilePts:

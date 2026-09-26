@@ -15,7 +15,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import net from "node:net";
-import { requireBrowser } from "./browser_harness.mjs";
+import { requireBrowser, launchBrowser } from "./browser_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -44,10 +44,7 @@ function cleanup() { try { server.kill("SIGKILL"); } catch {} }
 if (!(await waitUp())) { cleanup(); skip("serve.py did not come up"); }
 
 const fails = [];
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"],
-});
+const browser = await launchBrowser(puppeteer, chrome);
 let docs = [], totalSvg = 0;
 try {
   const idx = await (await fetch(base + "/docs-index.json")).json();

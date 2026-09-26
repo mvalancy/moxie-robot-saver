@@ -28,7 +28,7 @@ import { dirname, join } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import net from "node:net";
-import { skipper } from "./browser_harness.mjs";
+import { skipper, launchBrowser } from "./browser_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -100,11 +100,7 @@ const HEALTH_BUSY = JSON.stringify(envelope.envelope({
 }));
 
 // A non-local hostname mapped to the loopback test server — makes env.js see a "hosted" host.
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-         `--host-resolver-rules=MAP moxie.hosted.test 127.0.0.1:${port}`],
-});
+const browser = await launchBrowser(puppeteer, chrome, { hosts: { "moxie.hosted.test": port } });
 
 /**
  * Load sim.html and report what a visitor would actually see.

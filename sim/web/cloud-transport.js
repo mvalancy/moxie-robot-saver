@@ -1,96 +1,51 @@
 /* cloud-transport.js — the live HTTP turn: one typed sentence in, Moxie's own voice out.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §3.4 (the voice-first ordering rule and
- * why no edit to `bridge.js` is needed), §3.5 (this file: a wrapper, not a replacement),
- * §3.2 (both route contracts), §4.5 (what a 429/503 means), §6 (the fallback).
+ * Spec: docs/architecture/backlog/live-sim-demo.md §3.2-3.5, §4.5, §6.
  *
- * WHAT IT DOES, in one sentence: when `window.moxieMode` says this deployment has a live
- * brain, a child's turn goes to the same-origin `POST /api/chat` and `POST /api/speech`
- * instead of to `stub.js`, and the two payloads that come back are handed to the SAME
- * `route()` function a live MQTT bus and a recorded session already drive.
+ * When `window.moxieMode` says this deployment has a live brain, a child's turn goes to
+ * same-origin `POST /api/chat` + `POST /api/speech` instead of `stub.js`, and the payloads
+ * are handed to the SAME `route()` a live MQTT bus and a recorded session drive.
  *
- * ============================================================================
- * IT IS A WRAPPER, AND THAT IS THE WHOLE DESIGN (§3.5).
+ * A WRAPPER (§3.5): `bridge.js` and `audio.js` are not modified. Every `window.moxieBridge`
+ * member passes through untouched except `sendUserTurn` and `isLive` (and additive
+ * members), so the bridge/audio suites stay green by construction. A CONNECTED MQTT BROKER
+ * ALWAYS WINS: a self-hoster's supervisor gets the turn.
  *
- * `bridge.js` and `audio.js` ARE NOT MODIFIED. Not one line. Everything below composes
- * over the seven-and-more member surface `bridge.js` publishes on `window.moxieBridge`:
- * `route`, `faceEvent`, `presenceStats`, `telehealthStats`, `hasCloudVoice`, `actionStats`,
- * `activityStats`, `sendQuery`, `reportMentorBehavior`, `reportTelehealthState` all pass
- * through UNTOUCHED, and only `sendUserTurn` and `isLive` are wrapped. That is what keeps
- * `sim/test_bridge.mjs`, `sim/test_automarkup_render.mjs`, `sim/test_audio.mjs`,
- * `sim/test_presence_bridge.mjs`, `sim/test_voice.mjs` and `sim/tests/test_sil.py` green by
- * construction rather than by luck.
+ * ONE VOICE (§3.4): with no MQTT client, `bridge.js::speakLocally` speaks immediately unless
+ * `cloudVoice` is already latched (by `handleTts`). So the fix is ORDERING:
+ *   1. POST /api/chat  -> the chat message plus a speech ticket;
+ *   2. POST /api/speech immediately;
+ *   3. route the chat message when EITHER the speech reply lands (TTS routed FIRST) or
+ *      `SPEECH_WAIT_MS` elapses. Late TTS is dropped if a local voice is already speaking.
  *
- * A CONNECTED MQTT BROKER ALWAYS WINS. If `inner.isLive()` is true a real supervisor is on
- * the other end of the bus, and it gets the turn — the hosted HTTP brain never competes
- * with it. A self-hoster with a broker is completely unaffected by this file.
- * ============================================================================
- *
- * ============================================================================
- * THE ONE BEHAVIOUR THAT WOULD OTHERWISE BITE: THE DOUBLE VOICE (§3.4).
- *
- * `bridge.js`'s `speakLocally` speaks **IMMEDIATELY** when no MQTT client is connected
- * (`bridge.js`:298-300 — the 900 ms grace window only applies on a live bus). So a naive
- * HTTP transport that routed the chat message first would play the pre-cached/browser voice
- * AND THEN the gateway voice, one on top of the other.
- *
- * `speakLocally` returns instantly when `cloudVoice` is already latched
- * (`bridge.js`:299), and `handleTts` latches it (:315). So the fix is ORDERING, not an
- * edit:
- *
- *   1. POST /api/chat  -> the chat message plus a speech ticket.
- *   2. POST /api/speech immediately, in parallel with nothing else.
- *   3. Route the chat message as soon as EITHER the speech reply lands OR
- *      `SPEECH_WAIT_MS` elapses — routing the TTS message FIRST if it arrived.
- *
- * One voice, always. The bubble and the audio land together. If TTS fails or is slow the
- * text still renders within 2.5 s and speaks from the clip/browser voice exactly as the
- * site does today. And a TTS reply that arrives AFTER the local voice already started is
- * dropped rather than layered on top of it — `stats.lateSpeechDropped` records it, and
- * `sim/test_cloud_transport.mjs` asserts the ordering in both directions.
- * ============================================================================
- *
- * NO SECRET IS INVOLVED, AND THERE IS NO HOSTNAME IN THIS FILE. Both routes are
- * same-origin under `/api/*` (the base comes from `window.moxieMode.apiBase()`, which is
- * `location.origin`), so a fork on any domain works with zero configuration and the
- * browser never holds a gateway key. The `ticket` and `context` strings are OPAQUE here:
- * they are signed server-side, this file only carries them, and the context dies with the
- * tab — nothing about a conversation reaches disk anywhere (§2.6).
+ * No secret and no hostname here: the base is `moxieMode.apiBase()` (= location.origin).
+ * `ticket` and `context` are opaque, signed server-side, and die with the tab (§2.6).
  */
 (function () {
   "use strict";
 
   // §3.4's client-side ceiling on how long the words wait for the voice.
   var SPEECH_WAIT_MS = 2500;
-  // Client-side request ceilings. Deliberately ABOVE the server's own
-  // `DEMO_CHAT_TIMEOUT_MS`/`DEMO_SPEECH_TIMEOUT_MS` (20 s / 12 s) so the server's honest
-  // 504 `timeout` envelope wins the race and the page learns WHY, instead of the browser
-  // aborting first and the page learning only "something failed".
+  // Client ceilings ABOVE the server's own (20 s / 12 s), so its honest 504 `timeout`
+  // envelope wins the race and the page learns WHY.
   var CHAT_FETCH_MS = 25000;
   var SPEECH_FETCH_MS = 15000;
-  // The pause before a fallback reply, matching `bridge.js`:691's own 450 ms so a degraded
-  // turn has the same rhythm as it does today.
+  // The pause before a fallback reply, matching bridge.js's own 450 ms beat.
   var FALLBACK_MS = 450;
 
   var inner = window.moxieBridge;
-  // No bridge, no transport. This file is additive: with `bridge.js` absent it does
-  // nothing at all rather than half-wiring a page.
+  // Additive: with no bridge.js this does nothing rather than half-wiring a page.
   if (!inner || typeof inner.sendUserTurn !== "function" || typeof inner.route !== "function") return;
 
-  /* The topic the local echo rides. `route()` dispatches on the topic SUFFIX only
-   * (`bridge.js`:599-610), so the device segment is identity and not routing: if a
-   * deployment sets `DEMO_DEVICE_ID` to something else, the server's own messages carry
-   * that id and still route correctly, and this echo still routes correctly too. `d_sim`
-   * mirrors `bridge.js`:50, which is what the browser SIM has always published as. */
+  /* The topic the local echo rides. `route()` dispatches on the topic SUFFIX only, so the
+   * device segment is identity, not routing; `d_sim` is what the browser SIM publishes as. */
   var USER_TOPIC = "/devices/d_sim/events/remote-chat";
 
-  /* The signed conversation blob (§3.3). Opaque, browser-held, capped server-side at 4
-   * turns / 1500 chars, re-minted every turn, and gone when the tab closes. Moxie really
-   * does forget this conversation when you close the tab, and the page says so. */
+  /* The signed conversation blob (§3.3): opaque, capped server-side, re-minted every turn,
+   * gone when the tab closes. */
   var contextBlob = "";
 
-  /* Everything this transport RECORDED, readable after the fact. Tests assert on this and
-   * never on a live timing (playbook rule 11). */
+  /* What this transport RECORDED; tests assert on this, never live timing (rule 11). */
   var stats = {
     turns: 0, live: 0, delegated: 0, fallbacks: 0,
     scripted: 0,             // consolation lines the PAGE chose (mic.js's degraded turn)
@@ -118,8 +73,7 @@
     return base || null;
   }
 
-  /** Is a live turn spendable right now? `mode.js` owns this answer: it is `live`, a
-   *  transport is loaded (this file), and no `Retry-After` window is open (§6.3). */
+  /** Is a live turn spendable now? `mode.js` owns the answer (§6.3). */
   function canSpendLiveTurn() {
     var m = mode();
     return !!(m && m.canSpendLiveTurn && m.canSpendLiveTurn() && apiBase());
@@ -185,16 +139,14 @@
     }
   }
 
-  /** Echo the child's turn locally so the transcript row and the `listen` SFX fire
-   *  (`bridge.js`:668-681). Deliberately NOT `inner.sendUserTurn`: that would ALSO fire
-   *  the offline stub 450 ms later (`bridge.js`:689-695) and Moxie would answer twice. */
+  /** Echo the child's turn locally (transcript row + `listen` SFX). NOT
+   *  `inner.sendUserTurn`: that also fires the offline stub and Moxie would answer twice. */
   function echoUser(text) {
     inner.route(USER_TOPIC, JSON.stringify({ command: "prompt", backend: "router", speech: text }));
   }
 
-  /** The degraded answer for ONE turn: `stub.js`, in the same reply shape, after the same
-   *  450 ms beat `bridge.js` uses. The user turn has already been echoed, so this must not
-   *  go back through `inner.sendUserTurn` (that would echo it a second time). */
+  /** The degraded answer for ONE turn: `stub.js` after the bridge's 450 ms beat. The turn
+   *  is already echoed, so not via `inner.sendUserTurn`. */
   function fallbackReply(text) {
     stats.fallbacks++;
     if (!window.moxieStub || !window.moxieStub.enabled) return Promise.resolve();
@@ -235,25 +187,21 @@
 
     return Promise.race([speech, wait]).then(function () {
       if (tts) {
-        // The voice arrived first. Route it BEFORE the words: `handleTts` latches
-        // `cloudVoice`, after which `speakLocally` is a permanent no-op and the bubble
-        // and the audio land together.
+        // Voice first: `handleTts` latches `cloudVoice`, so `speakLocally` stays silent and
+        // bubble and audio land together.
         routeAll(tts, "tts");
         routeAll(chatMessages, "chat");
         stats.voiceFirst++;
         return;
       }
-      // 2.5 s elapsed with no voice. The words go out alone and speak from the clip or
-      // the browser voice, exactly as the site does today.
+        // No voice in time: the words go out alone and speak from the clip/browser voice.
       routeAll(chatMessages, "chat");
       stats.chatFirst++;
       if (!waited) return;      // the speech promise settled without producing audio
       return speech.then(function () {
         if (!tts) return;
-        // Late audio. Playing it on top of a local voice already in the air is the double
-        // voice this whole ordering exists to prevent — so it is dropped. But from the
-        // second turn onward `cloudVoice` is latched and `speakLocally` did nothing at
-        // all, so nothing is speaking and the late audio is exactly what the page needs.
+        // Late audio: drop it if a local voice is already speaking (the double voice).
+        // From the second turn `cloudVoice` is latched and nothing is speaking, so play it.
         var speaking = false;
         try {
           speaking = !!(window.moxieAudio && window.moxieAudio.isSpeaking && window.moxieAudio.isSpeaking());
@@ -265,103 +213,52 @@
     });
   }
 
-  /* ---- the bot control (§4.1's Turnstile slice) --------------------------- *
-   * `sim/web/turnstile.js` owns the whole widget lifecycle and hands this file ONE
-   * promise of a string. THE SEAM IS ONE LINE IN `liveTurn` DELIBERATELY: a parallel
-   * branch is rewriting this composer, so the widget must not be tangled into the send
-   * path it is rewriting.
-   *
-   * Three outcomes, and the middle one is the interesting one:
-   *   ""      — this deployment does not enforce it (a fork, a preview, a local page, or
-   *             any page that simply does not load `turnstile.js`). Send as-is; the field
-   *             goes out empty and the server's own config gate ignores it.
-   *   "<tok>" — a fresh single-use token for THIS send.
-   *   null    — enforcement is on and no token could be got. DO NOT SEND.
-   *
-   * A MISSING MODULE IS THE `""` CASE, not the `null` one. `sim/test_cloud_transport.mjs`
-   * loads this file without `turnstile.js`, and so does any page that never added the
-   * script tag — and in both the honest answer is "this page has no bot control", not
-   * "this page cannot talk to Moxie". The control lives on the SERVER; this half only
-   * supplies a token when the server has said it wants one.
+  /* ---- the bot control ---------------------------------------------------- *
+   * `turnstile.js` owns the widget and hands back one promise of a string:
+   *   ""      — not enforced here (fork, preview, local page, or turnstile.js not loaded):
+   *             send as-is;
+   *   "<tok>" — a fresh single-use token for THIS send;
+   *   null    — enforcement on, no token: DO NOT SEND.
+   * A missing module is the `""` case: the control lives on the SERVER.
    */
   function botToken() {
     var t;
     try { t = window.moxieTurnstile; } catch (e) { t = null; }
     if (!t || typeof t.getToken !== "function") return Promise.resolve("");
     try {
-      /* THE ACTION IS NAMED, and it is named HERE rather than defaulted there. The two
-       * spending routes require different actions back (`TURNSTILE_ACTIONS`) because a
-       * microphone turn costs up to 15 s of billable speech-to-text and a typed turn does
-       * not, so a token minted for this send must be refused by the ears. `mic.js` passes
-       * `"transcribe"` on its own send path for the same reason. */
+      /* The action is named HERE: the routes require different actions so a typed turn's
+       * token cannot pay for costly STT (`mic.js` asks for "transcribe"). */
       return Promise.resolve(t.getToken("chat")).then(function (tok) {
         return typeof tok === "string" ? tok : null;
       }, function () { return null; });
     } catch (e) { return Promise.resolve(null); }
   }
 
-  /* The marks a locally-composed Moxie line needs to have a face and a gesture. Same
-   * format as `stub.js`'s `MK` (and `functions/api/_lib/wire.js`'s), written out here as
-   * two constants because this file has exactly one line of its own to say and importing
-   * a builder for it would be a module system this page does not have. Mood 1 and
-   * `Gesture_Question` read as a puzzled shrug, which is what this actually is. */
+  /* Marks for the one locally-composed line (same format as stub.js's `MK`): mood 1 +
+   * `Gesture_Question`, a puzzled shrug. */
   var MK_MOOD = '<mark name="cmd:playback-mood,data:{+mood+:1,+intensity+:1}"/>';
   var MK_SHRUG = '<mark name="cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,' +
                  '+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Question+,' +
                  '+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}"/>';
 
-  /* THE ONE LINE MOXIE SAYS WHEN A TOKEN COULD NOT BE MINTED.
-   *
-   * NEVER A SILENT DEAD SEND. This is the whole reason this function exists rather than a
-   * bare `return`: the visitor typed a sentence, pressed a button, and the request was
-   * refused BY THIS PAGE before it left. If nothing appeared, the page would look exactly
-   * like the `#speech-btn`-into-a-missing-sidecar bug that this transport was written to
-   * fix — a control that seems alive and silently does nothing. So the child's line is
-   * already echoed (`liveTurn` echoes before asking for a token), Moxie answers in her own
-   * voice through the SAME `route()` a real reply takes, and the status line under the box
-   * says what to do. NO REQUEST IS MADE and nothing is spent. */
+  /* What Moxie says when a token could not be minted. Never a silent dead Send: the child's
+   * line is already echoed, she answers through the same `route()` a real reply takes, and
+   * NO REQUEST IS MADE. */
   var BOT_LINE = "Hmm, my visitor check did not answer just now. Try me once more!";
 
-  /* CONSECUTIVE local token failures. Reset by the first send that gets a token (or by a
-   * deployment that does not enforce), because what matters is whether the widget is
-   * working NOW — a page that failed once at boot and has been fine since is not degraded. */
+  /* CONSECUTIVE local token failures, reset by the first send that gets a token (or an
+   * unenforced deployment) — what matters is whether the widget works NOW. */
   var botStrikes = 0;
 
   /**
-   * No token could be minted, so nothing was sent. What the page does about it.
-   *
-   * ============================================================================
-   * IT DEGRADES LIKE EVERY OTHER FAILURE ON THIS PAGE, AND THE FIRST VERSION DID NOT.
-   *
-   * THE BUG, measured: with `challenges.cloudflare.com` blocked (an ad-blocker rule, a DNS
-   * filter, a `frame-src` refusal — all real and none of them the visitor's doing), five
-   * typed messages produced five VERBATIM copies of the same robotic sentence, each one
-   * inviting a retry that could not work, under a badge that still said **LIVE**. No
-   * strike was recorded, `mode.js` never left `live`, and `stub.js` — the page's own
-   * answer for exactly this situation — was never asked. That is strictly worse than the
-   * unreachable-gateway path, which flips the badge to SCRIPTED and answers topically.
-   *
-   * SO THERE ARE TWO BEHAVIOURS AND A COUNTER:
-   *
-   *   · EVERY failure counts as a transport strike (`noteTransportError()`), which is the
-   *     SAME 3-strike degrade an unreachable gateway uses (§6.3). No new ceiling is
-   *     invented: a widget host that cannot be reached IS a transport failure from this
-   *     page's point of view, and after three of them the badge says SCRIPTED and the copy
-   *     stops claiming a live brain.
-   *   · the FIRST failure still says Moxie's own honest line, because "try me once more"
-   *     is TRUE for a one-off — a single `onerror`, one slow load, one expired challenge —
-   *     and `turnstile.js` no longer memoises a failed script load, so the retry it invites
-   *     can genuinely succeed now.
-   *   · from the SECOND consecutive failure the turn is answered from `stub.js` instead
-   *     (`fallbackReply`), so the visitor gets a topical reply rather than the same
-   *     sentence again. If there is no stub to ask, the honest line is still spoken —
-   *     A SILENT DEAD SEND IS NEVER AN OPTION, which is the whole reason this function
-   *     exists rather than a bare `return`.
-   * ============================================================================
-   *
-   * The child's line is already echoed (`liveTurn` echoes before asking for a token), so
-   * whichever branch runs, Moxie answers in her own voice through the SAME `route()` a real
-   * reply takes. NO REQUEST IS MADE and nothing is spent.
+   * No token could be minted, so nothing was sent. Degrades like every other failure:
+   *   · EVERY failure is a transport strike — the same 3-strike degrade an unreachable
+   *     gateway uses (§6.3), so the badge stops saying LIVE over a page that cannot send;
+   *   · the FIRST failure says Moxie's honest "try me once more" (true for a one-off, and
+   *     turnstile.js no longer memoises a failed load);
+   *   · from the SECOND consecutive failure the turn is answered from `stub.js` rather than
+   *     repeating the same sentence; with no stub the honest line is still spoken.
+   * No request is made and nothing is spent.
    */
   function botUnavailable(text) {
     stats.botUnavailable++;
@@ -388,40 +285,30 @@
   function liveTurn(text) {
     stats.live++;
     status("thinking…");
-    // …and SHOW it. The status line is grey text a child does not read; this is the same
-    // statement made with her face and arms, and it is what fills the ~1.2-4 s gap that
-    // otherwise reads as a robot that has stopped working. It is a no-op for the first
-    // `THINK_DELAY_MS`, so a fast turn never flashes a thinking pose.
+    // …and show it with her face and arms (the status line is text a child won't read).
+    // No-op for the first THINK_DELAY_MS, so a fast turn never flashes a pose.
     if (window.moxieAlive) window.moxieAlive.thinking();
     echoUser(text);
     // The bot control, in one line. `""` means this deployment does not enforce it.
     return botToken().then(function (tok) {
       if (tok === null) return botUnavailable(text);
-      // A token (or an unenforced deployment) means the widget is working now, so the
-      // consecutive-failure count starts again — see `botUnavailable`.
+      // The widget works now, so the consecutive-failure count restarts.
       botStrikes = 0;
       if (tok) stats.botTokens++;
       return chatPost(text, tok);
     });
   }
 
-  /** The POST itself, unchanged from before the bot control existed except for the field
-   *  it now carries. Split out of `liveTurn` so the token step above is a wrapper rather
-   *  than a re-indentation of everything below it — see `botToken`'s note on the seam. */
+  /** The POST itself, split out of `liveTurn` so the token step is a wrapper. */
   function chatPost(text, token) {
     var payload = { text: text, context: contextBlob };
-    // Cloudflare's own form-field name, kept even though this is JSON: it is the name
-    // every Turnstile example verifies, and `functions/api/_lib/turnstile.js::TOKEN_FIELD`
-    // is the other half of the pair. Absent (rather than empty) when there is no control,
-    // so an unenforced deployment sends byte-identically to how it always did.
+    // Cloudflare's own form-field name (every Turnstile example verifies it; the other half
+    // is `_lib/turnstile.js::TOKEN_FIELD`). Absent when there is no control, so an
+    // unenforced deployment sends byte-identically.
     if (token) payload["cf-turnstile-response"] = token;
     return post("/api/chat", payload, CHAT_FETCH_MS).then(function (res) {
-      /* THE WAIT IS OVER, whatever the outcome. Cleared HERE — once, at the top, on the
-       * single path every answer and every refusal comes back through — rather than at
-       * each of the five returns below. A thinking pose that outlives its turn is worse
-       * than never showing one: it would sit on top of the reply's own markup and read as
-       * a robot that never came back. The reply sets her face immediately after, so this
-       * only stops the cues and hands the arms home. */
+      /* The wait is over, whatever the outcome: cleared once here, on the single path every
+       * answer and refusal returns through, so a thinking pose never outlives its turn. */
       if (window.moxieAlive) window.moxieAlive.settled();
       if (!res.body) {
         stats.chatErrors++;
@@ -433,17 +320,12 @@
       note(body.reason, body.retry_after_s);
 
       if (body.reason) {
-        // A refusal, or a safety block. Either way the page must not go quiet (§4.5).
-        // `blocked` carries the rule table's own redirect line, so it is routed; every
-        // other reason answers from `stub.js` for this one turn.
+        // A refusal or a safety block: the page must not go quiet (§4.5). `blocked` carries
+        // the rule table's redirect line; every other reason answers from `stub.js`.
         if (body.reason === "blocked") stats.blocked++;
         else stats.chatRefused++;
-        /* BELT AND BRACES FOR A POISONED BLOB. The server no longer refuses an expired
-         * context, but any refusal that IS about the blob would otherwise repeat for ever:
-         * this file only replaces `contextBlob` on a successful reply, so a rejected blob
-         * would be sent again on the very next turn. Dropping it on `bad_request` costs a
-         * conversation its history — which has already effectively happened — and turns a
-         * permanent wedge into one bad turn. */
+        /* A refused blob would otherwise be resent every turn (it is only replaced on
+         * success), so drop it on `bad_request`: one bad turn instead of a permanent wedge. */
         if (body.reason === "bad_request") contextBlob = "";
         var m2 = mode();
         status((m2 && m2.message && m2.message()) || "answering from her recorded lines.");
@@ -453,16 +335,8 @@
 
       stats.chatOk++;
       status("");
-      /* SHE DREW SOMETHING. Fired and not awaited on purpose: the diagram is a bonus on top
-       * of a turn that has already succeeded, and mermaid's first load is 3.3 MB — making
-       * her words wait on it would trade the thing that matters for the thing that does
-       * not. Every failure inside resolves false and draws nothing (`diagram.js`), so there
-       * is no rejection to handle here and nothing that can turn a good turn into a bad
-       * one. */
-      /* SHE CITES HER SOURCE. `cited` is `"<title>|<path>"` for a document in the corpus
-       * this site already serves, so the link goes to the docs explorer and a visitor can
-       * read the thing she paraphrased. A robot that says "I looked it up" and cannot show
-       * you where is just asserting. */
+      /* She cites her source: `cited` is "<title>|<path>" for a corpus doc, linked into the
+       * docs explorer so a visitor can read what she paraphrased. */
       if (body.cited) {
         var bar = body.cited.indexOf("|");
         var ctitle = bar < 0 ? body.cited : body.cited.slice(0, bar);
@@ -485,6 +359,8 @@
           if ((log.scrollHeight - log.scrollTop - log.clientHeight) < 40) log.scrollTop = log.scrollHeight;
         }
       }
+      // She drew something: fired, not awaited — a bonus that must never delay her words
+      // (mermaid's first load is 3.3 MB); every failure inside draws nothing.
       if (body.diagram && window.moxieDiagram) {
         stats.diagrams++;
         window.moxieDiagram.render(body.diagram);
@@ -492,8 +368,7 @@
       contextBlob = typeof body.context === "string" ? body.context : "";
       var ticket = body.speech && body.speech[0] && body.speech[0].ticket;
       if (!ticket) {
-        // No voice configured (`DEMO_TTS_MODEL` unset => `voice: false`): the words go out
-        // and speak from the clips, which is today's behaviour and honest about it.
+        // No voice configured (`voice: false`): the words speak from the clips.
         routeAll(body.messages, "chat");
         return;
       }
@@ -504,12 +379,10 @@
   /* ---- the wrapped surface (§3.5) ---------------------------------------- */
   window.moxieBridge = Object.assign({}, inner, {
     /**
-     * A child's turn. Three paths, in priority order:
-     *   1. A connected MQTT broker -> `inner.sendUserTurn`, untouched. A real supervisor
-     *      answers and the hosted brain stays out of the way.
-     *   2. Mode `live`, a transport loaded, no open `Retry-After` -> the HTTP turn.
-     *   3. Anything else -> `inner.sendUserTurn`, which echoes the turn and answers from
-     *      `stub.js` exactly as it does today.
+     * A child's turn, in priority order:
+     *   1. connected MQTT broker -> `inner.sendUserTurn`, untouched;
+     *   2. mode `live`, transport loaded, no open `Retry-After` -> the HTTP turn;
+     *   3. anything else -> `inner.sendUserTurn` (echo + `stub.js`).
      */
     sendUserTurn: function (text) {
       var t = String(text == null ? "" : text).trim();
@@ -524,29 +397,12 @@
     },
 
     /**
-     * A line the PAGE chose, not words a visitor said — and therefore a line that must
-     * cost nothing.
-     *
-     * `mic.js` consoles a visitor whose clip was too long, or whose transcription was
-     * refused or failed, with a SCRIPTED CHILD LINE so the conversation still runs and the
-     * button is never dead (spec §6). Nobody spoke those words. Routed through
-     * `sendUserTurn` — which is what it did before — that consolation bought a full
-     * `POST /api/chat` and `POST /api/speech` out of a budget the whole demo shares, on
-     * every path where a refusal changes no mode: `bad_request`, `too_long`, `too_short`,
-     * the client-side over-size gate that never even uploaded, and the first two of the
-     * three transport errors it takes to degrade the page. (`rate_limited`, `at_capacity`,
-     * `budget_exhausted` and `upstream_down` were free only by accident — they happen to
-     * shut `canSpendLiveTurn()` on their way past `mode.js`.)
-     *
-     * Same three-way ordering as `sendUserTurn`, with the middle one replaced:
-     *   1. A connected MQTT broker still gets it. That is a self-hoster's OWN backend, it
-     *      costs this demo nothing, and it is the behaviour they have today.
-     *   2. Nothing spendable -> `inner.sendUserTurn`, i.e. `stub.js`, free and unchanged.
-     *   3. A LIVE page -> the local echo plus the stub answer, assembled here: the same
-     *      transcript row, the same child clip, the same 450 ms beat as (2), and NOT ONE
-     *      REQUEST.
-     *
-     * The visitor cannot tell (2) and (3) apart. The gateway can.
+     * A line the PAGE chose (mic.js's scripted consolation), not words a visitor said — so it
+     * must cost nothing. Via `sendUserTurn` it used to buy a full chat + speech turn on every
+     * refusal that changes no mode. Same ordering, middle path replaced:
+     *   1. connected MQTT broker -> still gets it (a self-hoster's own backend);
+     *   2. nothing spendable -> `inner.sendUserTurn` (`stub.js`, free);
+     *   3. LIVE page -> local echo + stub answer, same beat, and NOT ONE REQUEST.
      */
     sendScriptedTurn: function (text) {
       var t = String(text == null ? "" : text).trim();
@@ -567,53 +423,29 @@
       return !!(inner.isLive() || (m && m.state && m.state() === "live"));
     },
 
-    /** What the transport RECORDED. Additive: every member `bridge.js` published is still
-     *  present and unchanged, so nothing that reads the old surface can notice. */
+    /** What the transport RECORDED (additive to the bridge's surface). */
     transportStats: function () { return JSON.parse(JSON.stringify(stats)); },
   });
 
   /* ---- the typed turn, and the ONE control that carries it ---------------- *
-   * A typed line is a spoken line without the STT leg. `mic.js`:157 hands a transcript to
-   * `window.moxieBridge.sendUserTurn(text)` and EVERYTHING downstream — the transcript
-   * row, the chat message, the speech ticket, playback, the mouth — follows from there.
-   * So the typed path is not a second flow; it is the same call with the microphone
-   * removed, and there is deliberately no second copy of it in this file.
+   * A typed line is a spoken line without the STT leg: the same `sendUserTurn` call mic.js
+   * makes, with no second copy of the flow here.
    *
-   * WHICH CONTROL CARRIES IT. `sim.html` has had a text box in the Voice panel since long
-   * before this transport existed: `#speech-input` + `#speech-btn` ("Say"), whose job is
-   * to make MOXIE say arbitrary text through the LOCAL Piper sidecar on :8081. On a hosted
-   * deployment that sidecar cannot exist, and this site's own CSP (`connect-src 'self'`,
-   * `sim/web/_headers`) correctly refuses the request — so a visitor typed a sentence into
-   * the most obvious box on the page, pressed the button, and got silence plus a console
-   * error. Measured in Chrome against the live site on 2026-09-03:
+   * `#speech-input` + `#speech-btn` ("Say") speak text through the LOCAL Piper sidecar. On a
+   * hosted deployment that sidecar cannot exist and the CSP refuses it, so the most obvious
+   * box on the page was a dead control. So when local Piper is NOT available (env.js decides,
+   * via mode.js and its sidecar probe — never the hostname), env.js calls `adopt()` and the
+   * box becomes the typed turn ("Ask"). With a real Piper it is untouched: local engines
+   * stay first-class.
    *
-   *     apiCalls: only /api/health      audioDecoded: 0   audioStarted: 0
-   *     Refused to connect to 'https://…:8081/tts?text=…' — connect-src 'self'
-   *
-   * `env.js` already MARKED that button `needs-backend`, but a mark is a tooltip and a
-   * half-opacity: the button stayed fully clickable and silently failed. A dead control
-   * that looks alive is worse than one that is visibly unavailable.
-   *
-   * So when the local Piper voice is NOT available — and only then — `env.js` calls
-   * `adopt()` below and that box becomes the typed turn: "Say" becomes "Ask", and the
-   * line goes to Moxie instead of through a sidecar that is not there. When a real Piper
-   * IS reachable the button is untouched and behaves exactly as it always has; the owner's
-   * standing rule is that the local engines stay first-class options, and this is
-   * additive, never a replacement. THE MODE DECIDES, NOT THE HOSTNAME: `env.js` asks
-   * `mode.js` and its own sidecar probe, and hands the answer here.
-   *
-   * The injected `#chat-sub` box below remains the fallback for any page that has no
-   * `#speech-input` to adopt (and for the transport's own unit test). Exactly one typed
-   * control is ever visible: adopting hides the injected one and moves `#chat-status`
-   * across, so the "thinking…" line and every refusal still land under the control the
-   * visitor actually used.
+   * The injected `#chat-sub` box is the fallback for pages with no `#speech-input`. Exactly
+   * one typed control is ever visible, and `#chat-status` moves under the one in use.
    */
   var talkSec = null;        // the injected "Talk" section, when one had to be made
   var adopted = false;       // true once #speech-input/#speech-btn carry the typed turn
 
-  /** The client-side ceiling on one line. `§4.1` enforces it server-side too, on purpose;
-   *  this half exists so the page can say WHY before it spends a request — an over-long
-   *  line must never reach `admit()` at all. */
+  /** Client-side line cap (also enforced server-side, §4.1), so the page says WHY before an
+   *  over-long line reaches `admit()`. */
   function maxChars() {
     var m = mode();
     var lim = (m && m.limits) ? m.limits() : {};
@@ -622,20 +454,10 @@
   }
 
   /**
-   * The one typed path, shared by whichever control is carrying it.
-   *
-   * It inherits the whole spend story for free: `sendUserTurn` above sends a turn to the
-   * live brain ONLY when `canSpendLiveTurn()` says so, and the server's `admit()` — origin
-   * pin, per-IP window, budget, the bounded FIFO queue — is the same gate the microphone
-   * passes. Typing is not a cheaper way to spend the gateway than speaking.
-   *
-   * When the page is NOT live it falls through `inner.sendUserTurn` to `stub.js`, which
-   * costs nothing and is the scripted behaviour the site has today. Note what it does NOT
-   * do: it never invents a line — the only text that reaches `sendUserTurn` from here is
-   * text a human typed. `mic.js`'s degraded path publishes a line the page invented, and
-   * used to publish it through this same call, which on a live page spent a full chat +
-   * speech turn on words the visitor never said; it goes through `sendScriptedTurn` above
-   * now, which is the same rule this function has always followed, written down.
+   * The one typed path. It inherits the spend story: `sendUserTurn` goes live only when
+   * `canSpendLiveTurn()`, through the same server `admit()` the microphone passes; otherwise
+   * `stub.js`, free. Only text a human typed reaches it (invented lines use
+   * `sendScriptedTurn`).
    *
    * @returns {boolean} whether the line was sent.
    */
@@ -673,19 +495,10 @@
   }
 
   /**
-   * Hand `#speech-input` / `#speech-btn` the typed turn.
-   *
-   * ONE-WAY ON PURPOSE. The only input that can change the answer is `env.js`'s sidecar
-   * probe, which resolves exactly once per session, and `env.js` withholds the call until
-   * it has resolved — so there is no "un-adopt" to get wrong, and no window in which the
-   * button's label and its behaviour could disagree. `adopt(false)` is therefore a query,
-   * not a command.
-   *
-   * The two existing listeners on those elements (`moxie.js`'s `setSpeech`, `sim.html`'s
-   * `wireAudio`) are NOT removed — they ask `moxieTypedTurn.adopted()` and stand down.
-   * That is deliberately explicit rather than clever: replacing the nodes would silently
-   * break `sim.html`'s phrase chips, which hold a reference to the input, and a
-   * capture-phase interceptor would make the page's behaviour depend on listener ordering.
+   * Hand `#speech-input` / `#speech-btn` the typed turn. ONE-WAY: env.js calls it once,
+   * after its sidecar probe resolves, so `adopt(false)` is only a query. The existing
+   * listeners (moxie.js `setSpeech`, sim.html `wireAudio`) are not removed — they check
+   * `moxieTypedTurn.adopted()` and stand down; replacing nodes would break the phrase chips.
    *
    * @returns {boolean} whether this page has such a control at all.
    */
@@ -696,16 +509,10 @@
     if (!btn || !inp) return false;
 
     var sec = btn.closest ? btn.closest("section.sub") : null;
-    /* The status line follows the control: "thinking…", every refusal reason and the
-     * over-long warning have to appear under the box the visitor actually used. Note the
-     * ORDER this runs in — `env.js` renders synchronously while the document is still
-     * parsing, so adoption normally happens BEFORE `injectTalkUI` would have made a
-     * `#chat-status` at all. Hence `ensureStatus`, and hence `injectTalkUI`'s early-out:
-     * when this control was adopted, the duplicate box is never built in the first place. */
+    /* The status line follows the control. Adoption normally runs before `injectTalkUI`
+     * (env.js renders while the document parses), hence `ensureStatus` and the early-out. */
     ensureStatus(sec);
-    // ...and if one was already built (a page that adopts late), it goes away, so the
-    // panel never shows two text inputs that look like they do the same thing. It did, on
-    // the live site, and the visitor reliably tried the top one — the dead one.
+    // …and a late-adopting page hides the injected box: never two text inputs.
     if (talkSec) talkSec.hidden = true;
 
     btn.textContent = "Ask";
@@ -726,27 +533,17 @@
     return true;
   }
 
-  /* The injected fallback box. Kept for any page with no `#speech-input` to adopt — and
-   * it is what the transport's own unit test drives. It works in EVERY mode: with no live
-   * brain the turn goes to `stub.js` through `inner.sendUserTurn`.
-   *
-   * It is injected from here rather than added to `sim.html` for two reasons: it keeps
-   * `sim.html`'s edit to the single `<script>` tag §9's file table budgets, and it means
-   * the control exists exactly when the transport does. `env.js` already established this
-   * pattern — it injects the env badge and the banner the same way. */
+  /* The injected fallback box, for pages with no `#speech-input` to adopt (and the unit
+   * test). Works in every mode. Injected here so the control exists exactly when the
+   * transport does. */
   function injectTalkUI() {
     if (adopted) return;                        // the page already has a typed control
     if (document.getElementById("chat-send")) return;
     var mic = document.getElementById("mic-btn");
     var host = mic && mic.closest ? mic.closest("section.sub") : null;
-    /* WHERE IT MAY NOT GO (2026-09-05). `#mic-btn` moved out of the rail and into the
-     * page's composer (`#chat-dock` in sim.html), and that dock must hold EXACTLY ONE
-     * text box: two boxes that can disagree is a worse bug than the dead control this
-     * fallback exists for, and the live site has already proved that a visitor reliably
-     * tries the top one. So when the mic is in the dock, this box goes to the rail
-     * instead, beside the voice controls it belongs with. The only page that reaches this
-     * branch at all is a self-hosted one with a live Piper sidecar, where `#speech-input`
-     * is still the "make Moxie SAY this" control and so cannot be adopted. */
+    /* The composer dock (#chat-dock) must hold exactly ONE text box, so when the mic lives
+     * there this box goes to the rail beside the voice controls. Only a self-hosted page with
+     * a live Piper sidecar (whose #speech-input cannot be adopted) reaches this. */
     if (host && host.closest && host.closest("#chat-dock")) {
       var note = document.getElementById("voice-note");
       host = note && note.closest ? note.closest("section.sub") : null;
@@ -799,9 +596,7 @@
     }
   } catch (e) {}
 
-  /* The seam `env.js` uses to hand the typed turn a control. Published BEFORE the honesty
-   * guard below for the same reason that flag is set last: nothing may be able to adopt a
-   * control while the transport is only half-wired. */
+  /* The seam env.js uses. Published before the honesty flag below. */
   window.moxieTypedTurn = {
     adopt: function (on) { return on === false ? adopted : adoptSpeechControl(); },
     adopted: function () { return adopted; },
@@ -809,9 +604,7 @@
     maxChars: maxChars,
   };
 
-  /* THE HONESTY GUARD (`mode.js`:29-35). This flag is what tells `mode.js` that a
-   * configured deployment may finally be PAINTED as live, because something is now loaded
-   * that can actually use it. It is set LAST, after the wrapper is installed, so the flag
-   * can never be true while the transport is only half-wired. */
+  /* THE HONESTY GUARD: tells mode.js a configured deployment may be PAINTED live because
+   * something can now use it. Set LAST, so it is never true while half-wired. */
   window.moxieCloudTransport = true;
 })();

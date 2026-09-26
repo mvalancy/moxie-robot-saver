@@ -38,7 +38,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { requireBrowser, serveWeb, serveStatic, pagesHeaders, makeChecks, finish, web } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, serveStatic, pagesHeaders, makeChecks, finish, web, launchBrowser } from "./browser_harness.mjs";
 
 const LABEL = "CSP + security-headers test";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
@@ -62,11 +62,7 @@ const H = pagesHeaders();
  * an allowance. */
 const HOST = `http://moxie.hosted.test:${site.port}`;
 
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-         `--host-resolver-rules=MAP moxie.hosted.test 127.0.0.1:${site.port}`],
-});
+const browser = await launchBrowser(puppeteer, chrome, { hosts: { "moxie.hosted.test": site.port } });
 
 /* ONE known, pre-existing refusal, named exactly rather than matched loosely.
  *

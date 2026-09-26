@@ -61,8 +61,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo, web,
-         watchPage, notable } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo, web, watchPage, notable, launchBrowser } from "./browser_harness.mjs";
 
 const LABEL = "ambient-guard test";
 const { puppeteer, chrome, skip } = await requireBrowser(LABEL);
@@ -125,12 +124,8 @@ const speechBody = JSON.stringify(envelope.envelope({
  * what `perform()` would have spoken, and cannot drift from what the site ships. */
 const AMBIENT_LINE = JSON.parse(readFileSync(join(web, "ambient.json"), "utf8")).lines[0].text;
 
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-         "--autoplay-policy=no-user-gesture-required",
-         `--host-resolver-rules=MAP moxie.hosted.test 127.0.0.1:${site.port}`],
-});
+const browser = await launchBrowser(puppeteer, chrome,
+  { autoplay: true, hosts: { "moxie.hosted.test": site.port } });
 
 /** Open sim.html with `/api/*` answered at the browser and Web Audio fully instrumented. */
 async function open(url, opts) {

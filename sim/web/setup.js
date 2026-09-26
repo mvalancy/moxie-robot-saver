@@ -1,10 +1,6 @@
 /* setup.js — the standalone parent-app "basics" page: turns the two forms into Moxie QR
  * codes. The encoders themselves live in `qr.js` and are NOT reimplemented here, so this
- * page can never drift from the byte-parity guarantee `sim/test_qr.mjs` holds over them.
- *
- * Lived inline in `setup.html` until 2026-09-04; moved out for `script-src 'self'` (see
- * `sim/web/_headers`).
- */
+ * page can never drift from the byte-parity guarantee `sim/test_qr.mjs` holds over them. */
 (function(){
   "use strict";
   var Q = window.moxieQR;

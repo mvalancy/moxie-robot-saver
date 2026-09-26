@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import net from "node:net";
-import { requireBrowser, makeChecks, finish } from "./browser_harness.mjs";
+import { requireBrowser, makeChecks, finish, launchBrowser } from "./browser_harness.mjs";
 
 const LABEL = "docs-explorer tests";
 const here = dirname(fileURLToPath(import.meta.url));
@@ -49,10 +49,7 @@ const { fails, ok, count } = makeChecks();
 
 if (!(await waitUp())) { cleanup(); skip("serve.py did not come up"); }
 
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"],
-});
+const browser = await launchBrowser(puppeteer, chrome);
 
 try {
   const page = await browser.newPage();

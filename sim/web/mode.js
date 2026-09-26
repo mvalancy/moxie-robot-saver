@@ -1,50 +1,26 @@
 /* mode.js — what this deployment can actually DO, asked rather than guessed.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §6.3 (the state machine and the poll
- * schedule), §7 (capacity signalling and the visitor-facing copy), §3.2 (the envelope),
- * §4.5 (what a 429/503 means).
+ * Spec: docs/architecture/backlog/live-sim-demo.md §6.3 (state machine, poll schedule),
+ * §7 (capacity signalling + copy), §3.2 (envelope), §4.5 (what a 429/503 means).
  *
- * WHY THIS FILE EXISTS. Until now the page decided everything from the HOSTNAME
- * (`env.js`:12-14): any non-local host was assumed to be a backend-less static demo, and
- * the page said so — "hosted demo — only pre-scripted lines have audio" — whether that
- * was true or not. It also had no notion of gateway health at all: with a broker
- * connected and the brain dead the page rendered nothing, which is dead air. So this
- * module asks one same-origin route, `GET /api/health`, and publishes the answer as
- * `window.moxieMode`. `env.js` paints the badge, the pill and the `needs-backend` marks
- * from it. Nothing here decides what Moxie SAYS — that stays `bridge.js`/`stub.js`.
+ * Asks one same-origin route, `GET /api/health`, and publishes the answer as
+ * `window.moxieMode`; env.js paints the badge, pill and `needs-backend` marks from it.
+ * Nothing here decides what Moxie SAYS (bridge.js / stub.js).
  *
- * THE THREE STATES (§6.3), and the guarantee each one carries:
+ *   offline  — no /api/health (fork without Functions, file://, plain CDN, 404): the page
+ *              behaves exactly as without this module, and is never polled again.
+ *   degraded — the route answered honestly: scripted Moxie plus the reason.
+ *              `gateway_not_configured` is sticky, so an unconfigured deployment fires
+ *              exactly ONE request (no poll storm).
+ *   live     — a live brain is reachable. A 429 does not leave `live` (soft degrade).
  *
- *   offline  — `/api/health` is not there at all: a fork with no Functions, `file://`, a
- *              plain CDN, a 404. Behaviour and copy are BYTE-IDENTICAL TO TODAY, and
- *              nothing is polled again for the rest of the session. This is the promise
- *              that adding all of this cannot regress the existing site.
- *   degraded — the route exists and answered honestly. Scripted Moxie plus the reason,
- *              on screen. `gateway_not_configured` is sticky for the session (§4.5:
- *              "no poll storm"), so an unconfigured deployment fires exactly ONE request.
- *   live     — a live brain is configured and reachable, so the HTTP transport may be
- *              used. A 429 does NOT leave this state: a rate-limited visitor is not a
- *              broken deployment (§6.3, "soft degrade").
+ * HONESTY GUARD: `live` only DISPLAYS as live when cloud-transport.js has loaded
+ * (`window.moxieCloudTransport`); otherwise it reads SCRIPTED with a line saying why.
  *
- * HONESTY GUARD, and it is the point of the whole slice: `live` only ever *displays* as
- * live when something is actually loaded that can use it. P0-a ships this mode machine
- * alone; the live HTTP transport is `cloud-transport.js` in P0-b (§3.5), which sets
- * `window.moxieCloudTransport = true`. Until that file is present, a configured
- * deployment reads as SCRIPTED with a copy line that says exactly why — because painting
- * "LIVE" over a page that still answers from `stub.js` would be the precise dishonesty
- * this slice exists to remove.
- *
- * NO SECRET IS INVOLVED. The route never returns a gateway URL, a key, or a model id
- * (§4.2), and this file contains no hostname of any kind: the base is `location.origin`,
- * so a fork on any domain works with zero configuration (C3).
- *
- * ONE PUBLIC VALUE DOES COME BACK, as of 2026-09-05: the Cloudflare Turnstile SITEKEY,
- * `""` when the bot control is not enforced. It is not a secret — it ships to every
- * visitor in the widget markup either way — and it arrives HERE rather than being written
- * into `sim.html` for the C3 reason above: a sitekey in a public repo is *this*
- * deployment's sitekey, which every fork and every branch preview would then render a
- * widget for and be refused by. `sim/web/turnstile.js` reads it through
- * `window.moxieMode.turnstile()` and is the only caller.
+ * No secret and no hostname: the base is `location.origin`, so a fork works unconfigured.
+ * The one public value returned is the Turnstile SITEKEY ("" = not enforced), delivered
+ * at runtime so forks and previews never render this deployment's widget;
+ * turnstile.js reads it via `window.moxieMode.turnstile()`.
  */
 (function () {
   "use strict";
@@ -56,30 +32,18 @@
   var STRIKES_TO_DEGRADE = 3;   // consecutive transport errors before live -> degraded
 
   // ---- the closed reason set (§3.2). Anything else is treated as unknown. ----
-  // `gateway_unreachable_or_gated` is P0-b's one addition to §3.2's set: the gateway is
-  // expected to live behind a Cloudflare Tunnel, and a tunnel behind Cloudflare Access
-  // answers a server-side fetch with an HTML LOGIN PAGE AND A 200 — so the Function
-  // distinguishes "the brain is down" from "the door in front of it is locked"
-  // (functions/api/_lib/envelope.js says why). It MUST be listed here: an unknown reason
-  // is coerced to `null` below, which `note()` would then read as a HEALTHY turn.
-  // The visitor sees the same badge and the same copy as `upstream_down`; only an
-  // operator reading the reason learns anything.
-  // The two `turnstile_*` reasons are the 2026-09-05 bot-control slice's additions, and
-  // they MUST be here for the same reason `gateway_unreachable_or_gated` must: an unknown
-  // reason is coerced to `null` twelve lines below, and `note()` would then read a REFUSED
-  // turn as a healthy one — resetting the strike count and, worse, painting LIVE over a
-  // deployment whose every turn is being refused. `functions/api/_lib/envelope.js` is the
-  // other half of this list and says what each one means.
+  // EVERY reason the server can send MUST be listed: an unknown one is coerced to null,
+  // and note() would read a refused turn as HEALTHY (painting LIVE over a deployment whose
+  // turns are all refused). functions/api/_lib/envelope.js is the other half of this list.
+  // `gateway_unreachable_or_gated` = Cloudflare Access answering with a login page + 200.
   var REASONS = ["rate_limited", "at_capacity", "budget_exhausted", "upstream_down",
                  "gateway_unreachable_or_gated",
                  "gateway_not_configured", "timeout", "bad_request", "too_long",
                  "too_short", "bad_ticket", "blocked", "forbidden_origin",
                  "turnstile_failed", "turnstile_misconfigured"];
 
-  // ---- §7's visitor-facing copy, and it lives HERE rather than on the server ----
-  // Two reasons. It has to be honest in `offline` too, where there is no server to send
-  // a string; and a raw status code or an upstream error string must never reach a
-  // visitor, which is easiest to guarantee when the visitor's words are all local.
+  // ---- §7's visitor-facing copy lives HERE, not on the server: it must be honest in
+  // `offline` too, and no raw status or upstream error string may reach a visitor.
   var BADGE_PLAIN = "HOSTED DEMO";
   var BADGE_LIVE = "MOXIE ONLINE";
   var BADGE_BUSY = "HOSTED DEMO · BUSY";
@@ -90,16 +54,10 @@
     budget_exhausted: "Moxie’s live brain has used up today’s demo budget. Everything you see still works — she’s speaking from her recorded lines.",
     unreachable: "Moxie’s brain is unreachable right now — she’s running on what she remembers.",
     rate_limited: "One at a time! Give Moxie a few seconds.",
-    // Not in §7's table because §7 assumes the transport exists. P0-a ships without it,
-    // and saying nothing would be the dishonest option.
+    // Not in §7 (which assumes the transport exists); saying nothing would be dishonest.
     no_transport: "Moxie’s live brain is configured, but this build has no live transport yet — she’s answering from her recorded lines.",
-    // The bot control, in two voices for the two very different faults behind it.
-    // `turnstile_failed` is per-turn and the page STAYS live — a token that expired
-    // (they last 300 s and are single-use) is not a broken deployment, and the next send
-    // mints a fresh one. `turnstile_misconfigured` is the deployment's own secret or
-    // hostname list being wrong, which refuses EVERY visitor identically until someone
-    // fixes it, so it reads like the other unreachable rows: honest, scripted, and no
-    // pretence that the next tap will work.
+    // turnstile_failed is per-turn (tokens expire/are single-use) and the page stays live;
+    // turnstile_misconfigured refuses every visitor until fixed, so it reads scripted.
     turnstile_failed: "Moxie needs to check you’re a real person — give that another try.",
     turnstile_misconfigured: "Moxie’s visitor check isn’t set up right on this deployment, so she’s answering from her recorded lines.",
   };
@@ -110,10 +68,7 @@
   var limits = {};
   var load = { level: "ok", inflight: 0, capacity: 0 };
   var voice = false, ears = false;
-  // The PUBLIC Turnstile sitekey the deployment published, or "" for "not enforced".
-  // `sim/web/turnstile.js` renders a widget only for a non-empty value, so this one string
-  // is the whole switch — nothing in the page decides it from a hostname (C3), and a fork
-  // or a branch preview that sets no Turnstile variables simply never sees a widget.
+  // The PUBLIC Turnstile sitekey, or "" = not enforced: the whole switch for the widget.
   var turnstile = "";
   var sticky = false;            // offline, and gateway_not_configured: never poll again
   var suppressUntil = 0;         // a 429/503 Retry-After window: no live turns until then
@@ -123,9 +78,7 @@
   var hiddenSkip = false;        // a poll fell due while the tab was hidden
   var listeners = [];
   var lastKey = "";
-  // Recorded, not sampled: every test asserts on these rather than on a live timing
-  // (sim/test_mode.mjs). A poll that already happened is a fact; one that is about to is
-  // a bet.
+  // Recorded, not sampled: tests assert on these, never on live timing (test_mode.mjs).
   var stats = { polls: 0, usable: 0, unusable: 0, absent: 0, transportErrors: 0,
                 hiddenSkips: 0, notes: 0, lastDelayMs: 0, scheduled: [], transitions: [] };
 
@@ -159,8 +112,7 @@
       if (!hasTransport()) return { badge: BADGE_SCRIPTED, message: COPY.no_transport };
       if (now() < suppressUntil && reason === "rate_limited")
         return { badge: BADGE_LIVE, message: COPY.rate_limited };
-      // Still LIVE, with a line that tells the visitor what to do about it. A bot check
-      // that did not pass is this turn's problem, not the deployment's.
+      // Still LIVE: a failed bot check is this turn's problem, not the deployment's.
       if (reason === "turnstile_failed")
         return { badge: BADGE_LIVE, message: COPY.turnstile_failed };
       if (load.level === "full") return { badge: BADGE_BUSY, message: COPY.full };
@@ -173,16 +125,14 @@
       if (reason === "upstream_down" || reason === "timeout" ||
           reason === "gateway_unreachable_or_gated")
         return { badge: BADGE_SCRIPTED, message: COPY.unreachable };
-      // Its own copy rather than `COPY.unreachable`: the brain is fine, the DOOR is
-      // misconfigured, and an operator reading the page should be told which.
+      // Own copy: the brain is fine, the DOOR is misconfigured.
       if (reason === "turnstile_misconfigured")
         return { badge: BADGE_SCRIPTED, message: COPY.turnstile_misconfigured };
       if (reason === "at_capacity") return { badge: BADGE_BUSY, message: COPY.full };
-      // gateway_not_configured (and anything unknown): today's copy, unchanged. §7 is
-      // explicit that this row keeps the existing wording — env.js owns it.
+      // gateway_not_configured (and anything unknown): plain copy; env.js owns the wording.
       return { badge: BADGE_PLAIN, message: "" };
     }
-    // boot and offline: today's page, exactly.
+    // boot and offline: the plain page.
     return { badge: BADGE_PLAIN, message: "" };
   }
 
@@ -206,8 +156,7 @@
 
   function emit() {
     var snap = snapshot();
-    // Only fire on a real change: env.js re-renders on every event, and a 30-second
-    // heartbeat that changed nothing must not repaint the topbar.
+    // Only fire on a real change: a heartbeat that changed nothing must not repaint.
     var key = [snap.state, snap.reason, snap.badge, snap.message, snap.level,
                snap.voice, snap.ears, snap.turnstile, snap.liveTurns].join("|");
     if (key === lastKey) return;
@@ -245,8 +194,7 @@
 
   function tick() {
     timer = null;
-    // Never poll while the tab is hidden — the rule ambient.js:77 already follows. The
-    // due poll is not lost: `visibilitychange` runs it the moment the tab comes back.
+    // Never poll a hidden tab; `visibilitychange` runs the due poll when it returns.
     if (hidden()) { hiddenSkip = true; stats.hiddenSkips++; return; }
     poll();
   }
@@ -261,8 +209,7 @@
     var body;
     try { body = JSON.parse(text); } catch (e) { return null; }
     if (!body || typeof body !== "object" || Array.isArray(body)) return null;
-    // A static host that answers 200 with its index page, or any body without a mode, is
-    // not this route. Treated as absent rather than believed.
+    // A 200 without a mode (e.g. a static index page) is not this route.
     if (body.mode !== "live" && body.mode !== "degraded") return null;
     return body;
   }
@@ -297,8 +244,7 @@
         opt.signal = AbortSignal.timeout(PROBE_TIMEOUT_MS);
     } catch (e) {}
     return fetch(base + "/api/health", opt).then(function (r) {
-      // The route is contractually always 200 (health.js), so a 404/405/501 means the
-      // route is ABSENT — a fork with no Functions, or a plain CDN.
+      // The route is always 200 (health.js), so 404/405/501 means it is ABSENT.
       if (r.status === 404 || r.status === 405 || r.status === 501) {
         stats.absent++;
         absent();
@@ -315,15 +261,14 @@
         return snapshot();
       });
     }).catch(function () {
-      // A network error is indistinguishable from an absent route at boot, and both are
-      // the same outcome for a visitor: today's page.
+      // At boot a network error is the same outcome as an absent route: the plain page.
       stats.unusable++;
       unusable();
       return snapshot();
     });
   }
 
-  /** The route is not there. Byte-identical-to-today, forever, no more requests. */
+  /** The route is not there: the plain page, forever, no more requests. */
   function absent() { clear(); setState("offline", null); }
 
   /** A reply we cannot read, or a network failure. */
@@ -352,9 +297,7 @@
 
     if (r === "forbidden_origin") { absent(); return snapshot(); }   // §4.5: treated as offline
     if (r === "gateway_not_configured") { setState("degraded", r); clear(); return snapshot(); }
-    // A misconfigured bot control refuses every visitor until a variable changes, so it
-    // degrades exactly like a dead gateway: SCRIPTED page, honest copy, and the poll
-    // rescheduled off the server's own `Retry-After` (60 s) rather than hammering it.
+    // A misconfigured bot control degrades like a dead gateway, polled off Retry-After.
     if (r === "budget_exhausted" || r === "upstream_down" ||
         r === "gateway_unreachable_or_gated" || r === "turnstile_misconfigured") {
       setState("degraded", r);
@@ -362,9 +305,8 @@
       return snapshot();
     }
     if (r === "rate_limited") {
-      // SOFT degrade (§6.3): the mode STAYS live. A rate-limited visitor is not a broken
-      // deployment. This turn is answered from the stub and live turns resume after
-      // Retry-After. Strikes reset: a 429 is a healthy server saying "not so fast".
+      // SOFT degrade (§6.3): stay live, answer this turn from the stub, resume after
+      // Retry-After. A 429 is a healthy server saying "not so fast", so strikes reset.
       strikes = 0;
       suppressUntil = now() + (retryMs || 10000);
       reason = "rate_limited";
@@ -372,10 +314,8 @@
       return snapshot();
     }
     if (r === "at_capacity") {
-      // §6.3's "live -> degraded on 503" and §4.5's at_capacity row disagree; §7 settles
-      // it by giving at_capacity the BUSY badge in the *live* row. So capacity is a load
-      // signal, not a broken deployment: stay live, show BUSY, and stop spending until
-      // Retry-After.
+      // §7 gives at_capacity the BUSY badge in the LIVE row: a load signal, not a broken
+      // deployment. Stay live, show BUSY, stop spending until Retry-After.
       strikes = 0;
       suppressUntil = now() + (retryMs || 15000);
       load = { level: "full", inflight: load.capacity, capacity: load.capacity };
@@ -393,12 +333,8 @@
       return snapshot();                      // input/safety outcome: never a mode change
     }
     if (r === "turnstile_failed") {
-      // SOFT, like `rate_limited` and for the same reason: the deployment is healthy and
-      // the next send mints a fresh token. But UNLIKE `rate_limited` there is no
-      // suppression window — telling the page to stop spending for ten seconds would
-      // punish a visitor for a token that expired, and the retry that fixes it is
-      // immediate. `reason` is set so the LIVE badge can carry the "give that another
-      // try" line, and `emit()` is what paints it.
+      // SOFT like rate_limited, but NO suppression window: the next send mints a fresh
+      // token immediately. `reason` lets the LIVE badge carry the "try again" line.
       strikes = 0;
       reason = "turnstile_failed";
       emit();
@@ -407,12 +343,8 @@
     // A clean turn: the deployment is healthy.
     strikes = 0;
     delay = POLL_MIN_MS;
-    // ...and a lingering per-turn note is cleared by the turn that succeeded, rather than
-    // by the next 30-second poll. `rate_limited` clears itself in `surface()` when its
-    // suppression window expires; `turnstile_failed` has no window (a fresh token is a
-    // tap away, so suppressing spend would punish the visitor for a stale token), which
-    // means the copy would otherwise sit under a working box saying "give that another
-    // try" for up to half a minute after they had.
+    // A successful turn clears a lingering turnstile_failed note now, not at the next poll
+    // (it has no suppression window to expire).
     if (state === "live" && reason === "turnstile_failed") { reason = null; emit(); }
     if (state === "degraded" && !sticky) { setState("live", null); schedule(delay); }
     return snapshot();
@@ -440,8 +372,7 @@
     limits: function () { return limits; },
     voice: function () { return voice; },
     ears: function () { return ears; },
-    /** The PUBLIC Turnstile sitekey this deployment published, or "" for "not enforced".
-     *  `sim/web/turnstile.js` is the only caller. */
+    /** PUBLIC Turnstile sitekey, or "" (not enforced). turnstile.js is the only caller. */
     turnstile: function () { return turnstile; },
     apiBase: apiBase,
     hasTransport: hasTransport,
@@ -463,8 +394,6 @@
     },
   };
 
-  // First probe immediately — via tick(), so the "never poll while hidden" rule holds for
-  // the very first request too: a page opened in a background tab shows today's copy
-  // (which is what `boot` deliberately is) and asks the moment it is looked at.
+  // First probe now, via tick(), so a background tab also waits until it is looked at.
   tick();
 })();

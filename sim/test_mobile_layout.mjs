@@ -28,7 +28,7 @@
  *
  *   node sim/test_mobile_layout.mjs
  */
-import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable }
+import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable, launchBrowser }
   from "./browser_harness.mjs";
 
 const LABEL = "mobile-layout test";
@@ -75,11 +75,7 @@ const PHONES = [
   ["iPhone XR  414x896", 414, 896],
 ];
 
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-         `--host-resolver-rules=MAP moxie.hosted.test 127.0.0.1:${site.port}`],
-});
+const browser = await launchBrowser(puppeteer, chrome, { hosts: { "moxie.hosted.test": site.port } });
 
 /**
  * Who would actually receive a tap at the centre of `sel`?

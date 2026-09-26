@@ -37,7 +37,7 @@
  *   node sim/test_typed_turn.mjs
  */
 import { join } from "node:path";
-import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo, launchBrowser } from "./browser_harness.mjs";
 
 const LABEL = "typed-turn test";
 const { puppeteer, chrome, skip } = await requireBrowser(LABEL);
@@ -103,12 +103,8 @@ function wavOfTone() {
 }
 const WAV = wavOfTone();
 
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-         "--autoplay-policy=no-user-gesture-required",
-         `--host-resolver-rules=MAP moxie.hosted.test 127.0.0.1:${site.port}`],
-});
+const browser = await launchBrowser(puppeteer, chrome,
+  { autoplay: true, hosts: { "moxie.hosted.test": site.port } });
 
 /**
  * Open sim.html with `/api/*` (and optionally the :8081 sidecar) answered at the browser.

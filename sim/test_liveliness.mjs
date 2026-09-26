@@ -19,7 +19,7 @@
  *
  *   node sim/test_liveliness.mjs
  */
-import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable }
+import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable, launchBrowser }
   from "./browser_harness.mjs";
 
 const LABEL = "liveliness + chat layout";
@@ -27,10 +27,7 @@ const { puppeteer, chrome } = await requireBrowser(LABEL);
 const { fails, ok, eq, count } = makeChecks();
 
 const site = await serveWeb();
-const browser = await puppeteer.launch({
-  executablePath: chrome, headless: "new",
-  args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"],
-});
+const browser = await launchBrowser(puppeteer, chrome);
 
 /* ---- WAIT FOR THE LAYOUT, NOT FOR A NUMBER OF MILLISECONDS ---------------- *
  *

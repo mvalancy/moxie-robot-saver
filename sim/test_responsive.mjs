@@ -25,7 +25,7 @@ import { dirname, join } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import net from "node:net";
-import { skipper } from "./browser_harness.mjs";
+import { skipper, launchBrowser } from "./browser_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -101,10 +101,7 @@ const VIEWPORTS = [
 let browser;
 try {
   if (!(await waitUp())) { cleanup(); skip(`dev server did not come up on ${base}`); }
-  browser = await puppeteer.launch({
-    executablePath: chrome, headless: "new",
-    args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"],
-  });
+  browser = await launchBrowser(puppeteer, chrome);
 
   async function open(path, w, h) {
     const p = await browser.newPage();

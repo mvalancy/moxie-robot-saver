@@ -90,6 +90,21 @@ export function skipper(label) {
  * `{ puppeteer, chrome }`, or a clean exit(0) when either is missing.
  * @param {string} label
  */
+/**
+ * Launch headless Chrome the way the SIM suites need it: software GL (swiftshader) so the
+ * WebGL stage renders on GPU-less runners, optional autoplay, and optional host mappings
+ * (`{ "moxie.hosted.test": port }`) so a loopback server can play a public hostname.
+ */
+export async function launchBrowser(puppeteer, chrome, { hosts = {}, autoplay = false, args = [], ...opts } = {}) {
+  const rules = Object.entries(hosts).map(([h, port]) => `MAP ${h} 127.0.0.1:${port}`).join(",");
+  return puppeteer.launch({
+    executablePath: chrome, headless: "new", ...opts,
+    args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
+           ...(autoplay ? ["--autoplay-policy=no-user-gesture-required"] : []),
+           ...(rules ? [`--host-resolver-rules=${rules}`] : []), ...args],
+  });
+}
+
 export async function requireBrowser(label) {
   const skip = skipper(label);
   const puppeteer = await loadPuppeteer();
