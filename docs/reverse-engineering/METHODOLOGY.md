@@ -103,7 +103,7 @@ Every reverse-engineering session runs the **same** disciplined cycle — this i
    questions.
 4. **Write** highly-detailed, `v24.10.803`-stamped findings into `docs/reverse-engineering/**`, filed in
    the [right subfolder](README.md) (phone / protocol / runtime / firmware / hardware) with a back-link.
-5. **Grow the tree, don't polish a leaf** — run the [top-down consistency pass](../README.md#-how-this-documentation-tree-is-maintained-sop):
+5. **Grow the tree, don't polish a leaf** — run the [top-down consistency pass](../README.md#maintaining-these-docs):
    a new leaf must be reflected upward (its subfolder README, the RE README, COVERAGE/EXPLORATION-MAP,
    and — if it changes the story — `docs/README.md` and the root `README.md`). No contradictions between
    levels; one message from root to leaf.
