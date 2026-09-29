@@ -3,7 +3,7 @@
 Vendored locally so the simulator runs with **no network / no CDN** (self-sufficiency
 doctrine — the sim must work if every external link dies). Pinned versions:
 
-- `three/three.module.js` + `three/addons/{controls/OrbitControls,utils/BufferGeometryUtils}.js`
+- `three/three.module.min.js` (the release build's minified module, byte-identical to `build/three.module.min.js` in the npm tarball) + `three/addons/{controls/OrbitControls,utils/BufferGeometryUtils}.js`
   — **three.js r160** (`three@0.160.0`). MIT License, © three.js authors.
 - `mqtt.min.js` — **MQTT.js v5.10.1**. MIT License, © the MQTT.js contributors.
 
