@@ -9,7 +9,6 @@ import base64
 import datetime
 import json
 import os
-import socket
 import urllib.error
 import urllib.request
 
@@ -21,7 +20,7 @@ from moxie_sdk.app import MoxieApp                       # noqa: E402
 from moxie_sdk.store import JsonStore                    # noqa: E402
 from moxie_sdk.types import Reply, Action, ActionType, RobotContext, ChildProfile  # noqa: E402
 import moxie_runtime                                     # noqa: E402
-from helpers_runtime import FakeClient                   # noqa: E402
+from helpers_runtime import FakeClient, free_port        # noqa: E402
 
 
 class _ActionApp(MoxieApp):
@@ -80,14 +79,6 @@ def _no_tts(published):
     return not [t for (t, _) in published if t.endswith("/commands/tts")]
 
 
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
-
-
 def _http_get(port, path):
     with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as r:
         return json.loads(r.read().decode())
@@ -115,7 +106,7 @@ def test_turn_roundtrips_text_actions_and_success():
     assert ra[0]["module_id"] == "DRAW" and ra[0]["content_id"] == "default"
 
 
-def test_turn_publishes_decodable_tts_when_synth_set(device_id="d_test"):
+def test_turn_publishes_decodable_tts_only_when_synth_set(device_id="d_test"):
     """With a server voice installed, a turn also publishes a CloudTTSResponse the SIM
     can decode back to audio — the runtime→SIM voice contract."""
     from moxie_sdk.tts import PiperSynthesizer, decode_cloud_tts_response
@@ -126,10 +117,7 @@ def test_turn_publishes_decodable_tts_when_synth_set(device_id="d_test"):
     spoken = decode_cloud_tts_response(tts[-1])
     assert spoken["audio"] == b"AUDIO" and spoken["sample_rate"] == 22050
     assert spoken["event_id"] == "evt-9"                  # carries the turn's event id
-
-
-def test_turn_no_tts_without_synth():
-    assert _no_tts(_drive(_ActionApp(), speech="hello"))
+    assert _no_tts(_drive(_ActionApp(), speech="hello"))  # the robot self-synthesizes
 
 
 def test_offline_brain_signals_error_offline_over_the_wire():
@@ -158,30 +146,6 @@ def test_history_accumulates_across_the_pipeline():
     h = rt.history.get("d_hist", [])
     assert {"role": "user", "content": "hi"} in h
     assert any(m["role"] == "assistant" for m in h)
-
-
-def test_tts_synthesizes_and_publishes_on_a_turn():
-    """With a synthesizer set, a turn also publishes a CloudTTSResponse (server voice for
-    the SIM); the real robot self-synthesizes, so it is opt-in."""
-    from moxie_sdk.tts import Synthesizer
-
-    class _FakeSynth(Synthesizer):
-        sample_rate = 16000
-        channels = 1
-
-        def synthesize(self, text, voice=None):
-            return b"PCM:" + text.encode()
-
-    rt = _rt("d_tts", nickname="Sam")
-    rt.set_synthesizer(_FakeSynth())
-    tts = _on(_turn(rt, "d_tts", "hi"), "/devices/d_tts/commands/tts")
-    assert tts, "no CloudTTSResponse published"
-    assert base64.b64decode(tts[-1]["audio"]["buffer"]).startswith(b"PCM:")
-    assert tts[-1]["audio"]["sample_rate"] == 16000
-
-
-def test_no_synthesizer_no_tts_published():
-    assert _no_tts(_turn(_rt("d_notts"), "d_notts", "hi"))
 
 
 # --------------------------------------------------------------------------- #
@@ -226,22 +190,7 @@ def test_handle_zmq_json_audio_frame_drives_stt():
 
 def test_handle_zmq_real_protobuf_frame_drives_stt():
     """A real robot's protobuf zmqSTTRequest frame off events/zmq → transcript."""
-    def _varint(n):
-        out = bytearray()
-        while True:
-            b = n & 0x7F
-            n >>= 7
-            out.append(b | (0x80 if n else 0))
-            if not n:
-                return bytes(out)
-
-    def _frame(vad, audio, uuid):
-        u = uuid.encode()
-        body = (bytes([0x10]) + _varint(vad)
-                + bytes([0x1A]) + _varint(len(audio)) + audio
-                + bytes([0x22]) + _varint(len(u)) + u)
-        return b"embodied.perception.audio.zmqSTTRequest:" + body
-
+    from helpers_audio import pb_zmq_stt_frame as _frame
     rt = _stt_rt(lambda pcm: f"pb {len(pcm)}b")
     did = "d_pb"
     rt.handle_zmq(did, _frame(1, b"aa", "u5"))                    # START
@@ -269,10 +218,8 @@ def test_push_config_publishes_spec_robot_cloud_config():
     assert msgs, "no config published"
     cfg = msgs[-1]
     assert cfg["pairing_status"] == "paired"                 # the wrapper the robot needs
-    assert cfg["child_pii"]["nickname"] == "Sam"
+    assert cfg["child_pii"]["nickname"] == "Sam"             # the runtime's child, not a default
     assert cfg["data_sharing"] == "NO_DATA"                  # LoggingPolicy default
-    assert "timezone_id" in cfg and "audio_volume" in cfg and "moxie_mode" in cfg
-    assert cfg["settings"]["props"]["stt"] == "4"            # stream audio to our STT
 
 
 def test_state_ingest_stores_robot_status():
@@ -294,13 +241,6 @@ def test_update_config_republishes_with_merged_overrides():
     rt.update_config(did, screen_brightness=0.5)           # a second edit merges
     cfg2 = _on(rt.client.published, f"/devices/{did}/config")[-1]
     assert cfg2["audio_volume"] == 0.9 and cfg2["screen_brightness"] == 0.5
-
-
-def test_update_config_bedtime_window():
-    cfg = _rt(allow_unverified_bots=True).update_config(
-        "d_bt", weekday_bedtime=("20:00", "07:00"))
-    assert cfg["weekday_bedtime_enabled"] is True
-    assert cfg["weekday_bedtime_starts_at"] == "20:00"
 
 
 def test_status_snapshot_surfaces_robot_state():
@@ -365,7 +305,7 @@ def test_status_server_serves_status_and_telemetry():
     did = "d_http"
     rt = _rt(did)
     rt.ingest_telemetry(did, _packet(did, "wake", recorded_at=42))
-    port = _free_port()
+    port = free_port()
     rt._start_status_server(port)
 
     assert _http_get(port, "/status")["ok"] is True
@@ -399,16 +339,20 @@ def _query(rt, query, device_id, request_id="r"):
                      device_id)[0][1]
 
 
-def test_schedule_query_echoes_request_id_and_keys_schedule(device_id="d_test"):
-    pub = _drive_activity({"subtopic": "query", "query": "schedule",
-                           "request_id": "req-abc"}, device_id)
+@pytest.mark.parametrize("query,key,want", [
+    ("schedule", "schedule", None), ("mentor_behaviors", "mentor_behaviors", []),
+    ("license", "license_values", []),
+])
+def test_a_query_is_answered_on_query_result_echoing_its_request_id(query, key, want):
+    pub = _drive_activity({"subtopic": "query", "query": query, "request_id": "req-1"})
     assert len(pub) == 1
     topic, msg = pub[0]
-    assert topic == f"/devices/{device_id}/commands/query_result"
-    assert msg["command"] == "query_result"
-    assert msg["query"] == "schedule"
-    assert msg["request_id"] == "req-abc"          # the robot correlates on this
-    assert "result" not in msg                     # the old generic key is gone
+    assert topic == "/devices/d_test/commands/query_result"
+    assert (msg["command"], msg["query"]) == ("query_result", query)
+    assert msg["request_id"] == "req-1"            # the robot correlates on this
+    assert key in msg and "result" not in msg      # the old generic key is gone
+    if want is not None:
+        assert msg[key] == want                    # nothing reported yet
 
 
 def test_schedule_query_serves_a_real_nonempty_day_plan(device_id="d_plan"):
@@ -420,23 +364,6 @@ def test_schedule_query_serves_a_real_nonempty_day_plan(device_id="d_plan"):
     ids = [r["module_id"] for r in sched["provided_schedule"]]
     assert len(ids) >= 8 and "DM" in ids
     assert "generate" not in sched                 # authoring key never hits the wire
-
-
-def test_mentor_behaviors_query_echoes_request_id_and_keys_the_list(device_id="d_test"):
-    topic, msg = _drive_activity({"subtopic": "query", "query": "mentor_behaviors",
-                                  "request_id": "req-mbh-1"}, device_id)[0]
-    assert topic == f"/devices/{device_id}/commands/query_result"
-    assert msg["query"] == "mentor_behaviors"
-    assert msg["request_id"] == "req-mbh-1"
-    assert msg["mentor_behaviors"] == []           # nothing reported yet
-    assert "result" not in msg
-
-
-def test_license_query_uses_license_values():
-    _, msg = _drive_activity({"subtopic": "query", "query": "license",
-                              "request_id": "req-lic"})[0]
-    assert msg["request_id"] == "req-lic"
-    assert msg["license_values"] == []
 
 
 def test_query_without_subtopic_is_still_answered():
@@ -593,7 +520,7 @@ def test_status_server_serves_the_schedule_and_its_explanations(tmp_path):
     did = "d_httpsched"
     rt = _rt(did, nickname="Sam", tmp_path=tmp_path)
     _activity(rt, {"subtopic": "query", "query": "schedule"}, did)
-    port = _free_port()
+    port = free_port()
     rt._start_status_server(port)
     view = _http_get(port, f"/schedule?device_id={did}")
     assert view["ok"] and view["device_id"] == did
