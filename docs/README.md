@@ -89,12 +89,12 @@ occasional cleanup:
    the same pass — no doc should still assert something we've since disproven (e.g. "hunt for hidden QR
    codes" after the grammar was proven closed).
 4. **Stamp the build.** Robot-side pages are stamped with the analyzed firmware (`v24.10.803`); the RE
-   [methodology](reverse-engineering/METHODOLOGY.md) and per-iteration loop keep new pages consistent.
+   [playbook](reverse-engineering/PLAYBOOK.md) and per-iteration loop keep new pages consistent.
 5. **Verify mechanically.** `python3 sim/tools/build_docs_bundle.py` → `node sim/test_docs.mjs` →
    `python3 scripts/check-doc-links.py` → `python3 scripts/check-doc-consistency.py` (stale-message +
    version-stamp guard). The tree must pass these before a commit.
 
-See [`reverse-engineering/METHODOLOGY.md`](reverse-engineering/METHODOLOGY.md) for the full RE loop and
+See [`reverse-engineering/PLAYBOOK.md`](reverse-engineering/PLAYBOOK.md) for the full RE loop and
 tool tiers (including Ghidra for native decompilation).
 
 ---
