@@ -282,6 +282,22 @@ class LLMApp(MoxieApp):
 
     # ---- parsing ----
     @staticmethod
+    def _objects(raw: str) -> dict:
+        """Every JSON object in `raw`, merged left to right — models sometimes split the
+        envelope as `{"say": …} {"mood": …}`. Prose around them is ignored; {} if none."""
+        dec, merged, i = json.JSONDecoder(), {}, raw.find("{")
+        while i >= 0:
+            try:
+                obj, end = dec.raw_decode(raw, i)
+            except ValueError:
+                i = raw.find("{", i + 1)
+                continue
+            if isinstance(obj, dict):
+                merged.update(obj)
+            i = raw.find("{", end)
+        return merged
+
+    @staticmethod
     def _parse(raw: str):
         """Pull {say, mood, gesture} out of the model's reply, tolerating stray prose.
 
@@ -291,19 +307,13 @@ class LLMApp(MoxieApp):
         raw = (raw or "").strip()
         if not raw:
             return "", None, None
-        m = re.search(r"\{.*\}", raw, re.S)
-        if m:
-            try:
-                obj = json.loads(m.group(0))
-                say = str(obj.get("say") or obj.get("text") or "").strip()
-                if say:
-                    mood = obj.get("mood")
-                    gesture = obj.get("gesture")
-                    return (say,
-                            str(mood).lower() if mood else None,
-                            str(gesture).lower() if gesture else None)
-            except Exception:
-                pass
+        obj = LLMApp._objects(raw)
+        say = str(obj.get("say") or obj.get("text") or "").strip()
+        if say:
+            mood, gesture = obj.get("mood"), obj.get("gesture")
+            return (say,
+                    str(mood).lower() if mood else None,
+                    str(gesture).lower() if gesture else None)
         # model ignored the format — treat the whole thing as the spoken line
         return raw, None, None
 
