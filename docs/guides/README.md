@@ -11,8 +11,7 @@ Task-oriented how-tos for Moxie owners.
 - [`first-time-setup.md`](first-time-setup.md) — set up a Moxie from scratch (Wi-Fi pairing).
 - [`factory-reset-a-paired-moxie.md`](factory-reset-a-paired-moxie.md) — unpair or fully reset a paired robot.
 - [`find-moxie-on-lan.md`](find-moxie-on-lan.md) — find your robot's IP after it joins Wi-Fi.
-- [`litellm-tts-setup.md`](litellm-tts-setup.md) — hand-off for the gateway manager to register TTS (Piper/Amy) models.
-- [`litellm-stt-setup.md`](litellm-stt-setup.md) — **hearing through the gateway**: `MOXIE_STT=gateway` is the whole switch (same host and key as the brain and the voice), the deployment matrix for choosing cloud ears vs local whisper — both first class — and what happens when the gateway hiccups mid-sentence.
+- [`gateway-voice-and-ears.md`](gateway-voice-and-ears.md) — speech and listening through an OpenAI-compatible gateway, or locally.
 - [`deploy-cloudflare.md`](deploy-cloudflare.md) — publish the SIL simulator + docs explorer as a static Cloudflare Pages site (and what does/doesn't survive the move off localhost).
 
 ---

@@ -12,8 +12,8 @@ dependencies** (works fully offline). Served at `/` by the FastAPI server.
   🧠 What Moxie remembers (browse + erase long-term memory),
   🎚️ Voice (pick the Speech and Listening engines from what this appliance can really use —
   the gateway's models discovered live, the local Piper voices and whisper sizes installed on the
-  box, and the built-ins; see the [TTS guide](../../docs/guides/litellm-tts-setup.md) and the
-  [STT guide](../../docs/guides/litellm-stt-setup.md)).
+  box, and the built-ins; see the [TTS guide](../../docs/guides/gateway-voice-and-ears.md) and the
+  [STT guide](../../docs/guides/gateway-voice-and-ears.md)).
 - [`js/`](js/) — the scripts, one per group of cards, loaded in order (no bundler); they talk
   to the server's `/local/*` and `/api/*` endpoints.
 - `style.css` — mobile-first, light/dark aware.

@@ -72,7 +72,7 @@ plugged in here must be told that rate rather than assume one.
 
 Two engines ship, and **neither is a fallback for the other** — which one a deployment wants is a
 property of the box, not a ranking (the matrix is in
-[`litellm-stt-setup.md`](../guides/litellm-stt-setup.md)):
+[`gateway-voice-and-ears.md`](../guides/gateway-voice-and-ears.md)):
 
 | Engine | `MOXIE_STT` | What it is | For |
 |---|---|---|---|
@@ -365,7 +365,7 @@ Three, in a fixed precedence (`mqtt/config.py::build_synthesizer`): **voice serv
 
 | Backend | When | Notes |
 |---|---|---|
-| `OpenAIVoiceSynthesizer` | `MOXIE_VOICE_BASE_URL` set | Any OpenAI-shaped `/audio/speech`. **Live on our LiteLLM gateway since 2026-09-02** (`piper-amy` / `piper-ryan`, same host + key as chat) — proven by transcribing its audio back at word overlap **1.00** (`sim/tests/test_live_gateway_tts.py`). A `wav` reply is unwrapped here, so `AudioBuffer.sample_rate` is **the file's own header**, not a constant; `pcm` uses `MOXIE_VOICE_SAMPLE_RATE`. Setup + the gateway's quirks: [litellm-tts-setup.md](../guides/litellm-tts-setup.md) |
+| `OpenAIVoiceSynthesizer` | `MOXIE_VOICE_BASE_URL` set | Any OpenAI-shaped `/audio/speech`. **Live on our LiteLLM gateway since 2026-09-02** (`piper-amy` / `piper-ryan`, same host + key as chat) — proven by transcribing its audio back at word overlap **1.00** (`sim/tests/test_live_gateway_tts.py`). A `wav` reply is unwrapped here, so `AudioBuffer.sample_rate` is **the file's own header**, not a constant; `pcm` uses `MOXIE_VOICE_SAMPLE_RATE`. Setup + the gateway's quirks: [gateway-voice-and-ears.md](../guides/gateway-voice-and-ears.md) |
 | `PiperSynthesizer` | `MOXIE_PIPER_MODEL` set + piper installed | Offline, no key, ~3-5× faster than the gateway for the same sentence |
 | `ToneSynthesizer` | `MOXIE_TTS=tone` | A shaped beep. **Not speech** — it exists so the SIM's audio path works with no model, network or extra dep |
 

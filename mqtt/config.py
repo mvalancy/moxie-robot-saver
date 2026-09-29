@@ -158,7 +158,7 @@ VOICE_API_KEY  = os.environ.get("MOXIE_VOICE_API_KEY", LLM_API_KEY)
 # Voice name for an OpenAI-shaped endpoint; on a LiteLLM gateway the MODEL is the voice,
 # and empty derives it from the model name (piper-amy → "amy").
 TTS_VOICE      = os.environ.get("MOXIE_TTS_VOICE", "")
-# The gateway's TTS model (docs/guides/litellm-tts-setup.md).
+# The gateway's TTS model (docs/guides/gateway-voice-and-ears.md).
 VOICE_MODEL    = os.environ.get("MOXIE_VOICE_MODEL", "") or "piper-amy"
 # "wav" (header carries the rate) or "pcm" (16-bit at MOXIE_VOICE_SAMPLE_RATE); no mp3/opus.
 VOICE_FORMAT   = (os.environ.get("MOXIE_VOICE_FORMAT", "").strip().lower() or "wav")

@@ -129,7 +129,7 @@ services:
       MOXIE_ALLOW_UNVERIFIED_BOTS: ${MOXIE_ALLOW_UNVERIFIED_BOTS:-}
       # The gateway voice: setting the base URL is the whole switch (same key as chat).
       # Piper — or the tone — stays behind it as the standby, so a gateway hiccup
-      # downgrades the voice instead of silencing the turn. docs/guides/litellm-tts-setup.md
+      # downgrades the voice instead of silencing the turn. docs/guides/gateway-voice-and-ears.md
       MOXIE_VOICE_BASE_URL: ${MOXIE_VOICE_BASE_URL:-}
       MOXIE_VOICE_DISCOVERY_TTL_S: ${MOXIE_VOICE_DISCOVERY_TTL_S:-300}   # how long the console picker caches the gateway's model list
       MOXIE_VOICE_API_KEY: ${MOXIE_VOICE_API_KEY:-}

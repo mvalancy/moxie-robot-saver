@@ -146,8 +146,8 @@ already forwarded. `MOXIE_VOICE_DISCOVERY_TTL_S` is optional — if added, forwa
 `mqtt/supervisor/moxie_runtime.py` (voice region + 3 status-HTTP routes + `set_synthesizer`) ·
 `server/moxie_server/{fleet,main}.py` · `server/static/{index.html,app.js,style.css}` ·
 `sim/tests/test_voice_settings.py`, `test_voice_runtime.py` (new), `test_console_roundtrip.py` (+cases) ·
-docs: `ai-seam.md` (§1 + §3 "choosing an engine"), `guides/litellm-tts-setup.md` + `litellm-stt-setup.md`
+docs: `ai-seam.md` (§1 + §3 "choosing an engine"), `guides/gateway-voice-and-ears.md` + `gateway-voice-and-ears.md`
 (a "Pick it in the console" paragraph), `ROADMAP.md` (TTS/STT rows), this file's status line.
 
 ---
-📖 [Backlog index](README.md) · [AI seam](../ai-seam.md) · [TTS guide](../../guides/litellm-tts-setup.md) · STT guide (`docs/guides/litellm-stt-setup.md`, lands with the STT slice)
+📖 [Backlog index](README.md) · [AI seam](../ai-seam.md) · [TTS guide](../../guides/gateway-voice-and-ears.md) · STT guide (`docs/guides/gateway-voice-and-ears.md`, lands with the STT slice)
