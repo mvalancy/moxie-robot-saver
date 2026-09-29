@@ -116,7 +116,7 @@ async function exportContent(){
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
     s.textContent=`✅ Exported ${items.length} item${items.length===1?'':'s'}.`;
-  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not export'); }
+  }catch(e){ s.textContent=oops(e,'could not export'); }
 }
 
 async function reviewContentFile(file){
@@ -127,15 +127,13 @@ async function reviewContentFile(file){
   catch(e){ s.textContent='⚠️ could not read that file'; return; }
   contentFile=text;
   try{
-    const r=await fetch('/local/content/review',
-                        {method:'POST',headers:{'Content-Type':'application/json'},body:text});
-    const v=await r.json();
+    const v=await postJson('/local/content/review', text);
     if(!v.ok){ s.textContent='⚠️ '+(v.error||'this file is not a content pack');
                hideContentReview(); return; }
     contentReview=v; contentDecisions={};
     (v.items||[]).forEach(it=>{ contentDecisions[it.id]=it.decision; });
     renderContentReview(v); s.textContent='';
-  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not read that pack'); }
+  }catch(e){ s.textContent=oops(e,'could not read that pack'); }
 }
 
 function renderContentReview(v){
@@ -191,11 +189,8 @@ async function importContent(){
   if(!accept.length){ s.textContent='⚠️ Nothing is set to Accept — nothing to install.'; return; }
   s.textContent='Installing…';
   try{
-    const r=await fetch('/local/content/import',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({pack:contentFile, accept:accept,
-                           expect_digest:contentReview.expect_digest})});
-    const v=await r.json();
+    const v=await postJson('/local/content/import', {pack:contentFile, accept:accept,
+                                  expect_digest:contentReview.expect_digest});
     if(!v.ok){
       s.textContent=v.conflict
         ? '⚠️ That file changed since you looked at it — open it again.'
@@ -206,7 +201,7 @@ async function importContent(){
       + 'the next thing she says.';
     hideContentReview();
     refreshContent(liveDevice);
-  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not install'); }
+  }catch(e){ s.textContent=oops(e,'could not install'); }
 }
 
 async function undoContent(){
@@ -217,7 +212,7 @@ async function undoContent(){
     s.textContent=v.ok ? '✅ Put back what the last import replaced.'
                        : '⚠️ '+(v.error||'nothing to undo');
     refreshContent(liveDevice);
-  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not undo'); }
+  }catch(e){ s.textContent=oops(e,'could not undo'); }
 }
 
 // ---- ✍️ The editor ----
@@ -326,7 +321,7 @@ async function edLoad(item){
     edFill(edDraft.data); edRenderCarries(); edRenderRaw();
     s.textContent='';
     if(edDraft.kind==='conversation') renderDraftPrompt();
-  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not open that item'); }
+  }catch(e){ s.textContent=oops(e,'could not open that item'); }
 }
 
 function edFill(d){
@@ -456,10 +451,7 @@ async function renderDraftPrompt(){
   const out=$('#ed-render'), note=$('#ed-render-note');
   if(!out) return;
   try{
-    const r=await fetch('/local/content/render',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({kind:'conversation', data:edCollect()})});
-    const v=await r.json();
+    const v=await postJson('/local/content/render', {kind:'conversation', data:edCollect()});
     if(!v.ok){ note.textContent='⚠️ '+(v.error||'could not resolve this'); return; }
     out.classList.remove('hidden');
     out.textContent=v.prompt||'(nothing — this chat tells Moxie nothing yet)';
@@ -469,7 +461,7 @@ async function renderDraftPrompt(){
       : '<span class="warn">This is what Moxie’s brain is told here — but it uses '
         + 'something that only works on an appliance like this one, so it would come out '
         + 'thinner if you shared it with somebody running Moxie a simpler way.</span>';
-  }catch(e){ note.textContent='⚠️ '+(e&&e.message?e.message:'could not resolve this'); }
+  }catch(e){ note.textContent=oops(e,'could not resolve this'); }
 }
 
 async function saveItem(){
@@ -479,9 +471,7 @@ async function saveItem(){
               local_rev:edDraft.local_rev||''};
   if(edDraft.kind==='global') body.phrases=edPhraseList();
   try{
-    const r=await fetch('/local/content/item',{method:'POST',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-    const v=await r.json();
+    const v=await postJson('/local/content/item', body);
     if(!v.ok){
       s.textContent = v.conflict
         ? '⚠️ Somebody else saved this while you had it open — open it again before saving.'
@@ -495,7 +485,7 @@ async function saveItem(){
     edIdentityNote();
     renderShadow(v.shadow||[]);
     refreshContent(liveDevice);
-  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not save'); }
+  }catch(e){ s.textContent=oops(e,'could not save'); }
 }
 
 //: The shadow rule (§4.4), with its bound said in the same breath. A command's precedence

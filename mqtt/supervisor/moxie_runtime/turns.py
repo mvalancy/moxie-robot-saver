@@ -146,10 +146,7 @@ class TurnsMixin:
             timer.daemon = True
             timer.start()
         try:
-            reply = app.respond(turn)
-        except Exception as e:
-            print(f"[runtime] app.respond error: {e}", flush=True)
-            reply = Reply(text="Hmm, let me think about that.")
+            reply = self._safe_respond(turn, app=app)
         finally:
             if timer is not None:
                 timer.cancel()
@@ -158,9 +155,7 @@ class TurnsMixin:
             state["done"] = True
             filler = state["filler"]
         if self._is_stale(device_id, seq):
-            self._note("chat", f"⏭️  dropped a stale answer for {device_id}")
-            print(f"[runtime] ⏭️  turn {seq} superseded on {device_id}; "
-                  f"dropping '{reply.text[:40]}'", flush=True)
+            self._note_stale(device_id, seq, f"dropping '{reply.text[:40]}'")
             return
         # A blocked answer is never published: a safe line goes out and is journaled.
         out_verdict = self._assess(reply.text, safety_seam.MOXIE)
@@ -174,8 +169,7 @@ class TurnsMixin:
         self._remember(device_id, speech, reply.text)
         markup, scored = self._stage(reply.text, reply, turn_key=event_id,
                                      chunk_index=0, markup=reply.markup)
-        self._note("chat", f"💬 '{speech[:30]}' → '{reply.text[:40]}'")
-        print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{reply.text[:60]}'", flush=True)
+        self._log_exchange(device_id, speech, reply.text)
         # After a filler this is chunk 1 and closes the sequence; else a single reply.
         chunk = 1 if filler is not None else None
         # `scored` carries the app's mood/dialog_act already validated by `_stage`; don't
@@ -200,18 +194,9 @@ class TurnsMixin:
                 return None                       # brain won the race — say nothing
             if self._is_stale(device_id, seq):
                 return None
-            text, markup = pick_filler(self._last_filler.get(device_id, ""))
-            state["filler"] = text
-            self._last_filler[device_id] = text
-            self._note("chat", f"⏳ '{text[:40]}'")
-            print(f"[runtime] ⏳ brain over budget ({self.brain_budget_s:g}s) on "
-                  f"{device_id} → filler: '{text}'", flush=True)
-            _, scored = self._stage(text, turn_key=event_id, markup=markup)
-            self._publish_chat(device_id, event_id, "router", text, markup,
-                               result=ResultCode.REPLY_PENDING, chunk_num=0,
-                               is_completed=False, scored=scored)
-            self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
-            return text
+            state["filler"] = self._say_filler(
+                device_id, event_id, 0, f"brain over budget ({self.brain_budget_s:g}s)")
+            return state["filler"]
 
     # ---- one turn, streamed sentence by sentence ----
     def _handle_stream_turn(self, device_id, event_id, speech, turn, seq, stream,
@@ -269,9 +254,8 @@ class TurnsMixin:
                                 said.append(chunk.text)
                             acts += list(getattr(chunk, "actions", None) or [])
                 if stale:
-                    self._note("chat", f"⏭️  cancelled a stale stream for {device_id}")
-                    print(f"[runtime] ⏭️  turn {seq} superseded on {device_id}; "
-                          f"cancelling the stream mid-answer", flush=True)
+                    self._note_stale(device_id, seq, "cancelling the stream mid-answer",
+                                     what="cancelled a stale stream")
                     return
                 if final or blocked:
                     closed = True
@@ -308,10 +292,31 @@ class TurnsMixin:
                     device_id, event_id, Reply(text=""), n, True, synthesize=False)
         text = " ".join(t for t in said if t).strip()
         self._remember(device_id, speech, text)
-        self._note("chat", f"💬 '{speech[:30]}' → '{text[:40]}'")
-        print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{text[:60]}' "
-              f"({state['chunk']} chunk(s))", flush=True)
+        self._log_exchange(device_id, speech, text, f" ({state['chunk']} chunk(s))")
         self._maybe_end_conversation(device_id, acts)
+
+    def _say_filler(self, device_id, event_id, n, why) -> str:
+        """Publish (and voice) one filler as chunk `n` / REPLY_PENDING — never the same
+        line twice running. The caller holds the turn's state lock."""
+        text, markup = pick_filler(self._last_filler.get(device_id, ""))
+        self._last_filler[device_id] = text
+        self._note("chat", f"⏳ '{text[:40]}'")
+        print(f"[runtime] ⏳ {why} on {device_id} → filler: '{text}'", flush=True)
+        _, scored = self._stage(text, turn_key=event_id, chunk_index=n, markup=markup)
+        self._publish_chat(device_id, event_id, "router", text, markup,
+                           result=ResultCode.REPLY_PENDING, chunk_num=n,
+                           is_completed=False, scored=scored)
+        self._maybe_synthesize(device_id, markup, event_id, chunk_num=n)
+        return text
+
+    def _note_stale(self, device_id, seq, detail, what="dropped a stale answer"):
+        self._note("chat", f"⏭️  {what} for {device_id}")
+        print(f"[runtime] ⏭️  turn {seq} superseded on {device_id}; {detail}", flush=True)
+
+    def _log_exchange(self, device_id, speech, text, suffix=""):
+        self._note("chat", f"💬 '{speech[:30]}' → '{text[:40]}'")
+        print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{text[:60]}'{suffix}",
+              flush=True)
 
     def _safe_respond(self, turn, app=None):
         """One non-streamed answer from `app` (the appliance's own when None)."""
@@ -413,22 +418,14 @@ class TurnsMixin:
                 return None
             if self._is_stale(device_id, seq):
                 return None
-            text, markup = pick_filler(self._last_filler.get(device_id, ""))
-            self._last_filler[device_id] = text
             state["fillers"] += 1
             state["gen"] += 1
             state["timer"] = None
             n = state["chunk"]
             state["chunk"] = n + 1
-            self._note("chat", f"⏳ '{text[:40]}'")
-            print(f"[runtime] ⏳ stream quiet for {self.brain_budget_s:g}s on "
-                  f"{device_id} → filler {state['fillers']}: '{text}'", flush=True)
-            _, scored = self._stage(text, turn_key=event_id, chunk_index=n,
-                                    markup=markup)
-            self._publish_chat(device_id, event_id, "router", text, markup,
-                               result=ResultCode.REPLY_PENDING, chunk_num=n,
-                               is_completed=False, scored=scored)
-            self._maybe_synthesize(device_id, markup, event_id, chunk_num=n)
+            text = self._say_filler(
+                device_id, event_id, n,
+                f"stream quiet for {self.brain_budget_s:g}s (filler {state['fillers']})")
         self._arm_filler(device_id, event_id, seq, state)   # another stall? one more line
         return text
 

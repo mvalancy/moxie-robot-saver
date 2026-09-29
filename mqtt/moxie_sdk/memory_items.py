@@ -1,6 +1,6 @@
 """
 The long-term memory **item model** — ids, provenance, decay and caps — used by
-`store.MemoryStore`. Pure functions over JSON-shaped data; no disk I/O.
+`memory_store.MemoryStore`. Pure functions over JSON-shaped data; no disk I/O.
 """
 from __future__ import annotations
 

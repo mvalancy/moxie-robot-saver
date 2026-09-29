@@ -35,6 +35,7 @@ python3 run_tests.py                                                   # every t
 | [`run_tests.py`](run_tests.py) | Runs every `test_*.py` here; each skips cleanly when `protobuf` is missing. |
 | [`gen_catalog.py`](gen_catalog.py) | Regenerates [`proto-catalog.md`](../../docs/reverse-engineering/protocol/proto-catalog.md) from `proto/` (needs `protoc`). |
 | `test_*.py` | Wire round-trip tests, one per protocol area: `attention`, `config_telemetry`, `fusion`, `mainapp`, `mpu_handling`, `offline_state`, `remote_chat`, `runtime_control`, `sel_taxonomy`, `telehealth`, `time_alarms`, `wifiapp_status`. Each cites its RE doc in its header. |
+| [`_harness.py`](_harness.py) | Shared `ok`/`rt`/`report` helpers for the `test_*.py` scripts. |
 
 Regenerate the Python bindings after editing protos:
 

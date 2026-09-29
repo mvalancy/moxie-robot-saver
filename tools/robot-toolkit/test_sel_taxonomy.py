@@ -13,6 +13,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report  # noqa: E402
 
 try:
     from embodied.robotbrain import Tags_pb2 as T  # noqa: E402
@@ -21,11 +22,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  SEL-taxonomy toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
 
 # a four-level chain: Pillar 'Emotion' -> Skill 'Awareness' -> Goal 'Name feelings' -> Level 'L1'
 sti = T.SELTagInfo()
@@ -60,10 +56,5 @@ ok(d._module_id == "m_feelings" and d._does_report_completion is True, "module i
 ok(d._sel_tags[0].goal == "g1" and d._sel_tags[0].level == "l1", "module SEL goal-at-level lost")
 ok(d._content_tags[0].tag_uuid == "t_topic", "module content tag lost")
 
-if fails:
-    print("❌ SEL-taxonomy toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ SEL-taxonomy toolkit test OK — SELTagInfo (Pillars→Skills→Goals→Levels + weighted edges) + "
-      "ModuleTagData (module → SEL goals + content tags) round-trip through embodied.robotbrain.tags")
+report("SEL-taxonomy", "SELTagInfo (Pillars→Skills→Goals→Levels + weighted edges) + "
+       "ModuleTagData (module → SEL goals + content tags) round-trip through embodied.robotbrain.tags")

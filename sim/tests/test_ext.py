@@ -19,7 +19,8 @@ from moxie_sdk.content import packs as P
 from moxie_sdk.content import content_app as CA
 from moxie_sdk.content.content_app import ContentApp
 from moxie_sdk.content.module import load_modules
-from moxie_sdk.store import JsonStore, MemoryStore
+from moxie_sdk.store import JsonStore
+from moxie_sdk.memory_store import MemoryStore
 from moxie_sdk.types import Turn
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))

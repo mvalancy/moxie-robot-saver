@@ -310,29 +310,8 @@ def annotate(text: str, *, mood_hint: Optional[str] = None,
         elif hinted_g != "Gesture_None":
             hint_gesture = hinted_g
 
-    # One whole-body tree per line, attached to the sentence whose text cued it.
-    tree_at, tree_name = -1, None
-    for pattern, name in (_TREE_CUES if trees else ()):
-        for si, sentence in enumerate(sentences):
-            if pattern.search(sentence):
-                tree_at, tree_name = si, name
-                break
-        if tree_name:
-            break
-    if look:
-        if look in vocab.GAZE_TREES:
-            tree_at, tree_name = 0, look
-        else:
-            _drop(f"look={look}")
-
-    icon_value = None
-    if icons:
-        for pattern, value in _ICON_CUES:
-            if pattern.search(text):
-                icon_value = value if value in vocab.ICON_SET else None
-                if icon_value is None:
-                    _drop(f"icon={value}")
-                break
+    tree_at, tree_name = _line_tree(sentences, trees, look)
+    icon_value = _line_icon(text) if icons else None
 
     # ---- build the token stream ------------------------------------------- #
     # ("m", mark) glues to whatever is next; ("w", word) is separated by one space from
@@ -356,43 +335,11 @@ def annotate(text: str, *, mood_hint: Optional[str] = None,
         genre = _genre(sentence)
         has_tree = si == tree_at and tree_name is not None
 
-        # -- which words carry a gesture, and where a clause pause goes --
-        at: dict = {}               # word index -> gesture mark (placed BEFORE the word)
-        after: dict = {}            # word index -> marks placed right AFTER the word
-        per_sentence = 0
         bounds = _clause_bounds(sentence, words)
-
-        if si == 0 and hint_gesture:
-            at[0] = hint_gesture                 # the model's own choice wins
-            per_sentence += 1
-            emitted += 1
-        elif not has_tree:
-            # A sentence that plays a whole-body tree gets no arm gesture stacked on it.
-            for (start, stop) in bounds:
-                if (per_sentence >= MAX_GESTURES_PER_SENTENCE
-                        or emitted >= MAX_GESTURES_PER_LINE):
-                    break
-                found = _clause_gesture(words, start, stop)
-                if found and found[0] not in at:
-                    at[found[0]] = found[1]
-                    per_sentence += 1
-                    emitted += 1
-
-        # -- talking gestures: one every TALK_EVERY words, never near the closing pose --
-        if not has_tree and len(words) >= TALK_MIN_WORDS:
-            # Spacing restarts after the last carrying gesture (effective floor: 8 words).
-            anchor = max(at) if at else 0
-            pos = anchor + TALK_EVERY
-            limit = len(words) - TALK_TAIL
-            while pos < limit:
-                if (per_sentence >= MAX_GESTURES_PER_SENTENCE
-                        or emitted >= MAX_GESTURES_PER_LINE):
-                    break
-                if pos not in at and _ratio(turn_key, chunk_index, si, pos) < TALK_PROBABILITY:
-                    at[pos] = "Gesture_Talk"
-                    per_sentence += 1
-                    emitted += 1
-                pos += TALK_EVERY
+        at, emitted = _sentence_gestures(
+            words, bounds, si, emitted, hint_gesture=hint_gesture, has_tree=has_tree,
+            turn_key=turn_key, chunk_index=chunk_index)
+        after: dict = {}            # word index -> marks placed right AFTER the word
 
         # -- a pause after a leading interjection comma ("Hmm, " / "Oh, ") --
         if len(bounds) > 1:
@@ -424,7 +371,76 @@ def annotate(text: str, *, mood_hint: Optional[str] = None,
     if icon_value:
         tokens.append(("m", vocab.icons_mark([], command=vocab.ICON_CLEAR)))
 
-    # ---- render ------------------------------------------------------------ #
+    return _render(tokens)
+
+
+def _line_tree(sentences, trees: bool, look):
+    """`(sentence index, tree)` for the line's one whole-body tree — attached to the
+    sentence whose text cued it; an explicit valid `look` overrides. `(-1, None)` if none."""
+    found = next(((si, name) for pattern, name in (_TREE_CUES if trees else ())
+                  for si, sentence in enumerate(sentences) if pattern.search(sentence)),
+                 (-1, None))
+    if look:
+        if look in vocab.GAZE_TREES:
+            return 0, look
+        _drop(f"look={look}")
+    return found
+
+
+def _line_icon(text: str):
+    """The first cued `icons-v2` value, or None (a cue naming an unknown value is dropped)."""
+    for pattern, value in _ICON_CUES:
+        if pattern.search(text):
+            if value in vocab.ICON_SET:
+                return value
+            _drop(f"icon={value}")
+            return None
+    return None
+
+
+def _sentence_gestures(words, bounds, si: int, emitted: int, *, hint_gesture,
+                       has_tree: bool, turn_key: str, chunk_index: int):
+    """`({word index: gesture}, emitted)` for one sentence, marks placed BEFORE the word.
+
+    Sentence 0 carries the model's hint when there is one; otherwise each clause may
+    carry a cued gesture, then `Gesture_Talk` every `TALK_EVERY` words (never near the
+    closing pose). A sentence that plays a whole-body tree gets no arm gesture. Both caps
+    (`MAX_GESTURES_PER_SENTENCE`, `MAX_GESTURES_PER_LINE`) bound every placement.
+    """
+    at: dict = {}
+    per_sentence = 0
+
+    def room() -> bool:
+        return per_sentence < MAX_GESTURES_PER_SENTENCE and emitted < MAX_GESTURES_PER_LINE
+
+    if si == 0 and hint_gesture:
+        at[0] = hint_gesture                 # the model's own choice wins
+        per_sentence += 1
+        emitted += 1
+    elif not has_tree:
+        for (start, stop) in bounds:
+            if not room():
+                break
+            found = _clause_gesture(words, start, stop)
+            if found and found[0] not in at:
+                at[found[0]] = found[1]
+                per_sentence += 1
+                emitted += 1
+    if not has_tree and len(words) >= TALK_MIN_WORDS:
+        # Spacing restarts after the last carrying gesture (effective floor: 8 words).
+        pos = (max(at) if at else 0) + TALK_EVERY
+        while pos < len(words) - TALK_TAIL and room():
+            if pos not in at and _ratio(turn_key, chunk_index, si, pos) < TALK_PROBABILITY:
+                at[pos] = "Gesture_Talk"
+                per_sentence += 1
+                emitted += 1
+            pos += TALK_EVERY
+    return at, emitted
+
+
+def _render(tokens) -> str:
+    """Join the token stream: ("m", mark) glues to what follows; ("w", word) is one space
+    from the previous word; ("o"/"c", tag) opens/closes a `<usel>` span."""
     out: List[str] = []
     space = False                   # a spoken word has been written; the next needs a gap
     for kind, value in tokens:
