@@ -217,9 +217,16 @@ def test_the_fallback_is_a_drop_in_transcriber_for_the_runtime_session():
     assert session.feed(VADState.END_OF_SPEECH, b"") == "heard locally"
 
 
-def test_no_endpoint_means_no_gateway_ears():
+def test_gateway_ears_need_both_an_endpoint_and_the_sdk(monkeypatch):
+    """Deterministic whatever this box has installed: the SDK is faked in, then out."""
+    import sys
+    import types
     assert OpenAITranscriber.available("") is False        # no endpoint → unavailable
     assert make_openai_transcriber("", "k") is None
+    monkeypatch.setitem(sys.modules, "openai", types.ModuleType("openai"))
+    assert OpenAITranscriber.available("https://gateway.example/v1") is True
+    monkeypatch.setitem(sys.modules, "openai", None)       # `import openai` now raises
+    assert OpenAITranscriber.available("https://gateway.example/v1") is False
 
 
 # ------------------------------------------------------- the MOXIE_STT knob --
