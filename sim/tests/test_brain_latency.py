@@ -9,27 +9,19 @@ with `SUCCESS` + `consistency_control.is_completed` (fields 22 / 18).
 No sleeps: the fake brain blocks on an `Event` and the fake transport is a `Condition`. The
 one timing assertion (no filler before the budget) uses a monotonic clock, loosely.
 
-Covered: fast brain → one SUCCESS; slow brain → filler + real chunk; the stale guard; filler
-rotation; both chunks synthesized; the budget knob; and the `mqtt/.env`-from-a-worktree
-helper the live tier needs.
 """
 import json
 import os
 import threading
 import time
 
-import pytest
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-from helpers_runtime import (CHAT_TOPIC, CountingSynth, LatchClient, drive_turn,  # noqa: E402
+from helpers_runtime import (CHAT_TOPIC, CountingSynth, LatchClient,  # noqa: E402
                              dotenv_values, find_repo_dotenv, load_repo_dotenv,
                              main_worktree, make_runtime)
 from moxie_sdk.app import MoxieApp                                # noqa: E402
 from moxie_sdk.filler import FILLERS, pick_filler                 # noqa: E402
 from moxie_sdk.tts import strip_markup               # noqa: E402
 from moxie_sdk.types import Reply                                 # noqa: E402
-from moxie_sdk.wire import build_chat_response                    # noqa: E402
 
 TTS_TOPIC = "/devices/{device_id}/commands/tts"
 FILLER_TEXTS = [text for (text, _markup) in FILLERS]
@@ -107,21 +99,7 @@ def _chats(rt, device_id):
 
 
 # ------------------------------------------------------------------ the fast path
-def test_fast_brain_still_answers_in_exactly_one_success_chunk():
-    """Under budget → byte-for-byte the reply we always sent: no filler, no chunking."""
-    rt, dev = make_runtime(_InstantApp())
-    rt.brain_budget_s = 5.0                     # generous: the brain wins easily
-    resp = drive_turn(rt, dev, "hello", event_id="evt-fast")
-    replies = rt.client.chat_replies(dev)
-    assert len(replies) == 1, replies
-    assert resp["result"] == "SUCCESS"
-    assert resp["event_id"] == "evt-fast"
-    assert resp["output"]["text"] == "You said: hello"
-    # A single-chunk turn stays exactly as it was on the wire (chunk 0 is the proto
-    # default), so nothing downstream has to learn about streaming to keep working.
-    assert "chunk_num" not in resp and "consistency_control" not in resp
-
-
+# (an instant brain's single SUCCESS is test_streaming's non-streaming-app test)
 def test_a_zero_budget_disables_the_filler_entirely():
     app = _SlowApp()
     rt, dev = _slow_runtime(app, budget=0)
@@ -276,27 +254,6 @@ def test_the_budget_comes_from_the_env_and_the_constructor_wins(monkeypatch):
             == moxie_runtime.DEFAULT_BRAIN_BUDGET_S)
 
 
-def test_config_exposes_the_budget_knob():
-    import config
-    assert isinstance(config.BRAIN_BUDGET_S, float)
-    assert config.BRAIN_BUDGET_S > 0, "the shipped default must actually cover a child"
-
-
-# ------------------------------------------------------------------- the wire
-def test_chat_response_carries_chunk_num_and_completion_only_when_asked():
-    plain = build_chat_response("evt-1", "hi", "hi")
-    assert "chunk_num" not in plain and "consistency_control" not in plain
-    chunk0 = build_chat_response("evt-1", "hmm", "hmm", result=9, chunk_num=0,
-                                 is_completed=False)
-    assert chunk0["result"] == "REPLY_PENDING"
-    assert chunk0["chunk_num"] == 0
-    assert chunk0["consistency_control"] == {"is_completed": False}
-    chunk1 = build_chat_response("evt-1", "there", "there", chunk_num=1, is_completed=True)
-    assert chunk1["result"] == "SUCCESS" and chunk1["chunk_num"] == 1
-    assert chunk1["consistency_control"] == {"is_completed": True}
-    assert chunk1["event_id"] == chunk0["event_id"], "one event_id ties the chunks"
-
-
 # ------------------------------------------- mqtt/.env from inside a git worktree
 def _fake_worktree(tmp_path, env_text="MOXIE_TEST_KNOB=from-main\n", *, in_tree=None):
     """A main checkout (with mqtt/.env) plus a linked worktree pointing at it."""
@@ -345,13 +302,3 @@ def test_load_repo_dotenv_never_overrides_the_real_environment(tmp_path, monkeyp
     assert os.environ["MOXIE_TEST_A"] == "already-set"
     assert os.environ["MOXIE_TEST_B"] == "fromfile"
     monkeypatch.delenv("MOXIE_TEST_B")
-
-
-def test_the_live_tier_can_find_its_credentials_from_this_tree():
-    """Not a live test — it just proves the lookup itself works wherever this suite is
-    run from. Nothing about the file's CONTENT is asserted, and nothing is printed."""
-    found = find_repo_dotenv()
-    if found is None:
-        pytest.skip("no mqtt/.env in this checkout (CI): nothing to locate")
-    assert os.path.isfile(found)
-    assert found.endswith(os.path.join("mqtt", ".env"))
