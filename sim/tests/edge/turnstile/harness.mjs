@@ -2,7 +2,7 @@
  * helpers and the no-leak sweep. See the entry file for what the suite proves.
  */
 import {
-  repo, api, ledger, BASE, KEY, ORIGIN, GATEWAY, BROWSER_HEADERS, post as apiPost, responseText, jsonOf,
+  repo, api, ledger, BASE, KEY, ORIGIN, GATEWAY, BROWSER_HEADERS, post as apiPost, leakSweep, jsonOf,
   wavBytes,
 } from "../common.mjs";
 
@@ -31,8 +31,6 @@ export const ACT = ts.TURNSTILE_ACTIONS;
  * `sim/web/turnstile.js` renders `appearance: "interaction-only"`. */
 export const SITEKEY = "1x00000000000000000000BB";          // always passes, invisible
 export const SECRET_PASS = "1x0000000000000000000000000000000AA";
-export const SECRET_FAIL = "2x0000000000000000000000000000000AA";
-export const SECRET_SPENT = "3x0000000000000000000000000000000AA";
 export const TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 
 /** The gateway configured AND the bot control enforced: the production shape. */
@@ -43,8 +41,7 @@ export const ARMED = Object.assign({}, GATEWAY, {
 
 /** Never in a response. The SITEKEY is deliberately absent: it is public, and §8 asserts
  *  it IS published. */
-export const FORBIDDEN = [KEY, BASE, "gw.invalid.test", "test-brain-model",
-                          SECRET_PASS, SECRET_FAIL, SECRET_SPENT];
+export const FORBIDDEN = [KEY, BASE, "gw.invalid.test", "test-brain-model", SECRET_PASS];
 
 /** Every `error-codes` string Cloudflare can return; none may reach a response body. */
 export const ERROR_CODES = ["missing-input-secret", "invalid-input-secret", "missing-input-response",
@@ -103,8 +100,7 @@ function siteverifyAnswer(form, opt) {
         challenge_ts: "2026-09-05T00:00:00.000Z",
       };
     }
-    if (secret === SECRET_SPENT) return { success: false, "error-codes": ["timeout-or-duplicate"] };
-    return { success: false, "error-codes": ["invalid-input-response"] };  // "always fails"
+    return { success: false, "error-codes": ["invalid-input-response"] };
   })();
   return new Response(JSON.stringify(body), {
     status: 200, headers: { "Content-Type": "application/json" },
@@ -146,19 +142,11 @@ export function fresh() {
   P.plan = {};
 }
 
-/** The §4.2 sweep, extended to the widget secret and every Cloudflare error code. Runs on
- *  EVERY response this suite produces. */
+/** The §4.2 sweep (`common.mjs::leakSweep`) plus the widget secret and every Cloudflare
+ *  error code, on EVERY response this suite produces: one assertion per response. */
 export async function assertClean(res, label) {
   C.sweeps += 1;
-  const { text, headerText } = await responseText(res);
-  for (const secret of FORBIDDEN) {
-    ok(!text.includes(secret), `${label}: the BODY leaked ${JSON.stringify(secret.slice(0, 14))}…`);
-    ok(!headerText.includes(secret), `${label}: a HEADER leaked ${JSON.stringify(secret.slice(0, 14))}…`);
-  }
-  for (const code of ERROR_CODES) {
-    ok(!text.includes(code), `${label}: the body forwarded Cloudflare's raw error code ${code}`);
-  }
-  ok(!/https?:\/\//.test(text.replace(/"topic":"[^"]*"/g, "")), `${label}: the body contains a URL`);
+  await leakSweep(ok, res, [...FORBIDDEN, ...ERROR_CODES], label, { stripTopic: true });
 }
 
 /** POST to `/api/chat`, sweep the reply, and hand back everything a test asserts on. */
