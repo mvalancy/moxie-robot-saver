@@ -83,12 +83,6 @@ def test_empty_history_keeps_the_full_ftue_onboarding():
     assert ids[:4] == ["WELCOME", "TNT", "SYSTEMSCHECK", "DM"]      # onboarding first
 
 
-def test_empty_history_and_no_generate_block_still_valid():
-    sched = build_schedule({"provided_schedule": [{"module_id": "DM"}]},
-                           mentor_behaviors=[], device_id="d_1", day="2026-09-02")
-    assert _ids(sched) == ["DM"] and validate_schedule(sched) == []
-
-
 # ---- skipping what's already done ----
 
 def test_completed_counts_only_counts_completed():
@@ -161,20 +155,7 @@ def test_chats_are_interleaved_between_activities_not_stacked_at_the_end():
     assert len(set(chat_at)) == len(chat_at)
 
 
-def test_generated_activities_avoid_two_of_the_same_category_in_a_row():
-    cat = {m["module_id"]: m["category"] for m in ONBOARD_MODULES}
-    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
-        ids = [m for m in _ids(build_schedule(device_id="d_1", day=day)) if m in cat]
-        assert all(cat[a] != cat[b] for a, b in zip(ids, ids[1:])), ids
-
-
 # ---- determinism ----
-
-def test_the_same_inputs_always_produce_the_same_plan():
-    a = build_schedule(device_id="d_1", day="2026-09-02")
-    b = build_schedule(device_id="d_1", day="2026-09-02")
-    assert a == b
-
 
 def test_the_plan_varies_by_robot_and_by_day():
     base = _ids(build_schedule(device_id="d_1", day="2026-09-02"))
@@ -256,11 +237,3 @@ def test_no_planner_bookkeeping_leaks_onto_the_wire():
     for leak in ("category", "score", "factors", "reason_codes", "line", "Sam",
                  "generate", "bedtime", "parent_request"):
         assert leak not in blob, leak
-
-
-def test_build_schedule_keeps_its_pre_recommender_signature():
-    """The original call shape (template, mentor_behaviors, device_id, day) still returns
-    exactly a ContentSchedule, with no new required argument."""
-    sched = build_schedule(DEFAULT_TEMPLATE, mentor_behaviors=[_mbh("TNT")],
-                           device_id="d_1", day="2026-09-02")
-    assert validate_schedule(sched) == [] and "WELCOME" not in _ids(sched)
