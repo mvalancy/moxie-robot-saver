@@ -494,7 +494,7 @@ def test_the_editor_never_offers_a_verb_p0_refuses():
 
 
 def test_the_card_grew_the_four_functions_the_brief_names():
-    """§9 item 9: the four seams the brief hands a later agent, pinned by name."""
+    """§9 (P0): the four seams the brief hands a later agent, pinned by name."""
     js = console_js()
     for fn in ("function openEditor(", "async function saveItem(",
                "async function renderDraftPrompt(", "function renderChips("):
