@@ -5,7 +5,7 @@ The console's fleet/config/telemetry endpoints are thin proxies over the supervi
 status server (`mqtt/supervisor/moxie_runtime/status_http.py`). `FakeSupervisor` speaks
 that contract on a free port — same routes, payload shapes and status codes — with the
 REAL `sanitize_config_overrides` behind /config and a REAL `MoxieRuntime` behind /safety,
-/memory, /telehealth, /voice, /content, /conn, /wakeup and DELETE /telemetry. Only
+/memory, /telehealth, /voice, /brain, /content, /conn, /wakeup and DELETE /telemetry. Only
 /status, /telemetry (GET), /permits and /schedule are hand-built, and
 `test_console_roundtrip.py::test_fake_status_server_matches_the_real_runtime_shapes`
 diffs those against the real runtime so drift fails there instead of silently turning
@@ -394,7 +394,7 @@ class FakeSupervisor:
                     "telemetry_erases", "safety_queries", "memory_queries",
                     "memory_erases", "memory_edits", "telehealth_queries",
                     "schedule_queries", "conn_queries", "voice_queries", "voice_posts",
-                    "wakeups"):
+                    "wakeups", "brain_posts"):
             setattr(self, log, [])
         self.runtime = rt = _safety_runtime(safety_root)
         self.memory = seed_memory(rt)
@@ -465,6 +465,8 @@ class FakeSupervisor:
                     outer.voice_queries.append(_arg(q, "refresh"))
                     return self._out(rt.voice_view(
                         refresh=refresh not in ("", "0", "false")))
+                if u.path == "/brain":
+                    return self._out(rt.brain_view())
                 if u.path == "/content":
                     return self._out(rt.content_view())
                 if u.path == "/content/export":
@@ -511,6 +513,12 @@ class FakeSupervisor:
                     outer.wakeups.append(device_id)
                     out = rt.wake_robot(device_id)
                     return self._out(out, _code(out, 409))
+                if u.path == "/brain":
+                    body = json.loads(self._raw()) or {}
+                    outer.brain_posts.append((u.query, body))
+                    out = rt.brain_update(body, device_id=device_id,
+                                          scope=_arg(q, "scope", "robot"))
+                    return self._out(out, _code(out))
                 if u.path in ("/voice", "/voice/test"):
                     body = json.loads(self._raw()) or {}
                     outer.voice_posts.append((u.path, body))
