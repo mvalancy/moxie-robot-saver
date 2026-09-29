@@ -80,11 +80,9 @@ export function makeWorld(opts) {
   };
   let speaking = false;
 
-  /* A DOM faithful in the one way that matters here: `getElementById` returns NULL for an
-   * id the page does not have. `cloud-transport.js::injectTalkUI` guards on
-   * `getElementById("chat-send")`, so an auto-vivifying fake would make it skip the
-   * injection entirely and the test would assert against elements nobody wired. Injected
-   * children are registered by id as they are inserted, exactly as a real DOM does. */
+  /* `getElementById` returns NULL for an id the page lacks (`injectTalkUI` guards on
+   * `#chat-send`, so an auto-vivifying fake would skip the injection); injected children are
+   * registered by id as they are inserted, as a real DOM does. */
   const clickHandlers = {};
   const keyHandlers = {};
   const els = {};
