@@ -1,233 +1,115 @@
-# 🤖 Moxie Robot Saver
+# Moxie Robot Saver
 
-**Bring a Moxie robot fully back to life — end to end — on your own hardware, with no cloud.**
+**A self-hosted replacement for the cloud that Moxie robots depended on.**
 
-Embodied Inc. shut down in December 2024, took its servers offline, and bricked every Moxie robot in
-the field. This project is a complete, self-hosted replacement for **everything Moxie needed the
-internet for** — so an owner can pair a robot, configure it, and (as the project grows) have it
-*talk again* — all running on one machine at home.
-
-But the ambition is bigger than reviving the dead cloud. Moxie decides everything it says and does
-behind **one documented seam** (the `RemoteChat` turn), so **any** AI that answers it *becomes*
-Moxie — a local LLM, a cloud model, your own agent. The body is a shell; this project lets **any mind
-wear it**. Reviving the original experience is the floor; a full **brain transplant — a ghost in the
-shell** — is the ceiling.
+Embodied Inc. shut down in December 2024 and turned off the servers every Moxie robot needed. This
+project rebuilds that backend, clean-room, as open source you run on your own machine: the parent
+app, the robot's MQTT cloud, and the AI that lets Moxie talk. It also includes a browser simulator,
+so you can meet a virtual Moxie without owning one.
 
 <p align="center">
-  <img width="712" alt="Moxie SIL simulator" src="sim/web/img/sim-hero.png" />
+  <img width="712" alt="The Moxie simulator: a 3D Moxie beside its motion, expression and voice panels" src="sim/web/img/sim-hero.png" />
 </p>
 
-> 🗂️ **Repo layout:** see [`STRUCTURE.md`](STRUCTURE.md) — three domains (robot · parent app · server app).
+<p align="center">
+  <b><a href="https://moxie.mattvalancy.com">Try the hosted simulator</a></b>
+  &nbsp;·&nbsp; <a href="docs/README.md">Documentation</a>
+  &nbsp;·&nbsp; <a href="ROADMAP.md">Roadmap</a>
+</p>
 
-> 💚 **The goal:** unlock every Moxie so kids get their robot back, and keep a genuinely lovely piece
-> of hardware out of the landfill. **Local-first, private, no account, no subscription.**
+*The hosted simulator is the maintainer's own deployment. Every hostname, key and gateway is
+configuration, so you can deploy your own ([guide](docs/guides/deploy-cloudflare.md)).*
 
----
+## What works today
 
-## 🏠 The vision: one box, the whole Moxie backend
+| Piece | Status |
+|---|---|
+| **Parent app** — account-free REST server and phone web app: set up a child, enter Wi-Fi, generate the pairing QR | Works. A real Moxie scanned our Wi-Fi QR and joined the network. |
+| **Robot cloud** — TLS MQTT broker, endpoint QR, and a supervisor that speaks Moxie's protocol (config push, conversation turns, device permit list) | Works against the simulator in CI. Not yet tested with a real robot. |
+| **Brain, voice and ears** — any OpenAI-compatible LLM; speech via local Piper/Whisper or a gateway | Works in the simulator and the hosted demo. |
+| **Content and management** — data-driven content modules, a parent console with fleet status and insights | Works. |
+| **Simulator** — a 3D Moxie in the browser that speaks the real protocol | Works, locally and hosted. |
+| **Getting a real robot onto this cloud** | Depends on firmware; see below. |
 
-One machine on your home network — a **gaming PC, a home server, or an NVIDIA Jetson Orin** (anything
-with a GPU) — runs the entire Moxie cloud locally. Nothing leaves your home.
+### The firmware catch
 
-```mermaid
-flowchart LR
-    phone(["📱 Your phone<br/>(web app)"]) -->|LAN| server
-    robot(["🤖 Your Moxie"]) -->|Wi-Fi + MQTT| broker
+A robot can be pointed at a new server by showing it QR codes **only on firmware 24.10.801/803**.
+Most robots sold second-hand run older firmware, whose cloud address is fixed and cannot be changed
+by QR. Those units need a firmware reflash, which is documented but not yet proven end to end. Full
+decision tree: [revival path](docs/architecture/revival-path.md).
 
-    subgraph box ["🖥️ Your machine — no internet required"]
-        direction TB
-        server["🛂 Parent-app server<br/>REST API + web UI"]
-        broker["📡 MQTT broker<br/>TLS :8883"]
-        engine["💬 Conversation engine<br/>speech ▸ think ▸ speak"]
-        ai["🧠 Local AI<br/>Whisper · LLM · TTS"]
-        server -. "account · QR codes" .-> broker
-        broker --> engine --> ai
-    end
+## Quick start
 
-    ai -. "optional fallback" .-> ext(["☁️ any OpenAI-<br/>compatible endpoint"])
+**Just the simulator** (needs Docker):
 
-    classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
-    classDef wip fill:#fff3c4,stroke:#f9a825,color:#5d4037;
-    classDef ext fill:#e3eaf2,stroke:#607d8b,color:#263238;
-    class server done;
-    class broker,engine,ai wip;
-    class phone,robot,ext ext;
+```bash
+git clone https://github.com/mvalancy/moxie-robot-saver.git
+cd moxie-robot-saver
+docker compose -f sim/docker-compose.yml up
 ```
 
-Local models by default; an OpenAI-compatible endpoint is an *optional* fallback, never a requirement.
+Open <http://localhost:8080/sim.html> and click **Connect**. See [`sim/`](sim/README.md) for voice
+and demo options.
 
----
-
-## 🔌 Two channels, three steps
-
-Reviving a Moxie means replacing **two independent cloud connections**:
-
-```mermaid
-flowchart TB
-    subgraph ch1 ["Channel 1 · Control plane ✅ built"]
-        p(["📱 Phone web app"]) -->|"REST / HTTPS"| ps["🛂 Parent-app server"]
-    end
-    subgraph ch2 ["Channel 2 · The experience 🔨 in progress"]
-        m(["🤖 Moxie"]) -->|"MQTT / TLS"| mq["📡 Broker + AI"]
-    end
-    ps -. "shared account + pairing QR" .-> mq
-    classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
-    classDef wip fill:#fff3c4,stroke:#f9a825,color:#5d4037;
-    class p,ps done;
-    class m,mq wip;
-```
-
-### ⚠️ How you get there depends on the robot's firmware — read this first
-
-The clean "show it two QR codes" path **only works on firmware `24.10.801/803`**, which Embodied added
-late to bless the community server. In practice those units were claimed early; **most robots on the
-resale market today are older (`pre-801`)**, whose cloud endpoint is hard-pinned to Google Cloud IoT
-Core (dead since 2023) with hostname-checked TLS — so **they cannot be relocated by QR at all** (we
-confirmed this on real hardware). Treat the two-QR route as the lucky case, not the default.
-
-```mermaid
-flowchart TD
-    fw{"Firmware?"}
-    fw -->|"24.10.803 (lucky)"| qr["🎫 Two-QR relocation<br/>Wi-Fi QR + endpoint QR → your server"]
-    fw -->|"24.10.801"| qrs["🎫 Two-QR, but needs a real signed cert on the broker"]
-    fw -->|"pre-801 (most resale units)"| hard["🔩 QR route is impossible"]
-    hard --> hack["🎫 QR command space fully mapped<br/>(closed grammar — no hidden codes)"]
-    hard --> flash["⚡ Reflash to 803<br/>Rockchip Maskrom + rkdeveloptool"]
-    qr --> talk["🗣️ Moxie talks (local AI)"]
-    flash --> talk
-    classDef ok fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
-    classDef warn fill:#fff3c4,stroke:#f9a825,color:#5d4037;
-    classDef res fill:#e1bee7,stroke:#6a1b9a,color:#4a148c;
-    class qr,talk ok; class qrs warn; class hard,hack,flash res;
-```
-
-**The realistic paths this project builds toward:**
-
-| Path | For | Status |
-|------|-----|--------|
-| **Two-QR relocation** (Wi-Fi QR → endpoint QR → MQTT) | firmware **803** (increasingly rare) | ✅ Wi-Fi QR hardware-verified; endpoint QR + broker built |
-| **The QR command space** — mapped in full from the robot binaries (not guessed) | any firmware; reference | ✅ Closed grammar: pairing/Wi-Fi/VPN + `{"debug":{"command":…}}`; native `endpoint_update`/`om` re-home decoded ([`qr-commands.md`](docs/reverse-engineering/protocol/qr-commands.md)). The old discovery rig is retired — there are no hidden codes. |
-| **Firmware reflash to 803** (open case → USB → `rkdeveloptool`) | **pre-801** (most resale units) | 🔩 documented; signed image located |
-
-Full decision tree + the honest firmware reality: **[`docs/architecture/revival-path.md`](docs/architecture/revival-path.md)**
-and the live log in **[`docs/debugging/`](docs/debugging/)**.
-
----
-
-## 📍 Status
-
-**Phase 1 — the parent app — works**, and its Wi-Fi QR has been **verified against a real Moxie**
-(the robot scanned our clean-room QR and joined the network). Running today:
-
-- ✅ A faithful, account-free reimplementation of the parent-app REST API.
-- ✅ A mobile web app your phone opens over the LAN to set up a child, enter Wi-Fi, and make the QR.
-- ✅ Clean-room pairing-QR tooling + deterministic recovery-key crypto, matched to the decompiled app.
-- ✅ A hardware-free test path (`simulate-robot-scan`) that completes pairing with no robot.
-
-**Phases 2–3 — the MQTT broker, conversation engine, and local AI — are now fully specified:** the
-[build contracts](docs/architecture/README.md) (REST · MQTT · AI seam · config/telemetry · content ·
-SIM-as-a-client) define exactly what to build, ready for a clean-room implementation. See the
-**[Roadmap](ROADMAP.md)**.
-
----
-
-## 🚀 Quick start
-
-**The whole backend, two commands, no clone** — MQTT broker + robot supervisor + parent console,
-pulled as prebuilt multi-arch images (`linux/amd64` + `linux/arm64`, so a Raspberry Pi 4/5 works):
+**The whole backend** (broker, supervisor and parent console), using prebuilt images for
+`amd64` and `arm64` (a Raspberry Pi 4/5 works):
 
 ```bash
 curl -O https://raw.githubusercontent.com/mvalancy/moxie-robot-saver/main/docker-compose.images.yml
 docker compose -f docker-compose.images.yml up
 ```
 
-That file is self-contained — it is the entire install. *(The images are published by the release
-workflow on every `v*` tag; until the **first tag after this landed** the registry is empty and the
-pull will 404 — use the clone below until then.)*
+Or `docker compose up` from a clone to build locally. Then open `http://<this-computer's-ip>:8080`
+on your phone. Next steps: [one-command stack](docs/guides/one-command-stack.md) and
+[first-time setup](docs/guides/first-time-setup.md).
 
-**From a clone instead** — one command, builds the images locally. Needed for hacking on it, for
-32-bit ARM, and for the `voice` / `stt` profiles:
+## How it fits together
 
-```bash
-git clone https://github.com/mvalancy/moxie-robot-saver.git
-cd moxie-robot-saver
-docker compose up
-```
-
-Open **`http://<this-computer-ip>:8080`** from your phone (same LAN, or Tailscale), enter Wi-Fi,
-generate the QR, hold it to Moxie. → **[One-command stack](docs/guides/one-command-stack.md)** ·
-**[Full setup guide](docs/guides/first-time-setup.md)**
-
-Just the parent-app half, no Docker:
-
-```bash
-pip install -r server/requirements.txt
-python server/run.py                 # serves on 0.0.0.0:8080
-```
-
----
-
-## 🗂️ Repository map
+Moxie used two separate cloud connections, and this project replaces both.
 
 ```mermaid
-flowchart TD
-    root["📦 moxie-robot-saver"]
-    root --> server["🛂 server/<br/>parent-app REST + web UI ✅"]
-    root --> tools["🔑 tools/<br/>pairing-QR codec + CLI ✅"]
-    root --> mqtt["📡 mqtt/<br/>broker + endpoint QR 🔨"]
-    root --> ai["🧠 ai/<br/>local LLM · STT · TTS 🔨"]
-    root --> hardware["🤖 hardware/<br/>the robot itself 📖"]
-    root --> docs["📚 docs/<br/>the complete map 📖"]
-    classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
-    classDef wip fill:#fff3c4,stroke:#f9a825,color:#5d4037;
-    classDef ref fill:#e3eaf2,stroke:#607d8b,color:#263238;
-    class server,tools done;
-    class mqtt,ai wip;
-    class hardware,docs ref;
+flowchart LR
+    phone(["Phone"]) -->|"REST"| server["Parent-app server<br/>(server/)"]
+    robot(["Moxie or the simulator"]) -->|"MQTT over TLS"| broker["Broker + supervisor<br/>(mqtt/)"]
+    broker --> brain["LLM, speech-to-text,<br/>text-to-speech"]
+    server -. "pairing QR" .-> robot
 ```
 
-| Path | What | Phase |
-|------|------|-------|
-| [`server/`](server/) | Parent-app server (REST API + mobile web client + crypto) | 1 ✅ |
-| [`tools/pairing/`](tools/pairing/) | Clean-room QR codec + CLI | 1 ✅ |
-| [`mqtt/`](mqtt/) | Robot cloud: MQTT broker, endpoint QR, conversation engine | 2–3 🔨 |
-| [`ai/`](ai/) | Local LLM / STT / TTS adapters (OpenAI-compatible fallback) | 3 🔨 |
-| [`hardware/`](hardware/) | The robot itself: OS, firmware, finding it on the LAN | ref |
-| [`docs/`](docs/) | The complete map — start at [`docs/README.md`](docs/README.md) | — |
+1. **The control plane** — the phone app talks REST to the parent-app server to create an account
+   and pair the robot.
+2. **The experience** — the robot talks MQTT to the broker; the supervisor turns what the child says
+   into a reply using whatever AI you configure.
 
----
+The AI sits behind one documented interface ([AI seam](docs/architecture/ai-seam.md)), so any model,
+local or hosted, can be Moxie's brain.
 
-## 📚 Documentation
+## Repository map
 
-Start at **[`docs/README.md`](docs/README.md)**. Highlights:
-- 🏗️ **Architecture** — [overview](docs/architecture/overview.md) · [revival path](docs/architecture/revival-path.md), and the **[build contracts](docs/architecture/README.md)** a clean-room backend is built from: [REST services](docs/architecture/rest-api-contract.md) · [MQTT & conversation](docs/architecture/mqtt-and-conversation.md) · [AI seam (LLM/STT/TTS)](docs/architecture/ai-seam.md) · [config & telemetry](docs/architecture/config-and-telemetry-contract.md) · [content modules](docs/architecture/content-module-contract.md) · [SIM as a client](docs/architecture/sim-as-a-client.md)
-- 🔬 **Reverse-engineering** (source of truth) — [REST API](docs/reverse-engineering/phone/rest-api.md) · [crypto & keys](docs/reverse-engineering/phone/crypto-and-keys.md) · [pairing & robot](docs/reverse-engineering/phone/pairing-and-robot.md) · [QR format](docs/reverse-engineering/phone/qr-format.md) · [app structure](docs/reverse-engineering/phone/app-structure.md)
-- 🎛️ **Features** — the complete parent-app [feature catalog](docs/features/)
-- 🧭 **Guides** — [first-time setup](docs/guides/first-time-setup.md) · [child safety](docs/guides/child-safety.md) · [factory reset](docs/guides/factory-reset-a-paired-moxie.md) · [find Moxie on the LAN](docs/guides/find-moxie-on-lan.md)
-- 🔬 **Research tracks** — [Moxie sees (vision)](docs/architecture/vision.md) · [older robots & firmware](hardware/firmware-and-older-robots.md)
-- 🌍 **Community** — [the existing revival landscape](docs/community-research.md) (OpenMoxie et al.)
+| Folder | What's in it |
+|---|---|
+| [`server/`](server/) | Parent-app REST server and phone web client |
+| [`mqtt/`](mqtt/) | Robot cloud: broker config, supervisor, and the Moxie SDK (brain, voice, content) |
+| [`sim/`](sim/) | Browser simulator, virtual robot, and most of the test suite |
+| [`functions/`](functions/) | Cloudflare Pages functions behind the hosted demo |
+| [`tools/`](tools/) | Pairing and endpoint QR tools, command-line |
+| [`hardware/`](hardware/) | The physical robot: OS, firmware, finding it on your network |
+| [`docs/`](docs/README.md) | Guides, architecture contracts, and the reverse-engineering study |
 
----
+More detail: [`STRUCTURE.md`](STRUCTURE.md).
 
-## 🙏 Built with the community
+## Credits
 
-None of this would exist without the people who kept Moxie alive after the shutdown — above all
-**[OpenMoxie](https://github.com/jbeghtol/openmoxie)** (MIT, © Justin Beghtol), the CEO-sanctioned
-open-source off-ramp, and its most active fork
-**[Noonster77/openmoxie](https://github.com/Noonster77/openmoxie)**, which already runs Moxie on
-local models. We build on their groundwork and aim to complete the picture — adding the phone-side
-parent app and unifying everything into one local box. Full credits and licenses:
-**[`ATTRIBUTION.md`](ATTRIBUTION.md)**.
+This builds on the people who kept Moxie alive after the shutdown, above all
+[OpenMoxie](https://github.com/jbeghtol/openmoxie) (MIT, Justin Beghtol) and its active forks. Full
+credits and licenses: [`ATTRIBUTION.md`](ATTRIBUTION.md).
 
-## ⚖️ Legal & ethics
+## Legal
 
-An independent **interoperability and repair** project for hardware people already own, built by
-**clean-room reverse engineering** of the freely-distributed app solely to restore function to
-abandoned devices. It ships **no** Embodied code, assets, firmware, or binaries. No affiliation with
-or endorsement by Embodied Inc. "Moxie" is used only to identify the hardware this software
-interoperates with. Children's data is handled exactly as the original app did — **end-to-end
-encrypted, with the keys held by you**.
+An independent interoperability and repair project for hardware people already own. It was built by
+clean-room reverse engineering of the freely distributed app, and ships **no** Embodied code, assets,
+firmware or binaries. It is not affiliated with or endorsed by Embodied Inc.; "Moxie" names the
+hardware this software works with.
 
-## 📄 License
+## License
 
 MIT — see [`LICENSE`](LICENSE).
