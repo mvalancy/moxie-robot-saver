@@ -1,22 +1,11 @@
-"""Are the two SIM clients really interchangeable? — asserted, not claimed.
+"""Are the two SIM clients interchangeable? The headless SIL robot (`sim/virtual_moxie.py`)
+and the browser SIM (`sim/web/bridge/`) are held to the same goldens
+(`goldens/robot_to_cloud_activity.json`, `goldens/cloud_to_robot_actions.json`).
 
-`docs/architecture/sim-as-a-client.md` promises the headless SIL robot
-(`sim/virtual_moxie.py`) and the browser SIM (`sim/web/bridge/`) are drop-in
-replacements (DoD criterion 4). Downstream both decode the same payloads; this guards the
-robot→cloud direction (`events/client-service-activity-log`: schedule pull,
-`mentor_behavior`, telehealth state), which the browser SIM once did not publish at all:
-
-1. **The reference.** `sim/tests/goldens/robot_to_cloud_activity.json` is exactly what the
-   SIL robot publishes — asserted against the live `VirtualMoxie`, so it cannot go stale.
-2. **The other client.** `bridge/` builds the same envelopes with the same keys in the
-   same order, read structurally from the JS source so a Python-only run catches drift
-   (`sim/test_bridge.mjs` compares the runtime envelopes against the same golden).
-3. **The delta.** Only the golden's `identity_keys` (which robot, when) may differ.
-
-Plus the cloud→robot half: the browser SIM knows every `ActionType` the server can send
-and decodes `query_result` with the SIL robot's `CloudQueryResponse` field table.
-
-Hermetic and instant: no broker, network, node or browser.
+Split of duties: this file RUNS the SIL robot against the goldens (so they cannot go stale)
+and compares the cross-language TABLES a JS runtime cannot see from Python (action verbs vs
+`ActionType`, stat/applied keys, the query-field table). The browser's runtime behaviour
+against the same goldens is `sim/test_bridge.mjs` and `sim/test_action_payload.mjs`.
 """
 import json
 import os
@@ -31,34 +20,23 @@ sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from helpers_web import script_group  # noqa: E402
 
-GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "goldens",
-                           "robot_to_cloud_activity.json")
-
-with open(GOLDEN_PATH) as _fh:
+GOLDENS = os.path.join(os.path.dirname(__file__), "goldens")
+with open(os.path.join(GOLDENS, "robot_to_cloud_activity.json")) as _fh:
     GOLDEN = json.load(_fh)
+with open(os.path.join(GOLDENS, "cloud_to_robot_actions.json")) as _fh:
+    ACTIONS_GOLDEN = json.load(_fh)
 BRIDGE = script_group("bridge")
 
 
-# --------------------------------------------------------------------------- #
-# Reading object literals out of the JS, without a JS engine
-# --------------------------------------------------------------------------- #
+# ---- reading tables out of the JS, without a JS engine ----------------------------
 def _balanced(src: str, start: int) -> str:
     """`src[start]` is `{` — the substring through its matching `}`."""
     depth = 0
     for i in range(start, len(src)):
-        if src[i] == "{":
-            depth += 1
-        elif src[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return src[start:i + 1]
+        depth += {"{": 1, "}": -1}.get(src[i], 0)
+        if depth == 0:
+            return src[start:i + 1]
     raise AssertionError("unbalanced object literal in sim/web/bridge/")
-
-
-def _literal(anchor: str, opener: str = "publishActivity({") -> str:
-    """The object literal `opener` opens, in the first place `anchor` appears."""
-    at = BRIDGE.index(anchor)
-    return _balanced(BRIDGE, BRIDGE.index(opener, at) + len(opener) - 1)
 
 
 _KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*:")
@@ -69,11 +47,8 @@ def _keys(literal: str) -> list:
     keys, depth, i = [], 0, 0
     while i < len(literal):
         c = literal[i]
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-        elif depth == 1 and (i == 0 or literal[i - 1] in "{,\n\t "):
+        depth += {"{": 1, "}": -1}.get(c, 0)
+        if depth == 1 and c not in "{}" and (i == 0 or literal[i - 1] in "{,\n\t "):
             m = _KEY_RE.match(literal, i)
             if m:
                 keys.append(m.group(1))
@@ -82,19 +57,18 @@ def _keys(literal: str) -> list:
     return keys
 
 
-def _js_string_map(name: str) -> dict:
-    """A `const NAME = { a: "x", … };` table in bridge/, as a dict."""
-    at = BRIDGE.index(f"const {name} = {{")
-    body = _balanced(BRIDGE, BRIDGE.index("{", at))
-    return dict(re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"([^"]*)"', body))
+def _object_after(anchor: str, opener: str = "{") -> str:
+    return _balanced(BRIDGE, BRIDGE.index(opener, BRIDGE.index(anchor)))
 
 
-# --------------------------------------------------------------------------- #
-# 1. The golden is what the SIL robot actually publishes
-# --------------------------------------------------------------------------- #
+def _vm(device_id="d_parity"):
+    pytest.importorskip("paho.mqtt.client", reason="the SIL robot needs paho")
+    from virtual_moxie import VirtualMoxie
+    return VirtualMoxie(host="127.0.0.1", port=1, device_id=device_id, verbose=False)
+
+
+# ---- robot → cloud: the golden IS what the SIL robot publishes ----------------------
 class _Recorder:
-    """Stands in for paho: keeps `(topic, decoded)` for every publish."""
-
     def __init__(self):
         self.published = []
 
@@ -104,9 +78,7 @@ class _Recorder:
 
 @pytest.fixture(scope="module")
 def sil_envelopes():
-    pytest.importorskip("paho.mqtt.client", reason="the SIL robot needs paho")
-    from virtual_moxie import VirtualMoxie
-    vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_golden", verbose=False)
+    vm = _vm("d_golden")
     vm.client = _Recorder()
     vm.send_query("schedule")
     vm.report_mentor_behavior({"module_id": "DRAW", "content_id": "default",
@@ -116,8 +88,7 @@ def sil_envelopes():
 
 
 def _compare(path, want, got, out):
-    """Same keys in the same order, same values — except the golden's identity keys,
-    which are compared by JSON type only."""
+    """Same keys in the same order, same values — identity keys by JSON type only."""
     if path in GOLDEN["identity_keys"]:
         if type(want) is not type(got):
             out.append(f"{path}: identity field is {type(got).__name__}, "
@@ -136,8 +107,7 @@ def _compare(path, want, got, out):
 
 
 def test_the_sil_robot_publishes_all_three_envelopes_on_one_topic(sil_envelopes):
-    topics = {t for (t, _) in sil_envelopes}
-    assert topics == {f"/devices/d_golden/{GOLDEN['topic_suffix']}"}, topics
+    assert {t for (t, _) in sil_envelopes} == {f"/devices/d_golden/{GOLDEN['topic_suffix']}"}
     assert len(sil_envelopes) == 3, sil_envelopes
 
 
@@ -152,203 +122,49 @@ def test_the_golden_still_matches_the_sil_robot(kind, sil_envelopes):
     assert not out, f"{kind} drifted from the golden:\n  " + "\n  ".join(out)
 
 
-def test_the_goldens_documented_key_order_is_its_own_key_order():
-    """`key_order` is what both clients are held to; it must not be able to lie."""
-    for kind, spec in GOLDEN["envelopes"].items():
-        assert spec["key_order"] == list(spec["payload"]), kind
-        if "message_key_order" in spec:
-            assert spec["message_key_order"] == list(spec["payload"]["message"]), kind
-
-
-# --------------------------------------------------------------------------- #
-# 2. The browser SIM builds the same envelopes
-# --------------------------------------------------------------------------- #
-def test_the_browser_sim_publishes_on_the_recovered_topic():
-    assert f'dev("{GOLDEN["topic_suffix"]}")' in BRIDGE, (
-        "bridge/ must publish the activity log on the topic the SIL robot uses")
-
-
-@pytest.mark.parametrize("kind,anchor", [
-    ("query", "function sendQuery(query) {"),
-    ("mentor_behavior", "function reportMentorBehavior(mbh) {"),
-    ("telehealth_state", "function reportTelehealthState(state, sessionId) {"),
-])
-def test_the_browser_sim_uses_the_same_envelope_keys_in_the_same_order(kind, anchor):
-    literal = _literal(anchor)
-    assert _keys(literal) == GOLDEN["envelopes"][kind]["key_order"], (
-        f"{kind}: bridge/ key order {_keys(literal)} != the SIL robot's "
-        f"{GOLDEN['envelopes'][kind]['key_order']}")
-
-
-def test_the_browser_sims_telehealth_event_has_the_same_inner_message():
-    literal = _literal("function reportTelehealthState(state, sessionId) {")
-    inner = _balanced(literal, literal.index("{", literal.index("message:")))
-    assert _keys(inner) == GOLDEN["envelopes"]["telehealth_state"]["message_key_order"]
-
-
-@pytest.mark.parametrize("subtopic", ["query", "telehealth"])
-def test_the_browser_sim_uses_the_same_subtopic_values(subtopic):
-    assert f'subtopic: "{subtopic}"' in BRIDGE, subtopic
-
-
-def test_the_browser_sim_reports_its_firmware_the_way_the_sil_robot_does():
-    """`software_version` is NOT an identity key — a client lying about the build it
-    speaks would make every telemetry comparison meaningless."""
-    from virtual_moxie import FIRMWARE                       # noqa: E402
-    assert f'const FIRMWARE = "{FIRMWARE}";' in BRIDGE
-    assert GOLDEN["envelopes"]["query"]["payload"]["software_version"] == FIRMWARE
-
-
-def test_the_two_clients_name_themselves_differently_and_that_is_the_whole_point():
-    """`module_name` and the device id in `auid` are the delta the doc records: they say
-    WHICH client is speaking. If they were equal the log could not tell them apart."""
-    assert 'const MODULE_NAME = "sim-web";' in BRIDGE
-    assert "module_name" in GOLDEN["identity_keys"]
-    assert GOLDEN["envelopes"]["query"]["payload"]["module_name"] == "virtual-moxie"
-
-
-# --------------------------------------------------------------------------- #
-# 3. …and the cloud→robot half of the same claim
-# --------------------------------------------------------------------------- #
-def test_the_browser_sim_acts_on_response_actions_at_all():
-    """The gap this slice closed. `grep -rn response_actions sim/web/*.js` used to return
-    nothing: the server sent actions and no client consumed them."""
-    assert "response_actions" in BRIDGE
-    assert "response_action" in BRIDGE, "the legacy singular must be read too"
-
-
-def test_the_browser_sim_knows_every_action_type_the_server_can_send():
-    from moxie_sdk.types import ActionType
-    at = BRIDGE.index("const ACTION_KINDS = [")
-    kinds = set(re.findall(r'"([a-z_]+)"', _balanced_list(BRIDGE, at)))
-    assert kinds == {a.value for a in ActionType}, (
-        f"bridge/ implements {sorted(kinds)}; ActionType defines "
-        f"{sorted(a.value for a in ActionType)}")
-
-
-def _balanced_list(src: str, at: int) -> str:
-    start = src.index("[", at)
-    return src[start:src.index("]", start) + 1]
-
-
-def test_an_unknown_action_is_counted_and_skipped_rather_than_thrown():
-    """The behaviour is asserted for real in `sim/test_bridge.mjs`; this pins the two
-    source properties that make it possible, so neither can be deleted quietly."""
-    assert "actionState.unknown += 1" in BRIDGE
-    assert "catch (e) { actionState.unknown += 1;" in BRIDGE
-
-
+# ---- cloud → robot: the tables both clients must share ------------------------------
 def test_both_clients_decode_query_result_with_the_same_proto_field_table():
-    pytest.importorskip("paho.mqtt.client", reason="the SIL robot needs paho")
-    from virtual_moxie import VirtualMoxie
-    assert _js_string_map("QUERY_FIELD") == dict(VirtualMoxie.QUERY_FIELD)
-
-
-def test_the_browser_sim_subscribes_to_the_answers_it_asks_for():
-    assert 'client.subscribe("/devices/+/commands/query_result")' in BRIDGE
-
-
-# --------------------------------------------------------------------------- #
-# 4. …and the SIL robot's half of that same cloud→robot claim
-# --------------------------------------------------------------------------- #
-# Part 3 proved the BROWSER SIM acts on `response_actions`; the SIL robot — the client
-# every SIL test, smoke and soak drives — must too. These hold the two together.
-ACTIONS_GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "goldens",
-                                   "cloud_to_robot_actions.json")
-with open(ACTIONS_GOLDEN_PATH) as _fh:
-    ACTIONS_GOLDEN = json.load(_fh)
-
-BRIDGE_TEST = open(os.path.join(REPO, "sim", "test_bridge.mjs"), encoding="utf-8").read()
-
-
-def _sil():
-    pytest.importorskip("paho.mqtt.client", reason="the SIL robot needs paho")
-    import virtual_moxie
-    return virtual_moxie
-
-
-def test_the_sil_robot_acts_on_response_actions_at_all():
-    """The gap this slice closed, asserted the way its browser twin above is."""
-    src = open(os.path.join(REPO, "sim", "virtual_moxie.py"), encoding="utf-8").read()
-    assert "response_actions" in src
-    assert "response_action" in src, "the legacy singular must be read too"
+    body = _object_after("const QUERY_FIELD = {")
+    browser = dict(re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"([^"]*)"', body))
+    assert browser == dict(type(_vm()).QUERY_FIELD)
 
 
 def test_all_three_action_vocabularies_are_the_same_list():
-    """`ActionType` (what the server can send), `bridge/ACTION_KINDS` (what the
-    browser implements) and `virtual_moxie.ACTION_KINDS` (what the SIL robot implements).
-    Two clients that implement different verbs are not interchangeable."""
+    """What the server can send (`ActionType`), what the browser implements and what the
+    SIL robot implements. Two clients that implement different verbs are not peers."""
     from moxie_sdk.types import ActionType
-    at = BRIDGE.index("const ACTION_KINDS = [")
-    browser = set(re.findall(r'"([a-z_]+)"', _balanced_list(BRIDGE, at)))
-    assert browser == {a.value for a in ActionType} == set(_sil().ACTION_KINDS), (
-        sorted(browser), sorted(a.value for a in ActionType),
-        sorted(_sil().ACTION_KINDS))
-    assert set(ACTIONS_GOLDEN["action_kinds"]) == browser
+    at = BRIDGE.index("[", BRIDGE.index("const ACTION_KINDS = ["))
+    browser = set(re.findall(r'"([a-z_]+)"', BRIDGE[at:BRIDGE.index("]", at)]))
+    import virtual_moxie
+    assert browser == {a.value for a in ActionType} == set(virtual_moxie.ACTION_KINDS) \
+        == set(ACTIONS_GOLDEN["action_kinds"])
 
 
 def test_both_clients_report_what_an_action_did_under_the_same_names():
-    """`bridge/actionStats()` and `VirtualMoxie.action_stats()` are the surface every
-    test reads. Same keys, or a test written against one client means something else
-    against the other."""
+    """`bridge/actionStats()` and `VirtualMoxie.action_stats()` are what every test reads."""
     at = BRIDGE.index("actionStats = function ()")
     browser = set(_keys(_balanced(BRIDGE, BRIDGE.index("{", BRIDGE.index("return", at)))))
-    vm = _sil().VirtualMoxie(host="127.0.0.1", port=1, device_id="d_keys", verbose=False)
-    assert browser == set(vm.action_stats()) == set(ACTIONS_GOLDEN["stat_keys"]), (
-        sorted(browser), sorted(vm.action_stats()))
+    assert browser == set(_vm().action_stats()) == set(ACTIONS_GOLDEN["stat_keys"])
 
 
-def test_the_two_clients_are_driven_over_the_same_action_script():
-    """The golden's script is the one `sim/test_bridge.mjs` emits at the browser SIM, so
-    `expected_state` really is a claim about both clients and not two separate stories.
-    Pinned by event_id, which is what the browser test names each response by."""
-    for response in ACTIONS_GOLDEN["script"]:
-        eid = response["event_id"]
-        assert f'"{eid}"' in BRIDGE_TEST, (
-            f"golden response {eid} is not in {ACTIONS_GOLDEN['peer_test']}; the two "
-            "clients are no longer being driven over the same script")
-
-
-@pytest.mark.parametrize("client,keys", sorted(ACTIONS_GOLDEN["client_only_keys"].items()))
-def test_the_documented_action_deltas_are_the_only_ones(client, keys):
-    """The allowed divergence, named — the browser stamps a wall-clock `t` it renders in
-    the panel, and the SIL robot keeps `function_args` (the contract's field, which the
-    browser does not read). Everything else about an applied action must match."""
-    shared = set(ACTIONS_GOLDEN["applied_keys"])
-    extra = {k.split("[].", 1)[1] for k in keys}
-    assert not (shared & extra), (client, sorted(shared & extra))
-    if client.endswith("virtual_moxie.py"):
-        vm = _sil().VirtualMoxie(host="127.0.0.1", port=1, device_id="d_d", verbose=False)
-        vm._on_chat_reply({"command": "remote_chat", "event_id": "e",
-                           "output": {"text": ""},
-                           "response_actions": [{"output_type": "GLOBAL",
-                                                 "action": "launch", "module_id": "DM"}]})
-        assert set(vm.action_stats()["applied"][0]) == shared | extra
-    else:
-        at = BRIDGE.index("actionState.applied.push({")
-        assert set(_keys(_balanced(BRIDGE, BRIDGE.index("{", at)))) == shared | extra
-
-
-# --------------------------------------------------------------------------- #
-# 5. …and the PAYLOAD of the one verb that carries one
-# --------------------------------------------------------------------------- #
-# Same verb list is not enough once a verb carries a payload: `execute` carries
-# `function_id` (RemoteChat.proto field 7), `function_args` (8) and `action_args` (10), and
-# two clients that agree on the word `execute` but not on WHAT was executed are not
-# interchangeable. The golden's `execute_script` drives both over every spelling and
-# `execute_expected` is the decode both must reach — asserted of the SIL robot by running
-# it and of the browser structurally; `sim/test_action_payload.mjs` runs the real bridge
-# over the same script and carries the negative control.
-
-APPLY_ACTION = _balanced(BRIDGE, BRIDGE.index("{", BRIDGE.index("function applyAction(entry) {")))
-PAYLOAD_TEST_PATH = os.path.join(REPO, *ACTIONS_GOLDEN["payload_peer_test"].split("/"))
-PAYLOAD_TEST = open(PAYLOAD_TEST_PATH, encoding="utf-8").read()
+def test_both_clients_record_an_applied_action_under_the_same_keys_in_the_same_order():
+    """Shared keys in the golden's order, plus exactly the golden's documented
+    per-client extras (so `client_only_keys` cannot lie either)."""
+    shared, extras = ACTIONS_GOLDEN["applied_keys"], ACTIONS_GOLDEN["client_only_keys"]
+    extra = {c: [k.split("[].", 1)[1] for k in keys] for c, keys in extras.items()}
+    browser = _keys(_object_after("actionState.applied.push({"))
+    assert browser == shared + extra["sim/web/bridge/actions.js"], browser
+    vm = _vm()
+    vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
+                       "response_actions": [{"output_type": "GLOBAL", "action": "execute",
+                                             "function_id": "f", "function_args": ["a"]}]})
+    assert list(vm.action_stats()["applied"][0]) == shared + extra["sim/virtual_moxie.py"]
 
 
 def test_the_sil_robot_decodes_the_execute_payload_exactly_as_the_golden_says():
-    """The reference client, run — so `execute_expected` cannot go stale the way a
-    hand-written expectation would. This is the document the browser is held to."""
-    vm = _sil().VirtualMoxie(host="127.0.0.1", port=1, device_id="d_payload", verbose=False)
+    """The reference client, run — `sim/test_action_payload.mjs` holds the browser to the
+    same `execute_expected` (with a negative control)."""
+    vm = _vm()
     for response in ACTIONS_GOLDEN["execute_script"]:
         vm._on_chat_reply({k: v for k, v in response.items() if k != "_why"})
     keys = ACTIONS_GOLDEN["applied_keys"]
@@ -356,91 +172,9 @@ def test_the_sil_robot_decodes_the_execute_payload_exactly_as_the_golden_says():
     assert got == ACTIONS_GOLDEN["execute_expected"], got
 
 
-@pytest.mark.parametrize("field", ["function_id", "function_args", "action_args"])
-def test_the_browser_sim_reads_every_field_the_contract_puts_an_execute_in(field):
-    """`bridge/`:258 used to read `entry.function` and nothing else. Each of these three
-    is a field our own `wire.py::encode_action` emits, so a client that skips one is a
-    client that mis-reads a message this appliance actually sends."""
-    assert f"entry.{field}" in APPLY_ACTION, (
-        f"bridge/applyAction never reads `entry.{field}` — the SIL robot does, so an "
-        f"`execute` carrying it means two different things to the two clients")
-
-
-def test_both_clients_prefer_the_contracts_spelling_in_the_same_order():
-    """`function_id` first, the SIM's older `function` second, `""` last. Order is the
-    assertion: a client that preferred the other spelling would name a *different*
-    function whenever a server sent both, and no vocabulary test could see it."""
-    assert re.search(r'entry\.function_id\s*\|\|\s*entry\.function\s*\|\|\s*""', APPLY_ACTION)
-    src = open(os.path.join(REPO, "sim", "virtual_moxie.py"), encoding="utf-8").read()
-    assert re.search(r'entry\.get\("function_id"\)\s*or\s*entry\.get\("function"\)\s*or\s*""', src)
-
-
-def test_the_browser_sim_falls_through_on_ABSENCE_not_on_falsiness():
-    """`function_args: []` and `action_args: []` are things a server may legitimately put
-    on the wire, and they are not the same as the field being missing. The SIL robot tests
-    `is None`; a browser that wrote `entry.function_args || …` would silently promote an
-    empty list into the next spelling and the two clients would disagree on an edge the
-    golden's `exec-4` covers."""
-    for nxt in ("actionArgs(entry.action_args)", "entry.args"):
-        assert f"if (args === undefined || args === null) args = {nxt};" in APPLY_ACTION, (
-            f"the fall-through to `{nxt}` must test ABSENCE, not falsiness, to match the "
-            "SIL robot's `is None` — the golden's `exec-5` is the message the two clients "
-            "would otherwise decode differently")
-    assert not re.search(r"entry\.function_args\s*\|\|", APPLY_ACTION)
-    assert "if (!args)" not in APPLY_ACTION
-
-
-def test_the_browser_sim_decodes_action_args_into_the_mapping_it_encodes():
-    """`repeated ActionArgsEntry{key, value}` → `{key: value}`, with the SIL robot's own
-    rejections: a non-list is not args, and an entry that is not an object or carries no
-    `key` is dropped rather than becoming an `undefined` key. `null` (not `{}`) on nothing
-    readable, so the caller falls through instead of recording args the brain never sent."""
-    body = _balanced(BRIDGE, BRIDGE.index("{", BRIDGE.index("function actionArgs(entries) {")))
-    assert "if (!Array.isArray(entries)) return null;" in body
-    assert "e.key === undefined || e.key === null" in body
-    assert "return n ? out : null;" in body
-
-
-def test_both_clients_record_an_applied_action_under_the_same_keys_in_the_same_order():
-    """`args` moved out of `client_only_keys` when the browser learned to read it. This
-    pins the ORDER too, which is how every other envelope in this file is held."""
-    at = BRIDGE.index("actionState.applied.push({")
-    browser = _keys(_balanced(BRIDGE, BRIDGE.index("{", at)))
-    assert browser == ACTIONS_GOLDEN["applied_keys"] + ["t"], browser
-    vm = _sil().VirtualMoxie(host="127.0.0.1", port=1, device_id="d_ord", verbose=False)
-    vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
-                       "response_actions": [{"output_type": "GLOBAL", "action": "execute",
-                                             "function_id": "f", "function_args": ["a"]}]})
-    assert list(vm.action_stats()["applied"][0]) == ACTIONS_GOLDEN["applied_keys"]
-
-
-def test_the_browser_sims_actionStats_does_not_drop_the_payload_on_the_way_out():
-    """The SECOND place the payload can be lost: `actionStats()` projecting fewer keys
-    than `applyAction` records shows every caller an unarmed `execute`. The reader's
-    shape is as much of the contract as the writer's."""
-    at = BRIDGE.index("actionStats = function ()")
-    projection = _balanced(BRIDGE, BRIDGE.index("({", BRIDGE.index("applied:", at)) + 1)
-    assert _keys(projection) == ACTIONS_GOLDEN["applied_keys"], _keys(projection)
-
-
-def test_the_two_clients_are_driven_over_the_same_execute_script():
-    """As with `script` above: the browser half must be the SAME responses, or
-    `execute_expected` is two separate stories rather than one claim about both clients."""
-    for response in ACTIONS_GOLDEN["execute_script"]:
-        assert response["event_id"], response
-    assert "execute_script" in PAYLOAD_TEST and "execute_expected" in PAYLOAD_TEST, (
-        f"{ACTIONS_GOLDEN['payload_peer_test']} must drive the browser over this golden, "
-        "not over a script of its own")
-    assert "applied_keys" in PAYLOAD_TEST, (
-        "the browser comparison must be projected onto the golden's shared keys")
-
-
-def test_the_payload_suite_carries_a_negative_control():
-    """A browser assertion that cannot fail is what this repo learned to distrust: nine
-    suites skipped for months and stayed green. The peer test reverts the fix in the
-    bridge source and requires the same comparison to go red — and asserts its own
-    mutations actually changed the source, because a `replace()` that matched nothing
-    would make the control vacuous in exactly the way it exists to catch."""
-    assert "NEGATIVE CONTROL" in PAYLOAD_TEST
-    assert "mutated nothing" in PAYLOAD_TEST, (
-        "the control must prove it changed the source before trusting that it failed")
+def test_the_two_clients_are_driven_over_the_same_action_script():
+    """`sim/test_bridge.mjs` hard-codes its responses; each golden one must be among them
+    or `expected_state` is two separate stories rather than one claim about both clients."""
+    peer = open(os.path.join(REPO, ACTIONS_GOLDEN["peer_test"]), encoding="utf-8").read()
+    missing = [r["event_id"] for r in ACTIONS_GOLDEN["script"] if f'"{r["event_id"]}"' not in peer]
+    assert not missing, f"golden responses not driven by {ACTIONS_GOLDEN['peer_test']}: {missing}"
