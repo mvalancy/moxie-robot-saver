@@ -60,37 +60,33 @@ export async function responseText(res) {
 }
 
 /**
- * The §4.2 no-leak sweep shared by the proxy and ears suites: every forbidden string is
- * absent from the body, every header, and any base64 audio buffer DECODED (`includes`
- * cannot see inside base64, which once hid a raw-body passthrough in `/api/speech`).
- * Missing pieces (non-JSON body, no audio) are skipped, never failures. `stripTopic`
- * exempts the MQTT topic string from the no-URL check.
+ * The §4.2 no-leak sweep: no forbidden string in the body, any header, or any base64 audio
+ * buffer DECODED (`includes` cannot see inside base64, which once hid a raw-body passthrough
+ * in `/api/speech`); no `Bearer`, no URL in the body. ONE assertion per response, naming
+ * everything that leaked. `stripTopic` exempts the MQTT topic string from the no-URL check.
  */
 export async function leakSweep(ok, res, forbidden, label, { stripTopic = false } = {}) {
   const { text, headerText } = await responseText(res);
+  const leaks = [];
+  const short = (s) => JSON.stringify(s.slice(0, 12)) + "…";
   for (const secret of forbidden) {
-    ok(!text.includes(secret), `${label}: the response BODY leaked ${JSON.stringify(secret.slice(0, 12))}…`);
-    ok(!headerText.includes(secret), `${label}: a response HEADER leaked ${JSON.stringify(secret.slice(0, 12))}…`);
+    if (text.includes(secret)) leaks.push("BODY has " + short(secret));
+    if (headerText.includes(secret)) leaks.push("a HEADER has " + short(secret));
   }
-  ok(!/\bBearer\b/i.test(text), `${label}: the body contains the word Bearer`);
-  ok(!/https?:\/\//.test(stripTopic ? text.replace(/"topic":"[^"]*"/g, "") : text),
-     `${label}: the body contains a URL`);
+  if (/\bBearer\b/i.test(text)) leaks.push("body contains the word Bearer");
+  if (/https?:\/\//.test(stripTopic ? text.replace(/"topic":"[^"]*"/g, "") : text)) leaks.push("body contains a URL");
   let envelope = null;
   try { envelope = JSON.parse(text); } catch {}
-  const msgs = envelope && Array.isArray(envelope.messages) ? envelope.messages : [];
-  for (const m of msgs) {
+  for (const m of envelope && Array.isArray(envelope.messages) ? envelope.messages : []) {
     let payload = null;
     try { payload = JSON.parse(m && m.payload); } catch {}
     const b64 = payload && payload.audio && typeof payload.audio.buffer === "string" ? payload.audio.buffer : "";
     if (!b64) continue;
-    let decoded = "";
-    try { decoded = Buffer.from(b64, "base64").toString("latin1"); } catch {}
-    for (const secret of forbidden) {
-      ok(!decoded.includes(secret),
-         `${label}: the AUDIO BUFFER DECODES to bytes containing ${JSON.stringify(secret.slice(0, 12))}…`);
-    }
-    ok(!/https?:\/\//.test(decoded), `${label}: the audio buffer decodes to something carrying a URL`);
+    const decoded = Buffer.from(b64, "base64").toString("latin1");
+    for (const secret of forbidden) if (decoded.includes(secret)) leaks.push("AUDIO BUFFER DECODES to " + short(secret));
+    if (/https?:\/\//.test(decoded)) leaks.push("audio buffer decodes to a URL");
   }
+  ok(!leaks.length, `${label}: the response leaked — ${leaks.join("; ")}`);
 }
 
 /** The response body as JSON, or `null`. */

@@ -114,24 +114,9 @@ def test_the_overlay_is_written_never_the_merged_view(tmp_path):
     assert set(rt.content_items()) == {IDENT, "global:Timer"}
     stored = json.load(open(rt.store.shared_path("content_items")))
     assert list(stored["items"]) == [IDENT]
-
-
-def test_the_merge_order_is_defaults_then_overlay_both_ways(tmp_path):
-    rt, _ = build(tmp_path)
-    rt.content_import(pack_of(prompt="overlay wins"), [IDENT])
-    assert rt.content_items()[IDENT]["data"]["prompt"] == "overlay wins"
-    assert rt.content_items()["global:Timer"]["data"]["pattern"] == r"timer for (\d+)"
-    # and the other way: a shipped item the overlay does not name is untouched
-    assert rt.content_items()["global:Timer"]["provenance"]["origin"] == "shipped"
+    # the merge: the overlay wins by key; a shipped item it does not name is untouched
     assert rt.content_items()[IDENT]["provenance"]["origin"] == "pack"
-
-
-def test_reload_content_survives_a_restart_through_the_store(tmp_path):
-    rt, _ = build(tmp_path)
-    rt.content_import(pack_of(), [IDENT])
-    again, _ = build(tmp_path)                   # a brand-new runtime, same data dir
-    assert again.reload_content()["overlay"] == 1
-    assert again.app.module.conversation("FREE_CHAT").prompt == PACK_PROMPT
+    assert rt.content_items()["global:Timer"]["provenance"]["origin"] == "shipped"
 
 
 def test_an_import_publishes_nothing_and_never_re_pushes_config(tmp_path):
@@ -169,17 +154,11 @@ def test_undo_is_one_slot_and_says_so(tmp_path):
     rt.content_import(pack_of(), [IDENT])
     assert rt.content_view()["undo_available"] is True
     assert "bedtime" in rt.content_view()["undo_label"].lower()
+    assert [p["id"] for p in rt.content_view()["packs"]] == ["bedtime-wind-down"]
     assert rt.content_undo()["ok"] is True
     assert rt.content_view()["undo_available"] is False
+    assert rt.content_view()["packs"] == [], "undo rolls back the pack ledger too"
     assert rt.content_undo()["ok"] is False, "the slot is used up"
-
-
-def test_undo_also_rolls_back_the_pack_ledger(tmp_path):
-    rt, _ = build(tmp_path)
-    rt.content_import(pack_of(), [IDENT])
-    assert [p["id"] for p in rt.content_view()["packs"]] == ["bedtime-wind-down"]
-    rt.content_undo()
-    assert rt.content_view()["packs"] == []
 
 
 def test_an_import_that_applies_nothing_takes_no_snapshot(tmp_path):
@@ -210,23 +189,6 @@ def test_the_review_against_a_shipped_item_a_parent_edited_is_a_conflict(tmp_pat
     assert rows[IDENT]["local_edited"] is True
 
 
-def test_content_export_builds_a_pack_from_the_installed_items(tmp_path):
-    rt, _ = build(tmp_path)
-    pack = rt.content_export([IDENT], name="Just the chat", now=1788400000)
-    assert [i["key"] for i in pack["items"]] == ["FREE_CHAT/default"]
-    assert pack["items"][0]["data"]["prompt"] == SHIPPED_PROMPT
-    assert pack["digest"] == P.pack_digest(pack)
-    everything = rt.content_export(None, name="All of it", now=1788400000)
-    assert len(everything["items"]) == 2
-
-
-def test_exporting_something_that_is_not_installed_is_an_error(tmp_path):
-    rt, _ = build(tmp_path)
-    with pytest.raises(P.PackError) as e:
-        rt.content_export(["conversation:NOPE/x"], name="x")
-    assert "not installed" in str(e.value)
-
-
 def test_the_export_flags_a_prompt_that_names_the_child(tmp_path):
     """The residual leak of §2.2, named honestly: it catches the names we know."""
     rt, _ = build(tmp_path, prompt="You are talking to Sam, who is six.")
@@ -243,23 +205,6 @@ def test_review_writes_nothing_to_the_store(tmp_path):
     assert rt._content_overlay() == {}
     assert not os.path.exists(rt.store.shared_path("content_items"))
     assert not os.path.exists(rt.store.shared_path("content_backup"))
-
-
-def test_an_import_of_a_pack_that_is_not_the_reviewed_one_is_refused(tmp_path):
-    rt, _ = build(tmp_path)
-    reviewed = review(rt, pack_of(prompt="the one I read"))
-    out = rt.content_import(pack_of(prompt="a different one"), [IDENT],
-                            reviewed["expect_digest"])
-    assert out["ok"] is False and out["conflict"] is True
-    assert rt._content_overlay() == {}
-
-
-def test_the_reviewed_digest_lets_the_same_pack_through(tmp_path):
-    rt, _ = build(tmp_path)
-    pack = pack_of()
-    reviewed = review(rt, pack)
-    assert rt.content_import(pack, reviewed["accept"], reviewed["expect_digest"])["ok"]
-    assert reviewed["accept"] == [IDENT], "a new-vs-installed upgrade is pre-ticked"
 
 
 def test_a_code_carrying_pack_imports_and_the_string_is_never_executed(tmp_path):

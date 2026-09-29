@@ -1,12 +1,7 @@
-"""
-Comprehensive SIL + static-site automation.
-
-Exercises every page at every standard resolution, and drives the simulator
-through all of its modes and controls — clicking every expression chip, dragging
-every motor slider, toggling ALIVE / liveness / axes / sound / heart-LED, running
-the speech path, and the docs explorer — always asserting zero console errors and
-no horizontal page scroll.
-"""
+"""Static site + browser SIM in real Chromium: every page at every resolution loads clean,
+and the SIM's controls and server voice work end to end. Pure bridge/voice logic is covered
+without a browser by test_audio.mjs and test_bridge.mjs (presence); the docs explorer and the
+SIM's per-viewport reachability by test_docs_explorer.mjs and test_responsive.mjs."""
 import pytest
 
 from conftest import RESOLUTIONS, PAGES
@@ -15,18 +10,6 @@ from conftest import RESOLUTIONS, PAGES
 def _no_hscroll(page):
     return page.evaluate(
         "() => document.documentElement.scrollWidth <= window.innerWidth + 2"
-    )
-
-
-def _open_drawer_if_needed(page):
-    """On phone widths the controls are a bottom drawer — open it."""
-    page.evaluate(
-        """() => {
-            const hud = document.getElementById('hud');
-            const t = document.getElementById('rail-toggle');
-            if (hud && hud.classList.contains('rail-closed') && t
-                && getComputedStyle(t).display !== 'none') t.click();
-        }"""
     )
 
 
@@ -108,32 +91,27 @@ def test_all_motor_sliders(page, server):
     page.click("#alive-toggle")
     n = page.evaluate("() => document.querySelectorAll('#motors input[type=range]').length")
     assert n >= 5, f"expected motor sliders, got {n}"
-    moved = page.evaluate(
-        """() => {
-            const out = [];
-            document.querySelectorAll('#motors .motor').forEach((wrap) => {
-                const label = wrap.querySelector('label span').textContent.trim();
-                const idx = parseInt(label, 10);
+    idxs = page.evaluate(
+        """() => [...document.querySelectorAll('#motors .motor')].map((wrap) => {
+                const idx = parseInt(wrap.querySelector('label span').textContent.trim(), 10);
                 const s = wrap.querySelector('input[type=range]');
                 s.value = 22000; s.dispatchEvent(new Event('input'));
-                out.push([idx, window.moxie.getMotor(idx)]);
-            });
-            return out;
-        }"""
-    )
-    for idx, val in moved:
-        # motorValues eases toward the target; the target was set so held-target reflects it
-        assert val is not None, f"motor {idx} has no value"
+                return idx;
+            })""")
+    # the joint eases toward the slider's target; every one must actually get there
+    page.wait_for_function(
+        "(idxs) => idxs.every(i => Math.abs(window.moxie.getMotor(i) - 22000) < 50)",
+        arg=idxs, timeout=8000)
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
 
 
 # --------------------------------------------------------------------------- #
-# SIL: the remaining controls — center pose, heart LED, axes, sound, mic.
+# SIL: the remaining controls and the speech path throw nothing.
 # --------------------------------------------------------------------------- #
 def test_scene_and_toggle_controls(page, server):
     page.set_viewport_size({"width": 1440, "height": 900})
     page.goto(f"{server}/sim.html", wait_until="domcontentloaded")
-    page.wait_for_function("window.moxie")
+    page.wait_for_function("window.moxie && window.moxieAudio")
     page.click("#center-btn")
     page.check("#led-on")
     page.evaluate("() => { const c=document.getElementById('led-color'); c.value='#33ddff'; c.dispatchEvent(new Event('input')); }")
@@ -142,72 +120,20 @@ def test_scene_and_toggle_controls(page, server):
     page.uncheck("#axes-on")
     page.uncheck("#audio-on")
     page.check("#audio-on")
-    page.wait_for_timeout(100)
-    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
-
-
-# --------------------------------------------------------------------------- #
-# SIL: speech path — a pre-cached chip and free text.
-# --------------------------------------------------------------------------- #
-def test_speech(page, server):
-    page.set_viewport_size({"width": 1440, "height": 900})
-    page.goto(f"{server}/sim.html", wait_until="domcontentloaded")
-    page.wait_for_function("window.moxieAudio")
-    page.wait_for_function("document.querySelectorAll('#speech-chips .chip').length > 0", timeout=6000)
-    page.click("#speech-chips .chip")            # pre-cached clip (no server needed)
+    # the speech path: a pre-cached chip (no server needed) and free text
+    page.wait_for_function("document.querySelectorAll('#speech-chips .chip').length > 0",
+                           timeout=6000)
+    page.click("#speech-chips .chip")
     page.fill("#speech-input", "Hello Moxie")
     page.click("#speech-btn")
-    page.wait_for_timeout(200)
-    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
-
-
-# --------------------------------------------------------------------------- #
-# SIL: works at every resolution (open drawer on phones, drive a control).
-# --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("res", RESOLUTIONS, ids=[r[0] for r in RESOLUTIONS])
-def test_sil_controls_reachable(page, server, res):
-    label, w, h = res
-    page.set_viewport_size({"width": w, "height": h})
-    page.goto(f"{server}/sim.html", wait_until="domcontentloaded")
-    page.wait_for_function("window.moxie", timeout=8000)
-    page.wait_for_timeout(400)
-    _open_drawer_if_needed(page)
-    page.wait_for_timeout(150)
-    # a face chip and the ALIVE toggle must be clickable at every size
-    page.click("#faces button[data-expr='happy']")
-    page.click("#alive-toggle")
-    assert _no_hscroll(page), f"sim @ {label}: horizontal page scroll"
-    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
-
-
-# --------------------------------------------------------------------------- #
-# Docs explorer: search filters + opening a hit + Mermaid renders.
-# --------------------------------------------------------------------------- #
-def test_docs_explorer(page, server):
-    page.set_viewport_size({"width": 1440, "height": 900})
-    page.goto(f"{server}/docs.html", wait_until="domcontentloaded")
-    page.wait_for_selector("a.doc")
-    assert page.evaluate("() => document.querySelectorAll('a.doc').length") >= 60
-    # full-text search filters the tree
-    page.fill("#q", "projectorfanpid")
-    page.wait_for_timeout(800)
-    assert page.evaluate("() => document.querySelectorAll('a.doc.hit').length") > 0
-    # Mermaid renders on a diagram-heavy doc
-    page.goto(f"{server}/docs.html#reverse-engineering/architecture-diagrams.md",
-              wait_until="domcontentloaded")
-    page.wait_for_function("document.querySelectorAll('article svg').length > 0", timeout=8000)
-    assert page.evaluate("() => document.querySelectorAll('article svg').length") > 0
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
 
 
 # --------------------------------------------------------------------------- #
 # SIL: the SERVER voice — a CloudTTSResponse on /commands/tts actually plays.
 #
-# This is the browser half of AI seam ③ and the last client-side link in DoD
-# criterion 1. The supervisor publishes `{audio:{buffer(base64 raw 16-bit PCM),
-# channels, sample_rate}, marks[], event_id, chunk_num}`; we inject a synthetic
-# one through the REAL bridge route (the same call the MQTT client makes) and
-# assert the SIM decodes it, speaks it, animates the mouth, and stops cleanly.
+# A synthetic CloudTTSResponse through the REAL bridge route, in real Web Audio: decoded,
+# spoken, mouth animated, cleared. Queue/order/mute logic is test_audio.mjs §4-6.
 # --------------------------------------------------------------------------- #
 
 # Build a tone-shaped CloudTTSResponse IN THE PAGE and route it like the broker would.
@@ -297,134 +223,10 @@ def test_cloud_tts_plays_and_animates_the_mouth(page, server):
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
 
 
-# Wait for a chunked utterance to FINISH and hand back what the page recorded of it.
-# `chunks_played` is what tells a finished playback apart from one that never started —
-# `isSpeaking() === false` alone is also true a millisecond after injection.
-_PLAYED = """
-({event, want}) => {
-  const a = window.moxieAudio;
-  if (!a || a.isSpeaking()) return null;                 // still talking
-  const s = a.lastPlaybackStats();
-  if (!s || s.event_id !== event) return null;           // still the PREVIOUS utterance
-  if (s.chunks_played < want) return null;               // hasn't started, or not done
-  return {stats: s, pending: a.ttsPending()};
-}
-"""
-
-
-def test_cloud_tts_chunks_play_in_order_then_stop(page, server):
-    """Chunked responses: same event_id, out-of-order arrival, one continuous utterance."""
-    _sim_ready(page, server)
-    for chunk in (0, 2, 1):
-        page.evaluate(_INJECT_TTS, {"frames": 8820, "rate": 22050, "eventId": "evt-chunks",
-                                    "chunk": chunk, "marks": []})
-    # Assert on what the page RECORDED once the utterance is over: sampling the queue
-    # live raced a fast runner (the audio can drain inside one polling gap). voice/
-    # records each playback's chunk order and deepest queue, and holds a chunk until its
-    # turn, so ORDER is not a matter of timing either.
-    done = page.wait_for_function(_PLAYED, arg={"event": "evt-chunks", "want": 3},
-                                  timeout=20000).json_value()
-    stats = done["stats"]
-    assert stats["event_id"] == "evt-chunks", stats
-    assert stats["chunks_played"] == 3, f"all three chunks must play ({stats})"
-    assert stats["order"] == [0, 1, 2], f"chunks must play in chunk_num order ({stats})"
-    assert stats["max_pending"] >= 1, f"later chunks must queue ({stats})"
-    assert done["pending"] == 0, done
-    # no marks here: the mouth must have moved from the AUDIO ENVELOPE alone (only if the
-    # PCM really rendered), read as the peak the page recorded, not a live sample.
-    peak = page.evaluate("() => window.moxieAudio.lastMouthPeak()")
-    assert peak > 0.05, f"the envelope never drove the mouth (peak {peak})"
-
-    # ...and the proof that none of the above is a timing bet: do it again with 10 ms
-    # chunks injected in ONE synchronous round trip. They queue and drain far faster
-    # than any observer can look, so a live `ttsPending()` sample could not see the
-    # queue at all — the recorded stats still report exactly the same three facts.
-    burst = page.evaluate(
-        """() => {
-             const pcm = new ArrayBuffer(220 * 2), dv = new DataView(pcm);
-             for (let i = 0; i < 220; i++) dv.setInt16(i * 2, Math.round(11000 * Math.sin(i / 6)), true);
-             const bytes = new Uint8Array(pcm);
-             let bin = "";
-             for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-             const b64 = btoa(bin);
-             for (const chunk of [0, 2, 1])                    // one task: nothing can drain
-               window.moxieBridge.route("/devices/d_sim/commands/tts", JSON.stringify({
-                 request_source: "ROBOT_TTS_REQUEST",
-                 audio: {buffer: b64, channels: 1, sample_rate: 22050},
-                 marks: [], event_id: "evt-burst", chunk_num: chunk,
-               }));
-             return window.moxieAudio.ttsPending();
-           }""")
-    assert burst >= 1, f"three synchronous chunks must pipeline, pending={burst}"
-    fast = page.wait_for_function(_PLAYED, arg={"event": "evt-burst", "want": 3},
-                                  timeout=20000).json_value()["stats"]
-    assert fast["event_id"] == "evt-burst", fast
-    assert fast["chunks_played"] == 3 and fast["order"] == [0, 1, 2], fast
-    assert fast["max_pending"] >= 1, f"the queue depth must survive a fast drain ({fast})"
-
-    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
-
-
-def test_cloud_tts_chunks_stay_in_order_across_a_silent_gap(page, server):
-    """The out-of-order arrival a sorted queue cannot fix — the real regression.
-
-    Sorting the queue orders only what is WAITING in it. Here chunk 0 is over and the
-    queue is EMPTY before chunk 2 arrives, so there is nothing to sort it against: the
-    old player started chunk 2 (order [0,2,1]) and the child heard the end of the
-    sentence before its middle. That was pure timing, so the fix makes the order
-    structural: a chunk waits for its turn however idle the player is.
-    """
-    _sim_ready(page, server)
-    # 50 ms of audio: chunk 0 is finished long before the next round trip lands.
-    page.evaluate(_INJECT_TTS, {"frames": 1102, "rate": 22050, "eventId": "evt-jitter",
-                               "chunk": 0, "marks": []})
-    page.wait_for_function(
-        """() => { const a = window.moxieAudio;
-                   return !a.isSpeaking() && a.lastPlaybackStats().chunks_played >= 1; }""",
-        timeout=15000)
-
-    page.evaluate(_INJECT_TTS, {"frames": 8820, "rate": 22050, "eventId": "evt-jitter",
-                               "chunk": 2, "marks": []})
-    page.wait_for_timeout(150)
-    held = page.evaluate(
-        """() => ({speaking: window.moxieAudio.isSpeaking(),
-                   pending: window.moxieAudio.ttsPending(),
-                   stats: window.moxieAudio.lastPlaybackStats()})""")
-    assert held["speaking"] is False, f"chunk 2 must not play out of turn ({held})"
-    assert held["pending"] == 1, f"chunk 2 must be held, not dropped ({held})"
-    assert held["stats"]["order"] == [0], f"only chunk 0 may have played so far ({held})"
-
-    page.evaluate(_INJECT_TTS, {"frames": 8820, "rate": 22050, "eventId": "evt-jitter",
-                               "chunk": 1, "marks": []})
-    done = page.wait_for_function(_PLAYED, arg={"event": "evt-jitter", "want": 3},
-                                  timeout=20000).json_value()
-    stats = done["stats"]
-    assert stats["chunks_played"] == 3, f"all three chunks must play ({stats})"
-    assert stats["order"] == [0, 1, 2], f"chunks must play in chunk_num order ({stats})"
-    assert stats["max_pending"] >= 1, f"chunk 2 must have waited behind chunk 1 ({stats})"
-    assert done["pending"] == 0, done
-    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
-
-
-def test_cloud_tts_respects_the_mute_toggle(page, server):
-    _sim_ready(page, server)
-    page.uncheck("#audio-on")          # the SIM's existing sound switch
-    page.evaluate(_INJECT_TTS, {"frames": 4410, "rate": 22050, "eventId": "evt-mute",
-                                "chunk": 0, "marks": []})
-    page.wait_for_timeout(400)
-    assert page.evaluate("() => window.moxieAudio.isSpeaking()") is False, "muted audio must not play"
-    page.check("#audio-on")
-    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
-
-
 # --------------------------------------------------------------------------- #
-# SIL: PRESENCE — the robot's own eyes in the browser client.
-#
-# The stock robot runs vision on-device and sends only semantic events — no pixels, no
-# bounding boxes (docs/architecture/vision.md §1.1) — delivered as the `speech` of an
-# ordinary RemoteChatRequest. The SIM emits exactly that, and everything asserted below
-# is state the page RECORDED (`window.moxieBridge.presenceStats()`, the badge attribute),
-# never a live sample of an animation.
+# SIL: PRESENCE — the badge and toggle wired in the real page (the bridge's event/greeting
+# logic is test_bridge.mjs's presence section; the greeting and the
+# comms-log exclusion stay pinned here).
 # --------------------------------------------------------------------------- #
 
 # Answer a face event the way the supervisor does, through the REAL bridge route.

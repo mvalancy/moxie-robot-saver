@@ -15,13 +15,11 @@ Hermetic: no broker, one refused loopback connection, no wall clock. Test ids (`
 from __future__ import annotations
 
 import json
-import os
 import socket
 import threading
 
 import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from helpers_runtime import (FakeClient, LatchClient, free_port,   # noqa: E402
                              http_json, make_runtime, status_server)

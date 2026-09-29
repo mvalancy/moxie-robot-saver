@@ -53,14 +53,8 @@ const REQUIRED = Object.freeze([
 ]);
 const SENT = envelope.API_SECURITY_HEADERS || {};
 const REJECTED = envelope.REJECTED_SECURITY_HEADERS || {};
-ok(!!envelope.API_SECURITY_HEADERS,
-   "envelope.js must export API_SECURITY_HEADERS — the one place the /api/* header set lives");
-ok(!!envelope.REJECTED_SECURITY_HEADERS,
-   "…and REJECTED_SECURITY_HEADERS, so every header NOT sent carries a written reason");
-for (const h of REQUIRED) {
-  ok(typeof SENT[h] === "string" && SENT[h].length > 0,
-     `API_SECURITY_HEADERS must define ${h}`);
-}
+// A missing REJECTED export would make the "genuinely absent" loop below vacuous.
+ok(Object.keys(REJECTED).length > 0, "envelope.js exports REJECTED_SECURITY_HEADERS with its reasons");
 const health = await import(join(repo, "functions", "api", "health.js"));
 const chat = await import(join(repo, "functions", "api", "chat.js"));
 const limits = await import(join(repo, "functions", "api", "_lib", "limits.js"));
@@ -147,18 +141,16 @@ const ORIGIN = site.url;
     });
 
   const cases = [];
-  cases.push(["GET /api/health (200)", await realFetch(`${ORIGIN}/api/health`)]);
-  cases.push(["POST /api/chat (200)", await post({ text: "hi" })]);
-  cases.push(["bad_request (400)", await post({ text: "" })]);
-  cases.push(["forbidden_origin (403)", await post({ text: "hi" }, { origin: "https://evil.invalid.test" })]);
-  // DEMO_CHAT_PER_MIN is 2 and one turn is already spent from this IP, so the third
-  // is refused by the window rather than by anything upstream.
+  cases.push(["GET /api/health", 200, await realFetch(`${ORIGIN}/api/health`)]);
+  cases.push(["POST /api/chat", 200, await post({ text: "hi" })]);
+  cases.push(["bad_request", 400, await post({ text: "" })]);
+  cases.push(["forbidden_origin", 403, await post({ text: "hi" }, { origin: "https://evil.invalid.test" })]);
+  // DEMO_CHAT_PER_MIN is 2 and one turn is already spent, so the third is the window's 429.
   await post({ text: "hi" });
-  cases.push(["rate_limited (429)", await post({ text: "hi" })]);
+  cases.push(["rate_limited", 429, await post({ text: "hi" })]);
 
-  const seen = new Set();
-  for (const [label, res] of cases) {
-    seen.add(res.status);
+  for (const [label, status, res] of cases) {
+    eq(res.status, status, `${label} answered its own status over the wire`);
     for (const h of REQUIRED) {
       const got = res.headers.get(h);
       ok(got !== null && got !== "", `${label} — ${h} is MISSING from the served response`);
@@ -169,23 +161,18 @@ const ORIGIN = site.url;
     }
     eq(res.headers.get("Cache-Control"), "no-store", `${label} — still no-store`);
     // §4.2: no header may carry the key, the gateway base or a model id, ever.
-    for (const [, v] of res.headers) {
-      for (const bad of FORBIDDEN) {
-        ok(!String(v).includes(bad), `${label} — a header leaked a forbidden value`);
-      }
-    }
+    const values = [...res.headers].map(([, v]) => v).join("\n");
+    ok(!FORBIDDEN.some((bad) => values.includes(bad)), `${label} — a header leaked a forbidden value`);
     await res.arrayBuffer();
   }
-  ok(seen.has(200) && seen.has(400) && seen.has(403) && seen.has(429),
-     `proved on 200/400/403/429 over the wire, saw ${[...seen].sort().join("/")}`);
 
   /* HSTS must AGREE with the pages (one origin, one pin), read from the real `_headers`. */
-  eq(cases[0][1].headers.get("Strict-Transport-Security"),
+  eq(cases[0][2].headers.get("Strict-Transport-Security"),
      PAGE_HEADERS["Strict-Transport-Security"] || null,
      "the API's HSTS is byte-identical to the pages'");
 
   /* …and the API CSP is NOT the page CSP: a JSON body loads nothing. */
-  ok(cases[0][1].headers.get("Content-Security-Policy") !== PAGE_HEADERS["Content-Security-Policy"],
+  ok(cases[0][2].headers.get("Content-Security-Policy") !== PAGE_HEADERS["Content-Security-Policy"],
      "the API CSP is its own lockdown, not a copy of the page policy");
 }
 
@@ -230,7 +217,6 @@ try {
       } catch (e) { return { error: String(e) }; }
     });
     ok(!got.error, `the page's own same-origin fetch("/api/health") must work — got ${got.error}`);
-    eq(got.ok, true, "…with an ok response");
     eq(got.status, 200, "…a 200");
     eq(got.corp, "same-origin", "…carrying CORP, which therefore did not block it");
     ok(/default-src\s+'none'/.test(got.csp || ""),

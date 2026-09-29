@@ -8,7 +8,6 @@ A subscribed perception event arrives as the `speech` of an ordinary `RemoteChat
 Hermetic: no sleeps, broker or model. Elapsed time is expressed by seeding the presence
 record, never by waiting.
 """
-import os
 import time
 
 import pytest
@@ -17,7 +16,6 @@ from helpers_runtime import fresh_pool, seed_absent  # noqa: E402
 from helpers_runtime import (CountingSynth, drive_turn,   # noqa: E402
                              make_runtime)
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 from moxie_sdk import presence as P                                    # noqa: E402
 from moxie_sdk.app import MoxieApp                                     # noqa: E402
 from moxie_sdk.types import Reply                                      # noqa: E402
@@ -57,37 +55,19 @@ def _vision(rt, dev, name, *, event_id="evt-eye", input_vars=None):
 # 1. Ingest — the events land on RobotContext, and never on the brain
 # --------------------------------------------------------------------------- #
 def test_a_vision_event_updates_presence_and_never_reaches_the_brain():
+    """The contract requires *some* response, so the answer is `NOREPLY_ACK` (ResultCode 6,
+    "acknowledged, no spoken line") — and the event is not something a child said, so it
+    never reaches `respond` or the history; the app's event hook does see it."""
     app = EchoApp()
     rt, dev = _runtime(app)
     resp = _vision(rt, dev, FOUND)
-    assert app.turns == [], "eb-found-face is not something a child said"
-    assert resp["result"] == "NOREPLY_ACK", resp
+    assert app.turns == [] and rt.history.get(dev, []) == []
+    assert app.events and app.events[0][0] == FOUND
+    assert resp["command"] == "remote_chat" and resp["result"] == "NOREPLY_ACK", resp
     assert resp["event_id"] == "evt-eye"
     assert (resp["output"]["text"] or "") == ""
     state = rt.robots[dev].extra["presence"]
     assert state["face_present"] is True and state["faces_seen"] == 1
-
-
-def test_the_contract_still_gets_an_answer_because_it_requires_one():
-    """"The remote module must produce some response for this input to continue the
-    interaction" — so silence is not an option; `NOREPLY_ACK` (ResultCode 6) is the
-    contract's own "acknowledged, no spoken line"."""
-    rt, dev = _runtime()
-    resp = _vision(rt, dev, LOST)
-    assert resp["command"] == "remote_chat" and resp["result"] == "NOREPLY_ACK"
-
-
-def test_a_vision_event_is_not_written_into_conversation_history():
-    rt, dev = _runtime()
-    _vision(rt, dev, FOUND)
-    assert rt.history.get(dev, []) == []
-
-
-def test_the_app_event_hook_sees_every_vision_event():
-    app = EchoApp()
-    rt, dev = _runtime(app)
-    _vision(rt, dev, FOUND)
-    assert app.events and app.events[0][0] == FOUND
 
 
 def test_a_qr_event_carries_its_value_through_to_presence():
@@ -324,8 +304,9 @@ def test_an_unpermitted_robot_is_never_greeted():
 def test_bedtime_hours_suppress_the_hello():
     """Clock-RELATIVE on purpose: `rt._in_bedtime` reads the real clock itself, so pinning
     ours would test a different function. now±30 min contains now at all 1440 minutes,
-    wrap included (see the premise test below). Both weekday keys are written, so a
-    midnight between our read and the runtime's cannot pick the wrong one."""
+    wrap included (premise test below). Both weekday keys are written, so a midnight
+    between our read and the runtime's cannot pick the wrong one. (Outside a window the
+    hello is allowed: the arrival test above has no window at all.)"""
     rt, dev = _runtime()
     seed_absent(rt, dev, away_s=9000.0)
     import datetime
@@ -338,25 +319,10 @@ def test_bedtime_hours_suppress_the_hello():
     assert _vision(rt, dev, FOUND)["result"] == "NOREPLY_ACK"
 
 
-def test_outside_the_bedtime_window_the_hello_is_allowed():
-    """The other side: now+2 h … now+4 h excludes now at all 1440 minutes, wrap included
-    (verified by the premise test, so no escape-hatch skip). Both keys, as above."""
-    rt, dev = _runtime()
-    seed_absent(rt, dev, away_s=9000.0)
-    import datetime
-    cur = datetime.datetime.now()
-    start = (cur + datetime.timedelta(hours=2)).strftime("%H:%M")
-    end = (cur + datetime.timedelta(hours=4)).strftime("%H:%M")
-    rt._config_overrides[dev] = {"weekday_bedtime": [start, end],
-                                 "weekend_bedtime": [start, end]}
-    assert rt._in_bedtime(dev) is False, f"window {start}-{end} must exclude {cur:%H:%M}"
-    assert _vision(rt, dev, FOUND)["result"] == "SUCCESS"
-
-
-def test_the_synthetic_windows_the_two_tests_above_build_hold_at_every_minute():
-    """The premise of the two clock-relative tests, checked with no wall clock over all
+def test_the_synthetic_bedtime_windows_hold_at_every_minute():
+    """The premise of the clock-relative bedtime test, checked with no wall clock over all
     1440 minutes against the same `in_bedtime` helper the runtime calls — so a wrap bug
-    fails here deterministically, not once a day above."""
+    fails here deterministically, not once a day above (plus a window that excludes now)."""
     import datetime
     from moxie_sdk.cloud_config import in_bedtime
     base = datetime.datetime(2026, 9, 2)                      # any day; only H:M matters

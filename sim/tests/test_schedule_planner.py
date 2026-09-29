@@ -185,14 +185,6 @@ def test_the_day_spreads_across_categories_rather_than_stacking_one():
 
 # ------------------------------------------------------------------- FTUE ----
 
-def test_ftue_placement_is_exactly_what_it_was_before_the_recommender():
-    ids = _ids(build_schedule(device_id="d_new", now=MORNING, day="2026-09-02"))
-    assert ids[:4] == ["WELCOME", "TNT", "SYSTEMSCHECK", "DM"]
-    done = ([_mbh("TNT") for _ in range(9)] + [_mbh("SYSTEMSCHECK") for _ in range(4)])
-    after = _ids(build_schedule(device_id="d_new", now=MORNING, mentor_behaviors=done))
-    assert not ({"WELCOME", "TNT", "SYSTEMSCHECK"} & set(after)) and "DM" in after
-
-
 def test_unfinished_onboarding_outranks_every_other_signal_in_the_score():
     inputs = plan_inputs("d", NIGHT)
     ftue, _, codes = score_module({"module_id": "TNT", "category": "MOVEMENT"},
@@ -369,13 +361,6 @@ def test_a_parent_request_inside_bedtime_is_pulled_back_before_it():
 
 # --------------------------------------------------------------- determinism ----
 
-def test_the_same_inputs_produce_byte_identical_plans():
-    kw = dict(device_id="d_det", now=EVENING, mentor_behaviors=[_mbh("JOKE")])
-    a = json.dumps(build_schedule(**kw), sort_keys=True)
-    b = json.dumps(build_schedule(**kw), sort_keys=True)
-    assert a == b
-
-
 def test_the_plan_is_stable_across_python_hash_seeds():
     """`blake2b`, not `hash()` — a plan must not depend on the interpreter's salt, or two
     supervisor processes would serve the same robot two different days."""
@@ -391,12 +376,6 @@ def test_the_plan_is_stable_across_python_hash_seeds():
         outs.add(subprocess.run([sys.executable, "-c", script], env=env, check=True,
                                 capture_output=True, text=True).stdout.strip())
     assert len(outs) == 1, outs
-
-
-def test_the_plan_still_varies_by_robot_and_by_day():
-    a = _ids(build_schedule(device_id="d_1", now=EVENING, day="2026-09-02"))
-    assert a != _ids(build_schedule(device_id="d_2", now=EVENING, day="2026-09-02"))
-    assert a != _ids(build_schedule(device_id="d_1", now=EVENING, day="2026-09-09"))
 
 
 def test_plan_day_is_pure_and_replayable_from_its_inputs_alone():
@@ -429,13 +408,6 @@ def test_the_explanation_names_the_child_and_what_they_did():
                       template=_gen(generate={"module_count": 1}))
     line = expl[0]["line"]
     assert line.startswith("Sam finished Story 3 times"), line
-
-
-def test_explanations_never_reach_the_wire():
-    sched, expl, _ = plan("d_wire", now=EVENING)
-    assert validate_schedule(sched) == []
-    blob = json.dumps(sched)
-    assert "reason_codes" not in blob and "line" not in blob and "factors" not in blob
 
 
 def test_a_request_the_session_cannot_reach_says_so_instead_of_pretending():

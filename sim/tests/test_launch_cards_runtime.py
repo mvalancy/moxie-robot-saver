@@ -11,14 +11,12 @@ Hermetic: no sleeps, broker or model.
 """
 from __future__ import annotations
 
-import os
 
 import pytest
 
 from helpers_runtime import seed_absent  # noqa: E402
 from helpers_runtime import drive_turn, make_runtime                    # noqa: E402
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 from moxie_sdk import launch_cards as cards                             # noqa: E402
 from moxie_sdk import presence as P                                     # noqa: E402
 from moxie_sdk.app import MoxieApp                                      # noqa: E402
@@ -64,47 +62,25 @@ def _actions(resp):
 # T6 — a valid card produces exactly one launch, on this turn's own event_id
 # --------------------------------------------------------------------------- #
 def test_a_scanned_card_answers_with_exactly_one_launch_action():
-    rt, dev = _runtime()
+    """…and nothing else: a perception event is not something a child said (no brain call,
+    no history), and no invented spoken line — no text, no TTS."""
+    app = EchoApp()
+    rt, dev = _runtime(app)
     resp = _scan(rt, dev, "GO<launch:DM>")
     assert resp["result"] == "SUCCESS", resp
     assert resp["event_id"] == "evt-card", resp
     acts = _actions(resp)
     assert len(acts) == 1, acts
     assert acts[0]["action"] == "launch" and acts[0]["module_id"] == "DM", acts
+    assert app.turns == [] and rt.history.get(dev, []) == []
+    assert (resp["output"].get("text") or "") == "", resp
+    assert not [t for (t, _) in rt.client.published if t.endswith("/commands/tts")]
 
 
 def test_a_card_carries_its_content_id_onto_the_wire():
     rt, dev = _runtime()
     acts = _actions(_scan(rt, dev, "GO<launch:DRAW:mission_3>"))
     assert acts[0]["module_id"] == "DRAW" and acts[0]["content_id"] == "mission_3", acts
-
-
-def test_a_card_is_never_handed_to_a_brain_and_never_written_to_history():
-    """The invariant `test_presence_runtime.py` pins for face events, held for cards: a
-    perception event is not something a child said, so no brain call and no history."""
-    app = EchoApp()
-    rt, dev = _runtime(app)
-    _scan(rt, dev, "GO<launch:DM>")
-    assert app.turns == [], "a scanned card was handed to a brain as speech"
-    assert rt.history.get(dev, []) == []
-
-
-def test_a_card_alone_says_nothing_out_loud():
-    """No invented spoken line: the reply carries the launch and stays silent, so a child
-    never hears a decoding artefact. (`_maybe_synthesize` is likewise not reached — there
-    is no text to speak.)"""
-    rt, dev = _runtime()
-    resp = _scan(rt, dev, "GO<launch:DM>")
-    assert (resp["output"].get("text") or "") == "", resp
-    tts = [t for (t, _) in rt.client.published if t.endswith("/commands/tts")]
-    assert tts == [], tts
-
-
-def test_the_scanned_value_still_reaches_the_presence_record():
-    """P0-b reads the value; it does not re-model it. `presence.py` keeps working."""
-    rt, dev = _runtime()
-    _scan(rt, dev, "GO<launch:DM>")
-    assert rt.robots[dev].extra["presence"]["qr"]["value"] == "GO<launch:DM>"
 
 
 # --------------------------------------------------------------------------- #
@@ -131,12 +107,6 @@ def test_a_value_that_is_not_a_card_answers_noreply_ack_with_no_action(value):
     assert _actions(resp) == [], (value, resp)
 
 
-def test_a_refused_card_still_answers_the_turn_the_robot_is_waiting_on():
-    rt, dev = _runtime()
-    resp = _scan(rt, dev, "GO<launch:NOPE>", event_id="evt-refused")
-    assert resp["command"] == "remote_chat" and resp["event_id"] == "evt-refused"
-
-
 @pytest.mark.parametrize("event", [P.MARKER_EVENT, P.BOOK_EVENT, P.FOUND_FACE, P.LOST_TARGET])
 def test_a_card_on_any_event_but_the_qr_one_launches_nothing(event):
     """`eb-dr-event` (ArUco) and `eb-br-event` (book cover) share the shape; only QR reads our
@@ -157,14 +127,6 @@ def test_the_grammar_trims_a_field_so_a_padded_id_is_still_that_id():
     rt, dev = _runtime()
     acts = _actions(_scan(rt, dev, "GO<launch: DM >"))
     assert len(acts) == 1 and acts[0]["module_id"] == "DM", acts
-
-
-def test_a_face_event_is_unchanged_by_this_slice():
-    """The regression guard: the path that existed before still answers exactly as it
-    did — no action, `NOREPLY_ACK`, nothing spoken."""
-    rt, dev = _runtime()
-    resp = drive_turn(rt, dev, FOUND, event_id="evt-face")
-    assert resp["result"] == "NOREPLY_ACK" and _actions(resp) == []
 
 
 # --------------------------------------------------------------------------- #

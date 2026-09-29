@@ -75,12 +75,12 @@ def test_a_card_may_carry_a_content_id():
     assert (action.module_id, action.content_id) == ("DRAW", "mission_3")
 
 
-@pytest.mark.parametrize("module_id", sorted(cards.LAUNCHABLE_MODULE_IDS))
-def test_every_catalog_id_round_trips_through_encode_and_decode(module_id):
-    """24 ids: id → payload → decode → the same id. The printing side can never emit a
-    payload the reading side refuses."""
-    action = cards.decode(cards.encode(module_id))
-    assert action is not None and action.module_id == module_id
+def test_every_catalog_id_round_trips_through_encode_and_decode():
+    """id → payload → decode → the same id: the printing side never emits a payload the
+    reading side refuses."""
+    for module_id in sorted(cards.LAUNCHABLE_MODULE_IDS):
+        action = cards.decode(cards.encode(module_id))
+        assert action is not None and action.module_id == module_id, module_id
 
 
 def test_encode_refuses_an_id_outside_the_catalog():
@@ -105,12 +105,9 @@ def test_the_GO_marker_is_case_sensitive():
     assert cards.decode("Go<launch:DM>") is None
 
 
-def test_sleep_is_refused_by_name_even_though_the_grammar_parses_it():
+def test_sleep_and_exit_are_refused_by_name_even_though_the_grammar_parses_them():
     """A card may start an activity and may do nothing else."""
     assert cards.decode("GO<sleep>") is None
-
-
-def test_exit_is_refused_by_name_even_though_the_grammar_parses_it():
     assert cards.decode("GO<exit>") is None
 
 

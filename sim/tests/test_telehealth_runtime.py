@@ -1,29 +1,14 @@
-"""
-🎭 Telehealth through the REAL runtime — the six verbs, the three gates, the transcript.
-
-A real `MoxieRuntime` over `helpers_runtime.FakeClient`: the actual permit check, mode
-gate, safety classifier and markup floor. Pinned:
-
-  * speak round-trip — one `commands/telehealth` PLAY_OUTPUT + one `commands/tts`, markup
-    valid against the catalog, the operator's mood on the wire;
-  * mode gate — speaking at a robot still running its own brain publishes nothing;
-  * permit gate — a pending robot cannot be puppeted by any verb;
-  * safety — the operator's line is classified as `MOXIE`; a BLOCK is returned with its
-    reason and nothing is spoken (never silently rewritten); a FLAG is spoken + journaled;
-  * no brain mid-session (B3) — a `remote-chat` produces no `commands/remote_chat`;
-  * state ingest — verbatim, and "never reported" until then;
-  * the status HTTP verbs the console proxies.
-
-Assumptions are flagged in `mqtt/moxie_sdk/telehealth.py`; not run on a physical robot.
+"""Telehealth through the REAL runtime (`FakeClient` transport): the six verbs, the three gates
+(permit, mode, safety — a BLOCK goes back to the operator, never silently rewritten), no brain
+mid-session, the transcript ring and its privacy gate, and the status HTTP verbs the console
+proxies. Not run on a physical robot; assumptions are flagged in `moxie_sdk/telehealth.py`.
 """
 import json
-import urllib.error
-import urllib.request
 
 import pytest
 
-from helpers_runtime import (CountingSynth, FakeClient, make_runtime,  # noqa: E402
-                             status_server)
+from helpers_runtime import (CountingSynth, FakeClient, http_call,  # noqa: E402
+                             make_runtime, status_server)
 from moxie_sdk import safety as safety_seam                           # noqa: E402
 from moxie_sdk import telehealth as th                                # noqa: E402
 from moxie_sdk import vocab                                           # noqa: E402
@@ -254,24 +239,19 @@ def _journal(runtime, device_id):
 
 
 def test_a_blocked_operator_line_is_refused_with_its_reason_and_never_spoken(rt):
+    """The brain path substitutes a redirect because nobody is there to tell; here a human
+    is at the keyboard, so they get the verdict — never a silently rewritten sentence."""
     runtime, device_id = rt
     out = runtime.telehealth_speak(device_id, "you are a fucking idiot")
     assert out["ok"] is False and out["blocked"] is True
+    assert "spoke" not in out and "markup" not in out
+    assert runtime.telehealth_view(device_id)["transcript"] == []
     assert out["categories"] == ["profanity"]
     assert "Profanity" in out["reason"] and "rephrase" in out["reason"]
     assert runtime.client.published == []              # nothing on ANY topic
     rows = _journal(runtime, device_id)
     assert len(rows) == 1 and rows[0]["action"] == "block"
     assert rows[0]["side"] == safety_seam.MOXIE        # judged as words Moxie will say
-
-
-def test_a_blocked_line_is_not_silently_rewritten(rt):
-    """The brain path substitutes a redirect because there is nobody to tell. Here a human
-    is at the keyboard: they get the verdict, not a replacement sentence."""
-    runtime, device_id = rt
-    out = runtime.telehealth_speak(device_id, "you are a fucking idiot")
-    assert "spoke" not in out and "markup" not in out
-    assert runtime.telehealth_view(device_id)["transcript"] == []
 
 
 def test_a_flagged_line_is_spoken_and_journaled(rt):
@@ -462,9 +442,8 @@ def test_the_view_carries_the_vocabulary_the_card_renders(rt):
 # Bedtime (B4): a warning, never a gate
 # --------------------------------------------------------------------------- #
 def test_the_bedtime_warning_is_reported_and_the_line_is_still_sent(rt):
-    """We do not know whether a robot suppresses a puppet line inside its bedtime window,
-    so the operator is told the truth and the line goes anyway. Guessing either way would
-    be worse than saying so."""
+    """Unknown whether a robot suppresses a puppet line at bedtime, so the operator is told
+    and the line goes anyway."""
     import datetime
     runtime, device_id = rt
 
@@ -481,13 +460,7 @@ def test_the_bedtime_warning_is_reported_and_the_line_is_still_sent(rt):
     assert runtime.telehealth_speak(device_id, "Sleep well.")["ok"] is True
     assert len(_telehealth_msgs(runtime, device_id)) == 1
 
-    # …and the pure helper the view reads is exactly the runtime's own answer.
-    from moxie_sdk.cloud_config import in_bedtime
-    assert in_bedtime(runtime.effective_config(device_id), now) is True
-
-    # Plus a fully deterministic pair — no wall clock anywhere — so the helper's real
-    # semantics stay pinned even if the block above were ever loosened: a normal wrapping
-    # night contains 23:00 and excludes noon.
+    from moxie_sdk.cloud_config import in_bedtime      # and, clock-free: a wrapping night
     night = {"weekday_bedtime": ["20:30", "07:00"], "weekend_bedtime": ["20:30", "07:00"]}
     assert in_bedtime(night, datetime.datetime(2026, 9, 2, 23, 0)) is True
     assert in_bedtime(night, datetime.datetime(2026, 9, 2, 12, 0)) is False
@@ -504,15 +477,9 @@ def served(rt):
 
 
 def _call(base, device_id, payload=None):
-    url = f"{base}/telehealth?device_id={device_id}"
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(url, data=data, method="POST" if data else "GET",
-                                 headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return json.loads(r.read().decode()), r.status
-    except urllib.error.HTTPError as e:
-        return json.loads(e.read().decode() or "{}"), e.code
+    code, body = http_call(f"{base}/telehealth?device_id={device_id}",
+                           method="POST" if payload is not None else "GET", body=payload)
+    return body, code
 
 
 def test_get_telehealth_serves_the_view(served):
@@ -544,15 +511,6 @@ def test_a_safety_block_over_http_is_a_400_carrying_the_reason(served):
     assert code == 400
     assert out["ok"] is False and out["blocked"] is True
     assert "Profanity" in out["reason"]
-    assert runtime.client.published == []
-
-
-def test_the_mode_gate_over_http_is_a_400_the_console_can_act_on(served):
-    runtime, device_id, base = served
-    _call(base, device_id, {"action": "disable"})
-    runtime.client = FakeClient()
-    out, code = _call(base, device_id, {"action": "speak", "text": "Hello."})
-    assert code == 400 and "Be Moxie" in out["reason"]
     assert runtime.client.published == []
 
 

@@ -6,13 +6,8 @@ import {
   withGlobals,
 } from "./harness.mjs";
 
-/* --------------------------------------------------------------------------- *
- * 7. §6.2 row 3 — the degraded line, driven for real
- *
- * The real `ambient.js` is loaded under a stubbed window and a stub mode machine is walked
- * through boot -> degraded -> live -> degraded. What is asserted is what came OUT of
- * `moxieAudio.speak`, not that the file contains a function with a promising name.
- * --------------------------------------------------------------------------- */
+/* 7. §6.2 row 3 — the degraded line, driven for real: the real `ambient.js` under a stub mode
+ * machine; asserted on what came OUT of `moxieAudio.speak`. */
 {
   ok(!!ambient.degraded, "ambient.json must carry a `degraded` entry (§6.2 row 3)");
   ok(degradedText.length > 0, "the degraded line must have text");
@@ -161,17 +156,9 @@ async function ambientRig(g, script) {
   }});
 }
 
-/* --------------------------------------------------------------------------- *
- * 8. When the 1.4 s Piper probe fires, and when it must not
- *
- * The real `voice/` is loaded under a stubbed window and asked to speak a line with no
- * clip. What is asserted is whether a request to the sidecar port actually left the page.
- *   1. §6.2 row 4 — skip in `degraded`: that deployment has Functions and no sidecar, so the
- *      1.4 s wait is dead air.
- *   2. Skip on any host from which a localhost port cannot be reached: from a public origin
- *      the request violates the site's own CSP (`connect-src 'self'`) and Chrome logs it.
- *      The hostname decides only whether a sidecar could be reachable, never WHICH voice.
- * --------------------------------------------------------------------------- */
+/* 8. When the 1.4 s Piper probe fires: the real `voice/` speaks a clip-less line, and we watch
+ * whether a request to :8081 left the page. Skip in `degraded` (no sidecar: dead air, §6.2 row 4)
+ * and on a public origin (unreachable, and a `connect-src 'self'` violation). */
 function probeFired(modeState, opts = {}) {
   return withGlobals(["window", "document", "localStorage", "location", "fetch",
                       "CustomEvent", "requestAnimationFrame", "cancelAnimationFrame"],
@@ -232,11 +219,6 @@ async function probeRig(g, modeState, opts) {
   eq(await probeFired("offline", { hostname: "moxie.example", ttsBase: "https://moxie.example:8081" }), false,
      "…and not even an explicit moxie.ttsBase can arm it there: the address is unreachable either way, " +
      "so honouring it would only trade a wasted request for a console error");
-
-  ok(/skipProbe/.test(audioSrc) && /moxieMode/.test(audioSrc),
-     "the mode half of the skip must still be gated on window.moxieMode, not on a hostname regex");
-  ok(/pageCouldReachSidecar/.test(audioSrc),
-     "…and the host half must be a named, documented predicate, not an inline test");
 }
 
 

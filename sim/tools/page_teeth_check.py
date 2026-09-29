@@ -82,8 +82,8 @@ RESERVED = {
 
 # ---------------------------------------------------------------------------
 # The suites: every browser-launching suite, as (module stem, uses makeChecks, argv).
-# The one without `makeChecks` (test_env_hosted) rolls its own counters, so only its EXIT CODE can be
-# audited — printed in the report rather than hidden. `check_deployed --selftest` is
+# Every suite uses `makeChecks`, so each check is audited by its message, not only by the
+# suite's exit code. `check_deployed --selftest` is
 # hermetic and the most on-point target (it printed failures and asserted none); auditing
 # a reserved file is not editing it.
 # ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ SUITES = [
     ("test_console_insights", True, []),
     ("test_csp", True, []),
     ("test_docs_explorer", True, []),
-    ("test_env_hosted", False, []),
+    ("test_env_hosted", True, []),
     ("test_liveliness", True, []),
     ("test_mermaid", True, []),
     ("test_mic_spend", True, []),

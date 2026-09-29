@@ -1,34 +1,15 @@
-"""Remove each guard the production-hardening slice rests on, and check its test goes red.
+"""Break each guard the production-hardening P0 slice rests on (store lock, connection
+resilience, connect readiness); the row's tests `-k` selector must go red.
 
-*"A test for every fix, proven in BOTH directions."* A green suite proves the guards are
-**present**; this proves they are **load-bearing**. Same shape as
-`ext_mutation_check.py` / `brain_mutation_check.py` / `performance_mutation_check.py`,
-and it exists for the same reason every one of those did: each of them found a real hole.
+Some rows are the plausible HALF-DONE fixes rather than deletions: `connect_async` without
+`retry_first_connection`, and the lock taken on the data file instead of the `.lock`
+sidecar (serializes nothing, because `os.replace` swaps the inode). The timeout is not a
+nicety: T5's "wait forever" mutation once grew to 20 GB RSS in six minutes.
 
-Run it by hand after touching `moxie_sdk/store.py` or the connection region of
-`supervisor/moxie_runtime/`:
-
-    python3 sim/tools/hardening_mutation_check.py
-
-Every row must say "caught". A row that says NOT CAUGHT means the assertion passes with
-the guard deleted, i.e. it is not testing what its name claims.
-
-Two mutations are deliberately the **half-done fixes** the brief warns about rather than
-deleted guards, because those are what a plausible patch actually looks like:
-
-* `connect_async` with `retry_first_connection` left off — the §2.2 #3 trap, and the
-  reason S6 was written at all (risk R2);
-* the lock moved from the `.lock` sidecar onto the data file — which looks correct,
-  passes review, and serializes nothing because `os.replace` swaps the inode (risk R1).
-
-Nothing here changes the tree permanently: each mutation is reverted in a `finally`.
-`PYTHONDONTWRITEBYTECODE` is not a nicety — without it a `__pycache__` entry from an
-earlier mutation can shadow a later one and a guard reads as un-caught when it is fine.
+    python3 sim/tools/hardening_mutation_check.py [ROW ...]
 """
-import pathlib
-import subprocess
+from mutation_runner import WT, node_verdict, pytest, run_table  # noqa: F401
 
-WT = pathlib.Path(__file__).resolve().parents[2]
 STORE = WT / "mqtt/moxie_sdk/store.py"
 MEMSTORE = WT / "mqtt/moxie_sdk/memory_store.py"
 RT_CONNECTION = WT / "mqtt/supervisor/moxie_runtime/connection.py"
@@ -38,22 +19,10 @@ RT_LIFECYCLE = WT / "mqtt/supervisor/moxie_runtime/lifecycle.py"
 RT_TURNS = WT / "mqtt/supervisor/moxie_runtime/turns.py"
 CFG = WT / "mqtt/config.py"
 TESTS = WT / "sim/tests/test_store_concurrency.py"
-
-#: Seconds a single mutated run may take before it is treated as caught-by-hanging.
-#:
-#: **Not a nicety — this table can hang the box.** T5's *"wait forever instead of giving
-#: up"* turns `_wait_flock`'s budget loop into a true infinite one, and `t5b` drives it
-#: with an INJECTED sleep (`sleep=slept.append`), so nothing sleeps and nothing bounds it:
-#: the list grows as fast as the CPU can append. Run unattended on 2026-09-05 it reached
-#: **20 GB RSS in six minutes** on a 62 GB machine and was still climbing — an OOM that
-#: would have taken every other process on the box with it, from a tool whose whole job is
-#: to be safe to run. A mutation that hangs *is* caught (the guard's test certainly does
-#: not pass), but only if something ends it.
-MUTATION_TIMEOUT_S = 300
-
 STORE_TESTS = "sim/tests/test_store_concurrency.py"
 CONN_TESTS = "sim/tests/test_connection_resilience.py"
 READY_TESTS = "sim/tests/test_connect_readiness.py"
+MUTATION_TIMEOUT_S = 300
 
 MUTATIONS = [
     # ---- the store: the cross-process lock -------------------------------------
@@ -242,68 +211,6 @@ MUTATIONS = [
 ]
 
 
-def main() -> int:
-    caught = missed = noop = 0
-    for name, path, old, new, tests, sel in MUTATIONS:
-        src = path.read_text()
-        # AMBIGUOUS IS NOT CAUGHT, and it is not a milder NO-OP either. `replace(old, new, 1)`
-        # takes the FIRST match, so a row whose anchor occurs twice is about whichever block
-        # sorts earliest in the file — possibly the guard it names, possibly that guard's twin —
-        # and it prints `caught` either way. Measured 2026-09-05: three rows across this
-        # directory were anchored on a line a deliberate twin guard also carried (a load-time
-        # refusal and its runtime belt-and-braces; `_connack_failed` and `_suback_failed`). All
-        # three happened to hit the intended block by line order alone, which is luck, not proof.
-        # `unit_budget_mutation_check.py` hit the same defect where the WRONG block was patched.
-        # `sim/tests/test_mutation_tables.py` now refuses a non-unique anchor for every table in
-        # the fast tier; this is the same refusal at the point of use, so an operator running one
-        # table by hand is told why rather than reading a `caught` that means nothing.
-        hits = src.count(old)
-        if hits == 0:
-            print(f"  NO-OP       {name}  (anchor not found)")
-            noop += 1
-            continue
-        if hits > 1:
-            print(f"  AMBIGUOUS   {name}  (anchor matches {hits} places; "
-                  f"it would mutate whichever comes first)")
-            noop += 1
-            continue
-        backup = src
-        path.write_text(src.replace(old, new, 1))
-        try:
-            try:
-                r = subprocess.run(
-                    [str(WT / ".venv/bin/python"), "-m", "pytest", tests, "-q", "-k", sel,
-                     "-p", "no:cacheprovider"],
-                    cwd=WT, capture_output=True, text=True, timeout=MUTATION_TIMEOUT_S,
-                    env={"PATH": "/usr/bin:/bin", "MOXIE_LLM_API_KEY": "",
-                         "MOXIE_LLM_BASE_URL": "", "MOXIE_VOICE_BASE_URL": "",
-                         "MOXIE_STT_BASE_URL": "",
-                         "HOME": str(pathlib.Path.home()), "PYTHONDONTWRITEBYTECODE": "1"})
-            except subprocess.TimeoutExpired:
-                # Counted as caught, and SAID so rather than silently: the guard's test did
-                # not pass, but "it never finished" is a different fact from "it went red"
-                # and the next reader should not have to guess which one this row is.
-                print(f"  caught      {name}  (hung — killed after {MUTATION_TIMEOUT_S}s)")
-                caught += 1
-                continue
-            # Ported back from `hardening_p1_mutation_check.py` (2026-09-03): a `-k`
-            # selector that matched nothing exits 0 and would read as "caught" forever.
-            # Three of this table's anchors had gone stale against P1's refactors, which
-            # is the same rot one step earlier.
-            if "no tests ran" in r.stdout or " 0 passed" in r.stdout.replace("selected", ""):
-                print(f"  NO-OP       {name}  (selector {sel!r} matched no test)")
-                noop += 1
-            elif r.returncode == 0:
-                print(f"  NOT CAUGHT  {name}")
-                missed += 1
-            else:
-                print(f"  caught      {name}")
-                caught += 1
-        finally:
-            path.write_text(backup)
-    print(f"\nMUTATIONS: {caught} caught, {missed} missed, {noop} no-op")
-    return 1 if (missed or noop) else 0
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_table(MUTATIONS, lambda r: pytest(r[4], r[5]), timeout=MUTATION_TIMEOUT_S,
+                     baseline=[pytest(sorted({r[4] for r in MUTATIONS}))]))

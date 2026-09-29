@@ -2,12 +2,8 @@
 STT seam tests (M3) — the VAD accumulator + transcriber interface + response encoder.
 Pure (no audio libs); the Whisper backend is exercised only for availability/skip.
 """
-import os
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
 from moxie_sdk.stt import (  # noqa: E402
-    VADState, Transcriber, SttSession, WhisperTranscriber, build_stt_response,
+    VADState, Transcriber, SttSession, build_stt_response,
 )
 
 
@@ -66,27 +62,7 @@ def test_response_encoder_shape():
     assert build_stt_response("u", "hi", final=False)["type"] == "PARTIAL"
 
 
-def test_whisper_availability_is_boolean():
-    # no hard dep — just reports whether faster-whisper is installed
-    assert isinstance(WhisperTranscriber.available(), bool)
-
-
-def _pb_zmq_frame(vad, audio, uuid):
-    """Hand-encode a zmqSTTRequest protobuf frame (fields: vad=2, audio=3, uuid=4)."""
-    def varint(n):
-        out = bytearray()
-        while True:
-            b = n & 0x7F
-            n >>= 7
-            out.append(b | (0x80 if n else 0))
-            if not n:
-                return bytes(out)
-    body = b""
-    body += bytes([0x10]) + varint(vad)                      # field 2, varint
-    body += bytes([0x1A]) + varint(len(audio)) + audio       # field 3, len-delim
-    u = uuid.encode()
-    body += bytes([0x22]) + varint(len(u)) + u               # field 4, len-delim
-    return b"embodied.perception.audio.zmqSTTRequest:" + body
+from helpers_audio import pb_zmq_stt_frame as _pb_zmq_frame   # noqa: E402
 
 
 def test_decode_zmq_stt_frame():

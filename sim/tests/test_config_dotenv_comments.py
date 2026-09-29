@@ -1,14 +1,6 @@
-"""A copied `.env.example` must produce working values, not comment text.
-
-`mqtt/.env.example` documents values with inline comments and the documented first step is
-to copy it. Before this, `_load_env` took everything after `=`, so
-
-    MOXIE_VOICE_BASE_URL=         # e.g. https://your-gateway/v1 (empty -> Piper/tone)
-
-set the voice base URL to the string `"# e.g. https://…"` — **truthy garbage** that
-`build_synthesizer` would then treat as a gateway URL — and `MOXIE_APP` became
-`"llm            # llm | content | echo"`. The documented setup path produced a broken
-appliance, silently. Found by the class guard shipped alongside the gateway-default fix.
+"""A copied `.env.example` must produce working values, not comment text: `_load_env` used to
+take everything after `=`, so `MOXIE_VOICE_BASE_URL=   # e.g. https://…` became truthy garbage a
+builder treated as a gateway URL. The documented setup path produced a broken appliance.
 """
 import os
 import sys
@@ -25,6 +17,7 @@ import config  # noqa: E402
     ("         # e.g. https://your-gateway/v1 (empty -> Piper/tone)", ""),
     ("llm            # llm | content | echo", "llm"),
     ("https://example.invalid/v1", "https://example.invalid/v1"),
+    ("https://gw.example.invalid/v1   # the gateway", "https://gw.example.invalid/v1"),
     ('"quoted # with hash"', "quoted # with hash"),
     ("'single # quoted'", "single # quoted"),
     ("pass#word", "pass#word"),          # no preceding space: not a comment
@@ -51,11 +44,3 @@ def test_the_shipped_example_yields_no_comment_text():
         if "#" in value:
             offenders.append((key.strip(), value[:60]))
     assert not offenders, f"copying .env.example would set comment text: {offenders}"
-
-
-def test_a_url_shaped_value_is_not_truncated():
-    """The failure that would matter most: a real gateway URL must survive intact, since
-    a half-parsed URL fails at request time rather than at startup."""
-    url = "https://gw.example.invalid/v1"
-    assert config._dotenv_value(f"{url}   # the gateway") == url
-    assert config._dotenv_value(url) == url

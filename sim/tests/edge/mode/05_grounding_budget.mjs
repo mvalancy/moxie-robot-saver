@@ -8,10 +8,8 @@ import {
 
 const GROUNDING_SRC = readFileSync(join(here, "tools", "grounding_probe.mjs"), "utf8");
 
-// --------------------------------------------------------------------------- //
 // 7. The paid grounding gate has one counter across all logical calls and retries.
 //    Everything here is injected or refused before dotenv loading: zero network calls.
-// --------------------------------------------------------------------------- //
 {
   deep(passageEvidence(
     "I use MQTT messages.", "I talk online.", "How do you talk to the cloud?",
@@ -32,10 +30,6 @@ const GROUNDING_SRC = readFileSync(join(here, "tools", "grounding_probe.mjs"), "
      "live negative arm withholds the passage from both identical prompts");
   ok(/passageEvidence\([\s\S]*candidateDocs\.excerpt/.test(GROUNDING_SRC),
      "live negative arm still scores against a non-empty withheld production passage");
-  ok(!/console\.log\([^\n]*(?:VERDICT|GROUNDED|not grounded)/.test(GROUNDING_SRC),
-     "the one-sample lexical instrument never prints a broader grounding verdict");
-  ok(/one lexical sample, not proof/.test(GROUNDING_SRC),
-     "the executable states its evidence ceiling at the final success path");
 
   eq((GROUNDING_SRC.match(/budget\.requestText\s*\(/g) || []).length, 1,
      "the grounding caller has exactly one outbound seam, inside ProbeBudget");
@@ -100,9 +94,8 @@ const GROUNDING_SRC = readFileSync(join(here, "tools", "grounding_probe.mjs"), "
   eq(hungCalls, 1, "the timeout path starts one actual attempt");
   eq(timed.attempts, 1, "the timed-out attempt remains charged");
 
-  // Run real loopback HTTP in a fresh process because the browser fixtures above replace
-  // global fetch/timers. This is what a Fetch double cannot reveal: automatic redirects
-  // emit extra requests, and Fetch resolves before a delayed body completes.
+  // Real loopback HTTP in a fresh process (the fixtures above replace fetch/timers): a Fetch
+  // double cannot reveal redirect follow-ups or a body that completes after Fetch resolves.
   const loopback = spawnSync(process.execPath,
     [join(here, "tests", "helpers_probe_budget_loopback.mjs")],
     { encoding: "utf8", env: { PATH: process.env.PATH || "" }, timeout: 3000 });

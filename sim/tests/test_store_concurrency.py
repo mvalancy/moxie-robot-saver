@@ -398,11 +398,17 @@ def test_t7b_with_fcntl_there_is_no_warning_line(capsys):
     assert capsys.readouterr().out == ""
 
 
-def test_t7c_run_py_prints_the_note_at_startup(tmp_path):
-    """`mqtt/run.py` builds the store, so it is where the note must be printed."""
-    src = open(os.path.join(REPO, "mqtt", "run.py")).read()
-    assert "warn_no_locking" in src, (
-        "nothing calls store.warn_no_locking() — the fallback is silent after all")
+def test_t7c_run_py_prints_the_note_at_startup(tmp_path, monkeypatch, capsys):
+    """`mqtt/run.py` builds the store, so booting it on a no-`fcntl` platform must say so."""
+    from helpers_runtime import load_mqtt_run, reload_config
+    monkeypatch.setattr(store_mod, "fcntl", None)
+    monkeypatch.setattr(store_mod, "_warned_no_locking", False)
+    monkeypatch.setenv("MOXIE_DATA_DIR", str(tmp_path))
+    load_mqtt_run().assemble(reload_config(monkeypatch, ("MOXIE_STT", "MOXIE_TTS"),
+                                           MOXIE_APP="echo", MOXIE_STT="off",
+                                           MOXIE_TTS="off"))
+    assert store_mod.locking_note() in capsys.readouterr().out, \
+        "nothing at startup calls store.warn_no_locking() — the fallback is silent"
 
 
 # --------------------------------------------------------------------------- #

@@ -1,25 +1,11 @@
-"""Remove each guard the extension sandbox rests on, and check its test goes red.
+"""Break each guard the extension sandbox rests on; its `test_ext_escapes.py` test (the
+row's `-k` selector) must go red. Run after touching `ext/`, `render.py`, `ext_host.py` or
+`packs/`'s pattern cap. Runner and verdicts: `mutation_runner.py`.
 
-"A test for every feature, proven in BOTH directions": a green suite proves the guards
-are *present*, and this proves they are *load-bearing*. Run it by hand after touching
-`ext/`, `render.py`, `ext_host.py` or `packs/`'s pattern cap:
-
-    python3 sim/tools/ext_mutation_check.py
-
-Every row must say "caught". A row that says NOT CAUGHT means the assertion passes with
-the guard deleted, which means it is not testing what its name claims.
-
-Nothing here writes to the tree permanently — each mutation is reverted in a `finally`.
-`PYTHONDONTWRITEBYTECODE` is not a nicety: without it a `__pycache__` entry from an
-earlier mutation can shadow a later one, and a guard reads as un-caught when it is fine.
+    python3 sim/tools/ext_mutation_check.py [ROW ...]
 """
-import pathlib, subprocess
-# Resolved from this file, like every other checker here. It used to be the literal path
-# of the worktree it was written in (`.../wt-ext`), which stopped existing when that slice
-# was merged — so this tool could not run **anywhere**, silently, until
-# `sim/tests/test_mutation_tables.py` asked whether its anchors still resolved.
-WT = pathlib.Path(__file__).resolve().parents[2]
-# `ext` is a package; each row names the module its guard lives in.
+from mutation_runner import WT, node_verdict, pytest, run_table  # noqa: F401
+
 EXT_G = WT / "mqtt/moxie_sdk/content/ext/grammar.py"
 EXT_V = WT / "mqtt/moxie_sdk/content/ext/values.py"
 EXT_L = WT / "mqtt/moxie_sdk/content/ext/validate.py"
@@ -27,6 +13,7 @@ EXT_M = WT / "mqtt/moxie_sdk/content/ext/machine.py"
 REN = WT / "mqtt/moxie_sdk/content/render.py"
 HOST = WT / "mqtt/moxie_sdk/content/ext_host.py"
 PK  = WT / "mqtt/moxie_sdk/content/packs/items.py"
+TESTS = "sim/tests/test_ext_escapes.py"
 
 MUTATIONS = [
  # The anchor carries the `for` line above it because `if seg.startswith("_"):` occurs
@@ -131,49 +118,6 @@ MUTATIONS = [
   "        if len(pattern) > MAX_PATTERN_CHARS:", "        if False:", "x12_a_pathological"),
 ]
 
-# The runner lives in `main()` behind a `__main__` guard, like the other four
-# checkers. It used to be bare module-level code, so **importing** this file ran
-# twenty-eight mutations against the working tree — which is exactly what
-# `sim/tests/test_mutation_tables.py` did on its first draft, from inside pytest.
-def main() -> int:
-    caught = missed = noop = 0
-    for name, path, old, new, sel in MUTATIONS:
-        src = path.read_text()
-        # AMBIGUOUS IS NOT CAUGHT, and it is not a milder NO-OP either. `replace(old, new, 1)`
-        # takes the FIRST match, so a row whose anchor occurs twice is about whichever block
-        # sorts earliest in the file — possibly the guard it names, possibly that guard's twin —
-        # and it prints `caught` either way. Measured 2026-09-05: three rows across this
-        # directory were anchored on a line a deliberate twin guard also carried (a load-time
-        # refusal and its runtime belt-and-braces; `_connack_failed` and `_suback_failed`). All
-        # three happened to hit the intended block by line order alone, which is luck, not proof.
-        # `unit_budget_mutation_check.py` hit the same defect where the WRONG block was patched.
-        # `sim/tests/test_mutation_tables.py` now refuses a non-unique anchor for every table in
-        # the fast tier; this is the same refusal at the point of use, so an operator running one
-        # table by hand is told why rather than reading a `caught` that means nothing.
-        hits = src.count(old)
-        if hits == 0:
-            print(f"  NO-OP       {name}  (anchor not found)"); noop += 1; continue
-        if hits > 1:
-            print(f"  AMBIGUOUS   {name}  (anchor matches {hits} places; "
-                  f"it would mutate whichever comes first)"); noop += 1; continue
-        backup = src
-        path.write_text(src.replace(old, new, 1))
-        try:
-            r = subprocess.run([str(WT / ".venv/bin/python"), "-m", "pytest",
-                                "sim/tests/test_ext_escapes.py", "-q", "-k", sel,
-                                "-p", "no:cacheprovider"],
-                               cwd=WT, capture_output=True, text=True,
-                               env={"PATH": "/usr/bin:/bin", "MOXIE_LLM_API_KEY": "",
-                                    "HOME": "/home/scubasonar", "PYTHONDONTWRITEBYTECODE": "1"})
-            if r.returncode == 0:
-                print(f"  NOT CAUGHT  {name}"); missed += 1
-            else:
-                print(f"  caught      {name}"); caught += 1
-        finally:
-            path.write_text(backup)
-    print(f"\nMUTATIONS: {caught} caught, {missed} missed, {noop} no-op")
-    return 1 if (missed or noop) else 0
-
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_table(MUTATIONS, lambda r: pytest(TESTS, r[4]), baseline=[pytest(TESTS)]))

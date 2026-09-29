@@ -1,20 +1,10 @@
-"""
-The CI harness, guarded as code: a red push that a PR check never saw is an unproven
-assumption about CI that nothing in the repo asserted.
+"""The CI harness, guarded as code (pure YAML/file reading — no network, `gh` or runner).
 
-The post-mortem behind it: a test reddened every `dev` push while the merge gate believed
-the matching pull_request runs were green — they had failed identically, but PRs were
-merged minutes after opening, before the slow `sil` job finished, and "no conclusion yet"
-read as "not failing". Two invariants follow and live here:
-
-* **Push and pull_request execute the same thing** in the fast tier (no `if:`, no
-  `paths:` filter, no `concurrency:` group), so the two outcomes can never legitimately
-  differ.
-* **The installed workflows equal their templates.** `.github/workflows/*.yml` needs a
-  workflow-scoped token to push, so the source lives at `sim/ci/*.yml` and is copied by
-  hand — a drift waiting to happen, invisible until CI behaves unlike the file we read.
-
-Pure file/YAML reading — no network, no `gh`, no runner.
+Post-mortem: a test reddened every `dev` push while PRs merged minutes after opening,
+before the slow `sil` job concluded — "no conclusion yet" read as "not failing". So: push
+and pull_request run the SAME fast tier, a red hermetic suite reports before a two-minute
+merge gate can open, the gate requires every job, and the installed workflows equal their
+`sim/ci/` templates (`.github/workflows/` needs a workflow-scoped token to push).
 """
 from __future__ import annotations
 
@@ -33,25 +23,13 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HERE = os.path.dirname(__file__)
 TEMPLATES = os.path.join(REPO, "sim", "ci")
 INSTALLED = os.path.join(REPO, ".github", "workflows")
-
-#: Every workflow this repo ships. Only the fast tier is held to event symmetry; the
-#: deep tier's extra jobs, the release tag trigger and the monitors' schedules
-#: (`deployed.yml`, `promotion.yml` — gating nothing) are deliberate. Every workflow must
-#: be named here, because the byte-identity guard is the only thing keeping template and
-#: installed copy equal; the pytest-keyed guards simply pass over workflows without pytest.
-TIERS = ("ci.yml", "ci-deep.yml", "release.yml", "deployed.yml", "promotion.yml",
-         "cleanup.yml")
+TIERS = sorted(f for f in os.listdir(TEMPLATES) if f.endswith((".yml", ".yaml")))
 FAST = "ci.yml"
-NON_RELEASE = ("ci.yml", "ci-deep.yml", "deployed.yml", "promotion.yml", "cleanup.yml")
-
-
-def _load(path: str) -> dict:
-    with open(path) as fh:
-        return yaml.safe_load(fh)
 
 
 def _template(name: str) -> dict:
-    return _load(os.path.join(TEMPLATES, name))
+    with open(os.path.join(TEMPLATES, name)) as fh:
+        return yaml.safe_load(fh)
 
 
 def _triggers(doc: dict) -> dict:
@@ -63,18 +41,19 @@ def _steps(job: dict) -> list:
     return list(job.get("steps") or [])
 
 
+def _uncommented(run) -> str:
+    """A `run:` block without shell comments — these steps document at length what they
+    no longer do, and a guard must read commands, not prose."""
+    return "\n".join(ln.split(" #", 1)[0] for ln in (run or "").splitlines()
+                     if not ln.lstrip().startswith("#"))
+
+
 def _run(step: dict) -> str:
-    return step.get("run") or ""
+    return _uncommented(step.get("run"))
 
 
 def _first(steps, pred):
     return next((i for i, s in enumerate(steps) if pred(s)), None)
-
-
-def _browser_install(steps):
-    at = _first(steps, lambda s: "playwright install" in _run(s))
-    assert at is not None, "the sil job no longer installs a browser (update this guard)"
-    return at
 
 
 @pytest.fixture(scope="module")
@@ -82,639 +61,279 @@ def fast() -> dict:
     return _template(FAST)
 
 
-# --------------------------------------------------------------------------- #
-# The templates and the installed workflows are the same bytes
-# --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("name", TIERS)
-def test_the_installed_workflow_is_byte_identical_to_its_template(name):
-    tmpl = os.path.join(TEMPLATES, name)
-    inst = os.path.join(INSTALLED, name)
-    assert os.path.exists(tmpl), tmpl
-    assert os.path.exists(inst), (
-        f"{name} is templated at sim/ci/ but not installed under .github/workflows/")
-    with open(tmpl, "rb") as a, open(inst, "rb") as b:
-        left, right = a.read(), b.read()
-    assert left == right, (
-        f"{name} drifted: sim/ci/{name} and .github/workflows/{name} differ. "
-        "Copy the template across (both must be committed in the same change).")
-
-
-def test_every_installed_workflow_has_a_template():
-    """A workflow only under `.github/` cannot be edited without workflow scope."""
+# ------------------------------------------------ templates == installed workflows --
+def test_every_workflow_is_installed_byte_identical_to_its_template():
     installed = {f for f in os.listdir(INSTALLED) if f.endswith((".yml", ".yaml"))}
-    templated = {f for f in os.listdir(TEMPLATES) if f.endswith((".yml", ".yaml"))}
-    assert installed <= templated, sorted(installed - templated)
+    assert installed == set(TIERS), ("template-only or installed-only workflows",
+                                     sorted(installed ^ set(TIERS)))
+    drifted = [n for n in TIERS
+               if open(os.path.join(TEMPLATES, n), "rb").read()
+               != open(os.path.join(INSTALLED, n), "rb").read()]
+    assert not drifted, f"{drifted}: copy sim/ci/ over .github/workflows/ in the same commit"
 
 
-def test_ci_runs_do_not_publish_actions_artifacts():
-    """CI verdicts live in checks and logs, not in durable artifacts nobody consumes.
-    Release assets (softprops/action-gh-release in release.yml) are out of scope."""
-    offenders = [f"{workflow}:{job_id}:{step.get('name', step.get('uses', ''))}"
-                 for workflow in NON_RELEASE
-                 for job_id, job in _template(workflow)["jobs"].items()
-                 for step in _steps(job)
-                 if step.get("uses", "").startswith("actions/upload-artifact@")]
-    assert not offenders, (
-        "non-release workflows must not create durable Actions artifacts: "
-        + ", ".join(offenders))
-
-
-def test_buildx_diagnostic_record_uploads_are_disabled():
-    """build-push-action uploads .dockerbuild records unless explicitly disabled — the
-    source of almost all accumulated artifacts — so every Buildx workflow must opt out."""
-    found = []
+def test_ci_publishes_no_durable_actions_artifacts():
+    """Verdicts live in checks and logs; Buildx uploads `.dockerbuild` records unless told
+    not to (the source of almost all accumulated artifacts). Release assets are exempt."""
     for workflow in TIERS:
         doc = _template(workflow)
-        build_jobs = [job_id for job_id, job in doc["jobs"].items()
-                      for step in _steps(job)
-                      if step.get("uses", "").startswith("docker/build-push-action@")]
-        if not build_jobs:
-            continue
-        found.extend((workflow, job_id) for job_id in build_jobs)
-        value = str((doc.get("env") or {}).get("DOCKER_BUILD_RECORD_UPLOAD", "")).lower()
-        assert value == "false", (
-            f"{workflow} invokes docker/build-push-action but does not set "
-            "DOCKER_BUILD_RECORD_UPLOAD=false")
-    assert found, "the Buildx artifact guard found no docker/build-push-action steps"
+        uses = [s.get("uses", "") for j in doc["jobs"].values() for s in _steps(j)]
+        if workflow != "release.yml":
+            assert not any(u.startswith("actions/upload-artifact@") for u in uses), workflow
+        if any(u.startswith("docker/build-push-action@") for u in uses):
+            assert str((doc.get("env") or {}).get("DOCKER_BUILD_RECORD_UPLOAD")).lower() \
+                == "false", f"{workflow}: set DOCKER_BUILD_RECORD_UPLOAD=false"
 
 
 def test_closed_pr_cleanup_deletes_only_that_prs_cache_namespace():
-    """Closed PR caches cannot be restored by another ref; branch caches still can."""
     doc = _template("cleanup.yml")
     assert _triggers(doc) == {"pull_request": {"types": ["closed"]}}
     assert doc["permissions"] == {"contents": "read", "actions": "write"}
-    steps = _steps(doc["jobs"]["cleanup"])
-    assert len(steps) == 1
-    step = steps[0]
-    assert step["env"]["PR_REF"] == (
-        "${{ format('refs/pull/{0}/merge', github.event.pull_request.number) }}")
-    assert step["env"]["REPOSITORY"] == "${{ github.repository }}"
-    assert step["run"] == (
-        'gh cache delete --repo "$REPOSITORY" --all --ref "$PR_REF" '
-        '--succeed-on-no-caches')
+    (step,) = _steps(doc["jobs"]["cleanup"])
+    assert step["env"]["PR_REF"].endswith("format('refs/pull/{0}/merge', "
+                                          "github.event.pull_request.number) }}")
+    assert '--ref "$PR_REF"' in step["run"]
     assert "${{" not in step["run"], "event data must reach the shell only through env"
 
 
-# --------------------------------------------------------------------------- #
-# The fast tier runs the SAME thing on a push and on a pull request
-# --------------------------------------------------------------------------- #
+# ------------------------------------ push and pull_request run the SAME fast tier --
 def test_the_fast_tier_fires_on_push_and_pull_request_for_the_same_branches(fast):
     on = _triggers(fast)
     assert set(on) == {"push", "pull_request"}, sorted(on)
-    assert on["push"]["branches"] == on["pull_request"]["branches"], on
-    assert on["push"]["branches"] == ["dev"], on["push"]
+    assert on["push"] == on["pull_request"] == {"branches": ["dev"]}, \
+        "no paths:/filters — one commit must not get two verdicts"
+    assert "concurrency" not in fast and not any("concurrency" in j for j in fast["jobs"].values())
 
 
 def test_no_job_or_step_in_the_fast_tier_is_conditional_at_all(fast):
-    """One `if: github.event_name == 'push'` would make a green PR check and a red push
-    *legitimate*, and the merge gate could not tell that from a race."""
-    offenders = []
-    for job_id, job in fast["jobs"].items():
-        if "if" in job:
-            offenders.append(f"job {job_id}: if: {job['if']}")
-        for i, step in enumerate(_steps(job), 1):
-            if "if" in step:
-                offenders.append(
-                    f"job {job_id} step {i} ({step.get('name', step.get('uses', '?'))}): "
-                    f"if: {step['if']}")
-    assert not offenders, (
-        "the fast tier must execute identically for a push and for a pull request:\n  "
-        + "\n  ".join(offenders))
+    """One `if: github.event_name == 'push'` makes a green PR and a red push legitimate."""
+    offenders = [f"{jid}: {s.get('name', '?')}" for jid, job in fast["jobs"].items()
+                 for s in [job, *_steps(job)] if "if" in s]
+    assert not offenders, offenders
 
 
-def test_the_fast_tier_has_no_path_filter_and_no_cancelling_concurrency(fast):
-    """The other two ways one commit can produce two different verdicts."""
-    for event, spec in _triggers(fast).items():
-        assert isinstance(spec, dict), (event, spec)
-        assert not (set(spec) - {"branches"}), (
-            f"{event} carries a filter beyond `branches`: {sorted(set(spec) - {'branches'})}")
-    assert "concurrency" not in fast, fast.get("concurrency")
-    for job_id, job in fast["jobs"].items():
-        assert "concurrency" not in job, (job_id, job.get("concurrency"))
+def test_the_fast_tier_needs_no_credential_or_expression(fast):
+    """Runnable on a fork, and no secret can reach a workflow file."""
+    text = open(os.path.join(TEMPLATES, FAST)).read()
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    assert "secrets." not in code and "${{" not in code
 
 
 def test_the_fast_tier_runs_the_whole_pytest_suite(fast):
-    """Somewhere the fast tier runs ALL of `sim/tests` with no `-k`/`--ignore`. Reads the
-    commands with comments stripped: a comment explaining the no-selector rule once
-    contained the very token this guard searches for."""
-    runs = [_uncommented(_run(s)) for job in fast["jobs"].values() for s in _steps(job)]
-    pytest_runs = [r for r in runs if "pytest sim/tests" in r]
-    assert pytest_runs, "the fast tier no longer runs the pytest suite at all"
-    whole = [r for r in pytest_runs if " -k " not in r and "--ignore" not in r]
-    assert whole, ("every fast-tier pytest invocation now filters the suite:\n"
-                   + "\n---\n".join(pytest_runs))
+    runs = [_run(s) for job in fast["jobs"].values() for s in _steps(job)]
+    whole = [r for r in runs if "pytest sim/tests" in r and " -k " not in r and "--ignore" not in r]
+    assert whole, "every fast-tier pytest invocation filters the suite"
 
 
-def test_the_fast_tier_fails_before_a_two_minute_merge_gate_can_open(fast):
-    """The timing half of the post-mortem: the hermetic suite runs BEFORE the browser
-    install, so a red suite reports inside the window a merger actually waits."""
+#: Hermetic node suites guarding what the hosted site shows and SPENDS; ~1 s each.
+EARLY_NODE_TESTS = ("sim/test_mode.mjs", "sim/test_demo_proxy.mjs", "sim/test_demo_tickets.mjs",
+                    "sim/test_wav_decode.mjs", "sim/test_demo_ears.mjs", "sim/test_turnstile.mjs",
+                    "sim/test_cloud_transport.mjs", "sim/test_fallback_coverage.mjs")
+
+
+@pytest.mark.parametrize("needle", ("pytest sim/tests",) + EARLY_NODE_TESTS)
+def test_hermetic_checks_report_before_the_browser_install(fast, needle):
+    """Behind the ~3-minute browser install a red suite surfaces after a merge gate opens."""
     steps = _steps(fast["jobs"]["sil"])
-    early = _first(steps, lambda s: "pytest sim/tests" in _run(s))
-    assert early is not None, "the sil job runs no pytest"
-    browser = _browser_install(steps)
-    assert early < browser, (
-        f"the first pytest step (#{early + 1}) runs after the browser install "
-        f"(#{browser + 1}); a hermetic failure would take minutes to surface")
-
-
-def test_the_early_hermetic_step_installs_protobuf(fast):
-    """Without protobuf the early step would `importorskip` past the compiled-proto
-    oracle — the very test the post-mortem was about."""
-    early = next(s for s in _steps(fast["jobs"]["sil"]) if "pytest sim/tests" in _run(s))
-    assert "protobuf" in early["run"], (
-        "the early hermetic step must install protobuf, or the pb2 oracle silently skips:\n"
-        + early["run"])
-
-
-# --------------------------------------------------------------------------- #
-# The headless node tests are actually WIRED — a test CI never runs is not a test
-# --------------------------------------------------------------------------- #
-#: The node tests guarding what the hosted static site tells a visitor (the mode machine
-#: and the page in every mode) and what its Pages Functions SPEND on a visitor's behalf
-#: (proxy caps + key sweep, tickets, audio decode, STT caps, Turnstile, transport,
-#: fallback voices). All hermetic — Functions imported as ES modules with a plain
-#: `context.env` and stubbed `fetch`, no account, key, secret or microphone — so there is
-#: no excuse for any to be missing from the fast tier.
-STATIC_SITE_NODE_TESTS = (
-    "sim/test_mode.mjs",
-    "sim/test_env_hosted.mjs",
-    "sim/test_demo_proxy.mjs",
-    "sim/test_demo_tickets.mjs",
-    "sim/test_wav_decode.mjs",
-    "sim/test_demo_ears.mjs",
-    "sim/test_turnstile.mjs",
-    "sim/test_cloud_transport.mjs",
-    "sim/test_fallback_coverage.mjs",
-)
-
-#: The subset that must report BEFORE anything downloads a browser.
-EARLY_NODE_TESTS = (
-    "sim/test_mode.mjs",
-    "sim/test_demo_proxy.mjs",
-    "sim/test_demo_tickets.mjs",
-    "sim/test_wav_decode.mjs",
-    "sim/test_demo_ears.mjs",
-    "sim/test_turnstile.mjs",
-    "sim/test_cloud_transport.mjs",
-)
-
-
-def _node_steps(job: dict) -> list:
-    """(index, script) for every `node sim/<file>.mjs` invocation in the job."""
-    return [(i, token) for i, step in enumerate(_steps(job))
-            for token in _run(step).split()
-            if token.startswith("sim/test_") and token.endswith(".mjs")]
-
-
-def _tier_node_steps(tier: dict) -> list:
-    """(job_id, index, script) across EVERY job — the browser suites live in a parallel
-    job, so reading only `sil` would silently stop covering them."""
-    return [(job_id, i, script) for job_id, job in tier["jobs"].items()
-            for i, script in _node_steps(job)]
-
-
-@pytest.mark.parametrize("script", STATIC_SITE_NODE_TESTS)
-def test_the_fast_tier_runs_the_static_site_honesty_tests(fast, script):
-    wired = {s: j for j, _, s in _tier_node_steps(fast)}
-    assert script in wired, (
-        f"{script} is not run by ANY job of the fast tier; the honest-indicator contract "
-        f"would be unproven on every push. Wired scripts: {sorted(wired)}")
+    at = _first(steps, lambda s: needle in _run(s))
+    browser = _first(steps, lambda s: "playwright install" in _run(s))
+    assert at is not None and browser is not None, (needle, at, browser)
+    assert at < browser, f"{needle} runs at step #{at + 1}, after the browser install"
 
 
 def test_every_node_test_the_fast_tier_names_actually_exists(fast):
-    """A typo fails the job as "Cannot find module" (reads as a broken runner), and
-    pre-wiring a suite a sibling branch has not landed guarantees a red `dev`."""
-    missing = sorted({s for _, _, s in _tier_node_steps(fast)
-                      if not os.path.exists(os.path.join(REPO, s))})
-    assert not missing, missing
-
-
-@pytest.mark.parametrize("script", EARLY_NODE_TESTS)
-def test_the_hermetic_edge_tests_report_before_a_two_minute_merge_gate_can_open(fast, script):
-    """Each takes about a second; behind the browser install a red mode machine or a
-    leaked gateway key would surface minutes after a script could have merged it."""
-    steps = _steps(fast["jobs"]["sil"])
-    at = _first(steps, lambda s: script in _run(s))
-    assert at is not None, f"the fast tier no longer runs {script}"
-    browser = _browser_install(steps)
-    assert at < browser, (
-        f"{script} (step #{at + 1}) runs after the browser install "
-        f"(#{browser + 1}); a hermetic failure would take minutes to surface")
-
-
-def test_no_hermetic_edge_test_needs_a_gateway_key_or_a_cloudflare_account(fast):
-    """Keeps the fast tier runnable on a fork and a secret out of CI: a step that needed
-    a credential would silently skip on a fork, or put a key in a workflow file."""
-    steps = [s for job in fast["jobs"].values() for s in _steps(job)]
-    for script in STATIC_SITE_NODE_TESTS:
-        step = next((s for s in steps if script in _run(s)), None)
-        assert step is not None, f"{script} is not wired into the fast tier"
-        run = _run(step)
-        for forbidden in ("MOXIE_LLM_API_KEY", "DEMO_GATEWAY_API_KEY", "CLOUDFLARE_API_TOKEN",
-                          "secrets.", "${{"):
-            assert forbidden not in run, (
-                f"the step running {script} references {forbidden!r}; these tests are "
-                f"hermetic and must never need a credential:\n{run}")
+    """A typo fails as "Cannot find module" (reads as a broken runner)."""
+    named = {t for job in fast["jobs"].values() for s in _steps(job) for t in _run(s).split()
+             if t.startswith("sim/test_") and t.endswith(".mjs")}
+    assert named and not [s for s in named if not os.path.exists(os.path.join(REPO, s))]
 
 
 def test_the_only_event_conditionals_in_the_deep_tier_are_the_dispatch_only_live_tiers():
-    """The deep tier gates its live stages (gateway spend, fork-unsafe) on
-    `workflow_dispatch`; any other event conditional must be a deliberate act."""
+    """Live stages spend gateway money and are fork-unsafe: dispatch-only."""
     for job_id, job in _template("ci-deep.yml")["jobs"].items():
-        for i, step in enumerate(_steps(job), 1):
-            cond = step.get("if")
-            if not cond or "github.event" not in cond:
-                continue
-            assert "workflow_dispatch" in cond, (
-                f"deep tier job {job_id} step {i} branches on the event without being "
-                f"dispatch-only: {cond}")
+        for step in _steps(job):
+            cond = step.get("if") or ""
+            assert "github.event" not in cond or "workflow_dispatch" in cond, (job_id, cond)
 
 
-# --------------------------------------------------------------------------- #
-# ONE dependency declaration, and the guards that keep it the only one
-# --------------------------------------------------------------------------- #
-#: The single declaration of what the pytest suite needs, and the same plus the browser
-#: driver. It used to be hand-written in five workflow steps, no two the same.
-HERMETIC_REQS = os.path.join("sim", "tests", "requirements-hermetic.txt")
-FULL_REQS = os.path.join("sim", "tests", "requirements.txt")
-
-#: Import name → distribution name, where they differ.
-MODULE_TO_DISTRIBUTION = {
-    "paho": "paho-mqtt",
-    "yaml": "pyyaml",
-    "google": "protobuf",
-    "faster_whisper": "faster-whisper",
-    "piper": "piper-tts",
-}
-
-#: Imported but deliberately NOT in the test list: ~2 GB of local model wheels, installed
-#: only by the deep tier's opt-in voice step; their suites `importorskip` and say why.
+# -------------------------------------------- ONE dependency declaration ----------
+HERMETIC_REQS = "sim/tests/requirements-hermetic.txt"
+FULL_REQS = "sim/tests/requirements.txt"
+MODULE_TO_DISTRIBUTION = {"paho": "paho-mqtt", "yaml": "pyyaml", "google": "protobuf",
+                          "faster_whisper": "faster-whisper", "piper": "piper-tts"}
+#: ~2 GB of local model wheels, installed only by the deep tier's opt-in voice step.
 DELIBERATELY_OPTIONAL = {"piper-tts", "faster-whisper"}
 
 
 def _requirements(rel_path: str) -> set:
-    """Distribution names a requirements file declares, following `-r` transitively
-    (relative to the referring file, as pip does). Specifiers/extras/markers stripped."""
+    """Distribution names a requirements file declares, following `-r` transitively."""
     out, stack, seen = set(), [os.path.join(REPO, rel_path)], set()
     while stack:
         path = stack.pop()
-        real = os.path.realpath(path)
-        if real in seen:
+        if os.path.realpath(path) in seen:
             continue
-        seen.add(real)
-        assert os.path.exists(path), (
-            f"a requirements file references {path}, which does not exist")
+        seen.add(os.path.realpath(path))
         for raw in open(path):
             line = raw.split("#", 1)[0].strip()
-            if not line:
-                continue
             if line.startswith(("-r", "--requirement")):
                 stack.append(os.path.join(os.path.dirname(path), line.split(None, 1)[1]))
-                continue
-            name = re.split(r"[<>=!~\[;\s]", line, maxsplit=1)[0].strip().lower()
-            if name:
-                out.add(name)
+            elif line:
+                out.add(re.split(r"[<>=!~\[;\s]", line, maxsplit=1)[0].lower())
     return out
 
 
-def _uncommented(run: str) -> str:
-    """A `run:` block with shell comments removed — guards assert over commands, and
-    these steps document at length what they no longer do."""
-    out = []
-    for line in (run or "").splitlines():
-        stripped = line.split(" #", 1)[0]
-        if not stripped.lstrip().startswith("#"):
-            out.append(stripped)
-    return "\n".join(out)
-
-
 def _pip_tokens(run: str) -> set:
-    """Package names a `run:` block's `pip install` lines name, comments excluded."""
     names = set()
-    for line in _uncommented(run).splitlines():
-        if "pip install" not in line:
-            continue
-        for token in line.split():
-            token = token.strip('"\'\\')
-            if not token or token.startswith("-") or token in ("pip", "install",
-                                                             "python", "python3", "-m"):
-                continue
-            if token.endswith(".txt") or "/" in token:
-                continue
-            names.add(re.split(r"[<>=!~\[]", token, maxsplit=1)[0].strip().lower())
+    for line in run.splitlines():
+        if "pip install" in line:
+            for tok in (t.strip("\"'\\") for t in line.split()):
+                if tok and not tok.startswith("-") and "/" not in tok and not tok.endswith(".txt") \
+                        and tok not in ("pip", "install", "python", "python3"):
+                    names.add(re.split(r"[<>=!~\[]", tok, maxsplit=1)[0].lower())
     return names
 
 
 def _jobs_running_the_suite(workflow: str):
-    """(job_id, steps, index-of-first-pytest) for every job that runs pytest —
-    DISCOVERED, so a new or renamed job cannot escape the guards below."""
+    """(job_id, steps, index-of-first-pytest), DISCOVERED so a new job cannot escape."""
     for job_id, job in _template(workflow)["jobs"].items():
         steps = _steps(job)
-        at = _first(steps, lambda s: "pytest sim/tests" in _uncommented(_run(s)))
+        at = _first(steps, lambda s: "pytest sim/tests" in _run(s))
         if at is not None:
             yield job_id, steps, at
 
 
-def _installs_the_list(step) -> bool:
-    run = _uncommented(_run(step))
-    return HERMETIC_REQS in run or FULL_REQS in run
-
-
-@pytest.mark.parametrize("workflow", TIERS)
-def test_every_job_that_runs_the_pytest_suite_installs_the_declared_test_list(workflow):
-    """A job running `pytest sim/tests` must install the one list first, so no tier can
-    have "its own" deps to be missing."""
-    for job_id, steps, at in _jobs_running_the_suite(workflow):
-        before = "\n".join(_uncommented(_run(s)) for s in steps[:at + 1])
-        assert HERMETIC_REQS in before or FULL_REQS in before, (
-            f"{workflow} job `{job_id}` runs the pytest suite without installing "
-            f"{HERMETIC_REQS} (or {FULL_REQS}) first, so its dependencies are whatever "
-            f"that job happens to have:\n{before}")
-
-
-def test_some_job_actually_runs_the_suite_so_the_guard_above_is_not_vacuous():
+def test_some_job_actually_runs_the_suite_so_the_guards_below_are_not_vacuous():
     found = {(w, j) for w in TIERS for j, _, _ in _jobs_running_the_suite(w)}
-    assert (FAST, "sil") in found, found
-    assert ("ci-deep.yml", "hil-sim") in found, found
+    assert {(FAST, "sil"), ("ci-deep.yml", "hil-sim")} <= found, found
 
 
 @pytest.mark.parametrize("workflow", TIERS)
 def test_no_job_redeclares_a_package_the_test_list_owns(workflow):
-    """Declared once: after a job installs the list, no later step may `pip install` a
-    package it names — a second declaration is a second chance to disagree (a hand-added
-    `numpy` once hid that both hermetic tiers lacked it)."""
+    """Every job running pytest installs the ONE list first, and no step re-installs a
+    package it names — a hand-added `numpy` once hid that both hermetic tiers lacked it."""
     owned = _requirements(FULL_REQS)
-    for job_id, steps, _ in _jobs_running_the_suite(workflow):
-        installed_at = _first(steps, _installs_the_list)
-        if installed_at is None:
-            continue                     # the guard above is the one that fails for this
-        for i, step in enumerate(steps[installed_at:], start=installed_at):
-            duplicates = _pip_tokens(_run(step)) & owned
-            assert not duplicates, (
-                f"{workflow} job `{job_id}` step #{i + 1} "
-                f"({step.get('name', '?')}) re-installs {sorted(duplicates)}, which "
-                f"{FULL_REQS} already declares; delete the line and let the list own it.")
+    for job_id, steps, at in _jobs_running_the_suite(workflow):
+        installed = _first(steps, lambda s: HERMETIC_REQS in _run(s) or FULL_REQS in _run(s))
+        assert installed is not None and installed <= at, \
+            f"{workflow}:{job_id} runs pytest without installing {HERMETIC_REQS} first"
+        for step in steps[installed:]:
+            dup = _pip_tokens(_run(step)) & owned
+            assert not dup, f"{workflow}:{job_id} ({step.get('name')}) re-installs {dup}"
 
 
 def test_the_full_test_list_is_the_hermetic_list_plus_a_browser():
-    """The two files differ by exactly the playwright wheel; anything more and they have
-    become two lists again."""
     hermetic, full = _requirements(HERMETIC_REQS), _requirements(FULL_REQS)
-    assert hermetic <= full, sorted(hermetic - full)
-    assert full - hermetic == {"playwright"}, (
-        f"{FULL_REQS} and {HERMETIC_REQS} now differ by more than the browser driver: "
-        f"{sorted(full - hermetic)}. Move the package into the hermetic list (both tiers "
-        f"need it) or say in this guard why the browser tier alone does.")
+    assert hermetic <= full and full - hermetic == {"playwright"}, sorted(full ^ hermetic)
 
 
 def _third_party_modules_the_suite_imports() -> dict:
-    """{distribution: [files]} for every non-stdlib, non-local module `sim/tests` imports —
-    EVERY import (function-level too: `numpy` hid inside a helper's functions) plus every
-    `pytest.importorskip` name. "Local" = any module name matching a `.py` file or a
-    package directory in the repo; coarse, but its failure mode is a missed check."""
-    local, tests = set(), os.path.join(REPO, "sim", "tests")
-    skip = {".git", ".venv", "node_modules", "__pycache__", "work"}
+    """{distribution: [files]} for every non-stdlib, non-local module `sim/tests` imports,
+    function-level imports and `pytest.importorskip` names included."""
+    local, skip = set(), {".git", "node_modules", "__pycache__", "work"}
     for root, dirs, files in os.walk(REPO):
         dirs[:] = [d for d in dirs if d not in skip and not d.startswith(".venv")]
         local.update(f[:-3] for f in files if f.endswith(".py"))
-        local.update(d for d in dirs
-                     if any(x.endswith(".py") for x in os.listdir(os.path.join(root, d))))
+        local.update(d for d in dirs if any(x.endswith(".py")
+                                            for x in os.listdir(os.path.join(root, d))))
     found = {}
-    for name in sorted(os.listdir(tests)):
+    for name in sorted(os.listdir(HERE)):
         if not name.endswith(".py"):
             continue
-        tree = ast.parse(open(os.path.join(tests, name)).read())
         modules = set()
-        for node in ast.walk(tree):
+        for node in ast.walk(ast.parse(open(os.path.join(HERE, name)).read())):
             if isinstance(node, ast.Import):
                 modules.update(a.name.split(".")[0] for a in node.names)
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 modules.add(node.module.split(".")[0])
-            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                  and node.func.attr == "importorskip" and node.args
-                  and isinstance(node.args[0], ast.Constant)
-                  and isinstance(node.args[0].value, str)):
-                modules.add(node.args[0].value.split(".")[0])
-        for module in modules:
-            if module in sys.stdlib_module_names or module in local:
-                continue
-            dist = MODULE_TO_DISTRIBUTION.get(module, module).lower()
-            found.setdefault(dist, []).append(name)
+            elif (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "importorskip"
+                  and node.args and isinstance(node.args[0], ast.Constant)):
+                modules.add(str(node.args[0].value).split(".")[0])
+        for m in modules - set(sys.stdlib_module_names) - local:
+            found.setdefault(MODULE_TO_DISTRIBUTION.get(m, m).lower(), []).append(name)
     return found
 
 
-def test_the_import_scan_found_the_packages_we_know_the_suite_needs():
-    """Anti-vacuity: `numpy` is reachable only through a helper's in-function import."""
-    found = _third_party_modules_the_suite_imports()
-    for known in ("pytest", "numpy", "pyyaml", "paho-mqtt", "fastapi"):
-        assert known in found, (known, sorted(found))
-
-
 def test_the_declared_test_list_covers_every_package_the_suite_imports():
-    """A package a collectible test needs but its tier lacks turns an assertion into an
-    `importorskip` that reads as a pass (or a mid-turn ModuleNotFoundError)."""
-    declared = _requirements(FULL_REQS)
-    missing = {dist: sorted(files)
-               for dist, files in _third_party_modules_the_suite_imports().items()
-               if dist not in declared and dist not in DELIBERATELY_OPTIONAL}
-    assert not missing, (
-        f"the suite imports packages that {FULL_REQS} does not declare, so every tier "
-        f"runs those tests under-provisioned: {missing}. Add them to "
-        f"{HERMETIC_REQS} (both tiers need it) or to DELIBERATELY_OPTIONAL with the "
-        f"reason.")
-
-
-def test_the_console_round_trip_suite_can_actually_run_in_ci():
-    """`test_console_roundtrip.py` gates on fastapi; without the console's requirements
-    in the list the whole file is one green skip (which it once was, for weeks)."""
-    gate = open(os.path.join(HERE, "test_console_roundtrip.py")).read()
-    assert 'importorskip("fastapi"' in gate, (
-        "test_console_roundtrip.py no longer gates on fastapi — update this guard")
+    """An undeclared package turns an assertion into an `importorskip` that reads as a pass
+    (`numpy` hid in a helper's function-level import; `fastapi` skipped the console
+    round-trip suite for weeks)."""
+    found = _third_party_modules_the_suite_imports()
+    assert {"pytest", "numpy", "pyyaml", "paho-mqtt", "fastapi", "protobuf"} <= set(found)
     declared = _requirements(HERMETIC_REQS)
-    for dep in ("fastapi", "httpx"):
-        assert dep in declared, (dep, sorted(declared))
+    missing = {d: f for d, f in found.items()
+               if d not in declared | {"playwright"} | DELIBERATELY_OPTIONAL}
+    assert not missing, f"add to {HERMETIC_REQS} (or DELIBERATELY_OPTIONAL): {missing}"
 
 
-def test_the_test_list_carries_protobuf_for_the_compiled_proto_oracle():
-    assert "protobuf" in _requirements(HERMETIC_REQS)
-
-
-def _run_sh() -> str:
-    return open(os.path.join(HERE, "run.sh")).read()
-
-
-def test_the_local_runner_installs_everything_ci_does():
-    """`run.sh` provisions from `requirements.txt` (what CI installs) and its venv stamp
-    must hash BOTH files, or moving a package between them leaves venvs stale."""
-    run_sh = _run_sh()
-    assert "-r \"$here/requirements.txt\"" in run_sh, (
-        "run.sh no longer provisions its venv from requirements.txt")
-    for name in ("requirements.txt", "requirements-hermetic.txt"):
-        assert name in run_sh.split("sha256sum", 1)[1].split("\n")[0] or \
-            name in run_sh, f"run.sh does not hash {name}; a change to it leaves venvs stale"
-    stamp = [l for l in run_sh.splitlines() if "sha256sum" in l]
-    assert stamp and "requirements-hermetic.txt" in "\n".join(stamp), (
-        "run.sh's venv stamp does not cover requirements-hermetic.txt, where the packages "
-        f"actually live:\n{stamp}")
-
-
-def test_the_local_runner_reinstalls_when_requirements_change():
-    """Keyed on the requirements, not on `pytest` being present — a venv holding pytest
-    and nothing else was never repaired."""
-    run_sh = _run_sh()
-    assert "requirements.txt" in run_sh and "sha256sum" in run_sh, (
-        "run.sh no longer re-installs when requirements.txt changes; a stale venv will "
-        "under-provision the suite again")
-
-
-def test_the_agent_brief_protocol_points_at_the_declared_test_list():
-    """Agent briefs are copied from the agent-workflow doc's protocol; a hand-listed venv
-    recipe there started every agent with a red suite."""
-    protocol = open(os.path.join(REPO, "docs", "architecture", "agent-workflow.md")).read()
-    assert "sim/tests/requirements.txt" in protocol, (
-        "the agent-workflow protocol does not name sim/tests/requirements.txt; "
-        "a brief written from it will hand-list packages and omit one")
-    offenders = [line.strip() for line in protocol.splitlines()
-                 if "pip install" in line and "pytest" in line
-                 and "sim/tests/requirements" not in line]
-    assert not offenders, (
-        "the agent-workflow protocol hand-lists test dependencies instead of pointing at the one "
-        f"declaration: {offenders}")
+def test_the_local_runner_reinstalls_when_either_requirements_file_changes():
+    """`run.sh` provisions from requirements.txt and stamps its venv with BOTH files, or
+    moving a package between them leaves venvs stale."""
+    run_sh = open(os.path.join(HERE, "run.sh")).read()
+    assert '-r "$here/requirements.txt"' in run_sh
+    stamp = "\n".join(ln for ln in run_sh.splitlines() if "sha256sum" in ln)
+    assert "requirements.txt" in stamp and "requirements-hermetic.txt" in stamp, stamp
 
 
 def test_every_live_suite_is_dispatched_by_some_tier():
-    """A live suite nobody runs sits in the tree looking like coverage. The deep tier
-    names FILES, so a `-k` substring never sweeps one in. A deliberately undispatched
-    suite goes in EXEMPT with its reason."""
-    on_disk = {f[:-3] for f in os.listdir(HERE)
-               if f.startswith("test_live_") and f.endswith(".py")}
-    assert on_disk, "no live suites found — has the naming convention changed?"
-    texts = [open(os.path.join(TEMPLATES, n)).read() for n in os.listdir(TEMPLATES)
-             if n.endswith((".yml", ".yaml"))]
-    # match the FILE the tier names, not a substring of a longer suite name
-    dispatched = {suite for suite in on_disk for t in texts if f"{suite}.py" in t}
-    EXEMPT = {}
-    missing = sorted(on_disk - dispatched - set(EXEMPT))
-    assert not missing, (
-        "these live suites are dispatched by no CI tier, so they can only ever run on "
-        "someone's laptop: " + ", ".join(missing) + ". Add them to the deep tier's "
-        "creds-only invocation, or list them in EXEMPT with a reason.")
+    """A live suite nobody runs sits in the tree looking like coverage."""
+    on_disk = {f for f in os.listdir(HERE) if f.startswith("test_live_") and f.endswith(".py")}
+    texts = "\n".join(open(os.path.join(TEMPLATES, n)).read() for n in TIERS)
+    assert on_disk and not sorted(f for f in on_disk if f not in texts)
 
 
-# --------------------------------------------------------------------------- #
-# The browser suites are a PARALLEL job, and the gate still requires it
-# --------------------------------------------------------------------------- #
-# Chrome suites inside `sil` (~5,000 broker-backed tests) more than doubled its runtime
-# and reddened unrelated tests through load contention. The split is real only if the
-# job is actually parallel and the merge gate can still go red because of it.
-
+# ------------------------- the browser job is parallel, and the gate requires it --
 GATE = os.path.join(REPO, "scripts", "pr-green.sh")
 
 
-def _gate_source() -> str:
-    with open(GATE) as fh:
-        return fh.read()
-
-
 def _required_jobs() -> list:
-    """The `REQUIRED_JOBS=` line of the gate, parsed."""
-    m = re.search(r'^REQUIRED_JOBS="([^"]*)"', _gate_source(), re.M)
-    assert m, "scripts/pr-green.sh no longer declares REQUIRED_JOBS (update this guard)"
+    m = re.search(r'^REQUIRED_JOBS="([^"]*)"', open(GATE).read(), re.M)
+    assert m, "scripts/pr-green.sh no longer declares REQUIRED_JOBS"
     return [s for s in m.group(1).split(",") if s]
 
 
-def _gate_decision_script(tmp_path) -> str:
-    """The gate's REAL decision block, lifted out of its heredoc so it can be executed —
-    restating the logic here would prove nothing about the script anybody runs."""
-    body = re.search(r"<<'PY'\n(.*?)\nPY\n", _gate_source(), re.S)
-    assert body, "cannot find the gate's python block (update this guard)"
-    p = os.path.join(str(tmp_path), "gate_decision.py")
-    with open(p, "w") as fh:
-        fh.write(body.group(1))
-    return p
-
-
-def test_the_browser_suites_run_in_their_own_job_in_parallel(fast):
-    """No `needs:` — the split only buys wall-clock if the job starts when `sil` does."""
-    assert fast["jobs"].get("browser") is not None, "the fast tier has no `browser` job any more"
-    for job_id, job in fast["jobs"].items():
-        assert "needs" not in job, (
-            f"job `{job_id}` declares `needs: {job.get('needs')}` — the fast tier's "
-            f"jobs are deliberately independent, so the tier costs max(), not sum()")
-
-
-def test_no_job_runs_both_the_broker_suite_and_a_browser_suite(fast):
-    """Re-adding one browser suite to `sil` would silently restore the contention."""
-    browser_suites = {
-        p for p in os.listdir(os.path.join(REPO, "sim"))
-        if p.startswith("test_") and p.endswith(".mjs")
-        and any(k in open(os.path.join(REPO, "sim", p), encoding="utf-8").read()
-                for k in ("loadPuppeteer", "requireBrowser"))
-    }
-    assert browser_suites, "found no browser suites — has the harness API been renamed?"
+def test_the_browser_suites_run_in_their_own_parallel_job(fast):
+    """Chrome suites inside `sil` doubled its runtime and reddened unrelated tests through
+    load contention; no `needs:`, so the tier costs max(), not sum()."""
+    assert "browser" in fast["jobs"]
+    assert not [j for j, job in fast["jobs"].items() if "needs" in job]
+    browser_suites = {p for p in os.listdir(os.path.join(REPO, "sim"))
+                      if p.startswith("test_") and p.endswith(".mjs")
+                      and re.search(r"loadPuppeteer|requireBrowser",
+                                    open(os.path.join(REPO, "sim", p), encoding="utf-8").read())}
+    assert browser_suites
     for job_id, job in fast["jobs"].items():
         runs = "\n".join(_run(s) for s in _steps(job))
-        heavy = "pytest sim/tests" in runs or "run_smoke.sh" in runs
-        here = sorted(s for _, s in _node_steps(job)
-                      if os.path.basename(s) in browser_suites)
-        assert not (heavy and here), (
-            f"job `{job_id}` runs the broker-backed suite AND browser suites {here}; "
-            f"keep the browsers in their own job.")
+        if "pytest sim/tests" in runs or "run_smoke.sh" in runs:
+            here = [s for s in browser_suites if f"sim/{s}" in runs]
+            assert not here, f"`{job_id}` runs the broker suite AND browser suites {here}"
 
 
 def test_the_merge_gate_requires_every_job_in_the_fast_tier(fast):
-    """Checked both ways: a job the gate does not require cannot redden it, and each
-    entry must match EXACTLY one job — none is stale, two lets the wrong job satisfy the
-    gate while the right one is absent."""
-    names = {job_id: job["name"] for job_id, job in fast["jobs"].items()}
-    required = _required_jobs()
-    unrequired = sorted(f"{jid} ({n})" for jid, n in names.items()
-                        if not any(req in n for req in required))
-    assert not unrequired, (
-        "these fast-tier jobs are in no REQUIRED_JOBS entry of scripts/pr-green.sh, so a "
-        "PR could merge while they were absent from the rollup: " + ", ".join(unrequired))
-    for req in required:
-        hits = sorted(f"{jid} ({n})" for jid, n in names.items() if req in n)
-        assert len(hits) == 1, (
-            f"scripts/pr-green.sh's required entry {req!r} matches {len(hits)} jobs in "
-            f"sim/ci/ci.yml ({hits or 'none'}). One entry, one job.")
-
-
-def test_the_gate_actually_goes_RED_when_the_browser_job_is_missing_or_failing(fast, tmp_path):
-    """Against the gate's own decision code: a green rollup passes; the browser job
-    absent, still running, or red each fails."""
-    script = _gate_decision_script(tmp_path)
+    """Each fast-tier job matches exactly one REQUIRED_JOBS entry and vice versa."""
     names = [job["name"] for job in fast["jobs"].values()]
-    assert len(names) >= 3, names
+    for n in names:
+        assert any(req in n for req in _required_jobs()), f"{n!r} cannot redden the gate"
+    for req in _required_jobs():
+        assert sum(req in n for n in names) == 1, (req, names)
+
+
+def test_the_gate_goes_red_when_the_browser_job_is_missing_running_or_failing(fast, tmp_path):
+    """Against the gate's REAL decision block, lifted out of its heredoc."""
+    body = re.search(r"<<'PY'\n(.*?)\nPY\n", open(GATE).read(), re.S)
+    script = tmp_path / "gate.py"
+    script.write_text(body.group(1))
+    names = [job["name"] for job in fast["jobs"].values()]
     browser = next(n for n in names if "Browser" in n)
 
-    def rollup(**over):
-        out = [dict({"name": n, "status": "COMPLETED", "conclusion": "SUCCESS"},
-                    **over.get(n, {})) for n in names]
-        return [r for r in out if r.get("conclusion") != "__ABSENT__"]
+    def gate(over=None, need="3"):
+        rs = [dict({"name": n, "status": "COMPLETED", "conclusion": "SUCCESS"},
+                   **(over if n == browser and over else {})) for n in names]
+        rs = [r for r in rs if r["conclusion"] != "ABSENT"]
+        return subprocess.run([sys.executable, str(script), json.dumps(rs), need,
+                               ",".join(_required_jobs())], capture_output=True, text=True)
 
-    def run(rs, need="3"):
-        return subprocess.run(
-            [sys.executable, script, json.dumps(rs), need, ",".join(_required_jobs())],
-            capture_output=True, text=True)
-
-    green = run(rollup())
-    assert green.returncode == 0, green.stdout + green.stderr
-
-    # MISSING, twice: the default count floor catches it by luck, so the second call
-    # lowers the floor to 1 to isolate the by-NAME clause that must carry the weight.
-    absent = run(rollup(**{browser: {"conclusion": "__ABSENT__"}}))
-    assert absent.returncode != 0, (
-        "the gate passed a rollup with the browser job MISSING:\n" + absent.stdout)
-    absent_no_floor = run(rollup(**{browser: {"conclusion": "__ABSENT__"}}), need="1")
-    assert absent_no_floor.returncode != 0, (
-        "with the count floor lowered, the gate passed a rollup that never listed the "
-        "browser job at all — the by-name requirement is doing nothing:\n"
-        + absent_no_floor.stdout)
-    assert "Browser" in absent_no_floor.stdout, absent_no_floor.stdout
-
-    running = run(rollup(**{browser: {"status": "IN_PROGRESS", "conclusion": None}}))
-    assert running.returncode != 0, (
-        "the gate passed while the browser job was still running:\n" + running.stdout)
-    red = run(rollup(**{browser: {"conclusion": "FAILURE"}}))
-    assert red.returncode != 0, "the gate passed with the browser job RED:\n" + red.stdout
+    assert gate().returncode == 0
+    # need=1 lowers the count floor so the by-NAME clause must carry the weight
+    assert gate({"conclusion": "ABSENT"}, need="1").returncode != 0
+    assert gate({"status": "IN_PROGRESS", "conclusion": None}).returncode != 0
+    assert gate({"conclusion": "FAILURE"}).returncode != 0

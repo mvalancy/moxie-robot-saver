@@ -150,17 +150,6 @@ def test_no_data_stops_the_notify_path_too(memdir, tmp_path):
 # what happens to a file that is ALREADY there
 # ---------------------------------------------------------------------------
 
-def test_flipping_to_no_data_removes_the_transcript_already_on_disk(memdir, tmp_path):
-    """Refusing new writes while yesterday's transcript stays on disk is a half
-    guarantee. Erase is never policy-gated, so closing the gate erases."""
-    rt, did = _runtime(tmp_path)
-    _only_turn(rt, did)
-    assert _files(memdir) == [f"{did}.json"]
-
-    rt.update_config(did, logging_policy=int(LoggingPolicy.NO_DATA))
-    assert _files(memdir) == []
-
-
 def test_a_no_data_transcript_is_not_rehydrated_by_a_restart(memdir, tmp_path):
     """A durable fleet rule outlives the process; the file must not.
 

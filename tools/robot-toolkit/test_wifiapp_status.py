@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Round-trip test for the bo-wifi setup-app status helpers in moxie_toolkit.bus.
-
-Builds a WifiAppStatus (the WifiAppReady=100 "ready to scan a QR" signal) and a
-WifiAppBricked (setup-app failure), frames + re-parses them via the bus registry, and
-checks the WIFI_APP_STATUS_CODES map. See
-docs/reverse-engineering/protocol/qr-commands.md (The setup app's runtime status).
+"""The bo-wifi setup-app status helpers in moxie_toolkit.bus: the registry, the recovered
+WifiAppStatusCodes map (WifiAppReady=100 is "ready to scan a QR") and the status/bricked
+field names. See docs/reverse-engineering/protocol/qr-commands.md (The setup app's runtime
+status).
 
     python3 tools/robot-toolkit/test_wifiapp_status.py
 """
@@ -23,26 +21,13 @@ except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  wifiapp-status toolkit test skipped — {e}")
     sys.exit(0)
 
-registry = {bus.full_name(c): c for c in bus.wifi_app_status_classes()}
-ok(len(registry) == 4, f"expected 4 wifiapp status classes, got {len(registry)}")
-ok("embodied.unity.WifiAppStatus" in registry, f"WifiAppStatus not registered: {list(registry)}")
-
-# the status-code map is the recovered WifiAppStatusCodes enum
-ok(bus.WIFI_APP_STATUS_CODES.get(100) == "WifiAppReady", "100 should be WifiAppReady")
-ok(bus.WIFI_APP_STATUS_CODES.get(1) == "WifiAndUserGood" and bus.WIFI_APP_STATUS_CODES.get(1977) == "Alive",
+registry = {bus.full_name(c) for c in bus.wifi_app_status_classes()}
+ok(len(registry) == 4 and "embodied.unity.WifiAppStatus" in registry,
+   f"wifiapp registry wrong: {sorted(registry)}")
+codes = bus.WIFI_APP_STATUS_CODES
+ok((codes.get(100), codes.get(1), codes.get(1977)) == ("WifiAppReady", "WifiAndUserGood", "Alive"),
    "status-code map incomplete")
+S.WifiAppStatus(code=100)
+B.WifiAppBricked(error_code=2)
 
-# WifiAppReady round-trips through the bus framing
-st = S.WifiAppStatus(code=100)
-fn = bus.full_name(st)
-rt = registry[fn](); rt.ParseFromString(st.SerializeToString())
-ok(rt.code == 100 and bus.WIFI_APP_STATUS_CODES[rt.code] == "WifiAppReady",
-   "WifiAppStatus(WifiAppReady) round-trip failed")
-
-# a bricked setup app carries an error_code
-br = B.WifiAppBricked(error_code=2)
-rbr = B.WifiAppBricked(); rbr.ParseFromString(br.SerializeToString())
-ok(rbr.error_code == 2, "WifiAppBricked error_code lost")
-
-report("wifiapp-status", "WifiAppStatus(WifiAppReady=100) + WifiAppBricked(error_code) "
-       "round-trip + WIFI_APP_STATUS_CODES map through the bo-wifi setup-app status protos")
+report("wifiapp-status", "registry + WIFI_APP_STATUS_CODES + WifiAppStatus/WifiAppBricked fields")

@@ -67,17 +67,6 @@ def test_build_synthesizer_tone_engine():
         os.environ.pop("MOXIE_TTS", None)
 
 
-def test_build_synthesizer_tts_off_forces_none():
-    os.environ["MOXIE_TTS"] = "off"
-    os.environ["MOXIE_PIPER_MODEL"] = "/models/amy.onnx"   # even with a model configured
-    try:
-        c = _fresh_config({"MOXIE_APP": "echo", "MOXIE_STT": "off"})
-        assert c.build_synthesizer() is None
-    finally:
-        os.environ.pop("MOXIE_TTS", None)
-        os.environ.pop("MOXIE_PIPER_MODEL", None)
-
-
 def test_build_synthesizer_piper_model_when_piper_absent_is_none():
     # MOXIE_PIPER_MODEL set but piper isn't installed (CI) → clean None, no raise
     os.environ["MOXIE_PIPER_MODEL"] = "/models/en_US-amy-medium.onnx"
@@ -207,9 +196,11 @@ def test_tts_off_still_beats_a_voice_url(monkeypatch):
     calls = []
     _stub_voice(monkeypatch, calls)
     os.environ["MOXIE_TTS"] = "off"
+    os.environ["MOXIE_PIPER_MODEL"] = "/models/amy.onnx"   # even with a model configured
     try:
         c = _fresh_config({"MOXIE_APP": "echo", "MOXIE_STT": "off",
                            "MOXIE_VOICE_BASE_URL": "http://voice.local/v1"})
         assert c.build_synthesizer() is None and calls == []
     finally:
         os.environ.pop("MOXIE_TTS", None)
+        os.environ.pop("MOXIE_PIPER_MODEL", None)

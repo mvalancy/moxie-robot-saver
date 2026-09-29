@@ -18,7 +18,8 @@ take exactly ONE turn:
 
 **Budget: 1 chat completion + 1 `/audio/speech`** — one module-scoped turn that every test
 reads. `ToneSynthesizer` emits the same 22050 Hz PCM, so speech is told from the
-placeholder by spectral flatness, and that guard is tested creds-free below.
+placeholder by spectral flatness (`helpers_audio`; proven unable to pass on the tone,
+creds-free, in `test_speech_guard.py`).
 
 Skips instantly without a gateway key, without a broker, or without numpy.
 
@@ -49,28 +50,6 @@ KEY = (os.environ.get("MOXIE_VOICE_API_KEY")
        or os.environ.get("LITELLM_MASTER_KEY") or "")
 CHAT_BASE = (os.environ.get("MOXIE_LLM_BASE_URL") or "").strip()
 MODEL = (os.environ.get("MOXIE_VOICE_MODEL") or "piper-amy").strip()
-
-#: Speech is broadband, the tone one sine (~1e-12 vs ~5e-02 here). Re-exported from
-#: `helpers_audio`, never restated, so every suite agrees on what "speech" means.
-SPEECH_FLATNESS_FLOOR = A.SPEECH_FLATNESS_FLOOR
-
-
-# --------------------------------------------------------------------------- #
-# The guard itself — creds-free, so the live assertion below is never vacuous.
-# --------------------------------------------------------------------------- #
-def test_the_placeholder_tone_fails_the_speech_guard():
-    """`ToneSynthesizer` speaks at 22050 Hz too. If the live test below could pass on
-    tone output, it would be proving nothing — so prove it cannot, for free."""
-    from moxie_sdk.tts import ToneSynthesizer
-    tone = ToneSynthesizer()
-    pcm = tone.synthesize("Hi Sam, I am Moxie.")
-    assert tone.sample_rate == 22050, tone.sample_rate     # same rate as the gateway WAV
-    flat = A.spectral_flatness(pcm)
-    assert not A.is_real_speech(pcm), (
-        f"the tone ({flat:.3e}) is above the speech floor — the guard is useless")
-    assert SPEECH_FLATNESS_FLOOR == A.SPEECH_FLATNESS_FLOOR == 1e-6, \
-        "the floor moved; re-check both directions of this guard before trusting it"
-
 
 # --------------------------------------------------------------------------- #
 # The live turn

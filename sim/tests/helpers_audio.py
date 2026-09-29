@@ -32,7 +32,7 @@ import re
 import time
 from array import array
 from collections import Counter
-from typing import Iterable, List, Sequence, Tuple
+from typing import List, Sequence
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 

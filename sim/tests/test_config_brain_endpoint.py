@@ -1,22 +1,6 @@
-"""
-The brain endpoint is CONFIGURATION, and an unset one is LOUD.
-
-`mqtt/config.py` used to default `MOXIE_LLM_BASE_URL` to the maintainer's gateway: in a
-public repo that silently pointed a stranger's supervisor at someone else's server (which
-refused them, so the child heard "my brain got fuzzy" forever). The hosted Functions
-already refuse to guess (`DEMO_GATEWAY_BASE_URL` has no default).
-
-Asserted as BEHAVIOUR, not the old literal (which a different deployment would pass):
-
-  * unconfigured, every URL-shaped value the module exposes is empty or loopback;
-  * an app that needs a brain refuses to start, and the refusal NAMES the `MOXIE_*`
-    variable to set (tokens extracted, not prose matched);
-  * the help it offers points only at loopback;
-  * a configured endpoint is used EXACTLY;
-  * `MOXIE_APP=echo` needs no brain (keeps the SIL/compose smokes endpoint-free).
-
-The class-wide guard (no deployment hostname in shipped code) is
-`test_no_deployment_defaults.py`.
+"""The brain endpoint is configuration, and an unset one is loud: it used to default to the
+maintainer's gateway, silently pointing a stranger's supervisor at someone else's server.
+The class-wide guard (no deployment hostname in shipped code) is `test_no_deployment_defaults.py`.
 """
 from helpers_runtime import reload_config                      # noqa: E402
 import os
@@ -76,8 +60,7 @@ def test_the_ears_do_not_inherit_an_endpoint_that_was_never_configured(monkeypat
     nobody had configured one — a child's voice one missing `if` away from an upload."""
     c = _fresh(monkeypatch)
     assert c.STT_BASE_URL == ""
-    assert c.build_transcriber.__doc__            # the knob still exists, it just has
-    from moxie_sdk.stt import OpenAITranscriber   # nowhere to send anything
+    from moxie_sdk.stt import OpenAITranscriber
     assert OpenAITranscriber.available(c.STT_BASE_URL) is False
 
 
@@ -85,15 +68,15 @@ def test_the_ears_do_not_inherit_an_endpoint_that_was_never_configured(monkeypat
 
 @pytest.mark.parametrize("app", ["llm", "content"])
 def test_an_app_that_needs_a_brain_refuses_to_guess_one(monkeypatch, app):
-    """It exits, and the exit NAMES the variable — the whole failing of the old default
-    was that nothing was ever named. Asserted by extracting the `MOXIE_*` tokens from the
-    message rather than by matching a sentence, so the wording stays free to change."""
+    """It exits NAMING the variable (tokens extracted, so wording may change), and the
+    example URL it offers is loopback — an example URL is the shape the original defect took."""
     c = _fresh(monkeypatch, MOXIE_APP=app)
     with pytest.raises(SystemExit) as exc:
         c.build_app()
     named = set(re.findall(r"MOXIE_[A-Z0-9_]+", str(exc.value)))
     assert "MOXIE_LLM_BASE_URL" in named, \
         f"the refusal must name the variable to set; it named {sorted(named)}"
+    assert "://" in str(exc.value) and _remote_hosts(str(exc.value)) == []
 
 
 def test_the_refusal_arrives_at_assembly_not_on_the_first_turn(monkeypatch):
@@ -104,16 +87,6 @@ def test_the_refusal_arrives_at_assembly_not_on_the_first_turn(monkeypatch):
     run = load_mqtt_run()
     with pytest.raises(SystemExit):
         run.assemble(c)
-
-
-def test_the_help_it_offers_points_only_at_this_machine(monkeypatch):
-    """The error text is shipped code too: an example URL is exactly the shape the
-    original defect took, so the examples must be loopback and nothing else."""
-    c = _fresh(monkeypatch, MOXIE_APP="llm")
-    with pytest.raises(SystemExit) as exc:
-        c.build_app()
-    assert _remote_hosts(str(exc.value)) == []
-    assert "://" in str(exc.value), "the message should show what a base URL looks like"
 
 
 # ------------------------------------------------------- configured, and exact ----

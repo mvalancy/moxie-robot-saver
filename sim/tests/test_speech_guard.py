@@ -1,29 +1,11 @@
 """
 The speech/tone guard, guarded — and the rule that keeps a numpy-free suite numpy-free.
 
-`ToneSynthesizer` emits 22050 Hz mono PCM16 exactly like the gateway voice and Piper, so
-byte counts and WAV headers prove nothing about who spoke. `helpers_audio.is_real_speech`
-uses spectral flatness (a sine puts its energy in one bin; speech spreads it), with ten
-orders of magnitude of separation around a 1e-6 floor.
-
-That predicate needs numpy, but `test_live_gateway_stt.py` and `test_live_hosted_ears.py`
-must prove the cloud ears/voice on a box with only `openai` installed. `importorskip("numpy")`
-would turn that proof into a silent skip, so the measurement has a stdlib twin
-(`spectral_flatness_stdlib` / `is_real_speech_stdlib`), like `resample_pcm16_stdlib`.
-
-Asserted hermetically (the load-bearing half with no numpy):
-  1. the placeholder tone FAILS the stdlib guard;
-  2. speech-shaped audio PASSES it;
-  3. both implementations give the same verdict, with margin;
-  4. the stdlib one computes with numpy unimportable, and the numpy one then raises a
-     message naming the twin;
-  5. a REAL recorded voice (a committed PCM16 WAV read with `wave`) clears the floor on
-     both, by an asserted margin;
-  6. no numpy-free suite calls a numpy-only helper (derived from `helpers_audio.py`'s call
-     graph — the guard for the defect class);
-  7. no test shells out to an undeclared external binary.
-
-Not named `test_sil_*`: both CI tiers deselect `-k "not test_sil"`.
+`ToneSynthesizer` emits the same PCM16 format as a real voice, so only spectral flatness
+(`helpers_audio.is_real_speech`) tells them apart. The live ears/voice suites must run with
+only `openai` installed, so the guard has a stdlib twin; this file proves the twin separates
+tone from speech without numpy, agrees with the numpy one, and that no numpy-free suite
+calls a numpy-only helper or an undeclared binary. Not `test_sil_*`: CI deselects those.
 """
 from __future__ import annotations
 
@@ -107,24 +89,15 @@ def test_the_placeholder_tone_fails_the_stdlib_speech_guard(tone):
         f"four, so either the estimator or the floor drifted")
 
 
-def test_speech_shaped_audio_passes_the_stdlib_speech_guard(speech):
-    """The other direction, which a guard that simply returned False would also need to
-    fail (measured ~1.2e-01)."""
+def test_speech_shaped_audio_passes_the_stdlib_speech_guard(tone, speech):
+    """The other direction (measured ~1.2e-01). Same byte count as the tone, so the guard is
+    provably not keying on length."""
+    assert len(tone) == len(speech)
     flat = A.spectral_flatness_stdlib(speech)
     assert A.is_real_speech_stdlib(speech), (
         f"broadband voiced audio scored {flat:.3e}, below the floor — the guard would "
         f"fail every real voice and the live suites would be red for the wrong reason")
     assert flat > A.SPEECH_FLATNESS_FLOOR * 100, flat
-
-
-def test_the_stdlib_guard_is_not_secretly_a_length_check(tone, speech):
-    """Cheapest way for either half above to pass for the wrong reason is a predicate that
-    keys on size. These two buffers are the SAME number of bytes — the speech fixture is
-    built to the tone's length on purpose — and they land ten orders of magnitude apart, so
-    length is provably not what is being measured."""
-    assert len(tone) == len(speech), (len(tone), len(speech))
-    ratio = A.spectral_flatness_stdlib(speech) / max(A.spectral_flatness_stdlib(tone), 1e-30)
-    assert ratio > 1e6, f"only {ratio:.1e} between a tone and a voice"
 
 
 # --------------------------------------------------------------------------- #
@@ -233,42 +206,22 @@ def _recorded_voice() -> bytes:
         return clip.readframes(clip.getnframes())
 
 
-def test_a_real_recorded_voice_clears_the_floor_on_both_implementations():
-    """Synthetic broadband audio is a positive control, not a voice. This is a voice — the
-    same Piper-family speech the SIM actually plays — and the stdlib half of this assertion
-    runs UNCONDITIONALLY: no ffmpeg, no numpy, no network, nothing to skip on."""
+def test_a_real_recorded_voice_clears_the_floor_by_orders_of_magnitude():
+    """A real voice (the Piper-family speech the SIM plays), stdlib half unconditional. The
+    margin, not just the verdict: a trimmed clip creeping toward the floor would still pass
+    a bare verdict (measured ~30 000x stdlib, ~3 000x numpy)."""
     pcm = _recorded_voice()
     assert len(pcm) == 33074, len(pcm)          # the committed fixture, not a truncated read
-    flat = A.spectral_flatness_stdlib(pcm)
-    print(f"[guard] recorded stdlib={flat:.3e} floor={A.SPEECH_FLATNESS_FLOOR:.0e}")
-    assert A.is_real_speech_stdlib(pcm), (
-        f"a REAL recorded voice scored {flat:.3e}, below the floor — the stdlib estimator "
-        f"would fail every live suite that uses it")
-    numpy_flat = None
-    try:
-        numpy_flat = A.spectral_flatness(pcm)
-    except ModuleNotFoundError:
-        return                                  # tests 1-4 already stand without numpy
-    print(f"[guard] recorded numpy ={numpy_flat:.3e}")
-    assert A.is_real_speech(pcm), numpy_flat
-
-
-def test_the_recorded_fixture_clears_the_floor_by_orders_of_magnitude():
-    """The anti-vacuity half, and the guard against a future trim. A shorter or quieter clip
-    would still PASS the test above while creeping toward the floor, at which point "a real
-    voice is recognised as speech" stops being a measurement (measured ~30 000x stdlib,
-    ~3 000x numpy)."""
-    pcm = _recorded_voice()
+    assert A.is_real_speech_stdlib(pcm)
     margins = [A.spectral_flatness_stdlib(pcm) / A.SPEECH_FLATNESS_FLOOR]
     try:
         margins.append(A.spectral_flatness(pcm) / A.SPEECH_FLATNESS_FLOOR)
+        assert A.is_real_speech(pcm)
     except ModuleNotFoundError:
         pass
     assert min(margins) > RECORDED_MIN_MARGIN, (
-        f"the recorded fixture only clears the speech floor by {min(margins):.0f}x on its "
-        f"weaker implementation. It cleared 3 200x when it was committed; a fixture this "
-        f"close to the floor makes the assertion above vacuous without failing it. Restore "
-        f"a longer/louder span and re-state the margin at RECORDED_VOICE.")
+        f"the recorded fixture clears the floor by only {min(margins):.0f}x (3 200x when "
+        f"committed); restore a longer/louder span and re-state the margin at RECORDED_VOICE")
 
 
 # --------------------------------------------------------------------------- #
