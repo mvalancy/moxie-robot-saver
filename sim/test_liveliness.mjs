@@ -109,7 +109,7 @@ async function open(width, height, isMobile) {
     const el = document.getElementById("transcript");
     const row = document.createElement("div");
     row.className = "turn user";
-    row.innerHTML = '<span class="who">Child</span><span class="msg">hello moxie</span>';
+    row.innerHTML = '<span class="who">You</span><span class="msg">hello moxie</span>';
     el.appendChild(row);                        // exactly what addTranscript() builds
     const hud = document.getElementById("hud");
     return new Promise((resolve, reject) => {

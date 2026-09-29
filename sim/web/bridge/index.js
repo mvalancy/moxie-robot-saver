@@ -123,7 +123,7 @@
     }
     const row = document.createElement("div");
     row.className = "turn " + (role === "moxie" ? "moxie" : "user");
-    row.innerHTML = `<span class="who">${role === "moxie" ? "Moxie" : "Child"}</span>` +
+    row.innerHTML = `<span class="who">${role === "moxie" ? "Moxie" : "You"}</span>` +
                     `<span class="msg"></span>`;
     row.querySelector(".msg").textContent = text;   // textContent = XSS-safe
     el.appendChild(row);
