@@ -1,24 +1,10 @@
-"""🔌 The SUPERVISOR must not be booted on a promise the broker has not kept.
+"""The SUPERVISOR must not be booted on a promise the broker has not kept.
 
-Mirror image of `test_sil_handshake.py`, on the supervisor's side. `client.subscribe()`
-only queues a SUBSCRIBE (sent later on paho's thread), and `[runtime] broker connected` is
-printed right after it — "we asked", not "the broker agreed". A robot announcing in that
-gap publishes `/state` to a broker with no matching subscription, so no config push is ever
-generated (it is QoS 0, not retained): deleted, not delayed, and no timeout helps. Seen as
-the FIRST scenario failing 0/4 with the second passing. The fix is a second readiness line
-printed from `_on_subscribe`.
-
-Sleeping inside `_on_connect` cannot reproduce this (the line is printed after the loop, so
-it is delayed too). The gap is on the WIRE, so a TCP relay holds the SUBSCRIBE packet for
-`HOLD_SUBSCRIBE_S`; `mqtt/run.py` runs unpatched.
-
-1. §1 — booted on the SUBACK line, the supervisor serves the robot.
-2. §2 — the teeth: the identical run booted on `broker connected` loses the config.
-
-Needs a broker (hence `test_sil_*`). The hermetic halves are `test_connect_readiness.py` and
-`test_harness_readiness.py`.
-
-    .venv/bin/python -m pytest sim/tests/test_sil_supervisor_readiness.py -q
+`[runtime] broker connected` prints before the SUBSCRIBE is acknowledged; a robot announcing
+in that gap publishes a QoS-0 `/state` nobody receives, so its config is never generated
+(seen as the first scenario failing 0/4). A TCP relay holds the SUBSCRIBE packet on the wire
+so the real `mqtt/run.py` runs unpatched. Hermetic halves: test_connect_readiness.py and
+test_harness_readiness.py.
 """
 from __future__ import annotations
 
@@ -81,10 +67,8 @@ SUBSCRIBE = 8          # MQTT control packet type, high nibble of byte 0
 
 
 class LateSubscribeProxy:
-    """A TCP relay in front of the broker that delays only SUBSCRIBE packets by `delay_s`;
-    everything else passes straight through. The supervisor connects here, robots to the
-    real broker. Injected at the transport, so the claim is about the shipped `mqtt/run.py`.
-    """
+    """TCP relay in front of the broker delaying only client SUBSCRIBE packets by `delay_s`.
+    The supervisor connects here; robots connect to the real broker."""
 
     def __init__(self, upstream_port: int, delay_s: float):
         self.upstream_port = upstream_port
@@ -114,11 +98,9 @@ class LateSubscribeProxy:
             except OSError:
                 downstream.close()
                 continue
-            lock = threading.Lock()
-            threading.Thread(target=self._pump_from_client, daemon=True,
-                             args=(downstream, upstream, lock)).start()
-            threading.Thread(target=self._pump_plain, daemon=True,
-                             args=(upstream, downstream)).start()
+            for src, dst, hold in ((downstream, upstream, True), (upstream, downstream, False)):
+                threading.Thread(target=self._pump, daemon=True,
+                                 args=(src, dst, threading.Lock(), hold)).start()
 
     def _send(self, sock, data, lock):
         with lock:
@@ -127,8 +109,8 @@ class LateSubscribeProxy:
             except OSError:
                 pass
 
-    def _pump_from_client(self, src, dst, lock):
-        """Client → broker, one MQTT packet at a time, holding the SUBSCRIBEs."""
+    def _pump(self, src, dst, lock, hold):
+        """Relay one direction, one MQTT packet at a time; if `hold`, delay SUBSCRIBEs."""
         buf = b""
         try:
             while not self._stop.is_set():
@@ -140,33 +122,15 @@ class LateSubscribeProxy:
                     packet, buf = _split_packet(buf)
                     if packet is None:
                         break
-                    if packet[0] >> 4 == SUBSCRIBE and self.delay_s > 0:
+                    if hold and packet[0] >> 4 == SUBSCRIBE and self.delay_s > 0:
                         self.held += 1
-                        timer = threading.Timer(self.delay_s, self._send,
-                                                (dst, packet, lock))
+                        timer = threading.Timer(self.delay_s, self._send, (dst, packet, lock))
                         timer.daemon = True
                         self._timers.append(timer)
                         timer.start()
                     else:
                         self._send(dst, packet, lock)
-        except OSError:
-            pass
-        finally:
-            for s in (src, dst):
-                try:
-                    s.close()
-                except OSError:
-                    pass
-
-    def _pump_plain(self, src, dst):
-        lock = threading.Lock()
-        try:
-            while not self._stop.is_set():
-                chunk = src.recv(65536)
-                if not chunk:
-                    break
-                self._send(dst, chunk, lock)
-        except OSError:
+        except (OSError, ValueError):
             pass
         finally:
             for s in (src, dst):
@@ -257,11 +221,8 @@ def test_a_supervisor_whose_subscribe_is_late_still_serves_the_robot(tmp_path, b
 # --------------------------------------------------------------------------- #
 def test_the_teeth_a_robot_booted_on_the_connack_line_never_gets_its_config(
         tmp_path, broker, proxy):
-    """The HIL red on demand: same supervisor, robot and relay, but booted on
-    `[runtime] broker connected` — the announcement lands in the gap and no config ever
-    exists. `got_config` waits longer than the hold, so a merely LATE config would arrive
-    and fail this test.
-    """
+    """Same run booted on `broker connected`: the announcement lands in the gap and no
+    config ever exists (the wait exceeds the hold, so a merely LATE config fails this)."""
     sup = _supervisor(tmp_path, proxy, ready_line=S.CONNECT_LINE)
     vm = _connected_robot(broker)
     try:
