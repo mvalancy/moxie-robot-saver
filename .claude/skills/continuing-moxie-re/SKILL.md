@@ -7,33 +7,37 @@ description: Continue the Moxie firmware deconstruction — the project-specific
 
 The Moxie-specific driver over the general method (`reverse-engineering-android-robots` + its technique
 skills). Firmware under analysis: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9) — stamp every
-robot-side page with it.
+robot-side page with it (`scripts/check-doc-consistency.py` reports pages that lack it). The method in
+full: `docs/reverse-engineering/PLAYBOOK.md`.
 
-## Evidence base (under `work/`, one level up from the repo)
+## Evidence base (local workspace under `work/`, one level up from the repo — never committed)
 - Images: `work/firmware-re/{system.img,oem.img,parts/vendor.img,parts/boot.img}` (read with `debugfs`).
 - Apps: `work/firmware-re/extract/apps/*.apk`; jadx at `work/tools/jadx/bin/jadx`.
 - The brain: `work/firmware-re/extract/csharp/src-asm/Assembly-CSharp.decompiled.cs` — grep first.
 - Native libs: inside each APK's `lib/armeabi-v7a/`; Ghidra at `work/tools/ghidra`; the venv (capstone,
   UnityPy, pyghidra) at `work/firmware-re/extract/csharp/.venv`.
-- Recovered protos: `docs/reverse-engineering/protocol/recovered-proto/**`.
+- In the repo: recovered protos at `docs/reverse-engineering/protocol/recovered-proto/`.
 
 ## The loop (every iteration)
 1. Read `work/firmware-re/progress/PLAN.md` (status / next / blockers).
-2. Check `docs/reverse-engineering/COVERAGE.md` (esp. its "Clean-room self-sufficiency" register) +
-   `EXPLORATION-MAP.md` + the existing docs — **do not re-document**; pick the next genuinely unexplored thread.
-3. RE with the right technique skill (`decompiling-android-apps` / `-native-arm-libraries` /
+2. Check `docs/reverse-engineering/EXPLORATION-MAP.md` (coverage per goal, per source surface, the
+   clean-room self-sufficiency register, open items) and the existing docs — **do not re-document**;
+   pick the next genuinely open thread.
+3. RE with the right technique skill (`decompiling-android-apps` / `decompiling-native-arm-libraries` /
    `recovering-protobuf-schemas` / `extracting-unity-assets` / `mapping-robot-hardware`). Use the two
    lenses: **named-but-not-enumerated** and **clean-room sufficiency**.
-4. Write detailed, `v24.10.803`-stamped findings into the right `docs/reverse-engineering/**` subfolder;
-   extend `tools/robot-toolkit/` where a server/agent would use the finding.
-5. Push it upward + rebuild + verify with `publishing-moxie-docs`.
-6. Commit, push, update `PLAN.md`.
+4. Write detailed, stamped findings into the right subfolder of `docs/reverse-engineering/`
+   (`phone/`, `protocol/`, `runtime/`, `firmware/`, `hardware/`); extend `tools/robot-toolkit/` where a
+   server or agent would use the finding.
+5. Push it upward (subfolder README, RE README, exploration map) and verify with `publishing-moxie-docs`.
+6. Commit, then update `PLAN.md`.
 
-## The three goals to serve
-1. Build custom firmware. 2. Client/server revival (the ghost-in-the-shell brain seam). 3. Revive pre-801
-units without disassembly. `COVERAGE.md` tracks each; `FIELD-GUIDE.md` organizes the docs by them.
+## The three goals
+1. Custom firmware. 2. Client/server revival (the RemoteChat brain seam). 3. Revive pre-801 units without
+disassembly. `EXPLORATION-MAP.md` tracks each; `FIELD-GUIDE.md` organizes the docs by them.
 
-## Known-open in-scope gaps (as tracked in COVERAGE.md)
-The streamed **`rig3animations`** Unity bundle (eyeseme/viseme clips + `Bht_*` graphs — needs a bench unit
-or OTA content pull) and the **native settings defaults** (deep native RE). Most enumerable-set and
-protocol/firmware threads are captured — if a tick finds nothing genuinely new, say so; don't pad a commit.
+## Known open in-scope gaps (see the exploration map)
+The streamed **`rig3animations`** Unity bundle (Eyeseme/viseme clips + `Bht_*` graphs — needs a unit or
+an OTA content pull), the **native settings defaults** (deep native RE), and the bench-only hardware
+items (USB reachability, macro-button ADC thresholds, SoC UART pads, a signed 803 `update.zip`). If an
+iteration finds nothing genuinely new, say so; don't pad a commit.

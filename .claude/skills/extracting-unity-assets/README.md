@@ -1,18 +1,12 @@
-# 🛠️ Extracting Unity assets (UnityPy)
+# 🛠️ Skill: Extracting Unity assets
 
-Extract and inventory a Unity Android app's assets with UnityPy — meshes and blendshapes, animation clips, textures/sprites, audio, animator state machines, and MonoBehaviour data. Use when a device's visuals/animations/behaviors live in Unity asset files and you need the actual geometry, clip names, or behavior data (not just the code that drives them).
+Enumerate and export meshes/blendshapes, animation clips, textures and animator data from a Unity APK with UnityPy.
 
-Invoke it by name (`extracting-unity-assets`) — it is a **shared agent skill**, so any agent working in this repo can load it instead of re-deriving the method.
+Invoke it by name: `extracting-unity-assets`.
 
 | File | Purpose |
 |---|---|
-| [`SKILL.md`](SKILL.md) | The skill itself — instructions the agent follows. |
-
-## What it covers
-
-- Where the assets are
-- Enumerate, then pull what you need
-- Worked example (Moxie)
+| [`SKILL.md`](SKILL.md) | The skill: YAML frontmatter (`name`, `description`) plus the steps the agent follows. |
 
 ---
-📖 [Skills](../README.md) · [Back to top](../../../README.md)
+📖 [Skills index](../README.md) · [Shared agents & skills](../../README.md) · [Back to top](../../../README.md)
