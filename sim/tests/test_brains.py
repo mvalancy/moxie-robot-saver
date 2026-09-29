@@ -137,14 +137,6 @@ def test_the_values_that_mean_decide_for_me_pin_nothing(value):
     assert brains.pin_for_env(value) == ""
 
 
-def test_an_unset_environment_pins_nothing_even_though_the_default_is_a_brain():
-    """The accident this design exists to avoid. `config.MOXIE_APP` is
-    `os.environ.get("MOXIE_APP", "llm")`, so an unset variable already *reads* as `llm`;
-    pinning that resolved value would have locked every box nobody configured out of the
-    per-child picker. The pin is computed from the RAW environment instead."""
-    assert brains.pin_for_env(os.environ.get("MOXIE_APP_DEFINITELY_UNSET", "")) == ""
-
-
 def test_the_pin_note_names_the_variable_and_the_way_out():
     note = brains.pin_note("content")
     assert brains.ENV_VAR in note and "content" in note
@@ -345,7 +337,8 @@ def test_an_explicit_moxie_app_pins_and_an_unset_one_does_not(monkeypatch):
     monkeypatch.delenv("MOXIE_APP", raising=False)
     import config as _c
     c = importlib.reload(_c)
-    assert c.MOXIE_APP == "llm", "the resolved value still defaults, as it always did"
+    assert c.MOXIE_APP == "llm" == brains.DEFAULT_BRAIN, \
+        "the resolved value still defaults, and to the registry's own default"
     assert c.brain_pin() == "", "…and it does NOT pin"
     assert len(c.brain_engines().available()["available"]) == len(EXPECTED)
     monkeypatch.setenv("MOXIE_APP", "echo")
@@ -367,13 +360,3 @@ def test_moxie_app_any_boots_a_brain_but_pins_nothing(monkeypatch):
     assert c.brain_pin() == ""
     assert c.default_brain() == brains.DEFAULT_BRAIN
     assert brains.option_ids(c.brain_engines().available()["available"]) == list(EXPECTED)
-
-
-def test_the_default_layer_matches_the_module_s_own_default(monkeypatch):
-    """Two places name a fallback brain; they must be the same one, or a box that reads
-    the registry and a box that reads `config` disagree about what "nothing set" means."""
-    monkeypatch.setenv("MOXIE_SKIP_DOTENV", "1")
-    monkeypatch.delenv("MOXIE_APP", raising=False)
-    import config as _c
-    c = importlib.reload(_c)
-    assert c.MOXIE_APP == brains.DEFAULT_BRAIN

@@ -12,11 +12,7 @@ split abbreviation ("Doctor... Seuss"), a split ellipsis, a lone "Hi." followed 
 gap, or — the subtle one — the LAST sentence escaping through `feed` so nothing is left
 for `flush` to close the turn with.
 """
-import os
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-from moxie_sdk.segment import SentenceSegmenter, segment       # noqa: E402
+from moxie_sdk.segment import SentenceSegmenter, segment
 
 
 def _stream(text, chunk=3, min_chars=None):

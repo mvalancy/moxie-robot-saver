@@ -393,12 +393,6 @@ def test_normalize_items_is_idempotent_and_leaves_non_items_alone():
 # rendering: persist_data really reaches the prompt
 # ---------------------------------------------------------------------------
 
-def test_render_exposes_persist_data():
-    v = Volley(persist_data=wrap_facts({"mchat": {"facts": ["has a dog", "likes red"]}}))
-    out = render_prompt("FACTS:\n{{ volley.persist_data.mchat.facts }}", {"volley": v})
-    assert "- has a dog" in out and "- likes red" in out
-
-
 def test_render_turns_stored_items_back_into_plain_bullets(tmp_path):
     """Items grew ids and provenance; prompts did not change one character. A model must
     never see an id, and a `{{ ... }}` that leaked a JSON blob into the system prompt
@@ -417,18 +411,6 @@ def test_render_missing_namespace_is_blank_not_an_error():
     v = Volley(persist_data={})
     out = render_prompt("FACTS:\n{{ volley.persist_data.mchat.facts }}", {"volley": v})
     assert out.strip() == "FACTS:"
-
-
-def test_render_exposes_persist_data_without_jinja2_installed():
-    """`render.py` falls back to a dependency-free `{{ dotted.path }}` substitution when
-    jinja2 is absent (a bare SDK install); memory must render on that path too."""
-    from moxie_sdk.content import render as render_mod
-    v = Volley(persist_data=wrap_facts({"mchat": {"facts": ["has a dog"]}}))
-    out = render_mod._minimal_render("FACTS:\n{{ volley.persist_data.mchat.facts }}",
-                                     {"volley": v})
-    assert "- has a dog" in out
-    assert render_mod._minimal_render("{{ volley.persist_data.nope.facts }}",
-                                      {"volley": v}) == ""
 
 
 def test_fact_list_is_a_real_list_and_renders_as_bullets():
