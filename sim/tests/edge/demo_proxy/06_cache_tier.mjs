@@ -189,7 +189,7 @@ import {
     ok(key.startsWith(ORIGIN + "/__moxie/rl/chat/") && !key.includes("203.0.113.99"),
        `the entry lives on our OWN origin under a non-route prefix, with no ADDRESS in it — got ${key}`);
     ok(/^[0-9a-f]{24}$/.test(key.slice((ORIGIN + "/__moxie/rl/chat/").length).split("/")[0]), "…only a 96-bit keyed tag of it");
-    deep(JSON.parse(c.store.get(key).body), { n: 1 }, "the stored entry is a bare count: nothing an outsider could learn from");
+    deep(JSON.parse((c.store.get(key) || { body: "null" }).body), { n: 1 }, "the stored entry is a bare count: nothing an outsider could learn from");
     eq((await keyOf("203.0.113.99", 3000)).key, key, "the same visitor in the same minute keys the same entry");
     ok((await keyOf("203.0.113.98", 3000)).key !== key, "a DIFFERENT visitor keys a different entry");
     ok((await keyOf("203.0.113.99", 3060)).key !== key, "…and the next MINUTE keys a different entry, so the hot key rotates");
