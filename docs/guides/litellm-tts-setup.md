@@ -227,4 +227,4 @@ default model name in a git-ignored `.env`; nothing new to deploy on your side):
 2. **`response_format`(s) supported** + **sample rate** if PCM (e.g. `wav`, or `pcm @ 24000`).
 
 ---
-📖 [AI seam contract §3 (TTS)](../architecture/ai-seam.md) · [Implementation plan](../architecture/implementation-plan.md) · [Docs index](../README.md)
+📖 [AI seam contract §3 (TTS)](../architecture/ai-seam.md) · [Roadmap](../../ROADMAP.md) · [Docs index](../README.md)

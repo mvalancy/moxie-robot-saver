@@ -282,7 +282,7 @@ step "3e. …and the compose file's OWN default (MOXIE_APP=content) is what a ba
 #     pin nothing. That is the positive control that keeps this from passing vacuously.
 # It also records the boot verdict for each, because `content` with no MOXIE_LLM_BASE_URL
 # exits at assembly (config.require_llm_base_url, PR #68) and `restart: unless-stopped`
-# turns that into a crash loop — see docs/architecture/implementation-plan.md, Known gaps.
+# turns that into a crash loop — see ROADMAP.md.
 if "${COMPOSE[@]}" exec -T -e MOXIE_APP=content -e MOXIE_LLM_BASE_URL= supervisor python -c '
 import sys; sys.path.insert(0, "/app")
 import config

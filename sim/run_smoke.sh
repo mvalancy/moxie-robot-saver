@@ -25,7 +25,7 @@ SUP_LOG=/tmp/moxie-supervisor.log
 # sim/tests/test_live_gateway.py drives a real brain with no broker. Nothing ran BOTH
 # halves in one process tree, which is what "a child can talk to Moxie end to end,
 # proven by a live scenario, not a mock" asks for
-# (docs/architecture/implementation-plan.md, Definition of done #1).
+# (ROADMAP.md, Definition of done #1).
 #
 # `MOXIE_SMOKE_APP` picks WHICH brain — `content` (the shipped starter modules, the
 # production default) unless told otherwise, `llm` for the free-form companion. The flag

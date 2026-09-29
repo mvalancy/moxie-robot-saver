@@ -134,4 +134,4 @@ revoke it when the session ends). HIL against real infra uses repo **secrets** (
 robot host) that the deep workflow reads — never committed.
 
 ---
-📖 [Repo structure](STRUCTURE.md) · [Implementation plan](docs/architecture/implementation-plan.md)
+📖 [Repo structure](STRUCTURE.md) · [Roadmap](ROADMAP.md)

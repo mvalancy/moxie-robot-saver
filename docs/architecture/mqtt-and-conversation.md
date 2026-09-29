@@ -748,7 +748,7 @@ t=17.9  commands/remote_chat {result: SUCCESS, chunk_num: 1,            ← the 
 > robot disagrees, is OpenMoxie Fork A's shape: answer the *current* request with the filler
 > and deliver the finished answer on the robot's next (re)prompt — same background
 > inference, no second unsolicited publish. Tracked in
-> [`implementation-plan.md`](implementation-plan.md) → Known gaps.
+> [`ROADMAP.md`](../../ROADMAP.md).
 >
 > **Streaming leans on the same assumption harder**, and says so: a filler turn publishes two
 > responses, a streamed turn publishes three to five, and we have no capture of a physical

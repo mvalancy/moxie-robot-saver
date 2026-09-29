@@ -9,7 +9,7 @@ its own.
 - [`overview.md`](overview.md) — the two channels (parent app and robot cloud), the components, and
   privacy.
 - [`revival-path.md`](revival-path.md) — how a real robot gets onto this backend, by firmware version.
-- [`implementation-plan.md`](implementation-plan.md) — what is built and what is left.
+- [Roadmap](../../ROADMAP.md) — what is built and what is left.
 - [`agent-workflow.md`](agent-workflow.md) — how changes are made: hard rules, the agent brief,
   integration rules, session loops.
 
