@@ -1,14 +1,11 @@
-/* Docs-explorer bundle test. sim/web/docs.html ships with NO build step, so the bundle
- * must be committed and current. Asserts:
- *   1. docs-index.json exists and covers every docs/*.md in the repo (no drift),
- *   2. each indexed file was actually copied into docs-bundle/,
- *   3. mermaid counts are right, and the vendored renderers are present,
- *   4. docs.html is wired to the vendored marked + mermaid and the index.
- * If the bundle is stale, `python3 sim/tools/build_docs_bundle.py` fixes it.
+/* The docs bundle (sim/tools/build_docs_bundle.py's output, committed because docs.html has
+ * no build step): the index covers every docs/*.md, each file is in the bundle with the right
+ * mermaid count and full text, the committed files stay merge-safe, section order follows
+ * each README, and every docs folder with >=2 docs has a README. The explorer's runtime
+ * behaviour is test_docs_explorer.mjs's. Fix a stale bundle with the builder.
  * Run: node sim/test_docs.mjs
  */
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
-import { pageSource } from "./browser_harness.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -71,9 +68,6 @@ if (existsSync(searchPath)) {
   for (const f of idx.files)
     ok(typeof search[f.path] === "string" && search[f.path].length > 0,
        `docs-search.json missing full text for ${f.path}`);
-  // a known term from the firmware docs must be findable in the body text
-  const hay = Object.values(search).join("\n").toLowerCase();
-  ok(hay.includes("dlpc3430"), "full-text index should contain body prose (e.g. 'DLPC3430')");
 }
 
 // ---- the two committed artifacts must stay MERGE-SAFE ----
@@ -91,27 +85,9 @@ if (existsSync(searchPath)) {
      "blank-line separated, or every branch pair conflicts on it. See build_docs_bundle.py.");
 }
 
-// ---- vendored renderers present ----
-for (const v of ["marked.min.js", "mermaid.min.js", "highlight.min.js"])
-  ok(existsSync(join(web, "vendor", v)), `vendored ${v} missing`);
-// the protobuf language must be bundled alongside hljs (30+ proto code blocks)
-{
-  const hl = readFileSync(join(web, "vendor", "highlight.min.js"), "utf8");
-  ok(/registerLanguage\(["']protobuf["']/.test(hl), "highlight.min.js must include the protobuf language");
-}
-
-// ---- docs.html wiring ----
-/* Page + its own scripts (docs.js). `vendor/` is excluded by `pageSource`, so
- * `mermaid.render` below must be OUR call, not the library's own string. */
-const html = pageSource("docs.html");
-ok(html.includes("vendor/marked.min.js") && html.includes("vendor/mermaid.min.js"),
-   "docs.html must load the vendored marked + mermaid");
-ok(html.includes("docs-index.json"), "docs.html must fetch docs-index.json");
-ok(html.includes("docs-search.json"), "docs.html must fetch the full-text docs-search.json");
-ok(html.includes("mermaid.render") || html.includes("mermaid.init"), "docs.html must render mermaid");
-ok(html.includes("vendor/highlight.min.js") && html.includes("highlightElement"),
-   "docs.html must load + apply the vendored highlighter");
-ok(html.includes("docs-bundle/"), "docs.html must fetch docs from docs-bundle/");
+// the protobuf language must be vendored with hljs (30+ proto code blocks)
+ok(/registerLanguage\(["']protobuf["']/.test(readFileSync(join(web, "vendor", "highlight.min.js"), "utf8")),
+   "highlight.min.js must include the protobuf language");
 
 // ---- within-section reading order follows each section's README ----
 // For every section with a README: tree + pager follow its link order, and no doc silently
@@ -164,4 +140,4 @@ if (fails.length) {
   for (const f of fails) console.log("   -", f);
   process.exit(1);
 }
-console.log(`✅ docs tests OK — ${idx.files.length} docs indexed & bundled, ${mermaidTotal} mermaid diagrams, explorer wired`);
+console.log(`✅ docs tests OK — ${idx.files.length} docs indexed & bundled, ${mermaidTotal} mermaid diagrams`);
