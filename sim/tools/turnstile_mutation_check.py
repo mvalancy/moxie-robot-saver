@@ -1,100 +1,17 @@
-"""Remove each guard the Turnstile bot control rests on, and check its test goes red.
+"""Break each guard the Turnstile bot control rests on; the row's node suite must go red
+ON THE CHECK its selector names (an unrelated red reads WRONG CHECK — the first fail-open
+draft reddened only the slot-release block and proved nothing about fail-open).
 
-*"A test for every fix, proven in BOTH directions."* A green `sim/test_turnstile.mjs` proves
-the guards are **present**; this proves they are **load-bearing**. Same shape as
-`hardening_mutation_check.py` / `ext_mutation_check.py` / `brain_mutation_check.py`, and it
-exists for the same reason every one of those did.
+Rows cover the three mandatory checks one at a time, D2's slot release (and its negative
+control), both halves of D3's fail-closed/fail-open split, D1's order, D4's config gate,
+and the client's per-send token freshness. Mutations run in a throwaway `cp -al` copy:
+the first version edited the checkout and once left check C2 disabled in a tree about to
+be pushed. ~6 minutes (the suite waits out a real 8 s deadline; D3e is caught by hanging).
 
-Run it by hand after touching `functions/api/_lib/turnstile.js`, the Turnstile step in
-`functions/api/chat.js`, or `sim/web/turnstile.js`:
-
-    python3 sim/tools/turnstile_mutation_check.py
-
-Every row must say "caught". A row that says NOT CAUGHT means the assertion passes with the
-guard deleted, i.e. it is not testing what its name claims.
-
-**It takes about six minutes**, and both halves of that are deliberate: the suite spends ~8 s
-per run waiting out `sim/web/turnstile.js`'s real 8 s deadline (§9 asserts on a mint that has
-NOT resolved, so the deadline is the thing under test and cannot be shortened from the test),
-and row D3e is caught by hanging, which costs `MUTATION_TIMEOUT_S` on its own. Pass a row name
-to re-check one row in ~9 s.
-
-=============================================================================
-WHY THIS TABLE IS DIFFERENT FROM THE OTHER FIVE, AND WHY IT IS STRICTER.
-
-The others run `pytest <file> -k <selector>` and treat ANY non-zero exit as "caught". That
-is too weak for a security control: a mutation that broke some unrelated assertion would
-read as caught while the guard it targeted was never actually exercised. Here the runner is
-`node sim/test_turnstile.mjs`, which prints one `FAIL: <label>` line per failed check, and
-the sixth column is a substring that must appear IN A FAILING LABEL. So a row is caught only
-when **the check that names that guard** is the one that reddened.
-
-That distinction is not theoretical. The first draft of the fail-open row (`unreachable` ->
-refuse) reddened this suite through the *slot-release* block, because a refusal there also
-changes the in-flight arithmetic — it would have "passed" while proving nothing about
-fail-open at all.
-=============================================================================
-
-THE SIX PROPERTIES EVERY ROW BELOW MAPS BACK TO, in the brief's own terms:
-
-  · the THREE MANDATORY CHECKS — `success`, `action`, `hostname` — each deleted separately,
-    because a table that deletes them together cannot tell which one the suite can see;
-  · D2, THE SLOT RELEASE. Two mutations: return the refusal from OUTSIDE the `try` (the
-    plausible edit — it reads as tidier), and neuter `release()` itself. A leaked slot fails
-    CLOSED, which is the direction this project has already rejected a design over;
-  · D3's SPLIT, BOTH HALVES. Fail-closed turned into fail-open (the control removed) and
-    fail-open turned into fail-closed (the demo taken down by a third-party outage). Neither
-    shows up in a green suite, which is exactly why both are here;
-  · D1's ORDER — move the check in front of the safety floor, and in front of `admit()`;
-  · D4's CONFIG GATE — enforce with no secret, and skip when one is present;
-  · the CLIENT's per-send freshness — drop the `reset()` before `execute()`, which is the
-    one-character version of "reuse the same token", and refuses every turn after the first.
-
-=============================================================================
-**IT NEVER TOUCHES YOUR CHECKOUT.** Every mutation is applied inside a THROWAWAY COPY.
-
-The first version rewrote the live worktree files and restored them in a `finally`. Two
-things went wrong with that, both observed rather than imagined:
-
-  · A RUN THAT DOES NOT REACH ITS `finally` LEAVES A DISABLED SECURITY CHECK IN THE TREE.
-    At one review's start `git status` showed `functions/api/_lib/turnstile.js` dirty with
-    row C2 still applied — mandatory check 2 replaced by `if (false)`, in the tree the
-    orchestrator was about to push. `finally` does not run on `SIGKILL`, and anything that
-    reads the working tree in that window ships it: `git commit -a`, `git add -A`, a
-    `wrangler pages dev`, a build.
-  · TWO RUNS AT ONCE POISON EACH OTHER. With a second session running the suite, three
-    consecutive runs failed on three DIFFERENT rows, because `sim/web/turnstile.js` was
-    being rewritten underneath them. A red security suite with no defect behind it is the
-    worst kind of noise to hand a reviewer.
-
-So `main()` hardlink-copies `functions/` and `sim/` into a fresh temporary directory
-(~0.2 s for this repo, because hardlinks copy metadata and not bytes), replaces the few
-files the table mutates with REAL copies so that no write can ever reach the original
-inode through a shared one, and runs `node` there. The checkout is never opened for
-writing at all, two runs cannot see each other, and a `kill -9` leaves nothing behind but
-a directory under `/tmp`.
-=============================================================================
-
-Nothing here changes the tree permanently, because nothing here changes the tree.
+    python3 sim/tools/turnstile_mutation_check.py [ROW ...]
 """
-import os
-import pathlib
-import shutil
-import subprocess
-import tempfile
+from mutation_runner import WT, node_verdict, pytest, run_table  # noqa: F401
 
-WT = pathlib.Path(__file__).resolve().parents[2]
-
-#: The subtrees the suites need. `sim/test_turnstile.mjs` computes its repo root as
-#: `sim/..`, imports `functions/api/**` and reads `sim/web/**` as text; nothing else in the
-#: repo is touched by any suite in the table.
-TREES = ("functions", "sim")
-
-#: The files the table mutates, as `WT / ...` paths — the shape `sim/tests/
-#: test_mutation_tables.py` reads with `ast` so it can check every anchor still resolves
-#: against the REAL checkout and that no mutation has been committed into it. `main()`
-#: maps each one into its throwaway copy with `.relative_to(WT)`; nothing here is ever
-#: opened for writing.
 LIB = WT / "functions/api/_lib/turnstile.js"
 LIMITS = WT / "functions/api/_lib/limits.js"
 CHAT = WT / "functions/api/chat.js"
@@ -106,20 +23,8 @@ CLIENT = WT / "sim/web/turnstile.js"
 TRANSPORT = WT / "sim/web/cloud-transport.js"
 MIC = WT / "sim/web/mic.js"
 HEADERS = WT / "sim/web/_headers"
-
-#: The suite most of these guards live in. Every row runs it whole — it takes under a
-#: second, so there is nothing to gain from narrowing it, and running it whole is what lets
-#: the selector column check that the RIGHT assertion reddened.
 SUITE = "sim/test_turnstile.mjs"
-
-#: ...and the one that owns the SEND PATH's behaviour rather than the control's: whether a
-#: page whose token could not be minted degrades like every other failure on it, or repeats
-#: one sentence under a LIVE badge. Same runner, same rule about the selector.
 UX = "sim/test_cloud_transport.mjs"
-
-#: Seconds one mutated run may take before it is treated as caught-by-hanging. Generous:
-#: the suite is ~1 s, and a mutation that makes it hang (a promise that never settles in
-#: the client half) is caught — but only if something ends it.
 MUTATION_TIMEOUT_S = 120
 
 MUTATIONS = [
@@ -471,120 +376,7 @@ MUTATIONS = [
 ]
 
 
-def _scratch_tree() -> pathlib.Path:
-    """A throwaway copy of the subtrees the suites read, safe to rewrite.
-
-    `cp -al` (hardlinks, metadata only) rather than a byte copy: this repo is 320 MB and
-    9 000 files, and the link farm takes about 0.2 s. THE CATCH IS THE WHOLE POINT OF THE
-    NEXT LOOP — a hardlink shares its inode, and `open(..., "w")` truncates in place, which
-    would write straight THROUGH to the checkout. So every file this table can mutate is
-    immediately replaced by a real copy, breaking that link before any row runs.
-
-    `shutil.copytree` is not used: it copies bytes, which for this tree is seconds per row's
-    worth of setup rather than one fifth of a second for the whole run.
-    """
-    root = pathlib.Path(tempfile.mkdtemp(prefix="turnstile-mutation-"))
-    for tree in TREES:
-        subprocess.run(["cp", "-al", str(WT / tree), str(root / tree)], check=True)
-    for real in sorted({row[1] for row in MUTATIONS}):
-        target = root / real.relative_to(WT)
-        data = real.read_bytes()
-        target.unlink()                     # break the hardlink; do NOT truncate through it
-        target.write_bytes(data)
-        assert target.stat().st_nlink == 1, f"{real} is still hardlinked to the checkout"
-    return root
-
-
-def main(argv=()) -> int:
-    """Run the table, or only the rows whose name starts with one of `argv`.
-
-    The filter exists because row D3e is caught BY HANGING, which costs
-    `MUTATION_TIMEOUT_S` on its own — so re-checking one row after repairing it would
-    otherwise mean waiting out somebody else's deliberate hang.
-    """
-    rows = [r for r in MUTATIONS
-            if not argv or any(r[0].split()[0] == a or r[0].startswith(a) for a in argv)]
-    if argv and not rows:
-        print(f"no row matches {list(argv)}; rows are: "
-              + ", ".join(r[0].split()[0] for r in MUTATIONS))
-        return 1
-    root = _scratch_tree()
-    print(f"  (mutating a throwaway copy at {root} — the checkout is never written)")
-    caught = missed = noop = wrong = 0
-    try:
-        for name, real, old, new, suite, selector in rows:
-            path = root / real.relative_to(WT)
-            pristine = real.read_text()
-            src = path.read_text()
-            # AMBIGUOUS IS NOT CAUGHT, and it is not a milder NO-OP either. `replace(old, new, 1)`
-            # takes the FIRST match, so a row whose anchor occurs twice is about whichever block
-            # sorts earliest in the file — possibly the guard it names, possibly that guard's twin —
-            # and it prints `caught` either way. Measured 2026-09-05: three rows across this
-            # directory were anchored on a line a deliberate twin guard also carried (a load-time
-            # refusal and its runtime belt-and-braces; `_connack_failed` and `_suback_failed`). All
-            # three happened to hit the intended block by line order alone, which is luck, not proof.
-            # `unit_budget_mutation_check.py` hit the same defect where the WRONG block was patched.
-            # `sim/tests/test_mutation_tables.py` now refuses a non-unique anchor for every table in
-            # the fast tier; this is the same refusal at the point of use, so an operator running one
-            # table by hand is told why rather than reading a `caught` that means nothing.
-            hits = src.count(old)
-            if hits == 0:
-                print(f"  NO-OP       {name}  (anchor not found)")
-                noop += 1
-                continue
-            if hits > 1:
-                print(f"  AMBIGUOUS   {name}  (anchor matches {hits} places; "
-                      f"it would mutate whichever comes first)")
-                noop += 1
-                continue
-            path.write_text(src.replace(old, new, 1))
-            try:
-                try:
-                    r = subprocess.run(
-                        ["node", suite], cwd=root, capture_output=True, text=True,
-                        timeout=MUTATION_TIMEOUT_S)
-                except subprocess.TimeoutExpired:
-                    # Counted as caught, and SAID so rather than silently: the guard's test
-                    # did not pass, but "it never finished" is a different fact from "it
-                    # went red".
-                    print(f"  caught      {name}  (hung — killed after {MUTATION_TIMEOUT_S}s)")
-                    caught += 1
-                    continue
-                out = r.stdout + r.stderr
-                # Three failure formats ship in this repo and a row may target any of
-                # them: `  FAIL: <label>` (sim/test_turnstile.mjs), `  - <label>`
-                # (sim/test_cloud_transport.mjs's `finish`) and `   · <label>`
-                # (browser_harness.mjs). Matching only the first would report a real red
-                # as WRONG CHECK for every row whose suite is not test_turnstile.
-                failing = [ln for ln in out.splitlines()
-                           if "FAIL:" in ln or ln.startswith("  - ") or ln.startswith("   \u00b7 ")]
-                if r.returncode == 0:
-                    print(f"  NOT CAUGHT  {name}")
-                    missed += 1
-                elif any(selector in ln for ln in failing):
-                    hits = sum(1 for ln in failing if selector in ln)
-                    print(f"  caught      {name}  ({len(failing)} red, {hits} naming {selector!r})")
-                    caught += 1
-                else:
-                    # The suite reddened, but not on the assertion this row is about. That
-                    # is NOT a pass: see the header — it is how a row comes to prove nothing.
-                    print(f"  WRONG CHECK {name}  ({len(failing)} red, none naming {selector!r})")
-                    if failing:
-                        print(f"                 first red: {failing[0].strip()[:120]}")
-                    wrong += 1
-            finally:
-                # Back to pristine INSIDE the scratch tree, so the next row starts from the
-                # committed text rather than from this row's edit. (Restoring the checkout
-                # is not a thing this tool has to do any more — it never changed it.)
-                path.write_text(pristine)
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-    total = caught + missed + noop + wrong
-    print(f"\nMUTATIONS: {caught} caught, {missed} missed, {noop} no-op, {wrong} wrong-check "
-          f"({total} rows run, {len(MUTATIONS)} in the table)")
-    return 1 if (missed or noop or wrong) else 0
-
-
 if __name__ == "__main__":
-    import sys
-    raise SystemExit(main([a for a in sys.argv[1:] if not a.startswith("-")]))
+    raise SystemExit(run_table(MUTATIONS, lambda r: ["node", r[4]], verdict=node_verdict,
+                     timeout=MUTATION_TIMEOUT_S, scratch=("functions", "sim"),
+                     baseline=[["node", SUITE], ["node", UX]]))

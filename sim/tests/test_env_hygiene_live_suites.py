@@ -1,19 +1,10 @@
-"""
-Live suites must leave the process environment as they found it — hermetic guards.
+"""Live suites must leave the process environment as they found it — hermetic guards.
 
-The failure this fences: a full `pytest sim/tests` on a machine WITH credentials went red
-(9 failures, 4 errors) while every file passed alone and CI (no key, live tier skipped)
-never saw it. `test_live_gateway.py` set the engine selectors `MOXIE_APP=content` and
-`MOXIE_STT=off` without restoring them, and every later live suite reloads `config`
-against the live environment — so the voice picker two files later was judged against a
-deployment told it has no ears. Since `MOXIE_APP` also became a brain pin, the same leak
-now costs the next suite its brain too.
-
-The fix (`test_live_gateway._assembly_env`) lives in a file that skips wherever there is
-no key, i.e. everywhere that could notice it breaking — so it is guarded here,
-hermetically: the helper restores in both directions, and each leaked variable really
-does change what a reloaded `config` reports. Deliberately NOT named `test_live_*`: that
-prefix means "needs credentials" to `test_ci_workflows.py` and `conftest.py`.
+A credentialed full run went red (9 failures, 4 errors) while every file passed alone:
+`test_live_gateway.py` set `MOXIE_APP=content` / `MOXIE_STT=off` without restoring them, and
+the voice picker two files later was judged against a deployment with no ears. Its fix
+(`_assembly_env`) lives in a file that skips without a key, so it is guarded here. Not
+named `test_live_*`: that prefix means "needs credentials" to conftest and CI.
 """
 from __future__ import annotations
 
@@ -67,36 +58,17 @@ def _config(**env):
 
 
 # ------------------------------------------------------------------ the helper --
-def test_the_assembly_env_sets_what_the_assembled_stack_needs(env_sandbox):
-    with _assembly_env():
-        for k, v in _ASSEMBLY_ENV.items():
-            assert os.environ[k] == v, (k, os.environ.get(k))
-
-
-def test_it_puts_back_a_variable_that_was_already_set(env_sandbox):
+def test_the_assembly_env_sets_its_vars_and_restores_both_directions_even_on_error(env_sandbox):
+    """Put back a var that was set, REMOVE one that was not (the bug's direction), and do
+    both when the body raises — a failed live turn must not redden a second suite."""
     os.environ["MOXIE_APP"] = "sentinel-app"
-    with _assembly_env():
-        assert os.environ["MOXIE_APP"] == "content"
-    assert os.environ["MOXIE_APP"] == "sentinel-app"
-
-
-def test_it_REMOVES_a_variable_that_was_not_set(env_sandbox):
-    """The direction the bug was in: putting back *nothing* means deleting our key."""
     os.environ.pop("MOXIE_STT", None)
-    with _assembly_env():
-        assert os.environ["MOXIE_STT"] == "off"
-    assert "MOXIE_STT" not in os.environ, os.environ.get("MOXIE_STT")
-
-
-def test_it_restores_even_when_the_body_raises(env_sandbox):
-    """A live test failing mid-turn must not turn into a second red run elsewhere."""
-    os.environ.pop("MOXIE_STT", None)
-    os.environ["MOXIE_APP"] = "sentinel-app"
     with pytest.raises(RuntimeError):
         with _assembly_env():
+            assert {k: os.environ.get(k) for k in _ASSEMBLY_ENV} == dict(_ASSEMBLY_ENV)
             raise RuntimeError("the live turn failed")
-    assert "MOXIE_STT" not in os.environ
     assert os.environ["MOXIE_APP"] == "sentinel-app"
+    assert "MOXIE_STT" not in os.environ
 
 
 def test_the_environment_is_restored_before_config_is_left_alone(env_sandbox):
@@ -196,11 +168,3 @@ def test_test_assemble_py_leaves_the_environment_exactly_as_it_found_it(tmp_path
         f"  gone:    {sorted(set(before) - set(after))}\n"
         f"  added:   {sorted(set(after) - set(before))}\n"
         f"  changed: {sorted(k for k in set(after) & set(before) if after[k] != before[k])}")
-
-
-def test_that_guard_would_notice_a_deletion():
-    """Mutation control: the comparison above must fail when a variable goes missing."""
-    before = {"MOXIE_LLM_BASE_URL": "x", "MOXIE_APP": "echo"}
-    after = {"MOXIE_APP": "echo"}
-    assert after != before
-    assert sorted(set(before) - set(after)) == ["MOXIE_LLM_BASE_URL"]

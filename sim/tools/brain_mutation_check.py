@@ -1,31 +1,10 @@
-#!/usr/bin/env python3
-"""🧠 Delete one brain-registry guard at a time and require a test to go red.
+"""Break each brain-registry guard (positive list, pin, layer precedence, server-only key
+filter, once-per-turn resolution); `test_brains.py` + `test_brain_runtime.py` must go red.
+Runner and verdicts: `mutation_runner.py`.
 
-The house rule is that a feature's tests are proven in BOTH directions: green with the
-guard, red without it. A test that only ever runs against correct code cannot tell you
-whether it is asserting the property or merely restating it — `sim/tools/ext_mutation_check.py`
-is the same tool for the sandboxed-extension grammar, and this is its sibling for
-"any brain, hot-swappable, per child".
-
-Each entry deletes exactly one guard (the positive list's refusal, the pin, a layer's
-precedence, the server-only key filter, the once-per-turn resolution, …), runs
-`test_brains.py` + `test_brain_runtime.py`, and restores the file. A mutation that leaves
-the suite GREEN is a hole in the tests, not a pass.
-
-    python3 sim/tools/brain_mutation_check.py     # from the repo root
-
-Uses the repo's own virtualenv if it has one, else the interpreter running this script.
+    python3 sim/tools/brain_mutation_check.py [ROW ...]
 """
-import os
-import pathlib
-import subprocess
-import sys
-
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-PY = ROOT / ".venv/bin/python"
-if not PY.exists():
-    PY = pathlib.Path(sys.executable)
-TESTS = ["sim/tests/test_brains.py", "sim/tests/test_brain_runtime.py"]
+from mutation_runner import WT, node_verdict, pytest, run_table  # noqa: F401
 
 B = "mqtt/moxie_sdk/brains.py"
 C = "mqtt/config.py"
@@ -34,6 +13,7 @@ R_BRAIN = "mqtt/supervisor/moxie_runtime/brain.py"
 R_CONTENT = "mqtt/supervisor/moxie_runtime/content.py"
 R_LIFECYCLE = "mqtt/supervisor/moxie_runtime/lifecycle.py"
 R_TURNS = "mqtt/supervisor/moxie_runtime/turns.py"
+TESTS = ["sim/tests/test_brains.py", "sim/tests/test_brain_runtime.py"]
 
 MUTATIONS = [
     ("M1  unknown name resolves to the default again", B,
@@ -105,42 +85,5 @@ MUTATIONS = [
 ]
 
 
-def run():
-    proc = subprocess.run([str(PY), "-m", "pytest", *TESTS, "-q", "-x", "--no-header"],
-                          cwd=ROOT, capture_output=True, text=True,
-                          env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                               "HOME": os.environ.get("HOME", "/tmp"),
-                               # Blanked explicitly: a bare run finds the main worktree's
-                               # `mqtt/.env` and would spend real gateway calls.
-                               "MOXIE_LLM_API_KEY": "", "MOXIE_LLM_BASE_URL": "",
-                               "MOXIE_VOICE_BASE_URL": "", "MOXIE_STT_BASE_URL": "",
-                               "MOXIE_SKIP_DOTENV": "1"})
-    return proc.returncode, proc.stdout.strip().splitlines()[-1] if proc.stdout else ""
-
-
-def main():
-    caught, missed = 0, []
-    for label, rel, old, new in MUTATIONS:
-        path = ROOT / rel
-        backup = path.read_text()
-        if backup.count(old) != 1:
-            missed.append(f"{label}: anchor not unique ({backup.count(old)})")
-            continue
-        path.write_text(backup.replace(old, new, 1))
-        try:
-            code, tail = run()
-        finally:
-            path.write_text(backup)
-        if code == 0:
-            missed.append(f"{label}: STILL GREEN — {tail}")
-        else:
-            caught += 1
-            print(f"✅ {label} → {tail}")
-    print(f"\n{caught}/{len(MUTATIONS)} mutations caught")
-    for m in missed:
-        print("❌ " + m)
-    return 1 if missed else 0
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(run_table(MUTATIONS, lambda r: pytest(TESTS, None, "-x"), baseline=[pytest(TESTS)]))

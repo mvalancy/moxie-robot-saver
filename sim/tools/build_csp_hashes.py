@@ -1,46 +1,16 @@
 #!/usr/bin/env python3
 """Generate the SHA-256 `script-src` sources in `sim/web/_headers` from the pages on disk.
 
-WHY THIS EXISTS AT ALL. `sim/web/_headers` is a STATIC file served by Cloudflare Pages, so
-a per-response nonce is impossible and a hash is the only way an inline `<script>` can run
-under `script-src 'self'`. A hash is a hostile thing to maintain by hand: when it drifts
-from the block it covers the page does not degrade, it goes BLANK — and it goes blank in
-production, because every browser suite in this repo would still be serving the old bytes.
+`_headers` is static (Cloudflare Pages), so a hash is the only way an inline `<script>` runs
+under `script-src 'self'` — and a drifted hash BLANKS the page in production only. So the
+header is generated, never typed. One inline block remains (`sim.html`'s importmap, which
+cannot be external); a new one should become a `.js` file, not a hash.
 
-So the rule this file enforces is: **the header is generated, never typed.** Run it after
-touching any inline block; `--check` proves the committed header matches the pages, and
-`sim/tests/test_csp_hashes.py` runs that check in CI.
-
-THE SURFACE IS DELIBERATELY TINY. As of 2026-09-04 exactly ONE inline block remains on the
-whole site — `sim.html`'s `<script type="importmap">`, which cannot be an external file in
-any browser (the `src` form was dropped from the spec and never shipped). The other
-thirteen were MOVED INTO FILES rather than hashed, because a file that does not exist
-cannot drift. Keep it that way: if this tool starts reporting more than one hash, the right
-fix is almost always to move the new block into a `.js` file, not to accept the hash.
+This tool owns the HASHES and nothing else: host allowances (the analytics beacon,
+Turnstile) are policy argued in `sim/web/_headers` and carried through untouched.
 
     python3 sim/tools/build_csp_hashes.py            # rewrite _headers in place
-    python3 sim/tools/build_csp_hashes.py --check    # exit 1 if it is out of date
-
-Exit 0 = header matches the pages. Exit 1 = drift (or a block that no hash can rescue).
-
-=============================================================================
-LOOKING FOR THE OFF-ORIGIN HOST LIST? IT IS NOT IN THIS FILE, AND THAT IS ON PURPOSE.
-
-Twice now (the Cloudflare analytics beacon in 2026-09-03, Turnstile's
-`https://challenges.cloudflare.com` in 2026-09-05) a pass has needed to allow one more
-third-party host, and the obvious-looking move is to add it to a constant here and let the
-generator emit the whole directive. **Do not.** `script_src()` below carries every
-non-hash source THROUGH from the committed header for the reason written there: a host
-allowance is a policy decision argued out in `sim/web/_headers` and pinned by
-`sim/test_csp.mjs`, and a generator that rebuilt the directive from its own constant would
-silently overwrite that argument the first time the two disagreed.
-
-So the division of labour is: **hosts are edited in `sim/web/_headers`, next to the
-paragraph that justifies them; hashes are NEVER typed anywhere.** After changing a host,
-run this tool (not `--check`) so the line you commit is one the generator produced, then
-`--check` to prove it. `frame-src` and `connect-src` are not touched by this tool at all —
-it owns `script-src`'s hashes and nothing else.
-=============================================================================
+    python3 sim/tools/build_csp_hashes.py --check    # exit 1 if out of date
 """
 import base64
 import hashlib
@@ -95,18 +65,8 @@ def scan():
 
 
 def script_src(hashes, current):
-    """The `script-src` the pages imply, given the one that is there now.
-
-    THIS TOOL OWNS THE HASHES AND NOTHING ELSE. The host allowance in `script-src` —
-    today exactly one, Cloudflare's injected analytics beacon — is a policy decision
-    argued out in `sim/web/_headers` and pinned by `sim/test_csp.mjs`; a generator that
-    rebuilt the whole directive from a constant in *this* file would silently overwrite
-    that decision the first time it changed, and would put somebody's deployment hostname
-    in shipped Python (which `sim/tests/test_no_deployment_defaults.py` forbids as a
-    class). So every non-hash source is carried through in its existing order, and only
-    the `'sha256-…'` list is regenerated — inserted right after `'self'`, which is where
-    it reads.
-    """
+    """The `script-src` the pages imply: every non-hash source carried through in order,
+    the `'sha256-…'` list regenerated right after `'self'`."""
     keep = [t for t in current.split()[1:]
             if not t.startswith("'sha256-") and t not in ("'unsafe-inline'", "'unsafe-hashes'")]
     if "'self'" in keep:

@@ -1,61 +1,15 @@
-#!/usr/bin/env python3
-"""👁️  Delete one `subscribe` guard at a time and require a test to go red.
+"""Break each `subscribe` guard; the three ext suites (one run, so a guard whose wire test
+stays green shows up) must go red.
 
-The house rule is that a feature's tests are proven in BOTH directions: green with the
-guard, red without it. A green suite says the guards are present; only this says they are
-**load-bearing**, and *"a guard never observed to fail is not a guard"*.
+Two failures here are SILENT: a pack's list winning the merge over the supervisor's
+vision subscription (the latch then never re-asks, and presence goes quiet with nothing
+logged), and S17 — a subscribed event routed to `app.respond`, which works visibly but
+turns every `eb-found-face` into a billed model call; only `chat.model_calls()` notices.
+Runner and verdicts: `mutation_runner.py`.
 
-It matters twice over here, because two of the rows below break something whose failure is
-**silent**. `moxie_runtime._merge_subscriptions` merges a content pack's requested events
-INTO the supervisor's own vision subscription and never over it; and
-`_vision_subscription` **latches** (`_vision_subscribed[device] = module`) at the moment it
-hands its list over. So an implementation in which a pack's list wins sets the latch,
-publishes a list without the vision events in it, and never asks again for that
-`(device, module)`. Presence goes quiet, the greeting rule stops firing, launch cards stop
-decoding — and nothing is logged, because as far as the runtime is concerned it subscribed.
-That is playbook rule 23's *"a cached belief about a moving thing"*, which is the most
-common bug this project has produced, so the direction of that merge gets a mutation of its
-own rather than a comment.
-
-    python3 sim/tools/subscribe_mutation_check.py      # from the repo root
-
-Since 2026-09-05 the table covers both directions of `subscribe`. S1-S16 are the outbound
-half — a pack's request reaching `EventSubscription.active[]` without ever displacing the
-supervisor's own list. **S17-S25 are the inbound half**, and S17 is the row with the
-sharpest teeth in this file: a subscribed event must be answered by the pack's *local*
-evaluator and never by a brain, because `eb-found-face` fires every time a child moves
-around a room and a model call per event would turn presence into a billing event
-(`docs/architecture/vision.md` §7.1). Route the event to `app.respond` instead — which
-looks exactly like sensible reuse — and every visible behaviour still works: the pack
-answers, the child hears a line, the wire is well-formed. The only thing that notices is
-`moxie_sdk.chat.model_calls()`, the recorded counter, which is why that counter exists at
-all and why deleting it is not a refactor.
-
-Sibling of `ext_mutation_check.py` (which owns the sandbox's escape guards and runs only
-`test_ext_escapes.py`) and of `launch_card_mutation_check.py`, whose multi-file runner this
-copies. A separate table rather than more rows in `ext_mutation_check.py` because half of
-these guards live in the *runtime*, and the ext checker cannot see a runtime test.
-
-The anchors are held honest by `sim/tests/test_mutation_tables.py`, which fails if a
-refactor makes any row below a no-op — repair the anchor, never delete the row.
+    python3 sim/tools/subscribe_mutation_check.py [ROW ...]
 """
-import os
-import pathlib
-import subprocess
-import sys
-
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-PY = ROOT / ".venv/bin/python"
-if not PY.exists():
-    PY = pathlib.Path(sys.executable)
-
-#: All three suites in ONE run, deliberately, for the same comparative reason
-#: `launch_card_mutation_check.py` gives: a guard that reddens the unit chain but leaves
-#: the wire test green is a guard whose wire test is not actually asserting on the wire,
-#: and only one run can show that.
-TESTS = ["sim/tests/test_ext_subscribe.py",     # the chain, the merge, the wire
-         "sim/tests/test_ext.py",               # the G6 conformance row
-         "sim/tests/test_ext_escapes.py"]       # the three load gates
+from mutation_runner import WT, node_verdict, pytest, run_table  # noqa: F401
 
 XG = "mqtt/moxie_sdk/content/ext/grammar.py"
 XL = "mqtt/moxie_sdk/content/ext/validate.py"
@@ -65,6 +19,8 @@ HOST = "mqtt/moxie_sdk/content/ext_host.py"
 R_CONNECTION = "mqtt/supervisor/moxie_runtime/connection.py"
 R_PRESENCE = "mqtt/supervisor/moxie_runtime/presence.py"
 R_TURNS = "mqtt/supervisor/moxie_runtime/turns.py"
+TESTS = ["sim/tests/test_ext_subscribe.py", "sim/tests/test_ext.py",
+         "sim/tests/test_ext_escapes.py"]
 
 MUTATIONS = [
     # ---- the closed vocabulary: refused at load, and again at each boundary ----
@@ -214,48 +170,5 @@ MUTATIONS = [
 ]
 
 
-def run():
-    proc = subprocess.run([str(PY), "-m", "pytest", *TESTS, "-q", "--no-header",
-                           "-p", "no:cacheprovider"],
-                          cwd=ROOT, capture_output=True, text=True,
-                          env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                               "HOME": os.environ.get("HOME", "/tmp"),
-                               # Blanked explicitly: a bare run finds the main worktree's
-                               # `mqtt/.env` and would spend real gateway calls.
-                               "MOXIE_LLM_API_KEY": "", "MOXIE_LLM_BASE_URL": "",
-                               "MOXIE_VOICE_BASE_URL": "", "MOXIE_STT_BASE_URL": "",
-                               "MOXIE_SKIP_DOTENV": "1",
-                               # Without it a `__pycache__` entry from an earlier mutation
-                               # can shadow a later one, and a guard reads as un-caught
-                               # when it is fine (`ext_mutation_check.py`'s lesson).
-                               "PYTHONDONTWRITEBYTECODE": "1"})
-    tail = proc.stdout.strip().splitlines()[-1] if proc.stdout else ""
-    return proc.returncode, tail
-
-
-def main():
-    caught, missed = 0, []
-    for label, rel, old, new in MUTATIONS:
-        path = ROOT / rel
-        backup = path.read_text()
-        if backup.count(old) != 1:
-            missed.append(f"{label}: anchor not unique ({backup.count(old)})")
-            continue
-        path.write_text(backup.replace(old, new, 1))
-        try:
-            code, tail = run()
-        finally:
-            path.write_text(backup)
-        if code == 0:
-            missed.append(f"{label}: STILL GREEN — {tail}")
-        else:
-            caught += 1
-            print(f"✅ {label} → {tail}")
-    print(f"\n{caught}/{len(MUTATIONS)} mutations caught")
-    for m in missed:
-        print("❌ " + m)
-    return 1 if missed else 0
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(run_table(MUTATIONS, lambda r: pytest(TESTS), baseline=[pytest(TESTS)]))
