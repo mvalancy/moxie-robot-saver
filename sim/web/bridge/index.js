@@ -181,8 +181,26 @@
   }
   B.route = route;
 
+  /* mqtt.js (322 KB) is fetched on the first Link, not on every visit: only the live bus
+   * uses it, and almost no visitor presses Link. Same origin, so script-src 'self' covers it. */
+  let mqttLoading = null;
+  function loadMqtt() {
+    if (typeof mqtt !== "undefined") return Promise.resolve(true);
+    return mqttLoading = mqttLoading || new Promise((resolve) => {
+      const s = document.createElement("script");
+      s.src = "vendor/mqtt.min.js";
+      s.onload = () => resolve(typeof mqtt !== "undefined");
+      s.onerror = () => { mqttLoading = null; resolve(false); };
+      document.head.appendChild(s);
+    });
+  }
+
   function connect(host, port) {
-    if (typeof mqtt === "undefined") { status("mqtt.js not loaded"); return; }
+    if (typeof mqtt === "undefined") {
+      status("loading mqtt.js…");
+      loadMqtt().then((ok) => ok ? connect(host, port) : status("mqtt.js not loaded"));
+      return;
+    }
     if (B.client) { try { B.client.end(true); } catch {} B.client = null; }
     const url = `ws://${host}:${port}`;
     status(`connecting ${url}…`);
@@ -232,6 +250,7 @@
 
   // ---- the public surface (mic.js, mode.js, cloud-transport.js, the tests) ----
   window.moxieBridge = Object.assign(B.api, {
+    loadMqtt,          // the lazy vendor/mqtt.min.js fetch connect() waits on
     route: route,
     // Inject a child utterance onto the live bus (the real backend answers) or, offline,
     // answer with the stub brain in the SAME reply shape so the avatar animates either way.

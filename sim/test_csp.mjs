@@ -425,6 +425,16 @@ try {
     /* --- sim.html: a typed turn end to end, and the QR card ------------------- */
     {
       const { page } = await load("sim.html");
+      /* mqtt.js is fetched lazily by the first Link (bridge/index.js::loadMqtt), so a visit
+       * that never links never pays for it — and when it IS fetched, 'self' must admit it. */
+      const lazy = await page.evaluate(async () => {
+        const before = typeof mqtt === "undefined" &&
+          !performance.getEntriesByType("resource").some((e) => /mqtt\.min\.js/.test(e.name));
+        const loaded = await window.moxieBridge.loadMqtt();
+        return { before, loaded, after: typeof mqtt !== "undefined" && typeof mqtt.connect === "function" };
+      });
+      eq(lazy.before, true, "sim.html: mqtt.js is NOT fetched on a plain visit");
+      ok(lazy.loaded && lazy.after, `sim.html: …and loadMqtt() fetches it under the shipped CSP (${JSON.stringify(lazy)})`);
       await page.type("#speech-input", "hello moxie");
       await page.click("#speech-btn");
       await new Promise((r) => setTimeout(r, 3500));
