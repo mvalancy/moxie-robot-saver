@@ -26,7 +26,6 @@ import os
 
 import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 pytest.importorskip("paho.mqtt.client", reason="the runtime needs paho")
 

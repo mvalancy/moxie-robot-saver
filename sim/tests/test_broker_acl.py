@@ -17,7 +17,6 @@ Pure: no broker, no Docker, no network. Two halves.
 The end-to-end proof that a real broker enforces all this is `sim/run_acl_proof.sh`.
 """
 import os
-import re
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 

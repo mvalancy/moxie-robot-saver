@@ -15,7 +15,6 @@ Hermetic: builders arrive through `set_brain_engines()`; HTTP goes through the r
 import json
 import threading
 
-import pytest
 
 from helpers_runtime import fresh_pool  # noqa: E402
 from helpers_runtime import (drive_turn, http_call, http_json,        # noqa: E402

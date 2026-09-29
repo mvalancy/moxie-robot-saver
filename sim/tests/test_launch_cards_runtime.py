@@ -11,14 +11,12 @@ Hermetic: no sleeps, broker or model.
 """
 from __future__ import annotations
 
-import os
 
 import pytest
 
 from helpers_runtime import seed_absent  # noqa: E402
 from helpers_runtime import drive_turn, make_runtime                    # noqa: E402
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 from moxie_sdk import launch_cards as cards                             # noqa: E402
 from moxie_sdk import presence as P                                     # noqa: E402
 from moxie_sdk.app import MoxieApp                                      # noqa: E402

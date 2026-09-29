@@ -25,7 +25,6 @@ from moxie_sdk import telemetry as T                # noqa: E402
 from moxie_sdk.app import MoxieApp                  # noqa: E402
 from moxie_sdk.cloud_config import LoggingPolicy    # noqa: E402
 from moxie_sdk.store import JsonStore               # noqa: E402
-from moxie_sdk.types import RobotContext            # noqa: E402
 
 
 class _App(MoxieApp):
