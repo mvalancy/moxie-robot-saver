@@ -1,15 +1,11 @@
 # 🎬 Robot actions — the top-level behavior arbiter (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
-> Reverse-engineered from the decompiled `Assembly-CSharp.dll` (`bo-android`) in the **v24.10.803**
-> image — the `RobotAction` / `RobotActionManager` / `RobotActionScores` system. This is the **top of
-> Moxie's behavior stack**: the single arbiter that decides, moment to moment, *what Moxie is doing at
-> all* — reacting to being picked up, responding to a hug, running a content activity, or idling. Below it
-> sit the [behavior tree](behavior-tree-engine.md) (the *detail* of each action), the
-> [task scheduler](task-scheduler.md) (which *outputs* each task claims), and the
-> [face-animation engine](unity-face-animation.md) (the *render*). This layer is the "personality" —
-> what makes Moxie feel like it has priorities of its own.
-
-## The stack
+The top of Moxie's behavior stack (`RobotAction` / `RobotActionManager` / `RobotActionScores`, decompiled
+`Assembly-CSharp.dll` in the **v24.10.803** image): one arbiter re-scores every action each frame and runs
+exactly one — reacting to being picked up, a hug, a content activity, or idling. The fixed score ladder
+**Startup > handling (900/800/700) > affection (400/300) > activity (200) > idle (100)** *is* Moxie's
+priority personality. Below it: the [behavior tree](behavior-tree-engine.md) (how), the
+[task scheduler](task-scheduler.md) (which outputs), the [face engine](unity-face-animation.md) (render).
 
 ```mermaid
 flowchart TB
@@ -21,48 +17,34 @@ flowchart TB
   tasks --> render["face / body / audio"]
 ```
 
-`RobotAction` = *what am I doing*; the behavior tree = *how*; `EBGameTask` = *which outputs*; the animator
-= *render*. This doc is the top box.
-
 ## The arbiter — `RobotActionManager`
 
-A singleton that holds a `Dictionary<Type, RobotAction>` of every action (discovered by reflection,
-`CreateInstancesOfType<RobotActionRuntime, RobotAction>`) and runs exactly one at a time:
+A singleton holding a `Dictionary<Type, RobotAction>` of every action (discovered by reflection,
+`CreateInstancesOfType<RobotActionRuntime, RobotAction>`):
 
-- Each tick, **`SelectBestAction()`** calls **`GetActionScore()`** on every action, stores it in
-  `CurrentScore`, and takes the **highest score ≥ 0** as the winner.
-- **`SetCurrentAction(action)`** switches: it deactivates the outgoing action (`ActionDeactivated`) and
-  activates the winner (`ActionActivated`); a re-selection of the same action is a no-op.
+- Each tick **`SelectBestAction()`** calls **`GetActionScore()`** on every action, stores it in
+  `CurrentScore`, and takes the **highest score ≥ 0**. An inapplicable action scores negative.
+- **`SetCurrentAction(action)`** deactivates the outgoing action (`ActionDeactivated`) and activates the
+  winner (`ActionActivated`); re-selecting the same action is a no-op.
 - **`Update()`** ticks only the `CurrentAction` (`ActionActivatedUpdate` + its coroutines).
-
-So Moxie runs **one top-level action at a time**, re-decided every frame by score. An action that isn't
-applicable scores negative and is simply never selected.
 
 ## The score ladder — `RobotActionScores`
 
-The scores are fixed constants; what varies is *whether* an action returns its score (only when its
-trigger is live). Highest wins:
+Scores are fixed constants; what varies is *whether* an action returns its score (only while its trigger
+is live).
 
 | Score | Action | When it scores |
 |--:|---|---|
 | `float.MaxValue` | **Startup** | during the boot/wake sequence — always wins |
-| 900 | **MPUPutDown** | Moxie was just set down |
-| 800 | **MPUPickedUp** | Moxie is being **held** |
-| 700 | **MPUUnstable** | Moxie is being **wobbled / is unstable** |
-| 400 | **BellyRub** | a belly-rub was detected |
-| 300 | **Hug** | a hug was detected |
+| 900 | **MPUPutDown** | just set down |
+| 800 | **MPUPickedUp** | being **held** |
+| 700 | **MPUUnstable** | being **wobbled / unstable** |
+| 400 | **BellyRub** | belly-rub detected |
+| 300 | **Hug** | hug detected |
 | 200 | **Activity** | a content activity is available/running |
 | 100 | **Idle** | always (the floor) |
 
-This ladder *is* Moxie's personality priority: **physical handling** (put-down / pickup / wobble)
-overrides everything but boot; **affection** (belly-rub / hug) overrides content; a **content activity**
-overrides idle; and **idle** is the ever-present floor. Pick Moxie up in the middle of a drawing activity
-and `MPUPickedUp` (800) instantly beats `Activity` (200) — it reacts to being held; set it down and once
-it stabilises, `MPUPickedUp` stops scoring and the activity resumes.
-
-## Reactions — the `RobotActionMicroExpBase` pattern
-
-The handling and affection actions share one elegant generic base:
+## Reflexes — `RobotActionMicroExpBase<TActionEvent, TRobotState>`
 
 ```csharp
 abstract class RobotActionMicroExpBase<TActionEvent, TRobotState>
@@ -70,8 +52,8 @@ abstract class RobotActionMicroExpBase<TActionEvent, TRobotState>
 { protected override float OnActionEventReceivedScore => …; }
 ```
 
-Each reaction is parameterised by **(a) the [`InputEvent`](behavior-input-events.md) that triggers it** and
-**(b) the `RobotStateLogic` (a behavior-tree state) it plays** when it wins:
+Each handling/affection reaction is parameterised by the [`InputEvent`](behavior-input-events.md) that
+triggers it and the `RobotStateLogic` (behavior-tree state) it plays:
 
 | Action | Trigger event | State played | Score |
 |---|---|---|--:|
@@ -80,18 +62,16 @@ Each reaction is parameterised by **(a) the [`InputEvent`](behavior-input-events
 | `RobotActionBellyRub` | `RobotActionBellyRubEvent` | `RobotState_HugBelly` | 400 |
 | `RobotActionHug` | `RobotActionHugEvent` | `RobotState_HugToNeutral` | 300 |
 
-When the event arrives, `OnActionEventReceivedScore` becomes the action's live score, it wins arbitration,
-and it drives its `RobotStateLogic` — a scripted micro-expression reaction (a "micro-exp"). The trigger
-events come from perception/handling ([the IMU handling events](../hardware/hardware-map.md#semantic-handling-events-embodiedunity)
-feed the MPU reactions; touch feeds hug/belly-rub), so the whole reflex arc is **percept → scored action →
-state → animation**. `RobotActionStartup` and `RobotActionIdle` are plain `RobotActionRuntime`s (not
-event-gated): Startup wins during boot, Idle is the constant floor.
+When the event arrives, `OnActionEventReceivedScore` becomes the live score, the action wins, and it plays
+its scripted micro-expression ("micro-exp"). Triggers come from the
+[IMU handling events](../hardware/hardware-map.md#semantic-handling-events-embodiedunity) (MPU reactions)
+and touch (hug/belly-rub): **percept → scored action → state → animation**. `RobotActionStartup` and
+`RobotActionIdle` are plain `RobotActionRuntime`s, not event-gated.
 
 ## Content — `RobotActionActivity`
 
-`RobotActionActivity` (score 200) is the action that **runs content activities**. It's itself a mini
-arbiter: it holds a set of typed `RobotActivity` runtimes and, via `GetActivityScore()`, selects the
-`BestActivity` among the `CurrentActivatableActivities`:
+`RobotActionActivity` (200) is itself a mini-arbiter: it holds typed `RobotActivity` runtimes and, via
+`GetActivityScore()`, picks the `BestActivity` among `CurrentActivatableActivities`:
 
 | Activity type | Kind |
 |---|---|
@@ -100,37 +80,23 @@ arbiter: it holds a set of typed `RobotActivity` runtimes and, via `GetActivityS
 | `RobotActivityImaginativePlay` | imaginative play |
 | `RobotActivityForTesting` | test harness |
 
-These are the *on-device shells* of an activity; the actual lines, logic, and Python `code` hooks
-(`pre_process`/`post_process`) run **server-side** in the brain ([content-and-conversation](content-and-conversation.md),
-[remote-chat-protocol](../protocol/remote-chat-protocol.md)) — there is **no Python interpreter in the robot image**.
-The robot's job is: pick the best activity shell, run its behavior-tree state, and volley with the server.
+These are on-device **shells**: the lines, logic and Python `code` hooks (`pre_process`/`post_process`)
+run **server-side** ([content-and-conversation](content-and-conversation.md),
+[remote-chat-protocol](../protocol/remote-chat-protocol.md)) — there is **no Python interpreter in the
+robot image**. The robot picks the shell, runs its behavior-tree state, and volleys with the server.
 
-## Worked example — a drawing activity, interrupted
+**Example.** During a drawing activity (`Activity` 200 → `RobotActivityDrawing`), the child picks Moxie
+up: `RobotActionMPUPickedUpEvent` → `MPUPickedUp` scores 800 → preempts the activity → plays
+`RobotState_MPU_PickedUp`. Set down and stable, `MPUPickedUp`/`MPUUnstable` stop scoring and the drawing
+resumes.
 
-1. `RobotActionActivity` (200) wins; within it, `RobotActivityDrawing` scores best → Moxie draws with the
-   child, volleying with the server.
-2. The child **picks Moxie up**. `RobotActionMPUPickedUpEvent` fires → `RobotActionMPUPickedUp` scores
-   **800** → it preempts `Activity` (200) → Moxie plays `RobotState_MPU_PickedUp` (a "whee, I'm being
-   held!" micro-exp).
-3. The child **sets Moxie down** and it stabilises → `MPUPickedUp`/`MPUUnstable` stop scoring → `Activity`
-   (200) wins again → the drawing resumes.
+## Implications
 
-One arbiter, re-decided every frame, is what makes that transition feel instant and natural.
-
-## What this means for the three goals
-
-**① Custom firmware — the headline.** This is the **top-level behavior contract**. A custom brain must
-reproduce a scored action arbiter with (at least) this ladder — **handling > affection > activity > idle**
-— or Moxie won't react like itself (it'll keep drawing while you shake it). The `RobotActionMicroExpBase`
-pattern (percept event → scored action → behavior state) is the template for every reflex; the
-`RobotActionScores` constants are the tuning that makes reactions feel appropriately urgent.
-
-**② Server revival.** The server drives the **Activity** branch (it supplies the content a
-`RobotActivity` runs, via RemoteChat), but the **reactions are on-device** and outrank content — a server
-can't (and shouldn't need to) make Moxie ignore being picked up. Knowing this split tells a revival server
-exactly what it owns (activities) versus what the robot owns (reflexes/idle).
-
-**③ Pre-801 revival.** No new lever; internal to the app.
+- **Custom brain:** reproduce a scored arbiter with at least **handling > affection > activity > idle**,
+  or Moxie keeps drawing while being shaken. `RobotActionMicroExpBase` (event → scored action → state) is
+  the template for every reflex; the `RobotActionScores` constants are the urgency tuning.
+- **Server revival:** the server owns the **Activity** branch (content via RemoteChat); reflexes and idle
+  are on-device and outrank content. Pre-801: no new lever.
 
 ---
 📖 [Reverse-engineering index](../README.md) · [Behavior-tree engine](behavior-tree-engine.md) · [Task scheduler](task-scheduler.md) · [Behavior input events](behavior-input-events.md) · [Content & conversation](content-and-conversation.md) · [Hardware map](../hardware/hardware-map.md)

@@ -1,9 +1,9 @@
 # ⚙️ SettingSchema — the robot's configuration surface
 
-> Every runtime setting the robot exposes via `embodied::core::SettingSchema` (extracted from
-> `libbo-logger`/`libbo-dispatch`, **v3.6.4-Zephyr / OTA v24.10.803**): **199 keys**. These are pushed
-> from the backend (over MQTT config / `ServiceConfiguration`-adjacent channels) and read across the
-> `bo-*` components. A revival server (goal #2) uses these to tune behavior; most have safe defaults.
+Every runtime setting the robot exposes via `embodied::core::SettingSchema`: **199 keys**, extracted
+from `libbo-logger`/`libbo-dispatch` in **v3.6.4-Zephyr / OTA v24.10.803**. The backend pushes them
+(MQTT config / `ServiceConfiguration`-adjacent channels) and the `bo-*` components read them. Most have
+safe defaults; the few worth controlling from a revival server are listed at the end.
 
 ## Cloud / brain / content
 
@@ -61,14 +61,11 @@
 `IMAGE_CAPTIONING_MODEL` · `IMAGE_CAPTIONING_TIMEOUT` · `IMAGE_CAPTION_BY_RB` · `ENHANCED_VISION_LOG` ·
 **`GAZE_WEIGHT`** · **`GAZE_DECAY`**
 
-> **Gaze / eye contact.** `GAZE_WEIGHT` and `GAZE_DECAY` tune how strongly a person's **gaze** counts
-> toward attention/targeting and how fast that contribution fades — the robot scores who is looking at
-> it (`gaze_score`, `eye_contact` in the fusion path) and uses it to pick whom to attend to, alongside
-> `FACE_TRACKING_THRESHOLD`/`ENGAGED_TARGETING_THRESHOLD`. Content can also explicitly request eye
-> contact via `LookAtMeRequest{user, bot}` ([`perception-pipeline.md`](../runtime/perception-pipeline.md)). A
-> revival server can leave these at defaults (attention is computed on-device) or tune them to make
-> Moxie more/less eager to hold eye contact; a **[SIL](../../architecture/sil-and-cicd.md)** can mirror the
-> same idea in its idle-gaze behavior.
+> **Gaze / eye contact.** `GAZE_WEIGHT` and `GAZE_DECAY` tune how strongly a person's gaze counts toward
+> attention/targeting and how fast it fades. The robot scores who is looking at it (`gaze_score`,
+> `eye_contact` in the fusion path) alongside `FACE_TRACKING_THRESHOLD`/`ENGAGED_TARGETING_THRESHOLD`.
+> Content can request eye contact via `LookAtMeRequest{user, bot}` ([perception-pipeline](../runtime/perception-pipeline.md)).
+> Attention is computed on-device, so defaults are fine; the [SIL](../../architecture/sil-and-cicd.md) mirrors the idea in its idle gaze.
 
 ## Wake · sleep · session
 
@@ -94,9 +91,9 @@
 *(199 keys total; grouped for readability. The recommender weights —
 `RECOMMENDATION_*` — and a few enum/index helpers round out the set.)*
 
-## For revival (goal #2)
+## For revival
 
-A server doesn't need to set most of these — defaults work. The high-value ones to control:
+The high-value keys for a server to control:
 `CLOUD_TTS_ENGINE`/`VOICE_ID` (pick a TTS), `STT_IMPL`/`LOCAL_STT` (STT backend), `FALLBACKS_GPT_MODEL`
 (LLM), `BRAIN_*_DOWNLOAD` + `REMOTE_CHAT_API` (content/chat endpoints), and `SYSTEM_LANGUAGE`. See
 [`cloud-protocol.md`](../protocol/cloud-protocol.md) for how config reaches the robot.

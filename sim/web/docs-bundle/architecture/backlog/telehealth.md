@@ -204,8 +204,8 @@ silently rewritten (§2.3). Credit is recorded in [`ATTRIBUTION.md`](../../../AT
 # mqtt/moxie_sdk/telehealth.py   (new — pure, stdlib only, no runtime imports)
 
 ACTIONS = ("UNKNOWN_ACTION", "START_SESSION", "PLAY_OUTPUT",
-           "END_SESSION", "UPDATE_STATE", "INTERRUPT")          # telehealth.md:35
-STATES  = ("UNKNOWN_STATE", "READY", "IN_SESSION", "EXITING")   # telehealth.md:36
+           "END_SESSION", "UPDATE_STATE", "INTERRUPT")          # telehealth.md:16
+STATES  = ("UNKNOWN_STATE", "READY", "IN_SESSION", "EXITING")   # telehealth.md:17
 
 def build_telehealth_command(action: str, *, text: str = "", markup: str = "",
                              session_id: str = "", timestamp: int | None = None) -> dict:

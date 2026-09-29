@@ -1,18 +1,13 @@
 # 👂 Behavior input events — the robot's perception vocabulary (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
-> Recovered from `Assembly-CSharp.dll` (the brain, `bo-android`) in the **v24.10.803** image. This is
-> the **input contract** of the behavior engine: the 163 typed events — sensors, vision, audio, speech,
-> chat, system — that flow *into* the behavior tree and make Moxie react. It is the counterpart to
-> [`behavior-markup.md`](behavior-markup.md) (what the brain emits *out*). Together with
-> [`perception-pipeline.md`](perception-pipeline.md) (the vision/audio DSP that *produces* percepts) and
-> [`hardware-map.md`](../hardware/hardware-map.md) (the Lizard MCU that produces sensor events), this closes the
-> "senses → brain → body" loop.
+The **input contract** of the behavior engine (decompiled `Assembly-CSharp.dll`, **v24.10.803**): the
+**163** typed `InputEvent`s — sensors, vision, audio, speech, chat, system — that flow into the behavior
+tree. Producers (`Farmer`s) feed one typed pub/sub bus (`InputEngine`). Only **24** events are
+protobuf-serializable and cross the ZeroMQ bus; the rest are in-process. Counterparts: output is
+[behavior-markup](behavior-markup.md); producers are the [perception pipeline](perception-pipeline.md) and
+the Lizard MCU ([hardware-map](../hardware/hardware-map.md)).
 
-## How events reach the behavior tree — the Farmer pattern
-
-Everything the robot perceives becomes an `InputEvent` and is dispatched through a single typed pub/sub
-bus. Producers are **`Farmer`s**; the **`InputEngine`** is the dispatcher; behavior-tree nodes and
-systems **subscribe by event type**.
+## The Farmer pattern
 
 ```mermaid
 flowchart LR
@@ -27,16 +22,15 @@ flowchart LR
   bt -->|reacts| out["markup / motion / speech<br/>(behavior-markup.md)"]
 ```
 
-- **`abstract class Farmer`** — holds `List<InputEvent> _inputs`; each frame `farmInput()` fills it and
-  `harvest()` drains it into the engine. Three concrete farmers exist:
-  - **`LizardFarmer`** — pulls hardware events from `Lizzerface` (the Lizard MCU bridge — see
-    [`hardware-map.md`](../hardware/hardware-map.md#raw-uart-command-set-lizzerfacecommands)); gated by `SensorsEnabled`.
+- **`abstract class Farmer`** holds `List<InputEvent> _inputs`; each frame `farmInput()` fills it and
+  `harvest()` drains it into the engine. Concrete farmers:
+  - **`LizardFarmer`** — hardware events from `Lizzerface` (the MCU bridge,
+    [raw UART commands](../hardware/hardware-map.md#raw-uart-command-set-lizzerfacecommands)); gated by `SensorsEnabled`.
   - **`TimerFarmer`** — scheduled `TimerEvent`s.
-  - **`UnityFarmer`** — the Unity engine tick plus the bridge for everything arriving on the on-device
-    **ZeroMQ** bus (vision, audio, STT/TTS, chat, cloud, system).
-- **`InputEngine : IEBEventDispatcher<InputEvent>`** — a singleton wrapping `EBEventDispatcher`.
-  Consumers call `Subscribe<T>(subscriber, delegate)` / `Unsubscribe<T>(…)` where `T : InputEvent`, so a
-  gaze controller subscribes to `FacesEvent`/`GazeEvent`, the chat manager to `STTResultEvent`, etc.
+  - **`UnityFarmer`** — the Unity tick plus everything arriving on the on-device ZeroMQ bus.
+- **`InputEngine : IEBEventDispatcher<InputEvent>`** — singleton wrapping `EBEventDispatcher`; consumers
+  call `Subscribe<T>(subscriber, delegate)` / `Unsubscribe<T>(…)` with `T : InputEvent` (e.g. gaze →
+  `FacesEvent`/`GazeEvent`, chat → `STTResultEvent`).
 
 ## The event vocabulary (163 types, by domain)
 
@@ -44,8 +38,9 @@ flowchart LR
 `TouchEvent` (BACK/TUMMY/hands) · `SwitchEvent` (arms, DC-plug) · `MpuEvent` + `MpuPickedUpEvent` /
 `MpuPickedUpShakenEvent` / `MpuPutDownEvent` / `MpuTiltEvent` / `MpuIsNoisyEvent` / `MpuPickUpStatusEvent` ·
 `ServoPosFdbackEvent` · `ServoStallEvent` · `BatteryEvent` · `PowerStateEvent` · `LizardWakeupEvent` ·
-`LizardErrorEvent` · `RobotActionMPUPickedUpEvent` · `RobotActionMPUNotStableEvent` · **`RobotActionHugEvent`**
-· **`RobotActionBellyRubEvent`** (higher-level gestures fused from touch + IMU).
+`LizardErrorEvent` · `RobotActionMPUPickedUpEvent` · `RobotActionMPUNotStableEvent` · `RobotActionHugEvent` ·
+`RobotActionBellyRubEvent` (the last four are higher-level percepts fused from touch + IMU that trigger
+the [reflex actions](robot-actions.md)).
 
 ### 👁️ Vision / people (from `libbo-vision` / fusion)
 `FacesEvent` · `PeopleEvent` · `FusedPeopleEvent` · `PersonAddedEvent` / `PersonRemovedEvent` /
@@ -85,14 +80,14 @@ flowchart LR
 
 ### ⏱️ Timers, assets, logging, debug
 `TimerEvent` · `KeyEvent` · `ConsoleCommandEvent` · `AnimStateEvent` / `AnimTrackEvent` /
-`ProceduralBlinkEvent` · `DynamicAssetBundle{Load,ReLoad,Release,Scan}Event` · `Logging*` · `*TestEvent`.
+`ProceduralBlinkEvent` · `DynamicAssetBundle{Load,ReLoad,Release,Scan}Event` ([content-delivery](content-delivery.md)) ·
+`Logging*` · `*TestEvent`.
 
 ## The bus-serializable subset — the external contract (24 events)
 
-Most events are in-process (Unity/behavior-tree plumbing). **24** carry a protobuf serializer
-(`new Serializer<Evt>(Serialize, EvtPB.Descriptor.FullName)`), meaning they cross the process/ZeroMQ
-boundary and are exactly what a **server or a custom controller sees/injects** on the bus
-([`robot-ipc-protocol.md`](../protocol/robot-ipc-protocol.md)):
+These carry a protobuf serializer (`new Serializer<Evt>(Serialize, EvtPB.Descriptor.FullName)`), so they
+cross the process/ZeroMQ boundary and are what a server or custom controller sees/injects on the bus
+([robot-ipc-protocol](../protocol/robot-ipc-protocol.md), `MoxieBus`):
 
 | Event | Proto | Domain |
 |---|---|---|
@@ -111,24 +106,17 @@ boundary and are exactly what a **server or a custom controller sees/injects** o
 | `SystemSuspendEventPBPublisher` | `SystemSuspendPB` | suspend |
 | `SystemFPSStatsPBPublisher` / `TTSStatsPBPublisher` | `FPSStatsPB` / `TTSStatsPB` | telemetry |
 
-> The rest (vision `Faces/People*`, `Gaze*`, `Chat*`, `STT/TTS*`, `BT*`) are **in-process** — they live
-> inside the brain and never hit the bus, so a self-hosted server does not receive them directly; it
-> influences them via the cloud chat/TTS contract ([`cloud-protocol.md`](../protocol/cloud-protocol.md)) and the
-> markup it returns.
+Everything else (vision `Faces/People*`, `Gaze*`, `Chat*`, `STT/TTS*`, `BT*`) stays inside the brain; a
+server influences it only through the cloud chat/TTS contract ([cloud-protocol](../protocol/cloud-protocol.md))
+and the markup it returns.
 
-## What this means for the three goals
+## Implications
 
-**① Custom firmware / custom brain.** This is the complete list of stimuli a replacement behavior engine
-must consume to feel like Moxie — and the bus-serializable 24 are the hardware/telemetry events your code
-must handle (or synthesize) to drive the stock stack. `RobotActionHugEvent` / `RobotActionBellyRubEvent`
-show the fused "affection" percepts the personality keys off of.
-
-**② Server revival.** The 24 PB events are what actually appear on the ZMQ bus; a server bridging the bus
-([`robot-ipc-protocol.md`](../protocol/robot-ipc-protocol.md), `MoxieBus`) can read sensor/battery/power/IMU state and
-inject audio-playback control. Conversation is not event-injection — it's the cloud chat/TTS contract.
-
-**③ Pre-801 revival.** No new lever; this is brain-side, above the network boundary in
-[`network-trust.md`](../protocol/network-trust.md).
+- **Custom brain:** the 163 types are the stimuli a replacement engine must consume to feel like Moxie;
+  the 24 PB events are the hardware/telemetry events it must handle or synthesize.
+- **Server revival:** a bus bridge can read sensor/battery/power/IMU state and inject audio-playback
+  control; conversation goes through chat/TTS, not event injection. Pre-801: no new lever (above the
+  [network boundary](../protocol/network-trust.md)).
 
 ---
 📖 [Reverse-engineering index](../README.md) · [Behavior markup (output)](behavior-markup.md) · [Perception pipeline](perception-pipeline.md) · [Hardware map](../hardware/hardware-map.md) · [Robot IPC](../protocol/robot-ipc-protocol.md)

@@ -2,10 +2,12 @@
 
 > Analyzed build: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9) — see [`firmware-803-reference.md`](../firmware/firmware-803-reference.md).
 
-> **What this is.** How sound and sight flow through the robot: wake-word → mic DSP → speech-to-text →
-> brain → text-to-speech → speaker, plus the vision events (faces, people, QR). A revival server sits
-> in the middle of this (receives STT, returns TTS), and a custom firmware must drive these hardware
-> stages. From the `embodied.perception.*` / `embodied.unity` protos and `bo-android`'s audio/vision code.
+How sound and sight flow through the robot, from the `embodied.perception.*` / `embodied.unity` protos
+and `bo-android`'s audio/vision code: wake-word → XMOS mic DSP → STT → brain → TTS → speaker, plus the
+vision events (faces, people, pose, QR, camera activities). Wake-word and VAD are fully on-device; a
+revival server sits in the middle (receives STT, returns TTS) and can plug in either as a
+Deepgram-compatible cloud STT or as an on-device `zmqSTT` engine. Also here: the XMOS DSP's own
+firmware and its USB-DFU update chain.
 
 ## Audio: hear → understand → speak
 
@@ -17,43 +19,34 @@ flowchart LR
   stt --> brain["brain<br/>RemoteChat"]
   brain --> tts["CloudTTS<br/>(server renders) / local CereVoice"]
   tts --> spk["speaker + TTSMarks<br/>(gestures/visemes)"]
-  classDef d fill:#e3eaf2,stroke:#607d8b,color:#263238;
-  class mic,xmos,ww,stt,brain,tts,spk d;
 ```
 
 ### Input side (`embodied.perception.audio`)
-- **XMOS DSP** — a dedicated audio chip does acoustic echo cancellation, mic-array **beamforming**,
-  **VAD**, and **DOA** (direction of arrival). Config via `EchoSuppressConfig` / `XmosConfig`; its
-  firmware is updated by `bo-xmos-wd`/`xmosdfu` (`BO_XMOS_WD` gates on XMOS readiness — "XMOS is not
-  ready, deferring launching services").
-- **`WakeWordEvent{wake_word_detected}`** — "Hey, Moxie" trigger ("Wakeword key event detected. Sending
-  detect intent").
-- **STT** streams mic audio to **Deepgram** (`wss://deepgram-test.embodied.com/v2/listen/stream`,
-  bearer auth; [`network-trust.md`](../protocol/network-trust.md)) and emits:
-  - `STTPartial` / (final) — `speech`, `confidence`, `alternatives`, `language`,
-    `original_speech`/`original_language` (translation), `event_id`, start/end timestamps.
-  - **Two STT engines** (`STT_IMPL` / `LOCAL_STT`, [`settings-schema.md`](../firmware/settings-schema.md)):
-    - **Cloud (primary):** Deepgram over WebSocket (above).
-      A legacy **Google Speech** path also exists (`GoogleAccount{project_id}` selects the GCP project); Deepgram is the shipping primary.
-    - **ASR biasing** — content boosts recognition accuracy by sending expected terms:
-      `PhraseHints{module, hints[]}` (per-activity phrases), `NameHints{names[]}` (the child's/family
-      names), `NativeHints`. A revival server can pass these to its STT (Deepgram keyword boosting /
-      Kaldi) to match Moxie's per-activity accuracy.
-    - **Offline: Kaldi.** `embodied::audio::KaldiSTT` runs a full **Kaldi online-nnet3** decoder —
-      MFCC + **i-vector** speaker adaptation (`OnlineNnet2FeaturePipelineInfo`, `AcceptIvector`) → an
-      **nnet3** acoustic model (`DecodableNnetSimpleLoopedInfo`) → `HCLG.fst` lattice decode
-      (`LatticeFaster`/`StdToken`) → **RNNLM** rescoring (`kaldi::rnnlm`). `USE_LOCAL_STT_QUANTIZED_MODEL`
-      selects a quantized model; used for offline / `WAKE_WITHOUT_NET` / fallback. The Kaldi model
-      (`final.mdl`, `HCLG.fst`, `words.txt`, i-vector extractor, RNNLM) is **synced content**, not in
-      the firmware (like the CereVoice voice + ChatScript, [`content-and-conversation.md`](content-and-conversation.md)).
-  - `Speaker{id, doa, id_confidence, doa_observations}` + `EnrollmentState` — **speaker ID** (who's
-    talking + where), with voice enrollment.
-  - `VoiceActivity{state, doa}`, `DOA{doa, vad, doa_ready}`, `PoorSNR{event_id}` — activity/quality.
-- **Barge-in**: `Interrupt` / `AllowInterrupt{allow}` / `CutoffStatistics` — lets a child interrupt
-  Moxie mid-sentence (and measures how often speech was cut off).
+- **XMOS DSP** — acoustic echo cancellation, mic-array **beamforming**, **VAD**, **DOA**. Config via
+  `EchoSuppressConfig` / `XmosConfig`; firmware updated by `bo-xmos-wd`/`xmosdfu`
+  ([below](#xmos-firmware-dfu)); `BO_XMOS_WD` gates service launch on XMOS readiness ("XMOS is not ready,
+  deferring launching services").
+- **STT engines** (`STT_IMPL` / `LOCAL_STT`, [settings-schema](../firmware/settings-schema.md)):
+  - **Cloud (primary): Deepgram** — `wss://deepgram-test.embodied.com/v2/listen/stream`, bearer auth
+    ([network-trust](../protocol/network-trust.md)). A legacy **Google Speech** path also exists
+    (`GoogleAccount{project_id}` selects the GCP project).
+  - **Offline: Kaldi** — `embodied::audio::KaldiSTT` runs a **Kaldi online-nnet3** decoder: MFCC +
+    **i-vector** speaker adaptation (`OnlineNnet2FeaturePipelineInfo`, `AcceptIvector`) → **nnet3**
+    acoustic model (`DecodableNnetSimpleLoopedInfo`) → `HCLG.fst` lattice decode (`LatticeFaster`/`StdToken`)
+    → **RNNLM** rescoring (`kaldi::rnnlm`). `USE_LOCAL_STT_QUANTIZED_MODEL` selects a quantized model; used
+    offline / `WAKE_WITHOUT_NET` / fallback. The model (`final.mdl`, `HCLG.fst`, `words.txt`, i-vector
+    extractor, RNNLM) is **synced content**, like the voice + ChatScript ([content-and-conversation](content-and-conversation.md)).
+  - **ASR biasing** — `PhraseHints{module, hints[]}` (per-activity), `NameHints{names[]}` (family names),
+    `NativeHints`; a revival can pass these to its STT (keyword boosting).
+- STT output: `STTPartial` / final — `speech`, `confidence`, `alternatives`, `language`,
+  `original_speech`/`original_language` (translation), `event_id`, start/end timestamps.
+- **Speaker ID** — `Speaker{id, doa, id_confidence, doa_observations}` + `EnrollmentState` (voice enrollment).
+- Activity/quality — `VoiceActivity{state, doa}`, `DOA{doa, vad, doa_ready}`, `PoorSNR{event_id}`.
+- **Barge-in** — `Interrupt` / `AllowInterrupt{allow}` / `CutoffStatistics` (how often speech was cut
+  off); the state machine is [turn-taking](turn-taking.md#barge-in-interruption).
 
 #### STT response wire format (`DeepgramResponse`)
-What a revival server's STT must **return** — a **Deepgram-compatible** result the robot already parses:
+A Deepgram-compatible result the robot already parses — what a self-hosted STT (Whisper, Vosk, …) returns:
 
 ```proto
 message DeepgramResponse {
@@ -72,16 +65,14 @@ message DeepgramResponse {
 }
 ```
 
-So a self-hosted STT (Whisper, Vosk, …) just needs to emit `{transcript, confidence, words[], is_final,
-speech_final}` in this shape — `speech_final=true` is the endpoint that ends the child's turn. Timing
-telemetry rides alongside in **`ASRAnalytics`** (`detected_speech_start/end`, `asr_first_response`,
-`total/max/min_send_time`, `final_result_count`, `error_message[]`) — a server can populate or omit it.
+`speech_final=true` ends the child's turn. Optional timing telemetry: **`ASRAnalytics`**
+(`detected_speech_start/end`, `asr_first_response`, `total/max/min_send_time`, `final_result_count`,
+`error_message[]`).
 
 #### The internal STT bus interface (`zmqSTT`) — how any engine plugs in
 
-The Deepgram WebSocket above is the *external* (cloud) STT path. On-device, the audio module talks to
-**whichever** STT engine (the Deepgram glue **or** local Kaldi) through one **bus abstraction** —
-`embodied.perception.audio.zmqSTT` — so a custom engine drops in behind a single request/response contract:
+On-device, the audio module talks to whichever engine (Deepgram glue or Kaldi) through one bus contract,
+`embodied.perception.audio.zmqSTT`:
 
 ```proto
 message zmqSTTRequest {
@@ -100,170 +91,123 @@ message zmqSTTResponse {
 }
 ```
 
-The audio module streams **VAD-framed** chunks (`START_OF_SPEECH` → `SPEECH…` → `END_OF_SPEECH`) and the
-engine streams back `PARTIAL` then `FINAL` results — **translation-aware** (`original_*` carry the
-pre-translation text) and speaker-attributed (`speaker_id`), the same duality seen in
-[perception fusion](../protocol/perception-fusion.md#fusedspeechpb-the-voice-fused-onto-the-person).
-
-The engine's results are then republished to the brain as the STT **event stream**:
+VAD-framed chunks go in (`START_OF_SPEECH` → `SPEECH…` → `END_OF_SPEECH`); `PARTIAL` then `FINAL` come
+back, translation-aware and speaker-attributed (cf. [fusion](../protocol/perception-fusion.md#fusedspeechpb-the-voice-fused-onto-the-person)).
+Results are republished to the brain as:
 
 | Event | Meaning |
 |---|---|
-| `STTReady` | the STT engine is up and listening |
+| `STTReady` | engine up and listening |
 | `STTPartial` / `STTFinal { Speaker, speech, confidence, start/endTimestamp, event_id }` | interim / committed transcription, attributed to a `Speaker` (id + DOA) |
 | `SpeechStateChanged { bool state, Speaker }` | a speaker started/stopped talking |
-| `CutoffDetected { cutoff_duration, stt_uuid }` / `NonTargetCutoff` | a **barge-in** cut the current line (a non-target speaker for the latter) |
+| `CutoffDetected { cutoff_duration, stt_uuid }` / `NonTargetCutoff` | a barge-in cut the current line (non-target speaker for the latter) |
 
-**Revival relevance (goal ②).** Two places a server/engine plugs in: emit the **Deepgram-shaped**
-`DeepgramResponse` (above) to be a drop-in cloud STT, **or** implement the `zmqSTT` request/response to be
-a drop-in *on-device* engine (like Kaldi). Either way the brain consumes the same `STTFinal` event stream.
+Either plug-in point (Deepgram-shaped cloud STT or `zmqSTT` engine) yields the same `STTFinal` stream.
 
 ### Wake-word & VAD (fully on-device)
 
-Waking Moxie and detecting speech happen **entirely on the robot** — a server never handles wake; it
-only sees STT *after* a wake + speech. Three layers cooperate:
+A server never handles wake; it sees STT only after wake + speech. Three layers:
 
-- **XMOS DSP (hardware):** the `wk` firmware variants (vs `nowk`, [above](#xmos-firmware-dfu)) enable
-  **on-chip keyword spotting** — the "Hey, Moxie" wake word runs on the XMOS VocalFusion chip, plus its
-  DOA/AEC. `XMOS_VARIANT` (settings) picks the image; `XMOS_VAD_BOOST_*`/`XMOS_DOA_BOOST_*` tune it.
-- **TRILLsson features (TFLite, on RK3288):** `embodied::audio::TrillFeatureExtractor` +
-  `TrillVAD` + `TrillssonListener` run **Google TRILLsson** (a distilled non-semantic-speech embedding
-  model) via `libtensorflowlite` for **voice-activity detection** and speaker/voice features
-  (`USE_TRILS_FEATS`, `TRILL_THRESHOLD/VAD/PREFIX/POSTFIX`, `TRILL_WEBRTC_TH`).
-- **WebRTC VAD** as a classic fallback (`WEBRTC_VAD_AGGRESSIVENESS`, `..._SPEECH_START/STOP`) plus
-  `VAD_CONFIG_HIGH/LOW/OFF`.
+- **XMOS (hardware):** the `wk` firmware variants ([images](#shipped-dsp-images-xmosdfuapk-decode-the-naming))
+  run on-chip keyword spotting for "Hey, Moxie" on the VocalFusion chip, plus DOA/AEC. `XMOS_VARIANT`
+  picks the image; `XMOS_VAD_BOOST_*`/`XMOS_DOA_BOOST_*` tune it.
+- **TRILLsson (TFLite, on the RK3288):** `embodied::audio::TrillFeatureExtractor` + `TrillVAD` +
+  `TrillssonListener` run **Google TRILLsson** (distilled non-semantic speech embedding) via
+  `libtensorflowlite` for VAD and speaker/voice features (`USE_TRILS_FEATS`,
+  `TRILL_THRESHOLD/VAD/PREFIX/POSTFIX`, `TRILL_WEBRTC_TH`).
+- **WebRTC VAD** fallback (`WEBRTC_VAD_AGGRESSIVENESS`, `..._SPEECH_START/STOP`) plus `VAD_CONFIG_HIGH/LOW/OFF`.
 
-A detection emits **`WakeWordEvent{wake_word_detected}`** on the bus (`ACTION_WAKEWORD`,
-"Wakeword key event detected"). Wake can also come from **the button** (`WAKE_BUTTON`, the Macro key —
-[`device-tree.md`](../hardware/device-tree.md)), **touch** (`TOUCH_WAKEUP`/`TOUCH_WAKE_ENABLED`), or
-**smart wakeup** (`ENABLE_SMART_WAKEUP`); `AUDIO_WAKE_SET`/`VC_WAKE`/`WAKE_WITHOUT_NET` gate voice wake.
-
-**Revival implication (goal #2):** wake + VAD are self-contained on the robot. Your server receives
-audio/STT only once Moxie is already awake and hears speech — you don't implement wake-word.
+Detection emits **`WakeWordEvent{wake_word_detected}`** (`ACTION_WAKEWORD`, log "Wakeword key event
+detected. Sending detect intent"). Other wake sources: the **button** (`WAKE_BUTTON`, the Macro key,
+[device-tree](../hardware/device-tree.md)), **touch** (`TOUCH_WAKEUP`/`TOUCH_WAKE_ENABLED`), **smart
+wakeup** (`ENABLE_SMART_WAKEUP`); `AUDIO_WAKE_SET`/`VC_WAKE`/`WAKE_WITHOUT_NET` gate voice wake.
 
 ### Output side — TTS (`embodied.unity`)
-- The brain sends **`CloudTTSRequest{markup, event_id, chunk_num, user_id}`** — the *markup* is the
-  speech + `<mark name="cmd:…">` behavior tags ([`behavior-markup.md`](behavior-markup.md)).
-- Back comes **`CloudTTSResponse{audio: AudioBuffer(buffer, channels, sample_rate), marks: TTSMark[],
-  event_id, chunk_num}`** — i.e. **the server renders the audio** (PCM) and returns it with timing.
-  A local **CereVoice** engine (`libcerevoice_eng.so`) is the on-device TTS path/fallback.
-- **`TTSMark{time, start, end, type, value}`** — timeline marks lifted from the markup, so the Unity
-  face syncs **visemes/lip-sync and gestures** to the audio. `SpeechPlaybackState{isPlaying}` reports
-  playback.
+- Brain → **`CloudTTSRequest{markup, event_id, chunk_num, user_id}`** — the markup is speech + `<mark
+  name="cmd:…">` tags ([behavior-markup](behavior-markup.md)).
+- ← **`CloudTTSResponse{audio: AudioBuffer(buffer, channels, sample_rate), marks: TTSMark[], event_id,
+  chunk_num}`** — **the server renders PCM**. Local **CereVoice** (`libcerevoice_eng.so`) is the
+  on-device path/fallback.
+- **`TTSMark{time, start, end, type, value}`** — timeline marks lifted from the markup so the face syncs
+  visemes and gestures ([face engine §6](unity-face-animation.md#6-the-mouth-visemes-lip-sync)).
+  `SpeechPlaybackState{isPlaying}` reports playback.
 - **`CloudTTSSupplement{event_id, chunk_num, text, markup, tts_engine, translation_time,
-  automarkup_time, synthesis_time, total_time}`** — per-chunk metadata that reveals the **server-side TTS
-  pipeline stages**: *translate* → *auto-markup* (insert behavior marks) → *synthesize*, then chunked
-  back (`chunk_num`). It names the `tts_engine` used and times each stage — a revival server can send
-  this (with zeros) or skip it; it's analytics, not required for playback.
+  automarkup_time, synthesis_time, total_time}`** — per-chunk analytics revealing the server-side stages
+  *translate → auto-markup → synthesize*; optional (zeros or omit).
 
-**For a revival server:** you terminate STT (proxy Deepgram or swap any STT with the same framing),
-answer `RemoteChat`, then satisfy `CloudTTSRequest` by synthesizing audio (any TTS) and returning a
-`CloudTTSResponse` with `TTSMark`s derived from your markup. Chunking (`chunk_num`, `stream_response`,
-`response_chunks`) lets you stream long replies.
+A revival server terminates STT, answers `RemoteChat`, and satisfies `CloudTTSRequest` with any TTS plus
+`TTSMark`s derived from its markup; chunking (`chunk_num`, `stream_response`, `response_chunks`) streams
+long replies.
 
 ## Vision (`embodied.perception.vision`)
 
-The camera (OV2710) feeds a CV stack (`libbo-vision`, TFLite) publishing:
+The camera (OV2710) feeds a CV stack (`libbo-vision`, TFLite; a second engine, `libbo-analytics`, is in
+[native-boundary](native-boundary.md#the-full-module-roster-what-each-remaining-bo-so-actually-is)):
 
 | Message | Content |
 |---|---|
-| `DetectedFacePB` / `FacesDetected` | face bbox (`center_x/y`, `width`, `height`), `confidence`, head **`pitch`/`yaw`** |
-| `FacesRecognized` / `FacesTracked` | identity + tracking across frames |
+| **`FacesDetectedPB { frame_id, DetectedFacePB faces[] }`** | per-frame detections; `DetectedFacePB`: `center_x/y`, `width`, `height`, `confidence`, head `pitch`/`yaw`/`roll`, **`emotion` + `emotion_proba`**, `left_eye_x/y` + `right_eye_x/y`, `occlusion`, a **`gesture`** string |
+| **`FacesTrackedPB { TrackedFacePB faces[] }`** | tracked faces: stable **`id`**, recognized **`name`**, **`WorldPosition { center_x/y/z, width, height }`** |
+| `FacesRecognizedPB` / `RecognizedPersonPB` / `Person { Face }` | recognition result; a detected person paired with their face |
 | `FaceIDEnrollmentState` | face-enrollment progress/errors |
 | `PersonPB` / `PeopleDetectedPB` | person bboxes + `frame_id` (body detection) |
-| `PosesEstimated` | body pose keypoints |
+| **`PosesEstimatedPB { PosePB people[] }`** | `PosePB`: `class_id`, `new_pose_id`, `proba`, **`jointPosPB joints[] { index, x, y }`** — 2D skeleton keypoints (not motor names, [hardware-map](../hardware/hardware-map.md#arm-anatomy-what-arm_in_out-actually-is)) |
 | `Gaze` (unity) | where the person/robot is looking |
-| `OcclusionDetected`, `RapidMotionDetected` | camera covered / fast motion |
-| **`QRPB{qrcode, timestamp}`** | **decoded QR string** — the vision QR event (feeds both the setup grammar in [`qr-commands.md`](../protocol/qr-commands.md) and content QRs in [`content-and-conversation.md`](content-and-conversation.md)) |
-| `BookId` / `DrawId` / `ImageToText` | activity-specific recognizers (reading, drawing) |
+| `OcclusionPB { occluded, occlusion_percentage }` / `RapidMotionPB { rapid_motion }` | camera covered / fast motion |
+| **`QRPB{qrcode, timestamp}`** | decoded QR string — feeds both the setup grammar ([qr-commands](../protocol/qr-commands.md)) and content QRs ([content-and-conversation](content-and-conversation.md#qr-inside-content-ties-to-the-qr-toolkit)) |
+| **`ShowState { Type, State }`** | "show me" brackets: `Type` = `BOOK` / `DRAWING` / **`ARUCO`** (fiducial) / `FACE`; `State` = `STARTED` / `FINISHED` |
+| `OfflineMediaPB` + `FacesAnalyzedPB { AnalyzedFacePB }` + `OfflineAnalysisReady` | analysis of **stored media**, not just the live feed |
 
-### The detection wire schema — detection → tracking → pose
-
-The vision events above have a concrete per-frame schema (the raw output that feeds
-[perception fusion](../protocol/perception-fusion.md)), a **detection → tracking** progression:
-
-- **`FacesDetectedPB { frame_id, DetectedFacePB faces[] }`** — the per-frame face detections. Each
-  **`DetectedFacePB`** is rich: `center_x/y`, `width`, `height`, `confidence`, head pose
-  (`pitch`/`yaw`/`roll`), **`emotion` + `emotion_proba`** (the classified expression), `left_eye_x/y` +
-  `right_eye_x/y` (eye landmarks), `occlusion`, and a **`gesture`** string (a recognized face gesture).
-- **`FacesTrackedPB { TrackedFacePB faces[] }`** — the same faces after **tracking**: a `TrackedFacePB`
-  adds a stable **`id`** and a recognized **`name`** to the detection, plus a **`WorldPosition
-  { center_x/y/z, width, height }`** — the 3D placement. `FacesRecognizedPB` / `RecognizedPersonPB` carry
-  the recognition result (and `Person { Face }` pairs a detected person with their face). So a face goes **detected (2D + emotion) → tracked (id + name + 3D world) →
-  [fused](../protocol/perception-fusion.md)**.
-- **`PosesEstimatedPB { PosePB people[] }`** — body **pose estimation**: each `PosePB` is a `class_id`, a
-  `new_pose_id`, a `proba`, and **`jointPosPB joints[] { index, x, y }`** — the 2D **skeleton keypoints**.
-  (These are the human-pose keypoints hardware-map warns are *not* motor names, [hardware-map](../hardware/hardware-map.md#arm-anatomy-what-arm_in_out-actually-is).)
-- **`OcclusionPB { occluded, occlusion_percentage }`** (camera covered) and **`RapidMotionPB
-  { rapid_motion }`** (fast motion) — frame-quality signals.
-- **`ShowState { Type, State }`** — the "show me" state machine: **`Type`** = `BOOK` / `DRAWING` /
-  **`ARUCO`** (fiducial marker) / `FACE`, **`State`** = `STARTED` / `FINISHED`. So when the child holds a
-  book, a drawing, an **ArUco marker**, or a face up to the camera, `ShowState` brackets the show — the
-  trigger the [camera-driven activities](#camera-driven-activities-content-activates-these) below key off.
-- **Offline analysis** (`OfflineFace`): `OfflineMediaPB` + `FacesAnalyzedPB { AnalyzedFacePB }` +
-  `OfflineAnalysisReady` — the robot can analyze **stored media** (not just the live feed) through the
-  same `AnalyzedFacePB` (head pose + FACS action units) path below.
+A face goes **detected (2D + emotion) → tracked (id + name + 3D) → [fused](../protocol/perception-fusion.md)**.
+Moxie reads the child's expression (`emotion`), distinct from its own expressed mood.
 
 ### Face recognition & enrollment data model
-How Moxie *recognizes* a returning child (the [MXNet embedding path](../firmware/firmware-inventory.md#the-on-device-ml-stack-four-frameworks)):
+Recognition uses the [MXNet embedding path](../firmware/firmware-inventory.md#the-on-device-ml-stack-four-frameworks):
 
-- **`FaceDescriptor`** — a detected face's full record: geometry (`center`, `w`/`h`, `pitch`/`yaw`/`roll`),
-  quality (`blur`, `occlusion`), landmarks (`left_eye`, `right_eye`, `chin`), and — the key field —
-  **`repeated float descriptors`**: the **face-embedding vector** (the MXNet network's output). Recognition
-  = nearest-neighbour of this vector against enrolled users; `id` is the matched identity.
-- **`FaceIDEnrollmentInfo{uuid, number_of_enrollments}`** + **`FaceIDEnrollmentsInfo{enrollments[]}`** — the
-  enrollment registry: per-user UUID and how many face samples were captured (the "learn my face" flow,
-  [content-and-conversation](content-and-conversation.md#session-sleep-lifecycle)).
-- **`AnalyzedFacePB`** — bbox + `HeadPosePB` + **`ActionUnitPB`** (facial **FACS action units** → the
-  child's expression/emotion, feeding `emotion`/`emotion_proba`) + `landmarks[]`.
+- **`FaceDescriptor`** — geometry (`center`, `w`/`h`, `pitch`/`yaw`/`roll`), quality (`blur`, `occlusion`),
+  landmarks (`left_eye`, `right_eye`, `chin`), and **`repeated float descriptors`** — the face-embedding
+  vector. Recognition = nearest neighbour against enrolled users; `id` is the match.
+- **`FaceIDEnrollmentInfo{uuid, number_of_enrollments}`** + **`FaceIDEnrollmentsInfo{enrollments[]}`** —
+  the enrollment registry ("learn my face", [content-and-conversation](content-and-conversation.md#session-sleep-lifecycle)).
+- **`AnalyzedFacePB`** — bbox + `HeadPosePB` + **`ActionUnitPB`** (FACS action units → `emotion`/
+  `emotion_proba`) + `landmarks[]`.
 
-> 🔒 **Privacy / revival note:** the face **embedding is biometric data**. It lives and matches
-> **on-device** — recognition never needs the cloud, so a revival server neither receives nor stores it
-> (matching the child-PII encryption stance in [crypto-and-keys §5b](../phone/crypto-and-keys.md#5b-field-level-encryption-apimodelschildjava177-196-asdecrypteddata)).
-> A minimal server can ignore face-ID entirely; the robot recognizes locally.
+> 🔒 The embedding is **biometric data** and matches **on-device**; a revival server neither receives nor
+> stores it (cf. child-PII encryption, [crypto-and-keys §5b](../phone/crypto-and-keys.md#5b-field-level-encryption-apimodelschildjava177-196-asdecrypteddata)).
 
 ### Camera-driven activities (content activates these)
 
-Beyond faces/people, the vision stack has **object/scene recognizers that content modules switch on**
-for specific activities (via `Enable*{run}` toggles + the `eb_enable_*` execution actions,
-[`content-and-conversation.md`](content-and-conversation.md)):
+Recognizers content modules switch on via `Enable*{run}` toggles and `eb_enable_*` execution actions:
 
 | Recognizer | Proto | Enable | Activity |
 |---|---|---|---|
-| **Book** | `BookIdPB{bookname, center_x/y}` | `EnableBook` | "read a book with Moxie" — IDs the physical book held up |
-| **Draw / card** | `DrawIdPB{drawname, center_x/y}` | `EnableDraw` | drawing/card recognition — IDs a card/drawing shown to the camera |
-| **Image→Text (VQA)** | `ImageToTextPB{question, prompt, description, targeted_region, is_mentor}` | `EnableICModule` | **visual question-answering / captioning** — Moxie "looks at" a region and describes/answers (a multimodal VLM; gated by `IMAGE_CAPTIONING`/`IMAGE_CAPTIONING_MODEL`, [`settings-schema.md`](../firmware/settings-schema.md)) |
-| **QR** | `QRPB{qrcode}` | `EnableQRCode` | content/launch QR ([`qr-commands.md`](../protocol/qr-commands.md)) |
-| **Gaze / look-at** | `LookAtMeRequest{user, bot}` | — | request the robot make eye contact with a specific user |
+| **Book** | `BookIdPB{bookname, center_x/y}` | `EnableBook` | IDs the physical book held up |
+| **Draw / card** | `DrawIdPB{drawname, center_x/y}` | `EnableDraw` | IDs a card/drawing shown |
+| **Image→Text (VQA)** | `ImageToTextPB{question, prompt, description, targeted_region, is_mentor}` | `EnableICModule` | captioning / visual QA on a region (gated by `IMAGE_CAPTIONING`/`IMAGE_CAPTIONING_MODEL`; `IMAGE_CAPTIONING_TIMEOUT`/`IMAGE_CAPTION_BY_RB` route it locally or via the remote brain) |
+| **QR** | `QRPB{qrcode}` | `EnableQRCode` | content/launch QR |
+| **Look-at** | `LookAtMeRequest{user, bot}` | — | make eye contact with a specific user |
 
-So a content module (e.g. a reading or drawing activity) toggles the recognizer it needs, and reacts
-to the resulting `*IdPB`/`ImageToTextPB` event. `ImageToText` is the notable one — a **camera→VLM**
-capability (the `IMAGE_CAPTIONING_TIMEOUT`/`IMAGE_CAPTION_BY_RB` settings route it locally or via the
-remote brain). For a revival server (goal #2), these are optional: a module can ignore them, or you can
-implement the recognizer server-side and return the `*IdPB`/description.
-
-Perception + audio are fused (`embodied.perception.fusion.FusedPeople`) so the brain knows **who** is
-present, **where**, and whether they're **engaged/looking** — driving targeting (`RobotEngageTurn`,
-`RobotTurnToOutOfViewChatTarget`) and the `BlockedType` reasons (`TARGET_OUT_OF_VIEW`, `NOT_ENGAGED`)
-in [`cloud-protocol.md`](../protocol/cloud-protocol.md).
+These are optional for a server: ignore them, or implement the recognizer server-side and return the
+`*IdPB`/description. Audio + vision are fused (`embodied.perception.fusion.FusedPeople`) into who is
+present, where, and whether engaged — driving targeting (`RobotEngageTurn`,
+`RobotTurnToOutOfViewChatTarget`) and the `BlockedType` reasons (`TARGET_OUT_OF_VIEW`, `NOT_ENGAGED`) in
+[cloud-protocol](../protocol/cloud-protocol.md).
 
 ## XMOS firmware (DFU)
 
-The **XMOS audio DSP** — a VocalFusion-class far-field voice chip (mic-array beamforming, AEC,
-wake-word) — is a **third embedded processor** with its own firmware, updated from Android over
-**USB DFU** (`libusb`, `/dev/bus/usb`) by `xmosdfu` / `bo_xmosupdate` (native `XMOSDFU` class).
+The XMOS VocalFusion-class far-field voice chip is a **third embedded processor**, updated from Android
+over **USB DFU** (`libusb`, `/dev/bus/usb`) by `xmosdfu` / `bo_xmosupdate` (native `XMOSDFU` class).
 
 | Aspect | Detail |
 |---|---|
-| Transport | **USB DFU** via libusb (`libusb_open_device_with_vid_pid`, `find_usbfs_path`) |
+| Transport | USB DFU via libusb (`libusb_open_device_with_vid_pid`, `find_usbfs_path`) |
 | Ops | `xmos_dfu_resetintodfu` → `--download <image>` → `xmos_dfu_resetfromdfu`; **`--revertfactory`** restores the factory image |
-| Active image | **`/vendor/etc/firmware/xmosdfu.bin`** (and `xmosdfu-<variant>.bin`) — the deployed DSP firmware |
-| Trigger | `bo-android`'s **`BoXmosWatchdog`** (`isXmosUpdateRequired`, "Checking for XMOS Update"); gated by `FEA_XMOS_WATCHDOG` and XMOS readiness at boot ([`boot-and-launcher.md`](../firmware/boot-and-launcher.md)) |
+| Active image | **`/vendor/etc/firmware/xmosdfu.bin`** (and `xmosdfu-<variant>.bin`) |
+| Trigger | `bo-android`'s **`BoXmosWatchdog`** (`isXmosUpdateRequired`, "Checking for XMOS Update"); gated by `FEA_XMOS_WATCHDOG` and XMOS readiness at boot ([boot-and-launcher](../firmware/boot-and-launcher.md)) |
 
 ### The update chain — three layers (`v24.10.803`)
 
-Reflashing the DSP is a **three-app/-thread chain**, not one call — decompiled from `bo-android`'s
-`me.embodied.services.XMOSDFU` + the standalone `me.embodied.xmosdfu` app:
+From `bo-android`'s `me.embodied.services.XMOSDFU` + the standalone `me.embodied.xmosdfu` app:
 
 ```mermaid
 flowchart LR
@@ -273,28 +217,23 @@ flowchart LR
   dfu["DFU thread<br/>find XMOS (VID 0x20B1) → native"] --> nat["JNI: Configure · Flash · Validate<br/>(libusb control transfers)"]
 ```
 
-1. **`XMOSDFU` service (in `bo-android`)** — *orchestration*. Picks the image from the **`xmos_variant`**
-   setting → `/vendor/etc/firmware/xmosdfu-<variant>.bin` (+ `xmosdfu-<variant>_version.txt`), falling
-   back to plain `xmosdfu.bin`. **Version-gates**: it reads the `*_version.txt`, compares to the
-   SharedPreference `xmos_version`, and flashes **only if they differ** (a variant's version is encoded
-   `firstChar*100 + baseVersion`). It then `bindService`s to the DFU app, passing the chosen path as
-   `EXTRA_FW_PATH`/`fwpath`, and polls progress on a timer.
-2. **`ServiceDFU` (in `me.embodied.xmosdfu`)** — the *DFU driver service*, reached over **Messenger IPC**
-   (`ComponentName("me.embodied.xmosdfu", "…ServiceDFU")`). On `Flash(fwpath)` it spawns a `DFU` thread
-   and exposes `GetProgress()` + a `PASS`/`FAIL` state back to the orchestrator.
-3. **`DFU` thread** — finds the XMOS by **USB vendor id `0x20B1` (8369, XMOS Ltd)** (`USB.java`), then runs
-   **`Setup → Flash → Validate`** through three **native JNI** methods — `Configure(int)`, `Flash(int,
-   path)`, `Validate(int, path)` — which are the actual [libusb control transfers](#xmos-firmware-dfu)
-   (search 10 s, reset 10 s, 1 KB blocks). So the Java is discovery + orchestration; the DFU wire protocol
-   is in native code.
+1. **`XMOSDFU` service** (orchestration) — picks `/vendor/etc/firmware/xmosdfu-<variant>.bin` (+
+   `xmosdfu-<variant>_version.txt`) from the **`xmos_variant`** setting, falling back to `xmosdfu.bin`.
+   Flashes **only if** the `*_version.txt` differs from SharedPreference `xmos_version` (a variant's
+   version is encoded `firstChar*100 + baseVersion`), then `bindService`s the DFU app with the path as
+   `EXTRA_FW_PATH`/`fwpath` and polls progress on a timer.
+2. **`ServiceDFU`** (`me.embodied.xmosdfu`, via **Messenger IPC**, `ComponentName("me.embodied.xmosdfu",
+   "…ServiceDFU")`) — on `Flash(fwpath)` spawns a `DFU` thread; exposes `GetProgress()` and `PASS`/`FAIL`.
+3. **`DFU` thread** — finds the XMOS by **USB vendor id `0x20B1` (8369, XMOS Ltd)** (`USB.java`), then
+   **`Setup → Flash → Validate`** through JNI `Configure(int)`, `Flash(int, path)`, `Validate(int, path)` —
+   the libusb control transfers (search 10 s, reset 10 s, 1 KB blocks).
 
-**For custom firmware:** the DSP is reflashable entirely from Android userspace over USB — drop a
-`xmosdfu[-variant].bin` at `/vendor/etc/firmware/`, bump its `_version.txt`, and the watchdog re-flashes
-on next boot. No JTAG needed for the DSP.
+Custom firmware can reflash the DSP from userspace: drop `xmosdfu[-variant].bin` in
+`/vendor/etc/firmware/`, bump its `_version.txt`, and the watchdog flashes on next boot — no JTAG.
 
 ### Shipped DSP images (`xmosdfu.apk`) — decode the naming
-`res/raw/` ships **8** DSP images (`v24.10.803`): six `nowk`/mic builds at ~146 KB and two `wk`
-(wake-word) builds at ~426 KB — the wake model adds ~280 KB:
+`res/raw/` ships **8** images (`v24.10.803`): six `nowk`/mic builds (~146 KB) and two `wk` builds
+(~426 KB; the wake model adds ~280 KB):
 
 | Image | Size |
 |---|--:|
@@ -303,34 +242,28 @@ on next boot. No JTAG needed for the DSP.
 | `p9_48k_10_10_mic23.bin` | 147,456 |
 | **`wk_moxie_ep1_48k_10_10_cm.bin`** · **`wk_moxie_p9_48k_10_10_cm.bin`** | 425,728 |
 
-The fields: **p9 / ep1** — the audio-board rev in XMOS's *own* naming (Moxie **P9** / **EP1**), which is
-**not** the Lizard `REVISION_D*` / MoxieBlue scheme in [hardware-map](../hardware/hardware-map.md) — and
-note the two `wk` builds are `wk_moxie_ep1`/`wk_moxie_p9`, not the `wk_blue` an earlier read assumed;
-**16k / 48k** — sample rate; **10_10 / 10_30** — DSP pipeline/geometry; **cm** —
-combined/comms mic mode, **mic01 / mic23** — active mic pair; **wk / nowk** — wake-word on/off (only the
-`wk` pair carries the on-chip wake model, and only at 48k/cm for the two board revs). `test.wav` (3 MB)
-ships alongside for audio validation.
+Fields: **p9 / ep1** — audio-board rev in XMOS's own naming (Moxie P9 / EP1; *not* the Lizard
+`REVISION_D*` / MoxieBlue scheme in [hardware-map](../hardware/hardware-map.md)); the wake builds are
+`wk_moxie_ep1`/`wk_moxie_p9` (not `wk_blue`); **16k / 48k** — sample rate; **10_10 / 10_30** — DSP
+pipeline/geometry; **cm** — combined/comms mic mode; **mic01 / mic23** — active mic pair; **wk / nowk** —
+wake-word on/off (only at 48k/cm, one per board rev). `test.wav` (3 MB) ships for audio validation.
 
 ## The three embedded processors (firmware map)
 
-Moxie has **three** processors, each with its own firmware updated from the Android side:
-
 | Processor | Role | Update path | Image format |
 |---|---|---|---|
-| **RK3288** (this OS) | main SoC — brain, vision, Unity face | A/B `update_engine` OTA ([`ota-and-recovery.md`](../firmware/ota-and-recovery.md)) | signed `payload.bin` |
-| **Lizard STM32 MCU** | motors · touch · IMU · LEDs · battery | UART `/dev/ttyS3`, GOBY bootloader ([`hardware-map.md`](../hardware/hardware-map.md)) | Intel HEX @ `0x08000000` |
+| **RK3288** (this OS) | main SoC — brain, vision, Unity face | A/B `update_engine` OTA ([ota-and-recovery](../firmware/ota-and-recovery.md)) | signed `payload.bin` |
+| **Lizard STM32 MCU** | motors · touch · IMU · LEDs · battery | UART `/dev/ttyS3`, GOBY bootloader ([hardware-map](../hardware/hardware-map.md)) | Intel HEX @ `0x08000000` |
 | **XMOS DSP** | mic array · AEC · wake-word | **USB DFU** (libusb) | `.bin` → `/vendor/etc/firmware/xmosdfu.bin` |
 
-> `xmosdfu.apk` also bundles **newer Lizard MCU images** (`res/raw/d{4,5,6}_lizard_app.hex` = the
-> D4/D5/D6 board revs) in addition to XMOS `.bin`s — so this one app can reflash both the DSP and the
-> MCU. (`bo-firmwareUpdate` carries the older `v4_0_*`/`v7_7_*` Lizard images.)
+`xmosdfu.apk` also bundles newer **Lizard MCU images** (`res/raw/d{4,5,6}_lizard_app.hex` = D4/D5/D6
+board revs), so one app can reflash both DSP and MCU; `bo-firmwareUpdate` carries the older
+`v4_0_*`/`v7_7_*` Lizard images.
 
-## For custom firmware (goal #1)
-
-The XMOS DSP and camera CV run as their own components (`BO_AUDIO`, `BO_VISION`) publishing these
-protos on the ZMQ bus ([`robot-ipc-protocol.md`](../protocol/robot-ipc-protocol.md)). A minimal-invasive build
-keeps them and just consumes their events; a full custom stack must reproduce wake-word + VAD/DOA (or
-drive the XMOS directly) and the face/person detectors.
+**For custom firmware:** audio and vision run as their own components (`BO_AUDIO`, `BO_VISION`)
+publishing these protos on the ZMQ bus ([robot-ipc-protocol](../protocol/robot-ipc-protocol.md)). Keep
+them and consume their events, or reproduce wake-word + VAD/DOA (or drive the XMOS directly) and the
+face/person detectors.
 
 ---
 📖 [Reverse-engineering index](../README.md) · [Cloud protocol](../protocol/cloud-protocol.md) · [Behavior markup](behavior-markup.md) · [Docs index](../../README.md)

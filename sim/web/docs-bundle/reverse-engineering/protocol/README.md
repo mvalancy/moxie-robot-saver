@@ -1,21 +1,25 @@
 # 🔌 Protocol — the robot↔server & on-device wire
 
-The **wire** between robot, server, and the on-device modules — the bus, cloud/MQTT/REST, and the recovered protobuf.
+The wire formats between robot, server and on-device modules, recovered from firmware `v24.10.803`.
+Start with **cloud-protocol** (what a self-hosted server implements) and **robot-ipc-protocol** (the
+on-device bus); the rest go deep on one message family each.
 
-- [`robot-ipc-protocol.md`](robot-ipc-protocol.md) — the on-device **ZeroMQ + protobuf** message bus that wires the modules together; the module map and behavior-command markup.
-- [`cloud-protocol.md`](cloud-protocol.md) — the robot↔backend surface (REST `client-service`, MQTT topics, Deepgram STT, the chat envelope) — **what a self-hosted server must implement**.
-- [`remote-chat-protocol.md`](remote-chat-protocol.md) — the **per-turn robot↔brain conversation RPC** (`RemoteChat.proto`): the full `RemoteChatResponse` contract a self-hosted brain returns — `output{text,markup,mood,dialog_act,emotion,sentiment}`, **action commands** (`launch`/`exit_module`/`execute`/`sleep`/`tangent`) that drive activity navigation, the `input.safety` **moderation verdict**, `RemoteChatMetrics`, the 10 `ResultCode`s, streaming, and the dialog-act/emotion/signal taxonomies.
-- [`device-config-and-telemetry.md`](device-config-and-telemetry.md) — the **`embodied.logging` data-model**: `RobotCloudConfig` (the master config the cloud pushes — child/bedtime/alarms/volume/OTA/privacy), `RobotStatus`, the `Packet`/`Log*` **telemetry envelope**, the `LoggingPolicy` (`NO_DATA`/`NO_MEDIA`/`FULL`) data-collection gate, the `CloudStatus.UserState` pairing lifecycle, and the `IOTEndpoint` taxonomy (incl. `EMBODIED_LOCAL`/`OPEN_MOXIE`).
-- [`runtime-control.md`](runtime-control.md) — the **imperative runtime-control surface**: bus commands that change a *running* brain live (vs. the declarative config) — `SystemVolumeModify` (abs/relative), `SystemSlowInputModify` (accessibility pacing), `ChatbotListeningRequest` (force listen), `AllowCutoffEvent` (barge-in gate), `SoftReset`/`HardReset`, and the ChatScript lifecycle.
-- [`power-and-system-events.md`](power-and-system-events.md) — the **power lifecycle protocol**: the authoritative `PowerStatePB` state enum (11 states, 0–10), the `ResumeCause` wake taxonomy, `RESTART_XMOS` co-processor recovery, and the `embodied.sys` status events (Wi-Fi vs internet, STT/OTA health, shutdown, the unpair/telehealth **disengage** flow, and **time/timezone/wake-alarms** — `TimeZoneInfo` (Olson id) + `UserAlarmRequest`/`UserAlarmTriggered`, the on-device implementation of the cloud `WakeSchedule`/bedtime).
-- [`perception-fusion.md`](perception-fusion.md) — the **fused world-model of people**: `libbo-fusion.so` ties face + body + voice (DOA/VAD/STT) into one tracked `FusedPersonPB` with 3D **world** + **screen** coordinates, per-eye landmarks, head pose, engagement, and a **translation-aware** speech model, plus the person-level event stream (added/removed/moved, started/stopped-speaking with STT-vs-VAD source, smiled, engaged/disengaged) the brain reasons over.
-- [`offline-and-brain-state.md`](offline-and-brain-state.md) — **offline behavior + persisted brain state** (`embodied.robotbrain.serialized`): the `FallbackInfo` tree Moxie serves on `ERROR_OFFLINE` (with the 6-option `FallbackOptions` strategy + the `FallbackType` decision), pushed by the server via `upgrade_fallbacks`; `CSData` (the reboot-surviving resume point); and `UserRecommendationData` (the recommender's persisted tag-history + RNG state). Why a stuck robot still talks with no backend.
-- [`telehealth.md`](telehealth.md) — the **remote-puppet ("TeleBrain") protocol**: `STATE_TELEBRAIN` runs perception + MAINAPP with **no local brain** while a remote operator drives Moxie via `TeleHealth.proto` (`START_SESSION`/`PLAY_OUTPUT`/`INTERRUPT`), `Output{text, markup}` over MQTT.
-- [`qr-commands.md`](qr-commands.md) — the **complete QR grammar** the robot scans (pairing / VPN / debug-factory commands), read from `bo-wifi`.
-- [`network-trust.md`](network-trust.md) — the TLS trust model: **CA-store validation, no pinning**; what cert a self-hosted server needs, and the precise pre-801 block.
-- [`unity-mainapp-interface.md`](unity-mainapp-interface.md) — the **MAINAPP (Unity front-end) protocol** (`embodied.unity`): the complete map of the seam between the brain logic and the Unity face/audio/camera app — app lifecycle (`MainAppStatus`/`SoftwareVersion`), the virtual **camera** (`RobotCamera`), **audio out** (CloudTTS `AudioBuffer`+`TTSMark`s, `AudioNotif` playback control, `PredictedMotorNoise` for AEC), engagement/turn signals, runtime **asset bundles**, the `UserPairingRequest` action set, FPS/TTS **stats**, and the markup authoring tool.
-- [`proto-catalog.md`](proto-catalog.md) — the **browsable catalog** of all 382 messages / 84 enums / 2074 fields (auto-generated).
-- [`recovered-proto/`](recovered-proto/) — **120 `.proto` files** reconstructed from the robot binaries; the machine-readable protocol.
+| Doc | What it covers |
+|---|---|
+| [`cloud-protocol.md`](cloud-protocol.md) | Robot↔backend: REST `client-service`, the `IOTEndpoint` host table, `ServiceConfiguration`/`cloud.json`, MQTT topic map (incl. `commands/zmq`), device auth (RS256 JWT), Deepgram STT, `CloudQuery`, file sync, the full session sequence, minimum viable backend. |
+| [`robot-ipc-protocol.md`](robot-ipc-protocol.md) | The on-device ZeroMQ + protobuf bus: ports, two-frame framing, module/package map, `<mark cmd:…>` behavior markup, the 31 console commands. |
+| [`remote-chat-protocol.md`](remote-chat-protocol.md) | Per-turn robot↔brain RPC: `RemoteChatRequest`/`RemoteChatResponse`, the 10 `ResultCode`s, output scoring, navigation actions, `InputSafety`, metrics, dialog-act/emotion/signal taxonomies. |
+| [`device-config-and-telemetry.md`](device-config-and-telemetry.md) | `embodied.logging` data model: `RobotCloudConfig`, the child-PII boundary, `RobotStatus`, `CloudStatus.UserState`, `Packet` telemetry, `LoggingPolicy`. |
+| [`runtime-control.md`](runtime-control.md) | Imperative commands to a running brain: volume, slow-input pacing, force-listen, barge-in gate, soft/hard reset, ChatScript lifecycle. |
+| [`power-and-system-events.md`](power-and-system-events.md) | `PowerStatePB` (11 states), `ResumeCause`, `RESTART_XMOS`, Wi-Fi/internet/STT/OTA status, unpair/disengage, timezone and wake alarms. |
+| [`perception-fusion.md`](perception-fusion.md) | `libbo-fusion` people model: `FusedPersonPB` (world + screen frames, eyes, head pose, engagement, translation-aware speech) and the person event stream. |
+| [`offline-and-brain-state.md`](offline-and-brain-state.md) | Persisted brain state: the `FallbackInfo` offline tree (pushed via `upgrade_fallbacks`), `CSData` resume point, recommender memory. |
+| [`telehealth.md`](telehealth.md) | Remote-puppet mode: `STATE_TELEBRAIN` + `TeleHealth.proto` (`START_SESSION`/`PLAY_OUTPUT`/`INTERRUPT`) over MQTT. |
+| [`unity-mainapp-interface.md`](unity-mainapp-interface.md) | `embodied.unity` brain↔Unity seam: lifecycle, virtual camera, CloudTTS audio + marks, playback control, asset bundles, pairing actions, stats, markup tool. |
+| [`qr-commands.md`](qr-commands.md) | The closed QR grammar: `PA`/`VN`/JSON forms, the 4 setup-app debug commands, the 3 native `RightPoint` codes (`report`, `endpoint_update`, `om`), Wi-Fi support, setup-app status/error codes, runtime content QR. |
+| [`network-trust.md`](network-trust.md) | TLS trust: CA-store validation with no pinning, `disable_verify`, why pre-801 is stuck, NTP/clock skew. |
+| [`proto-catalog.md`](proto-catalog.md) | Generated catalog of every message, enum and field (382 messages · 84 enums · 2074 fields). |
+| [`recovered-proto/`](recovered-proto/) | The 120 `.proto` files reconstructed from the robot binaries. |
 
 ---
-📖 [Reverse-engineering index](../README.md) · [Coverage](../COVERAGE.md) · [Exploration map](../EXPLORATION-MAP.md)
+📖 [Reverse-engineering index](../README.md) · [Field guide](../FIELD-GUIDE.md) · [Exploration map](../EXPLORATION-MAP.md)

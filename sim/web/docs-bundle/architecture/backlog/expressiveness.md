@@ -28,7 +28,7 @@
 > **Clean-room.** Every vocabulary, id and grammar below is taken from **our own** reverse-engineering
 > pages (chiefly [`behavior-markup.md`](../../reverse-engineering/runtime/behavior-markup.md),
 > [`behavior-tree-engine.md`](../../reverse-engineering/runtime/behavior-tree-engine.md),
-> [`behavior-nodes.md`](../../reverse-engineering/runtime/behavior-nodes.md),
+> [`behavior-tree-engine.md` node catalog](../../reverse-engineering/runtime/behavior-tree-engine.md#the-node-catalog-the-65-robotbt_-nodes),
 > [`remote-chat-protocol.md`](../../reverse-engineering/protocol/remote-chat-protocol.md)) — never from the
 > vendor app. **OpenMoxie** (MIT, © Justin Beghtol) is read as prior art and cited by path: we describe what
 > its engine *does* and port the **behaviors**, we do not copy its code.
@@ -185,7 +185,7 @@ Call sites change minimally:
 | **Voice (SSML)** | `<usel variant genre>` with `genre ∈ {none, question, motivational, intimate, excited}` and `variant` 0–8; `<break time>`; `<prosody pitch rate volume>`; `<emphasis level="strong">`; `<phoneme ph>`; `<say-as interpret-as>` (10 values) | same, §"Speech markup (SSML / CereVoice)", lines 35–43 |
 | **Screen icons** | `cmd:icons-v2` — `command` (0 = show, 2 = clear), `index`, `transition`, `volume`, **four** `icon0..icon3 {iconType, value, background}` slots, `highlight`. Confirmed `value`s: **`School`, `Birthday`, `Medical`, `Learning_About_Family_03_Heart_Family`** | same, §"Data schemas", lines 139–159 |
 | **SFX** | `cmd:playaudio` — `SoundToPlay`, `LoopSound`, `channel` (**`FX`=0 · `BackGround`=1 · `Stinger`=2 · `VocalGesture`=3**), `Volume`, `FadeInTime`/`FadeOutTime`; `cmd:stopaudio` with `scope` (`All`=0 / `Channel`=1). Confirmed asset ids: **only two** — `sfx_twinkly_upbeat_stinger_1`, `moxie_mu_cast_zarcona_theme_loop_v2` | same, lines 97–105 |
-| **Gaze** | **there is no gaze verb.** Gaze is on-device (weighted interest points → `AttentionTarget` → IK look-at). A cloud reaches it only *indirectly*, by choosing a look-bearing tree (`Bht_Search`, `Bht_Idle_Curious`, `Bht_Idle_Listening`, `Bht_Idle_Near_Focused`) | [`gaze-and-attention.md`](../../reverse-engineering/runtime/gaze-and-attention.md); node side in [`behavior-nodes.md`](../../reverse-engineering/runtime/behavior-nodes.md) §"Gaze → where Moxie looks" |
+| **Gaze** | **there is no gaze verb.** Gaze is on-device (weighted interest points → `AttentionTarget` → IK look-at). A cloud reaches it only *indirectly*, by choosing a look-bearing tree (`Bht_Search`, `Bht_Idle_Curious`, `Bht_Idle_Listening`, `Bht_Idle_Near_Focused`) | [`gaze-and-attention.md`](../../reverse-engineering/runtime/gaze-and-attention.md); node side in [`behavior-tree-engine.md` node catalog](../../reverse-engineering/runtime/behavior-tree-engine.md#the-node-catalog-the-65-robotbt_-nodes) (Gaze table) |
 | **Dialog acts** | `RemoteDialog.DialogAct` (22): `abandon, apology, apology_response, appreciation, backchannelling, closing, complaint, opinion, statement_non_opinion, factual_question, opinion_question, hold, opening, yes_no_question, pos_answer, neg_answer, other_answers, command, comment, thanking, other, timeout` | [`remote-chat-protocol.md`](../../reverse-engineering/protocol/remote-chat-protocol.md) §Taxonomies, lines 119–122 |
 | **Signals** | `RemoteSignals.Signal` (9): `no_signal, closing, apology, interrupted_speech, complaint_clarification, confirmation_agreement, interest, non_interest, rejection_disagreement` | [`behavior-markup.md`](../../reverse-engineering/runtime/behavior-markup.md) lines 183–189 |
 
@@ -484,7 +484,7 @@ def render(p) -> str: ...                      # the ONLY place a mark is minted
 > on-device: weighted interest points → `AttentionTarget` → IK look-at with saccades
 > ([`gaze-and-attention.md`](../../reverse-engineering/runtime/gaze-and-attention.md)), driven from trees by
 > `RobotBT_GazeControlTarget` / `RobotBT_GazeControlManualTarget` / `RobotBT_GazeDisabler`
-> ([`behavior-nodes.md`](../../reverse-engineering/runtime/behavior-nodes.md)). The only cloud-side handle
+> ([`behavior-tree-engine.md` node catalog](../../reverse-engineering/runtime/behavior-tree-engine.md#the-node-catalog-the-65-robotbt_-nodes)). The only cloud-side handle
 > is **choosing a look-bearing behavior tree** (`Bht_Search`, `Bht_Idle_Curious`, `Bht_Idle_Listening`,
 > `Bht_Idle_Near_Focused`). The `gaze` slot is therefore a **closed 4-value enum over trees**, not a
 > direction — and the spec says so rather than inventing a verb. Widening it needs either a new markup verb
