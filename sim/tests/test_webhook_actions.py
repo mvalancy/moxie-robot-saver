@@ -2,7 +2,7 @@
 `WebhookApp` must strip its own tags — an external brain must not speak its markup aloud.
 
 A webhook service answers `{"text", "markup", "actions", "end_turn"}`; declared `actions`
-already reach the robot (`test_e2e_actions_to_robot.py`). An INLINE tag (`<launch:DRAW>`,
+already reach the robot (`test_actions_reach_the_robot.py`). An INLINE tag (`<launch:DRAW>`,
 `<exit>`, `<sleep>` — the grammar `actions.py` teaches every model) must likewise be lifted
 out of the spoken text and still fire, as `LLMApp` and `ContentApp` do. Also pinned: declared
 actions still work, both sources compose, `<mark .../>` markup is untouched, and tags we do
@@ -10,13 +10,10 @@ not own are left alone.
 
 Hermetic: `_post` is stubbed; everything after the one network call is shipped code.
 """
-import os
+import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-from moxie_sdk.apps import WebhookApp           # noqa: E402
-from moxie_sdk.types import (ActionType, ChildProfile, RobotContext,  # noqa: E402
-                             Turn)
+from moxie_sdk.apps import WebhookApp
+from moxie_sdk.types import ActionType, ChildProfile, RobotContext, Turn
 
 
 def _brain(answer: dict) -> WebhookApp:
@@ -36,24 +33,15 @@ def _turn(speech="can we draw?") -> Turn:
 # --------------------------------------------------------------------------- #
 # The bug this file exists for
 # --------------------------------------------------------------------------- #
-def test_a_launch_tag_never_reaches_the_spoken_text():
-    reply = _brain({"text": "Yes! Let's draw. <launch:DRAW:default>"}).respond(_turn())
-    assert reply.text == "Yes! Let's draw.", reply.text
-    assert "<launch" not in reply.text
-
-
-def test_the_launch_tag_still_becomes_a_real_action():
-    reply = _brain({"text": "Yes! Let's draw. <launch:DRAW:default>"}).respond(_turn())
-    assert len(reply.actions) == 1, reply.actions
-    a = reply.actions[0]
-    assert (a.type, a.module_id, a.content_id) == (ActionType.LAUNCH, "DRAW", "default")
-
-
-def test_exit_and_sleep_tags_are_consumed_too():
-    for tag, kind in (("<exit>", ActionType.EXIT), ("<sleep>", ActionType.SLEEP)):
-        reply = _brain({"text": f"Okay. {tag}"}).respond(_turn())
-        assert reply.text == "Okay.", (tag, reply.text)
-        assert [x.type for x in reply.actions] == [kind], (tag, reply.actions)
+@pytest.mark.parametrize("tag,want", [
+    ("<launch:DRAW:default>", (ActionType.LAUNCH, "DRAW", "default")),
+    ("<exit>", (ActionType.EXIT, None, None)),
+    ("<sleep>", (ActionType.SLEEP, None, None)),
+])
+def test_an_inline_tag_is_lifted_out_of_the_spoken_text_and_still_fires(tag, want):
+    reply = _brain({"text": f"Okay. {tag}"}).respond(_turn())
+    assert reply.text == "Okay.", reply.text
+    assert [(a.type, a.module_id, a.content_id) for a in reply.actions] == [want]
 
 
 def test_a_tag_in_the_markup_is_stripped_from_the_markup_as_well():
@@ -69,17 +57,6 @@ def test_a_tag_in_the_markup_is_stripped_from_the_markup_as_well():
 # --------------------------------------------------------------------------- #
 # …without breaking what already worked
 # --------------------------------------------------------------------------- #
-def test_declared_actions_still_arrive_and_bogus_types_are_still_dropped():
-    reply = _brain({"text": "Let's play a game!",
-                    "actions": [{"type": "launch", "module_id": "GAME",
-                                 "content_id": "level1"},
-                                {"type": "not-a-real-action"}]}).respond(_turn())
-    assert reply.text == "Let's play a game!"
-    assert len(reply.actions) == 1, reply.actions
-    a = reply.actions[0]
-    assert (a.type, a.module_id, a.content_id) == (ActionType.LAUNCH, "GAME", "level1")
-
-
 def test_a_service_may_use_both_and_the_declared_one_comes_first():
     reply = _brain({"text": "One more, then bed. <exit>",
                     "actions": [{"type": "launch", "module_id": "GAME"}]}

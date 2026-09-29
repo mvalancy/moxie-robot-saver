@@ -13,8 +13,7 @@ import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from moxie_sdk.actions import (ACTION_TAG_PROMPT, LAUNCH_IF_CONFIRMED_AS,  # noqa: E402
-                               parse_action_tags)
+from moxie_sdk.actions import LAUNCH_IF_CONFIRMED_AS, parse_action_tags  # noqa: E402
 from moxie_sdk.content import ContentApp, load_module            # noqa: E402
 from moxie_sdk.content.volley import Volley, Session             # noqa: E402
 from moxie_sdk.types import (ActionType, ChildProfile, RobotContext,  # noqa: E402
@@ -34,32 +33,32 @@ def test_empty_and_none_are_safe():
     assert parse_action_tags(None) == ("", [])
 
 
-def test_exit_tag():
-    text, actions = parse_action_tags("Bye bye, see you tomorrow! <exit>")
-    assert text == "Bye bye, see you tomorrow!"
-    assert len(actions) == 1
-    assert actions[0].type is ActionType.EXIT
-    assert actions[0].module_id is None and actions[0].content_id is None
+#: (model line, spoken text, [(type, module_id, content_id)]) — every well-formed tag.
+TAGGED = [
+    ("Bye bye, see you tomorrow! <exit>", "Bye bye, see you tomorrow!",
+     [(ActionType.EXIT, None, None)]),
+    ("<sleep>Okay, goodnight.", "Okay, goodnight.", [(ActionType.SLEEP, None, None)]),
+    ("Let's draw! <launch:DRAW>", "Let's draw!", [(ActionType.LAUNCH, "DRAW", None)]),
+    ("Great pick. <launch:DRAW:default>", "Great pick.",
+     [(ActionType.LAUNCH, "DRAW", "default")]),
+    # tag names are case-insensitive, ids are not
+    ("ok <LAUNCH:DRAW:Default> <ExIt>", "ok",
+     [(ActionType.LAUNCH, "DRAW", "Default"), (ActionType.EXIT, None, None)]),
+    ("hi < launch : DRAW : default >", "hi", [(ActionType.LAUNCH, "DRAW", "default")]),
+    ("bye <  exit  >", "bye", [(ActionType.EXIT, None, None)]),
+    # several tags keep source order
+    ("a <sleep> b <launch:GAME> c <exit> d", "a b c d",
+     [(ActionType.SLEEP, None, None), (ActionType.LAUNCH, "GAME", None),
+      (ActionType.EXIT, None, None)]),
+    ("<exit>", "", [(ActionType.EXIT, None, None)]),        # a bare tag leaves no text
+]
 
 
-def test_sleep_tag():
-    text, actions = parse_action_tags("<sleep>Okay, goodnight.")
-    assert text == "Okay, goodnight."
-    assert [a.type for a in actions] == [ActionType.SLEEP]
-
-
-def test_launch_module_only():
-    text, actions = parse_action_tags("Let's draw! <launch:DRAW>")
-    assert text == "Let's draw!"
-    a = actions[0]
-    assert (a.type, a.module_id, a.content_id) == (ActionType.LAUNCH, "DRAW", None)
-
-
-def test_launch_module_and_content():
-    text, actions = parse_action_tags("Great pick. <launch:DRAW:default>")
-    assert text == "Great pick."
-    a = actions[0]
-    assert (a.type, a.module_id, a.content_id) == (ActionType.LAUNCH, "DRAW", "default")
+@pytest.mark.parametrize("line,text,want", TAGGED)
+def test_a_tag_becomes_an_action_and_leaves_the_spoken_line(line, text, want):
+    got_text, actions = parse_action_tags(line)
+    assert got_text == text
+    assert [(a.type, a.module_id, a.content_id) for a in actions] == want
 
 
 def test_launch_if_confirmed_maps_to_the_contract_we_have():
@@ -71,27 +70,6 @@ def test_launch_if_confirmed_maps_to_the_contract_we_have():
         assert actions[0].type is LAUNCH_IF_CONFIRMED_AS
         assert actions[0].module_id == "DRAW"
     assert LAUNCH_IF_CONFIRMED_AS is ActionType.LAUNCH   # documented caveat, not a wish
-
-
-def test_tag_names_are_case_insensitive_but_ids_are_not():
-    text, actions = parse_action_tags("ok <LAUNCH:DRAW:Default> <ExIt>")
-    assert text == "ok"
-    assert actions[0].module_id == "DRAW" and actions[0].content_id == "Default"
-    assert actions[1].type is ActionType.EXIT
-
-
-def test_whitespace_inside_a_tag_is_tolerated():
-    _, actions = parse_action_tags("hi < launch : DRAW : default >")
-    a = actions[0]
-    assert (a.module_id, a.content_id) == ("DRAW", "default")
-    assert parse_action_tags("bye <  exit  >")[1][0].type is ActionType.EXIT
-
-
-def test_multiple_tags_keep_source_order():
-    text, actions = parse_action_tags("a <sleep> b <launch:GAME> c <exit> d")
-    assert text == "a b c d"
-    assert [a.type for a in actions] == [ActionType.SLEEP, ActionType.LAUNCH,
-                                         ActionType.EXIT]
 
 
 @pytest.mark.parametrize("bad", [
@@ -124,17 +102,6 @@ def test_spoken_text_is_tidied_after_the_tag_is_removed():
     assert parse_action_tags("  <exit>  Bye now.  ")[0] == "Bye now."
     assert parse_action_tags("Let's <launch:DRAW> draw")[0] == "Let's draw"
     assert parse_action_tags("one\n\n<exit>\n\ntwo")[0] == "one\n\ntwo"
-
-
-def test_a_bare_tag_leaves_no_text_at_all():
-    text, actions = parse_action_tags("<exit>")
-    assert text == ""
-    assert [a.type for a in actions] == [ActionType.EXIT]
-
-
-def test_prompt_paragraph_names_every_tag_it_teaches():
-    for token in ("<exit>", "<sleep>", "<launch:MODULE>"):
-        assert token in ACTION_TAG_PROMPT
 
 
 # ---------------------------------------------------------------- 2. LLMApp
@@ -204,8 +171,7 @@ def test_llm_app_teaches_the_model_the_tags():
     app.respond(Turn(robot=RobotContext(device_id="d1"), speech="hi"))
     system = fake.seen[0][0]
     assert system["role"] == "system"
-    assert "Robot controls" in system["content"]
-    assert "<exit>" in system["content"]
+    assert all(tag in system["content"] for tag in ("<exit>", "<sleep>", "<launch:MODULE>"))
 
 
 # ---------------------------------------------------------------- 3. ContentApp
@@ -261,25 +227,18 @@ def _drive(app, device_id="d_tags", speech="can we draw"):
     return drive_turn(rt, device_id, speech, event_id="evt-tag")
 
 
-def test_a_tag_in_model_text_reaches_the_wire_as_response_actions():
-    """End to end: brain writes `<launch:DRAW:default>` → RemoteChatResponse carries
-    a launch action and the spoken text is clean."""
+@pytest.mark.parametrize("line,text,action", [
+    ("Sure! Let's draw. <launch:DRAW:default>", "Sure! Let's draw.",
+     {"action": "launch", "module_id": "DRAW", "content_id": "default"}),
+    ("Bye Sam! <exit>", "Bye Sam!", {"action": "exit"}),
+])
+def test_a_tag_in_model_text_reaches_the_wire_as_response_actions(line, text, action):
+    """End to end: the brain writes a tag → RemoteChatResponse carries the action and the
+    spoken text is clean."""
     pytest.importorskip("paho.mqtt.client")
-    app = ContentApp(load_module(MODULE),
-                     lambda m: "Sure! Let's draw. <launch:DRAW:default>")
-    resp = _drive(app)
+    resp = _drive(ContentApp(load_module(MODULE), lambda m: line))
     assert resp["command"] == "remote_chat" and resp["result"] == "SUCCESS"
-    assert resp["output"]["text"] == "Sure! Let's draw."
-    assert "<launch" not in resp["output"]["markup"]
-    ra = resp["response_actions"]
-    assert len(ra) == 1
-    assert ra[0]["action"] == "launch"
-    assert ra[0]["module_id"] == "DRAW" and ra[0]["content_id"] == "default"
-
-
-def test_an_exit_tag_reaches_the_wire():
-    pytest.importorskip("paho.mqtt.client")
-    app = ContentApp(load_module(MODULE), lambda m: "Bye Sam! <exit>")
-    resp = _drive(app, speech="bye moxie")
-    assert resp["output"]["text"] == "Bye Sam!"
-    assert [a["action"] for a in resp["response_actions"]] == ["exit"]
+    assert resp["output"]["text"] == text
+    assert "<" not in resp["output"]["text"] and "<launch" not in resp["output"]["markup"]
+    (ra,) = resp["response_actions"]
+    assert {k: ra.get(k) for k in action} == action

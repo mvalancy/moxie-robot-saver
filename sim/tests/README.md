@@ -65,7 +65,7 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 | `test_sil.py`, `test_sil_child_voice.py` | Playwright: every page at every resolution, expression chips, motor sliders, ALIVE loop, speech path; the child's clips reaching `ctx.destination` |
 | `test_sil_*.py` (others) | Real mosquitto + supervisor: durable telemetry across a restart, SUBACK handshake both ends, performance fields on the wire, presence, brains/extensions |
 | `test_runtime_turn`, `test_streaming`, `test_segment`, `test_brain_*`, `test_brains`, `test_backoff`, `test_connect_readiness`, `test_connection_resilience`, `test_clean_shutdown` | The supervisor turn loop, streaming chunks, fillers, reconnects |
-| `test_action_*`, `test_actions_reach_the_robot`, `test_e2e_actions_to_robot`, `test_webhook_actions`, `test_launch_*` | `response_actions` from brain to robot; launch cards and sheet |
+| `test_action_*`, `test_actions_reach_the_robot`, `test_webhook_actions`, `test_launch_*` | `response_actions` from brain to robot; launch cards and sheet |
 | `test_content*`, `test_render_*`, `test_automarkup`, `test_performance`, `test_faces` | Content packs, template sandbox and parity, markup floor, behavior planner |
 | `test_ext*.py` | Sandboxed extensions: escapes X1–X12, conformance T1–T18, `act`/`subscribe` |
 | `test_memory*`, `test_telemetry*`, `test_store*`, `test_transcript_memory_policy`, `test_soak_accounting` | Durable store, roll-up repair, erase and logging policy |

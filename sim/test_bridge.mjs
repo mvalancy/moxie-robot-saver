@@ -63,7 +63,7 @@ const th = window.moxieBridge.telehealthStats();
 const speechAtInterrupt = calls.setSpeech.slice();
 
 // ---- 🎬 response_actions: the cloud drives navigation, and the avatar must obey ----
-// The shape is the one `sim/tests/test_e2e_actions_to_robot.py` asserts arrives at the
+// The shape is the one `sim/tests/test_actions_reach_the_robot.py` asserts arrives at the
 // robot: `{output_type:"GLOBAL", action, module_id, content_id}` off
 // `mqtt/moxie_sdk/wire.py::build_chat_response`. That test's docstring says outright that
 // no SIM client acts on them; these assertions are that gap closing.

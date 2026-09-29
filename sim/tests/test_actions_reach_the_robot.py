@@ -1,9 +1,10 @@
 """
 Does the ROBOT act on `response_actions`? — beyond what it was handed.
 
-`test_e2e_actions_to_robot.py` asserts the payload on the wire; this asserts the SIL robot
-(`sim/virtual_moxie.py`) acts on it, as `sim/web/bridge/actions.js::applyAction` does (DoD
-criterion 4, interchangeable clients):
+`test_action_tags.py` reads `response_actions` off a recording client; here the REAL runtime
+and the SIL robot (`sim/virtual_moxie.py`) share `helpers_runtime.loopback()`, and the robot
+must both RECEIVE the recovered shape and ACT on it, as `sim/web/bridge/actions.js::applyAction`
+does (DoD criterion 4, interchangeable clients):
 
 1. A real turn: the real `MoxieRuntime` + `LLMApp` (canned completion via `client=`)
    answers "can we draw?" with `<launch:DRAW:default>`, and the ROBOT'S OWN STATE is then
@@ -83,11 +84,25 @@ def test_a_launch_on_a_real_turn_puts_the_robot_in_the_module():
     assert acted["content_id"] == "default", acted
     assert acted["last"] == "launch", acted
     assert acted["unknown"] == 0, f"the robot did not understand its own reply: {acted}"
-    # …and it is the SAME action the wire carried, not a coincidence.
+    # …and it is the SAME action the wire carried, in the recovered shape.
     on_wire = next(a for a in vm.reply_payload["response_actions"] if a.get("action"))
-    assert (on_wire["action"], on_wire["module_id"], on_wire["content_id"]) == (
-        "launch", "DRAW", "default")
+    assert on_wire == {"output_type": "GLOBAL", "action": "launch", "module_id": "DRAW",
+                       "content_id": "default"}, on_wire
     assert acted["applied"][-1]["action"] == "launch"
+    # The child never hears the tag: asserted on the ROBOT's copy, the text it reads out.
+    output = vm.reply_payload["output"]
+    assert output["text"] == vm.reply_text == "Yes! Let's draw.", output
+    assert "<launch" not in output["markup"], output
+
+
+def test_an_exit_tag_on_a_real_turn_arrives_as_the_only_action():
+    vm = _real_turn('{"say": "Bye Sam! <exit>", "mood": "positive", "gesture": "talk"}',
+                    speech="bye moxie")
+    actions = [a["action"] for a in vm.reply_payload.get("response_actions", [])
+               if a.get("action")]
+    assert actions == ["exit"], vm.reply_payload
+    assert vm.reply_payload["output"]["text"] == "Bye Sam!"
+    assert vm.action_stats()["exits"] == 1
 
 
 def test_an_exit_on_a_real_turn_takes_the_robot_back_out():
@@ -113,6 +128,34 @@ def test_an_untagged_reply_leaves_the_robot_where_it_was():
     assert acted["applied"] == [], acted
     assert (acted["launches"], acted["exits"], acted["unknown"]) == (0, 0, 0), acted
     assert acted["module_id"] == "" and acted["last"] == "", acted
+
+
+def test_actions_from_an_external_brain_reach_the_robot_too():
+    """`WebhookApp` lets a service declare `actions` outright rather than writing tags —
+    the same wire and robot, so the action path is not an LLM-only feature."""
+    from moxie_sdk.apps import WebhookApp
+
+    class _Webhook(WebhookApp):
+        """The real app with its one network call stubbed."""
+
+        def _post(self, path_hint, body):
+            return {"text": "Let's play a game!",
+                    "actions": [{"type": "launch", "module_id": "GAME",
+                                 "content_id": "level1"},
+                                {"type": "not-a-real-action"}]}
+
+    rt, dev = make_runtime(_Webhook("http://127.0.0.1:1/turn"), device_id=DEV)
+    vm = VirtualMoxie(host="127.0.0.1", port=1, device_id=dev, verbose=False)
+    loopback(rt, vm)
+    vm.client.publish(vm.t_event("remote-chat"), json.dumps(
+        {"event_id": "evt-webhook", "command": "prompt", "backend": "router",
+         "speech": "let's play"}))
+    rt._pool.shutdown(wait=True)
+    ra = [a for a in vm.reply_payload.get("response_actions", []) if a.get("action")]
+    assert [(a["action"], a["module_id"], a["content_id"]) for a in ra] == [
+        ("launch", "GAME", "level1")], "the bogus action type should have been dropped"
+    assert vm.reply_payload["output"]["text"] == "Let's play a game!"
+    assert vm.action_stats()["module_id"] == "GAME"
 
 
 def test_the_robot_records_the_event_subscription_the_brain_asked_for():
