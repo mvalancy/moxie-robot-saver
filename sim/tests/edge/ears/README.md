@@ -9,7 +9,7 @@ recorder — no microphone is ever opened).
 - [`02_route_upstream.mjs`](02_route_upstream.mjs) — A6–A10: hostile upstream, byte sniffing and the container allowlist, the BUILT upstream body, the transcript, the envelope.
 - [`03_route_duration.mjs`](03_route_duration.mjs) — A-DUR / A-RDR: the server-side WAV duration ceiling, no redirect chasing.
 - [`04_mic_capture.mjs`](04_mic_capture.mjs) — B1–B4: silence auto-stop, the 15 s hard stop, the published cap, where the clip goes, both reply shapes.
-- [`05_mic_degraded.mjs`](05_mic_degraded.mjs) — B5–B8: never a dead button, a consolation line never spends a live turn, client gates, capture failures, the WAV encoder, source guards.
+- [`05_mic_degraded.mjs`](05_mic_degraded.mjs) — B5–B7b: never a dead button, a consolation line never spends a live turn, client gates, capture failures, the WAV encoder.
 
 ---
 📖 [Edge modules](../README.md) · [Back to top](../../../../README.md)
