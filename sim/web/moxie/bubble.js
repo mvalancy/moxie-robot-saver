@@ -12,8 +12,8 @@
 import * as THREE from 'three';
 import { speech } from './face.js';
 
-const HEAD_TOP_RISE = 0.34;      // above head centre — clears the crown
-const HEAD_ANCHOR_DROP = 0.16;   // just under the chin: where the leader points
+const HEAD_TOP_RISE = 0.48;      // above head centre — clears the face panel (top at +0.41)
+const HEAD_ANCHOR_DROP = 0.55;   // her chin (head half-height 0.60): where the leader ends
 const CHEST_DROP = 0.62;         // below head centre — the top of the chest bubble
 const MIN_HEAD_GAP = 26;         // px: the bubble's top never comes closer to her head
 const BUBBLE_METRICS_MS = 250;   // layout reads are cached (no forced layout per frame)

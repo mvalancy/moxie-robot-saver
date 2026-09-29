@@ -335,16 +335,7 @@ async function dockGeometry(page) {
   eq(a.stamped, true, "…and the page recorded the frame it placed the bubble from");
   eq(a.frozen, false, "…a CURRENT frame, not a stash frozen behind a hidden bubble");
 
-  /* 1280x900 with the rail open has no headroom but a wide stage: BESIDE her head, which
-   * is the whole point of the side placement (the chest leader drew a line through her
-   * mouth here). */
-  eq(e.mode, "side", `a wide stage with no headroom puts the bubble BESIDE her head (${e.mode})`);
-  if (e.mode === "side") {
-    const tailY = e.bubble.top + 22;
-    ok(Math.abs(tailY - e.face.y) <= 1,
-       `…with its tail at her eyes (tail ${tailY.toFixed(1)} vs face ${e.face.y.toFixed(1)})`);
-    ok(e.face.r > 30, `…measured against her real on-screen head width (r ${e.face.r.toFixed(1)}px)`);
-  } else {
+  if (e.mode === "chest") {
     // At her chest it anchors on the CHEST, a few px off the head off-axis; 8 px covers it.
     ok(Math.abs(e.bubble.cx - e.head.x) <= 8,
        `…horizontally centred on her head (bubble ${e.bubble.cx.toFixed(1)} vs head ${e.head.x.toFixed(1)})`);
@@ -378,8 +369,11 @@ async function dockGeometry(page) {
   } else if (e.mode === "above") {
     ok(e.bubble.bottom < e.head.y,
        `…above the head (bubble bottom ${e.bubble.bottom.toFixed(1)} vs head ${e.head.y.toFixed(1)})`);
-    ok(e.head.y - e.bubble.bottom < 90,
-       `…and still close to her rather than floating away (gap ${(e.head.y - e.bubble.bottom).toFixed(1)}px)`);
+    /* Its tail rests on her crown (the anchor sits just above her face panel), so it
+     * neither hides her face nor floats away. `bh` is cached for 250 ms while the
+     * typewriter wraps, hence a band rather than equality. */
+    ok(e.bubble.bottom <= e.crown.y + 2 && e.crown.y - e.bubble.bottom < 40,
+       `…and its tail rests on her crown (bubble bottom ${e.bubble.bottom.toFixed(1)} vs crown ${e.crown.y.toFixed(1)})`);
   }
   ok(a.bubble.top > 0 && a.bubble.left >= 0 && a.bubble.right <= 1280,
      "…entirely on screen");
@@ -435,6 +429,37 @@ async function dockGeometry(page) {
 }
 
 /* ======================================================================== *
+ * 4-side. NO HEADROOM, WIDE STAGE: BESIDE HER HEAD, NOT ON HER CHIN
+ * ======================================================================== *
+ * 1280x720 with the rail open: the bubble does not fit above her, and the chest fallback
+ * used to draw its leader up through her mouth. It goes beside her head instead, placed by
+ * the edge NEAREST her (so the typewriter grows it away from her face), tail at her eyes.
+ */
+{
+  const page = await open(1280, 720);
+  const a = await page.evaluate(() => {
+    window.moxie.setSpeech("Do you ever think about the sky?");
+    return new Promise((r) => requestAnimationFrame(() =>
+      requestAnimationFrame(() => r(window.__bubbleAnchor()))));
+  });
+  const e = a.exact;
+  eq(e.mode, "side", `1280x720: a wide stage with no headroom puts the bubble BESIDE her head (${e.mode})`);
+  ok(e.face.r > 30, `…measured against her real on-screen head width (r ${e.face.r.toFixed(1)}px)`);
+  ok(Math.abs(e.bubble.top + 22 - e.face.y) <= 1,
+     `…with its tail at her eyes (tail ${(e.bubble.top + 22).toFixed(1)} vs face ${e.face.y.toFixed(1)})`);
+  ok(bubbleAnchorErr(e) <= 0.5, `…its near edge on the anchor (off by ${bubbleAnchorErr(e).toFixed(2)}px)`);
+  eq(bubbleCovers(e), false,
+     `…and outside her head (box ${e.bubble.left.toFixed(0)}..${e.bubble.right.toFixed(0)}, head ${(e.face.x - e.face.r).toFixed(0)}..${(e.face.x + e.face.r).toFixed(0)})`);
+  // Let the typewriter finish: the box has grown to full width, still clear of her face.
+  const done = await page.evaluate(() => new Promise((r) => setTimeout(() =>
+    requestAnimationFrame(() => r(window.__bubbleAnchor())), 1400)));
+  ok(!done.hidden && done.exact && !bubbleCovers(done.exact) && done.bubble.right <= 1280 && done.bubble.left >= 0,
+     `…and once the whole line is typed it has grown AWAY from her, still on screen (${done.bubble.left}..${done.bubble.right})`);
+  eyes("the side bubble", page);
+  await page.close();
+}
+
+/* ======================================================================== *
  * 4a. THE ANCHOR READOUT IS ONE INSTANT — PROVED BY MOVING HER FAST
  * ======================================================================== *
  * The race is CREATED here: motors 6 (lean, the widest head arc) and 4 (nod) are stepped end
@@ -442,8 +467,14 @@ async function dockGeometry(page) {
  * time drifts up to 15.6 px; the frame stash stays near 0.06, and these tolerances redden
  * if the readout ever mixes two instants again.
  */
-{
-  const page = await open(1280, 900);
+for (const [label, w, h, cam, want] of [
+  // BESIDE her head: a closer camera, no headroom, a wide stage either side of her
+  ["beside, near 1280x900", 1280, 900, [0, 2.0, 3.0, 0, 1.6, 0], "side"],
+  // AT HER CHEST on a leader: a close-up (the visitor scroll-zoomed in) fills the stage
+  ["chest, close-up 1280x900", 1280, 900, [0, 1.9, 2.2, 0, 1.2, 0], "chest"],
+]) {
+  const page = await open(w, h);
+  if (cam) await page.evaluate((c) => window.__setCam(...c), cam);
   // Per-sweep head-y RANGE, used only in the failure text (backlog/head-sweep-wait.md).
   const probe = await page.evaluate(async () => {
     const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
@@ -487,7 +518,7 @@ async function dockGeometry(page) {
   });
   const m = probe.rows;
 
-  ok(m.length >= 30, `she was sampled while actually moving (${m.length} placed frames)`);
+  ok(m.length >= 30, `${label}: she was sampled while actually moving (${m.length} placed frames)`);
   const validStepDeltas = (deltas) => deltas.length === 16 &&
     deltas.every((steps) => Number.isInteger(steps) && steps >= 0) &&
     deltas.some((steps) => steps > 0);
@@ -504,18 +535,20 @@ async function dockGeometry(page) {
        `${stalled}/16 moved her <6px, so ${
          stalled > 8 ? "this runner never gave her the frames to move in" : "the drive itself did not swing her"}`})`);
   const leadered = m.filter((r) => r.leader > 0);
-  const beside = m.filter((r) => r.mode === "side");
-  ok(leadered.length + beside.length >= 20,
-     `…beside her head or on a leader for most of it (${beside.length} beside, ${leadered.length} leadered)`);
+  const placed = m.filter((r) => r.mode === want);
+  ok(placed.length >= 20,
+     `${label}: …placed ${want === "side" ? "BESIDE her head" : "at her chest on a leader"} for most of it (${placed.length} of ${m.length} frames)`);
+  if (want === "chest")
+    ok(leadered.length >= 20, `${label}: …with a real leader drawn (${leadered.length} frames)`);
 
   const worstGap = leadered.length ? Math.max(...leadered.map((r) => r.gapErr)) : 0;
   ok(worstGap <= 0.2,
-     `THE LEADER SPANS THE GAP IN EVERY FRAME, however fast she moves (worst ${worstGap.toFixed(2)}px)`);
+     `${label}: THE LEADER SPANS THE GAP IN EVERY FRAME, however fast she moves (worst ${worstGap.toFixed(2)}px)`);
   const worstAnchor = Math.max(...m.map((r) => r.anchorErr));
   ok(worstAnchor <= 0.5,
-     `…and the box stays on the anchor it was placed from (worst ${worstAnchor.toFixed(2)}px)`);
+     `${label}: …and the box stays on the anchor it was placed from (worst ${worstAnchor.toFixed(2)}px)`);
   eq(m.filter((r) => r.covers).length, 0,
-     "…and NOT ONE of those frames put the bubble over her face");
+     `${label}: …and NOT ONE of those frames put the bubble over her face`);
   await page.close();
 }
 
