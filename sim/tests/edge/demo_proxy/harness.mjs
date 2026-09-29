@@ -1,20 +1,15 @@
-/* Harness for `sim/test_demo_proxy.mjs`: the stubbed gateway, the request helpers and the
- * no-leak sweep every section's responses go through. See the entry file for what the
- * suite proves.
- */
+/* Harness for `sim/test_demo_proxy.mjs`: the stubbed gateway, request helpers, and the
+ * no-leak sweep every section's responses go through. */
 import { join } from "node:path";
 import {
   repo, api, ledger, BASE, KEY, ORIGIN, post, leakSweep, jsonOf, fakeCache,
 } from "../common.mjs";
 
 export { execFileSync } from "node:child_process";
-export { existsSync, readFileSync } from "node:fs";
-export { fileURLToPath } from "node:url";
-export { dirname, join } from "node:path";
+export { readFileSync } from "node:fs";
+export { join } from "node:path";
 export { repo, BASE, KEY, ORIGIN, fakeCache };
 
-/** `sim/` — kept under its old name so section paths read as before. */
-export const here = join(repo, "sim");
 /** `sim/web` — the deployed asset tree, for the fixtures that read the REAL corpus. */
 export const web0 = join(repo, "sim", "web");
 
@@ -28,8 +23,6 @@ export const wire = await api("_lib", "wire.js");
 export const hmac = await api("_lib", "hmac.js");
 export const ttscache = await api("_lib", "ttscache.js");
 export const wire2 = await api("_lib", "env.js");
-/** The response builder itself: the header guards ask a REAL `Response` what it carries
- *  rather than regexing the source. */
 export const env0 = await api("_lib", "envelope.js");
 export const turnshape = await api("_lib", "turnshape.js");
 
