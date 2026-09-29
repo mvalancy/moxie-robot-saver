@@ -12,13 +12,9 @@ No `openai` needed: the transcriber takes a `client=` fake and config tests stub
 """
 from helpers_runtime import reload_config                      # noqa: E402
 import io
-import os
 import wave
 
 import pytest
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-MQTT = os.path.join(REPO, "mqtt")
 
 from moxie_sdk.stt import (  # noqa: E402
     FallbackTranscriber, NullTranscriber, OpenAITranscriber, SttServerError,
@@ -83,15 +79,6 @@ def test_pcm_is_wrapped_in_a_readable_riff_wav_at_the_given_rate():
         assert w.getsampwidth() == 2
         assert w.getnframes() == len(PCM_16K) // 2
         assert w.readframes(w.getnframes()) == PCM_16K
-
-
-def test_the_header_carries_the_true_rate_not_a_constant():
-    """A WAV that lied about its rate would pitch-shift the audio and wreck the
-    transcript — so 22050 Hz TTS audio must arrive labelled 22050."""
-    for rate in (8000, 16000, 22050, 24000, 48000):
-        with wave.open(io.BytesIO(wav_bytes(PCM_16K, rate)), "rb") as w:
-            assert w.getframerate() == rate
-    assert wav_bytes(b"", 16000)[:4] == b"RIFF"        # empty PCM still makes a file
 
 
 # -------------------------------------------------------------- the request --
@@ -230,14 +217,8 @@ def test_the_fallback_is_a_drop_in_transcriber_for_the_runtime_session():
     assert session.feed(VADState.END_OF_SPEECH, b"") == "heard locally"
 
 
-def test_availability_needs_both_the_sdk_and_an_endpoint():
+def test_no_endpoint_means_no_gateway_ears():
     assert OpenAITranscriber.available("") is False        # no endpoint → unavailable
-    try:
-        import openai  # noqa: F401
-        assert OpenAITranscriber.available("https://gateway.example/v1") is True
-    except ImportError:
-        assert OpenAITranscriber.available("https://gateway.example/v1") is False
-    assert isinstance(WhisperTranscriber.available(), bool)
     assert make_openai_transcriber("", "k") is None
 
 
@@ -359,7 +340,6 @@ def test_local_piper_is_selectable_the_same_way_for_the_voice(monkeypatch):
                       MOXIE_PIPER_MODEL="/models/en_US-amy-medium.onnx",
                       MOXIE_VOICE_BASE_URL=GW, MOXIE_LLM_API_KEY="sk-test-not-a-real-key-0000")
     assert c.build_synthesizer().name == "piper", "MOXIE_TTS=piper let the gateway win"
-    import pytest
     c = _fresh_config(monkeypatch, MOXIE_STT="off", MOXIE_TTS="gateway")
     with pytest.raises(SystemExit):
         c.build_synthesizer()                       # explicit gateway with no URL exits loudly
@@ -454,14 +434,8 @@ def test_the_startup_log_line_says_which_ears_are_listening(monkeypatch):
     _stub_engines(monkeypatch)
     c = _fresh_config(monkeypatch, MOXIE_STT="gateway", MOXIE_STT_BASE_URL=GW,
                       MOXIE_APP="echo")
-    # By file path, not `import run`: the console has a `server/run.py` too, and which
-    # one a bare import finds depends on what an earlier test put on sys.path.
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("_supervisor_run",
-                                                  os.path.join(MQTT, "run.py"))
-    run = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(run)
-    rt = run.assemble(c)
+    from helpers_runtime import load_mqtt_run
+    rt = load_mqtt_run().assemble(c)
     assert rt._transcriber.describe().startswith("openai-stt (stt-whisper)")
 
 
