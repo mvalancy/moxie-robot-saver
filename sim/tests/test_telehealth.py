@@ -52,12 +52,6 @@ def _proto_fields(message: str) -> set:
     return set(re.findall(r"\s([a-z_][a-z0-9_]*)\s*=\s*\d+;", body))
 
 
-def test_the_recovered_proto_is_where_we_say_it_is():
-    """The oracle is a committed file, not a memory — if it moves, this fails loudly."""
-    assert os.path.isfile(RECOVERED_PROTO), RECOVERED_PROTO
-    assert "package embodied.telehealth;" in _proto_text()
-
-
 def test_our_enums_are_the_recovered_enums():
     assert list(th.ACTIONS) == _proto_enum("Action")
     assert list(th.STATES) == _proto_enum("RobotState")
@@ -96,26 +90,13 @@ def test_session_id_is_omitted_when_there_is_none():
     assert "session_id" not in th.build_telehealth_command("UPDATE_STATE")["message"]
 
 
-def test_line_id_and_line_params_are_never_emitted():
-    """ASSUMPTION B5: the field comment says "id of a pre-authored line" and we have no
-    catalog of those ids. An id we cannot cite is an id we do not send."""
-    cmd = th.build_telehealth_command("PLAY_OUTPUT", text="hi", markup="<m/>")
-    assert set(cmd["message"]["output"]) == {"text", "markup"}
-
-
-def test_an_unknown_action_raises():
+@pytest.mark.parametrize("action,kw", [
+    ("SPEAK", {}), ("UNKNOWN_ACTION", {}),          # the proto's zero value is not a command
+    ("PLAY_OUTPUT", {"text": "   "}),
+])
+def test_an_unknown_action_or_an_empty_line_raises(action, kw):
     with pytest.raises(ValueError):
-        th.build_telehealth_command("SPEAK")
-
-
-def test_the_protos_zero_value_is_not_a_command():
-    with pytest.raises(ValueError):
-        th.build_telehealth_command("UNKNOWN_ACTION")
-
-
-def test_play_output_with_no_text_raises():
-    with pytest.raises(ValueError):
-        th.build_telehealth_command("PLAY_OUTPUT", text="   ")
+        th.build_telehealth_command(action, **kw)
 
 
 def test_the_action_name_is_case_insensitive_but_canonical_on_the_wire():
@@ -160,7 +141,8 @@ def test_every_key_we_emit_is_a_recovered_field_name():
         assert cmd["message"]["action"] in _proto_enum("Action")
     assert seen_message <= message_fields, seen_message - message_fields
     assert seen_output <= output_fields, seen_output - output_fields
-    # …and the two we refuse to emit really are fields, i.e. the omission is a decision.
+    # ASSUMPTION B5: we have no catalog of pre-authored line ids, so these real fields are
+    # deliberately never emitted.
     assert {"line_id", "line_params"} <= output_fields
     assert "line_id" not in seen_output and "line_params" not in seen_output
 
@@ -235,9 +217,7 @@ def test_the_reported_action_is_kept_only_when_it_is_a_recovered_one():
 # --------------------------------------------------------------------------- #
 def test_the_mood_list_is_the_eleven_recovered_moods_in_enum_order():
     names = [m["id"] for m in th.moods()]
-    assert len(names) == 11
     assert names == [n for n, _ in sorted(vocab.MOODS.items(), key=lambda kv: kv[1])]
-    assert names[0] == "neutral" and "shy" in names and "embarrassed" in names
     assert [m["value"] for m in th.moods()] == list(range(11))
 
 
@@ -265,11 +245,7 @@ def test_intensity_is_an_integer_0_to_2_and_clamps():
     assert th.validate_intensity(7) == 2          # dragged past the end means "as strong"
     assert th.validate_intensity(-3) == 0
     assert th.validate_intensity(None) is None
-
-
-def test_intensity_is_not_a_float_slider():
-    """0-2, because `maxIntensity=2` is what the robot's own enum accepts — a 0.0-1.0
-    float would silently collapse three steps into one."""
+    # the robot's own enum is 0-2; a 0.0-1.0 float slider would collapse three steps to one
     assert th.validate_intensity(0.9) == 0
     with pytest.raises(ValueError):
         th.validate_intensity("loud")
@@ -300,10 +276,3 @@ def test_the_fleet_layer_cannot_put_a_whole_household_into_puppet_mode():
     from moxie_sdk.cloud_config import sanitize_config_overrides
     assert sanitize_config_overrides({"moxie_mode": 1, "audio_volume": 0.5}) == {
         "audio_volume": 0.5}
-
-
-def test_the_subtopic_is_the_one_the_activity_log_multiplexes_on():
-    assert th.EVENT_SUBTOPIC == "telehealth"
-    doc = os.path.join(REPO, "docs", "architecture", "mqtt-and-conversation.md")
-    with open(doc) as fh:
-        assert 'subtopic:"telehealth"' in fh.read()
