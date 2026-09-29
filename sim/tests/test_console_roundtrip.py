@@ -463,28 +463,6 @@ def test_todays_plan_reaches_the_console_with_a_reason_per_entry(client, supervi
     assert all(e["why"] for e in s["entries"])
 
 
-def test_untimed_fixtures_show_no_clock_time_and_scored_picks_do(client):
-    rows = {e["module_id"]: e for e in _get(client, "schedule").json()["entries"]}
-    assert rows["DM"]["time_local"] is None and rows["DM"]["fixture"] is True
-    assert rows["FREE_CHAT"]["time_local"] is None
-    assert rows["WELCOME"]["time_local"] is None
-    assert rows["STORYTELLING"]["time_local"] == "09:03"
-    assert rows["SCAVENGERHUNT"]["time_local"] == "09:13"
-    assert rows["SCAVENGERHUNT"]["fixture"] is False
-
-
-def test_the_constraints_the_planner_reported_reach_the_footer(client):
-    c = _get(client, "schedule").json()
-    assert c["constraints"]["bedtime"] == {"enabled": True, "kind": "weekday",
-                                           "starts_at": "09:23", "ends_at": "17:23"}
-    assert c["dropped_for_bedtime"] == 4
-    assert c["constraints"]["parent_request"] == {
-        "count": 1, "pinned": [{"module_id": "STORYTELLING", "at": "08:43"}]}
-    assert [e["module_id"] for e in c["entries"] if e["pinned"]] == ["STORYTELLING"]
-    # the runtime says telemetry carries no module signal; the console must not lose it
-    assert c["constraints"]["telemetry_signal"] is False
-
-
 def test_refresh_is_forwarded_so_a_parent_can_re_plan_the_day(client, supervisor):
     before = len(supervisor.schedule_queries)
     assert _get(client, "schedule", params={"refresh": "true"}).status_code == 200

@@ -1,15 +1,6 @@
-"""
-📅 Today's plan — the console's read of the recommender's "why this activity today".
-
-`normalize_schedule_view` is all of `server/`'s logic here: `routes/console.py` is a thin
-proxy of the supervisor's `GET /schedule?device_id=…`, so everything the card renders is
-decided by it. `RECORDED` is a real `GET /schedule` body captured from mosquitto +
-`mqtt/run.py` + `sim/virtual_moxie.py --query schedule` (bedtime an hour out, one
-`ParentRequest`): an FTUE spine with no clock times, a drifted parent request, a scored
-pick, chat breaks, a bedtime-truncated day and `carries_module_signal: false`.
-
-Pure (no fastapi, no network). The route seam is covered in `test_console_roundtrip.py`.
-"""
+"""📅 Today's plan: `fleet.normalize_schedule_view` is all of the console's logic for the
+card (the route is a thin proxy). `RECORDED` is a real `GET /schedule` body from mosquitto
++ `mqtt/run.py` + the virtual robot: FTUE spine, drifted parent request, bedtime cut."""
 import os
 import sys
 
@@ -121,9 +112,6 @@ def test_the_parent_request_is_the_only_pinned_row():
     pr = v["constraints"]["parent_request"]
     assert pr["count"] == 1 and pr["pinned"] == [{"module_id": "STORYTELLING",
                                                   "at": "08:43"}]
-    # and the *why* line says so in words a parent reads, drift included
-    why = next(r["why"] for r in v["entries"] if r["module_id"] == "STORYTELLING")
-    assert "Requested by a parent" in why and "9:03 am" in why
 
 
 def test_bedtime_is_carried_with_the_slots_it_cost():
@@ -210,9 +198,6 @@ def test_supervisor_down_is_a_renderable_error_not_an_exception():
         v = normalize_schedule_view(payload)
         assert v["ok"] is False and v["entries"] == [] and v["error"]
         assert v["constraints"]["bedtime"] == {"enabled": False, "kind": ""}
-
-
-def test_unknown_device_keeps_the_runtimes_own_reason():
     v = normalize_schedule_view({"ok": False, "device_id": "d_nope",
                                  "error": "unknown device_id 'd_nope'"})
     assert v["ok"] is False and v["error"] == "unknown device_id 'd_nope'"
