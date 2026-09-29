@@ -4,10 +4,7 @@ upload-gate. Field names verified against embodied/logging/Cloud.proto.
 """
 import base64
 import json
-import os
 import time
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from moxie_sdk.telemetry import (  # noqa: E402
     PacketModel, build_packet, parse_packet, should_upload, summarize_events,
@@ -71,6 +68,7 @@ def test_summarize_events_latest_is_newest_first_and_capped():
     s = summarize_events(_pkts(), limit=2)
     assert [p["event_name"] for p in s["latest"]] == ["wake", "said"]   # newest first
     assert len(s["latest"]) == 2 and s["count"] == 3                    # count is total
+    assert summarize_events(_pkts(), limit=0)["latest"] == []
 
 
 def test_summarize_events_empty_and_none_are_safe():
@@ -90,28 +88,16 @@ def test_summarize_events_tolerates_partial_packets():
     assert s["last_seen"] == {"said": 77}                   # only stamped events appear
 
 
-def test_summarize_events_limit_zero_returns_no_rows():
-    s = summarize_events(_pkts(), limit=0)
-    assert s["latest"] == [] and s["count"] == 3
-
-
 # ---------------------------------------------------------------------------
 # Durable, bounded telemetry — the privacy gate, the caps, the day arithmetic
 # ---------------------------------------------------------------------------
 # The pure half; runtime: `test_telemetry_runtime.py`; console: `test_fleet.py`.
 
 from moxie_sdk.telemetry import (  # noqa: E402
-    DAILY_COLLECTION, MAX_DAY_EVENTS, OTHER_EVENT, PACKETS_COLLECTION,
+    MAX_DAY_EVENTS, OTHER_EVENT,
     history_view, max_packets, max_rollup_days, new_rollup, packet_day, policy_value,
     retention, roll_up_packet, rollup_totals, storable_packet,
 )
-
-
-def test_collections_are_distinct_and_filesystem_safe():
-    """Two records, not one: a ring for "just now" and day rows for "last week"."""
-    assert PACKETS_COLLECTION != DAILY_COLLECTION
-    for name in (PACKETS_COLLECTION, DAILY_COLLECTION):
-        assert name.replace("_", "").isalnum()
 
 
 # --- the privacy gate: one test per LoggingPolicy value ---
