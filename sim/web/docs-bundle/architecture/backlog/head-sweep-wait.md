@@ -12,7 +12,7 @@ after waiting a fixed `for (let f = 0; f < 4; f++)` per sweep. `animate()` clamp
 four frames on a starved runner advance her a fraction of what four frames advance her on an idle one.
 **"Four frames happened" and "she swung" are different claims that agree only while the runner is
 fast** — the same fixed-wait-standing-in-for-a-condition shape recorded a dozen times in
-[the orchestration log](../orchestration-plan.md).
+[the orchestration log](../agent-workflow.md).
 
 ## What was tried
 
@@ -158,4 +158,4 @@ failure and not a reason to change motion behavior.
    have now been offered for it, of which this page has retired two.
 
 ---
-📖 [Backlog index](README.md) · [Architecture index](../README.md) · [Orchestration log](../orchestration-plan.md)
+📖 [Backlog index](README.md) · [Architecture index](../README.md) · [Orchestration log](../agent-workflow.md)

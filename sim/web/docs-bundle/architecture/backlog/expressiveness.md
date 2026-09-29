@@ -96,7 +96,7 @@ latency it adds is latency a child waits through.
 > 8 byte-exact goldens in [`sim/tests/goldens/annotate.json`](../../../sim/tests/goldens/annotate.json))
 > and rendered by [`sim/test_automarkup_render.mjs`](../../../sim/test_automarkup_render.mjs)
 > through the real browser bridge. Written up as built in
-> [`mqtt-and-conversation.md` §4.6](../mqtt-and-conversation.md#46-the-markup-floor-built-v1-2026-09-02).
+> [`mqtt-and-conversation.md` §4.6](../mqtt-and-conversation.md#46-behavior-markup).
 >
 > **Four deliberate departures from the spec below, each for a stated reason.**
 > 1. The module is `automarkup.py`, not `annotate.py` — the function is `annotate`.

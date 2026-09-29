@@ -39,7 +39,7 @@
 >
 > The owner's steer for [`moxie.mattvalancy.com/sim`](https://moxie.mattvalancy.com/sim) had four parts.
 > Three are specified enough to build and are recorded at
-> [`implementation-plan.md`](../implementation-plan.md):1598 — a chat composer pinned to the bottom, the
+> [`ROADMAP.md`](../../../ROADMAP.md) — a chat composer pinned to the bottom, the
 > engineering rail made optional, and the fact that none of the six visible controls says *"talk to
 > Moxie"*. The fourth, verbatim, is **"Gamify this for regular people"**, and the plan records it as
 > *"NOT yet specified and must not be guessed at"*.
@@ -94,7 +94,7 @@ under what privacy rule — is a decision this page deliberately does not make.
 **Say this part first, because it invalidates any proposal that skips it.**
 
 Our own production measurement, recorded in [`mobile-first-visit.md`](mobile-first-visit.md) and cited by
-the owner's own steer at [`implementation-plan.md`](../implementation-plan.md):1598 — measured against
+the owner's own steer at [`ROADMAP.md`](../../../ROADMAP.md) — measured against
 `https://moxie.mattvalancy.com/sim` in a fresh incognito profile at 390 × 844:
 
 | | measured |
@@ -458,7 +458,7 @@ can fail.
   you feeling?"*, *"Play a game with me"*. Tap one; she answers in voice, with her face. **No scrolling,
   no `CONTROLS`, no drawer.**
 - **Evidence.** §1's measurement (`0 × 0`, `y = 2 095`) — our own, verified. The owner's steer verbatim
-  ([`implementation-plan.md`](../implementation-plan.md):1598) asks for exactly this composer. §4.3's
+  ([`ROADMAP.md`](../../../ROADMAP.md)) asks for exactly this composer. §4.3's
   *"high-barrier"* finding. §2.4's non-technical evaluator. §4.4's *chat-only* wish. The openers are the
   antidote to the measured fact that **none of the six visible controls says "talk to Moxie"**.
 - **What it touches.** `sim/web/sim.html` (the composer), `sim/web/style.css`, `sim/web/rail.js` (the
@@ -714,7 +714,7 @@ Named plainly, in the house style, because a research brief that hides its holes
 ## 9. Where this lands on the audit
 
 **Nothing is re-ranked by this page**, and that is deliberate — it is a research brief, not a decision.
-[§4.4](../openmoxie-feature-audit.md#44-the-open-backlog-re-ranked-2026-09-05) remains the one place to
+[§4.4](../openmoxie-feature-audit.md#44-the-open-backlog) remains the one place to
 look for *"what should I build next."* What this scan hands the rest of the tree:
 
 | Finding | Where it lands |
@@ -726,10 +726,10 @@ look for *"what should I build next."* What this scan hands the rest of the tree
 | **§2.3's repo metrics** | 91 stars / 10 watchers vs 8 K views on one grief thread — a positioning fact for [`vision.md`](../vision.md) and the public site, not an engineering one |
 | **§0's analytics finding** | Zero analytics anywhere. An owner decision, recorded rather than taken |
 
-> **A note for whoever places this.** [`implementation-plan.md`](../implementation-plan.md) is
+> **A note for whoever places this.** [`ROADMAP.md`](../../../ROADMAP.md) is
 > hard-reserved by two other agents at the time of writing, so this brief adds **no row** to it. If the
 > owner answers §0, the ⓪ bullet's *"(d) **'Gamify this for regular people'** is NOT yet specified"* is the
 > line that should change, and it should point here.
 
 ---
-📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Community signals](community-signals.md) · [Mobile first visit](mobile-first-visit.md) · [Live Sim demo](live-sim-demo.md) · [Implementation plan](../implementation-plan.md)
+📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Community signals](community-signals.md) · [Mobile first visit](mobile-first-visit.md) · [Live Sim demo](live-sim-demo.md) · [Roadmap](../../../ROADMAP.md)

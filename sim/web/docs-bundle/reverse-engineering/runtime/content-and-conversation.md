@@ -161,7 +161,7 @@ How the brain builds what the LLM sees, and stays topical:
   > revival server **authors Moxie's character itself** — warm, playful, kid-safe SEL mentor (the
   > [GRL](../firmware/unity-assets.md) lore, age-adaptation, and the mood/emotion + behavior-markup systems are the
   > cues) — and injects it here. This is the core of the ecosystem's
-  > [LLM-agent workstream](../../architecture/moxie-ecosystem.md#5-brain-llm-agent-personality).
+  > [LLM-agent workstream](../../architecture/moxie-as-a-platform.md).
 - **Holiday / event awareness** — `EventsAndHolidaysData{holidays[]}` with
   `Holiday{event_uid, holiday_id, name, tag, date, region}`: **region-specific, dated events** the robot
   uses for topical content (birthdays, holidays). A server can supply this for seasonal behavior.

@@ -3,7 +3,7 @@
 > **Backlog brief v1 · 2026-09-02.** The build document for the audit's oldest honest gap:
 > [§3.1 *"Robot identity / JWT"*](../openmoxie-feature-audit.md) — *"broker is anonymous; we don't verify
 > JWTs either (deferred, §3b)"*, filed as **HAVE (parity — both punt)**. PR #27 shipped the
-> [pairing gate](../mqtt-and-conversation.md#37-the-pairing-gate-which-robots-we-actually-serve-built-v1-2026-09-02)
+> [pairing gate](../mqtt-and-conversation.md#37-the-pairing-gate)
 > and recorded its own limit verbatim: *"service refusal, not authentication: an unpermitted device still
 > connects, and a spoofed `d_<uuid>` is served as that robot; broker ACL/JWT still deferred."* This brief
 > closes as much of that as can honestly be closed, in the order it can be closed, and says plainly where

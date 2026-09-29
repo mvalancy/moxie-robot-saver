@@ -798,7 +798,7 @@ robot waits out its whole timeout, and the test fails as *"no config pushed with
 Load-dependent, and measured: **4/4 failures** while the soak and the full suite were both running,
 **0/9** at moderate load, and in the failing runs a second `/state` published afterwards was answered
 immediately. It is the same defect as everything else on this page — **a check whose subject can change
-between the check and the action is not a check, it is a memory** (orchestration-plan rule 23) — here in
+between the check and the action is not a check, it is a memory** (agent-workflow rule 23) — here in
 the readiness contract rather than in the runtime. The honest fix is a readiness signal that means
 *"subscribed"*, not *"CONNACK"*; it is **not** to make the SIL robot retry, which would hide the window
 rather than close it. Left unfixed on purpose: it touches `_on_connect` and the shared `helpers_stack`,
@@ -917,6 +917,6 @@ broker, there is a recording of what happened rather than a shrug.
 [MQTT and the conversation](../mqtt-and-conversation.md) ·
 [Config & telemetry contract](../config-and-telemetry-contract.md) ·
 [Broker auth](security-broker-auth.md) · [Sandboxed extensions](sandboxed-extensions.md) ·
-[Live Sim demo](live-sim-demo.md) · [Orchestration plan](../orchestration-plan.md) ·
+[Live Sim demo](live-sim-demo.md) · [Orchestration plan](../agent-workflow.md) ·
 [Remote-chat protocol](../../reverse-engineering/protocol/remote-chat-protocol.md) ·
 [Attribution](../../../ATTRIBUTION.md)

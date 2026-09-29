@@ -111,7 +111,7 @@ content *we* ship: a release that improves the starter chat is just a newer pack
 the same rule that governs a stranger's.
 
 And it is the piece that makes ③ possible at all. "A content-authoring studio for data-driven modules"
-([`../orchestration-plan.md`](../orchestration-plan.md), WS-C) has nothing to author *into* until
+([`../agent-workflow.md`](../agent-workflow.md), WS-C) has nothing to author *into* until
 content has an identity, a version and a way to move between machines.
 
 ---
@@ -609,4 +609,4 @@ Everything else in §4 — the format, the digest, the allowlist, the review mat
 no-exec guarantee — is provable in CI on a laptop, today.
 
 ---
-📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Content-module contract](../content-module-contract.md) · [Orchestration plan](../orchestration-plan.md) · [Attribution](../../../ATTRIBUTION.md)
+📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Content-module contract](../content-module-contract.md) · [Orchestration plan](../agent-workflow.md) · [Attribution](../../../ATTRIBUTION.md)
