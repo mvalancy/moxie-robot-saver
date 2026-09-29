@@ -24,6 +24,5 @@ gateways are both first-class: pick whichever runs where you are.
   works.
 - **Swappable.** Each seam is a small interface; the console can switch brain and voice per robot.
 
-Setup guides: [LiteLLM text-to-speech](../docs/guides/litellm-tts-setup.md) ·
-[LiteLLM speech-to-text](../docs/guides/litellm-stt-setup.md). Research on giving Moxie sight:
+Setup guide: [voice and ears through a gateway](../docs/guides/gateway-voice-and-ears.md). Research on giving Moxie sight:
 [vision](../docs/architecture/vision.md).

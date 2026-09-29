@@ -1,10 +1,9 @@
-# 🧩 Content-module contract — activities, the volley API, execution actions
+# Content-module contract — activities, the volley API, execution actions
 
 > **Spec version 1 · robot side stamped to firmware v3.6.4-Zephyr / OTA v24.10.803.**
-> The *implementation-facing* contract for the **content layer** — how a server defines the activities
-> Moxie runs and drives each turn. This sits **on top of** the [AI seam](ai-seam.md): the AI seam is
-> the per-turn RemoteChat RPC; a content module is the *server-side logic* that answers it. Reads
-> standalone; cites the study for provenance. Source:
+> The content layer: how a server defines the activities Moxie runs and drives each turn. It sits on
+> top of the [AI seam](ai-seam.md): the seam is the per-turn RemoteChat call; a content module is the
+> server-side logic that answers it. Sources:
 > [`content-and-conversation.md`](../reverse-engineering/runtime/content-and-conversation.md),
 > [`content-delivery.md`](../reverse-engineering/runtime/content-delivery.md).
 
@@ -12,18 +11,16 @@
 
 The [AI seam](ai-seam.md) says: per turn, a `RemoteChatRequest` comes in and a `RemoteChatResponse`
 goes out. **A content module is how the server decides that response.** The brain loads a module,
-renders its prompt, calls an LLM, runs the module's `code` hooks, and returns text + markup + actions.
+renders its prompt, calls an LLM, runs any `extension` program, and returns text + markup + actions.
 Activities are therefore **pure server-side modules** — no firmware change needed to add one.
 
 ```mermaid
 flowchart LR
   req["RemoteChatRequest<br/>(from the AI seam)"] --> load["load module<br/>(conversations/globals/schedules)"]
   load --> render["render Jinja prompt<br/>+ call LLM"]
-  render --> hooks["run code hooks<br/>pre/post_process"]
+  render --> hooks["run extension<br/>rules"]
   hooks --> out["volley.set_output(text, markup)<br/>+ execution_actions"]
   out --> resp["RemoteChatResponse<br/>(back to the AI seam)"]
-  classDef s fill:#0e0e14,stroke:#00f0ff,color:#e8edf5;
-  class req,load,render,hooks,out,resp s;
 ```
 
 ## The module format (what a server serves)
@@ -43,8 +40,9 @@ A module is JSON with three optional sections:
   [how a prompt is rendered](#how-a-prompt-is-rendered)). Common vars:
   `volley.config.child_pii.nickname`, `volley.persist_data.*`, `session.overflow`.
 - **`opener`** supports `|`-alternatives and inline tags (`<opener>`, `<exit>`, `<sleep>`, `<launch:XX>`).
-- **`code`** defines Python hooks run around each turn: `pre_process`, `post_process`,
-  `complete_handler`, `notify_handler` (and `handle_volley` for globals).
+- **`code`** is OpenMoxie's slot for Python hooks (`pre_process`, `post_process`,
+  `complete_handler`, `notify_handler`, and `handle_volley` for globals). This appliance **carries it as
+  data and never executes it**; runnable behavior uses [`extension`](#extensions-a-pack-that-can-do-something).
 - `model`/`max_tokens`/`temperature` are the LLM knobs — served to *your* [AI-seam brain](ai-seam.md),
   not a hardcoded vendor.
 
@@ -52,14 +50,13 @@ A module is JSON with three optional sections:
 
 `mqtt/moxie_sdk/content/render.py` renders `prompt` and `opener` through a **sandboxed** Jinja2
 environment (`jinja2.sandbox.SandboxedEnvironment`, `ChainableUndefined`, no autoescape). The
-sandbox is not decoration: a `prompt` travels inside an importable [content pack](#content-packs-moving-content-between-machines-p0-built-2026-09-02),
+sandbox is not decoration: a `prompt` travels inside an importable [content pack](#content-packs-moving-content-between-machines),
 so it is *untrusted input*, and under a plain `jinja2.Environment` a template is server-side code
 execution. Every refusal is counted in `render.BLOCKED`; a hostile template comes back inert and
 the turn is never interrupted (`sim/tests/test_render_sandbox.py`).
 
-**The container has jinja2** — `mqtt/requirements.txt` lists `jinja2>=3.0` and `mqtt/Dockerfile`
-installs from that file, so the appliance runs the form this page documents. Measured in the real
-`mqtt/` image (2026-09-02, jinja2 3.1.6): with `presence.face_present` true and false,
+**The container has jinja2** (`mqtt/requirements.txt`, installed by `mqtt/Dockerfile`), so the
+appliance renders the full form:
 
 ```
 template : You are Moxie.{% if presence.face_present %} Sam is here.{% endif %} Say hi to {{ nickname }}.
@@ -67,27 +64,16 @@ true     : You are Moxie. Sam is here. Say hi to Sam.
 false    : You are Moxie. Say hi to Sam.
 ```
 
-Shipping jinja2 into the image costs **+437 KB** (57.31 MB → 57.75 MB, +0.8%) and is safe *only*
-because the renderer is sandboxed — the two changes are a package, not a coincidence.
-
-A **bare-metal** install can still lack jinja2 (`pip install moxie-cloud-sdk` without the
-`content` extra — `mqtt/pyproject.toml` keeps it there on purpose so the SDK imports with no heavy
-dependencies). On that path `render_prompt` uses a dependency-free fallback — see below.
+A bare-metal `pip install moxie-cloud-sdk` without the `content` extra has no jinja2 (the SDK keeps it
+optional in `mqtt/pyproject.toml`). There `render_prompt` uses a dependency-free fallback.
 
 #### What the dependency-free fallback does
 
-Without jinja2, `render_prompt` falls back to `_minimal_render`. Its **one hard rule** is
-that nothing template-shaped may reach the brain: the output is a *system prompt*, so a
-leftover `{% if presence.face_present %}` is not a cosmetic glitch — it is
-instructions-shaped noise in the place the model takes its instructions from. (Until
-2026-09-02 the fallback passed block tags through verbatim, and every deployment ran the
-fallback. That is the bug this section documents the fix for.)
-
-One principle decides every case: **resolve what you can, and treat everything else as
-absent** — empty string, false, empty sequence. That is not a new rule; it is what a
-missing dotted path already resolved to, and what jinja2's own `ChainableUndefined` gives
-an undefined name, so the fallback is a *subset* of the real renderer rather than a
-divergent dialect.
+Without jinja2, `render_prompt` falls back to `_minimal_render`. Its hard rule: nothing
+template-shaped may reach the brain, because the output is a system prompt. Every case follows
+one principle — **resolve what you can, treat everything else as absent** (empty string, false,
+empty sequence) — which is what jinja2's `ChainableUndefined` does too, so the fallback is a subset
+of the real renderer.
 
 | Construct | Fallback | Same as jinja2? |
 |---|---|---|
@@ -115,18 +101,12 @@ Three choices in that table are worth their reasons:
   so `{{ loop.index }}. {{ f }}` emitted once becomes a dangling `". "` describing an item
   that does not exist. Iterating for real would mean loop variables and nested scopes —
   i.e. a second template engine.
-- **A `_`-leading path segment is refused, and that is a security boundary.** The walk is
-  `getattr` over the live `volley` / `session` / `presence` objects, and a `prompt` is
-  untrusted input — it arrives inside an importable pack — so "a bare dotted path" was, until
-  2026-09-03, an attribute-chain escape:
-  `{{ session.__class__.__repr__.__globals__.inspect.os.environ }}` rendered this process's
-  whole environment, `MOXIE_LLM_API_KEY` included, into the system prompt. Only the
-  jinja2-less path was ever exposed (`SandboxedEnvironment` already refuses underscore-leading
-  attributes, which is why the shipped container was not); the fallback now matches it, and
-  counts each refusal in `BLOCKED` rather than `STRIPPED` because the question it answers is
-  *did somebody try?*, not *is this install missing a dependency?*. The guard is the **first
-  character of a segment**, so `child_pii` and friends keep resolving.
-  Fenced by `sim/tests/test_content_pack_sandbox.py`.
+- **A `_`-leading path segment is refused — a security boundary.** The walk is `getattr` over
+  live objects and a prompt is untrusted (it can arrive in a pack), so without this
+  `{{ session.__class__.__repr__.__globals__.inspect.os.environ }}` would render the process
+  environment, API keys included, into the prompt. `SandboxedEnvironment` refuses the same thing.
+  Refusals count in `BLOCKED` (someone tried), not `STRIPPED`. The guard is the first character of
+  a segment, so `child_pii` still resolves. Tested by `sim/tests/test_content_pack_sandbox.py`.
 
 Every ❌ row increments **`render.STRIPPED`**, the sibling of `render.BLOCKED`. The
 degradation is invisible in the output *by design*, so the counter is the only thing that
@@ -163,21 +143,16 @@ recovered the always-listening set from `FlexibleGlobalCommand1`: **`Sleep`, `Wa
 greeting would replace every "hi Moxie" with one fixed string. Free chat greets better than a canned
 line does; authoring it would make her less like Moxie, not more.
 
-**`Earmuffs` says only what it does.** It is also an `EngagementState` the face renders
-([`turn-taking.md`](../reverse-engineering/runtime/turn-taking.md):20) and an animation
-([`unity-face-animation.md`](../reverse-engineering/runtime/unity-face-animation.md):187-191) — the
-robot visibly covers its ears. This sim has neither wiring, so the line promises only the half that
-happens. A global that *claimed* to stop listening while still listening would be a lie told to a
-child. The face/engagement half is a real follow-up, not a pretence.
+**`Earmuffs` says only what it does.** On the robot it is also an `EngagementState` and an animation
+(the robot covers its ears; [`turn-taking.md`](../reverse-engineering/runtime/turn-taking.md):20,
+[`unity-face-animation.md`](../reverse-engineering/runtime/unity-face-animation.md):187-191). That is not
+wired here, so the line must not claim Moxie stopped listening.
 
-> **Over-matching is the silent failure of this whole section, and it is worth one worked example.**
-> A global short-circuits before the brain, so a pattern one word too loose does not raise anything —
-> it quietly answers a real sentence with a canned line, and the only symptom is a robot that has
-> become strangely wooden. `SomethingElse` shipped for ten minutes matching the bare phrase, which
-> swallowed *"my mum said something else happened at work"*. It was caught by the paired test, not by
-> reading. **Anchor a global on the request, not on its words, and assert both directions** —
-> `sim/tests/test_content_wiring.py` pins the command firing with no LLM call *and* the ordinary
-> sentence that merely contains its words reaching the brain.
+> **Over-matching is the silent failure.** A global short-circuits before the brain, so a pattern one
+> word too loose quietly answers a real sentence with a canned line (a bare "something else" pattern
+> would swallow *"my mum said something else happened at work"*). Anchor a global on the request, not
+> its words, and test both directions: `sim/tests/test_content_wiring.py` checks the command fires with
+> no LLM call *and* that an ordinary sentence containing its words reaches the brain.
 
 ### `schedules[]` — what to offer when
 ```json
@@ -211,20 +186,18 @@ Progress comes back the other way: the robot **reports** each finished or abando
 [`MentorBehavior`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/MentorBehavior.proto)
 `{module_id, content_id, content_day, timestamp, action, instance_id, ended_reason}`). The server stores
 that history per robot and answers `query:"mentor_behaviors"` with it — which is what lets the next day's
-plan skip what's already done. Where it lives: [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule/)
+plan skip what's already done. Where it lives: [`mqtt/moxie_sdk/schedule/`](../../mqtt/moxie_sdk/schedule/)
 (the builder) and [`../../mqtt/moxie_sdk/store.py`](../../mqtt/moxie_sdk/store.py) (the history).
 
-#### The recommender: history + preferences + the clock → today's plan *(2026-09-02)*
+#### The recommender: history + preferences + the clock → today's plan
 
-The builder used to be a `(device_id, day)` rotation. It is still **deterministic** — the same
-inputs produce byte-identical bytes, in any process, under any `PYTHONHASHSEED` — but it is now a
-*scored* recommender ([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2 row 7).
-Two pure functions, both in [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule/):
+A **deterministic** scored recommender: the same inputs produce byte-identical output in any process,
+under any `PYTHONHASHSEED`. Two pure functions in [`mqtt/moxie_sdk/schedule/`](../../mqtt/moxie_sdk/schedule/):
 
-- **`plan_inputs(device_id, now, …)`** gathers the signals — the `schedules[]` template, the
+- **`plan_inputs(device_id, now, …)`** (`signals.py`) gathers the signals — the `schedules[]` template, the
   robot's `mentor_behaviors`, its effective config, its telemetry, the clock — into one JSON-safe
   object. That object is the plan's audit trail: it is exactly what `GET /schedule` shows a parent.
-- **`plan_day(inputs) -> (ContentSchedule, explanations)`** scores, orders and explains. It reads
+- **`plan_day(inputs) -> (ContentSchedule, explanations)`** (`planner.py`) scores, orders and explains. It reads
   nothing but `inputs`, so a plan can be replayed from a stored one.
 
 **The signals, and where each comes from**
@@ -236,11 +209,11 @@ Two pure functions, both in [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxi
 | when the child must be asleep | `weekday_bedtime` / `weekend_bedtime` in the effective config | a hard exclusion; windows may wrap midnight |
 | the time of day | the caller's `now` (injected — the planner never reads a clock of its own) | slot *i* is notionally at `now + i × SLOT_MINUTES` (10 min, **ours**: `CSData.module_started_ts` shows the robot time-boxes activities but our corpus does not recover the limit) |
 | what the module offers | the module's own `schedules[]` | an entry named after the current bucket (`morning`/`afternoon`/`evening`/`night`) is preferred, so a module can ship a wind-down day; otherwise the first entry |
-| telemetry | `Packet` (`event_name`, `recorded_at`, `moxie_session_id`) | **context only** — see the honesty note below |
+| telemetry | `Packet` (`event_name`, `recorded_at`, `moxie_session_id`) | **context only** — see the note below |
 
 **Constraints** (applied before scoring): nothing is ever planned into bedtime, and a candidate
 whose `ModuleCategory` matches the previous pick is filtered out unless nothing else remains
-(the same no-two-in-a-row rule the rotation had).
+(no two of a category in a row).
 
 **Weights** (summed; every term is returned in `factors` so the arithmetic is inspectable):
 
@@ -275,7 +248,7 @@ Anything unclassified (`UNASSIGNED`, `UTILITY`, `OTHER`, an authored `USER` cate
 Nothing is *forbidden* by time of day — a child who wants to dance at 8 pm still can; it is just no
 longer the top pick.
 
-**Honesty note — what telemetry does *not* carry.** The recovered envelope is
+**What telemetry does not carry.** The recovered envelope is
 `embodied.logging.Packet{model, version, recorded_at, moxie_id, moxie_session_id, user_id,
 event_name, event_data}`
 ([`device-config-and-telemetry.md`](../reverse-engineering/protocol/device-config-and-telemetry.md)
@@ -307,12 +280,11 @@ one, else a small table of plain-English names — a module id we have no Englis
 `FF`, `AB`) is printed verbatim rather than given an invented product name. **None of this reaches
 the robot**: the served `ContentSchedule` still contains only `ContentSchedule` fields, and each
 entry only `Recommendation` fields. It is stored at `robots/<device_id>/schedule_explain.json` and
-served by `GET /schedule?device_id=…`
-([`mqtt-and-conversation.md` §3.8](mqtt-and-conversation.md#38-the-schedule-query)).
+served by `GET /schedule?device_id=…` ([MQTT contract](mqtt-and-conversation.md), the schedule query).
 
 ##### In the console
 
-The parent reads it on the **📅 Today's plan** card: `GET /local/robots/{device_id}/schedule` is a
+The parent reads it on the **Today's plan** card: `GET /local/robots/{device_id}/schedule` is a
 thin proxy of the runtime's `GET /schedule` ([`routes/console.py`](../../server/moxie_server/routes/console.py)),
 normalized by the pure `normalize_schedule_view`
 ([`fleet/cards.py`](../../server/moxie_server/fleet/cards.py)) into one row per served
@@ -324,7 +296,7 @@ position (the contract above) and re-paired by `module_id` if a payload ever bre
 Three things the card refuses to invent: a **name** (`Recommendation.module_name` when the template
 supplies one, else the id verbatim — the plain-English table lives in the SDK and is not copied
 across the seam), a **clock time** (the authored spine is ordered, not timed, and shows `—`), and a
-**telemetry signal**. The card is **read-only**: a day is changed from ⚙️ Settings (bedtime,
+**telemetry signal**. The card is **read-only**: a day is changed from Settings (bedtime,
 `schedule_preferences.parent_requests`), never from here. Tested pure in
 [`../../sim/tests/test_schedule_view.py`](../../sim/tests/test_schedule_view.py) against a recorded
 real payload, and across the seam in
@@ -352,8 +324,7 @@ Each turn hands the module's `code` a **`volley`** (this exchange) and **`sessio
 
 ## Memory — `persist_data` + `session.summarize()`
 
-**Built 2026-09-02.** A conversation that ends is summarized into a few durable facts; the
-next conversation reads them back. Where it lives:
+A conversation that ends is summarized into a few durable facts; the next conversation reads them back. Where it lives:
 [`moxie_sdk/store.py`](../../mqtt/moxie_sdk/store.py) (`MemoryStore` — the storage),
 [`moxie_sdk/content/memory.py`](../../mqtt/moxie_sdk/content/memory.py) (the summarizer),
 [`content_app.py`](../../mqtt/moxie_sdk/content/content_app.py) (the wiring).
@@ -395,12 +366,11 @@ able to act on exactly one of them:
 A bare string is still read (and still renders); it simply has no id until the next merge.
 
 - **Bounded** — caps on namespaces (32), items per list (25), item length (240 chars) and
-  total file size (64 KB; it was 16 KB before items grew ids and provenance — the byte cap
-  drops whole trailing namespaces, so leaving it would have halved how many activities a
-  robot can remember). An unbounded memory is both a prompt-cost bug and a privacy one.
+  total file size (64 KB; the byte cap drops whole trailing namespaces). An unbounded memory is
+  both a prompt-cost bug and a privacy one.
 - **Provenance per item *and* per merge** — which module, which day, how many turns and
   *why* the conversation ended. `_`-prefixed keys are the engine's; they never appear in
-  the parent-facing `data`, except `_meta`, which `view()` now surfaces as `meta` so the
+  the parent-facing `data`, except `_meta`, which `view()` surfaces as `meta` so the
   console can show how far a transcript was actually written down.
 - **JSON-safe** — anything a module or a model produces that will not serialize is dropped,
   never stored as junk.
@@ -420,15 +390,10 @@ A bare string is still read (and still renders); it simply has no id until the n
   [config contract](config-and-telemetry-contract.md)), so one house rule covers every
   robot on the appliance and a single robot can still be set apart.
 
-  **The switch covers both memories, and saying so is the point.** This section is about
-  the durable *facts* (`MemoryStore`), but the appliance keeps a second thing on disk: the
-  **rolling conversation transcript**, `MoxieRuntime.history` written to
-  `MOXIE_MEMORY_DIR/<device>.json` after every turn. Both compose files set that variable
-  (`/data/memory`), so on a shipped appliance that path is on by default — and until the
-  gate landed it was guarded by nothing but "is the directory configured", which made the
-  sentence above false on the one file that holds the child's words verbatim. It is now
-  resolved through the *same* `memory_policy` callable, so there is one parent switch and
-  not two that could disagree:
+  **The switch covers both memories.** Besides the durable facts (`MemoryStore`), the
+  appliance keeps the **rolling conversation transcript**, `MoxieRuntime.history`, written to
+  `MOXIE_MEMORY_DIR/<device>.json` after every turn (both compose files set it to
+  `/data/memory`). It is gated by the same `memory_policy`, so there is one parent switch:
 
   | | `NO_DATA` | `NO_MEDIA` (default) | `FULL` |
   |---|---|---|---|
@@ -436,7 +401,7 @@ A bare string is still read (and still renders); it simply has no id until the n
   | rolling transcript (`MOXIE_MEMORY_DIR`) | not written, **and the stored file is deleted** | written | written |
   | in-memory history (RAM) | kept | kept | kept |
 
-  Three things that table is deliberately saying:
+  Notes on the table:
 
   - **`NO_MEDIA` writes the transcript.** It is the value that withholds an opaque
     *payload* — telemetry's `event_data`, which could be audio (see the
@@ -497,7 +462,7 @@ and the use clocks freeze.
 
 ### Declaring it (the `memory` block)
 
-Module `code` strings are deliberately never executed (sandboxing — see
+Module `code` strings are never executed (see
 [`content_app.py`](../../mqtt/moxie_sdk/content/content_app.py)), so what OpenMoxie's
 MemoryChat expresses as a `complete_handler` is **declared** here instead:
 
@@ -516,7 +481,7 @@ never re-summarizes, or re-pays for, the same turns) and merges it in.
 ### What a parent can do
 
 The supervisor's localhost status server serves the memory
-([`moxie_runtime.py`](../../mqtt/supervisor/moxie_runtime/), the memory region):
+([`mqtt/supervisor/moxie_runtime/memory.py`](../../mqtt/supervisor/moxie_runtime/memory.py)):
 
 | Endpoint | Effect |
 |---|---|
@@ -529,17 +494,16 @@ The supervisor's localhost status server serves the memory
 Erasure is never policy-gated — a parent must always be able to delete — and neither is the
 edit: fixing a nearly-right line must work on a `NO_DATA` robot too, where the only
 alternative is deleting it. The parent console drives all of it from the
-🧠 **What Moxie remembers** card ([`server/static/js/memory.js`](../../server/static/js/memory.js)
+**What Moxie remembers** card ([`server/static/js/memory.js`](../../server/static/js/memory.js)
 `refreshMemory` → `normalize_memory` → `GET`/`DELETE /local/robots/{id}/memory[/{namespace}[/{item}]]`
 and `POST …/memory/{namespace}/{item}`; the parent-facing guide is
 [`what-moxie-remembers.md`](../guides/what-moxie-remembers.md)).
 
-### Honest limits
+### Limits
 
 The model can be wrong, and a wrong fact is **sticky** — it goes back into every later
-prompt until someone corrects or erases it (our own live run turned "sleeps on my bed" into
-"Puppy sleeps on **his** bed", inventing a pronoun; that exact line is now a per-item edit
-away from being right). The verbatim check is a floor, not a guarantee: a *paraphrase* can
+prompt until someone corrects or erases it (e.g. "sleeps on my bed" summarized as "Puppy sleeps
+on **his** bed", an invented pronoun). The verbatim check is a floor, not a guarantee: a *paraphrase* can
 still carry something private. Decay is a clock, not a judgement — see above for the three
 things it deliberately will not decide. That is exactly why the facts are few, bounded,
 attributed per item, correctable and erasable one line at a time.
@@ -568,7 +532,7 @@ These are ordinary content QRs (a text payload the vision pipeline decodes) — 
 setup/`bo-wifi` grammar in [`qr-commands.md`](../reverse-engineering/protocol/qr-commands.md); same
 camera, different consumer.
 
-## Content packs — moving content between machines *(P0 built 2026-09-02)*
+## Content packs — moving content between machines
 
 A module is a file in a git repository, which makes authoring content a developer activity.
 A **pack** is the distribution unit that fixes that: one JSON file a parent, a teacher or a
@@ -576,7 +540,7 @@ speech therapist can be handed, reviewed item by item before it changes anything
 afterwards. Design record and the full assumption ledger:
 [`backlog/content-packs.md`](backlog/content-packs.md) (audit
 [ADOPT #5](openmoxie-feature-audit.md)). Implementation:
-[`../../mqtt/moxie_sdk/content/packs.py`](../../mqtt/moxie_sdk/content/packs/) — pure,
+[`mqtt/moxie_sdk/content/packs/`](../../mqtt/moxie_sdk/content/packs/) — pure,
 stdlib only, no store and no clock except an injected `now`.
 
 ### The file
@@ -638,26 +602,17 @@ Ada — edit it or export anyway"*. **It catches the names we know and nothing e
 **`code` is data, never behaviour.** The engine has never executed a module's `code`
 ([`content_app.py`](../../mqtt/moxie_sdk/content/content_app.py)), and packs make that a
 security property rather than a deferral: a `code` string round-trips as an opaque field,
-the review marks the item ⚠️ *"carries a `code` block, which this appliance never runs"*, and
-it stays in the store so a future sandboxed runtime (audit BEYOND #6) could start running it
-behind a capability declaration without a re-import. The honest cost: importing upstream's
-`MoxieTime` or `MoxieTimers` gives you a global that matches an utterance and then does
-nothing, because their behaviour *is* the `code`.
-
-**That is still true, and it is now true on purpose rather than by deferral.** The
-sandboxed runtime landed (2026-09-03, BEYOND #6 P0) and it did **not** start running
-`code` — it added a *different field*, [`extension`](#extensions-a-pack-that-can-do-something),
-which carries a small total program instead of a Python string. `code` keeps its ⚠️, its
-wording is now *"carries a `code` block (Python), which this appliance never runs — see
-`extension` for behaviour this appliance can run"*, and compiling one into the other is
-explicitly out of scope: a Python-to-AST compiler is a parser for a Turing-complete
-language living in the trusted half of the system, whose failure mode is a program that
-means something other than what the reviewer read. Six upstream hooks is a hand-port
-([`ext_conformance.json`](../../sim/tests/data/ext_conformance.json)), not a compiler.
+the review warns *"carries a `code` block (Python), which this appliance never runs — see
+`extension` for behaviour this appliance can run"*. Importing upstream's `MoxieTime` or
+`MoxieTimers` as-is therefore gives a global that matches and does nothing, because their
+behaviour is the `code`. Runnable behaviour uses a different field,
+[`extension`](#extensions-a-pack-that-can-do-something). Compiling `code` into `extension` is out of
+scope (a parser for a Turing-complete language in the trusted half of the system); upstream hooks are
+hand-ported instead ([`ext_conformance.json`](../../sim/tests/data/ext_conformance.json)).
 
 ### Extensions — a pack that can *do* something
 
-*(BEYOND #6 P0, built 2026-09-03. Design:
+*(Design:
 [`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md). Code:
 [`ext.py`](../../mqtt/moxie_sdk/content/ext/). Tests:
 [`test_ext_escapes.py`](../../sim/tests/test_ext_escapes.py) ·
@@ -665,7 +620,7 @@ means something other than what the reviewer read. Six upstream hooks is a hand-
 
 A conversation or a global may carry an **`extension`**: a small, total, capability-scoped
 program the appliance actually runs. It is what lifts a pack from a prompt library to a
-platform — a pack can now **check the clock**, **count something** and **remember a
+platform — a pack can **check the clock**, **count something** and **remember a
 score** — while keeping the property packs were unsigned *because of*: an imported pack
 cannot express the harm.
 
@@ -692,9 +647,9 @@ stops. `let` is an ordered map of value bindings, which is what removes the need
 — and there are none: no loop, no user function, no recursion, no `exec`, no parser, and
 **no name that resolves to a host object**.
 
-`on` selects the hook. P0 ships `global` (a matched pattern, before the conversation — the
+`on` selects the hook. Implemented: `global` (a matched pattern, before the conversation — the
 socket a registered Python handler fills) and `turn.before` (before the prompt renders; may
-set `handled` and suppress the model). `turn.after` and `session.end` are P1.
+set `handled` and suppress the model). `turn.after` and `session.end` are not implemented.
 
 **Capabilities.** An extension **declares** what it needs, and the declared set must
 **equal** the set the AST actually uses — using more is a load refusal, and declaring more
@@ -712,12 +667,12 @@ is *also* a load refusal, so the list a parent reads is provably what the progra
 | `memory.read` / `memory.write` | Its **own namespace** of `persist_data` | refused |
 | `presence` | `face_present`, `line` | refused |
 | `markup` | Author behaviour markup (catalogue-validated) | refused |
-| `act.<name>` | One robot function per name, from the closed `ext.ACTION_WORDS` allowlist | refused (grantable ✅ 2026-09-04) |
-| `subscribe` | Ask the robot to push a perception event, from the closed `ext.SUBSCRIBE_EVENTS` vocabulary | refused (grantable ✅ 2026-09-05) |
-| `brain` · `schedule.request` | A model call of its own, a schedule request | **P1 — refused at load** |
+| `act.<name>` | One robot function per name, from the closed `ext.ACTION_WORDS` allowlist | refused (grantable) |
+| `subscribe` | Ask the robot to push a perception event, from the closed `ext.SUBSCRIBE_EVENTS` vocabulary | refused (grantable) |
+| `brain` · `schedule.request` | A model call of its own, a schedule request | **not implemented — refused at load** |
 
 The default-granted set is exactly those four, and widening it is a code change: there is
-deliberately no env var and no console control at P0. Shipped-by-us activities get a wider
+deliberately no env var and no console control. Shipped-by-us activities get a wider
 set (`content_app.SHIPPED_EXTRA_GRANTS`) anchored to the **digest of the program** — so an
 imported pack overriding a shipped item's key does *not* inherit its grants.
 
@@ -735,7 +690,7 @@ so an attribute walk has nothing to walk to. A path segment beginning `_` is ref
 load, so `__class__` and `_meta` are not *blocked* — they are not valid programs.
 
 **Effects are collected, never applied during the program.** `say`, `markup`, `remember`,
-`forget`, `scratch`, `note`, `act`, `subscribe` (and P1's `brain`) append to a list the host
+`forget`, `scratch`, `note`, `act`, `subscribe` append to a list the host
 applies afterwards — through the same output-safety classifier and the same `annotate`
 floor a model's line goes through, with the memory namespace supplied by the host. So a
 breach mid-program leaves **nothing** half-applied.
@@ -743,7 +698,7 @@ breach mid-program leaves **nothing** half-applied.
 **A `subscribe` is MERGED, never applied as a replacement — at every layer.** The names are
 bounded three times against the recovered vision catalog (at load in `ext._st_subscribe`, at
 the host boundary in `content_app.subscriptions_of`, and once more in the runtime against the
-events it can actually route). Then `moxie_runtime._merge_subscriptions` merges what the reply
+events it can actually route). Then `_merge_subscriptions` (`mqtt/supervisor/moxie_runtime/presence.py`) merges what the reply
 asked for **into** the supervisor's own vision subscription: every entry the runtime put there
 survives, unconditionally. A content pack must be able to ask to perceive something and must
 never be able to switch off the events presence, the unprompted greeting and launch cards
@@ -752,24 +707,23 @@ depend on — and a replace here would do that *silently*, because the runtime l
 is additionally refused when `MOXIE_VISION=0` (an operator's kill switch is above a pack) or
 when the robot is not permitted.
 
-**…and a subscribed event comes BACK to the pack, without ever reaching a brain (2026-09-05).**
+**A subscribed event comes back to the pack without reaching a brain.**
 A perception event arrives as the `speech` of an ordinary `RemoteChatRequest`
 ([`vision.md`](vision.md) §7.1) and the runtime diverts it away from the turn loop, because
 `eb-found-face` fires every time a child moves around a room and answering it with a model call
-would turn presence into a billing event. That divert is unchanged. What is new is that
-`_on_vision_turn` first offers the event to `MoxieApp.perceive`, and `ContentApp.perceive` runs
+would turn presence into a billing event. `_on_vision_turn` first offers the event to `MoxieApp.perceive`, and `ContentApp.perceive` runs
 **only** this section's evaluator — the same pure, step- and byte-budgeted `evaluate()`, no
 network — over a `turn.before` extension whose rule may match on `{"var": "speech"}` being the
 event name. So a rule like *"when `speech` is `eb-qr-event` and `$eb_qr_value` starts with `GO`,
-say what the card said"* is now live on a real robot rather than only in the conformance golden.
+say what the card said"*.
 
 The gates are the request read backwards, which is what makes them impossible to disagree with:
 the runtime records what it **accepted** (`{device: {event: module}}`) and wakes a pack only for
 an event in that record, under the module it is running now — *"events are automatically
 unsubscribed when the module exits"*. `MOXIE_VISION=0` and the pairing gate refuse on the way in
 as well as on the way out. If a rule answers, that reply is the whole turn; if none matches, the
-appliance's own presence handling — the unprompted greeting, a 🎴 launch card, or `NOREPLY_ACK` —
-runs exactly as it did before. An app that does not implement `perceive` (which is every app but
+appliance's own presence handling — the unprompted greeting, a launch card, or `NOREPLY_ACK` —
+runs. An app that does not implement `perceive` (which is every app but
 a content pack's) is untouched, because the base class returns `None`.
 
 **The limits**, all env vars in [`config.py`](../../mqtt/config.py):
@@ -788,7 +742,7 @@ startup: an extension gets a slice of a child's patience (4 % of a turn), not a 
 it. Every number is chosen rather than measured, which is why every one is an env var.
 
 **Failure is boring and total.** On any breach the effect list is discarded whole and
-`ContentApp` proceeds exactly as it does today: a failed `global` **falls through to the
+`ContentApp` proceeds as if there were no extension: a failed `global` **falls through to the
 conversation**, a failed `turn.before` is skipped and the model runs, nothing is written,
 and **the child hears no error text**. The parent hears it once, in plain language, through
 a bounded `ext_events` ring (*"it took too long"*, *"it tried to build something too
@@ -816,7 +770,7 @@ call.
 
 Every record — shipped or imported — carries **`source_version`**, an integer the *author*
 owns and bumps (default 1; the shipped modules under
-[`../../mqtt/content_modules/`](../../mqtt/content_modules/) now state it explicitly). Every
+[`mqtt/content_modules/`](../../mqtt/content_modules/) state it explicitly). Every
 installed item also carries provenance:
 
 ```jsonc
@@ -850,7 +804,7 @@ Three fleet-scoped [`JsonStore`](../../mqtt/moxie_sdk/store.py) collections:
 | File | Holds |
 |---|---|
 | `fleet/content_items.json` | the installed **overlay** — `{"items": {"conversation:FREE_CHAT/default": {"data", "provenance"}, …}}` |
-| `fleet/content_packs.json` | the ledger the 📦 card lists (one row per installed pack) |
+| `fleet/content_packs.json` | the ledger the console's Content card lists (one row per installed pack) |
 | `fleet/content_backup.json` | the one-slot pre-import snapshot, for `undo` |
 
 **Effective content = shipped defaults, then the overlay by `kind:key`.**
@@ -860,7 +814,7 @@ shipped records carry a version, upgrading *our* content across a release obeys 
 rule as a stranger's pack — and a shipped item a parent edited is not silently taken back.
 Only accepted items are written to the overlay, never the merged view, so a later release's
 improved starter chat is still an upgrade rather than something the overlay shadows. The
-overlay never deletes: P0 has no remove-item operation.
+overlay never deletes: there is no remove-item operation.
 
 An import ends in `reload_content()`, which reassigns **one attribute** (`self.app.module`).
 The next turn renders the new prompt; a turn already in flight finishes on the module object
@@ -880,15 +834,15 @@ appliance, not of one robot:
 | `POST /content/review` | the pack file's own bytes | per-item rows + `expect_digest`; **writes nothing** |
 | `POST /content/import` | `{"pack", "accept": ["kind:key", …], "expect_digest"}` | the applied/skipped summary, or **409** |
 | `POST /content/undo` | — | what was restored |
-| `POST /content/item` | `{"kind", "data", "phrases", "key", "local_rev"}` | ✍️ one authored item saved — see *Authoring* below |
-| `POST /content/render` | `{"kind": "conversation", "data", "context"}` | ✍️ a draft prompt resolved; **no model call, no write** |
+| `POST /content/item` | `{"kind", "data", "phrases", "key", "local_rev"}` | one authored item saved — see *Authoring* below |
+| `POST /content/render` | `{"kind": "conversation", "data", "context"}` | a draft prompt resolved; **no model call, no write** |
 
 `pack` may be the parsed object **or the file's raw text**, and the console sends the text:
 re-encoding in a browser turns `1.0` into `1` and would make a good file report as tampered.
 A body over `MOXIE_PACK_MAX_BYTES` (default 1 MiB) is **413**, refused before it is buffered.
 The **409** closes the review-one-file-import-another gap: the pack is re-sent between the two
 calls because the server holds no session state, so they can genuinely be different files.
-The console proxies these at `/local/content{,/export,/review,/import,/undo}` behind the 📦
+The console proxies these at `/local/content{,/export,/review,/import,/undo}` behind the Content
 card. Nothing here touches the wire — a pack is server-side data, and `_push_config` and
 `RobotCloudConfig` are untouched (which is why face/config packs are a later slice).
 
@@ -898,7 +852,7 @@ a real robot does with an entry naming a module its firmware lacks — ignore it
 or fail the query — is **unobserved**; the review warns on any `module_id` outside the
 recovered on-board catalog rather than refusing it.
 
-### Authoring — writing an item instead of importing one *(P0 built 2026-09-04)*
+### Authoring — writing an item instead of importing one
 
 Packs made content **shippable**; these two routes make it **writable**. The design is
 [`backlog/content-authoring.md`](backlog/content-authoring.md); what a module author needs to
@@ -976,13 +930,13 @@ references; a text-only activity needs none. Detail:
 - **Minimum:** one `conversations[]` module (a prompt + an LLM call) answered through the AI seam — a
   working open-ended chat, no schedules, no assets, no execution actions.
 - **Full:** globals (timers/commands), a daily `schedules[]` plan, `persist_data` memory
-  (built — see [Memory](#memory-persist_data-sessionsummarize)), execution actions
+  (see [Memory](#memory-persist_data-sessionsummarize)), execution actions
   (timers/QR), and hosted asset bundles for rich activities.
 
 ## Conformance checklist
 
 - [ ] Loads a module and renders its Jinja `prompt` over `volley`/`session`.
-- [ ] Runs the `code` hooks (`pre_process`/`post_process`/`handle_volley`) and returns the result via `volley.set_output(text, markup)`.
+- [ ] Returns each turn's result via `volley.set_output(text, markup)`; runs `extension` programs within their declared capabilities; never executes a module's `code` string.
 - [ ] Answers through the [AI seam](ai-seam.md) as a `RemoteChatResponse` (text + markup + optional actions).
 - [ ] Supports `globals[]` regex commands alongside the active activity.
 - [ ] (Full) honors `schedules[]`, execution actions, and hosts referenced asset bundles.
@@ -998,4 +952,4 @@ Where it lives: [`../../mqtt/`](../../mqtt/) (the `MoxieApp` brain that loads mo
 new activities are pure server-side modules — no firmware change.
 
 ---
-📖 [Docs index](../README.md) · [AI seam](ai-seam.md) · [Config & telemetry](config-and-telemetry-contract.md) · [MQTT & conversation](mqtt-and-conversation.md)
+[Docs index](../README.md) · [AI seam](ai-seam.md) · [Config & telemetry](config-and-telemetry-contract.md) · [MQTT & conversation](mqtt-and-conversation.md)

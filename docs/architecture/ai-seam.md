@@ -1,33 +1,29 @@
-# 🔌 The AI seam — LLM / STT / TTS interface contract
+# The AI seam — LLM, STT and TTS interface contract
 
 > **Spec version 1 · robot side stamped to firmware v3.6.4-Zephyr / OTA v24.10.803.**
-> This is the *implementation-facing* contract for the three places a backend supplies intelligence.
-> It reads standalone; it cites the reverse-engineering study for provenance but you do not need to
-> read that study to build against this. Distilled from
+> The contract for the three places a backend supplies intelligence. It reads on its own; the
+> reverse-engineering study is cited for provenance only. Distilled from
 > [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md),
 > [`perception-pipeline.md`](../reverse-engineering/runtime/perception-pipeline.md), and
 > [`unity-mainapp-interface.md`](../reverse-engineering/protocol/unity-mainapp-interface.md).
 
-## Why this is the whole game
+## The three seams
 
-Moxie's body — face render, motors, LEDs, speaker, camera, mic, the behavior tree, the perception
-pipeline — is fixed hardware and fixed on-device code. It is a **shell**. Everything that makes a
-given Moxie *think, hear, and speak* enters through exactly **three seams**, each a request/response
-contract carried over the [MQTT/ZMQ bus](mqtt-and-conversation.md). Implement these three and any AI
-becomes Moxie's mind — that is the "ghost in the shell." The SIL avatar and a re-homed robot are
-**interchangeable clients** of the same three seams, so anything proven in the sim runs on hardware.
+Moxie's body (face, motors, LEDs, speaker, camera, mic, behavior tree, perception) is fixed hardware and
+fixed on-device code. Everything that makes it think, hear and speak enters through three seams, each a
+request/response contract carried over [MQTT](mqtt-and-conversation.md). Implement them and any AI can
+be Moxie's mind. The Sim and a re-homed robot are interchangeable clients of the same seams
+([Sim as a client](sim-as-a-client.md)).
 
 ```mermaid
 flowchart LR
-  mic["🎙️ mic audio"] -->|"① STT in"| stt["STT engine"]
+  mic["mic audio"] -->|"① STT in"| stt["STT engine"]
   stt -->|"text turn"| brain
   subgraph seam["the three seams a backend fills"]
     brain["② Brain<br/>(LLM + personality)"]
   end
   brain -->|"markup + text"| tts["③ TTS engine"]
-  tts -->|"PCM + viseme marks"| spk["🔊 speaker + face"]
-  classDef s fill:#0e0e14,stroke:#00f0ff,color:#e8edf5;
-  class mic,stt,brain,tts,spk s;
+  tts -->|"PCM + viseme marks"| spk["speaker + face"]
 ```
 
 Each seam below is: **the contract** (what crosses it), **the wire shape** (exact fields, from the
@@ -62,40 +58,27 @@ low-latency barge-in), `confidence`, `speaker_id` (diarization), and the transla
 `END_OF_SPEECH` + `FINAL` (plug B); everything before that is provisional.
 Full detail: [`perception-pipeline.md`](../reverse-engineering/runtime/perception-pipeline.md).
 
-### What we implement (plug point B) — BUILT, and live on both engines (2026-09-02)
+### This repo's implementation (plug point B)
 
-`moxie_sdk/stt.py` is plug B: `SttSession` accumulates the VAD-tagged frames of one utterance and
-hands the whole thing to a `Transcriber` on `END_OF_SPEECH`, and the runtime publishes the
-`zmqSTTResponse`. **The audio the accumulator carries is 16-bit mono PCM at 16 kHz** — the
-perception bus's own rate, and the default `SttSession(transcriber)` is built with — so any engine
-plugged in here must be told that rate rather than assume one.
+[`mqtt/moxie_sdk/stt.py`](../../mqtt/moxie_sdk/stt.py): `SttSession` accumulates the VAD-tagged frames
+of one utterance and hands them to a `Transcriber` on `END_OF_SPEECH`; the runtime publishes the
+`zmqSTTResponse`. The audio is **16-bit mono PCM at 16 kHz** (the perception bus's rate); an engine must
+be told that rate, not assume one.
 
-Two engines ship, and **neither is a fallback for the other** — which one a deployment wants is a
-property of the box, not a ranking (the matrix is in
-[`gateway-voice-and-ears.md`](../guides/gateway-voice-and-ears.md)):
+| Engine | `MOXIE_STT` | What it is |
+|---|---|---|
+| `WhisperTranscriber` | `whisper` (alias `local`) | local faster-whisper; no network, no key |
+| `OpenAITranscriber` | `gateway` | OpenAI-shaped `POST /v1/audio/transcriptions` (multipart WAV in, `{"text": …}` out) |
 
-| Engine | `MOXIE_STT` | What it is | For |
-|---|---|---|---|
-| `WhisperTranscriber` | `whisper` (alias `local`) | local faster-whisper, lazily imported | a home appliance: no network, no key, a child's voice never leaves the house |
-| `OpenAITranscriber` | `gateway` | OpenAI-shaped `POST /v1/audio/transcriptions` (multipart WAV in, `{"text": …}` out) | a hosted deployment: no model wheels, no GPU, one key for brain + voice + ears |
+Neither is a fallback ranking; which one fits is a property of the box
+([STT setup](../guides/gateway-voice-and-ears.md)). `auto` (the default) picks the gateway when a URL **and**
+a key resolve, else local whisper, else none. The gateway engine wraps the PCM in a WAV header at the
+rate it was handed (a wrong header pitch-shifts the audio), skips clips under 120 ms, and shares the LLM
+path's `call_with_backoff` + `Pacer` for 429/5xx. `FallbackTranscriber` puts the local engine (or a
+`NullTranscriber` returning `""`) behind the gateway and latches on the first failure, reporting it once.
 
-`auto` (the default) picks the gateway when a URL **and** a key resolve, else local whisper, else
-nothing. The gateway engine wraps the headerless PCM in an in-memory RIFF/WAVE **at the rate it was
-handed** (a header that lies pitch-shifts the audio), drops anything under 120 ms without a request,
-and shares the LLM path's `call_with_backoff` + `Pacer` for 429/5xx. `FallbackTranscriber` puts the
-local engine (or a `NullTranscriber` returning `""`) behind the cloud one and latches on the first
-failure, reporting it once — a gateway outage is a downgrade, never a traceback mid-sentence.
-
-Live-proven end to end on 2026-09-02: gateway TTS → gateway STT at **word overlap 1.00** at both
-22050 Hz and the robot's 16 kHz, and one child utterance through the real runtime with all three
-seams on the gateway (`sim/tests/test_live_gateway_stt.py`).
-
-**Choosing the ears without an env edit — BUILT (2026-09-02).** The console's 🎚️ **Listening**
-dropdown offers whatever this appliance can really hear with: the gateway's STT models
-(`stt-whisper`, `graphling-stt`, `stt-whisper-base`, discovered from `GET /v1/models` and classified
-by `moxie_sdk/audio_models.py`), the local whisper sizes that are installed, and `off`. The pick is
-persisted fleet-wide in `fleet/voice.json` and swaps the live engine — see §③'s *Choosing an
-engine* for the one mechanism both seams share.
+The console's **Listening** picker chooses the engine at runtime; see [Choosing an
+engine](#choosing-an-engine) under ③.
 
 ---
 
@@ -106,24 +89,16 @@ utterance + context) and returns a `RemoteChatResponse` that (a) says a line, (b
 navigation, and (c) reports its read of the child. A minimal backend fills only the *speak* half; a
 full brain uses all three.
 
-### Which brain, per child — BUILT (P0, 2026-09-03)
-
-"Any AI wears the shell" was true of this drawing and false of the appliance: a brain was chosen
-**once, globally**, by `MOXIE_APP` at import time, and `config.build_app()` returned the LLM app for
-anything it did not recognise. It is now a **registry plus a selection**, and both halves are
-idioms this repo already had:
+### Which brain, per child
 
 | | |
 |---|---|
-| **The registry** | [`moxie_sdk/brains.py`](../../mqtt/moxie_sdk/brains.py) — a **closed positive list** (`llm`, `content`, `webhook`, `echo`), the idiom of `content/packs.py::SPEC` and `content/ext.py::OPS`. A name in the table resolves to a builder in `config.BRAIN_BUILDERS`; **a name that is not in it is refused, naming the four**, never resolved to a default. No deny-list |
-| **The selection** | `brain` is an ordinary key in the ordinary config layers — `defaults ⊕ fleet ⊕ per-robot` (ADOPT #6). `POST /config?scope=fleet` sets the house rule and `POST /config?device_id=` sets one child's, exactly as for volume or bedtime; `cloud_config.SERVER_ONLY_KEYS` keeps it out of the document pushed to the robot, which has no field for it |
-| **The swap** | `MoxieRuntime.app_for(device_id)` resolves **once**, at the top of a turn, and the app is carried through it. A parent's Save lands on the child's **next** turn; a turn already in flight finishes with the brain that heard the question. No restart, no reconnect — `voice_update` and `reload_content()`'s rule |
-| **The pin** | An explicit `MOXIE_APP` **pins** the appliance's brain and a per-child pick may not overrule it (the owner rule PR #77 enforced for `MOXIE_TTS`/`MOXIE_STT`). The card offers only that entry, and a stale page's pick is refused *naming the variable*. `MOXIE_APP=any` is the explicit "decide per child". The pin reads the **raw** environment, because `config.MOXIE_APP` already reads as `llm` on a box where nobody said anything |
+| **Registry** | [`moxie_sdk/brains.py`](../../mqtt/moxie_sdk/brains.py): a closed list (`llm`, `content`, `webhook`, `echo`). Each name maps to a builder in `config.BRAIN_BUILDERS`; an unknown name is refused, naming the valid ones, never defaulted. |
+| **Selection** | `brain` is an ordinary key in the config layers `defaults ⊕ fleet ⊕ per-robot`: `POST /config?scope=fleet` sets the house rule, `POST /config?device_id=` one child's. `cloud_config.SERVER_ONLY_KEYS` keeps it out of the document pushed to the robot. |
+| **Swap** | `app_for(device_id)` (`supervisor/moxie_runtime/brain.py`) resolves once at the top of a turn. A change applies from the child's next turn; no restart. |
+| **Pin** | An explicit `MOXIE_APP` pins the appliance's brain; a per-child pick cannot override it and a stale pick is refused naming the variable. `MOXIE_APP=any` means "decide per child". The pin reads the raw environment. |
 
-So one appliance can answer one child with a content module and another with a webhook to your own
-service, live. The 🧠 **Brain** card in the console is the parent-facing half — a brain for this
-robot or a house rule for all of them, each robot's row naming *which layer decided* — over
-`GET`/`POST /brain`. Design, gaps and the mutation run:
+The console's **Brain** card sets these over `GET`/`POST /brain`. Design:
 [`backlog/brain-picker.md`](backlog/brain-picker.md).
 
 ### Request in — `RemoteChatRequest`
@@ -132,14 +107,13 @@ The transcript from seam ① plus conversation context, history, the current mod
 (`Recommendation{module_id, content_id, entry_line}`, `restricted_modules`, `Urgency` casual/normal/immediate).
 Deltas over the base session are in [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md).
 
-#### Presence in the turn context — BUILT (v1, 2026-09-02)
+#### Presence in the turn context
 
-A `Turn` now also carries **`presence`** — what Moxie's own eyes have told the server. The robot
-runs vision on-device and emits semantic events only (`eb-found-face`, `eb-lost-target`, QR/ArUco/
-book) with **no pixels, no bounding box, no identity**
-([`vision.md`](vision.md) §1.1), and they arrive as the `speech` of an ordinary `RemoteChatRequest`
-once the brain subscribes with `EventSubscription.active[]` (see (b) below). The runtime folds them
-into a bounded per-robot record and hands the app a resolved snapshot:
+A `Turn` also carries **`presence`**: what the robot's own vision has reported. The robot runs vision
+on-device and emits semantic events only (`eb-found-face`, `eb-lost-target`, QR/ArUco/book) with no
+pixels, box or identity ([`vision.md`](vision.md) §1.1). They arrive as the `speech` of an ordinary
+`RemoteChatRequest` once the brain subscribes via `EventSubscription.active[]` (see (b) below). The
+runtime folds them into a bounded per-robot record and hands the app a snapshot:
 
 | `Turn.presence` | |
 |---|---|
@@ -149,16 +123,12 @@ into a bounded per-robot record and hands the app a resolved snapshot:
 | `last_qr` / `last_marker` / `last_book` | `$eb_qr_value` / `$eb_dr_value` / `$eb_br_value` |
 | `line` | **one short, kid-safe sentence for the system prompt — `""` on most turns** |
 
-`line` is the whole contract with the brain: it is non-empty only when the situation actually
-changed ("A child just came back in front of you — nobody had been visible for about 15 minutes"),
-because a standing "a child is visible" would be a per-turn tax on the context window and would
-teach the model to narrate the camera. `LLMApp` renders it as *"What you can see right now: …"*;
-content modules read the same snapshot as a `presence` render variable. **No extra model call** —
-presence is derived by a pure helper (`moxie_sdk/presence.py`), never by asking a model.
-
-An `arrived` after a long enough absence can also make Moxie speak **without being asked** — the
-greeting rule, its gates, and the unsolicited-reply assumption it is designed around are in
-[`vision.md`](vision.md) §7.4.
+`line` is non-empty only when the situation changed ("A child just came back in front of you — nobody
+had been visible for about 15 minutes"); a standing "a child is visible" would waste context and teach
+the model to narrate the camera. `LLMApp` renders it as *"What you can see right now: …"*; content
+modules get the same snapshot as a `presence` render variable. It is derived by a pure helper
+(`moxie_sdk/presence.py`), never by a model call. A long-enough absence followed by an arrival can make
+Moxie greet unprompted; the rule is in [`vision.md`](vision.md) §7.4.
 
 ### Response out — `RemoteChatResponse`
 Three parts:
@@ -173,42 +143,25 @@ Three parts:
 | `dialog_act`, `emotion`, `sentiment` (+ scores) | optional | what the line *means* — analytics/steering |
 | `signals`, `auto_tags[]`, `perplexity`, `source` | optional | conversation signals + content tags + provenance |
 
-> **Output scoring — where `markup` comes from, and what is still empty.** Since the **markup
-> floor** landed (v1, 2026-09-02) `markup` is *derived, never authored*: every reply that does
-> not bring its own goes through one generator,
-> [`moxie_sdk/automarkup.py`](../../mqtt/moxie_sdk/automarkup.py), behind the
-> `supervisor/markup.py` seam, and every id it emits is validated against the frozen catalog in
-> [`moxie_sdk/vocab.py`](../../mqtt/moxie_sdk/vocab.py) — so the "no unknown asset id"
-> guarantee holds for *every* path, including a brain that suggests one (a suggestion is
-> dropped, never forwarded). See [`mqtt-and-conversation.md`](mqtt-and-conversation.md) §4.6.
->
-> **The scored neighbours of `markup` are now filled — the behavior planner (P1, v1,
-> 2026-09-03).** They used to be plumbed and empty: `Reply` carried `mood` and `dialog_act`
-> and no app ever set them, while `mood_intensity`, `emotion` and `signals` had no `Reply`
-> field at all and `ReplyChunk` had none of them, so a *streamed* answer could not be scored
-> even in principle. [`moxie_sdk/performance.py`](../../mqtt/moxie_sdk/performance.py) closes
-> that: it stages every line as a validated `Performance` and
-> [`supervisor/markup.py::perform`](../../mqtt/supervisor/markup.py) hands the runtime the
-> markup **and** the score, which `MoxieRuntime._stage` puts on every published turn — the
-> reply, every streamed chunk, both fillers, the greeting, the queued opener and the safety
-> redirect. An app's own scoring still wins, field by field.
->
-> **`Performance` → scored output, the one mapping:**
-> `Performance.mood`/`mood_intensity` → `RemoteChatOutput.mood` (the `ePlaybackMood`
-> **name**; the int form rides the `cmd:playback-mood` mark inside `markup`) and
-> `mood_intensity`; `Performance.dialog_act` → `dialog_act` (one of the 22
-> `RemoteDialog.DialogAct`s); `Performance.emotion` → `emotion` (one of the 7
-> `RemoteDialog.EmotionState`s); `Performance.signal` → `signals[]` (one of the 9
-> `RemoteSignals.Signal`s, a list because the field is `repeated`); `Performance.beats[]` →
-> `markup`, through the single `render()`. **The wire needed nothing new** — the point of
-> building to this contract is that a 10× feature turns out to be a fill-in, not a redesign.
-> `auto_tags[]`, `sentiment` and `perplexity` are still empty and still honest: nothing in
-> the appliance produces them yet.
->
-> Design, phases and the honest gaps (there is no gaze verb, so `gaze` is a closed 4-value
-> enum over look-bearing trees and nothing can lower the gaze):
-> [`backlog/expressiveness.md`](backlog/expressiveness.md) §2. `MOXIE_EXPRESSIVE=planner|floor|off`
-> pins which generation answers, and a planner failure always degrades to the floor.
+**Where the scored fields come from in this repo.** `markup` is derived, never authored: a reply
+without its own goes through [`moxie_sdk/automarkup.py`](../../mqtt/moxie_sdk/automarkup.py) behind the
+`supervisor/markup.py` seam, and every id is validated against the frozen catalog in
+[`moxie_sdk/vocab.py`](../../mqtt/moxie_sdk/vocab.py); an unknown id suggested by a brain is dropped.
+The behavior planner ([`moxie_sdk/performance.py`](../../mqtt/moxie_sdk/performance.py)) stages each line
+as a validated `Performance`, and the runtime puts its score on every published turn (reply, streamed
+chunks, fillers, greeting, opener, safety redirect). An app's own scoring wins, field by field. Mapping:
+
+| `Performance` | `RemoteChatOutput` |
+|---|---|
+| `mood`, `mood_intensity` | `mood` (the `ePlaybackMood` name; the int rides the `cmd:playback-mood` mark), `mood_intensity` |
+| `dialog_act` | `dialog_act` (one of 22 `RemoteDialog.DialogAct`) |
+| `emotion` | `emotion` (one of 7 `RemoteDialog.EmotionState`) |
+| `signal` | `signals[]` (one of 9 `RemoteSignals.Signal`) |
+| `beats[]` | `markup`, through the single `render()` |
+
+`auto_tags[]`, `sentiment` and `perplexity` are left empty; nothing produces them yet.
+`MOXIE_EXPRESSIVE=planner|floor|off` pins which generator answers; a planner failure falls back to the
+floor. Design: [`backlog/expressiveness.md`](backlog/expressiveness.md) §2.
 
 **(b) `RemoteChatAction` — drive the robot (optional, this is the "director" power).** `ActionID`:
 `launch` / `launch_if_confirmed` (start a module), `exit_module` / `abort_module`, `request_next`,
@@ -217,21 +170,19 @@ Three parts:
 robot input events it wants pushed to it. This is why a revival server can do **more than reply**: it
 moves the child between activities and reacts to perception.
 
-> **We now send it.** The runtime attaches `event_subscription{active:[eb-found-face,
+**This repo sends it:** the runtime attaches `event_subscription{active:[eb-found-face,
 > eb-lost-target, eb-lost-face, eb-qr-event, eb-dr-event, eb-br-event], clear:false}` once per
-> `(device, module_id)` — "events are automatically unsubscribed when the module exits" — riding a
-> plain, action-free reply so nothing that already carries a `launch`/`exit` changes shape.
-> `MOXIE_VISION=0` turns it off. Without this the robot **discards its own vision events**, which is
-> why nobody, us included, had ever seen one ([`vision.md`](vision.md) §7.1).
+`(device, module_id)` (events unsubscribe automatically when the module exits), on a plain action-free
+reply. `MOXIE_VISION=0` turns it off. Without a subscription the robot discards its own vision events
+([`vision.md`](vision.md) §7.1).
 
 **(c) `RemoteChatInput` — the brain's read of the child (optional).** `emotion`/`dialog_act`/`sentiment`
 + **`InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}`** — the content-moderation verdict.
-**This is the moderation hook**: a kid-facing backend SHOULD populate it. **We do — see below.**
+This is the moderation hook; a kid-facing backend should populate it.
 
-#### Input safety — BUILT (v1, 2026-09-02)
+#### Input safety
 
-`InputSafety` is the only moderation field the contract has, and it is now enforced rather
-than merely specified. Where it sits in a turn:
+`InputSafety` is the contract's only moderation field. Where the check sits in a turn:
 
 ```
 child speech ──▶ ① assess(role="child") ──block──▶ redirect line + input.safety, brain NEVER called
@@ -260,14 +211,14 @@ whose field 12 is `InputSafety` ([`RemoteChat.proto`](../reverse-engineering/pro
 
 `phrase_id` is the id of the safety line Moxie actually spoke (the proto calls it "a matched
 safety-phrase id"); `input_intents` (field 10) mirrors `intents` for a client that reads only
-the flat field. A response with **no** verdict is byte-identical to what we have always sent.
+the flat field. A response with no verdict carries no `input` field.
 `is_unsafe` is asserted only when something **blocked** — a merely-flagged turn goes through to
 the brain and is recorded for a parent, not declared unsafe to the robot. `RemoteChatInput` is
 by definition the brain's read of *the child's input*, so a block on **Moxie's own output** has
 no field in the contract: it is recorded in the parent queue and logged, never faked onto
 `input.safety`.
 
-**What v1 is.** A transparent, local rule engine — [`mqtt/moxie_sdk/safety.py`](../../mqtt/moxie_sdk/safety.py)
+**This repo's classifier.** A transparent, local rule engine — [`mqtt/moxie_sdk/safety.py`](../../mqtt/moxie_sdk/safety.py)
 applying [`safety_rules.json`](../../mqtt/moxie_sdk/safety_rules.json), which *is* the whole
 table and is meant to be read by a parent. Eight categories with a **per-side** policy, because
 the two sides of a conversation are not symmetric:
@@ -293,7 +244,7 @@ is matched — "shoot a photo", "kill the lights", "my feet are killing me", "a 
 football", "shiitake mushrooms", "murder mystery", "killing myself laughing". A guard subtracts
 its own span only: a second, unexcused use of the same word in the same sentence still counts.
 
-**Honest limits — a rule engine is a floor, not a filter.** It cannot read context, sarcasm, or a
+**Limits: a rule engine is a floor, not a filter.** It cannot read context, sarcasm, or a
 harmful idea expressed in gentle words. It misses novel phrasings, deliberate obfuscation past its
 normalizer (letters split with spaces, invented spellings), and every language its tables are not
 written in. Its slur and profanity lists are short by construction. It is one layer *under* the
@@ -312,7 +263,7 @@ Moxie. `MOXIE_SAFETY=0` disables the stage; `MOXIE_SAFETY_RULES` points at your 
 excerpt — matched words masked, and no excerpt at all if masking could not be verified — plus
 category, side, timestamp and the spoken `phrase_id`. Served by the runtime (`GET /safety`,
 `POST /safety` to acknowledge), forwarded by the console (`/local/robots/{id}/safety`) and shown
-as the 🛡️ Safety panel. Under LoggingPolicy `NO_DATA` the journal keeps **counts only** — no rows,
+as the Safety panel. Under LoggingPolicy `NO_DATA` the journal keeps **counts only** — no rows,
 no excerpts — and the block still happens, because blocking is not recording. Parent-facing
 walkthrough: [child-safety guide](../guides/child-safety.md).
 
@@ -322,15 +273,14 @@ so a backend that returns `ERROR_OFFLINE` degrades gracefully instead of hanging
 `REPLY_FORCE_ANCHOR` and `REPLY_FORCE_QUIT`. **Streaming:** chunk a long turn with `chunk_num`
 (`REPLY_PENDING` on every chunk but the last). The ten codes are enumerated in
 [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#the-response-remotechatresponse) and
-mirrored by `ResultCode` in [`types.py`](../../mqtt/moxie_sdk/types.py); **there is no `REPLY` or bare
-`QUIT` code** — this paragraph named both until 2026-09-03, and a brain written from it would have
-answered with a value the robot cannot render.
+mirrored by `ResultCode` in [`types.py`](../../mqtt/moxie_sdk/types.py). There is **no** `REPLY` or bare
+`QUIT` code.
 
 **Taxonomies** (closed sets the brain scores into): `DialogAct`×22, `EmotionState`×7, `Signal`×9,
 `Urgency`×3 — enumerated in [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#taxonomies).
 
 > **The minimal viable brain:** answer every `RemoteChatRequest` with a `RemoteChatResponse` whose
-> `ResultCode=REPLY` and `RemoteChatOutput.text` set. Add `markup`+`mood` to make the face act; add
+> `ResultCode=SUCCESS` and `RemoteChatOutput.text` set. Add `markup`+`mood` to make the face act; add
 > `RemoteChatAction` to run activities; add `InputSafety` to moderate. Everything past `text` is
 > progressive enhancement.
 
@@ -359,13 +309,13 @@ message CloudTTSResponse { RequestSourceType request_source; AudioBuffer audio;
                            uint64 total_time; uint64 synthesis_time; }
 ```
 
-### Backends in this repo — and what happens when one fails
+### Backends in this repo
 
 Three, in a fixed precedence (`mqtt/config.py::build_synthesizer`): **voice server → Piper → tone**.
 
 | Backend | When | Notes |
 |---|---|---|
-| `OpenAIVoiceSynthesizer` | `MOXIE_VOICE_BASE_URL` set | Any OpenAI-shaped `/audio/speech`. **Live on our LiteLLM gateway since 2026-09-02** (`piper-amy` / `piper-ryan`, same host + key as chat) — proven by transcribing its audio back at word overlap **1.00** (`sim/tests/test_live_gateway_tts.py`). A `wav` reply is unwrapped here, so `AudioBuffer.sample_rate` is **the file's own header**, not a constant; `pcm` uses `MOXIE_VOICE_SAMPLE_RATE`. Setup + the gateway's quirks: [gateway-voice-and-ears.md](../guides/gateway-voice-and-ears.md) |
+| `OpenAIVoiceSynthesizer` | `MOXIE_VOICE_BASE_URL` set | Any OpenAI-shaped `/audio/speech` (e.g. a LiteLLM gateway serving Piper voices; live test: `sim/tests/test_live_gateway_tts.py`). A `wav` reply is unwrapped here, so `AudioBuffer.sample_rate` is **the file's own header**, not a constant; `pcm` uses `MOXIE_VOICE_SAMPLE_RATE`. Setup + the gateway's quirks: [gateway-voice-and-ears.md](../guides/gateway-voice-and-ears.md) |
 | `PiperSynthesizer` | `MOXIE_PIPER_MODEL` set + piper installed | Offline, no key, ~3-5× faster than the gateway for the same sentence |
 | `ToneSynthesizer` | `MOXIE_TTS=tone` | A shaped beep. **Not speech** — it exists so the SIM's audio path works with no model, network or extra dep |
 
@@ -375,19 +325,18 @@ tone). A 400, an outage past the SDK's backoff, or a body that is JSON rather th
 **once** and then latched: the turn *downgrades* to a working voice instead of handing a child
 silence. `synth.voice_name` says which one is talking.
 
-### Choosing an engine — the 🎚️ picker (BUILT, 2026-09-02)
+### Choosing an engine
 
-The precedence above is what an appliance boots with. **What it runs after that is a parent's
-choice**, made in the console rather than in a `.env`: a **Speech** dropdown and a **Listening**
-dropdown, each populated from what this box can genuinely use right now.
+The precedence above is what the appliance boots with. After that, a parent picks **Speech** and
+**Listening** engines in the console, from what this box can actually use:
 
-| Where an entry comes from | How we know it is available | Examples |
+| Where an entry comes from | How availability is known | Examples |
 |---|---|---|
-| Gateway | one cached `GET /v1/models` classified by [`moxie_sdk/audio_models.py`](../../mqtt/moxie_sdk/audio_models.py) | `gateway:piper-amy`, `gateway:graphling-tts-narrator`, `gateway:stt-whisper` |
-| Local | `PiperSynthesizer.available()` + the `.onnx` voices under `sim/tts/voices/` (or `MOXIE_PIPER_MODEL`) · `WhisperTranscriber.available()` | `piper:en_US-amy-medium`, `whisper:base.en` |
+| Gateway | one cached `GET /v1/models`, classified by [`moxie_sdk/audio_models.py`](../../mqtt/moxie_sdk/audio_models.py) | `gateway:piper-amy`, `gateway:stt-whisper` |
+| Local | `PiperSynthesizer.available()` + `.onnx` voices under `sim/tts/voices/` (or `MOXIE_PIPER_MODEL`) · `WhisperTranscriber.available()` | `piper:en_US-amy-medium`, `whisper:base.en` |
 | Built-in | always | `tone` (speech) · `off` (listening) |
 
-Five properties are load-bearing, and each is pinned by a test in
+Rules, each pinned by a test in
 [`sim/tests/test_voice_settings.py`](../../sim/tests/test_voice_settings.py) /
 [`test_voice_runtime.py`](../../sim/tests/test_voice_runtime.py):
 
@@ -410,9 +359,8 @@ Five properties are load-bearing, and each is pinned by a test in
    `MOXIE_VOICE_DISCOVERY_TTL_S` (default 300 s) and refreshes it on a background thread; the first
    ask after boot answers with the local entries and `discovering: true`. The one bounded exception
    is a console **write**: `POST /voice` waits up to `VOICE_SETTLE_S` (10 s) for the *first* listing,
-   because a supervisor three seconds old would otherwise refuse a perfectly good `gateway:piper-amy`
-   with *"choose one of: tone"* — which is exactly what the live run hit on 2026-09-02. A write is
-   never on a turn's path; a read never waits.
+   so a freshly booted supervisor does not refuse a valid `gateway:piper-amy`. A write is never on a
+   turn's path; a read never waits.
 4. **An outage never blanks the card.** A failed listing keeps the last good one and reports
    `gateway_error: "<ExceptionClass>"`; a stored pick the gateway can no longer confirm stays in
    force rather than silently reverting.
@@ -445,21 +393,21 @@ A backend is a valid Moxie mind when it satisfies **one plug point per seam**:
 - [ ] **③ TTS** — returns `CloudTTSResponse{audio, event_id}` for each `CloudTTSRequest`.
 
 Recommended for a *good* experience (not required to function): `markup`+`mood` on the brain output,
-`marks[]` on TTS (lip-sync) and partial STT (barge-in). **`InputSafety` (moderation) is built** —
-see §2 "Input safety"; a kid-facing backend should not ship without something in that slot.
+`marks[]` on TTS (lip-sync) and partial STT (barge-in). A kid-facing backend should not ship without
+something in the `InputSafety` slot ([Input safety](#input-safety)).
 
 ## Where each seam is implemented in this repo
 
 | Seam | Lives in | Notes |
 |---|---|---|
-| ① STT in | `ai/` + `mqtt/` | local Whisper/Vosk → `DeepgramResponse` shape; the sim uses `sim/stt/` |
-| ② Brain | `mqtt/` (the `MoxieApp`/`LLMApp` agent) | any OpenAI-compatible LLM (Ollama/LiteLLM), env-configured; emits markup |
-| ②b Input safety | `mqtt/moxie_sdk/safety.py` + `supervisor/moxie_runtime.py` | local rule engine (`safety_rules.json`) enforced pre-inference and per streamed chunk; parent review queue |
-| ③ TTS out | `ai/` + `mqtt/` | gateway voice (live, `piper-amy`) → Piper (offline) → tone, with the displaced rung as a standby → `CloudTTSResponse` PCM; the sim uses `sim/tts/` |
+| ① STT in | `mqtt/moxie_sdk/stt.py` | `zmqSTT` plug point B; local whisper or gateway. The Sim's local service is `sim/stt/` |
+| ② Brain | `mqtt/moxie_sdk/` (`MoxieApp`, `LLMApp`, `brains.py`) | any OpenAI-compatible LLM, configured by env; emits markup |
+| ②b Input safety | `mqtt/moxie_sdk/safety.py` + `mqtt/supervisor/moxie_runtime/safety.py` | local rule engine enforced before inference and per streamed chunk; parent review queue |
+| ③ TTS out | `mqtt/moxie_sdk/tts.py` | gateway voice → Piper → tone, with the displaced rung as standby; the Sim's local service is `sim/tts/` |
 
 Keys/endpoints live only in a git-ignored `.env`; the repo ships placeholders. The
 [architecture overview](overview.md) shows how these three sit inside the one-command stack; the
 [MQTT/conversation spec](mqtt-and-conversation.md) carries the transport (topics, framing, session).
 
 ---
-📖 [Docs index](../README.md) · [Architecture: MQTT & conversation →](mqtt-and-conversation.md) · [Architecture overview](overview.md)
+[Docs index](../README.md) · [MQTT & conversation](mqtt-and-conversation.md) · [Architecture overview](overview.md)
