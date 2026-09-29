@@ -1,13 +1,9 @@
-/* Voice-loop tests — TTS out (Piper), STT in (faster-whisper), and the bridge's public
- * surface, against the REAL services' wire shapes. Skips (exit 0) a service not running.
+/* Voice-loop tests — the optional local engines: TTS out (Piper) and STT in (faster-whisper),
+ * against the REAL services' wire shapes. Skips (exit 0) a service that is not running; the
+ * browser side of voice/ and mic.js is driven by test_audio, test_typed_turn and test_mic_spend.
  *
  * Run: node sim/test_voice.mjs   [TTS_BASE=http://127.0.0.1:8081] [STT_BASE=...]
  */
-import { BRIDGE_SRC, VOICE_SRC } from "./bridge_harness.mjs";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
 const TTS = process.env.TTS_BASE || "http://127.0.0.1:8081";
 const STT = process.env.STT_BASE || "http://127.0.0.1:8082";
 const fails = [];
@@ -78,21 +74,6 @@ if (!sttHealth) {
   ok(hits >= 4, `TTS→STT round-trip lost too much: heard "${alt.transcript}"`);
 }
 
-// ---- 3. voice/ / mic.js public surface (static, no browser) ---------------
-const here = dirname(fileURLToPath(import.meta.url));
-const audioSrc = VOICE_SRC;
-const micSrc = readFileSync(join(here, "web", "mic.js"), "utf8");
-const bridgeSrc = BRIDGE_SRC;
-for (const m of ["speak", "sfx", "setEnabled", "setTtsBase"])
-  ok(audioSrc.includes(m + ":") || audioSrc.includes(m + " ="), `voice/ missing ${m}`);
-for (const m of ["start", "stop", "toggle", "setSttBase"])
-  ok(micSrc.includes(m + ":") || micSrc.includes("function " + m), `mic.js missing ${m}`);
-ok(micSrc.includes("events/remote-chat"),
-   "mic.js must publish the transcript as a child utterance on events/remote-chat");
-ok(bridgeSrc.includes("window.moxieBridge"), "bridge/ must expose window.moxieBridge");
-ok(bridgeSrc.includes("sendUserTurn"), "bridge/ must expose sendUserTurn");
-ok(audioSrc.includes("setMouthOpen"), "voice/ should drive lip-sync via setMouthOpen");
-
 // ---- report -----------------------------------------------------------------
 for (const n of notes) console.log("ℹ️ ", n);
 if (fails.length) {
@@ -100,4 +81,4 @@ if (fails.length) {
   for (const f of fails) console.log("   -", f);
   process.exit(1);
 }
-console.log(`✅ voice tests OK — TTS ${ttsHealth ? "live" : "skipped"}, STT ${sttHealth ? "live" : "skipped"}, web surface verified`);
+console.log(`✅ voice tests OK — TTS ${ttsHealth ? "live" : "skipped"}, STT ${sttHealth ? "live" : "skipped"}`);
