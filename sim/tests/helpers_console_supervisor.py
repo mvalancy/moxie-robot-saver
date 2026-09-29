@@ -394,7 +394,7 @@ class FakeSupervisor:
                     "telemetry_erases", "safety_queries", "memory_queries",
                     "memory_erases", "memory_edits", "telehealth_queries",
                     "schedule_queries", "conn_queries", "voice_queries", "voice_posts",
-                    "content_queries", "content_posts", "telehealth_posts", "wakeups"):
+                    "wakeups"):
             setattr(self, log, [])
         self.runtime = rt = _safety_runtime(safety_root)
         self.memory = seed_memory(rt)
@@ -466,10 +466,8 @@ class FakeSupervisor:
                     return self._out(rt.voice_view(
                         refresh=refresh not in ("", "0", "false")))
                 if u.path == "/content":
-                    outer.content_queries.append((u.path, u.query))
                     return self._out(rt.content_view())
                 if u.path == "/content/export":
-                    outer.content_queries.append((u.path, u.query))
                     keys = [k for part in (q.get("items") or [])
                             for k in part.split(",") if k.strip()]
                     try:
@@ -523,7 +521,6 @@ class FakeSupervisor:
                     return self._out(out, 200 if out.get("ok") else 400)
                 if u.path in ("/content/review", "/content/import", "/content/undo"):
                     raw = self._raw()
-                    outer.content_posts.append((u.path, len(raw)))
                     try:
                         if u.path == "/content/undo":
                             out = rt.content_undo()
@@ -540,7 +537,6 @@ class FakeSupervisor:
                                           "reason": str(e)}, 400)
                 if u.path == "/telehealth":
                     body = json.loads(self._raw()) or {}
-                    outer.telehealth_posts.append((device_id, body))
                     try:
                         out = _telehealth_verb(rt, device_id, body)
                         return self._out(out, _code(out))
