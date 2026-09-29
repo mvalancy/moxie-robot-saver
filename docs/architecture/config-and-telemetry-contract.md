@@ -186,7 +186,7 @@ existed.
 >   reason to redo the work. Our corpus does not record the cache key: it gives `ChildDecrypted.id = 14`
 >   as the child's identity in the pushed config, `SwitchUserConfig{action, restore_id, child_id, force,
 >   child_name}` as the user-switch lever (proto-catalog.md:341-347), and `USER_DATA_UPDATE` as both the
->   cloud-visible lifecycle state (device-config-and-telemetry.md:88) and the on-device disengage reason
+>   cloud-visible lifecycle state (device-config-and-telemetry.md:73) and the on-device disengage reason
 >   for "the child's data/profile is being updated"
 >   ([power-and-system-events.md](../reverse-engineering/protocol/power-and-system-events.md):85) — but
 >   it never says the texture cache is keyed on `child_pii.id`. OpenMoxie's face editor does, from a

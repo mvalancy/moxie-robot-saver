@@ -2,7 +2,7 @@
  * to the Python generators it shadows: `moxie_toolkit.qr_codec` (revival codes the robot's
  * setup parser reads) and `moxie_sdk.launch_cards` (launch cards our cloud reads back).
  * A drift fails silently as a QR that just doesn't scan.
- * Grammar: docs/reverse-engineering/qr-commands.md (firmware v24.10.803).
+ * Grammar: docs/reverse-engineering/protocol/qr-commands.md (firmware v24.10.803).
  *
  * Run: node sim/test_qr.mjs
  */
