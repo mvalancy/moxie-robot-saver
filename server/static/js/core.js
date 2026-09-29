@@ -11,7 +11,13 @@ async function api(path, {method='GET', body, auth=true}={}){
   const h={'Content-Type':'application/json'};
   if(auth && TOKEN) h['Authorization']='Bearer '+TOKEN;
   const r=await fetch(path,{method,headers:h,body:body?JSON.stringify(body):undefined});
-  if(!r.ok) throw new Error((await r.text())||r.status);
+  if(!r.ok){
+    // A refusal carries a sentence for the parent (`reason`, else `error`): throw that.
+    const text=await r.text();
+    let msg=text||String(r.status);
+    try{ const j=JSON.parse(text); msg=(j&&(j.reason||j.error))||msg; }catch(_){}
+    throw new Error(msg);
+  }
   const ct=r.headers.get('content-type')||''; return ct.includes('json')?r.json():r.text();
 }
 
