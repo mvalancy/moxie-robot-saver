@@ -4,12 +4,10 @@ SDK / robot-cloud unit tests — pure Python, no broker or browser (runs fast in
 ResultCode fidelity, scored output, and action passthrough.
 See docs/architecture/ai-seam.md §2 + ROADMAP.md.
 """
-import os
+import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-from moxie_sdk.types import Reply, Action, ActionType, ResultCode  # noqa: E402
-from moxie_sdk.wire import build_chat_response, build_activity_response  # noqa: E402 (pure)
+from moxie_sdk.types import Reply, Action, ActionType, ResultCode
+from moxie_sdk.wire import build_chat_response, build_activity_response
 
 
 def test_resultcode_values_match_recovered_proto():
@@ -61,29 +59,18 @@ def test_int_result_is_coerced_to_name():
 
 # ---- build_activity_response (the `query_result` / CloudQueryResponse encoder) ----
 
-def test_activity_response_echoes_request_id_and_keys_schedule():
-    # CloudQueryResponse: request_id (field 3) echoed from the request, the day's plan
-    # under `schedule` (field 6) — NOT a generic `result` key.
-    resp = build_activity_response("schedule", request_id="req-42")
-    assert resp["command"] == "query_result"
-    assert resp["query"] == "schedule"
+@pytest.mark.parametrize("query, field, empty", [
+    ("schedule", "schedule", {}),                    # field 6, NOT a generic `result`
+    ("mentor_behaviors", "mentor_behaviors", []),    # field 10, repeated MentorBehavior
+    ("license", "license_values", []),               # field 5, not `license`
+])
+def test_activity_response_keys_each_query_by_its_proto_field(query, field, empty):
+    """CloudQueryResponse: request_id (field 3) echoed, the payload under its own field."""
+    resp = build_activity_response(query, request_id="req-42")
+    assert resp["command"] == "query_result" and resp["query"] == query
     assert resp["request_id"] == "req-42"
-    assert resp["schedule"] == {}
-    assert "result" not in resp
-
-
-def test_activity_response_keys_mentor_behaviors_as_a_list():
-    resp = build_activity_response("mentor_behaviors", request_id="req-7")
-    assert resp["request_id"] == "req-7"
-    assert resp["mentor_behaviors"] == []      # field 10, repeated MentorBehavior
-    assert "result" not in resp
-
-
-def test_activity_response_license_uses_license_values():
-    # field 5 is `license_values` (repeated LicenseRecord), not `license`
-    resp = build_activity_response("license", request_id="r")
-    assert resp["license_values"] == []
-    assert "license" not in resp
+    assert resp[field] == empty
+    assert "result" not in resp and (field == query or query not in resp)
 
 
 def test_activity_response_carries_a_real_payload():
@@ -111,6 +98,5 @@ def test_activity_response_response_code_optional():
 
 
 def test_activity_response_rejects_unknown_query():
-    import pytest
     with pytest.raises(ValueError):
         build_activity_response("not_a_cloud_query")

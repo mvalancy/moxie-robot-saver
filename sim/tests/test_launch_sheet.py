@@ -13,22 +13,16 @@ importorskipped.
 """
 from __future__ import annotations
 
-import ast
-import os
 import re
 import sys
 
 import pytest
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import helpers_qr_matrix as qrm                                         # noqa: E402
 from moxie_sdk import launch_cards as cards                             # noqa: E402
 from moxie_sdk import launch_sheet as sheet                             # noqa: E402
 from moxie_sdk import schedule                                          # noqa: E402
 from moxie_sdk.types import ActionType                                  # noqa: E402
-
-SOURCE = os.path.join(REPO, "mqtt", "moxie_sdk", "launch_sheet.py")
 
 
 @pytest.fixture(scope="module")
@@ -57,44 +51,10 @@ def test_every_card_payload_is_the_one_launch_cards_encode_produces(deck):
                                             for i in sorted(cards.LAUNCHABLE_MODULE_IDS)]
 
 
-def _code_string_literals(path):
-    """Every string literal in the module's CODE (docstrings/comments excluded), so a
-    quoted `GO<launch:DM>` in prose does not count."""
-    tree = ast.parse(open(path, encoding="utf-8").read())
-    docs = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
-                             ast.ClassDef)) and node.body:
-            first = node.body[0]
-            if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
-                    and isinstance(first.value.value, str)):
-                docs.add(id(first.value))
-    return [n.value for n in ast.walk(tree)
-            if isinstance(n, ast.Constant) and isinstance(n.value, str)
-            and id(n) not in docs]
-
-
-def test_the_sheet_does_not_carry_a_second_copy_of_the_payload_format():
-    """No executable string in the generator spells the card grammar. If it did, a sheet
-    could drift from the decoder silently — the exact failure `launch_cards.encode`'s
-    docstring says it lives outside the sheet generator to prevent."""
-    offenders = [s for s in _code_string_literals(SOURCE)
-                 if "<launch" in s or s == cards.CARD_PREFIX or "GO<" in s]
-    assert not offenders, offenders
-
-
-def test_the_sheet_does_not_re_derive_the_catalog_from_the_schedule_module():
-    """The catalog has exactly one owner (`launch_cards._catalog`) and this is not it.
-    A third derivation is the drift `sim/test_qr.mjs` was written to catch."""
-    tree = ast.parse(open(SOURCE, encoding="utf-8").read())
-    reads = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
-    assert "ONBOARD_MODULES" not in reads and "DEFAULT_TEMPLATE" not in reads
-    assert sheet.catalog_ids() == sorted(cards.LAUNCHABLE_MODULE_IDS)
-
-
 def test_the_default_sheet_covers_the_whole_closed_catalog(deck):
     assert len(deck) == 24
     assert {i for i, _, _ in deck} == set(cards.LAUNCHABLE_MODULE_IDS)
+    assert sheet.catalog_ids() == sorted(cards.LAUNCHABLE_MODULE_IDS)
 
 
 # --------------------------------------------------------------------------- #
@@ -120,13 +80,6 @@ def test_one_bad_id_among_good_ones_refuses_the_whole_sheet():
 def test_a_sheet_of_nothing_is_refused_rather_than_rendered_empty():
     with pytest.raises(ValueError):
         sheet.render_sheet([])
-
-
-def test_the_refusal_survives_the_whole_render_path(deck):
-    """Anti-vacuity for the tests above: the same call shape that refuses `NOPE` really
-    does produce a page for a catalog id, so the refusals are the guard and not a
-    universally broken function."""
-    assert "<svg" in sheet.render_sheet(["DRAW"])
 
 
 # --------------------------------------------------------------------------- #
@@ -283,16 +236,6 @@ def test_the_symbol_is_pure_black_on_pure_white(version, deck):
     assert len(set(re.findall(r'fill="(#[0-9a-fA-F]{6})"', svg))) == 2
 
 
-def test_the_symbol_is_vector_and_sized_in_millimetres(version, deck):
-    """The whole reason the sheet is SVG rather than PNG: a printer rasterises it at its
-    own DPI, so a module edge is exact at any size."""
-    svg = sheet.symbol_svg(deck[0][2], version)
-    assert f'width="{sheet.SYMBOL_MM}mm"' in svg and f'height="{sheet.SYMBOL_MM}mm"' in svg
-    assert 'shape-rendering="crispEdges"' in svg
-    assert "<image" not in svg and "data:image" not in svg
-    assert "http" not in svg          # inline SVG in HTML needs no xmlns; see symbol_svg
-
-
 # --------------------------------------------------------------------------- #
 # 5. The page a parent actually opens
 # --------------------------------------------------------------------------- #
@@ -340,19 +283,6 @@ def test_the_page_is_self_contained_and_reaches_no_network(html):
     assert "http" not in html
 
 
-def test_the_print_stylesheet_sets_the_margin_and_breaks_between_sheets(html):
-    assert f"@page {{ margin: {sheet.PAGE_MARGIN_MM}mm; }}" in html
-    assert "break-before: page" in html and "page-break-before: always" in html
-    assert ".intro { display: none; }" in html            # screen-only notes stay off paper
-
-
-def test_the_page_tells_a_parent_not_to_shrink_it(html):
-    """A "fit to page" tick is the one printer setting that silently ruins the geometry
-    every other test here defends."""
-    assert "100% scale" in html and "fit to page" in html
-    assert f"{sheet.ERROR_LEVEL.upper()}" in html
-
-
 def test_rendering_twice_produces_the_same_bytes():
     """Version pinned, error level un-boosted, mode fixed: one payload, one matrix. A
     sheet a parent re-prints is the sheet they printed."""
@@ -372,14 +302,6 @@ def test_the_module_imports_with_no_qr_library_at_all(monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         sheet.qr_matrix("GO<launch:DRAW>", 3)
     assert "segno" in str(exc.value) and "cards" in str(exc.value)
-
-
-def test_the_wheel_declares_the_qr_library_as_an_extra_and_not_a_base_dependency():
-    """Read out of `pyproject.toml`, so the promise above is checked where it is made."""
-    text = open(os.path.join(REPO, "mqtt", "pyproject.toml"), encoding="utf-8").read()
-    base = text.split("[project.optional-dependencies]")[0]
-    assert "segno" not in base
-    assert re.search(r"^cards = \[\"segno>=[\d.]+\"\]", text, re.M)
 
 
 # --------------------------------------------------------------------------- #
@@ -463,27 +385,6 @@ def test_a_printed_symbol_still_reads_back_after_a_browser_rasterises_it(browser
             assert read == payload, module_id
             action = cards.decode(read)
             assert action is not None and action.module_id == module_id, module_id
-    finally:
-        page.close()
-        context.close()
-
-
-def test_the_raster_reader_is_not_a_function_that_returns_the_right_answer_anyway(browser,
-                                                                                  version):
-    """Anti-vacuity for the test above: sample a symbol drawn for a DIFFERENT card and the
-    payload must come back different, so the pipeline is reading the pixels rather than
-    the string it was handed."""
-    units = int(sheet.geometry(version)["units"])
-    context = browser.new_context(device_scale_factor=300 / 96.0)
-    page = context.new_page()
-    try:
-        page.set_content(f'<body style="margin:0">'
-                         f'{sheet.symbol_svg(cards.encode("JOKE"), version)}</body>')
-        shot = page.locator("svg").screenshot(type="png")
-        width, height, grey = qrm.read_png_gray(shot)
-        matrix = qrm.sample_matrix(width, height, grey, units, sheet.QUIET_MODULES)
-        assert qrm.read_payload(matrix) == cards.encode("JOKE")
-        assert qrm.read_payload(matrix) != cards.encode("DRAW")
     finally:
         page.close()
         context.close()

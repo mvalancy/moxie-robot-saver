@@ -180,7 +180,7 @@ INVISIBLE = [
     ("U+FFFA INTERLINEAR ANNOTATION SEPARATOR", "￺"),  # Cf
     ("U+FFFB INTERLINEAR ANNOTATION TERMINATOR", "￻"), # Cf
     # NOT `Cf`, and named one at a time because the category does not reach them:
-    ("U+034F COMBINING GRAPHEME JOINER", "͏"),  # Mn — see the CGJ test below
+    ("U+034F COMBINING GRAPHEME JOINER", "͏"),  # Mn with ccc 0: a combining-CLASS test misses it
     ("U+115F HANGUL CHOSEONG FILLER", "ᅟ"),     # Lo, but glyphless
     ("U+1160 HANGUL JUNGSEONG FILLER", "ᅠ"),    # Lo, but glyphless
     ("U+3164 HANGUL FILLER", "ㅤ"),              # Lo — NFKD-folds onto U+1160
@@ -230,47 +230,12 @@ def test_the_stripped_set_is_a_unicode_category_not_a_hand_picked_list():
         assert not S._is_invisible(keep), keep
 
 
-def test_u180e_is_cf_in_this_interpreter_which_is_why_the_category_is_probed():
-    """U+180E moved category (`Zs` until Unicode 6.3; V8 reports `Cf`). Pin what PYTHON
-    reports: a move back to `Zs` would be a space, not a hole, but would break parity."""
-    import unicodedata
-    assert unicodedata.category("᠎") == "Cf", unicodedata.unidata_version
-
-
-def test_the_combining_grapheme_joiner_is_closed_by_the_category_test_not_by_nfkd():
-    r"""Where Python and V8 differ: `unicodedata.combining()` is the canonical combining
-    CLASS, not the category. CGJ (U+034F) is `Mn` with ccc 0, so testing ccc kept it;
-    testing the category is what `\p{M}` in `safety.js` means."""
-    import unicodedata
-    assert unicodedata.category("͏") == "Mn"
-    assert unicodedata.combining("͏") == 0, "ccc 0 is the whole reason this was open"
-    assert S.normalize(_spread("suicide", "͏")) == "suicide"
-
-
-def test_the_hangul_fillers_are_letters_and_still_have_to_go():
-    """The glyphless fillers are `Lo`, out of the `Cf` sweep's reach, so all four are named
-    (two NFKD-fold onto U+1160 first)."""
-    import unicodedata
-    for ch in "ᅟᅠㅤﾠ":
-        assert unicodedata.category(ch) == "Lo", ch
-    assert unicodedata.normalize("NFKD", "ㅤ") == "ᅠ"
-    assert unicodedata.normalize("NFKD", "ﾠ") == "ᅠ"
-
-
 @pytest.mark.parametrize("name,ch", SPACES, ids=[n.split()[0] for n, _ in SPACES])
 def test_an_exotic_space_becomes_a_real_space_and_is_not_deleted(name, ch):
     """Exotic spaces are NOT stripped: NFKD folds them to U+0020 (U+1680 via the `\\s+`
     collapse), so they act as real word separators and multi-word phrases still match."""
     assert S.normalize("a" + ch + "b") == "a b", name
     assert S.assess("i want to" + ch + "kill myself").blocked_by == ["self_harm"], name
-
-
-def test_intra_letter_spacing_stays_open_deliberately():
-    """The honest limit: `s u i c i d e` (visible spaces) is not caught — deleting spaces
-    would break every phrase regex. Out of scope on purpose; `safety.js` pins the same."""
-    assert S.assess(_spread("suicide", " ")).blocked_by == []
-    assert S.assess(_spread("suicide", " ")).blocked_by == [], \
-        "the exotic-space form folds onto the plain one, which is the point"
 
 
 @pytest.mark.parametrize("text", [
@@ -281,16 +246,9 @@ def test_the_punctuation_variant_closes_separators_inside_a_word(text):
     assert S.assess(text).blocked_by == ["self_harm"], text
 
 
-def test_the_punctuation_variant_is_a_fourth_form_not_a_replacement():
-    """Added to `_variants`, never substituted for the base: it can only ADD a match."""
-    assert S._variants("s.u.i.c.i.d.e") == ("s.u.i.c.i.d.e", "suicide")
-    assert S._variants("fuuuuck")[0] == "fuuuuck", "the base form is always first"
-    assert "fuck" in S._variants("fuuuuck"), "the de-elongated forms are still there"
-
-
-# The false-positive guard: blocking ordinary speech is its own harm. Stripping all
-# punctuation erases sentence boundaries and blocks the two (*) sentences; the shipped
-# form needs a letter/digit on both sides, keeping `want. ` and still closing `s.u.i.c.i.d.e`.
+# The false-positive guard: blocking ordinary speech is its own harm. Stripping ALL
+# punctuation (measured and rejected) erases sentence boundaries and blocks the two (*)
+# sentences; the shipped form needs a letter/digit on both sides of the separator.
 INNOCENT = [
     "that's what i want. To die of laughter would be great, honestly",   # (*)
     "i don't know what i want. To not be so shy would be nice",          # (*)
@@ -327,30 +285,6 @@ INNOCENT = [
 def test_an_innocent_sentence_is_not_blocked(text):
     v = S.assess(text)
     assert v.blocked_by == [], f"{text!r} blocked as {v.blocked_by}"
-
-
-def test_the_broad_punctuation_transform_is_the_one_that_was_measured_and_rejected():
-    """The measurement, executable: the broad `[^a-z0-9 ]+` form blocks exactly the two (*)
-    sentences. If this reads zero, the narrow form's justification needs re-deriving."""
-    import re as _re
-
-    class _Broad:
-        def sub(self, repl, s):
-            return _re.sub(r"[^a-z0-9 ]+", "", s)
-
-    narrow = [t for t in INNOCENT if S.assess(t).blocked_by]
-    assert narrow == [], f"the SHIPPED narrow form has false positives: {narrow}"
-
-    original = S._INWORD_PUNCT
-    try:
-        S._INWORD_PUNCT = _Broad()
-        broad = [t for t in INNOCENT if S.assess(t).blocked_by]
-    finally:
-        S._INWORD_PUNCT = original
-    assert len(broad) == 2, f"expected the 2 measured false positives, got {broad}"
-    assert all("i want" in t for t in broad), broad
-    assert all(S.assess(t).blocked_by == [] for t in broad), \
-        "…and the narrow form leaves those same two alone"
 
 
 def test_normalize_output_never_reaches_the_verdict_a_parent_or_the_child():

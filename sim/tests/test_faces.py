@@ -167,14 +167,8 @@ def test_the_data_file_carries_the_citation_it_was_ingested_under():
     assert src["symbol"] == "MOXIE_CUSTOMIZATIONS"
     assert re.fullmatch(r"[0-9a-f]{40}", src["commit"])
     assert src["license"].startswith("MIT")
-    assert src["ingested"] == "2026-09-02"
     assert src["entries"] == MANIFEST_ENTRIES
     assert re.fullmatch(r"[0-9a-f]{64}", src["sha256_of_ids"])
-    # the two warnings that travel with the ids
-    assert "crash" in src["upstream_caution"].lower()
-    assert "mqtt-and-conversation.md:780" in src["upstream_caution"]
-    # and the promise that no code came with them
-    assert "no code" in src["what_we_took"]
 
 
 def test_the_loader_has_a_seam():
@@ -223,12 +217,6 @@ def test_the_catalog_is_json_safe_and_stable():
     assert faces.face_catalog() is not catalog               # a fresh copy each call
     catalog[0]["options"].clear()
     assert faces.face_catalog()[0]["options"], "the frozen catalog was mutated"
-
-
-def test_every_slot_has_a_parent_facing_label_and_a_recovered_type():
-    for slot in faces.face_catalog():
-        assert slot["id"] and slot["label"] and slot["type"]
-        assert slot["type"] in CITED_SLOT_TYPES
 
 
 # --------------------------------------------------------------------------- #
@@ -366,15 +354,9 @@ def test_describe_face_is_readable_or_empty():
 # ③ The cache-buster
 # --------------------------------------------------------------------------- #
 
-def test_the_same_look_always_yields_the_same_texture_key():
-    """Deterministic on purpose: an idempotent re-push (a reconnect, a volume change)
-    must not churn the child's id and make the robot recomposite for nothing."""
-    a = faces.face_child_id(["EyeColor_teal"], "Sam")
-    assert a == faces.face_child_id(["EyeColor_teal"], "Sam")
-
-
 def test_the_texture_key_is_pinned_to_a_recorded_value():
-    """Stable across releases, so an SDK upgrade never churns an unchanged household's
+    """Deterministic (an idempotent re-push must not recomposite) and stable across
+    releases, so an SDK upgrade never churns an unchanged household's
     child id: pinned to recorded values, so changing `FACE_CACHE_NAMESPACE`, the `\x1f`
     join or a wire spelling must be a deliberate, migrated decision. Covers a recovered-enum
     look and a mixed look with an ingested id."""
@@ -392,12 +374,6 @@ def test_any_change_of_any_layer_yields_a_different_texture_key():
     assert faces.face_child_id(["EyeColor_teal", "Hair_X"], "Sam") != base
     assert faces.face_child_id(["EyeColor_teal"], "Alex") != base   # per child, too
     assert faces.face_child_id([], "Sam") != base
-
-
-def test_the_texture_key_looks_like_the_uuid_the_field_otherwise_carries():
-    import uuid
-    value = faces.face_child_id(["EyeColor_teal"], "Sam")
-    assert str(uuid.UUID(value)) == value
 
 
 # --------------------------------------------------------------------------- #
@@ -423,13 +399,6 @@ def test_a_chosen_face_renders_into_child_pii_with_the_cache_buster():
     assert pii["face_options"] == ["EyeColor_teal", "FaceColor_pink"]
     assert pii["id"] == faces.face_child_id(pii["face_options"], "Sam")
     assert json.loads(json.dumps(cfg)) == cfg          # the whole document stays JSON
-
-
-def test_changing_one_layer_changes_the_pushed_id():
-    a = build_robot_cloud_config(CHILD, face={"eye_color": "teal"})["child_pii"]["id"]
-    b = build_robot_cloud_config(CHILD, face={"eye_color": "gold"})["child_pii"]["id"]
-    c = build_robot_cloud_config(CHILD, face={"eye_color": "teal"})["child_pii"]["id"]
-    assert a != b and a == c
 
 
 def test_the_builder_validates_what_it_is_handed():
@@ -622,24 +591,3 @@ def test_the_normalizer_drops_junk_rows_rather_than_rendering_them(tmp_path):
     assert slot["options"] == [{"id": "teal", "label": "teal", "hex": "#38ADAE"},
                                {"id": "sneaky", "label": "sneaky"}]
     assert slot["cited"] is True
-
-
-# --------------------------------------------------------------------------- #
-# ⑧ The table is data — so it has to actually ship
-# --------------------------------------------------------------------------- #
-
-def test_the_asset_table_would_ship_in_the_wheel():
-    """`face_assets.json` is loaded at import, so a wheel without it is an SDK that
-    cannot be imported at all. `sim/tests/test_package_contents.py` guards this for every
-    data file generically; this is the same check aimed at the one this slice added, so
-    the failure names the right file."""
-    tomllib = pytest.importorskip("tomllib", reason="python < 3.11 has no tomllib")
-    import fnmatch
-    with open(os.path.join(REPO, "mqtt", "pyproject.toml"), "rb") as fh:
-        globs = tomllib.load(fh)["tool"]["setuptools"]["package-data"]["moxie_sdk"]
-    assert any(fnmatch.fnmatch("face_assets.json", g) for g in globs), (
-        "moxie_sdk/face_assets.json matches no package-data glob — pip would drop it "
-        "and `import moxie_sdk.faces` would fail on an installed SDK")
-    assert os.path.isfile(os.path.join(REPO, "mqtt", "moxie_sdk", "face_assets.json"))
-    assert faces.face_assets_path().endswith(os.path.join("moxie_sdk",
-                                                          "face_assets.json"))

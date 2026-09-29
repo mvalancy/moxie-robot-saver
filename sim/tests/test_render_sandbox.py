@@ -9,13 +9,9 @@ The container ships jinja2 on purpose (`content-module-contract.md`:42 advertise
 Each probe is a real escape technique and must come back inert, while ordinary templating
 (`Hi {{ nickname }}`) keeps working.
 """
-import os
-
 import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-from moxie_sdk.content import render as R  # noqa: E402
+from moxie_sdk.content import render as R
 
 jinja2 = pytest.importorskip("jinja2", reason="the sandbox only exists when jinja2 does")
 
@@ -50,11 +46,8 @@ def test_the_escape_comes_back_inert(name):
 def test_the_renderer_uses_the_sandboxed_environment():
     """Pin the mechanism, not just the symptom — a future refactor back to
     `jinja2.Environment` must fail here even if every probe above happens to be inert."""
-    src = open(os.path.join(REPO, "mqtt", "moxie_sdk", "content", "render.py")).read()
-    code = "\n".join(l for l in src.splitlines()
-                     if not l.strip().startswith(("#", '"', "'", "*")))
-    assert "SandboxedEnvironment" in code, "render.py must build a SandboxedEnvironment"
-    assert "jinja2.Environment(" not in code, "render.py must not build a plain Environment"
+    from jinja2.sandbox import SandboxedEnvironment
+    assert isinstance(R._sandbox(), SandboxedEnvironment)
 
 
 def test_a_refused_template_is_counted_not_swallowed():
