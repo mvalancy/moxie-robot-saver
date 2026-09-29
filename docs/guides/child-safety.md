@@ -1,7 +1,7 @@
 # 🛡️ Child safety — what Moxie checks, and where you review it
 
 > For parents. No code, no protocol. If you want the engineering detail it is in
-> [`ai-seam.md` §2](../architecture/ai-seam.md#input-safety-built-v1-2026-09-02).
+> [`ai-seam.md` §2](../architecture/ai-seam.md#input-safety).
 
 Moxie talks to your child, and the words come from an AI model. Model makers do their own
 safety work, but you should not have to take that on faith on a device sitting in a

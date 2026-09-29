@@ -823,7 +823,7 @@ Streaming is what made moderation urgent: a sentence is published while the rest
 answer does not exist yet, so the only place a bad sentence can be stopped is *before its
 chunk goes out*. The runtime therefore checks **both** ends of a turn — the child's speech
 before the brain is called, and every chunk before it is published
-([`ai-seam.md` §2 "Input safety"](ai-seam.md#input-safety-built-v1-2026-09-02)).
+([`ai-seam.md` §2 "Input safety"](ai-seam.md#input-safety)).
 
 The contract already carries the verdict. `RemoteChatResponse.input` is **field 17**, a
 `RemoteChatInput`; its **field 12** is `InputSafety`, whose four fields are
