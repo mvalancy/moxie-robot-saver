@@ -1,15 +1,6 @@
-"""
-Pytest + Playwright harness for the Moxie SIL static site.
-
-Self-contained: starts `sim/serve.py` on a free port and drives a real Chromium.
-It reuses the locally-cached Chrome (the same binary the node/puppeteer tests use,
-under ~/.cache/puppeteer) so nothing needs downloading. If neither Playwright's
-chromium nor a local Chrome is available, the whole suite skips cleanly (exit 0),
-exactly like the node browser tests — so CI stays green without a browser.
-
-Run:
-    sim/tests/.venv/bin/python -m pytest sim/tests -q
-"""
+"""Shared pytest fixtures: the dotenv/credential fence, an isolated data dir, and the
+Playwright harness for the static site (`sim/serve.py` on a free port + a real Chromium,
+reusing puppeteer's cached Chrome; the browser tests skip when none is available)."""
 import os
 import socket
 import subprocess
@@ -30,30 +21,15 @@ for _p in (REPO / "mqtt", REPO / "mqtt" / "supervisor", Path(__file__).resolve()
 
 
 def pytest_addoption(parser):
-    """Trusted local control path for the counts-only goodbye supervisor.
-
-    This is deliberately a pytest option rather than an environment variable: live
-    modules may import only the narrow credential/endpoint/model dotenv allowlist.
-    """
+    """Counts-only goodbye supervisor state file — an option, not an env var, because
+    live modules may import only the narrow dotenv allowlist."""
     parser.addoption("--moxie-campaign-state-file", default="", metavar="PATH")
 
-# --------------------------------------------------------------------------- #
-# The dotenv fence: decided ONCE, at conftest import, before anything imports `config`.
-# --------------------------------------------------------------------------- #
-#
-# `config._load_env` promotes every key of a git-ignored `mqtt/.env` into `os.environ`
-# with `setdefault` on the FIRST `import config` of the session, permanently. A per-test
-# `MOXIE_SKIP_DOTENV` is therefore a first-import-wins switch that arrives too late, and
-# a denylist of variable names never covers the next knob — either way a developer's
-# deployment silently decides what the hermetic suite asserts, and a local run stops
-# being the CI run. So the fence goes here, the one file pytest imports before any test.
-#
-# An explicit opinion still wins, because running against a real dotenv is how this
-# class of defect is found:
-#   * `MOXIE_SKIP_DOTENV=0 pytest sim/tests`   → run it as this deployment sees it
-#   * `MOXIE_DOTENV=<file> pytest sim/tests`   → run it against a fixture
-# `test_dotenv_cannot_perturb_the_suite.py` uses the second to prove the fence is real.
-# Never point either at a developer's own `mqtt/.env`.
+# The dotenv fence, decided ONCE before anything imports `config`: `config._load_env`
+# promotes a git-ignored `mqtt/.env` into os.environ on the FIRST import, permanently, so
+# a developer's deployment would silently decide what the hermetic suite asserts. An
+# explicit opinion still wins: `MOXIE_SKIP_DOTENV=0` (run as this deployment sees it) or
+# `MOXIE_DOTENV=<file>` (a fixture; `test_dotenv_cannot_perturb_the_suite.py` uses it).
 _SKIP_DOTENV = "MOXIE_SKIP_DOTENV"
 _DOTENV_PATH = "MOXIE_DOTENV"
 if _SKIP_DOTENV not in os.environ and _DOTENV_PATH not in os.environ:
@@ -90,8 +66,7 @@ def _free_port():
 
 @pytest.fixture(autouse=True, scope="session")
 def isolated_data_dir(tmp_path_factory):
-    """Point `MOXIE_DATA_DIR` (the runtime's durable store, default `mqtt/data/`) at a
-    throwaway directory for the session, so the suite never writes into the repo."""
+    """`MOXIE_DATA_DIR` -> a throwaway dir, so the suite never writes into the repo."""
     prev = os.environ.get("MOXIE_DATA_DIR")
     os.environ["MOXIE_DATA_DIR"] = str(tmp_path_factory.mktemp("moxie-data"))
     yield os.environ["MOXIE_DATA_DIR"]
@@ -117,20 +92,10 @@ def _live_keys():
 
 @pytest.fixture(autouse=True)
 def hermetic_tier_sees_no_credentials(request):
-    """The second half of the fence: hide live credentials from every hermetic test.
-
-    `helpers_runtime.load_repo_dotenv` is deliberately NOT fenced — the `test_live_*.py`
-    suites call it at import to find a real key, and fencing it would turn them into
-    silent skips. It is narrowed instead to `LIVE_KEYS` (credentials, endpoints, model
-    names). But a credential and an endpoint ARE what "is a gateway configured?" means
-    (`MOXIE_STT=auto` resolves to the gateway when both are present), so a hermetic test
-    must not see even those. Live suites read their credentials at IMPORT, before any
-    fixture runs; hermetic tests read the environment while they run — so the keys stay
-    in `os.environ` for collection and are hidden for the duration of each non-live test.
-
-    Keyed on the `test_live_` filename prefix, the one definition of a live suite that
-    `test_ci_workflows.py` already enforces. Restores what it removed afterwards.
-    """
+    """Hide `LIVE_KEYS` (credentials, endpoints, models) from every non-`test_live_*`
+    test while it runs: "is a gateway configured?" is exactly those keys (`MOXIE_STT=auto`
+    resolves to the gateway when present). Live suites read them at IMPORT, before any
+    fixture, so they keep working; the keys are restored afterwards."""
     if Path(str(request.node.path)).name.startswith("test_live_"):
         yield
         return
@@ -211,14 +176,9 @@ _CAPABILITY_PROBE = "/api/health"
 
 
 class ConsoleErrors(list):
-    """The console errors a test should care about, computed at ACCESS time.
-
-    Whether the capability probe's 404 line is benign depends on whether any OTHER 404
-    was seen, which is only knowable once the page has loaded; filtering at capture
-    would race the console and response events. A real missing asset lands in
-    `unexpected`, which switches the suppression off so every 404 line is reported.
-    A `list` subclass so existing assertion sites keep working.
-    """
+    """Console errors, filtered at ACCESS time: the capability probe's 404 line is benign
+    only if no OTHER 404 was seen, which is unknowable until the page has loaded. A real
+    missing asset (in `unexpected`) switches the suppression off."""
 
     def __init__(self, raw, unexpected):
         super().__init__()
@@ -253,13 +213,7 @@ class ConsoleErrors(list):
 
 @pytest.fixture
 def page(browser):
-    """A fresh page that records real console errors on `page.console_errors`.
-
-    Benign 'optional backend absent' errors (see `_BENIGN_CONSOLE`) are filtered
-    at capture, so the suite is hermetic — it passes with OR without a broker up.
-    The optional `/api/health` capability probe's 404 is filtered at access time
-    instead (see `ConsoleErrors`), because judging it needs the whole page load.
-    """
+    """A fresh page recording real console errors on `page.console_errors`."""
     page = browser.new_page()
     raw, unexpected = [], []
     page.on("console",
