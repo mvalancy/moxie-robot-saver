@@ -10,12 +10,6 @@ No sleeps: the fake brain yields each chunk when the test opens its `Event` and 
 transport is a `Condition`, so ordering is causal. The only bounded waits are "a filler
 appeared inside the budget" and "a THIRD filler never appeared".
 
-Covered: a fast stream (numbering, one event_id, every chunk synthesized, final completed);
-a late first token (filler, then stream); a mid-answer stall (second filler, never a third);
-the stale guard cancelling a stream; stream failure falling back to a single reply;
-`MOXIE_STREAMING=0` reproducing the single-reply wire byte for byte; LLMApp's own streaming
-(incremental JSON envelope, leading action tag on chunk 0, per-chunk markup); and the SIL
-client joining one turn's chunks.
 """
 import json
 import os
@@ -370,10 +364,10 @@ def test_the_streaming_knob_reads_the_environment(value, expected, monkeypatch):
         monkeypatch.delenv("MOXIE_STREAMING", raising=False)
     else:
         monkeypatch.setenv("MOXIE_STREAMING", value)
-    rt = moxie_runtime.MoxieRuntime(app=NonStreamingApp())
-    assert rt.streaming is expected
-    assert moxie_runtime.MoxieRuntime(app=NonStreamingApp(), streaming=False).streaming is False
-    assert moxie_runtime.MoxieRuntime(app=NonStreamingApp(), streaming=True).streaming is True
+    assert moxie_runtime.MoxieRuntime(app=NonStreamingApp()).streaming is expected
+    # an explicit argument beats the environment either way
+    assert moxie_runtime.MoxieRuntime(app=NonStreamingApp(),
+                                      streaming=not expected).streaming is (not expected)
 
 
 def test_config_exposes_the_knob(monkeypatch):

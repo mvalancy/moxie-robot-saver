@@ -10,11 +10,9 @@ names are `-k` selectors in `sim/tools/hardening_p1_mutation_check.py` — keep 
 """
 from __future__ import annotations
 
-import os
 
 import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from helpers_runtime import make_runtime                          # noqa: E402
 from moxie_sdk import conn_telemetry as conn                      # noqa: E402

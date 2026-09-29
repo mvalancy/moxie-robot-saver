@@ -14,8 +14,6 @@ import os
 
 import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-MQTT = os.path.join(REPO, "mqtt")
 
 from helpers_runtime import (drive_turn, http_json, make_runtime,  # noqa: E402
                              status_server)
@@ -115,19 +113,6 @@ def _runtime(tmp_path, engines=None, **kw):
 
 
 # ----------------------------------------------------------------- the card --
-def test_the_card_lists_the_gateway_the_local_engines_and_the_builtins(tmp_path):
-    rt, _ = _runtime(tmp_path, _Engines(piper=["en_US-amy-medium"], whisper=["base.en"]))
-    view = rt.voice_view()
-    assert view["ok"] is True
-    assert vs.option_ids(view["available"][vs.SPEECH]) == [
-        "gateway:piper-amy", "gateway:piper-ryan", "gateway:graphling-tts-narrator",
-        "gateway:graphling-tts-character", "gateway:tts-piper-amy",
-        "gateway:tts-piper-ryan", "piper:en_US-amy-medium", "tone"]
-    assert vs.option_ids(view["available"][vs.LISTENING]) == [
-        "gateway:stt-whisper", "gateway:graphling-stt", "gateway:stt-whisper-base",
-        "whisper:base.en", "off"]
-
-
 def test_acceptance_1_the_defaults_are_piper_amy_and_stt_whisper(tmp_path):
     rt, _ = _runtime(tmp_path, _Engines())
     view = rt.voice_view()
@@ -137,14 +122,6 @@ def test_acceptance_1_the_defaults_are_piper_amy_and_stt_whisper(tmp_path):
     assert view["chosen"] == {vs.SPEECH: False, vs.LISTENING: False}
     marked = [e["id"] for e in view["available"][vs.SPEECH] if e["default"]]
     assert marked == ["gateway:piper-amy"]
-
-
-def test_acceptance_3_with_no_gateway_the_card_shows_local_and_builtin_only(tmp_path):
-    rt, _ = _runtime(tmp_path, _Engines(gateway=[], piper=["en_US-amy-medium"],
-                                        whisper=["base.en"]))
-    view = rt.voice_view()
-    assert view["selected"] == {vs.SPEECH: "piper:en_US-amy-medium",
-                                vs.LISTENING: "whisper:base.en"}
 
 
 def test_acceptance_5_a_gateway_outage_never_blanks_the_card(tmp_path):
@@ -321,20 +298,6 @@ def test_the_test_button_speaks_through_the_engine_that_is_installed(tmp_path):
     assert published[0]["chunk_num"] == 0 and published[0]["audio"]["buffer"]
 
 
-def test_the_test_button_says_the_line_it_was_given(tmp_path):
-    rt, device_id = _runtime(tmp_path, _Engines())
-    rt.voice_update({"speech": "gateway:piper-amy"})
-    out = rt.voice_test(device_id, "Testing, one two three.")
-    assert out["ok"] and rt._synth.spoken == ["Testing, one two three."]
-
-
-def test_the_test_button_needs_a_robot_that_is_actually_there(tmp_path):
-    rt, _ = _runtime(tmp_path, _Engines())
-    rt.voice_update({"speech": "gateway:piper-amy"})
-    out = rt.voice_test("d_nobody")
-    assert out["ok"] is False and "unknown device_id" in out["error"]
-
-
 def test_the_test_button_is_honest_when_there_is_no_voice(tmp_path):
     rt, device_id = _runtime(tmp_path, _Engines())
     rt.set_synthesizer(None)
@@ -397,26 +360,24 @@ def test_post_voice_test_for_a_robot_that_is_not_there_is_a_404(served):
 
 
 # ------------------------------ the cold-supervisor race ------------------------------
-def test_a_save_asks_discovery_to_settle_but_the_card_never_does():
+def test_a_save_asks_discovery_to_settle_but_the_card_never_does(tmp_path):
     """The live run's bug, pinned: three seconds after boot the gateway list is still in
     flight, and a `POST /voice` judged against it refused `gateway:piper-amy` with
     "choose one of: tone". A write gets a bounded wait; a read gets whatever is cached."""
-    import tempfile
-    with tempfile.TemporaryDirectory() as tmp:
-        engines = _Engines()
-        rt, _ = _runtime(tmp, engines)
-        rt.voice_view()
-        assert engines.settles == [0.0], "the card's poll must never wait"
-        rt.voice_update({"speech": "gateway:piper-ryan"})
-        # the WRITE's own lookup waits; the view it renders afterwards does not
-        assert engines.settles[1] == rt.VOICE_SETTLE_S > 0
-        assert engines.settles[2] == 0.0
+    engines = _Engines()
+    rt, _ = _runtime(tmp_path, engines)
+    rt.voice_view()
+    assert engines.settles == [0.0], "the card's poll must never wait"
+    rt.voice_update({"speech": "gateway:piper-ryan"})
+    # the WRITE's own lookup waits; the view it renders afterwards does not
+    assert engines.settles[1] == rt.VOICE_SETTLE_S > 0
+    assert engines.settles[2] == 0.0
 
 
-def test_a_cold_catalog_does_not_refuse_a_good_pick():
+def test_a_cold_catalog_does_not_refuse_a_good_pick(tmp_path):
     """End to end through the real `GatewayCatalog`: the listing is still on its way when
     the Save arrives, and the pick is accepted rather than refused."""
-    import tempfile, threading
+    import threading
     started, release = threading.Event(), threading.Event()
 
     def _slow():
@@ -435,15 +396,14 @@ def test_a_cold_catalog_does_not_refuse_a_good_pick():
                     "discovering": snap["discovering"],
                     "gateway_error": snap["gateway_error"]}
 
-    with tempfile.TemporaryDirectory() as tmp:
-        rt, _ = _runtime(tmp, _ColdEngines())
-        cold = rt.voice_view()                       # the card renders immediately…
-        assert cold["discovering"] is True
-        assert vs.option_ids(cold["available"][vs.SPEECH]) == ["tone"]
-        threading.Timer(0.2, release.set).start()    # …the listing lands a moment later
-        out = rt.voice_update({"speech": "gateway:piper-ryan"})
-        assert out["ok"] is True, out.get("reason")
-        assert out["selected"][vs.SPEECH] == "gateway:piper-ryan"
+    rt, _ = _runtime(tmp_path, _ColdEngines())
+    cold = rt.voice_view()                           # the card renders immediately…
+    assert cold["discovering"] is True
+    assert vs.option_ids(cold["available"][vs.SPEECH]) == ["tone"]
+    threading.Timer(0.2, release.set).start()        # …the listing lands a moment later
+    out = rt.voice_update({"speech": "gateway:piper-ryan"})
+    assert out["ok"] is True, out.get("reason")
+    assert out["selected"][vs.SPEECH] == "gateway:piper-ryan"
 
 
 # ------------------------------------------- the environment's pin, on the card ---

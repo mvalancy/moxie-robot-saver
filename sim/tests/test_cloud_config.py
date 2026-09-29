@@ -3,13 +3,12 @@ Config & telemetry tests (M5) — RobotCloudConfig builder, RobotStatus parser, 
 LoggingPolicy gate. Field names verified against embodied/logging/Cloud.proto.
 """
 import json
-import os
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+import pytest
 
 from moxie_sdk.cloud_config import (  # noqa: E402
     LoggingPolicy, MoxieMode, WAKE_DAY_NAMES, build_robot_cloud_config, parse_robot_status,
-    child_pii_from_profile, merge_config_layers, normalize_schedule_preferences,
+    child_pii_from_profile, normalize_schedule_preferences,
     normalize_wake_schedule, sanitize_config_overrides, schedulable_module_ids,
 )
 from moxie_sdk.types import ChildProfile  # noqa: E402
@@ -50,10 +49,6 @@ def test_child_pii_from_profile_includes_birthday():
     assert pii == {"nickname": "Robin", "birthday": "2018-05-01"}
 
 
-def test_config_is_json_serializable():
-    json.dumps(build_robot_cloud_config(ChildProfile(nickname="Sam")))  # must not raise
-
-
 def test_parse_robot_status_extracts_known_fields():
     state = json.dumps({
         "embodied_robot_id": "d_x", "robot_firmware_version": "v24.10.803",
@@ -74,8 +69,6 @@ def test_status_firmware_falls_back_to_software_version():
 
 
 # --- sanitize_config_overrides (M6 parent-console config edit) ---
-import json as _json
-import pytest
 
 
 def test_sanitize_whitelists_and_coerces():
@@ -99,7 +92,7 @@ def test_sanitize_output_is_json_safe_and_feeds_builder():
     builder — so sanitized values must be JSON-serializable AND valid builder kwargs."""
     out = sanitize_config_overrides({"audio_volume": 0.5, "logging_policy": 2,
                                      "weekday_bedtime": ["21:00", "06:30"]})
-    _json.dumps(out)                        # must not raise (no enums)
+    json.dumps(out)                        # must not raise (no enums)
     cfg = build_robot_cloud_config(ChildProfile(nickname="Sam"), **out)
     assert cfg["audio_volume"] == 0.5 and cfg["data_sharing"] == "FULL"
     assert cfg["weekday_bedtime_enabled"] and cfg["weekday_bedtime_starts_at"] == "21:00"

@@ -1,30 +1,17 @@
-"""
-The ACTIVITY RECORD on disk, through the parent's privacy switch (the transcript half is
-`test_transcript_memory_policy.py`):
-
-  1. Telemetry needs an erasure path: `NO_DATA` means "no packet, no count, no day row; a
-     restart finds an empty store" (config-and-telemetry-contract.md §③), including data
-     written before the switch moved.
-  2. `ingest_mentor_behavior` (a per-child log of finished/quit/refused activities) is
-     gated by `LoggingPolicy` like everything else written about a child.
-
-Every assertion reads the store back off DISK — a 200 or a `False` return is not evidence.
-Each "nothing written" test has a `NO_MEDIA`/`FULL` twin proving the path does write.
-
-Hermetic: fake MQTT transport, no brain, tmp store, no sleeps.
+"""The activity record on disk through the parent's privacy switch: `NO_DATA` means no packet,
+no count, no day row and no behaviour log — including data written before the switch moved —
+and a parent can always erase (config-and-telemetry-contract.md §③). Every assertion reads
+the store back off DISK; each "nothing written" test has a twin proving the path does write.
 """
 from __future__ import annotations
 
 import json
-import os
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import pytest  # noqa: E402
 
 pytest.importorskip("paho.mqtt.client", reason="the runtime needs paho")
 
-from helpers_runtime import make_runtime            # noqa: E402
+from helpers_runtime import http_call, make_runtime, status_server  # noqa: E402
 from moxie_sdk import telemetry as T                # noqa: E402
 from moxie_sdk.app import MoxieApp                  # noqa: E402
 from moxie_sdk.cloud_config import LoggingPolicy    # noqa: E402
@@ -89,25 +76,8 @@ def _set_policy(rt, device_id, policy):
     rt._config_overrides.setdefault(device_id, {})["logging_policy"] = int(policy)
 
 
-def _free_port():
-    import socket
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
-
-
-def _http(port, path, method="GET"):
-    import urllib.error
-    import urllib.request
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method=method,
-                                 data=b"{}" if method == "POST" else None)
-    try:
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return r.status, json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read().decode() or "{}")
+def _http(base, path, method="GET"):
+    return http_call(base + path, method=method, body={} if method == "POST" else None)
 
 
 # =========================================================================== #
@@ -345,8 +315,7 @@ def test_delete_telemetry_over_http_really_empties_the_store(tmp_path):
     The 200 is checked and then ignored: the assertion that matters is the directory."""
     rt, did = _rt(tmp_path)
     _drive(rt, did)
-    port = _free_port()
-    rt._start_status_server(port)
+    port = status_server(rt)
 
     code, body = _http(port, f"/telemetry?device_id={did}", method="DELETE")
     assert code == 200 and body["ok"] is True and body["erased"] is True
@@ -360,8 +329,7 @@ def test_delete_telemetry_without_a_device_id_is_a_400(tmp_path):
     """No device_id is a client error, not an accidental fleet-wide wipe."""
     rt, did = _rt(tmp_path)
     _drive(rt, did)
-    port = _free_port()
-    rt._start_status_server(port)
+    port = status_server(rt)
     code, body = _http(port, "/telemetry", method="DELETE")
     assert code == 400 and body["ok"] is False
     assert len(_on_disk(tmp_path, did)) == 3        # and it erased nothing
@@ -373,8 +341,7 @@ def test_delete_still_serves_memory_and_still_404s_anything_else(tmp_path):
     rt, did = _rt(tmp_path)
     rt.memory_store().merge(did, "mchat", {"facts": ["a fact"]})
     _drive(rt, did)
-    port = _free_port()
-    rt._start_status_server(port)
+    port = status_server(rt)
 
     code, body = _http(port, f"/memory?device_id={did}", method="DELETE")
     assert code == 200 and body["erased"] is True

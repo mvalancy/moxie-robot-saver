@@ -102,8 +102,6 @@ REVIEWED: dict = {
     _TP + "test_bedtime_hours_suppress_the_hello": (
         ("datetime.now",), "RELATIVE — `_in_bedtime` reads its own clock; now±30 min "
         "contains now at all 1440 minutes and both weekday keys are written."),
-    _TP + "test_outside_the_bedtime_window_the_hello_is_allowed": (
-        ("datetime.now",), "RELATIVE — the mirror: now+2h..+4h excludes now at every minute."),
     _TS + "_bedtime_body": (
         ("datetime.now",), "RELATIVE — every window is built from a `now` PARAMETER, so "
         "fixture and assertions reason about one instant."),

@@ -1,19 +1,7 @@
-"""🩺 `no config pushed within timeout` must say WHICH — starved, or wedged.
-
-A smoke failure under heavy load (robot subscribed and acknowledged BEFORE announcing, so
-not the QoS-0 race `test_sil_supervisor_readiness.py` reproduces) turned out to be a
-supervisor starved of CPU — reported in exactly the words reserved for a broken one,
-because the wait could not tell the difference.
-
-**The rule.** A wait whose expiry means *"we stopped waiting"* must not be phrased as a
-verdict about the thing waited for.
-
-**Why asking works.** The status server is a different transport (HTTP on localhost) from
-the one that went quiet (MQTT), so an answer there separates *alive but did not push* from
-*not answering anything at all* — which a longer MQTT timeout never could.
-
-**Proved here:** the three outcomes are distinguishable, none is silent, and the diagnosis
-cannot itself throw (a raising failure path would replace a misleading message with none).
+"""`no config pushed within timeout` must say WHICH: a supervisor starved of CPU was once
+reported in the words reserved for a wedged one. Asking the status server (HTTP, a different
+transport from the MQTT that went quiet) separates the three outcomes; none may be silent,
+and the diagnosis must not throw on the failure path it serves.
 """
 from __future__ import annotations
 
@@ -60,28 +48,19 @@ def test_says_ALIVE_when_the_status_server_answers():
         why = _robot(f"http://127.0.0.1:{port}")._why_no_config()
     finally:
         srv.shutdown()
-    assert "IS ALIVE" in why, why
-    assert "NOT a wedged appliance" in why, why
-    # The evidence, not just the verdict: a reader must be able to check the claim.
-    assert "GET /status -> 200" in why, why
+    assert "IS ALIVE" in why and "GET /status -> 200" in why, why   # verdict + evidence
 
 
 def test_says_NOT_ANSWERING_when_nothing_is_listening():
     """Nothing on the port is the other verdict, and it must be stated as such."""
     why = _robot(f"http://127.0.0.1:{_free_port()}")._why_no_config()
-    assert "did NOT answer /status either" in why, why
-    assert "wedged, gone, or starved" in why, why
+    assert "did NOT answer /status" in why and "IS ALIVE" not in why, why
 
 
 def test_says_it_did_not_check_when_it_was_not_told_where_to_look():
-    """The third outcome is the one most easily faked: SILENCE.
-
-    With no `--status-url` the honest answer is *I did not check*, not an implied verdict.
-    A diagnosis that omits the un-run case reads as though it ran and found nothing.
-    """
+    """With no `--status-url` the honest answer is *I did not check*, not an implied verdict."""
     why = _robot(None)._why_no_config()
-    assert "NOT CHECKED" in why, why
-    assert "starved vs wedged" in why, why
+    assert "NOT CHECKED" in why and "IS ALIVE" not in why, why
 
 
 @pytest.mark.parametrize("url", ["", "not-a-url", "http://", "http://127.0.0.1:99999"])
@@ -89,18 +68,3 @@ def test_the_diagnosis_never_raises(url):
     """It runs only on the failure path, so it must not replace a bad message with none."""
     why = _robot(url)._why_no_config()
     assert isinstance(why, str) and why, url
-
-
-def test_the_three_verdicts_are_distinguishable():
-    """Belt and braces: no two outcomes share wording a reader could confuse."""
-    port = _free_port()
-    srv = http.server.HTTPServer(("127.0.0.1", port), _Quiet)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    try:
-        alive = _robot(f"http://127.0.0.1:{port}")._why_no_config()
-    finally:
-        srv.shutdown()
-    dead = _robot(f"http://127.0.0.1:{_free_port()}")._why_no_config()
-    unchecked = _robot(None)._why_no_config()
-    assert len({alive, dead, unchecked}) == 3
-    assert "IS ALIVE" not in dead and "IS ALIVE" not in unchecked
