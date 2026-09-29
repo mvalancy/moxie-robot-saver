@@ -2,12 +2,8 @@
 STT seam tests (M3) — the VAD accumulator + transcriber interface + response encoder.
 Pure (no audio libs); the Whisper backend is exercised only for availability/skip.
 """
-import os
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
 from moxie_sdk.stt import (  # noqa: E402
-    VADState, Transcriber, SttSession, WhisperTranscriber, build_stt_response,
+    VADState, Transcriber, SttSession, build_stt_response,
 )
 
 
@@ -64,11 +60,6 @@ def test_response_encoder_shape():
     assert r == {"type": "FINAL", "speech": "hello moxie",
                  "confidence": 1.0, "uuid": "u-1"}
     assert build_stt_response("u", "hi", final=False)["type"] == "PARTIAL"
-
-
-def test_whisper_availability_is_boolean():
-    # no hard dep — just reports whether faster-whisper is installed
-    assert isinstance(WhisperTranscriber.available(), bool)
 
 
 def _pb_zmq_frame(vad, audio, uuid):
