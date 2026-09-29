@@ -62,6 +62,7 @@ import {
   deep(posts.map(([p]) => p), ["/api/chat", "/api/speech"], "one /api/chat then one /api/speech");
   deep(posts[0][1], { text: "hi moxie", context: "" }, "the chat request sends exactly the sentence and an empty first-turn context");
   deep(posts[1][1], { ticket: "v1.PAYLOAD.MAC" }, "the speech request sends EXACTLY the minted ticket — no text field");
+  deep(posts.map(([, , init]) => init.credentials), ["omit", "omit"], "…and neither request carries credentials");
 
   // The avatar: the child's turn is echoed, Moxie's line renders, the markup drives the
   // face, and ONLY the gateway voice speaks it.

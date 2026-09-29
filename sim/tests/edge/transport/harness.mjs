@@ -12,7 +12,6 @@ export { readFileSync, join, repo };
 export const { fails, C, ok, eq, deep } = ledger();
 
 export const SRC = {
-
   stub: readFileSync(join(repo, "sim", "web", "stub.js"), "utf8"),
   bridge: BRIDGE_SRC,
   mode: readFileSync(join(repo, "sim", "web", "mode.js"), "utf8"),
@@ -76,7 +75,7 @@ export function makeWorld(opts) {
     setSpeech: [],
     setFace: [],
     transcript: [],       // [role, text]
-    fetches: [],          // [path, bodyObject]
+    fetches: [],          // [path, bodyObject, init]
     modeNotes: [],
   };
   let speaking = false;
@@ -177,7 +176,7 @@ export function makeWorld(opts) {
     const path = String(url).replace("https://demo.invalid.test", "");
     let body = null;
     try { body = init && init.body ? JSON.parse(init.body) : null; } catch {}
-    spy.fetches.push([path, body]);
+    spy.fetches.push([path, body, init || {}]);
     const answer = o.answer || (() => ({ status: 200, json: {} }));
     const res = answer(path, body, spy);
     const settle = (r) => new Response(typeof r.text === "string" ? r.text : JSON.stringify(r.json || {}),
