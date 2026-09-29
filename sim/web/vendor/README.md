@@ -4,7 +4,7 @@ Vendored so the site runs with no network or CDN. All are served under the `/ven
 
 | file | library | license | used by |
 |---|---|---|---|
-| [`three/`](three/README.md) | three.js r160 (`three@0.160.0`) + two addons | MIT | the 3D model, wireframe backgrounds |
+| [`three/`](three/README.md) | three.js r160 (`three@0.160.0`): the release's minified `three.module.min.js` + two addons | MIT | the 3D model, wireframe backgrounds |
 | `mqtt.min.js` | MQTT.js v5.10.1 | MIT | `bridge/` |
 | `qrcode.js` | qrcode-generator v1.4.4 (Kazuhiko Arase) | MIT | `qr.js` |
 | `marked.min.js` | marked v12.0.0 | MIT | docs explorer (Markdown to HTML) |

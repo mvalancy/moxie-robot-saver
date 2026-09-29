@@ -6,7 +6,7 @@
  *
  * Imports the VENDORED three path rather than bare "three", so these pages need no inline
  * importmap (which CSP would have to hash). */
-import * as THREE from "./vendor/three/three.module.js";
+import * as THREE from "./vendor/three/three.module.min.js";
 
 // Body silhouette (lathe profile), simplified from moxie.js bodyProfilePts:
 // base → speaker → chest seam (steps out) → upper chest tapering to the neck.

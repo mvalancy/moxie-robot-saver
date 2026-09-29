@@ -80,7 +80,7 @@ def test_the_inline_surface_is_one_block_and_says_why():
 
 
 @pytest.mark.parametrize("mutation", [
-    ('"three": "./vendor/three/three.module.js"', '"three":  "./vendor/three/three.module.js"'),
+    ('"three": "./vendor/three/three.module.min.js"', '"three":  "./vendor/three/three.module.min.js"'),
 ])
 def test_a_drifted_block_is_caught(tmp_path, monkeypatch, mutation):
     """NEGATIVE CONTROL: a one-character edit to the hashed block must redden this.

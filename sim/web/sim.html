@@ -14,7 +14,7 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "./vendor/three/three.module.js",
+    "three": "./vendor/three/three.module.min.js",
     "three/addons/": "./vendor/three/addons/"
   }
 }
@@ -431,14 +431,13 @@
            are bounded in CSS so a two-line hosted-demo warning can never push the box
            itself off the bottom of the screen — which would recreate this whole bug in
            miniature. -->
-      <p id="mic-status" class="hint">click to start / stop recording</p>
+      <p id="mic-status" class="hint">Tap Listen, say something, then tap it again to send.</p>
     </section>
   </div>
 
 </div>
 
 <script type="module" src="moxie.js?v=cute7"></script>
-<script src="./vendor/mqtt.min.js"></script>
 <script src="./vendor/qrcode.js"></script>
 <script src="qr.js?v=cute7"></script>
 <script src="stub.js?v=cute7"></script>

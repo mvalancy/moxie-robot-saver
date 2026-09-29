@@ -10,7 +10,7 @@
  * CLASSIC SCRIPTS, NOT ES MODULES: mode.js and cloud-transport.js wrap
  * `window.moxieBridge` synchronously as they load, and the node suites eval the parts as
  * one source. The parts share state through `window.__moxieBridge` (`B`), which this
- * file creates fresh on every load. Uses the global `mqtt` from vendor/mqtt.min.js.
+ * file creates fresh on every load. Uses the global `mqtt` from vendor/mqtt.min.js, which index.js loads on the first Link.
  */
 (function () {
   "use strict";
