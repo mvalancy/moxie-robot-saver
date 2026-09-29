@@ -317,17 +317,11 @@ REVIEWED: dict = {
         "passes; it reddens only if the line genuinely never appears (callers pass "
         "180 s / 30 s)."),
 
-    "sim/tests/test_sil_handshake.py::test_the_announcement_really_did_wait_for_the_suback": (
-        ("time.monotonic",),
-        "RELATIVE — a LOWER bound: `waited >= LATE_SUBSCRIBE_S * 0.5` proves `announce()` "
-        "blocked for the SUBACK instead of returning early. Preemption inflates `waited`, "
-        "which pushes the assertion further from failure, so load can only make this "
-        "greener. The same expression as an upper bound would be the defect."),
     "sim/tests/test_sil_supervisor_readiness.py::test_a_supervisor_whose_subscribe_is_late_still_serves_the_robot": (
         ("time.monotonic",),
-        "RELATIVE — the same shape and the same direction: `booted >= HOLD_SUBSCRIBE_S * "
-        "0.5` proves the boot really blocked on the held SUBSCRIBE. A busy machine only "
-        "makes `booted` larger."),
+        "RELATIVE — a LOWER bound: `booted >= HOLD_SUBSCRIBE_S * 0.5` proves the boot "
+        "really blocked on the held SUBSCRIBE. A busy machine only makes `booted` larger, "
+        "which pushes the assertion further from failure."),
 
     "sim/tests/test_soak_accounting.py::test_a_fault_wholly_inside_a_turn_is_seen": (
         ("time.monotonic",),
