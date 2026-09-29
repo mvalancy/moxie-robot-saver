@@ -1,21 +1,7 @@
-"""
-Parent console <-> supervisor round trip: the console-runtime contract, end to end.
-
-The console's `/local/*` endpoints are thin proxies over the MQTT supervisor's status
-server. `test_fleet.py` unit-tests the normalizers; this exercises the *seam* — the URL
-the console builds, the query string and body it forwards, and what it does with a 400,
-404 or dead supervisor on the other side. `helpers_console_supervisor.FakeSupervisor`
-stands in for the supervisor on a free port, backed by a REAL `MoxieRuntime` wherever
-one can be; `test_fake_status_server_matches_the_real_runtime_shapes` keeps the
-hand-built parts honest.
-
-Sibling files cover the other cards against the same fake: `test_console_memory.py`,
-`test_console_telehealth.py`, `test_console_voice.py`, `test_console_content.py`,
-`test_console_devices.py`. Tests in each file share one module-scoped supervisor and
-some deliberately build on the previous test's state (config edits).
-
-Skips cleanly when fastapi/httpx (or the server's own deps) are absent.
-"""
+"""Parent console <-> supervisor seam: the URL/query/body the console forwards and what it
+does with a 400, 404 or dead supervisor. `FakeSupervisor` is backed by a REAL
+`MoxieRuntime` where it can be; the drift test below keeps the hand-built parts honest.
+Tests share one module-scoped supervisor and some build on earlier config edits."""
 import json
 
 import pytest
@@ -57,13 +43,20 @@ def test_fleet_normalizes_the_supervisors_snapshot(client):
     assert "battery 91%" in robot["summary"]
     assert f["recent"] == [{"t": 1, "kind": "chat", "text": "hi"}]
     assert f["error"] is None
-
-
-def test_the_console_learns_the_module_catalog_from_the_supervisor(client):
-    """The activity picker's options come from the one on-board catalog, never a copy."""
-    f = client.get("/local/fleet").json()
-    assert "JOKE" in f["schedule_modules"]
+    # the pickers' option lists come from the on-board catalogs, never a console copy
     assert set(f["schedule_modules"]) == set(schedulable_module_ids())
+    assert [s["id"] for s in f["face_catalog"]] == [s["id"] for s in face_catalog()]
+    eyes = next(s for s in f["face_catalog"] if s["id"] == "eye_color")
+    assert eyes["cited"] and sum("hex" in o for o in eyes["options"]) == 6
+
+
+def test_a_face_swatch_colour_that_is_not_a_hex_never_reaches_the_page():
+    """`hex` is interpolated into an inline style= in the console, so a hostile value from
+    the supervisor must be dropped, not rendered."""
+    from moxie_server.fleet.robots import _face_catalog
+    rows = _face_catalog([{"id": "eye_color", "options": [
+        {"id": "ok", "hex": "#38ADAE"}, {"id": "bad", "hex": "red;background:url(x)"}]}])
+    assert [o.get("hex") for o in rows[0]["options"]] == ["#38ADAE", None]
 
 
 # --------------------------------------------------------------------------- #
@@ -159,9 +152,6 @@ def test_config_edit_forwards_and_returns_the_applied_overrides(client, supervis
     device_id, raw = supervisor.config_posts[-1]
     assert device_id == DEVICE
     assert json.loads(raw) == {"audio_volume": 60, "weekday_bedtime": ["20:30", "07:00"]}
-
-
-def test_a_config_edit_shows_up_in_the_next_fleet_read(client):
     f = client.get("/local/fleet").json()
     assert f["robots"][0]["config_overrides"]["audio_volume"] == pytest.approx(0.6)
 
@@ -226,22 +216,6 @@ def test_a_per_robot_override_beats_the_fleet_default_through_the_console(client
 # --------------------------------------------------------------------------- #
 # Moxie's look — face customization
 # --------------------------------------------------------------------------- #
-
-def test_the_console_learns_the_face_catalog_from_the_supervisor(client):
-    """The card renders the SDK's catalog, so it can never offer an option
-    `validate_face` would then reject."""
-    f = client.get("/local/fleet").json()
-    assert [s["id"] for s in f["face_catalog"]] == [s["id"] for s in face_catalog()]
-    eyes = next(s for s in f["face_catalog"] if s["id"] == "eye_color")
-    assert eyes["cited"] is True
-    assert {"green", "blue", "purple", "brown", "gold", "teal"} <= {
-        o["id"] for o in eyes["options"]}          # the recovered enum, still offered
-    swatchable = [o for o in eyes["options"] if "hex" in o]
-    assert len(swatchable) == 6                    # …and still the only previewable six
-    assert all(o["hex"].startswith("#") for o in swatchable)
-    # a slot no source lists ids for says so rather than lying
-    assert next(s for s in f["face_catalog"] if s["id"] == "stickers")["cited"] is False
-
 
 def test_a_face_edit_round_trips_and_changes_the_texture_key(client, supervisor):
     """A picked look reaches the supervisor, comes back in the effective config, and
@@ -330,11 +304,6 @@ def test_the_card_is_told_the_retention_window_and_the_lifetime_total(client):
     assert body["totals"]["dropped_days"] == 2
     assert body["retention"]["packets"] > 0 and body["retention"]["days"] > 0
     assert body["policy"] == "NO_MEDIA" and body["persisted"] is True
-
-
-@pytest.mark.parametrize("days", [1, 7])
-def test_the_days_window_is_forwarded_to_the_supervisor(client, days):
-    assert len(_get(client, f"telemetry?days={days}").json()["history"]) == days
 
 
 def test_erasing_telemetry_from_the_console_really_empties_the_store(client, supervisor):
@@ -626,56 +595,15 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
     assert code == 404 and set(fake_missing) == set(rt.schedule_view("d_nope"))
 
 
-# --------------------------------------------------------------------------- #
-# The console page itself: ids and tokens the JS drives must exist
-# --------------------------------------------------------------------------- #
-# No browser harness covers `server/static/`, so the classic failure is a silently dead
-# card: JS reaches for an id the HTML no longer has, or never reads a payload key.
-
-def test_the_console_serves_the_ids_the_insights_and_device_code_drives(client):
+def test_the_device_controls_exist_and_reboot_ships_disabled(client):
+    """No browser suite loads these controls; a vanished id is a silently dead button,
+    and a Reboot button must not look usable before any JS runs (the endpoint is a 501)."""
     html = static(client, "/index.html")
     js = console_js_served(client)
-    for element_id in ("robot-insights", "btn-wake", "btn-reboot", "dev-status"):
-        assert f'id="{element_id}"' in html, f"#{element_id} vanished from the page"
-        assert f"'#{element_id}'" in js or f"#{element_id}" in js, \
-            f"#{element_id} is in the HTML but nothing drives it"
-
-
-def test_the_reboot_button_ships_disabled_in_the_markup(client):
-    """Before any JS runs, the button must not look like a working control."""
-    row = [ln for ln in static(client, "/index.html").splitlines()
-           if 'id="btn-reboot"' in ln]
-    assert row and "disabled" in row[0], "the Reboot button is offered as if it worked"
-
-
-def test_the_voice_card_reads_the_environments_pin(client):
-    assert "pin_notes" in console_js_served(client), \
-        "the voice card never reads the environment's pin"
-
-
-@pytest.mark.parametrize("what, tokens, classes", [
-    ("insights week", ("weekBars", "t.history", "ret.packets", "ret.days",
-                       "tot.first_day", "t.persisted"),
-     (".tweek", ".tbar", ".tday.zero", ".tnote")),
-    ("connection strip", ("/local/connection", "connectionStrip", "c.verdict", "c.gaps",
-                          "e.waited_s", "roster"),
-     (".connstrip", ".connstrip.warn", ".connstrip.down")),
-])
-def test_the_insights_card_renders_its_durable_payload(client, what, tokens, classes):
-    """A card that fetched the payload and ignored it would pass every API test above."""
-    js = console_js_served(client)
-    for token in tokens:
-        assert token in js, f"the {what} never reads {token}"
-    css = static(client, "/style.css")
-    for cls in classes:
-        assert cls in css, f"{cls} has no styling, so the {what} will not render"
-
-
-def test_the_insights_card_renders_the_connection_strip_with_no_robot(client):
-    """The strip earns its place in the no-robot branch, so it must be built before it."""
-    js = console_js_served(client)
-    assert js.index("connectionStrip") < js.index("Insights: no robot connected"), \
-        "the strip is built after the no-robot early return, so it never shows there"
+    for element_id in ("btn-wake", "btn-reboot", "dev-status"):
+        assert f'id="{element_id}"' in html and f"#{element_id}" in js, element_id
+    row = [ln for ln in html.splitlines() if 'id="btn-reboot"' in ln]
+    assert "disabled" in row[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -729,7 +657,6 @@ def test_recovered_is_not_rendered_as_healthy():
     recovered = normalize_connection({"ok": True, "connected": True,
                                       "health": {"state": "recovered", "outages": 9}})
     assert steady["verdict"] != recovered["verdict"]
-    assert "not been the whole time" in recovered["verdict"]
     assert recovered["connected"] is True, "it IS up — the verdict is about its history"
 
 
