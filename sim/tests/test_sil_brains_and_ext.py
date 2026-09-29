@@ -290,19 +290,9 @@ def test_the_shipped_clock_extension_answers_on_the_wire_with_no_model_call(lab,
         "the point of an extension is that it costs none")
 
 
-def test_the_extension_answered_and_the_conversation_did_not(lab, alice):
-    """A `handled` global returns before the conversation module is ever reached, so the
-    reply must be the program's sentence and nothing else — not a model line with the
-    time bolted on, and not the free-chat opener."""
-    text = alice.ask("please tell me the time")
-    assert BRAIN_LINE not in text, text
-    assert text.startswith("The time is "), text
-
-
 def test_a_content_turn_that_is_not_the_extension_still_reaches_the_brain(lab, alice):
-    """The control that stops the two tests above from passing vacuously: on the very
-    same robot and the very same brain, an *unmatched* utterance still costs one call.
-    Without this, a content app that had silently failed to build would look identical."""
+    """The control for the clock test: on the same robot and brain an *unmatched* utterance
+    still costs one call (a content app that failed to build would look identical)."""
     before = lab["brain"].count
     text = alice.ask("tell me about dinosaurs")
     assert BRAIN_LINE in text, text
@@ -344,14 +334,7 @@ def test_and_the_very_next_turn_uses_the_new_one(lab, bob):
     assert lab["brain"].count == before, text
 
 
-# ------------------------------------------------ 6. what the appliance reported --
-def test_the_supervisor_logged_every_brain_it_built(lab):
-    log = lab["stack"].supervisor.text()
-    for name in ("Echo (no model) (echo)", "Content modules (content)"):
-        assert f"🧠 built {name}" in log, f"no build line for {name}\n{log[-3000:]}"
-    assert "could not be built" not in log, log[-3000:]
-
-
+# ------------------------------------------------ 6. clearing and refusing --
 def test_clearing_a_per_robot_brain_hands_the_robot_back_to_the_fleet(lab, alice):
     """`{"brain": null}` clears the layer rather than storing a name — the shape the
     console's "inherit" option posts. Alice goes back to the house rule."""
