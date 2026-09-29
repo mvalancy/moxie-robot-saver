@@ -5,7 +5,7 @@ Round-trip test for the telehealth (remote-puppet) builders in moxie_toolkit.clo
 Builds each Action of a telehealth session, wraps in the publishable
 TelehealthRobotCommand, serializes + re-parses, and checks the fields survive — the
 exact cloud->robot path a revival server uses. Also round-trips a robot->cloud
-TelehealthRobotEvent. See docs/reverse-engineering/telehealth.md.
+TelehealthRobotEvent. See docs/reverse-engineering/protocol/telehealth.md.
 
     python3 tools/robot-toolkit/test_telehealth.py
 """

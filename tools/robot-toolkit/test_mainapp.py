@@ -3,7 +3,7 @@
 moxie_toolkit.bus (embodied.unity). Builds a RobotCamera (drive the face self-view),
 a CloudTTSResponse a server returns (PCM + a viseme TTSMark), a UserPairingRequest,
 and checks the lifecycle + audio-notif subscribe sets. See
-docs/reverse-engineering/unity-mainapp-interface.md.
+docs/reverse-engineering/protocol/unity-mainapp-interface.md.
 
     python3 tools/robot-toolkit/test_mainapp.py
 """

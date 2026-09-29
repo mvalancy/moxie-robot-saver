@@ -4,7 +4,7 @@
 Builds a WifiAppStatus (the WifiAppReady=100 "ready to scan a QR" signal) and a
 WifiAppBricked (setup-app failure), frames + re-parses them via the bus registry, and
 checks the WIFI_APP_STATUS_CODES map. See
-docs/reverse-engineering/qr-commands.md (The setup app's runtime status).
+docs/reverse-engineering/protocol/qr-commands.md (The setup app's runtime status).
 
     python3 tools/robot-toolkit/test_wifiapp_status.py
 """

@@ -2,7 +2,7 @@
 """Round-trip test for the IMU handling-event helpers in moxie_toolkit.bus
 (embodied.unity MpuPickup). Builds a shaken event (with direction), a pickup-status
 (pitch), and the IMU-noise gate, frames + re-parses them via the bus registry, and
-checks the MpuShakeDirection enum. See docs/reverse-engineering/hardware-map.md
+checks the MpuShakeDirection enum. See docs/reverse-engineering/hardware/hardware-map.md
 (Semantic handling events).
 
     python3 tools/robot-toolkit/test_mpu_handling.py

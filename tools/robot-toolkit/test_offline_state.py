@@ -3,7 +3,7 @@
 (embodied.robotbrain.serialized). Builds a FallbackInfo tree (the offline content a
 server pushes via upgrade_fallbacks), a CSData resume checkpoint, and a
 UserRecommendationData history, serializes + re-parses them, and checks the
-FallbackOptions strategy enum. See docs/reverse-engineering/offline-and-brain-state.md.
+FallbackOptions strategy enum. See docs/reverse-engineering/protocol/offline-and-brain-state.md.
 
     python3 tools/robot-toolkit/test_offline_state.py
 """

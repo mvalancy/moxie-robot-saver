@@ -3,7 +3,7 @@
 (embodied.robotbrain System/Reset/ChatScriptState). Builds each control command a
 server/app sends to a running brain — volume (absolute + relative delta), accessibility
 pacing, force-listen, barge-in gate, soft/hard reset — frames + re-parses them, and
-checks descriptor names. See docs/reverse-engineering/runtime-control.md.
+checks descriptor names. See docs/reverse-engineering/protocol/runtime-control.md.
 
     python3 tools/robot-toolkit/test_runtime_control.py
 """

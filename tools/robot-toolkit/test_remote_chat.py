@@ -5,7 +5,7 @@ Builds the RemoteChatResponse a self-hosted brain returns for one turn — text 
 mood, a launch action that drives the robot into a module, and a SUCCESS result — then
 serializes + re-parses it (the exact reply a revival server sends). Also round-trips a
 RemoteChatRequest (robot -> brain) with translated speech. See
-docs/reverse-engineering/remote-chat-protocol.md.
+docs/reverse-engineering/protocol/remote-chat-protocol.md.
 
     python3 tools/robot-toolkit/test_remote_chat.py
 """

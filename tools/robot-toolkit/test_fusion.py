@@ -5,7 +5,7 @@ Builds a FusedPeoplePB roster with one recognized, engaged, speaking person (fac
 with head pose + eye landmarks, a DOA-placed utterance with a translation), applies
 the same [FullName][bytes] framing the on-device ZMQ bus uses, and re-parses it via
 the fused_people_classes() registry — the exact path a revival server uses to consume
-who-is-in-the-room events. See docs/reverse-engineering/perception-fusion.md.
+who-is-in-the-room events. See docs/reverse-engineering/protocol/perception-fusion.md.
 
     python3 tools/robot-toolkit/test_fusion.py
 """
