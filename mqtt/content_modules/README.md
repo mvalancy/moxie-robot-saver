@@ -91,3 +91,6 @@ overlay wins for the keys it names.
 Add an activity by dropping another `.json` here and pointing `MOXIE_CONTENT_MODULE` at it
 (or a directory to merge — a future loader slice), or by exporting one from the 📦 card and
 sending somebody the file.
+
+---
+📖 [mqtt/ overview](../README.md) · [Back to top](../../README.md)
