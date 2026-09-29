@@ -431,19 +431,21 @@ async function dockGeometry(page) {
 /* ======================================================================== *
  * 4-side. NO HEADROOM, WIDE STAGE: BESIDE HER HEAD, NOT ON HER CHIN
  * ======================================================================== *
- * 1280x720 with the rail open: the bubble does not fit above her, and the chest fallback
+ * 1280x600 with the rail open (her crown sits ~20 px short of the headroom cut at every
+ * point of her breathing, so this is clearly-no-headroom geometry, not a borderline one):
+ * the bubble does not fit above her, and the chest fallback
  * used to draw its leader up through her mouth. It goes beside her head instead, placed by
  * the edge NEAREST her (so the typewriter grows it away from her face), tail at her eyes.
  */
 {
-  const page = await open(1280, 720);
+  const page = await open(1280, 600);
   const a = await page.evaluate(() => {
     window.moxie.setSpeech("Do you ever think about the sky?");
     return new Promise((r) => requestAnimationFrame(() =>
       requestAnimationFrame(() => r(window.__bubbleAnchor()))));
   });
   const e = a.exact;
-  eq(e.mode, "side", `1280x720: a wide stage with no headroom puts the bubble BESIDE her head (${e.mode})`);
+  eq(e.mode, "side", `1280x600: a wide stage with no headroom puts the bubble BESIDE her head (${e.mode})`);
   ok(e.face.r > 30, `…measured against her real on-screen head width (r ${e.face.r.toFixed(1)}px)`);
   ok(Math.abs(e.bubble.top + 22 - e.face.y) <= 1,
      `…with its tail at her eyes (tail ${(e.bubble.top + 22).toFixed(1)} vs face ${e.face.y.toFixed(1)})`);
@@ -456,6 +458,37 @@ async function dockGeometry(page) {
   ok(!done.hidden && done.exact && !bubbleCovers(done.exact) && done.bubble.right <= 1280 && done.bubble.left >= 0,
      `…and once the whole line is typed it has grown AWAY from her, still on screen (${done.bubble.left}..${done.bubble.right})`);
   eyes("the side bubble", page);
+  await page.close();
+}
+
+/* ======================================================================== *
+ * 4-steady. AT A BORDERLINE SIZE THE PLACEMENT DOES NOT FLICKER WITH HER BREATHING
+ * ======================================================================== *
+ * 1280x720 is ON the headroom threshold: breathing and the idle nod move her crown ~8 px
+ * across it. With a bare threshold the bubble jumped between above and beside about once a
+ * second (and a CI runner caught whichever phase it sampled). Whatever it picks first, it
+ * must hold that placement through several breaths — and never cover her face.
+ */
+{
+  const page = await open(1280, 720);
+  const modes = await page.evaluate(async () => {
+    const out = [];
+    for (let i = 0; i < 24; i++) {         // ~4.8 s: more than one 4.3 s breath
+      if (document.getElementById("bubble").classList.contains("hidden") || i % 6 === 0)
+        window.moxie.setSpeech("Do you ever think about the sky?");
+      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => requestAnimationFrame(r));
+      const a = window.__bubbleAnchor();
+      if (!a.frozen && a.exact) out.push({ mode: a.exact.mode, e: a.exact });
+    }
+    return out;
+  });
+  ok(modes.length >= 15, `1280x720: sampled through her breathing (${modes.length} placed frames)`);
+  const seq = modes.map((m) => m.mode);
+  let flips = 0;
+  for (let i = 1; i < seq.length; i++) if (seq[i] !== seq[i - 1]) flips++;
+  eq(flips, 0, `1280x720: the placement holds steady while she breathes (${seq.join(",")})`);
+  eq(modes.filter((m) => bubbleCovers(m.e)).length, 0, "1280x720: …and never covers her face");
   await page.close();
 }
 

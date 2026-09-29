@@ -21,6 +21,11 @@ const M = 8;                     // stage margin, px
 const HEAD_HALF_W = 0.66;        // head mesh half-width (moxie.js HEAD_R.x), local units
 const SIDE_GAP = 18;             // px between the side of her head and the side box
 const SIDE_MIN_W = 190;          // px: narrower than this and a side box is a word column
+// HYSTERESIS. Her breathing and idle nod move the crown ~8 px, so a bare threshold flipped
+// the bubble between above and beside about once a second at 1280x720 (measured: crown
+// 72..80 px against a 77 px cut). A placement is kept until the other one fits by HYST px
+// clear; staying 'above' may cost up to HYST px of the dome (the face panel starts lower).
+const HYST = 12;
 const SIDE_TAIL_Y = 22;          // px from the box top to the tail's centre (css/hud.css)
 
 const bubbleEl = document.getElementById('bubble');
@@ -29,7 +34,7 @@ const reduceMotion = window.matchMedia &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let bubbleTimer = null, typeTimer = null;
-let stage = null, lastSide = 'r';
+let stage = null, lastSide = 'r', lastMode = null;
 const headP = new THREE.Vector3(), chestP = new THREE.Vector3(), topP = new THREE.Vector3();
 const faceP = new THREE.Vector3(), edgeP = new THREE.Vector3(), rightV = new THREE.Vector3();
 const metrics = { at: -1e9, sx: 0, sy: 0, sw: 0, sh: 0, bw: 0, bh: 0 };
@@ -116,14 +121,17 @@ export function updateBubbleAnchor(head, camera) {
   const faceX = faceVX - st.sx, faceY = faceVY - st.sy;
 
   // Which placement. Side prefers the side it used last, so a sway cannot flip it.
+  const keep = (m) => lastMode === m ? -HYST : lastMode === null ? 0 : HYST;
   let mode = 'chest';
-  if ((crownY - bh - M) >= M) mode = 'above';
+  if ((crownY - bh - M) >= M + keep('above')) mode = 'above';
   else {
     const room = { r: st.sw - (faceX + faceR + SIDE_GAP) - M, l: faceX - faceR - SIDE_GAP - M };
     const other = lastSide === 'r' ? 'l' : 'r';
-    const side = room[lastSide] >= SIDE_MIN_W ? lastSide : room[other] >= SIDE_MIN_W ? other : null;
+    const need = SIDE_MIN_W + keep('side');
+    const side = room[lastSide] >= need ? lastSide : room[other] >= need ? other : null;
     if (side && faceY > 0 && faceY < st.sh) { mode = 'side'; lastSide = side; }
   }
+  lastMode = mode;
   bubbleEl.classList.toggle('leadered', mode === 'chest');
   bubbleEl.classList.toggle('side', mode === 'side');
   bubbleEl.classList.toggle('side-l', mode === 'side' && lastSide === 'l');
