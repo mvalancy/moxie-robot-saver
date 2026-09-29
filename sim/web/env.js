@@ -201,7 +201,7 @@
     // Mic / STT
     var micSt = $("mic-status");
     if (stt) {
-      if (micSt) { micSt.textContent = "click to start / stop recording"; micSt.classList.remove("warn"); }
+      if (micSt) { micSt.textContent = "Tap Listen, say something, then tap it again to send."; micSt.classList.remove("warn"); }
       needsBackend($("mic-btn"), isLocal
         ? "Records and transcribes through the local STT server."
         : "Records and transcribes on this page — speech-to-text runs on the site's own origin.", false);

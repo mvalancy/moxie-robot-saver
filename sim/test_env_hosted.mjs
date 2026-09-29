@@ -240,6 +240,9 @@ try {
   const live = await load(HOSTED, { health: { status: 200, body: HEALTH_LIVE }, transport: true });
   ok(live.state === "live", `a configured route must read as live (got ${live.state})`);
   ok(live.badge === "MOXIE ONLINE", `live badge (got "${live.badge}")`);
+  // Most visitors are on a phone: the mic line names the button and says "tap", not "click".
+  ok(/Listen/.test(live.micStatus) && !/click/i.test(live.micStatus),
+     `live mic line tells a phone visitor what to do (got "${live.micStatus}")`);
   ok(live.mode === "live", `body[data-mode] should say live (got ${live.mode})`);
   ok(live.pillShown === false, "live and idle: nothing to apologise for");
   ok(live.micMarked === false, "live ears must REMOVE #mic-btn's needs-backend mark");
