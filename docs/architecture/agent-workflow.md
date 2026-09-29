@@ -105,4 +105,4 @@ See also the `running-layered-session-loops` skill in `.claude/skills/`.
 - Physical-robot claims stay unproven until tested on a real Moxie.
 
 ---
-[Architecture index](README.md) · [Implementation plan](implementation-plan.md) · [Release process](../../RELEASING.md)
+[Architecture index](README.md) · [Roadmap](../../ROADMAP.md) · [Release process](../../RELEASING.md)

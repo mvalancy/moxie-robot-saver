@@ -220,4 +220,4 @@ multipart WAV in, `{"text": …, "usage": null}` out.)*
 2. **the audio formats + sample rates** accepted.
 
 ---
-📖 [AI seam contract §1 (STT)](../architecture/ai-seam.md) · [TTS on the gateway](litellm-tts-setup.md) · [Implementation plan](../architecture/implementation-plan.md) · [Docs index](../README.md)
+📖 [AI seam contract §1 (STT)](../architecture/ai-seam.md) · [TTS on the gateway](litellm-tts-setup.md) · [Roadmap](../../ROADMAP.md) · [Docs index](../README.md)

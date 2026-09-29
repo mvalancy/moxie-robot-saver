@@ -2,7 +2,7 @@
 SDK / robot-cloud unit tests — pure Python, no broker or browser (runs fast in CI's
 `pytest sim/tests`). Covers the RemoteChat response contract built in M1:
 ResultCode fidelity, scored output, and action passthrough.
-See docs/architecture/ai-seam.md §2 + docs/architecture/implementation-plan.md.
+See docs/architecture/ai-seam.md §2 + ROADMAP.md.
 """
 import os
 

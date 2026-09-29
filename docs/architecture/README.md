@@ -11,7 +11,7 @@ for the bigger picture.
 ## The build contracts — *what to implement*
 Versioned, standalone specs distilled from the [reverse-engineering study](../reverse-engineering/README.md).
 A backend + Sim are built from these directly; each cites the study but reads on its own.
-**Now building:** see [`implementation-plan.md`](implementation-plan.md) — the roadmap + honest status.
+**Status:** see the [roadmap](../../ROADMAP.md).
 - [`agent-workflow.md`](agent-workflow.md) — how changes are made: hard rules, the agent brief, integration rules, session loops.
 - [`rest-api-contract.md`](rest-api-contract.md) — **Channel 1, the control plane**: the REST services the
   parent-app server exposes (auth, children, pairing, robot settings) + the minimum-viable-server path.

@@ -147,7 +147,7 @@ already forwarded. `MOXIE_VOICE_DISCOVERY_TTL_S` is optional — if added, forwa
 `server/moxie_server/{fleet,main}.py` · `server/static/{index.html,app.js,style.css}` ·
 `sim/tests/test_voice_settings.py`, `test_voice_runtime.py` (new), `test_console_roundtrip.py` (+cases) ·
 docs: `ai-seam.md` (§1 + §3 "choosing an engine"), `guides/litellm-tts-setup.md` + `litellm-stt-setup.md`
-(a "Pick it in the console" paragraph), `implementation-plan.md` (TTS/STT rows), this file's status line.
+(a "Pick it in the console" paragraph), `ROADMAP.md` (TTS/STT rows), this file's status line.
 
 ---
 📖 [Backlog index](README.md) · [AI seam](../ai-seam.md) · [TTS guide](../../guides/litellm-tts-setup.md) · STT guide (`docs/guides/litellm-stt-setup.md`, lands with the STT slice)
