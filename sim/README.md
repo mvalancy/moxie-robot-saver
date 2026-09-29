@@ -1,91 +1,82 @@
-# 🕹️ `sim/` — Moxie software-in-the-loop simulator
+# sim — the Moxie simulator
 
-Run and watch a **virtual Moxie** — the WebGL 3D robot (face, arms, head, body) driven by the **exact
-protocol reverse-engineered from firmware v3.6.4-Zephyr / OTA v24.10.803** — with **no hardware**. See
-[`docs/architecture/sil-and-cicd.md`](../docs/architecture/sil-and-cicd.md) for the design.
+A virtual Moxie you can watch in a browser: a WebGL 3D robot (face, arms, head, body) driven by
+the real MQTT protocol recovered from firmware v24.10.803. No hardware needed. The same folder
+holds the static website (`web/`), the virtual robot used by the tests, and most of the test
+suites. Design and scope: [`docs/architecture/sil-and-cicd.md`](../docs/architecture/sil-and-cicd.md).
 
-## One command
+## Run it
 
 ```sh
-docker compose -f sim/docker-compose.yml up                   # broker + supervisor + web UI
-#                                    --profile voice          # + Piper TTS + whisper STT (Moxie speaks & listens)
-#                                    --profile demo           # + a virtual robot that chats on a loop
-#                        --profile voice --profile demo       # everything
+docker compose -f sim/docker-compose.yml up                          # broker + supervisor + web UI
+docker compose -f sim/docker-compose.yml --profile voice up          # + Piper voice (:8081) and Whisper ears (:8082)
+docker compose -f sim/docker-compose.yml --profile demo up           # + a virtual robot chatting on a loop
 ```
-> The `voice` profile needs a Piper voice on disk first — see [Voice (Piper TTS)](#voice-piper-tts).
 
-Then open **http://localhost:8080** (the hub; the simulator is at **/sim.html**) and click **Connect** (the UI talks MQTT-over-WebSocket to the
-broker on `:9001`). Drive Moxie by hand with the panel, hit **Play demo** to replay a canned birthday session (no broker
-needed), or use `--profile demo` to watch a scripted conversation play out — the 3D Moxie speaks, emotes, gestures, and shows event icons from the live bus.
+Open <http://localhost:8080> (the hub) or <http://localhost:8080/sim.html> (the simulator) and
+click **Connect**. The browser talks MQTT over WebSocket to the broker on `:9001`. Drive Moxie
+from the panel, press **Demo** to replay a recorded session, or use the `demo` profile.
 
-## Pieces
+The supervisor starts with the echo brain. For a real LLM, set `MOXIE_APP=llm` and the
+`MOXIE_LLM_*` settings in `mqtt/.env` ([`mqtt/`](../mqtt/README.md)).
+
+Without Docker:
+
+```sh
+bash sim/run_smoke.sh          # broker + supervisor + one round trip (needs mosquitto or docker)
+python3 sim/serve.py           # serve sim/web on 127.0.0.1:8080 with cache-busting
+```
+
+## What's in here
+
 | Path | What |
 |---|---|
-| [`web/`](web/) | The WebGL 3D Moxie (three.js, vendored) + `bridge/` (MQTT→avatar) + `voice/` (plays the server's `CloudTTSResponse`) — the UI. |
-| [`virtual_moxie.py`](virtual_moxie.py) | The SIL robot: speaks the real MQTT protocol. `--scenario`/`--loop-seconds` replay conversations. |
-| [`broker/ci-mosquitto.conf`](broker/) | Mosquitto with `:1883` (MQTT) + `:9001` (WebSocket for the browser). |
-| [`scenarios/`](scenarios/) | Scripted conversations (JSON) for the demo + tests. |
-| [`run_compose_smoke.sh`](run_compose_smoke.sh) + [`compose-smoke.env`](compose-smoke.env) | Proof for the **[one-command stack](../docs/guides/one-command-stack.md)**: brings the repo-root `docker-compose.yml` up under a throwaway project on unused ports, round-trips the virtual robot (incl. TTS audio) through it, checks the console's `/local/fleet`, tears it down. |
-| [`run_acl_proof.sh`](run_acl_proof.sh) + [`tools/prove_broker_acl.py`](tools/) | Proof for **[broker hardening P0](../docs/architecture/backlog/security-broker-auth.md)**: starts a throwaway mosquitto from `mqtt/broker/{compose-mosquitto.conf,acl,acl-robot}` with a scratch credential, then asserts **by message delivery** (MQTT 3.1.1 acks an authorization failure as success) that the supervisor authenticates, that a robot cannot read another robot's config or `$SYS/broker/log`, and that the browser SIM keeps its observer view. |
-| [`run_broker_outage.sh`](run_broker_outage.sh) | Proof for **[production hardening P0](../docs/architecture/backlog/production-hardening.md)** §4.1: takes a **real broker away from a running supervisor** and gives it back. Five phases against a mosquitto container it owns — a cold start with no broker at all (it must wait and retry, not die), the broker appearing, a SIL turn, the outage (`/status` flips `broker_connected`, stamps `last_broker_disconnect`, counts the gap's publish in `publish_drops`, and `POST /wakeup` answers **409 with a reason** instead of `published: true`), and the reconnect with the next turn end to end. The unit tests for all of that use fakes; this is the only thing that stops a real socket. |
-| `run_smoke.sh` / `run_scenarios.sh` / `test_bridge.mjs` / `test_automarkup_render.mjs` / `test_voice.mjs` / `test_qr.mjs` / `test_cloud.mjs` / `test_audio.mjs` | The eight test layers, all in the CI workflow ([`ci/ci.yml`](ci/) — a template; install to `.github/workflows/` to run on GitHub). `test_voice` exercises the real TTS/STT services and skips cleanly if they aren't running; `test_qr` asserts the browser QR encoder is byte-identical to the python toolkit; `test_cloud` asserts the cloud-console fixture keeps the real REST/MQTT shapes; `test_audio` asserts the browser decodes and plays a `CloudTTSResponse` (PCM maths, chunk order, lip-sync) and round-trips that decoder against the real server encoder; `test_automarkup_render` drives the eight byte-exact markup-floor goldens ([`sim/tests/goldens/annotate.json`](tests/goldens/annotate.json)) through the real `bridge/` and asserts the avatar reaches six distinct faces and moves its arms — the SIM is the **only renderer we can assert against**, since no hardware has ever played our markup. |
-| [`bridge_harness.mjs`](bridge_harness.mjs) | Shared plumbing for the node-only bridge suites (`test_bridge`, `test_action_payload`, `test_*_render`, `test_presence_bridge`): `loadBridge()` evaluates the REAL `web/bridge/` parts against recording `window.moxie` / DOM / MQTT stubs and returns the spies, the fake client and an `emit()` helper; `scriptGroup("bridge"|"voice")` (`BRIDGE_SRC` / `VOICE_SRC`) is how every node suite reads a split script group — sim.html's parts, in load order, as one source. Not itself a test. |
-| [`browser_harness.mjs`](browser_harness.mjs) + `test_typed_turn.mjs` / `test_mic_spend.mjs` / `test_mobile_layout.mjs` / `test_csp.mjs` / `test_bg_perf.mjs` / `test_console_insights.mjs` | The **headless-browser** layer, added 2026-09-03 after three defects that no fake-DOM suite could have seen. `browser_harness.mjs` is shared plumbing (puppeteer/Chrome discovery, a static server that can send the real `web/_headers`, a real PCM tone fixture, and — since 2026-09-06 — `watchPage()` + `notable()`, which install a `console` **and** a `pageerror` listener and forgive only the noise the fixture itself provoked, counted at the interceptor that provoked it) and is not itself a test. Four suites here had **neither** listener until then and so could not fail on a 404'd script, a CSP refusal or an uncaught exception however broken the page was; `pageerror` alone is not enough, because a missing `<script src>` raises no exception anywhere and surfaces only on the console. `test_typed_turn` drives a typed line to `/api/chat` and asserts the **peak sample amplitude** of the buffer handed to Web Audio — a silent clip fails it — plus that the controls which cannot work on a hosted origin are disabled and produce no CSP error. `test_mobile_layout` hit-tests the bottom-anchored controls with `document.elementFromPoint()` at four phone widths (the hosted banner used to sit on top of `#rail-toggle`; it was visible the whole time, so only a hit test could catch it). `test_mic_spend` counts the requests that actually leave the page when a microphone press fails, and pairs every "spends nothing" with a Web Audio assertion that the visitor was still consoled *out loud* — a scripted consolation line used to travel `sendUserTurn` and buy a real chat + speech turn on words nobody said. `test_csp` serves every page with the shipped security headers **actually applied** — the first suite here that does, and the only thing that can tell a safe policy from one that blanks a page. `test_bg_perf` opens a **second** page and `bringToFront()`s it, which is the only way a headless run gets a genuinely hidden tab (`document.hidden` stays false in a lone page, and a measurement that missed that talked itself into a reproduction it had not got) — then asserts that `bg.js` accumulates **nothing** while rAF is paused, with a teeth block that rebuilds the old `setInterval` producer shape out of the shipped file and requires the growth to reappear, so an environment that cannot background a tab skips green instead of passing on nothing. `test_console_insights` is the first suite in this repo to load **`server/static`** at all rather than `sim/web` — the parent console had no browser coverage whatsoever until 2026-09-04, so 📈 Insights' two-click **Erase history** button was asserted only by Python route tests, which cannot see whether a button ever wires itself up. It serves the console with `serveStatic` and answers every `/local/*` XHR at the browser (no fastapi, no supervisor), builds its fixtures by calling the **real** `server/moxie_server/fleet/` normalizers so they cannot drift from what the route answers, and sweeps **all six render paths** of `refreshInsights` against one invariant: in each path the erase button is either absent, or present *and* armed *and* issues exactly one `DELETE` on the second click — asserted on the intercepted request and the moment it arrived, never on a label. Its teeth serve three mutated copies of `js/insights.js` to Chrome; the third moves the wiring out of `render` back to the terminal branch, which is exactly the *"works in three of them"* defect the comment above `refreshInsights` in [`js/insights.js`](../server/static/js/insights.js) predicts, and reddens path 4 while leaving path 6 green. |
-| [`check_deployed.mjs`](check_deployed.mjs) | **The only check here that looks at a DEPLOYED artifact**, and not a `test_*.mjs` on purpose (that name is a promise the fast tier runs it on every push; this needs the public internet and a finished Pages build). It drives a real phone-sized browser — 390×844, a real iOS UA — at any URL (`node sim/check_deployed.mjs [url]`, `MOXIE_DEPLOYED_URL`, else the canonical origin the site declares in `web/index.html`) and asserts two things a local server structurally cannot answer. **One:** on a fresh load with **no tap on CONTROLS and no scrolling**, `#speech-input` and `#speech-btn` have a non-zero box, sit inside the first viewport, and win a `document.elementFromPoint` hit test at their own centre — three separate clauses, because the three ways this has actually failed each pass the other two (pre-PR #162 the box was `0×0` on load and `262×40 at y=2095` after opening the drawer; `#env-banner` used to sit *on top of* `#rail-toggle` while looking perfectly healthy). **Two:** Cloudflare Pages **injects** a `static.cloudflareinsights.com` analytics script into every HTML response, our first CSP refused it on every production page load, and nothing local could see that — so the beacon must LOAD and the page must fire **zero** `securitypolicyviolation` events. Two measured facts shape it: the injection only happens for a browser's `Accept: text/html` (a `curl | grep` version would have been green for the wrong reason), and it is **zone**-level, so no `*.pages.dev` preview carries one. It spends nothing — `/api/chat`, `/api/speech` and `/api/transcriptions` are aborted at the browser. `--selftest` is its teeth and is hermetic: four loopback servers under the real `web/_headers` policy, where the unmutated tree must pass every clause and three mutated copies must each redden a **different** one. The fast tier runs `--selftest` on every push; [`ci/deployed.yml`](ci/deployed.yml) runs the real thing on a schedule, deliberately **not** as a merge gate (its header carries the measurements). |
-| [`check_hosted_mic.mjs`](check_hosted_mic.mjs) | **The check that deliberately SPENDS**, and the complement of the row above: `check_deployed.mjs` aborts `/api/chat`, `/api/speech` and `/api/transcribe` so it costs nothing, and this one lets them through. It plays a WAV into Chrome's **fake microphone** (`--use-file-for-fake-audio-capture`, plus a CDP permission grant) and drives the real page — `getUserMedia`, `mic.js::wavCapture`'s ScriptProcessor graph, `encodeWav`'s 48 kHz → 16 kHz decimation, the upload — then reads back what the deployment heard, answered and said. Not a `test_*.mjs` for three reasons: it costs money, it needs a finished Pages build, and a fork PR has no preview. The budget is an INTERCEPTOR (`MOXIE_MIC_BUDGET`, default 5): request N+1 on a spending route is aborted at the browser. `--dry-run` aborts all of them and still proves the button, the device, the encoded WAV and that the audio in it is the audio played — free, against the real site. **The audio clause is an ORDERING, not a magnitude**, and that is a scar: the first version asserted an absolute envelope floor, passed here at 0.955–0.991 and **failed in CI** (run 34013443378) because the runner's own capture *saturates* — `peak 1.0000`, which flattens a peak envelope — while getting the ordering right in all four cases. The vote survived that; then run 101437894164 showed worse than a red — the mutant that plays a **different clip PASSED at 71 %**, a false green on the one case that proves the audio is the right audio. Handed the fixtures directly the scorer separates them 100 %/0 %, so it is the runner's *capture* that cannot carry the statistic. **Both browser-capture statistics — identity and fidelity — are now asserted only by `--dry-run` and the paid run** and printed in CI; the push gate is deterministic instead: a **scorer proof** over committed fixtures (the decoy must lose), a **degradation gauntlet** over the looped fixture, and **silence** through a real capture reddening the audible clause. `--selftest` is hermetic and is what the fast tier runs: two fake microphones (the sentence, and digital silence which must redden *audible*), plus a **scorer proof** and a **degradation gauntlet** that are pure arithmetic over committed bytes — seven modelled capture defects, each of which must hold *and* must fail with the templates swapped. First paid run, 2026-09-05: **transcript word overlap 1.00** (decoy 0.00), a real reply, 0 CSP violations, **3 gateway calls**. |
+| [`web/`](web/README.md) | The static site: simulator (`sim.html`), hub (`index.html`), setup page, example parent console, docs explorer. Deployed to Cloudflare Pages. |
+| [`virtual_moxie.py`](virtual_moxie.py) | The virtual robot: speaks the real MQTT protocol; `--scenario` and `--loop-seconds` replay conversations. |
+| [`broker/`](broker/README.md) | Mosquitto config with MQTT `:1883` and WebSocket `:9001`. |
+| [`scenarios/`](scenarios/README.md) | Scripted conversations (JSON) for the demo and tests. |
+| [`tts/`](tts/README.md), [`stt/`](stt/README.md) | Local Piper voice and faster-whisper ears services. |
+| [`tools/`](tools/README.md) | Build scripts (docs bundle, CSP hashes, pre-rendered audio), probes and mutation checkers. |
+| [`tests/`](tests/README.md) | The pytest suites. |
+| [`ci/`](ci/README.md) | GitHub Actions workflow templates. |
+| `run_smoke.sh` | Broker, supervisor and one round trip. `--telehealth` for the puppet path; `MOXIE_SIL_PORT` / `MOXIE_STATUS_PORT` pick free ports. |
+| `run_scenarios.sh` | Replays every scenario through a live stack. |
+| `run_soak.sh` | Fault-injection soak: `--profile smoke\|quick\|week` (about 1, 5 or 60 minutes). |
+| `run_compose_smoke.sh` | Brings up the root `docker-compose.yml` on spare ports and round-trips the virtual robot through it. |
+| `run_acl_proof.sh` | Proves the broker ACL against a real mosquitto. |
+| `run_broker_outage.sh` | Stops and restarts a real broker under a running supervisor. |
+| `readiness.sh` | The shared "wait for the stack" helpers: a TCP connect to the broker, then the supervisor's `subscriptions acknowledged by the broker` log line. Never a fixed sleep. |
+| `test_*.mjs` | Node suites: the bridge, voice, QR, audio, edge Functions, docs explorer, and headless-browser suites (layout, CSP, microphone spend, background tab). |
+| `bridge_harness.mjs`, `browser_harness.mjs` | Shared plumbing for the node suites (not tests themselves). |
+| `check_deployed.mjs` | Checks a deployed site in a phone-sized browser. Spends nothing. See [`ci/`](ci/README.md). |
+| `check_hosted_mic.mjs` | Plays a voice into Chrome's fake microphone against a deployment. `--dry-run` is free; a real run spends gateway calls. |
+| `eval_live.mjs` | Scores real multi-turn conversations against a deployment. Spends money; refuses to run without `--yes`. Not a test. |
 
-## Without Docker
-```sh
-bash sim/run_smoke.sh          # broker + supervisor + one round-trip (needs mosquitto or docker)
-                               #   --telehealth   the puppet round-trip instead
-                               #   MOXIE_SIL_PORT / MOXIE_STATUS_PORT pick free ports
-bash sim/run_soak.sh           # the SIL soak: fault injection + 12 numeric bars (needs docker)
-                               #   --profile smoke|quick|week   (~1 min / ~5 min / 60 min)
-                               #   --only-contention            (the store half; no broker needed)
-bash sim/run_acl_proof.sh      # the broker ACL, against a real mosquitto (needs docker)
-bash sim/run_broker_outage.sh  # stop and start a real broker under a live supervisor (needs docker)
-cd sim/web && python3 -m http.server 8080   # serve the UI, then run a broker+supervisor separately
-```
+## What is real and what is simulated
 
-The boot of every script above is **waited on, never slept through**: [`readiness.sh`](readiness.sh) holds the two waits (a TCP connect to the broker, then the supervisor's own `[runtime] subscriptions acknowledged by the broker` line) that `run_smoke.sh` and `run_scenarios.sh` both source. A fixed `sleep` is wrong in both directions — it wastes seconds on a warm box and, on a loaded one, turns a boot that had not finished into a timeout blamed on the robot.
+We do not boot the robot's Android image (it needs vendor hardware drivers). The virtual robot
+speaks the real MQTT topics, JSON and markup, so "works in the sim" means the backend behaves
+correctly toward a re-homed robot. It does not prove what the robot's own face and body do with
+that output. See [`sil-and-cicd.md`](../docs/architecture/sil-and-cicd.md).
 
-The second wait is on the **SUBACK**, not on `[runtime] broker connected` (2026-09-05). `subscribe()` only queues a SUBSCRIBE packet, so the older line meant *"we asked"*: a robot booted on it announced `/state` into a broker holding no matching subscription, and the config push that answers a `/state` is QoS 0 and not retained — so the answer was never generated and nothing replayed it. That is the HIL red `❌ scenario 'basic-conversation': 0/4 turns OK — no config pushed within timeout` with the *second* scenario green in the same job, and it is why a longer timeout could not have helped. The CONNACK line still prints and still means what it always did; the SUBACK line is a second one beside it. [`sim/tests/test_sil_supervisor_readiness.py`](tests/test_sil_supervisor_readiness.py) reproduces the failure on demand by holding the supervisor's SUBSCRIBE packet on the wire, and [PR #143](tests/test_sil_handshake.py) is the same fix on the robot's side.
-
-## What's real vs simulated
-The firmware is the **contract, not the runtime** — we don't boot the RK3288 Android image (it needs
-absent vendor HALs). The virtual robot speaks the real MQTT topics + JSON/markup, so "works in the sim"
-means "works on a real re-homed robot." Scope + honest limits: [`sil-and-cicd.md`](../docs/architecture/sil-and-cicd.md#what-is-and-isnt-simulated-honest-scope).
-
-## Voice (Piper TTS)
-
-Moxie speaks via a local **Piper** service — offline, no cloud, no API key:
+## Voice (Piper)
 
 ```sh
-# 1) a python with piper installed
 python3 -m venv /tmp/piper-venv && /tmp/piper-venv/bin/pip install piper-tts
-# 2) a voice (amy is the default preference)
-curl -L -o sim/tts/voices/en_US-amy-medium.onnx \
-  https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx
-curl -L -o sim/tts/voices/en_US-amy-medium.onnx.json \
-  https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json
-# 3) run it
-python3 sim/tts/server.py 8081     # GET /tts?text=... -> audio/wav, /health
+python3 sim/ci/fetch_piper_voices.py      # pinned, checksummed voices into sim/tts/voices/
+python3 sim/tts/server.py 8081            # GET /tts?text=... -> audio/wav, GET /health
 ```
 
-The web UI's **Audio** panel points at `http://127.0.0.1:8081` by default (editable).
-Voice `.onnx` files are gitignored (63 MB each).
+The simulator's Audio panel points at port 8081 on the page's host by default. `MOXIE_PIPER_VOICE`
+picks a specific `.onnx` file. Voice files are git-ignored (63 MB each).
 
-## Ears (STT — talk to Moxie)
-
-The browser mic feeds a local **faster-whisper** service that returns the robot's own
-**Deepgram-compatible** shape (`DeepgramResponse`), so the same service serves the sim
-and a real robot:
+## Ears (faster-whisper)
 
 ```sh
-/tmp/piper-venv/bin/pip install faster-whisper     # or any python env
-python3 sim/stt/server.py 8082                     # POST /stt (audio) -> DeepgramResponse, GET /health
+/tmp/piper-venv/bin/pip install faster-whisper
+python3 sim/stt/server.py 8082            # POST /stt (audio) -> DeepgramResponse, GET /health
 ```
 
-Then click **Listen** in the VOICE group, talk, click again to stop — the transcript is
-published as a child utterance on `/devices/<id>/events/remote-chat`, the brain answers,
-and Moxie speaks the reply (Piper). Model via `MOXIE_STT_MODEL` (default `base.en`).
+Click **Listen**, talk, and click again. The transcript goes to the brain as a child utterance on
+`/devices/<id>/events/remote-chat`, and Moxie speaks the reply. `MOXIE_STT_MODEL` picks the model
+(default `base.en`).
