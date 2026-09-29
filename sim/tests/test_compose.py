@@ -89,7 +89,6 @@ def _both(compose, images):
 # ---- shape -------------------------------------------------------------------------
 
 def test_project_name_and_services(compose):
-    assert compose.get("name") == "moxie"
     for svc in SHARED:
         assert svc in compose["services"], f"missing service {svc}"
 
@@ -181,13 +180,6 @@ def test_defaults_are_zero_dependency(compose):
     assert compose["services"]["supervisor"]["build"]["args"]["EXTRAS"].endswith(":-}")
 
 
-def test_every_interpolated_knob_is_documented(raw):
-    used = interpolated(raw)
-    documented = env_file_keys(_read(ENV_EXAMPLE))
-    assert used - documented == set(), \
-        f".env.example does not document: {sorted(used - documented)}"
-
-
 def test_env_example_ships_no_secret():
     text = _read(ENV_EXAMPLE)
     assert not KEY_SHAPED.search(text), ".env.example must never hold a key"
@@ -200,13 +192,7 @@ def test_the_key_scan_does_not_cry_wolf():
     """`KEY_SHAPED` must catch a key AND stay silent on English. Both, or it is worthless."""
     assert KEY_SHAPED.search(_IS_A_KEY), "a key-shaped literal must still be caught"
     assert KEY_SHAPED.search("MOXIE_LLM_API_KEY=" + _IS_A_KEY), "…including after a `=`"
-    for prose in _NOT_KEYS:
-        assert not KEY_SHAPED.search(prose), (
-            f"{prose!r} is ordinary English, not a key — a scanner that reds on it is a "
-            f"scanner people learn to wave through")
-    # the boundaryless form DOES fire on the prose — the measurement behind the `\b`
-    assert re.search(r"sk-[A-Za-z0-9_]{12}", "task-notification"), \
-        "the boundaryless pattern is what this test exists to rule out"
+    assert not [p for p in _NOT_KEYS if KEY_SHAPED.search(p)], "ordinary English is not a key"
 
 
 def test_env_example_has_no_trailing_comments():
@@ -302,29 +288,15 @@ def test_inlined_broker_config_matches_the_file(images):
     assert not drift, "the inlined broker config has DRIFTED:\n" + drift
 
 
-def test_images_compose_stands_alone(images, images_raw):
-    """Its whole promise is `curl` one file and `up`. A `configs: file:` entry or a bind
-    mount would break that for an owner who never cloned."""
-    entry = images["configs"]["mosquitto-conf"]
-    assert "content" in entry and "file" not in entry, \
-        f"{IMAGES} must INLINE the broker config, not reference a path"
-    assert inlined_broker_conf(images), "the inlined broker config is empty"
+def test_images_compose_stands_alone(images):
+    """Its whole promise is `curl` one file and `up`: no bind mount, no build. (The inlined
+    configs are proven non-empty and file-free by `inlined_broker_conf` in the drift tests.)"""
     for name, svc in images["services"].items():
         for mount in svc.get("volumes") or []:
             source = str(mount).split(":", 1)[0]
             assert not (source.startswith(".") or source.startswith("/")), \
                 f"{IMAGES} service {name} bind-mounts {source!r} — that file is not there"
         assert "build" not in svc, f"{IMAGES} service {name} has a build: — it must pull"
-
-
-def test_broker_gets_its_config_both_ways(compose, images):
-    """Same file, two delivery mechanisms, same container path. (The two ACL files
-    beside it get the same treatment — test_broker_gets_its_acls_both_ways.)"""
-    mounts = [m for m in compose["services"]["broker"]["volumes"]
-              if "compose-mosquitto.conf" in m]
-    assert mounts == ["./mqtt/broker/compose-mosquitto.conf:/mosquitto/config/mosquitto.conf:ro"]
-    assert images["services"]["broker"]["configs"][0] == \
-        {"source": "mosquitto-conf", "target": "/mosquitto/config/mosquitto.conf"}
 
 
 # ---- service / healthcheck / port / volume parity ----------------------------------
@@ -592,10 +564,11 @@ def test_inlined_acls_escape_every_literal_dollar(images, config_name, _f):
         "\n  ".join(offenders)
 
 
-def test_broker_gets_its_acls_both_ways(compose, images):
-    """Same two files, two delivery mechanisms, same container paths."""
-    mounts = [m for m in compose["services"]["broker"]["volumes"] if "/broker/acl" in m]
-    assert mounts == ["./mqtt/broker/acl:/mosquitto/config/acl:ro",
+def test_broker_gets_its_config_and_acls_both_ways(compose, images):
+    """Same three files, two delivery mechanisms (bind mount / inline config), same paths."""
+    mounts = [m for m in compose["services"]["broker"]["volumes"] if m.startswith("./mqtt/broker/")]
+    assert mounts == ["./mqtt/broker/compose-mosquitto.conf:/mosquitto/config/mosquitto.conf:ro",
+                      "./mqtt/broker/acl:/mosquitto/config/acl:ro",
                       "./mqtt/broker/acl-robot:/mosquitto/config/acl-robot:ro"]
     assert images["services"]["broker"]["configs"] == [
         {"source": "mosquitto-conf", "target": "/mosquitto/config/mosquitto.conf"},

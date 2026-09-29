@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Run every toolkit round-trip test (test_*.py in this directory) and report.
+"""Run every toolkit wire test (test_*.py in this directory) and report.
 
 Each test graceful-skips (exit 0 with an "ℹ️ … skipped" line) when the protobuf
 bindings aren't importable, so this is safe to run anywhere — in CI (with `protobuf`
-installed + the committed embodied.* bindings) they actually execute the wire
-round-trips; without it they skip. Exits non-zero iff a test fails.
+installed + the committed embodied.* bindings) they actually exercise the
+builders/parsers; without it they skip. Exits non-zero iff a test fails.
 
     python3 tools/robot-toolkit/run_tests.py
 """
@@ -29,6 +29,6 @@ for t in tests:
         failed.append(name)
         sys.stdout.write(r.stdout); sys.stderr.write(r.stderr)
 
-print(f"\ntoolkit round-trip tests: {len(tests)-len(failed)}/{len(tests)} ok"
+print(f"\ntoolkit wire tests: {len(tests)-len(failed)}/{len(tests)} ok"
       + (f" — FAILED: {', '.join(failed)}" if failed else ""))
 sys.exit(1 if failed else 0)

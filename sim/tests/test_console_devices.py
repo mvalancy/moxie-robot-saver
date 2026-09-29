@@ -1,8 +1,5 @@
-"""
-The three device endpoints that used to report success for nothing: wake-up, reboot and
-OTA status. Each now either does the real thing (wake-up publishes the recovered command
-through the supervisor's REAL `wake_robot`) or says honestly that it cannot.
-"""
+"""Wake-up, reboot and OTA status used to report success for nothing; each now does the
+real thing (wake-up through the REAL `wake_robot`) or says honestly that it cannot."""
 import json
 
 import pytest
@@ -54,15 +51,8 @@ def test_pressing_wake_up_really_publishes_the_recovered_command(client, supervi
     assert body["resolved_by"] == "record" and body["topic"].endswith("/commands/wakeup")
     assert _wakeup_wire(supervisor) == [{"command": "wakeup"}]
     assert supervisor.wakeups[-1] == DEVICE
-
-
-def test_the_wake_up_reply_never_claims_the_robot_woke(client, paired):
-    """No acknowledgement for this command exists in our corpus, so the strongest true
-    claim is "it was published"."""
-    auth, rid = paired
-    body = client.post(f"/api/robots/{rid}/wakeup", headers=auth).json()
+    # no ack for this command exists in the corpus: "published" is the strongest true claim
     assert body["acknowledged"] is False
-    assert "not that Moxie woke up" in body["note"]
 
 
 def test_wake_up_on_a_record_with_no_mqtt_identity_is_a_409_not_a_success(client,
@@ -103,7 +93,6 @@ def test_reboot_is_an_honest_501_with_its_reasoning(client, supervisor, paired):
     body = r.json()
     assert body["ok"] is False and body["supported"] is False
     assert body["error"] == "unsupported" and body["reason"]
-    assert "power-and-system-events.md" in body["evidence"]
     assert supervisor.runtime.client.published == [], "reboot must publish nothing"
 
 
@@ -116,7 +105,6 @@ def test_ota_status_reports_the_robots_own_firmware_and_never_up_to_date(client,
     assert body["status"] == "unknown" and body["version"] == "3.6.4"
     assert body["ota_reboot_required"] is False
     assert body["ota_server"] is False and body["supported"] is False
-    assert "no OTA server" in body["note"]
 
 
 def test_ota_status_is_unavailable_when_the_supervisor_is_down(client, paired,

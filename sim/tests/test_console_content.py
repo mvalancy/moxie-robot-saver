@@ -1,13 +1,6 @@
-"""
-The console's content-pack card: export → review → import → inventory → undo.
-
-The console never invents a pack: it forwards the file's own bytes to the supervisor,
-renders what the review says, and posts back the parent's decisions. The supervisor
-runs the REAL content verbs over a real `JsonStore` (`helpers_console_supervisor`), so
-this proves the console's URL, body, status codes and normalizer against genuine
-payloads. Every test starts and ends on a fresh content store (`content` fixture) — an
-import leaking into the next test would make the review states meaningless.
-"""
+"""The content-pack card: export → review → import → inventory → undo, over the REAL
+content verbs. The console forwards the file's own bytes and never invents a pack; each
+test starts and ends on a fresh content store."""
 import json
 
 import pytest

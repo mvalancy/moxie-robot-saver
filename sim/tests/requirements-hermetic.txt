@@ -14,6 +14,8 @@
 #     pass on `ToneSynthesizer` output. Measured on 2026-09-05, hermetic selector, no creds:
 #     23 skipped / 5242 passed without numpy → 29 skipped / 5243 passed with it. That single
 #     restored pass is the anti-vacuity guard, and it had never once run in CI.
+#     (That live-file copy was later deleted as a duplicate; the anti-vacuity guard now
+#     lives in `test_speech_guard.py::test_the_placeholder_tone_fails_the_stdlib_speech_guard`.)
 #   · the deep tier lacked `pyyaml` (the compose parity guards) and `httpx` + the console's
 #     own requirements (all 55 `test_console_roundtrip.py` tests, DoD criterion 3's
 #     acceptance suite) until PR #34 and PR #47 each found one the hard way.

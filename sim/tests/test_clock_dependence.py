@@ -144,8 +144,6 @@ REVIEWED: dict = {
         "it); the upper bound is 25x the budget."),
     "sim/tests/test_clean_shutdown.py::_Tail.wait_for": (
         ("time.monotonic",), "DETERMINISTIC — a bounded deadline wait."),
-    "sim/tests/test_sil_handshake.py::test_the_announcement_really_did_wait_for_the_suback": (
-        ("time.monotonic",), "RELATIVE — a LOWER bound; preemption only inflates `waited`."),
     "sim/tests/test_sil_supervisor_readiness.py::test_a_supervisor_whose_subscribe_is_late_still_serves_the_robot": (
         ("time.monotonic",), "RELATIVE — a LOWER bound; a busy box only makes `booted` larger."),
     _TK + "test_a_fault_wholly_inside_a_turn_is_seen": (

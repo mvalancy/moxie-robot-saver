@@ -1,12 +1,6 @@
-"""
-The console's "what Moxie remembers" card against the supervisor's REAL `MemoryStore`.
-
-A parent can read every durable fact with its day and activity, correct one line (which
-pins it against decay), forget one item, one activity or everything — and every erase is
-asserted on the supervisor's store afterwards, not just on the console's reply. The fake
-supervisor and its seeded memory live in `helpers_console_supervisor.py`; tests that
-change memory put the seed back.
-"""
+"""The "what Moxie remembers" card against the supervisor's REAL `MemoryStore`: read,
+correct (pins against decay), forget one item/activity/everything — every erase asserted
+on the store, not just the reply. Tests that change memory put the seed back."""
 import pytest
 
 pytest.importorskip("fastapi", reason="console tests need fastapi")

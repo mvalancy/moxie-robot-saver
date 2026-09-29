@@ -1,12 +1,5 @@
-"""
-The console's "Be Moxie" (puppet / telehealth) card against the supervisor's REAL runtime.
-
-The one card where a mistake is audible in a child's room: the URL, the verb and the
-body, and above all what the console does with the supervisor's 400 when the safety
-classifier refuses a line — the operator is told why and the robot hears nothing. The
-runtime behind `helpers_console_supervisor.FakeSupervisor` does the permit check, the
-mode gate, the classifier and the publish.
-"""
+"""The "Be Moxie" (puppet) card against the REAL runtime: the one card where a mistake is
+audible in a child's room, so a safety refusal must be a 400 with a reason and silence."""
 import json
 
 import pytest

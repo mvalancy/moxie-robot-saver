@@ -1,20 +1,8 @@
-"""Durable telemetry and the three honest buttons — against a REAL running supervisor.
+"""Durable telemetry and the console's device buttons against a REAL running supervisor.
 
-The unit/runtime/console suites are fixtures; two claims need real processes:
-
-1. "Telemetry survives a restart." A second in-process runtime would not catch a module
-   cache or an `atexit` flush, so this boots mosquitto + `mqtt/run.py`, sends telemetry from
-   a paho robot, KILLS the supervisor, starts a new one over the same `MOXIE_DATA_DIR`, and
-   reads history via the new process's status HTTP with the robot not reconnected.
-2. "`LoggingPolicy` gates it and fails closed." All three values, set via `POST /config`,
-   sent on `/devices/<id>/events/telemetry`, and judged from what is on DISK.
-
-Then the console's three endpoints against the same supervisor: `wakeup` must publish (seen
-by a real subscriber), `reboot` is a 501 that says why, and `ota_status` returns the
-firmware the robot reported.
-
-Named `test_sil_*` (it boots a broker, so fast tiers deselect it). Skips cleanly with no
-mosquitto and no docker.
+Needs real processes: telemetry must survive killing `mqtt/run.py` (a second in-process
+runtime would not catch a module cache or an `atexit` flush); `LoggingPolicy` is judged
+from what is on DISK; `wakeup` is witnessed by a real subscriber. Boots a broker.
 """
 from __future__ import annotations
 
@@ -121,20 +109,20 @@ def _wait(predicate, timeout: float = 20.0, what: str = "condition"):
     raise AssertionError(f"timed out waiting for {what}; last={last!r}")
 
 
-def _packets(data_dir: str, device_id: str = DEVICE):
-    p = os.path.join(data_dir, "robots", device_id, "telemetry_packets.json")
+def _on_disk(name: str, data_dir: str, device_id: str = DEVICE):
+    p = os.path.join(data_dir, "robots", device_id, f"telemetry_{name}.json")
     if not os.path.exists(p):
         return None
     with open(p) as fh:
         return json.load(fh)
+
+
+def _packets(data_dir: str, device_id: str = DEVICE):
+    return _on_disk("packets", data_dir, device_id)
 
 
 def _daily(data_dir: str, device_id: str = DEVICE):
-    p = os.path.join(data_dir, "robots", device_id, "telemetry_daily.json")
-    if not os.path.exists(p):
-        return None
-    with open(p) as fh:
-        return json.load(fh)
+    return _on_disk("daily", data_dir, device_id)
 
 
 def _status_url(sup) -> str:
@@ -201,7 +189,6 @@ def restarted(stack, robot, history):
     so the restart happens once and no test depends on another having run first."""
     robot.close()                                   # nothing to re-populate RAM from
     sup = stack.restart_supervisor()
-    print(f"\n[restart] new supervisor status port {sup.status_port}")
     return sup
 
 
@@ -237,9 +224,6 @@ def test_telemetry_survives_a_real_supervisor_restart(stack, restarted):
         "the robot must be absent for this to be a durability proof"
 
     v = _telemetry_view(sup)
-    print("[restart] GET /telemetry →",
-          json.dumps({k: v[k] for k in ("ok", "connected", "policy", "persisted",
-                                        "totals")}, sort_keys=True))
     assert v["ok"] is True, v
     assert v["connected"] is False, "this robot is not on the broker; say so"
     assert v["summary"]["count"] == 3, v["summary"]
@@ -252,59 +236,29 @@ def test_telemetry_survives_a_real_supervisor_restart(stack, restarted):
 
 
 def test_the_buffer_is_a_cache_hydrated_on_first_touch(stack, restarted):
-    """`telemetry_count` in the status snapshot is the RAM buffer's length. After a
-    restart the new process has an empty buffer, so a reconnecting robot must show 3 —
-    the hydration path (`_telemetry_buffer`) reading the ring off disk. A 0 here would
-    mean the console's fleet card silently disagrees with its own insights card."""
+    """After a restart the RAM buffer is empty; a reconnecting robot's status row must still
+    say 3 (hydrated from the ring), or the fleet card disagrees with the insights card."""
     sup = restarted
     r = Robot(stack.port).connect()
     try:
         r.announce()
-
-        # Wait for the row AND its `firmware` (filled from the robot's state message a beat
-        # after `announce`), but not for hydration: the buffer is hydrated by the same
-        # `/status` call that builds the row, so waiting cannot turn 0 into 3 — it is
-        # ASSERTED below, with the two failure modes named.
         seen = {}
 
         def _populated():
             row = next((x for x in http_json(f"{_status_url(sup)}/status").get("robots", [])
                         if x["device_id"] == DEVICE), None)
-            if row is not None:
-                seen["row"] = row               # remember it, so a timeout can say why
-            if row is None or row.get("firmware") in (None, ""):
-                return None
-            return row
+            seen["row"] = row
+            return row if row and row.get("firmware") else None
 
         try:
-            row = _wait(_populated,
-                        what="the reconnected robot to appear in /status with the "
-                             "firmware from its state message")
+            row = _wait(_populated, what="the reconnected robot's row with its firmware")
         except AssertionError:
-            # The CI red this replaces was `…; last=None`, which cannot distinguish "the
-            # supervisor never saw the robot at all" from "it saw it but no state message
-            # arrived". Those have different causes and only one of them is about MQTT
-            # delivery, so the timeout now says which.
-            row = seen.get("row")
-            if row is None:
-                raise AssertionError(
-                    f"the restarted supervisor never listed {DEVICE} in /status at all — "
-                    f"the robot's CONNECT was not seen (broker log watch) and no /state "
-                    f"was ingested. Supervisor log tail:\n"
-                    f"{os.linesep.join(sup.text().splitlines()[-15:])}") from None
-            raise AssertionError(
-                f"the row appeared but its firmware never did (state message not "
-                f"ingested within the timeout); row={row!r}") from None
-
-        print(f"[hydration] telemetry_count={row['telemetry_count']} "
-              f"firmware={row['firmware']}")
+            # name which half failed: never seen at all vs. seen but /state not ingested
+            tail = os.linesep.join(sup.text().splitlines()[-15:])
+            raise AssertionError(f"row={seen.get('row')!r}\nsupervisor tail:\n{tail}") from None
         assert row["telemetry_count"] == 3, (
-            f"the reconnected robot's status row says it holds "
-            f"{row['telemetry_count']} telemetry events, not 3. The ring on disk holds "
-            f"{len(_packets(stack.data_dir) or [])}. A 0 with a populated ring means "
-            f"`_telemetry_buffer` cached an empty read instead of hydrating — the fleet "
-            f"card would then disagree with the insights card for this robot, for the "
-            f"life of the process. row={row!r}")
+            f"ring on disk holds {len(_packets(stack.data_dir) or [])}; a 0 means "
+            f"`_telemetry_buffer` cached an empty read instead of hydrating. row={row!r}")
         assert row["firmware"] == FIRMWARE
     finally:
         r.close()
@@ -341,16 +295,20 @@ def test_the_logging_policy_gate_holds_against_a_running_supervisor(stack, polic
         r.telemetry("policy_probe", PAYLOAD)
 
         if policy == 0:
-            # NO_DATA: nothing at all. Give the write a chance to happen before
-            # asserting that it did not — a race here would pass for the wrong reason.
-            time.sleep(1.5)
+            # NO_DATA: nothing at all. Barrier, not a sleep: the supervisor ingests events
+            # synchronously and in order per connection, so once a later /state from the
+            # same robot is visible, the probe has been handled.
+            r.announce(battery_level=42)
+            _wait(lambda: any(x["device_id"] == device and x.get("battery_level") == 42
+                              for x in http_json(f"{_status_url(sup)}/status")
+                              .get("robots", [])),
+                  what="the barrier /state to be ingested")
             assert _packets(stack.data_dir, device) is None, \
                 "NO_DATA wrote a telemetry ring"
             assert _daily(stack.data_dir, device) is None, \
                 "NO_DATA wrote a daily roll-up"
             v = http_json(f"{_status_url(sup)}/telemetry?device_id={device}")
             assert v["persisted"] is False and v["totals"]["total"] == 0
-            print(f"[policy NO_DATA] on-disk: none · view={json.dumps(v['totals'])}")
             return
 
         ring = _wait(lambda: _packets(stack.data_dir, device) or None,
@@ -365,7 +323,6 @@ def test_the_logging_policy_gate_holds_against_a_running_supervisor(stack, polic
             import base64
             assert base64.b64decode(row["event_data"]) == PAYLOAD
             assert "event_data_withheld" not in row
-        print(f"[policy {expected}] on-disk row: {json.dumps(row, sort_keys=True)[:220]}")
         # The ring and the roll-up are separate writes; wait for the roll-up field itself
         # (a wrong total still returns and fails; a missing one times out with a reason).
         total = _wait(lambda: (_daily(stack.data_dir, device) or {}).get("total"),
@@ -430,9 +387,6 @@ def test_wakeup_really_reaches_the_robot_over_the_broker(console, paired, listen
     r = console.post(f"/api/robots/{rid}/wakeup", headers=auth)
     assert r.status_code == 200, r.text
     body = r.json()
-    print("\n[wakeup] console →", json.dumps({k: body.get(k) for k in
-                                              ("published", "error", "topic",
-                                               "acknowledged", "resolved_by", "note")}))
     assert body["published"] is True and body["error"] is None
     assert body["resolved_by"] == "record"
     assert body["topic"] == f"/devices/{DEVICE}/commands/wakeup"
@@ -448,14 +402,14 @@ def test_reboot_is_a_501_that_says_why_and_publishes_nothing(console, paired, li
     r = console.post(f"/api/robots/{rid}/reboot", headers=auth)
     assert r.status_code == 501, r.text
     body = r.json()
-    print("[reboot] console →", json.dumps({k: body.get(k) for k in
-                                            ("ok", "supported", "error", "reason",
-                                             "evidence")}))
     assert body["ok"] is False and body["supported"] is False
     assert body["error"] == "unsupported" and body["reason"]
     assert "power-and-system-events.md" in body["evidence"]
-    time.sleep(1.0)                                  # a guess would have arrived by now
-    assert [m for m in listener.received if "/commands/" in m[0]] == [], \
+    # Barrier: a wakeup published after it arrives in order behind anything reboot sent.
+    assert console.post(f"/api/robots/{rid}/wakeup", headers=auth).json()["published"]
+    _wait(lambda: listener.received, what="the barrier wakeup")
+    assert [m[0] for m in listener.received if "/commands/" in m[0]] == \
+        [f"/devices/{DEVICE}/commands/wakeup"], \
         "reboot must not publish a guessed command at a child's robot"
 
 
@@ -466,7 +420,6 @@ def test_ota_status_reports_the_firmware_the_robot_itself_sent(console, paired,
     appliance serves no `api/ota` and is in no position to claim there is no newer build."""
     auth, rid = paired
     body = console.get(f"/api/robots/{rid}/ota_status", headers=auth).json()
-    print("[ota_status] console →", json.dumps(body, sort_keys=True))
     assert body["status"] != "up_to_date"
     assert body["version"] == FIRMWARE, body
     assert body["ota_reboot_required"] is False

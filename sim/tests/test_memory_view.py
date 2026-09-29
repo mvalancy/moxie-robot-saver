@@ -1,25 +1,6 @@
-"""
-The parent console's memory view — `moxie_server/fleet::normalize_memory`.
-
-`test_memory.py` covers the store and the summarizer; `test_memory_runtime.py` covers the
-runtime's `/memory` endpoints. This is the third piece: the **pure** transform that turns
-what the runtime serves into what the 🧠 "What Moxie remembers" card renders — flat dated
-rows per activity, counts, and the two hints a parent needs (the privacy switch and how
-far a transcript was summarized).
-
-Pure (no fastapi, no network, no supervisor), so it runs in the hermetic suite exactly
-like `test_fleet.py`. The shape it consumes is `MemoryStore.view()` wrapped by
-`MoxieRuntime.memory_view()`:
-
-    {ok, device_id, policy, writes_allowed, bytes,
-     namespaces: {ns: {data: {facts: [{id, text, _provenance, use_count, pinned}, ...]},
-                       provenance: [{at, date, module_id, turns, reason}, ...],
-                       meta: {summarized_through: N}}}}
-
-An item is a record now, so a row can carry the id the per-item erase and the inline edit
-act on; a bare string (a `memory.json` written before ids existed) still renders, with an
-empty id and the namespace's provenance as its date.
-"""
+"""The 🧠 "What Moxie remembers" card's pure transform, `fleet.normalize_memory`: the
+runtime's `memory_view()` (items as `{id, text, _provenance, …}` records, or bare strings
+from a pre-id `memory.json`) → flat dated rows, counts and the privacy/summary hints."""
 import os
 import sys
 
@@ -137,22 +118,18 @@ def test_per_item_provenance_orders_the_rows():
     assert ns["items"][0]["provenance"]["date"] == "2026-09-02"
 
 
-def test_undated_items_fall_back_to_the_namespaces_own_provenance():
-    ns = normalize_namespace("mchat", {"data": {"facts": ["a"]}, "provenance": []})
-    assert ns["items"][0]["provenance"] == {"date": "", "at": None, "module_id": "",
-                                            "content_id": "", "turns": 0, "reason": ""}
-
-
 def test_a_bare_string_still_renders_but_offers_no_id():
-    """A `memory.json` written before ids existed, read straight off disk. It must still
-    be readable — with no id, so the card offers the activity erase and no per-item ✕
-    rather than a button that would 404."""
+    """A pre-id `memory.json`: still readable, with no id, so the card offers no per-item
+    ✕ that would 404; it borrows the namespace's provenance (or an empty one)."""
     ns = normalize_namespace("mchat", {"data": {"facts": ["has a dog"]},
                                        "provenance": [_prov(3)]})
     row = ns["items"][0]
     assert row["text"] == "has a dog" and row["id"] == ""
     assert row["pinned"] is False and row["use_count"] == 0 and row["last_used"] is None
     assert row["provenance"]["module_id"] == "MCHAT"      # the namespace's, as a fallback
+    undated = normalize_namespace("mchat", {"data": {"facts": ["a"]}, "provenance": []})
+    assert undated["items"][0]["provenance"] == {"date": "", "at": None, "module_id": "",
+                                                 "content_id": "", "turns": 0, "reason": ""}
 
 
 # --- tolerance ---------------------------------------------------------------------
@@ -169,9 +146,6 @@ def test_supervisor_down_and_none_are_safe():
         m = normalize_memory(payload)
         assert m["ok"] is False and m["namespaces"] == [] and m["total"] == 0
         assert m["writes_allowed"] is False and m["error"]
-
-
-def test_an_unknown_device_keeps_the_runtimes_reason():
     m = normalize_memory({"ok": False, "device_id": "d_x",
                           "error": "unknown device_id 'd_x'"})
     assert m["ok"] is False and m["error"] == "unknown device_id 'd_x'"
@@ -214,19 +188,12 @@ def test_a_raw_memory_json_off_disk_renders_too():
     assert m["namespaces"][0]["items"][0]["id"] == "abc"
 
 
-def test_an_edit_reply_keeps_its_confirmation():
-    m = normalize_memory({"ok": True, "device_id": "d1", "namespaces": {},
-                          "edited": True, "namespace": "mchat", "item": "abc",
-                          "policy": "NO_MEDIA"})
-    assert m["edited"] is True and m["namespace"] == "mchat" and m["item"] == "abc"
-
-
-def test_an_erase_reply_keeps_its_confirmation():
-    m = normalize_memory({"ok": True, "device_id": "d1", "namespaces": {},
-                          "erased": True, "namespace": "mchat", "item": "abc",
-                          "policy": "NO_MEDIA"})
-    assert m["erased"] is True and m["namespace"] == "mchat" and m["total"] == 0
-    assert m["item"] == "abc"
+def test_an_edit_or_erase_reply_keeps_its_confirmation():
+    for verb in ("edited", "erased"):
+        m = normalize_memory({"ok": True, "device_id": "d1", "namespaces": {},
+                              verb: True, "namespace": "mchat", "item": "abc",
+                              "policy": "NO_MEDIA"})
+        assert (m[verb], m["namespace"], m["item"]) == (True, "mchat", "abc"), verb
 
 
 def test_the_privacy_switch_comes_through_for_the_ui_note():

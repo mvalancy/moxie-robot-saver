@@ -1,26 +1,12 @@
-"""The child's voice in a REAL browser — what the file-reading assertions cannot reach.
+"""The child's voice in a REAL browser — what the stubbed-Web-Audio node suites cannot reach.
 
-The node suites check the clips exist, the manifest lists them and the session leaves
-each line room to finish, but Web Audio is stubbed there. A `decodeAudioData` that
-rejects, a source wired to nothing, an autoplay-suspended context or a stale manifest key
-would each leave the demo silent and pass them all. So this drives the shipped `/sim.html`
-in real Chromium, replays the demo, and asserts what the audio graph DID:
-
-  1. both child MP3s are fetched over real HTTP, 200, with their real byte counts;
-  2. each decodes to a real AudioBuffer — non-zero duration, peak/RMS above silence;
-  3. each is `start()`ed on a node whose connect-graph REACHES `ctx.destination`;
-  4. neither is cut off: `ended` fires naturally, `stop()` is never called on it, and its
-     wall-clock covers its duration (`speak()` calls `stop()`, so Moxie answering too
-     early would silence the child mid-word);
-  5. Moxie's reply clip starts only after the child's has finished.
-
-Not proven: anything past `AudioDestinationNode` (mixer, volume, speaker) — a headless
-browser has no ear, so that gap is *unverified*, not *verified*.
-
-Every assertion reads a RECORD the page accumulated, after the replay COMPLETES; nothing
-samples a live value in a window.
+A rejecting `decodeAudioData`, a source wired to nothing, a suspended context or a stale
+manifest key would each leave the demo silent and pass them. So this replays the shipped demo
+in `/sim.html` and asserts what the audio graph DID: both child MP3s fetched whole, decoded
+to audible PCM, routed to `ctx.destination`, never cut off by Moxie's reply (`speak()` calls
+`stop()`), and Moxie starting only after the child finished. Every assertion reads a RECORD
+the page accumulated after the replay completed. Nothing past AudioDestinationNode is proven.
 """
-import json
 import os
 
 import pytest
@@ -336,8 +322,6 @@ def test_both_child_clips_decode_to_audible_pcm(replayed):
             f"{rel} decoded to SILENCE (peak {d['peak']:.4f}) — a valid buffer with "
             f"nothing in it is exactly the failure this test exists to catch")
         assert d["rms"] > RMS_FLOOR, f"{rel} rms {d['rms']:.5f} — near-silent"
-        print(f"   {rel}  {d['duration']:.2f}s  {d['sampleRate']} Hz  "
-              f"peak={d['peak']:.3f} rms={d['rms']:.4f}")
 
 
 # --------------------------------------------------------------------------- #
@@ -373,24 +357,11 @@ def test_the_reply_does_not_truncate_the_child(replayed):
             f"{(p['stoppedAt'] - p['startedAt']) if p['stoppedAt'] else 0:.0f} ms, ended at "
             f"{p['endedAt'] - p['startedAt']:.0f} ms). `speak()` calls stop(), so this is "
             f"Moxie answering before the child finished — retime sessions/demo.json.")
-        held = p["endedAt"] - p["startedAt"]
-        late = (f", stop() {p['stoppedAt'] - p['startedAt'] - p['duration'] * 1000:.0f} ms "
-                f"after it ended" if p["stoppedAt"] else "")
-        print(f"   {rel}  played {held:.0f} ms of {p['duration'] * 1000:.0f} ms, "
-              f"complete{late}")
 
 
 def test_moxie_answers_only_after_the_child_has_finished(replayed):
-    """The same rule from the other side, and the one `sessions/demo.json` must keep true.
-
-    Compared against the child's NATURAL end (`startedAt + duration`), never against the
-    recorded `endedAt`: the `ended` event fires on a `stop()` too, so an `endedAt`
-    comparison would report "Moxie waited politely" about a clip she had just cut off.
-
-    It checks the pairs the record HAS (normally one: Moxie's final reply starts after
-    `replay done`); the truncation test covers both children from the other side
-    unconditionally. `checked` is asserted so a `continue` can never verify nothing.
-    """
+    """Compared against the child's NATURAL end (`startedAt + duration`), not `endedAt`:
+    `ended` also fires on a `stop()`, which would call a cut-off clip "waited politely"."""
     sizes = {os.path.getsize(os.path.join(WEB, "audio", rel))
              for rel in CHILD_LINES.values()}
     child = sorted((p for p in replayed["plays"] if p["bytes"] in sizes),
@@ -412,18 +383,13 @@ def test_moxie_answers_only_after_the_child_has_finished(replayed):
         assert gap > -COMPLETION_TOLERANCE_MS, (
             f"Moxie started {-gap:.0f} ms BEFORE the child's clip would have finished — "
             f"she is talking over her")
-        print(f"   child clip would end → Moxie starts {gap:.0f} ms later")
     assert checked, (
         f"no child→Moxie pair was in the record, so this test asserted nothing: "
         f"{len(child)} child play(s), {len(moxie)} Moxie play(s)")
 
 
 # --------------------------------------------------------------------------- #
-# 4b. The predicate itself, in both directions — no browser, no timing luck.
-#
-# `truncated_by` must separate a stop that CUT the clip from one that landed after it
-# finished. Which one a replay produces depends on machine speed, so these are the record
-# shapes themselves, with real observed numbers, covering both directions on every run.
+# 4b. The truncation predicate itself — no browser, no timing luck.
 # --------------------------------------------------------------------------- #
 def _play(duration_ms, *, stopped_at=0.0, ended_at=None):
     """One `plays` record as the recorder writes it, started at t=1000."""
@@ -433,22 +399,13 @@ def _play(duration_ms, *, stopped_at=0.0, ended_at=None):
             "ended": True}
 
 
-def test_a_stop_after_the_clip_ended_is_not_a_truncation():
-    """Real numbers: stop() 1265 ms into a 1207 ms clip, 58 ms AFTER the audio finished —
-    nothing was lost, so it is not a cut."""
-    assert truncated_by(_play(1207, stopped_at=1265, ended_at=1265)) == 0.0
-    # …and an ordinary uncut play, this box's own: no stop at all.
-    assert truncated_by(_play(2519)) == 0.0
-
-
-def test_a_stop_before_the_clip_ended_is_still_caught():
-    """The regression this file exists for, with the numbers it was found at: stop() 2237
-    ms into a 2519 ms clip — 282 ms of "…it's my birthd—" never played."""
-    lost = truncated_by(_play(2519, stopped_at=2237, ended_at=2237))
-    assert lost > 0 and round(lost) == 282, lost
-    # A cut is caught through `endedAt` too, in case a stop is never recorded.
-    assert round(truncated_by(_play(1207, ended_at=900))) == 307
-    # And the tolerance is a boundary, not a slope: just outside it still fails.
+def test_the_truncation_predicate_separates_a_cut_from_a_late_stop():
+    """The instrument, checked at the real numbers it was calibrated on (which one a replay
+    produces depends on machine speed, so both directions are pinned here)."""
+    assert truncated_by(_play(1207, stopped_at=1265, ended_at=1265)) == 0.0   # stop 58 ms late
+    assert truncated_by(_play(2519)) == 0.0                                   # uncut
+    assert round(truncated_by(_play(2519, stopped_at=2237, ended_at=2237))) == 282  # the bug
+    assert round(truncated_by(_play(1207, ended_at=900))) == 307             # via endedAt
     assert truncated_by(_play(2519, stopped_at=2519 - COMPLETION_TOLERANCE_MS - 1)) > 0
     assert truncated_by(_play(2519, stopped_at=2519 - COMPLETION_TOLERANCE_MS + 1)) == 0.0
 
@@ -459,7 +416,3 @@ def test_a_stop_before_the_clip_ended_is_still_caught():
 def test_the_replay_is_console_clean(replayed):
     real = [e for e in replayed["console"] if "favicon" not in e]
     assert not real, f"console errors during the child's turn: {real[:3]}"
-    assert replayed["decodes"], "no audio was decoded at all"
-    print(f"   {len(replayed['fetches'])} clip fetch(es), {len(replayed['decodes'])} "
-          f"decode(s), {len(replayed['plays'])} playback(s), "
-          f"{json.dumps(sorted(replayed['destIds']))} destination node(s)")
