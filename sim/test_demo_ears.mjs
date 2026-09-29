@@ -24,9 +24,4 @@ if (fails.length) {
   for (const f of fails) console.error("  - " + f);
   process.exit(1);
 }
-console.log(
-  `✓ test_demo_ears: the ears hold their contract (${C.asserts} assertions, ${C.sweeps} secret sweeps, 0 leaks) — ` +
-  `both byte caps with a free floor, the per-IP windows, our own timeout, an unset DEMO_STT_MODEL making zero ` +
-  `upstream calls, a hostile upstream degrading per turn, the container allowlist, the browser's 16 kHz WAV read ` +
-  `back by the server's RIFF walker, and the 15 s hard stop proven to stop a recorder`,
-);
+console.log(`✓ test_demo_ears: the ears hold their contract (${C.asserts} assertions, ${C.sweeps} secret sweeps, 0 leaks)`);

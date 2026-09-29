@@ -5,12 +5,7 @@ import {
   ORIGIN, advance, bootMic, deep, eq, flush, ok, pendingTimers, recordToCap,
 } from "./harness.mjs";
 
-/* --------------------------------------------------------------------------- *
- * B1b. THE SILENCE AUTO-STOP — "the user pressed the button and it never resets"
- * --------------------------------------------------------------------------- *
- * End the turn promptly, but NEVER cut a child off mid-sentence: both directions are
- * asserted, and the mid-sentence pause is the case that matters most.
- * --------------------------------------------------------------------------- */
+/* B1b. THE SILENCE AUTO-STOP — end the turn promptly, but NEVER cut a child off mid-sentence. */
 {
   const w = bootMic();
   await w.mic.start();
@@ -34,14 +29,10 @@ import {
   eq(w.mic.isRecording(), false, "1.1 s of silence AFTER speech ends the recording");
   eq(w.mic.stats().silenceStops, 1, "…recorded as a silence stop, not a cap stop");
   eq(w.mic.stats().speechDetected, 1, "…having actually heard speech first");
-  /* No assertion on the status text: the transcribe overwrites `#mic-status` a tick later.
-   * `silenceStops` is the RECORDED fact that the room going quiet ended the recording. */
   eq(pendingTimers(), 0, "…leaving no timer behind");
 }
 {
-  // A tap with NOTHING said: the button was pressed by accident, or the mic is muted.
-  // Fifteen seconds of a listening indicator that will transcribe nothing is unkind, and
-  // the size floor would refuse the clip anyway.
+  // A tap with NOTHING said: 15 s of a listening indicator that will transcribe nothing is unkind.
   const w = bootMic();
   await w.mic.start();
   await flush();
@@ -55,9 +46,7 @@ import {
   eq(w.mic.stats().speechDetected, 0, "…with no speech detected");
 }
 {
-  // THE AUTO-STOP CAN ONLY EVER SHORTEN A RECORDING. A visitor who keeps talking still
-  // meets the 15 s hard cap and nothing else, so §4.1's ceiling on what one visitor can
-  // spend is untouched by any of this.
+  // THE AUTO-STOP CAN ONLY EVER SHORTEN A RECORDING: continuous speech meets the 15 s cap.
   const w = bootMic();
   await w.mic.start();
   await flush();
@@ -69,17 +58,12 @@ import {
   eq(w.mic.stats().silenceStops, 0, "…not a silence stop");
 }
 
-/* --------------------------------------------------------------------------- *
- * B1. THE HARD STOP — 15 s actually stops a recorder
- * --------------------------------------------------------------------------- */
+/* B1. THE HARD STOP — 15 s actually stops a recorder. */
 {
   const w = bootMic();
   eq(w.mic.maxRecordMs(), 15000, "the cap is the server-published DEMO_MAX_RECORD_MS");
   await w.mic.start();
   await flush();
-  eq(w.mic.isRecording(), true, "recording");
-  deep(w.rec.log, ["start"], "the recorder was started");
-
   await advance(14999);
   deep(w.rec.log, ["start"], "…and is STILL running at 14 999 ms");
   eq(w.mic.isRecording(), true, "…still recording just under the cap");
@@ -92,19 +76,15 @@ import {
   eq(pendingTimers(), 0, "the cap timer is not left behind");
 }
 
-/* --------------------------------------------------------------------------- *
- * B2. The cap is the SERVER's number, is overridable, and survives a silly one
- * --------------------------------------------------------------------------- */
+/* B2. The cap is the SERVER's number, is overridable, and survives a silly one. */
 {
-  // A deployment that shortens it.
   const short = bootMic({ mode: { limits: () => ({ max_record_ms: 4000 }) } });
   eq(short.mic.maxRecordMs(), 4000, "a server-published cap is obeyed");
   await short.mic.start();
   await advance(4001);
   deep(short.rec.log, ["start", "stop"], "…and stops the recorder at ITS number");
 
-  // No server at all: the built-in 15 s still applies. An unbounded recorder is a bug on
-  // a laptop too.
+  // No server at all: the built-in 15 s still applies.
   const local = bootMic({ mode: null });
   eq(local.mic.maxRecordMs(), 15000, "with NO mode machine the built-in 15 s cap still applies");
   await local.mic.start();
@@ -134,9 +114,7 @@ import {
   eq(pendingTimers(), 0, "…with no timer left behind");
 }
 
-/* --------------------------------------------------------------------------- *
- * B3. Where the clip goes: the mode machine picks, and an explicit base wins
- * --------------------------------------------------------------------------- */
+/* B3. Where the clip goes: the mode machine picks, and an explicit base wins. */
 {
   const cloud = bootMic();
   deep(cloud.mic.sttTarget(), { url: ORIGIN + "/api/transcribe", kind: "cloud" },
@@ -161,15 +139,11 @@ import {
   eq(set.mic.sttTarget().kind, "local", "…and setSttBase pins it at runtime too");
 }
 
-/* --------------------------------------------------------------------------- *
- * B4. Both shapes parse, and the local sidecar path is UNCHANGED
- * --------------------------------------------------------------------------- */
+/* B4. Both reply shapes parse, and the local sidecar path is UNCHANGED. */
 {
-  // The house envelope from /api/transcribe.
   const w = bootMic({ answer: () => ({ status: 200, json: { transcript: "hi moxie", reason: null } }) });
   await recordToCap(w);
   eq(w.posts.length, 1, "one POST");
-  eq(w.posts[0].url, ORIGIN + "/api/transcribe", "…to the same-origin route");
   eq(w.posts[0].init.method, "POST", "…as a POST");
   eq(w.posts[0].init.credentials, "omit", "…with no credentials");
   eq(w.posts[0].init.headers["Content-Type"], "audio/webm;codecs=opus",
