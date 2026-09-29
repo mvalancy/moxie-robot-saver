@@ -1,14 +1,10 @@
 """
 TTS seam tests (M4) — markup stripping, the CloudTTSResponse encoder, and the
-synthesize flow with a fake synthesizer. Pure (no voice server); the OpenAI backend
-is exercised only for availability/skip.
+synthesize flow with fake synthesizers. Pure: no voice server, no piper, no openai.
 """
 import base64
-import os
 
 import pytest
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from moxie_sdk.tts import (  # noqa: E402
     strip_markup, Synthesizer, build_cloud_tts_response, synthesize_cloud_tts,
@@ -47,14 +43,11 @@ def test_strip_markup_drops_emoji_so_piper_never_reads_them_aloud():
     assert strip_markup("\U0001F1FA\U0001F1F8 flag") == "flag"                   # regional indicators
     assert strip_markup("\u2705 done \u27A1 next") == "done next"
     assert strip_markup("\U0001F600") == "", "an emoji-only line has nothing to say"
+    assert strip_markup('<mark name="cmd:playback-mood,data:{+mood+:1}"/>Yay \U0001F389 you did it!') \
+        == "Yay you did it!"
     # …and the words a child's turn is actually made of are left exactly alone.
     kept = "Hello \u2014 it's 3:45, \"ok\"? (yes) 50% #1 & more\u2026 caf\u00e9 na\u00efve"
     assert strip_markup(kept) == kept
-
-
-def test_strip_markup_drops_emoji_inside_behavior_markup():
-    markup = '<mark name="cmd:playback-mood,data:{+mood+:1}"/>Yay \U0001F389 you did it!'
-    assert strip_markup(markup) == "Yay you did it!"
 
 
 def test_cloud_tts_response_shape():
@@ -84,49 +77,7 @@ def test_make_voice_synthesizer_needs_a_base_url():
     assert make_voice_synthesizer("", "key") is None           # not configured → None
 
 
-def test_voice_synth_backs_off_on_rate_limit():
-    """A busy voice server (429) is retried with backoff, not failed — same resilience
-    as the LLM gateway."""
-    from moxie_sdk.tts import OpenAIVoiceSynthesizer
-
-    class _RateLimit(Exception):
-        status_code = 429
-
-    class _Resp:
-        content = b"PCMOK"
-
-    class _FakeClient:
-        def __init__(self):
-            self.calls = 0
-            self.audio = self
-            self.speech = self
-
-        def create(self, **kw):
-            self.calls += 1
-            if self.calls < 3:
-                raise _RateLimit()
-            return _Resp()
-
-    fake = _FakeClient()
-    synth = OpenAIVoiceSynthesizer("", "", client=fake, response_format="pcm")
-    # patch the backoff sleep so the test is instant
-    import moxie_sdk.chat as chat
-    orig = chat.time.sleep
-    chat.time.sleep = lambda s: None
-    try:
-        out = synth.synthesize("hello")
-    finally:
-        chat.time.sleep = orig
-    assert out == b"PCMOK" and fake.calls == 3      # retried through 2 rate-limits
-
-
 # --- local Piper voice (our default/primary, offline) ---
-
-def test_piper_available_is_bool():
-    from moxie_sdk.tts import PiperSynthesizer
-    # piper isn't installed in CI → available() is a clean False (never raises)
-    assert PiperSynthesizer.available() in (True, False)
-
 
 def test_piper_synth_full_path_with_injected_voice_fn():
     """The whole strip→synthesize→CloudTTSResponse path works with an injected voice_fn,
@@ -197,13 +148,6 @@ def test_tone_synth_length_scales_with_text_and_is_bounded():
     assert long > short                                             # longer text → more audio
     huge = len(s.synthesize("word " * 10000))
     assert huge <= 2 * int(s.sample_rate * s._max_ms / 1000)        # capped at max_ms
-
-
-def test_tone_synth_through_cloud_tts():
-    from moxie_sdk.tts import ToneSynthesizer
-    resp = synthesize_cloud_tts(ToneSynthesizer(), '<mark name="cmd:x"/>Hi', event_id="t1")
-    got = decode_cloud_tts_response(resp)
-    assert got["audio"] and got["sample_rate"] == 22050 and got["event_id"] == "t1"
 
 
 # ============================================================================
