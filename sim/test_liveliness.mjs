@@ -421,7 +421,7 @@ async function dockGeometry(page) {
  */
 {
   const page = await open(1280, 900);
-  // Per-sweep head-y RANGE, used only in the failure text (backlog/head-sweep-wait.md).
+  // Per-sweep head-y RANGE, used only in the failure text (backlog/test-timing-under-load.md §2).
   const probe = await page.evaluate(async () => {
     const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
     const rows = [];

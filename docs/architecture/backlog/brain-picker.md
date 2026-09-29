@@ -1,121 +1,91 @@
-# 🧠 Any brain, hot-swappable, per child
+# Brain picker — any brain, hot-swappable, per child
 
-> **Audit BEYOND #3 · ranked #7 · P0 SHIPPED 2026-09-03.**
-> *Marker re-verified 2026-09-06 against the code and correct:*
-> [`brains.py`](../../../mqtt/moxie_sdk/brains.py) is 371 lines and the three test files below exist.
-> *One citation had drifted and is corrected on the Console line: this page said `normalize_brain`; the
-> shipped names are `normalize_brain_option` and `normalize_brain_robot`.*
-> **P1 remains open** — the *persona* half of the binding, per-child keys and cost accounting, all three
-> of which need a new secret.
-> `ai-seam.md` §2 has always said Moxie's body is a shell and any AI can wear it. That was true
-> of the drawing and false of the appliance: a brain was chosen **once, globally**, by `MOXIE_APP`
-> at import time. This is the registry and the selection that make it an operation.
->
-> Files: [`mqtt/moxie_sdk/brains.py`](../../../mqtt/moxie_sdk/brains.py) ·
-> [`mqtt/config.py`](../../../mqtt/config.py) (`BRAIN_BUILDERS`, `BrainEngines`) ·
-> [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) (`app_for`, `brain_for`,
-> `brain_view`, `brain_update`).
-> Console: [`fleet.py`](../../../server/moxie_server/fleet/)`::normalize_brain_option`:1017 +
-> `::normalize_brain_robot`:1032 + two proxy routes
-> + the 🧠 card in [`server/static/`](../../../server/static/index.html).
-> Tests: [`test_brains.py`](../../../sim/tests/test_brains.py) (82) +
-> [`test_brain_runtime.py`](../../../sim/tests/test_brain_runtime.py) (31) +
-> [`test_brain_console.py`](../../../sim/tests/test_brain_console.py) (13), plus
-> [`brain_mutation_check.py`](../../../sim/tools/brain_mutation_check.py) — 22 guards deleted, 22 red.
+**Status:** P0 shipped — [`mqtt/moxie_sdk/brains.py`](../../../mqtt/moxie_sdk/brains.py),
+[`mqtt/config.py`](../../../mqtt/config.py) (`BRAIN_BUILDERS`, `BrainEngines`, `BRAIN_ENV`),
+[`mqtt/supervisor/moxie_runtime/brain.py`](../../../mqtt/supervisor/moxie_runtime/brain.py); tested by
+`sim/tests/test_brains.py`, `test_brain_runtime.py`, `test_brain_console.py` and
+[`sim/tools/brain_mutation_check.py`](../../../sim/tools/brain_mutation_check.py). P1 (persona binding,
+per-child keys, cost accounting) is not started.
 
-## 1. What was actually missing
+## What it does
 
-Both hard parts already existed, which is why this is a registry and a card rather than an
-architecture:
+[`ai-seam.md`](../ai-seam.md) (section ②, the brain) says Moxie's body is a shell any AI can wear. Before this, a brain was
+chosen once, globally, by `MOXIE_APP` at import time. Now each robot on one appliance can be answered by
+a different brain, changed from the console without a restart.
 
-| Hard part | Where it already worked |
+The console's 🧠 **Brain** card (beside 🎚️ Voice) shows the brains this appliance can run, each with a
+blurb and the `MOXIE_*` variables it needs; an *applies to* choice — **this robot** or **every robot
+(house rule)**; a button to clear a layer; and a row per robot such as *"Sam — Content modules
+(content) — house rule"*. If the environment pinned the brain, that sentence comes first, because it is
+why the dropdown is short.
+
+## Design
+
+1. **A closed positive list.** `brains.BRAINS` has exactly four entries — `llm`, `content`, `webhook`,
+   `echo` — frozen as a literal in `test_brains.py`, so adding one needs a test edit. A name outside it is
+   refused, never guessed; there is no deny-list to forget to extend.
+2. **`brain` is an ordinary config key.** It rides the existing `defaults ⊕ fleet ⊕ per-robot` layering
+   (`fleet/config.json` and the per-robot overrides), so `POST /config?scope=fleet` and
+   `POST /config?device_id=` already set it and there is nothing new to back up.
+   `cloud_config.SERVER_ONLY_KEYS` keeps it out of the config pushed to the robot, which has no field
+   for it.
+3. **Resolved once per turn.** `MoxieRuntime.app_for(device_id)` is called at the top of each turn and
+   the app is carried through, so a Save lands on the child's **next** turn and a turn in flight
+   finishes with the brain that heard the question. Apps are built on first use and cached by name; the
+   lock covers the build only, never `respond()`.
+4. **The operator's environment wins.** An explicit `MOXIE_APP` naming a brain **pins** it:
+   `resolve_brain` returns it whatever the layers say, the card offers only that entry, and a stale
+   page's cross-brain pick is refused with a sentence naming the variable. `MOXIE_APP=any` (or `auto`,
+   or unset) pins nothing — "decide per child".
+
+### Why the pin reads the raw environment
+
+`config.MOXIE_APP` falls back to `llm` when the variable is unset. Pinning that resolved value would
+lock every unconfigured box out of the picker. So the pin is computed from `config.BRAIN_ENV`, the raw
+string, where `""` pins nothing. Unlike `MOXIE_TTS=tone` in the [voice picker](voice-picker.md), every
+`MOXIE_APP` value is a real selection, so all four brain names pin.
+
+## Interfaces
+
+- `GET /brain` (status HTTP) — every brain this box can run (id, label, group, blurb, needed vars), the
+  house rule, the pin and its note, and one row per robot with its brain and which layer decided
+  (`default` / `fleet` / `robot` / `pin`, `brains.SOURCES`).
+- `POST /brain?device_id=…` picks for one child; `POST /brain?scope=fleet` sets the house rule;
+  `{"brain": null}` clears a layer. Both are validating front doors onto the existing
+  `update_config` / `update_fleet_config`.
+- Console: `server/moxie_server/routes/console.py` proxies `GET/POST /local/robots/{id}/brain`;
+  `server/moxie_server/fleet/cards.py` (`normalize_brain`, `normalize_brain_option`,
+  `normalize_brain_robot`) shapes the payload; the card is in `server/static/index.html` +
+  `js/voice-brain.js`.
+
+## Tests
+
+| Property | Where |
 |---|---|
-| A live engine swap with **no restart** | the 🎚️ voice picker's `voice_update` (PR #48) and `reload_content()`'s attribute swap |
-| A **per-robot override layer** | `defaults ⊕ fleet ⊕ per-robot` — audit ADOPT #6, `cloud_config.merge_config_layers`, `fleet/config.json`, `POST /config?scope=fleet` |
+| The table is exactly four brains | `test_brains.py` |
+| Near-miss names (`gpt5`, `llm # the brain`, a dict) are refused; case and space normalised | `test_brains.py` |
+| `resolve_brain` agrees with `merge_config_layers` itself over generated layer combinations | `test_brains.py` |
+| An explicit `MOXIE_APP` beats a stored pick; an unset one pins nothing (`test_an_explicit_moxie_app_pins_and_an_unset_one_does_not`) | `test_brains.py` |
+| Two robots on one appliance answered by two brains in one process | `test_brain_runtime.py` |
+| A swap lands on the next turn; an in-flight turn keeps its brain | `test_brain_runtime.py` |
+| A brain that will not build keeps the appliance talking and says so once | `test_brain_runtime.py` |
+| `brain` never reaches the pushed `RobotCloudConfig` | both |
+| The console normalizer renders a refusal, an unreachable supervisor and a truncated payload — never an empty card | `test_brain_console.py` |
+| Deleting any of 22 guards turns a test red (mutation M9: reading the resolved `MOXIE_APP` instead of the raw one) | `brain_mutation_check.py` |
 
-What did not exist was any registry of any kind (a repo-wide search for `BRAINS` /
-`register_brain` / `brain_registry` returned nothing) and any way for two children on one
-appliance to be answered by two brains.
+## Known gaps
 
-## 2. The design, in four sentences
+- **No browser test clicks the card.** Its normalizer and wiring are tested; that is the same ceiling
+  every console card has.
+- **Our own compose default pins.** Both compose files set `MOXIE_APP: ${MOXIE_APP:-content}`, so a
+  bare `docker compose up` arrives as an explicit `content` and pins. The card says so and names
+  `MOXIE_APP=any`; silently ignoring an operator who really wrote `content` would be worse.
+- **A brain instance is shared by every child using it** (keyed by name). Per-child state inside a
+  brain — a second gateway, per-child keys, cost accounting — is P1 and needs a new secret.
+- **No per-child persona.** Only the app half of "app + persona" is built; a persona is a `content`
+  pack today.
+- **`memory_store()` is appliance-level.** `/memory` reads the same files a per-child content brain
+  writes, but through the appliance's app, not the child's.
 
-1. **A positive list.** `brains.BRAINS` is a closed table — `llm`, `content`, `webhook`, `echo` —
-   in the idiom this codebase already relies on (`content/packs.py::SPEC`, `content/ext.py::OPS`,
-   the frozen `vocab.py`). A name in it resolves to a builder; **a name that is not in it is
-   refused, never guessed.** There is no deny-list, so nothing can be admitted by forgetting to
-   exclude it.
-2. **`brain` is an ordinary config key.** It rides `fleet/config.json ⊕ the per-robot overrides`,
-   the one layering this codebase has, so `POST /config?scope=fleet` and `POST /config?device_id=`
-   already set it and there is nothing new to back up or migrate. `cloud_config.SERVER_ONLY_KEYS`
-   keeps it out of the document pushed to the robot, which has no field for it.
-3. **The swap is resolved once per turn.** `MoxieRuntime.app_for(device_id)` is called at the top of
-   `_handle_turn` and the app is carried through, so a parent's Save lands on the child's **next**
-   turn and a turn already in flight finishes with the brain that heard the question.
-4. **The operator's environment wins.** An explicit `MOXIE_APP` **pins** the appliance's brain
-   (PR #77's rule for `MOXIE_TTS`/`MOXIE_STT`): the card offers only that entry, `resolve_brain`
-   returns it whatever the layers say, and a stale page's cross-brain pick is refused **naming the
-   variable**. `MOXIE_APP=any` is the explicit "decide per child".
-
-### 2.1 Why the pin reads the *raw* environment
-
-PR #77's lesson is that **a value which is a permission rather than a selection must not pin**
-(`MOXIE_TTS=tone` opts the built-in beep in as the last rung; it does not choose it, and both
-compose files default to it).
-
-`MOXIE_APP` has no permission-shaped value — `build_app()` branches on the four names and each
-returns exactly that app — so all four pin. What it *does* have is a **fall-through**:
-`config.MOXIE_APP` is `os.environ.get("MOXIE_APP", "llm")`, so an unset variable already reads as
-`llm`. Pinning that resolved value would have locked every box nobody configured out of the picker
-— the same accident in a different costume. So the pin is computed from `config.BRAIN_ENV`, the raw
-string, and `""` pins nothing. `sim/tests/test_brains.py::test_an_explicit_moxie_app_pins_and_an_unset_one_does_not`
-is the guard, and mutation **M9** (read `MOXIE_APP` instead) turns it red.
-
-## 3. What a parent sees
-
-The 🧠 **Brain** card, beside 🎚️ Voice in the console: a dropdown of the brains this appliance can
-actually run (with each one's blurb and the `MOXIE_*` variables it needs), an *applies to* choice —
-**this robot** or **every robot (house rule)** — a **Use the layer underneath** button that clears a
-layer, and a row per robot reading *"Sam — Content modules (content) — house rule"*. When the
-environment has pinned the brain, that sentence is the **first** thing in the card, because it is the
-reason the dropdown looks short.
-
-Underneath, `GET /brain` renders it: every brain this box can run (id, label, group, blurb, the
-`MOXIE_*` variables it needs), the house rule, the pin and its note, and **one row per robot**
-saying which brain answers that child and *which layer decided* (`default` / `fleet` / `robot` /
-`pin`). `POST /brain?device_id=…` picks for one child, `?scope=fleet` sets the house rule,
-`{"brain": null}` clears a layer. Both are thin, validating front doors onto `update_config` /
-`update_fleet_config` — the store and the push are the ones that already existed.
-
-## 4. Tests
-
-| # | Property | Where |
-|:--:|---|---|
-| 1 | The table is exactly four brains, frozen as a literal | `test_brains.py` |
-| 2 | Every near-miss name (`gpt5`, `llm # the brain`, a dict) is refused; case and space are normalised | `test_brains.py` |
-| 3 | `resolve_brain` agrees with `merge_config_layers` **itself** over generated layer combinations — the guard against a second layering | `test_brains.py` |
-| 4 | An explicit `MOXIE_APP` beats a stored pick; an unset one pins nothing | `test_brains.py` |
-| 5 | Two robots on one appliance answered by two brains, in one process | `test_brain_runtime.py` |
-| 6 | A swap lands on the next turn; an in-flight turn keeps its brain | `test_brain_runtime.py` |
-| 7 | A brain that will not build keeps the appliance talking, and says so once | `test_brain_runtime.py` |
-| 8 | `brain` never reaches the pushed `RobotCloudConfig` | both |
-| 9 | The console normalizer renders a refusal, an unreachable supervisor and a truncated payload — never an empty card that reads as "no brains" | `test_brain_console.py` |
-| 10 | 22 guards deleted one at a time, 22 tests go red | `sim/tools/brain_mutation_check.py` |
-
-## 5. Honest gaps (P1+)
-
-* **The card has no browser harness.** Its normalizer and its id/driver wiring are tested
-  (`test_brain_console.py`), and `test_console_roundtrip.py` proves the console app still imports and
-  serves — but no test *clicks* it. That is the same ceiling every other card in this console has.
-* **Our own compose default pins.** `docker-compose.yml` interpolates `MOXIE_APP:
-  ${MOXIE_APP:-content}`, so a `docker compose up` with nothing set arrives as an explicit `content`
-  and pins — the shape #77 warned about. It is **told, not hidden**: the card prints the pin note
-  and names `MOXIE_APP=any` as the way to hand the choice back. Excluding `content` from the pin
-  table would have silently ignored the operator who really did write it, which is worse.
-* **A brain is shared by every child on it**, keyed by name — exactly today's semantics (one app
-  object serves every robot). Per-child *state* inside a brain (a second gateway, per-child keys,
-  cost accounting) is explicitly out of P0: all three need a new secret.
-* **No per-child persona.** BEYOND #3's full form is "app **+ persona** binding"; only the app half
-  is built. A persona is a `content` pack today.
-* **`memory_store()` is still fleet-level.** `/memory` reads the same files a per-child content
-  brain writes, so it answers correctly — but it reads them through the *appliance's* app, not the
-  child's.
+---
+📖 [Backlog index](README.md) · [AI seam](../ai-seam.md) · [Voice picker](voice-picker.md)
