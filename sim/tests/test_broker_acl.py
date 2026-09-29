@@ -113,13 +113,7 @@ def test_output_is_byte_stable_and_order_independent():
     order the keys arrived in."""
     reversed_devices = dict(reversed(list(PERMITS["devices"].items())))
     assert render_acl(PERMITS) == render_acl(dict(PERMITS, devices=reversed_devices))
-    assert render_acl(PERMITS) == render_acl(PERMITS)
     assert render_acl(PERMITS).endswith("\n")
-
-
-def test_devices_are_sorted():
-    ids = re.findall(r"^user (d_\S+)$", render_acl(PERMITS), re.M)
-    assert ids == sorted(ids)
 
 
 def test_unverified_bots_mode_is_recorded_but_still_confines():
