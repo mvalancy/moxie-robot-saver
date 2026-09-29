@@ -42,9 +42,6 @@ def test_conversation_path_personalizes_prompt_and_calls_brain():
 
 
 def test_persona_prepended_to_module_prompt():
-    app = ContentApp(load_module(MODULE), lambda m: "ok", persona="PERSONA-X")
-    app.respond(Turn(robot=_robot(), speech="hi"))
-    # capture via a second call with a recording brain
     grabbed = {}
     app2 = ContentApp(load_module(MODULE),
                       lambda m: grabbed.setdefault("sys", m[0]["content"]) or "ok",

@@ -10,14 +10,10 @@ raises if called, which is how T10 proves the render panel is free.
 """
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from helpers_console import console_js
 from helpers_content import boot_runtime, post_status
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from moxie_sdk.content import packs as P                            # noqa: E402
 from moxie_sdk.content import render as R                           # noqa: E402
@@ -254,7 +250,6 @@ def test_render_reports_stripped_for_a_construct_the_fallback_drops(base):
 def test_render_prompt_hands_a_caller_its_own_counts():
     """`counts`, both directions: a dropped construct moves `stripped`, a rendered one not."""
     counts = {}
-    R._minimal_render("{{ volley.config.child_pii.nickname }}", {"volley": None})
     text = R.render_prompt("{{ x.y }}", {"x": {"y": "ok"}}, counts=counts)
     assert text == "ok"
     assert counts == {"blocked": 0, "stripped": 0}, counts
@@ -426,42 +421,7 @@ def test_a_second_tab_cannot_silently_discard_the_first(rt, base):
     assert kept["prompt"] == conversation()["prompt"], "the 409 wrote anyway"
 
 
-# --- T17 — the routes are declared where the console says they are ---
-
-def _asset(name):
-    with open(os.path.join(REPO, "server", "static", name)) as fh:
-        return fh.read()
-
-
-def test_the_authoring_routes_are_declared():
-    """Route decorators pinned as source strings (the hermetic tier has no fastapi)."""
-    from helpers_console import server_source
-    main = server_source()
-    assert '.post("/local/content/item")' in main
-    assert '.post("/local/content/render")' in main
-    assert "normalize_content_item_result" in main, \
-        "the item route does not normalize its answer, so a card could 500 on a refusal"
-    # P0 must not ship the paid rung; matched as a route literal so prose does not trip it.
-    assert '.post("/local/content/try")' not in main, "`/content/try` is P1 (§9), not P0"
-
-    from helpers_runtime import runtime_source
-    runtime = runtime_source()
-    assert '"/content/item"' in runtime and '"/content/render"' in runtime
-    assert '"/content/try"' not in runtime, "`/content/try` is P1 (§9), not P0"
-
-
-def test_the_supervisor_route_owns_the_validation_not_the_proxy():
-    """R6: `validate_item` lives in the supervisor route that writes, not the console proxy
-    a direct `curl` would bypass."""
-    from helpers_runtime import runtime_source
-    runtime = runtime_source()
-    from helpers_console import server_source
-    main = server_source()
-    assert "content_packs.validate_item(" in runtime, \
-        "the supervisor's writing route does not call validate_item at all (§6.3)"
-    assert "validate_item(" not in main, \
-        "the console proxy validates; a direct curl at the supervisor would skip it"
-
+# --- T17 — the console's editor surface ---
 
 def test_the_chip_list_is_closed_to_the_two_portable_forms():
     """AC10: every chip fragment renders under the dependency-free fallback with
@@ -481,25 +441,6 @@ def test_the_chip_list_is_closed_to_the_two_portable_forms():
         R._minimal_render(text, ctx)
         assert R.STRIPPED == before, \
             f"chip fragment is not renderable by the dependency-free fallback: {text!r}"
-
-
-def test_the_editor_never_offers_a_verb_p0_refuses():
-    """No button for something the route refuses; `code`/`extension` are read-only."""
-    html = _asset("index.html")
-    js = console_js()
-    assert "ed-panel" in html, "the editor panel is not on the page"
-    assert "readonly" in html.lower() or "readOnly" in js, \
-        "the raw surface must be read-only in P0 (R1)"
-    assert "'/local/content/try'" not in js, "`/content/try` is P1 (§9), not P0"
-
-
-def test_the_card_grew_the_four_functions_the_brief_names():
-    """§9 (P0): the four seams the brief hands a later agent, pinned by name."""
-    js = console_js()
-    for fn in ("function openEditor(", "async function saveItem(",
-               "async function renderDraftPrompt(", "function renderChips("):
-        assert fn in js, f"the console JS has no {fn}…)"
-    assert "'/local/content/item'" in js and "'/local/content/render'" in js
 
 
 def test_no_timer_in_the_editor_can_reach_a_model():

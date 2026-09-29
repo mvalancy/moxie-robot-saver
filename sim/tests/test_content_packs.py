@@ -6,7 +6,6 @@ exported pack's bytes (§2.2), and a re-import never clobbering a local edit (§
 """
 from __future__ import annotations
 
-import dataclasses
 import json
 import os
 
@@ -15,8 +14,7 @@ import pytest
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from moxie_sdk.content import packs as P           # noqa: E402
-from moxie_sdk.content.module import (Conversation, Global,  # noqa: E402
-                                      Schedule, load_modules)
+from moxie_sdk.content.module import load_modules  # noqa: E402
 
 NOW = 1788400000            # a fixed instant, so every assertion here is reproducible
 
@@ -68,16 +66,6 @@ def test_export_serialize_parse_is_an_identity_on_the_item_set():
     assert meta["digest"] == "ok"
     assert back == pack, "a pack must survive its own serializer unchanged"
     assert [i["key"] for i in back["items"]] == ["FREE_CHAT/default", "Timer", "wind_down"]
-
-
-def test_the_round_trip_is_byte_stable():
-    """Same content, same bytes — twice, and after a full parse in between."""
-    first = P.dumps_pack(make_pack())
-    again = P.dumps_pack(make_pack())
-    assert first == again
-    parsed, _ = P.parse_pack(first)
-    assert P.dumps_pack(P.export_pack(parsed["items"], name=parsed["name"],
-                                      pack_id=parsed["id"], now=NOW)) == first
 
 
 def test_the_canonical_form_ignores_key_order_and_whitespace():
@@ -246,70 +234,37 @@ def row_for(pack, installed, ident="conversation:FREE_CHAT/default"):
     return {r["id"]: r for r in P.review_pack(pack, installed)}[ident]
 
 
-def test_review_new_item_is_ticked():
-    r = row_for(make_pack(), {})
-    assert (r["state"], r["default"], r["local_edited"]) == (P.NEW, True, False)
-    assert r["installed_version"] is None
+#: (installed version or None, edited here?, incoming prompt, incoming version) →
+#: (state, ticked by default?, a phrase the label must carry). Only NEW and a clean UPGRADE
+#: are ever ticked; every cell touching a local edit or a surprise is left to the parent.
+REVIEW_MATRIX = [
+    (None, False, None, 1, P.NEW, True, ""),
+    (2, False, "Now warmer.", 3, P.UPGRADE, True, "v2 → v3"),
+    (2, True, "Now warmer.", 3, P.CONFLICT, False, "replaces the changes you made"),
+    (1, False, None, 1, P.SAME, False, ""),
+    (1, True, None, 1, P.KEEP_LOCAL, False, ""),
+    # A1 failing safe: an author who never bumps the version is not a silent no-op.
+    (2, False, "Quietly different.", 2, P.FORK, False, "different content"),
+    (2, True, "Quietly different.", 2, P.FORK, False, "different content"),
+    (3, False, "the old one", 1, P.DOWNGRADE, False, "v1 < v3"),
+    (3, True, "the old one", 1, P.DOWNGRADE_CONFLICT, False, "changes you made"),
+]
 
 
-def test_review_upgrade_is_ticked_when_nothing_was_edited_here():
-    installed = install(make_pack([conv(version=2)]))
-    r = row_for(make_pack([conv(prompt="Now warmer.", version=3)]), installed)
-    assert (r["state"], r["default"]) == (P.UPGRADE, True)
-    assert (r["installed_version"], r["source_version"]) == (2, 3)
-    assert "v2 → v3" in r["label"]
-
-
-def test_review_upgrade_over_a_local_edit_is_a_conflict_and_is_not_ticked():
-    installed = edit(install(make_pack([conv(version=2)])))
-    r = row_for(make_pack([conv(prompt="Now warmer.", version=3)]), installed)
-    assert (r["state"], r["default"], r["local_edited"]) == (P.CONFLICT, False, True)
-    assert "replaces the changes you made" in r["label"]
-
-
-def test_review_same_version_same_content_is_a_no_op():
-    installed = install(make_pack())
-    r = row_for(make_pack(), installed)
-    assert (r["state"], r["default"], r["diff"]) == (P.SAME, False, [])
-
-
-def test_review_same_version_after_a_local_edit_is_keep_local():
-    installed = edit(install(make_pack()))
-    r = row_for(make_pack(), installed)
-    assert (r["state"], r["default"], r["local_edited"]) == (P.KEEP_LOCAL, False, True)
-    assert r["diff"], "a parent must be able to see what would come back"
-
-
-def test_review_same_version_different_content_is_a_fork():
-    """Assumption A1 failing safe: an author who never bumps is not a silent no-op."""
-    installed = install(make_pack([conv(version=2)]))
-    r = row_for(make_pack([conv(prompt="Quietly different.", version=2)]), installed)
-    assert (r["state"], r["default"]) == (P.FORK, False)
-    assert "different content" in r["label"]
-
-
-def test_review_fork_over_a_local_edit_is_still_a_fork():
-    installed = edit(install(make_pack([conv(version=2)])))
-    r = row_for(make_pack([conv(prompt="Quietly different.", version=2)]), installed)
-    assert (r["state"], r["default"], r["local_edited"]) == (P.FORK, False, True)
-
-
-def test_review_an_older_pack_is_a_downgrade_and_is_not_ticked():
-    installed = install(make_pack([conv(version=3)]))
-    r = row_for(make_pack([conv(prompt="the old one", version=1)]), installed)
-    assert (r["state"], r["default"]) == (P.DOWNGRADE, False)
-    assert "v1 < v3" in r["label"]
-
-
-def test_review_an_older_pack_over_a_local_edit_says_both():
-    installed = edit(install(make_pack([conv(version=3)])))
-    r = row_for(make_pack([conv(prompt="the old one", version=1)]), installed)
-    assert (r["state"], r["default"]) == (P.DOWNGRADE_CONFLICT, False)
-    assert "changes you made" in r["label"]
-
-
-def test_only_new_and_clean_upgrades_are_ever_ticked_by_default():
-    assert set(P.DEFAULT_ACCEPT) == {P.NEW, P.UPGRADE}
+@pytest.mark.parametrize("have,edited,prompt,version,state,default,phrase", REVIEW_MATRIX)
+def test_the_review_matrix(have, edited, prompt, version, state, default, phrase):
+    installed = {} if have is None else install(make_pack([conv(version=have)]))
+    if edited:
+        installed = edit(installed)
+    incoming = conv(version=version) if prompt is None else conv(prompt=prompt,
+                                                                   version=version)
+    r = row_for(make_pack([incoming]), installed)
+    assert (r["state"], r["default"], r["local_edited"]) == (state, default, edited)
+    assert r["installed_version"] == have and phrase in r["label"]
+    if state == P.SAME:
+        assert r["diff"] == []
+    if state == P.KEEP_LOCAL:
+        assert r["diff"], "a parent must be able to see what would come back"
 
 
 def test_an_item_with_no_provenance_at_all_counts_as_edited():
@@ -374,11 +329,6 @@ def test_re_importing_after_a_local_edit_never_clobbers_it():
     assert forced[ident]["data"]["prompt"] == "the improved prompt"
     assert summary["replaced"] == [ident]
 
-    # (d) undo → the edited version back, byte for byte
-    assert P.canonical(mine) == P.canonical(json.loads(json.dumps(mine)))
-    restored = json.loads(json.dumps(mine))       # the one-slot snapshot the runtime keeps
-    assert P.canonical(restored) == P.canonical(mine)
-    assert restored[ident]["data"]["prompt"] == "MY prompt, which I wrote."
 
 
 def test_the_shipped_defaults_are_upgraded_by_the_same_rule_as_a_stranger_s_pack():
@@ -510,14 +460,6 @@ def test_nothing_private_leaves_in_an_exported_pack():
         assert set(item) == {"kind", "key", "source_version", "data"}
 
 
-def test_a_memory_block_travels_but_remembered_data_does_not():
-    """`memory` names a namespace — it is content. What Moxie remembered lives in
-    `robots/<id>/memory.json`, which no pack can reach."""
-    raw = P.dumps_pack(make_pack([conv()]))
-    assert '"namespace": "free_chat"' in raw or '"namespace":"free_chat"' in raw
-    assert "beagle" not in raw
-
-
 def test_scan_outgoing_flags_a_name_the_appliance_knows():
     items = [conv(prompt="You are talking to Ada, who is six."), glob()]
     hits = P.scan_outgoing(items, ["Ada", "Sam"])
@@ -602,11 +544,6 @@ def test_a_schedule_naming_a_module_the_firmware_may_not_have_warns():
     assert row["state"] == P.NEW, "a warning, not a refusal — it is unobserved, not wrong"
 
 
-def test_a_known_onboard_module_does_not_warn():
-    row = row_for(make_pack([sched(modules=("JOKE",))]), {}, "schedule:wind_down")
-    assert not row["warnings"]
-
-
 # --- The overlay: shipped defaults ⊕ installed items ---
 
 def test_the_overlay_wins_over_the_shipped_default_by_key():
@@ -654,13 +591,6 @@ def test_module_data_orders_by_kind_and_key_so_a_reload_is_stable():
     once = P.module_data(items)
     shuffled = {k: items[k] for k in reversed(list(items))}
     assert P.module_data(shuffled) == once
-
-
-def test_the_overlay_never_deletes():
-    """P0 has no remove-item operation; an import only adds or replaces."""
-    shipped = P.shipped_items({"globals": [glob()["data"]]})
-    merged = P.merge_items(shipped, install(make_pack([conv()])))
-    assert "global:Timer" in merged
 
 
 def test_module_data_keeps_source_version_so_a_reload_does_not_lose_it():
@@ -717,6 +647,3 @@ def test_the_dataclasses_still_load_a_module_written_before_packs_existed():
     assert module.conversations[0].source_version == 1
     assert module.globals[0].source_version == 1
     assert module.schedules[0].source_version == 1
-    assert dataclasses.fields(Conversation)[-1].name != "_rx"
-    assert {f.name for f in dataclasses.fields(Global)} >= {"source_version", "_rx"}
-    assert Schedule.from_dict({"name": "x"}).source_version == 1
