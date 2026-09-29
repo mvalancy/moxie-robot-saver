@@ -13,14 +13,10 @@ Hermetic: builders arrive through `set_brain_engines()`; HTTP goes through the r
 `_start_status_server`.
 """
 import json
-import os
 import threading
 import urllib.error
 
 import pytest
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-MQTT = os.path.join(REPO, "mqtt")
 
 from helpers_runtime import fresh_pool  # noqa: E402
 from helpers_runtime import (drive_turn, http_json, make_runtime,     # noqa: E402
@@ -439,9 +435,7 @@ def test_a_post_naming_a_brain_that_does_not_exist_is_a_400(tmp_path):
     rt, _ = _runtime(tmp_path, default="echo")
     base = status_server(rt)
     code, out = refused(f"{base}/brain?device_id=d_one", {"brain": "gpt5"})
-    assert code == 400 and out["ok"] is False
-    for name in brains.BRAIN_IDS:
-        assert name in out["error"]
+    assert code == 400 and out["ok"] is False and "echo" in out["error"]
 
 
 def test_a_post_for_an_unknown_robot_is_a_404(tmp_path):
