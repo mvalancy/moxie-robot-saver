@@ -4,7 +4,7 @@ The SIL soak — *"a week in an hour"*, and honest about which half of that is t
 
 Build document:
 `docs/architecture/backlog/production-hardening.md` **§5**, whose acceptance criteria
-(§5.3, A1–A11) this file computes and prints, pass or fail, **never inferred**.
+(§5.3, A1–A12) this file computes and prints, pass or fail, **never inferred**.
 
 Read §5.4 before quoting any number this prints
 -----------------------------------------------
