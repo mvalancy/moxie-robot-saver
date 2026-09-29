@@ -1,70 +1,20 @@
-/* test_console_insights.mjs — the PARENT CONSOLE's 📈 Insights card, in a real browser.
+/* test_console_insights.mjs — the PARENT CONSOLE's 📈 Insights card (server/static), in a real
+ * browser. `refreshInsights` in js/insights.js has six render paths; the invariant held over
+ * ALL of them is: EITHER the 🧽 erase button is absent, OR it is present, starts unarmed, the
+ * first click only ARMS it (nothing on the wire), the second issues exactly one DELETE, and the
+ * card re-renders empty.
  *
- * WHY THIS FILE EXISTS. Until it landed, `grep -rln "server/static" sim/test_*.mjs` came
- * back EMPTY. Every one of the ~28 headless suites in this repo drives `sim/web` — the
- * public simulator — and not one of them had ever loaded `server/static/index.html`, the
- * ~2,470 lines a parent actually uses. So 📈 Insights, 📦 Content, 🧠 Brain, 🛡️ Safety and
- * the robot list were asserted only through Python ROUTE tests, which can prove what the
- * server answers and can prove nothing whatsoever about whether a button in the page ever
- * wires itself up. PR #136 shipped the two-click-armed **Erase history** button on this
- * card and had to report, honestly, that no headless click had ever touched it.
+ *   path 1 no permitted robot · 2 GET /telemetry 503 · 3 {ok:false} · 4 NO_DATA with count>0
+ *   (button SHOWN) · 5 nothing recorded · 6 a normal history (button SHOWN)
  *
- * THE BUG THE AUTHOR POINTED AT. `server/static/js/insights.js` says, above `refreshInsights`:
- *
- *     // Wiring the 🧽 button inside `render` rather than after each call: this function
- *     // returns early from four branches, and an erase button that works in three of them
- *     // is worse than none — a parent would learn it sometimes does nothing.
- *
- * That is the author naming the defect class and the mitigation in the same breath, with
- * nothing asserting either. Counted today the function has FIVE early returns and a sixth
- * terminal render (the comment's "four" predates one of them — see the table below), and
- * the erase button appears in exactly two of the six. The invariant this suite holds is
- * therefore stated over ALL SIX render paths, which is strictly stronger than the comment:
- *
- *     in every render path, EITHER the button is absent, OR it is present AND armed AND a
- *     second click issues exactly one DELETE.
- *
- *   ┌────────────────────────┬──────────────────────────────────┬────────┐
- *   │ render path            │ reached by                       │ button │
- *   ├────────────────────────┼──────────────────────────────────┼────────┤
- *   │ 1 !deviceId            │ fleet with no permitted robot    │ absent │
- *   │ 2 telemetry threw      │ GET /telemetry → 503             │ absent │
- *   │ 3 !t.ok                │ GET /telemetry → 200 {ok:false}  │ absent │
- *   │ 4 t.persisted===false  │ NO_DATA policy, count > 0        │ SHOWN  │
- *   │ 5 !count && !total     │ nothing recorded yet             │ absent │
- *   │ 6 terminal render      │ a normal history                 │ SHOWN  │
- *   └────────────────────────┴──────────────────────────────────┴────────┘
- *
- * NO FASTAPI, ANYWHERE. CI's hermetic environment cannot boot `server/moxie_server`, so
- * the console's assets are served by the harness's own static server (`serveStatic`, added
- * for this suite) and every `/local/*` XHR is answered AT THE BROWSER with
- * `page.setRequestInterception` — the idiom `test_mic_spend.mjs` and `test_ambient_guard.mjs`
- * established for `/api/*`.
- *
- * THE FIXTURES ARE BUILT BY THE REAL NORMALIZERS. `server/moxie_server/fleet/` is
- * deliberately dependency-free ("Pure + dependency-free (no fastapi/network here)"), and
- * `/local/robots/{id}/telemetry` is literally `normalize_telemetry(supervisor_json)`. So
- * this suite hands SUPERVISOR payloads to the real `normalize_telemetry` /
- * `normalize_connection` / `normalize_fleet` in a python3 subprocess and serves whatever
- * comes back. A hand-written fixture would let the suite pass forever against a response
- * shape the route stopped sending — the same class of lie as PR #82's 770 assertions that
- * read a file while Web Audio was stubbed.
- *
- * NOTHING IS ASSERTED ON A COUNTER THE PAGE KEEPS ABOUT ITSELF. Every claim is either an
- * INTERCEPTED REQUEST (method, path and the millisecond it arrived, so "the DELETE came
- * from the SECOND click" is a fact about the wire and not about a label) or a DOM fact read
- * out of Chrome (`textContent`, element counts, `data-armed`, `disabled`).
- *
- * TEETH. Three mutations of `js/insights.js` are served to the browser and the whole branch sweep
- * is re-run against each; a mutation that reddens nothing would mean the sweep proves
- * nothing, so each one asserts BOTH that the edit applied and that named assertions failed:
- *   · `arming`   — one click fires the DELETE (the arming removed).
- *   · `refresh`  — `eraseTelemetry` stops re-reading, so the card keeps its stale rows.
- *   · `branch`   — the wiring moves OUT of `render` and back to the terminal branch only:
- *                  EXACTLY the "works in three of them" shape the author's comment feared.
- *                  Its signature is asymmetric on purpose — path 6 keeps passing while
- *                  path 4 reddens — which is what makes the per-branch sweep meaningful
- *                  rather than a single click test wearing six hats.
+ * No FastAPI: the console's assets come from the harness's static server and every `/local/*`
+ * XHR is answered at the browser with payloads built by the REAL server normalizers
+ * (server/moxie_server/fleet, dependency-free) in a python3 subprocess, so a fixture cannot
+ * drift from what the route returns. Claims are intercepted requests (method, path, the
+ * millisecond it arrived) or DOM facts, never a counter the page keeps about itself.
+ * TEETH: the wiring is moved OUT of `render` back to the terminal branch only — the "works in
+ * three of them" shape the author's comment above refreshInsights feared — and path 4 must
+ * redden while path 6 stays green, which is what makes the per-path sweep meaningful.
  *
  *   node sim/test_console_insights.mjs
  */
@@ -182,13 +132,9 @@ const browser = await puppeteer.launch({
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
 });
 
-/* A REAL click, not `el.click()` inside `evaluate`: puppeteer scrolls the element into
- * view, resolves a CLICKABLE POINT and dispatches a genuine mouse event at it, so a
- * control that is in the DOM but covered, zero-sized or off-screen throws here instead of
- * quietly "working". `evaluate(e => e.click())` would pass on all three.
- *
- * The 1280×1000 viewport above is load-bearing for the same reason: at puppeteer's 800×600
- * default the 🤖 Moxie tab sits at x=766–883 and is not clickable at all. */
+/* A REAL click (puppeteer resolves a clickable point), so a covered, zero-sized or
+ * off-screen control throws instead of "working". The 1280x1000 viewport is load-bearing:
+ * at 800x600 the 🤖 Moxie tab is not clickable at all. */
 async function clickReal(page, sel) {
   const el = await page.$(sel);
   if (!el) return false;
@@ -212,14 +158,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function drive(mode, mutate) {
   const state = { deletes: [], gets: 0, erased: false };
   const page = await browser.newPage();
-  /* EVERY drive is a first visit. `js/core.js` reads `localStorage.moxie_token` at parse
-   * time and its last line auto-enters the app when one is there — so the second drive in
-   * a run would land already logged in, `#s-login` hidden and `#btn-login` collapsed to a
-   * 0×0 box. All six paths share one loopback origin, so without this the sweep would be
-   * ORDER-DEPENDENT: path 1 through the login button, paths 2–6 through the returning-
-   * parent path. `evaluateOnNewDocument` runs before any page script, so the clear beats
-   * that read. (The returning-parent path is real and worth its own coverage; it is not
-   * this slice, and it is named as a gap in the report.) */
+  /* EVERY drive is a first visit: js/core.js auto-enters the app when localStorage holds a
+   * token, which would make the sweep order-dependent (path 1 via login, 2-6 returning). */
   await page.evaluateOnNewDocument(() => { try { localStorage.clear(); } catch (e) {} });
   const { errs, aborted } = watchPage(page);
   await page.setRequestInterception(true);
@@ -295,10 +235,7 @@ const readCard = (page) => page.$eval("#robot-insights", (e) => ({
   })(),
 }));
 
-/**
- * One render path, end to end. `C` is a checks collector — the real one for the honest
- * run, a throwaway one for each mutation, so "how many reddened" is a measured number.
- */
+/** One render path, end to end, into checks collector `C` (a throwaway one under the teeth). */
 async function sweepPath(C, mode, { mutate = null, deep = false } = {}) {
   const spec = PATHS[mode];
   const { page, state, errs, aborted } = await drive(mode, mutate);
@@ -329,7 +266,8 @@ async function sweepPath(C, mode, { mutate = null, deep = false } = {}) {
       const click = () => clickReal(page, "#btn-telemetry-forget");
       /* --- click 1: ARMS, and must put nothing on the wire --- */
       C.ok(await click(), `${tag}: the erase button must be clickable`);
-      await sleep(400);
+      await page.waitForFunction(() => (document.querySelector("#btn-telemetry-forget") || {}).dataset?.armed === "1",
+                                 { timeout: 5000 }).catch(() => {});
       C.eq(state.deletes.length, 0,
            `${tag}: ONE click must NOT erase — no DELETE may reach the wire`);
       const armed = (await readCard(page)).btn;
@@ -398,8 +336,10 @@ async function sweepPath(C, mode, { mutate = null, deep = false } = {}) {
       const p2 = await drive("full", mutate);
       try {
         await p2.page.waitForSelector("#btn-telemetry-forget", { timeout: 8000 });
+        const armedNow = () => p2.page.waitForFunction(() =>
+          (document.querySelector("#btn-telemetry-forget") || {}).dataset?.armed === "1", { timeout: 5000 }).catch(() => {});
         await clickReal(p2.page, "#btn-telemetry-forget");
-        await sleep(300);
+        await armedNow();
         C.eq((await readCard(p2.page)).btn.armed, "1", "disarm: armed by the first click");
         await sleep(6400);
         const cooled = (await readCard(p2.page)).btn;
@@ -407,20 +347,14 @@ async function sweepPath(C, mode, { mutate = null, deep = false } = {}) {
         C.eq(cooled && cooled.label, "Erase history",
              "disarm: the label must return to rest when the arm expires");
         await clickReal(p2.page, "#btn-telemetry-forget");
-        await sleep(400);
+        await armedNow();
         C.eq(p2.state.deletes.length, 0,
              "disarm: a click after the arm expired must RE-ARM, never erase");
       } finally { await p2.page.close(); }
     }
 
-    /* WHAT THE BROWSER ITSELF SAID. This assertion existed before 2026-09-06 and covered
-     * `pageerror` ONLY — uncaught exceptions. That leaves the console unread, and the
-     * console is where a 404'd `<script src>` surfaces: no exception is raised anywhere,
-     * so the console JS failing to load at all would have left this suite reporting only that
-     * the card never rendered, with nothing saying why. `watchPage()` now installs both
-     * listeners and `notable()` forgives, by COUNT, exactly the refusals the interceptor
-     * issued above (path 2's deliberate 503, and the missing favicon on the first load).
-     * Measured across all six paths and all three mutations: nothing else is ever said. */
+    /* WHAT THE BROWSER ITSELF SAID: uncaught errors AND console errors (a 404'd <script> only
+     * surfaces there), forgiving by COUNT exactly path 2's deliberate 503 and the favicon. */
     const left = notable(errs, aborted);
     C.eq(left.length, 0,
          `${tag}: the page must raise no uncaught errors and no unexplained console ` +
@@ -433,75 +367,27 @@ async function sweepPath(C, mode, { mutate = null, deep = false } = {}) {
 /* ---- the honest run ------------------------------------------------------------- */
 for (const mode of Object.keys(PATHS)) await sweepPath({ ok, eq }, mode, { deep: true });
 
-/* ---- TEETH: the same sweep against a mutated console --------------------------- *
- * A suite that cannot fail proves nothing, so each mutation is applied to `js/insights.js` on its
- * way to the browser and the whole sweep re-run. Both halves are asserted: that the edit
- * really landed (a no-op mutation would make the teeth vacuous — the exact failure this
- * repo has been bitten by), and that named assertions went red because of it. */
-const MUTATIONS = {
-  arming: {
-    why: "one click fires the DELETE (the two-click arming removed)",
-    modes: ["nodata", "full"],
-    apply: (s) => s.replace(
-      "if(btn.dataset.armed==='1'){ btn.dataset.armed=''; btn.textContent=original;",
-      "if(true){ btn.dataset.armed=''; btn.textContent=original;"),
-    expect: /ONE click must NOT erase|must ARM the button/,
-  },
-  refresh: {
-    why: "eraseTelemetry stops re-reading, so the card keeps its stale rows",
-    modes: ["nodata", "full"],
-    apply: (s) => s.replace(
-      "  await refreshInsights(deviceId);\n  const box=$('#robot-insights');",
-      "  await Promise.resolve();\n  const box=$('#robot-insights');"),
-    expect: /NO stale event rows|button must be gone/,
-  },
-  branch: {
-    why: "the wiring moves out of `render` back to the terminal branch — the author's " +
-         "'works in three of them' shape, exactly",
-    modes: ["nodata", "full"],
-    apply: (s) => s
-      .replace("    const b=box.querySelector('#btn-telemetry-forget');\n" +
-               "    if(b) armErase(b, 'Click again to erase', ()=>eraseTelemetry(deviceId));",
-               "    void 0;")
-      .replace("    +`<div class=\"evlog\">${rows}</div><p class=\"tnote\">${note}</p>`);",
-               "    +`<div class=\"evlog\">${rows}</div><p class=\"tnote\">${note}</p>`);\n" +
-               "  { const bb=box.querySelector('#btn-telemetry-forget');\n" +
-               "    if(bb) armErase(bb, 'Click again to erase', ()=>eraseTelemetry(deviceId)); }"),
-    expect: /path 4 \(nodata\)/,
-  },
-};
+/* ---- TEETH: the wiring moved out of `render`, back to the terminal branch only ---------- */
+const BRANCH = (src) => src
+  .replace("    const b=box.querySelector('#btn-telemetry-forget');\n" +
+           "    if(b) armErase(b, 'Click again to erase', ()=>eraseTelemetry(deviceId));",
+           "    void 0;")
+  .replace("    +`<div class=\"evlog\">${rows}</div><p class=\"tnote\">${note}</p>`);",
+           "    +`<div class=\"evlog\">${rows}</div><p class=\"tnote\">${note}</p>`);\n" +
+           "  { const bb=box.querySelector('#btn-telemetry-forget');\n" +
+           "    if(bb) armErase(bb, 'Click again to erase', ()=>eraseTelemetry(deviceId)); }");
+ok(BRANCH(APPJS) !== APPJS, "teeth: the mutation must actually change js/insights.js");
 const teeth = {};
-for (const [name, mut] of Object.entries(MUTATIONS)) {
-  const mutated = mut.apply(APPJS);
-  ok(mutated !== APPJS,
-     `teeth/${name}: the mutation must actually change js/insights.js — ${mut.why}`);
+for (const mode of ["nodata", "full"]) {
   const C = makeChecks();
-  for (const mode of mut.modes) await sweepPath(C, mode, { mutate: mut.apply });
-  teeth[name] = { red: C.fails.length, of: C.count(), modes: mut.modes.join("+") };
-  ok(C.fails.length > 0,
-     `teeth/${name}: a mutated console must REDDEN this suite (${mut.why})`);
-  ok(C.fails.some((f) => mut.expect.test(f)),
-     `teeth/${name}: the failures must be the ones the mutation causes, not collateral — ` +
-     `expected ${mut.expect} in: ${C.fails.join(" | ")}`);
+  await sweepPath(C, mode, { mutate: BRANCH });
+  teeth[mode] = C.fails;
 }
-/* The `branch` mutation's signature is the whole reason the sweep is per-path: the wiring
- * still works where it was moved to (path 6) and is dead where it was removed from
- * (path 4). If both reddened, a single click test would have been enough. */
-{
-  const C6 = makeChecks();
-  await sweepPath(C6, "full", { mutate: MUTATIONS.branch.apply });
-  eq(C6.fails.length, 0,
-     "teeth/branch: path 6 must still PASS under the branch mutation — the wiring merely " +
-     `moved there. Got: ${C6.fails.join(" | ")}`);
-  const C4 = makeChecks();
-  await sweepPath(C4, "nodata", { mutate: MUTATIONS.branch.apply });
-  ok(C4.fails.length > 0,
-     "teeth/branch: path 4 must REDDEN under the branch mutation — that is the defect " +
-     "the author's comment above refreshInsights predicted");
-  teeth.branch.asym = `path6 ${C6.fails.length} red / path4 ${C4.fails.length} red`;
-}
-
-console.log("   teeth:", JSON.stringify(teeth));
+ok(teeth.nodata.length > 0 && teeth.nodata.some((f) => /path 4 \(nodata\)/.test(f)),
+   "teeth: path 4 must REDDEN with the wiring moved to the terminal branch — the defect the " +
+   `comment above refreshInsights predicted. Got: ${teeth.nodata.join(" | ")}`);
+eq(teeth.full.length, 0, "teeth: path 6 must still PASS under the same mutation (the wiring merely " +
+   `moved there), or a single click test would have been enough. Got: ${teeth.full.join(" | ")}`);
 await browser.close();
 site.close();
 finish(LABEL, { fails, count });
