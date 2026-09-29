@@ -1,152 +1,72 @@
-# 🏗️ Architecture
+# Architecture
 
-How all the pieces fit together — and, below, the **build contracts** a clean-room implementation works
-from. Start with the two orientation docs, build from the contracts, and consult the vision/plan docs
-for the bigger picture.
+How the replacement backend is put together, and the contracts it is built from. The contracts are
+distilled from the [reverse-engineering study](../reverse-engineering/README.md) and each one reads on
+its own.
 
-## Orientation
-- [`overview.md`](overview.md) — the two-channel model, the components, the appliance vision, privacy.
-- [`revival-path.md`](revival-path.md) — the exact steps + firmware gate to revive a robot (the 3-QR sequence).
+## Start here
 
-## The build contracts — *what to implement*
-Versioned, standalone specs distilled from the [reverse-engineering study](../reverse-engineering/README.md).
-A backend + Sim are built from these directly; each cites the study but reads on its own.
-**Now building:** see [`implementation-plan.md`](implementation-plan.md) — the roadmap + honest status.
-- [`agent-workflow.md`](agent-workflow.md) — how changes are made: hard rules, the agent brief, integration rules, session loops.
-- [`rest-api-contract.md`](rest-api-contract.md) — **Channel 1, the control plane**: the REST services the
-  parent-app server exposes (auth, children, pairing, robot settings) + the minimum-viable-server path.
-- [`mqtt-and-conversation.md`](mqtt-and-conversation.md) — **Channel 2, the robot cloud**: endpoint QR, the
-  MQTT broker, topics, conversation flow, and the local-AI plug-in points.
-- [`ai-seam.md`](ai-seam.md) — **the AI interface**: the three seams a backend fills (STT in /
-  brain-RemoteChat / TTS out) — exact wire shapes + a conformance checklist. Build any AI into Moxie from this.
-- [`config-and-telemetry-contract.md`](config-and-telemetry-contract.md) — the robot's **remotely-managed
-  state**: the `/config` (`RobotCloudConfig`) pushed down, the `/state` reported up, and the telemetry +
-  `LoggingPolicy` privacy gate — the data model behind the parent console.
-- [`content-module-contract.md`](content-module-contract.md) — the **content layer**: the activity/module
-  JSON format (conversations/globals/schedules), the per-turn `volley`/`session` API, and execution
-  actions — how a server defines what Moxie *does*, on top of the AI seam.
-- [`sim-as-a-client.md`](sim-as-a-client.md) — **the SIM is just another backend client**: interchangeable
-  with a real robot, what it substitutes vs what's contract-identical, and the one TTS divergence.
+- [`overview.md`](overview.md) — the two channels (parent app and robot cloud), the components, and
+  privacy.
+- [`revival-path.md`](revival-path.md) — how a real robot gets onto this backend, by firmware version.
+- [`implementation-plan.md`](implementation-plan.md) — what is built and what is left.
+- [`agent-workflow.md`](agent-workflow.md) — how changes are made: hard rules, the agent brief,
+  integration rules, session loops.
 
-## Vision, plans & research
-- [`moxie-as-a-platform.md`](moxie-as-a-platform.md) — **the SDK**: how any AI/game drives Moxie as an avatar.
-- [`moxie-ecosystem.md`](moxie-ecosystem.md) — the full self-hostable stack build plan: brain, voice, ears, liveness.
-- [`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) — **measured against the state of the art**: a
-  cited, feature-by-feature audit of [OpenMoxie](https://github.com/jbeghtol/openmoxie) (MIT) and its active
-  forks, classified HAVE / ADOPT / BEYOND, with a ranked backlog, a per-item **status** column, and an
-  honest list of where they're ahead.
-- [`backlog/`](backlog/README.md) — **the build briefs**: a ranked audit line turned into something an agent
-  can execute — seam, cited vocabularies, design, tests, acceptance criteria, risks. Currently
-  [`backlog/expressiveness.md`](backlog/expressiveness.md) (the markup floor + the behavior planner),
-  [`backlog/security-broker-auth.md`](backlog/security-broker-auth.md) (broker ACL → device credentials →
-  spoof-proofing, phased) and [`backlog/telehealth.md`](backlog/telehealth.md) (puppet mode: the
-  `commands/telehealth` path + the "Be Moxie" console panel), [`backlog/voice-picker.md`](backlog/voice-picker.md)
-  (Speech + Listening dropdowns in the console, fed by live gateway discovery + installed local engines),
-  [`backlog/content-packs.md`](backlog/content-packs.md) (content packs: export, import-with-review,
-  and a `source_version` upgrade that never clobbers a locally edited item), and
-  [`backlog/live-sim-demo.md`](backlog/live-sim-demo.md) (**the headline goal** — the hosted Sim alive on a
-  static edge: same-origin Cloudflare Functions for brain, voice and ears, behind hard caps, degrading to the
-  pre-cached scripted Moxie when the gateway is unconfigured, over budget, at capacity or down) and
-  [`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md) (sandboxed content extensions —
-  a declarative rule list over a total JSON-AST expression language, capability-scoped and reviewable in
-  plain English, so a shared pack can *do* something without trusting its author) and
-  [`backlog/brain-picker.md`](backlog/brain-picker.md) (any brain, hot-swappable, per child — a closed
-  positive registry of brains, per-robot selection layered like every other config value, a live swap
-  with no restart, and an explicit `MOXIE_APP` that pins the appliance's own), and
-  [`backlog/production-hardening.md`](backlog/production-hardening.md) (production hardening — the
-  cross-process store decision made rather than deferred, MQTT reconnection, and a soak that stands in
-  for a week in a house), and [`backlog/content-authoring.md`](backlog/content-authoring.md) (content
-  authoring — the verb packs did not ship: where authoring lives, what a non-programmer may and may not
-  write, the edit → hear it → keep it loop priced in gateway calls, and why an authored item is exactly
-  as untrusted as an imported one), and [`backlog/qr-launch-cards.md`](backlog/qr-launch-cards.md)
-  (printable launch cards — a `GO<launch:MOD>` card a child holds up to Moxie, re-scoped from the
-  audit's **S** to an **M** after the row's premise turned out to be a real mechanism pointed the wrong
-  way: arming the robot's *runtime* QR reader, routing the scanned value into a launch against a closed
-  allowlist, and only then the sheet a parent prints), and
-  [`backlog/insights.md`](backlog/insights.md) (insights that mean something — where a parent-facing
-  vocabulary comes from when `Packet.event_name` is a free string, which questions a card can honestly
-  answer, and which two charts it refuses to draw), and
-  [`backlog/mobile-first-visit.md`](backlog/mobile-first-visit.md) (measured against production and now
-  the top live-page item: on a 390 px phone the Talk box is `0 × 0` on load and still at y = 2 095 after
-  the `CONTROLS` drawer opens, while Moxie speaks unprompted at ~7 s — she talks and the visitor cannot
-  answer; **not broken, buried**, and the turn completes once scrolled to), and
-  [`backlog/vendor-the-readme-hero.md`](backlog/vendor-the-readme-hero.md) (**shipped 2026-09-04** —
-  the one defect that had stood between the live site and a clean browser console: the README's hero
-  image was hosted on `github.com`, which `img-src 'self' data: blob:` correctly refuses. Vendored
-  rather than allow-listed, and the guard against the next one — `sim/tests/test_no_offsite_images.py`
-  — is worth more than the image), and
-  [`backlog/ota-push.md`](backlog/ota-push.md) (**OTA push — a specification, and the argument for not
-  building it**: the one backlog item that mutates firmware on hardware nobody here owns. Separates what
-  our recovered protos actually prove from what one person's prose describes, labels four things
-  **unknown** rather than guessing them, designs eight refusals before the happy path — including the two
-  hazards the seam already contains, a config document that is re-asserted on every reconnect and a fleet
-  whitelist shared with the per-robot one — and finds that the brick risk is not a bad payload but
-  defeating the robot's own signature gate. Concludes **specify, do not build**), and
-  [`backlog/visemes.md`](backlog/visemes.md) (**`TTSMark[]` visemes — the research slice** the audit
-  asked for instead of a build agent. Answers the load-bearing question — Piper **can** emit exact
-  per-phoneme durations, after a one-time graph patch that Piper itself ships — and then finds that the
-  row is not about marks: the browser consumer is *already built*, and the ceiling is a face with one
-  drivable degree of freedom and a combine rule that can only open her mouth, never close it. So a
-  perfect phoneme track renders as a differently-timed version of the same animation. Recommends the
-  cheap universal half first). One page there is the
-  odd one out and deliberately so:
-  [`backlog/community-signals.md`](backlog/community-signals.md) — **the inbound half**, what owners
-  holding a real Moxie report on public trackers and forums, cited by URL and date and ranked by how
-  strong the evidence is rather than how good the feature sounds. A second page shares that outward
-  gaze and adds a rule of its own:
-  [`backlog/turnstile-layout-collision.md`](backlog/turnstile-layout-collision.md) — a layout defect
-  **found latent and fixed the same day**: the Turnstile challenge rendered viewport-centred while the
-  chat dock grows upward as the ambient loop fills the transcript, carrying `#rail-toggle` into that
-  band over ~30 seconds. It could not occur while `turnstile: ""`, so it **gated arming Turnstile
-  rather than shipping**, and both existing mobile suites sample ~1 s after load, so neither could
-  observe it. The page now measures its own bottom stack and centres the challenge above it; the
-  guard drives the transcript to its cap through `ambient.js`'s own test seam and stops on a
-  measurement rather than a clock. **Read it for the numbers that changed under re-measurement** —
-  the collision window is `683 < vh < 909`, which excludes the phone the original filing was written
-  from — and for the second, still-open `env.js` defect the same driven state exposes.
-  Filed 2026-09-06 and deliberately left unstarted:
-  [`backlog/smoke-load-sensitivity.md`](backlog/smoke-load-sensitivity.md) (**the stack exercise cannot
-  tell "broken" from "busy"** — `run_smoke.sh` reddens under load, measured by an interleaved A/B that
-  failed on *both* sides including pristine `dev`. The eleventh instance of the family, sitting under the
-  INTEGRATION tier's own primary instrument, and the brief requires separating a fixed wait from a real
-  capacity limit — the second would be a product finding).
-  [`backlog/head-sweep-wait.md`](backlog/head-sweep-wait.md) — **a rewrite that lost to the code it
-  replaced**, reverted on its own committed terms rather than tuned until green; the split verdict it
-  introduced is the part worth keeping —
-  [`backlog/action-tag-drift.md`](backlog/action-tag-drift.md) — **the runtime never ends a module
-  because the model stopped writing `<exit>`**, 0/3 on real replies, with the line written for exactly
-  this failure still in place and still last. One untested candidate cause, and the wrong first guess
-  recorded beside it —
-  [`backlog/one-brain-no-failover.md`](backlog/one-brain-no-failover.md) — **one
-  `DEMO_GATEWAY_BASE_URL`, no second provider**, measured against a 33-minute upstream outage that
-  took the public demo's brain down while `/api/health` still read `live`. The scripted fallback held.
-  Three options costed, cheapest first, and the cheapest is *do nothing* —
-  [`backlog/grounding-gate-unrun.md`](backlog/grounding-gate-unrun.md) — **the retrieval fix shipped
-  with a narrower proof than the one it was written against**: the right paragraph is provably
-  selected, but the end-to-end gate that would show her answer stops glossing has never executed,
-  because the gateway was 503 for hours. The brief exists so that gap is not read as closed —
-  and it,
-  and [`backlog/head-travel-threshold.md`](backlog/head-travel-threshold.md) (**the twelfth
-  instance, and the first this project introduced while fixing the family** — block 4a's `spread > 40`
-  px floor waits a fixed four frames per sweep, so a loaded runner reads a short arc as a broken drive.
-  Red on pristine `dev` in 2 of 3 interleaved pairs. A fix was written and **reverted**: polling the
-  motor for arrival stalled in a way a standalone probe could not reproduce, and shipping past an
-  unexplained contradiction is how the other eleven survived).
+## Build contracts
 
-[`backlog/gamify-the-public-sim.md`](backlog/gamify-the-public-sim.md) — evidence for the **one part
-  of the owner's chat-first steer that was deliberately left open**, *"Gamify this for regular
-  people"*. It answers who actually visits a page like ours, what people loved that a web chat could
-  deliver, and what disappoints them about revival demos — **every claim carrying a URL and a date, and
-  an explicit "no evidence found" where the sources are silent** — then prices five candidate
-  directions with a test plan and a counter-argument each. It **does not choose the game**: two
-  questions in its §0 are the owner's to answer. Its §1 is the part to read first even if you skip the
-  rest, because it is a precondition rather than a proposal — the Talk box measures `0 × 0` on load and
-  `y = 2 095` after `CONTROLS`, so anything gamified onto a surface the visitor cannot reach is
-  decoration.
-- [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
-  cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
-- [`sil-and-cicd.md`](sil-and-cicd.md) — the simulator's design + the test/CI layers that guard it.
-- [`vision.md`](vision.md) — can Moxie *see*? Camera access reality + a local OpenCV/VLM vision stack (research).
+| Contract | What it specifies |
+|---|---|
+| [`rest-api-contract.md`](rest-api-contract.md) | Channel 1: the parent-app REST services (auth, children, pairing, robot settings). |
+| [`mqtt-and-conversation.md`](mqtt-and-conversation.md) | Channel 2: the endpoint QR, broker, MQTT topics and the conversation flow. |
+| [`ai-seam.md`](ai-seam.md) | The three AI seams a backend fills — speech-to-text, the brain (`RemoteChat`), text-to-speech — with wire shapes and a conformance checklist. |
+| [`config-and-telemetry-contract.md`](config-and-telemetry-contract.md) | The robot's managed state: `/config` pushed down, `/state` reported up, telemetry and the `LoggingPolicy` privacy gate. |
+| [`content-module-contract.md`](content-module-contract.md) | The content layer: the module JSON format, the per-turn `volley`/`session` API, and execution actions. |
+| [`sim-as-a-client.md`](sim-as-a-client.md) | Why the simulator is interchangeable with a real robot, and where it differs. |
+
+## Platform, research and the hosted site
+
+- [`moxie-as-a-platform.md`](moxie-as-a-platform.md) — the SDK: how any AI or game drives Moxie.
+- [`moxie-ecosystem.md`](moxie-ecosystem.md) — the self-hostable stack: brain, voice, ears, liveness.
+- [`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) — OpenMoxie compared feature by feature:
+  what we have, what to adopt, where to go beyond.
+- [`static-experience.md`](static-experience.md) — the static site on Cloudflare Pages: simulator,
+  setup page, example console.
+- [`sil-and-cicd.md`](sil-and-cicd.md) — the simulator's design and the CI tiers that guard it.
+- [`vision.md`](vision.md) — can Moxie see? Camera reality and a local vision stack (research).
+
+## Backlog briefs
+
+Design briefs for larger items, one per page; [`backlog/README.md`](backlog/README.md) has the status
+table.
+
+| Brief | Topic |
+|---|---|
+| [`expressiveness.md`](backlog/expressiveness.md) | Behavior markup and the behavior planner |
+| [`security-broker-auth.md`](backlog/security-broker-auth.md) | Broker ACL, device credentials, spoof-proofing |
+| [`telehealth.md`](backlog/telehealth.md) | Puppet mode: an operator drives Moxie |
+| [`voice-picker.md`](backlog/voice-picker.md) | Choosing speech and listening models in the console |
+| [`content-packs.md`](backlog/content-packs.md) | Exporting and importing content packs |
+| [`live-sim-demo.md`](backlog/live-sim-demo.md) | The hosted simulator with a real brain, voice and ears |
+| [`sandboxed-extensions.md`](backlog/sandboxed-extensions.md) | Content packs that can run rules safely |
+| [`brain-picker.md`](backlog/brain-picker.md) | Any brain, hot-swappable, per child |
+| [`production-hardening.md`](backlog/production-hardening.md) | Reconnection, a shared store, and a soak test |
+| [`content-authoring.md`](backlog/content-authoring.md) | Authoring content without programming |
+| [`qr-launch-cards.md`](backlog/qr-launch-cards.md) | Printable QR cards that start an activity |
+| [`insights.md`](backlog/insights.md) | Parent insights built from real activity |
+| [`mobile-first-visit.md`](backlog/mobile-first-visit.md) | The first visit on a phone |
+| [`vendor-the-readme-hero.md`](backlog/vendor-the-readme-hero.md) | Hosting the README image in the repo |
+| [`ota-push.md`](backlog/ota-push.md) | Firmware push: the spec, and why not to build it yet |
+| [`visemes.md`](backlog/visemes.md) | Lip-sync from phoneme timings |
+| [`community-signals.md`](backlog/community-signals.md) | What real owners report, ranked by evidence |
+| [`turnstile-layout-collision.md`](backlog/turnstile-layout-collision.md) | A mobile layout collision with the bot challenge |
+| [`smoke-load-sensitivity.md`](backlog/smoke-load-sensitivity.md) | The smoke test failing under load |
+| [`head-sweep-wait.md`](backlog/head-sweep-wait.md) | Head-sweep animation timing |
+| [`action-tag-drift.md`](backlog/action-tag-drift.md) | The model not emitting `<exit>` |
+| [`one-brain-no-failover.md`](backlog/one-brain-no-failover.md) | The hosted demo has one LLM provider |
+| [`grounding-gate-unrun.md`](backlog/grounding-gate-unrun.md) | An unrun end-to-end grounding check |
+| [`head-travel-threshold.md`](backlog/head-travel-threshold.md) | A load-sensitive head-travel test |
+| [`gamify-the-public-sim.md`](backlog/gamify-the-public-sim.md) | Evidence on making the public simulator a game |
 
 ---
-📖 [Docs index](../README.md) · [Back to top](../../README.md)
+[Docs index](../README.md) · [Project README](../../README.md)
