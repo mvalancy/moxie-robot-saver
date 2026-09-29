@@ -22,13 +22,10 @@ export const ts = await api("_lib", "turnstile.js");
 
 export const HOSTNAME = "demo.invalid.test";
 
-/** The two widget actions, by route name. Each is refused in the other's place: the
- *  cross-route replay mandatory check 2 exists for. */
+/** The two widget actions, by route name; each is refused in the other's place. */
 export const ACT = ts.TURNSTILE_ACTIONS;
 
-/* Cloudflare's documented dummy keys (developers.cloudflare.com/turnstile/troubleshooting/
- * testing/). The invisible always-pass sitekey stands in for this deployment because
- * `sim/web/turnstile.js` renders `appearance: "interaction-only"`. */
+/* Cloudflare's documented dummy keys (developers.cloudflare.com/turnstile/troubleshooting/testing/). */
 export const SITEKEY = "1x00000000000000000000BB";          // always passes, invisible
 export const SECRET_PASS = "1x0000000000000000000000000000000AA";
 export const TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
@@ -39,8 +36,7 @@ export const ARMED = Object.assign({}, GATEWAY, {
   DEMO_TURNSTILE_SITEKEY: SITEKEY,
 });
 
-/** Never in a response. The SITEKEY is deliberately absent: it is public, and §8 asserts
- *  it IS published. */
+/** Never in a response. The SITEKEY is absent on purpose: it is public and IS published. */
 export const FORBIDDEN = [KEY, BASE, "gw.invalid.test", "test-brain-model", SECRET_PASS];
 
 /** Every `error-codes` string Cloudflare can return; none may reach a response body. */
@@ -56,12 +52,10 @@ export const sent = [];
 /** `P.plan = { chat, turnstile }` — what the stubs answer next. */
 export const P = { plan: {} };
 
-/** What Cloudflare documents each dummy secret answering, dispatched on the secret it was
- *  sent. `plan.turnstile` overrides it for cases no dummy key produces. */
+/** Siteverify: the pass verdict for SECRET_PASS, else a failed one; `plan.turnstile` overrides. */
 function siteverifyAnswer(form, opt) {
   const p = P.plan.turnstile || {};
-  /* Never answers, but honours `opt.signal` as a real `fetch` does — otherwise an unset
-   * deadline would be indistinguishable from a set one. */
+  // Never answers, but honours `opt.signal` as a real fetch does (so an unwired deadline hangs).
   if (p.hang) {
     return new Promise((resolve, reject) => {
       const sig = opt && opt.signal;
@@ -93,8 +87,7 @@ function siteverifyAnswer(form, opt) {
     if (secret === SECRET_PASS) {
       return {
         success: true,
-        // siteverify's request carries no route, so a test names the action it is about;
-        // the default is safe HERE only — production has none (`actionFor`).
+        // siteverify's request carries no route, so a test names the action it is about.
         action: p.action || ACT.chat,
         hostname: HOSTNAME,
         challenge_ts: "2026-09-05T00:00:00.000Z",
@@ -159,14 +152,12 @@ export async function post(body, env, headers) {
 /** A turn with the dummy token attached — the ordinary case. */
 export const turn = (text, env) => post({ text: text || "hello moxie", [ts.TOKEN_FIELD]: TOKEN }, env);
 
-/** Well over `DEMO_MIN_AUDIO_BYTES` and under `DEMO_MAX_RECORD_MS`; a real RIFF because
- *  the route sniffs bytes, so a fake would measure the sniffer, not the bot control. */
+/** A real 1 s RIFF (the route sniffs bytes), between the byte floor and the duration cap. */
 export { wavBytes };
 export const CLIP = wavBytes(1000);
 
-/** The ears' env: ARMED plus an STT model. The admission queue is OFF so a mutation that
- *  leaks a slot (rows D2/D2b) reddens a named check instead of hanging the suite; §11
- *  still proves the slot comes back, with the ceiling set explicitly. */
+/** The ears' env: ARMED plus an STT model; queue OFF so a leaked slot (rows D2/D2b) reddens
+ *  a named check instead of hanging the suite. */
 export const EARS = Object.assign({}, ARMED, {
   DEMO_STT_MODEL: "test-ears-model",
   DEMO_QUEUE_MAX_WAIT_MS: "0",
@@ -189,8 +180,7 @@ export const clip = (env) => postAudio({ [ts.TOKEN_HEADER]: TOKEN }, env);
 
 export const gatewayCalls = () => limits.__state().stats.upstreamCalls;
 export const refundedUnits = () => limits.__state().stats.refundedUnits;
-/** Every unit the budget currently thinks is spent, at whichever scale — both windows are
- *  charged the same amount by the same call. */
+/** Units the budget thinks are spent (both windows are charged alike). */
 export const unitsSpent = () => Math.max(0, ...Object.values(limits.__state().budget), 0);
 export const verifyCalls = () => ts.__stats().calls;
 export const outcomes = () => ts.__stats().outcomes;
