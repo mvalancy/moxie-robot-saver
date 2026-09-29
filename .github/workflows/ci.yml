@@ -110,9 +110,8 @@ jobs:
         # as `(unnamed)` while `sim/virtual_moxie.py` named it. This drives the REAL bridge
         # over the same golden script the SIL robot is driven over
         # (sim/tests/goldens/cloud_to_robot_actions.json) and compares the decode entry by
-        # entry — and it carries a NEGATIVE CONTROL: it reverts the fix in the bridge source
-        # and requires the same comparison to go red, so it cannot pass vacuously. Node only,
-        # no browser. Guarded by sim/tests/test_ci_test_coverage.py.
+        # entry (reverting the fix reddens 9 checks). Node only, no browser. Guarded by
+        # sim/tests/test_ci_test_coverage.py.
         run: node sim/test_action_payload.mjs
       - name: Markup-floor render test (the 8 goldens through the real bridge)
         run: node sim/test_automarkup_render.mjs
