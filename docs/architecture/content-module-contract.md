@@ -308,7 +308,7 @@ one, else a small table of plain-English names — a module id we have no Englis
 the robot**: the served `ContentSchedule` still contains only `ContentSchedule` fields, and each
 entry only `Recommendation` fields. It is stored at `robots/<device_id>/schedule_explain.json` and
 served by `GET /schedule?device_id=…`
-([`mqtt-and-conversation.md` §3.8](mqtt-and-conversation.md#38-the-schedule-query-the-day-plan-and-the-parents-read-of-it-adaptive-2026-09-02)).
+([`mqtt-and-conversation.md` §3.8](mqtt-and-conversation.md#38-the-schedule-query)).
 
 ##### In the console
 

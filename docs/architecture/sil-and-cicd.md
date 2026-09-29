@@ -1,714 +1,240 @@
-# 🕹️ SIL simulator, web UI & the 1-week delivery plan
+# SIL simulator and CI
 
-> **Goal.** A **software-in-the-loop (SIL) Moxie** you can watch in a browser — face, arms, head, body
-> moving — driven by the **exact protocol reverse-engineered from firmware v3.6.4-Zephyr / OTA
-> v24.10.803**, wired to our MQTT server, tested in CI. No robot hardware required. Built and delivered
-> over ~1 week by a **layered set of session timers**.
+The **software-in-the-loop (SIL) simulator** is a virtual Moxie you can watch in a browser (face,
+arms, head, body) driven by the exact protocol recovered from firmware v3.6.4-Zephyr / OTA
+v24.10.803 and wired to our MQTT backend. This page covers what it simulates, how it is built, and
+the CI tiers that test it. How to run it: [`sim/README.md`](../../sim/README.md). Workflow details:
+[`sim/ci/README.md`](../../sim/ci/README.md).
 
 ## What is (and isn't) simulated — honest scope
 
-We do **not** boot the RK3288 Android `system.img`: it expects vendor HALs for hardware that doesn't
-exist off-robot (DLP projector, XMOS DSP, Lizard MCU, cameras) plus AVB. That path is a dead end for a
-sim. Instead:
+We do **not** boot the robot's RK3288 Android image: it needs vendor HALs for hardware that does not
+exist off-robot (DLP projector, XMOS DSP, Lizard MCU, cameras) plus verified boot. Instead:
 
 | Layer | Approach | Status |
 |---|---|---|
-| **Protocol** (MQTT topics, JSON envelopes, JWT) | A **virtual robot** that speaks it exactly ([`sim/virtual_moxie.py`](../../sim/virtual_moxie.py)) | ✅ working — round-trips against the real [`mqtt/`](../../mqtt/) supervisor |
-| **Behavior** (`<mark cmd:…>` markup, moods, gestures) | `sim/web/bridge/` parses the marks → drives face + arm gestures | 🟡 wired (D3 refining) |
-| **Motion** (arms/head/body DOF) | Drive a **WebGL (three.js) 3D Moxie** from the `libmotionlib` motor indices ([hardware-map](../reverse-engineering/hardware/hardware-map.md#native-motion-api-factory-libmotionlib-liblizardjni)) | 🟢 model+rig+API + live bus bridge |
-| **Face** (DLP expressions/visemes) | Render the animated face to a canvas **texture on the face-screen mesh**, from TTS marks + mood verbs | 🟢 6 expressions + mood-driven + icons-v2 badges |
-| **Component golden-tests** (optional, later) | Run specific ARM `.so` (`libchatscript`) under **qemu-user** for reference outputs | ⏸ backlog |
+| **Protocol** (MQTT topics, JSON envelopes) | A virtual robot that speaks it exactly ([`sim/virtual_moxie.py`](../../sim/virtual_moxie.py)) | Works; round-trips against the real [`mqtt/`](../../mqtt/) supervisor |
+| **Behavior** (`<mark cmd:…>` markup, moods, gestures, `Bht_*` trees, `icons-v2`) | [`sim/web/bridge/`](../../sim/web/bridge/) parses the marks and drives face and arms | Works |
+| **Motion** (7 DOFs) | A WebGL (three.js) Moxie rigged on the `libmotionlib` motor indices ([hardware map](../reverse-engineering/hardware/hardware-map.md#native-motion-api-factory-libmotionlib-liblizardjni)) | Works; hand sliders plus a SIL-only `/devices/<id>/commands/motor` channel |
+| **Face** | An animated canvas texture on the face mesh, driven by mood and TTS marks | Works; expressions, mood, icon badges, a basic talking mouth |
+| **Voice** | Plays the server's `CloudTTSResponse` (`commands/tts`) through Web Audio | Works |
+| **Component goldens** | Run ARM `.so` files (e.g. `libchatscript`) under qemu-user | Not started |
 
-### Visual reference — the 3D model (from the FCC external photos)
+The **firmware is the contract, not the runtime**: the sim is validated against the recovered protocol,
+so behavior proven here should hold on a re-homed robot. Two caveats: the SIL-only motor channel does
+not exist on a real robot (its motion is markup-driven on-device), and no physical robot has yet run
+our markup. See [SIM as a client](sim-as-a-client.md) for where the sim and a robot differ.
 
-So the model is buildable from repo facts even if the photos vanish, Moxie's real appearance
-([R1‑EXT], [fcc-teardown](../reverse-engineering/hardware/fcc-teardown.md)):
+### Visual reference: the 3D model (from the FCC external photos)
 
-**Moxie is a two-part robot: a distinct HEAD sitting on top of a separate cylindrical BODY** — NOT one
-continuous teardrop. **~15 in (≈38 cm) tall.**
+Written down so the model can be rebuilt from repo facts alone
+([fcc-teardown](../reverse-engineering/hardware/fcc-teardown.md)).
 
-- **Body — TWO chest segments with a clean seam:** an **upper chest** (carries the **arms** and the
-  **heart LED**) that is **slightly wider** and **overhangs** a **lower chest** (carries the **speaker
-  grille**), with a **crisp shadowed step** at the division. Teal `#3BB6B0`, on a circular disc base.
-  The **waist/lean pivot is ABOVE the speaker**, at the chest seam: the **lower chest (speaker) stays
-  planted** and only the **upper chest — arms, heart LED, head — leans**.
-- **Neck:** a **short, stubby** neck between head and upper chest — wide relative to its height (not a
-  tall stalk), sized so a full head tilt **clears the chest without intersecting**.
-  The **speaker grille is low on the front of the body** (stays at the bottom). The body **turns** on
-  the base (`BODY L/R` = yaw) and **leans** forward/back (`BODY F/B`).
-- **Head:** **wider than it is tall** — chubby at the base, close to a sphere but with a **pointy top**
-  (radii ≈ x 0.66 · y 0.60 · z 0.63). A **separate rounded head on top of the body**, clearly distinct from it (a visible neck/gap,
-  not blended). The head **tilts forward/back** (`HEAD UP/DN`). The **face lives on the head** (moved up
-  from the body).
-- **Face:** the animated face-screen is on the **front of the head** — a **flat/near-flat panel**
-  (shallow, **not a cone or domed bulge**) that **FILLS most of the head's front** and **runs up to meet
-  the camera zone**, forming one continuous front "screen + camera" assembly (only a modest teal border
-  around the outside; no teal gap between face and camera). It's a
-  **glowing DLP projector**, not a dull panel. It **fills the head's front frame with NO black border**
-  — the lit screen runs to the panel edge; the only dark area is a **small camera zone at the very top**. Render it as an **emissive, glowing** surface so the face
-  literally casts light; eyes/brows/mouth glow. In a dark scene the face is the light source.
-  > 💡 **The glow comes from the FEATURES themselves (emissive map), never a light shining at the pane.**
-> The screen is fully **matte** (roughness 1, no clearcoat/reflectivity) — a projection screen, not
-> glass — and the face's point light sits **in front of and below** the pane so it spills onto the
-> chest/surroundings without creating a hotspot on the face.
-> **Symbols** (`showIcons`) draw as a **large square panel over the eyes** with the face **dimmed**
-> behind them, matching the robot's scan/QR cue; a **`sleep`** expression closes the eyes to calm arcs.
->
-> 💡 **The glow comes from INSIDE/behind the face — never a haze on top of it.** Drive emissive from
-  > the face canvas so the drawn features themselves glow (a backlit projection screen), with any
-  > halo/bloom as **spill around the pane's edges** and light cast onto the head/chest/surroundings.
-  > **Expression legibility always wins:** the eyes/brows/mouth must stay crisp and high-contrast at
-  > every `setSceneLight` level — never let an additive overlay sit in front of the pane and wash it out.
-- **Scene lighting is adjustable:** expose a control to dim the whole scene from lit → dark; when dark,
-  **Moxie's projected face glows** and lights its surroundings. (Fable: expose e.g.
-  `window.moxie.setSceneLight(0..1)`; the HUD adds a slider.)
-- **Camera / forehead:** the camera is a **small lens** set into the head **above the face** — it is
-  **NOT** a massive black band/visor. Keep the dark area **subtle and small** (a slim recessed strip or
-  just the lens itself), the same teal shell elsewhere.
-- **Arms:** **two half-cylinder arms on the OUTSIDE of the body** (curved shells hugging the body sides),
-  lighter teal — each a **two-segment limb, 2 DOF**: a **shoulder** bending the arm **up/down**
-  (`L/R ARM UP/DN`) and an **elbow** bending the forearm **in/out** (`L/R ARM IN/OUT`).
-  **Kinematics:** the arm behaves like **a flat sheet of cardboard that folds at the joint** — the
-  shoulder and elbow hinges are **aligned/co-planar, single-axis**, so the forearm folds **flat in-plane**
-  toward the upper arm. No tilted/skewed hinge sweeping the forearm across the body.
-  **Shoulders are OUT-ONLY on the in/out axis** — the arm cannot swing into the body, so that control
-  rests at **0** (arm against the side), not centred. **The elbow is NOT a controllable DOF — it is a pure spring mechanism** (no slider, no commanded
-  value): its bend is **derived entirely from the shoulder angle**. The fold is driven by the shoulder's **OUT/IN axis** (motors 1/3) — *not* up/down: it's the arm
-  swinging **away from the body** that releases the spring. At rest (out/in `0`, arm flat against the
-  side) the forearm points **straight down**, zero fold; as the arm swings out the spring closes the
-  elbow, reaching **max bend at `13064`**. Raising the arm up/down alone leaves the forearm straight. The curve is smoothstepped end-to-end so there is
-  **no step** at the threshold — so the fold stays at its stop while the arm
-  is away from the side, and opens only inside the narrow contact band as the arm returns. The spring pulls the forearm **closed**; the
-  **body pushes it back open** when the arm rests against the side. So the elbow's resting fold is a
-  **function of the shoulder angle** — arm down against the body → forced open; arm lifted clear →
-  the spring closes it — and the motor can only **add** fold on top (never hyperextend). This is why the
-  firmware only ever drives elbows toward `MOTOR_MAX_POS`
+- **Two parts:** a distinct **head** on a separate cylindrical **body**, about 15 in (38 cm) tall,
+  teal `#3BB6B0`, on a circular disc base with a black rubber ring and a `moxie` wordmark.
+- **Body:** an **upper chest** (arms and heart LED), slightly wider and overhanging a **lower chest**
+  (speaker grille, low on the front), with a crisp shadowed step between them. The body turns on the
+  base (yaw) and leans forward/back; the lean pivot is at the chest seam, so the lower chest stays
+  planted.
+- **Neck:** short and wide, sized so a full head tilt clears the chest.
+- **Head:** wider than tall (radii about x 0.66, y 0.60, z 0.63), rounded with a slightly pointed top.
+  It tilts forward/back.
+- **Face:** a flat, **matte**, glowing DLP screen filling most of the head front, running up to a
+  **small** camera lens at the top (not a dark visor). The glow comes from the drawn features
+  (emissive map), never an overlay in front of the pane; expressions must stay crisp at every
+  `setSceneLight` level. Symbols draw as a large square panel over the eyes with the face dimmed;
+  `sleep` closes the eyes to arcs.
+- **Scene light:** adjustable (`window.moxie.setSceneLight(0..1)`); in the dark, the face lights its
+  surroundings.
+- **Arms:** two uniform-width half-cylinder shells on the outside of the body, lighter-blue hands of
+  the same width. Each arm has a **shoulder** (up/down) and an **elbow** that folds flat in-plane.
+  Shoulders are out-only on the in/out axis (rest at 0, against the side).
+- **The elbow is a spring, not a motor:** its fold is derived from the shoulder's out/in angle
+  (motors 1/3). Against the body the forearm is pushed straight; as the arm swings out the spring
+  closes it, reaching maximum fold at `13064`, smoothstepped so there is no jump
   ([evidence](../reverse-engineering/hardware/hardware-map.md#arm-anatomy-what-arm_in_out-actually-is)).
-  **Handedness:** motor names are from the **robot's own perspective** (the Lizard board is silkscreened
-  `L ARM …`/`R ARM …`), so with a camera in front, the robot's **LEFT** arm (motors 0/1) appears on the
-  **viewer's RIGHT**. See the [motor map](../reverse-engineering/hardware/hardware-map.md).
-- **Arm width is CONSTANT:** the **upper arm, forearm, and hand are all the same width** — a
-  uniform-width curved shell from shoulder to tip. No tapering.
-- **Hands:** the arm ends in a **hand** in a **lighter blue** — the **same width as the arm** (the
-  rounded lighter-blue end of that same shell), **not a narrow pill/capsule** stuck on the end.
-- **Ears:** **horizontal oval mic-port markings on the left & right sides of the HEAD** (clearly wider
-  than they are tall — not circles). **Paint them into
-  the head's texture — do NOT model them as separate/intersecting geometry** (that clips and z-fights).
-  Thin, subtle ovals flat on the shell; nothing protruding, nothing sunken.
-- **Heart LED:** on the **body front, high on the chest just under the head**: a **thin white
-  horizontal line with a TINY white heart beneath it** — a small, delicate light indicator, **not** a
-  big black/solid heart shape.
-- **Base:** circular disc base with a **black rubber ring**; `moxie` wordmark.
+- **Handedness:** motor names are from the robot's own perspective, so its **left** arm (motors 0/1)
+  appears on the viewer's right ([motor map](../reverse-engineering/hardware/hardware-map.md)).
+- **Ears:** thin horizontal oval mic-port markings painted into the head texture (not geometry).
+- **Heart LED:** a thin white horizontal line with a tiny white heart beneath it, high on the chest.
 
-Rig (each `libmotionlib` DOF → one node): `bodyYaw(5) → bodyLean(6) → { head(4)→face+forehead-cam ;
-shoulderL(0)→elbowL(1)→handL ; shoulderR(2)→elbowR(3)→handR }`. Body cylinder + separate head group so
-the neck/gap is real; arms as half-cylinder shells on the body exterior. Primitives first; a sculpted
-GLTF can replace them later without changing the motor→node wiring.
+Rig: `bodyYaw(5) → bodyLean(6) → { head(4) → face + camera ; shoulderL(0) → elbowL(1) → handL ;
+shoulderR(2) → elbowR(3) → handR }`.
 
-> ⚠️ **The current `sim/web/moxie.js` model is a single teardrop with the face on the body — this is
-> wrong and is being redone by Fable 5 to match the above** (separate cylinder body + head, forehead
-> camera, half-cylinder arms, single-finger hands).
-
-> ⚠️ **Known limitation — the arm shells are body-wrapped.** `makeArmShellGeometry()` maps every vertex
-> onto `bodyRadiusAt(y)`, baking the body's curvature into the mesh. Consequences: (a) the plate's local
-> **Z is not its own plane**, so the anatomically-correct hinge axes (up/down about the boss axis) can't
-> be expressed — rotating on Z sends the arm behind the body; (b) a Z rotation isn't mirror-symmetric
-> across ±X, so the two elbows fold slightly differently. The fix is to build each plate **flat in its own
-> local frame** (origin at the hinge-boss centre) and *place* it with a transform. A first attempt at that
-> rebuild put the plates inside the body and was reverted — it needs the boss offset and the plate's
-> outward yaw solved together, not guessed. Tracked as the next model task.
-
-> **Modeling & look → Fable 5.** The 3D model, materials, face art, and overall visual polish are
-> delegated to **Fable 5** subagents (`Agent(model: "fable")`); the build timer spawns one for each
-> UI/appearance milestone (D2–D5), while the main loop keeps the protocol/motor **wiring** correct so
-> the look and the mechanics stay decoupled.
-
-The **firmware is the contract, not the runtime.** Everything the sim does is validated against the
-recovered protocol docs, so "it works in the sim" means "it will work on a real re-homed robot."
+**Known limitation:** `makeArmShellGeometry()` ([`sim/web/moxie/geometry.js`](../../sim/web/moxie/geometry.js))
+wraps each arm onto `bodyRadiusAt(y)`, so a plate's local Z is not its own plane and the two elbows fold
+slightly asymmetrically. The fix is to build each plate flat in its own frame at the hinge and place it
+with a transform, solving the boss offset and outward yaw together.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  vm["🤖 sim/virtual_moxie.py<br/>(SIL robot: speaks MQTT/JSON)"] <-->|":1883 MQTT"| broker["📡 mosquitto"]
-  broker <-->|":9001 WebSocket"| ui["🖥️ sim/web/ (browser)<br/>WebGL 3D Moxie: face·arms·head·body"]
-  broker <--> sup["⚙️ mqtt/ supervisor<br/>+ MoxieApp (echo/LLM)"]
-  sup -.->|"commands/remote_chat<br/>+ markup + motor state"| broker
-  classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
-  classDef todo fill:#fff3c4,stroke:#f9a825,color:#5d4037;
-  class vm,broker,sup done; class ui todo;
+  vm["sim/virtual_moxie.py<br/>(SIL robot: speaks MQTT/JSON)"] <-->|":1883 MQTT"| broker["mosquitto"]
+  broker <-->|":9001 WebSocket"| ui["sim/web/ (browser)<br/>3D Moxie: face, arms, head, body"]
+  broker <--> sup["mqtt/ supervisor<br/>+ MoxieApp (echo / LLM / content)"]
 ```
 
-The browser subscribes (MQTT-over-WebSocket) to the same topics the robot sees, so the avatar animates
-from the **real** `remote_chat` replies + behavior markup + motor commands — it's a window into the live
-bus, not a mock.
+The browser subscribes over MQTT-over-WebSocket to the same topics a robot sees, so the avatar
+animates from real `remote_chat` replies, markup and audio. It is a window onto the live bus, not a
+mock. It also records bus events and replays them with their original timing; the canned
+[`sim/web/sessions/demo.json`](../../sim/web/sessions/demo.json) plays with no broker at all.
+Scripted conversations live in [`sim/scenarios/`](../../sim/scenarios/).
 
-## Design language
+The same `sim/web/` folder is the static site (hub, simulator, setup page, example console, docs
+explorer): [static experience](static-experience.md). UI style: [style guide](../design/style-guide.md).
 
-All web UI follows the **[valpatel.com-derived style guide](../design/style-guide.md)** — a dark
-robot **telemetry/mission-control HUD** (void `#0a0a0f`, neon-cyan `#00f0ff` accents, Inter +
-JetBrains Mono, mono-labels-on-dark). Fonts are vendored (offline). The functional milestones below
-(D1–D7) are complete; a **design/depth pass (D8)** re-skins the SIL into the control-room aesthetic and
-is ongoing — "feature-complete" is not "done", the look matters.
+## CI tiers
 
-- [~] **D8 — Control-room redesign.** Apply the style guide deeply to `sim/web/` (and the server UI):
-  Moxie in the void, HUD panels, telemetry gauges, comms-log transcript, live indicators. In progress
-  (Fable 5). Then: phoneme visemes, screenshots/gif, release tag.
+Workflows are edited as templates in [`sim/ci/`](../../sim/ci/) and installed as identical copies in
+`.github/workflows/` (see [RELEASING.md](../../RELEASING.md)).
 
-## The 1-week roadmap (drives the build timer)
+| Workflow | Trigger | What it runs |
+|---|---|---|
+| `ci.yml` (fast) | push to `dev`, PR into `dev` | doc and protocol guards, the hermetic Python suite, the SIL smoke, node and headless-browser suites, and the `--selftest` of both deployed checks |
+| `ci-deep.yml` (deep) | PR into `main`, nightly 03:17 UTC, manual | the full suite, HIL scenarios, compose stack, package and multi-arch image builds (not pushed), the soak test; manual dispatch adds the **live** suites |
+| `deployed.yml` | 4× daily, manual | `check_deployed.mjs` against the real deployment; manual `mic=spend` runs the paid microphone check |
+| `promotion.yml` | hourly at :37, manual | is `dev` reconciled after the last `dev → main` squash? |
+| `release.yml` | tag `v*` | package and GHCR images |
+| `cleanup.yml` | PR closed | deletes that PR's build cache |
 
-Each day = one shippable milestone. The build loop picks the next unchecked item.
+Everything on the fast tier is **hermetic**: no key, no network brain, no voice models.
 
-- [x] **D1 — Protocol SIL + CI.** `virtual_moxie.py` round-trip (state→config(paired)→remote-chat→reply);
-  `sim/run_smoke.sh`; a ready **GitHub Actions workflow** ([`sim/ci/ci.yml`](../../sim/ci/ci.yml): doc-links
-  + proto + SIL smoke + bridge/voice/qr/cloud tests). ✅ The checks run **locally today** (and in the
-  loop); the workflow ships as a template because installing it under `.github/workflows/` needs a
-  push token with `workflow` scope — copy it there to enable it on GitHub.
-- [x] **D2 — 3D Moxie + bus to the browser.** ✅ WebGL 3D Moxie (`sim/web/`, three.js r160, Fable 5):
-  teal teardrop shell, oval canvas face, two-segment arms, 7-DOF rig on the `libmotionlib` indices,
-  `window.moxie` API + control panel. ✅ **Live bus**: broker `listener 9001 / websockets` +
-  `sim/web/bridge/` (MQTT.js) subscribes `/devices/+/commands/remote_chat` and drives the avatar —
-  verified end-to-end (WS client receives a supervisor reply over `:9001`). ✅ **three.js + mqtt.js
-  vendored** in `sim/web/vendor/` — the sim runs with **no network/CDN** (self-sufficiency).
-- [x] **D3 — Behavior markup → animation.** `bridge.js` parses `<mark cmd:…>` — full `Gesture_*` set +
-  `Bht_*` behaviour-trees (Wing_Flap/Sleep/Idle_Curious/…) → whole-body poses, `playback-mood` → face
-  (evidence-based mood map), text → speech bubble, and **`icons-v2` → face badges** (School/Birthday/
-  Medical/Heart glyphs drawn on the face canvas, Fable 5) with show(cmd 0)/clear(cmd 2).
-- [x] **D4 — Motion from motor state.** ✅ hand sliders (D2) + a **SIL-only motor channel**:
-  `/devices/<id>/commands/motor` `{motors:{idx:val}}` → `bridge.js` → the rig animates the 7
-  `libmotionlib` DOFs over the bus. `virtual_moxie.py` scenarios can carry `motors` turns
-  ([`scenarios/motion.json`](../../sim/scenarios/motion.json)); unit-tested. ⚠️ sim-only — the real
-  robot's motion is markup-driven on-device, not a cloud motor stream.
-- [~] **D5 — Face expressions + visemes + transcript.** ✅ 6 expressions + mood-driven face (D3);
-  ✅ **conversation transcript panel** — `bridge.js` subscribes to `events/remote-chat` (child) +
-  `commands/remote_chat` (Moxie) and renders both sides in a scrolling panel; basic talking-mouth viseme
-  during speech. ⏳ optional: phoneme-accurate viseme mouth shapes.
-- [x] **D6 — Scenarios + record/replay.** ✅ `sim/scenarios/*.json` + `virtual_moxie.py --scenario`/
-  `--loop-seconds` + `sim/run_scenarios.sh` (in CI). ✅ **record/replay**: `bridge.js` records live bus
-  events and replays them (with original timing) through the same handlers — Record/Save/Load/**Play
-  demo** buttons; ships a canned `sim/web/sessions/demo.json` (a birthday exchange) that replays the 3D
-  Moxie **with no broker**.
-- [x] **D7 — Package + deliver.** `docker compose -f sim/docker-compose.yml up` = broker + supervisor +
-  web UI (+ `--profile demo` virtual robot); [`sim/README.md`](../../sim/README.md) one-command run.
-  Compose config validated; loop-replay verified. ⏳ optional polish: screenshots/gif, release tag.
-- [x] **D9 — The experience as one static site.** Beyond the SIL: a **combined parent app + simulator +
-  cloud console** on one Cloudflare-deployable bundle (`sim/web/`) — `index.html` front door
-  (`/hub.html`→`/` redirect), `setup.html` (phone-first revival QR, server-free), `cloud.html` (parent
-  console from a fixture that mirrors the real REST/MQTT shapes). All surfaces done and **deployed live**
-  at [moxie.mattvalancy.com](https://moxie.mattvalancy.com). Map + roadmap: [`static-experience.md`](static-experience.md).
-
-Progress is tracked here (check items off) and in [`ROADMAP.md`](../../ROADMAP.md). A lightweight
-per-tick status mirror also lives at `work/firmware-re/progress/PLAN.md` — but `work/` is git-ignored
-(it holds the multi-GB firmware images), so that file is **local working state only**, not published.
-
-## The layered session timers
-
-Three cadences run this campaign. They are **session-local crons** (they fire prompts into the running
-Claude Code session, which has the repo + docker + git) — so they progress while this session is alive,
-exactly like the existing `/loop`. (Durable cloud schedules can't touch the local repo, so they're not
-used for the build itself.) Session crons **auto-expire after 7 days** — which is exactly the delivery
-window; re-arm them if the campaign runs longer.
-
-| Tier | Cadence | Job | Prompt intent |
-|---|---|---|---|
-| **① Build** | hourly (`:13`) | Implement the next roadmap item | "Pick the next unchecked D-item in sil-and-cicd.md, build it, run `sim/run_smoke.sh`, commit, push, check the item off." |
-| **② Test** | every 3 h (`:37`) | Guard quality | "Run the SIL smoke + CI checks; expand `sim/scenarios`; verify the web UI renders; fix any regression; report." |
-| **③ Plan/Audit** | every 12 h (`:23`) | Keep it coherent & honest | "Run `work/firmware-re/progress/SELF-AUDIT.md`; review this roadmap; keep docs↔code↔protocol consistent; post a status summary." |
-
-The **existing RE/deconstruction `/loop`** continues in parallel as the "research" tier — it feeds new
-protocol facts that the build tier consumes. All tiers share `PLAN.md` + this roadmap as the source of
-truth, so they don't collide: each reads state, does the smallest useful increment, and records it.
-
-> **If this session closes:** the timers stop (they're session-local). Restart them by re-running the
-> `/loop` prompts, or keep the session open for the week. A future option is to move the *research* tier
-> to a durable cloud schedule while keeping *build/test* local.
-
-## Live CI — proving it against the real gateway and real speech, on demand
-
-Everything above is hermetic: it runs with no key, no network brain and no voice models, which
-is what keeps the fast tier fast and green. That leaves one honest gap — a green CI run has
-never actually talked to the brain or made a sound. The **deep tier**
-([`sim/ci/ci-deep.yml`](../../sim/ci/ci-deep.yml), mirrored at `.github/workflows/ci-deep.yml`)
-closes it with **manual-dispatch-only** steps.
+### Live suites (manual, they spend)
 
 ```sh
 gh workflow run ci-deep.yml --ref dev                  # live gateway suites
-gh workflow run ci-deep.yml --ref dev -f voice=true    # …plus the live VOICE suite
+gh workflow run ci-deep.yml --ref dev -f voice=true    # plus the live voice suite
 ```
 
-| Step | Runs | Needs | Costs |
+| Step | Runs | Needs | Cost |
 |---|---|---|---|
-| **Live gateway** (every dispatch) | `test_live_gateway.py` + `test_live_action_tags.py` + `test_live_content_e2e.py`, one `pytest -q -ra` | secrets `MOXIE_LLM_API_KEY` / `MOXIE_LLM_BASE_URL` / `MOXIE_LLM_MODEL` | **≈12–13 real gateway completions** |
-| **Live voice** (`-f voice=true`) | `test_live_talk_e2e.py` | the above + `piper-tts`, `faster-whisper`, `numpy`, and the two Piper voices | ~1 completion + ~126 MB of models on a cold cache |
-| **Live-brain SIL smoke** (every dispatch) | `sim/run_smoke.sh --live-brain` — broker + supervisor + runtime + live brain + TTS + virtual robot in **one process tree** | the same three gateway secrets | **1 completion** |
+| Live gateway | `test_live_gateway.py`, `test_live_action_tags.py`, `test_live_content_e2e.py` | secrets `MOXIE_LLM_API_KEY` / `MOXIE_LLM_BASE_URL` / `MOXIE_LLM_MODEL` | about 12–13 completions |
+| Live voice (`voice=true`) | `test_live_talk_e2e.py`: real Piper speech through real Whisper | the above plus `piper-tts`, `faster-whisper` and two pinned Piper voices | about 1 completion and ~126 MB of models on a cold cache |
+| Live-brain SIL smoke | `sim/run_smoke.sh --live-brain`: broker, supervisor, live brain, TTS and virtual robot together | the same secrets | 1 completion |
 
-**Why manual.** A dispatch spends **real gateway calls against a real budget/rate limit** —
-about a dozen per run, plus one more with `voice=true`. That is the whole reason these steps
-are `workflow_dispatch` only and not part of the PR gate: CI should not bill the gateway on
-every push. (The same `if:` also makes the fork-safety explicit — GitHub withholds secrets
-from fork PRs, so a fork can never reach these steps.) Run one before promoting `dev → main`,
-or whenever a change touches the prompt, the content modules, or the voice path.
+They are manual because each run bills a real gateway, and GitHub withholds secrets from fork PRs.
+Run them before a promotion or when a change touches the prompt, content modules or voice path.
 
-**The join.** The hermetic smoke above is real at every layer *except* the brain
-(`MOXIE_APP=echo`, reply `You said: hello Moxie`), and `test_live_gateway.py` is a real brain
-with no broker — "minus the broker", says its own docstring. `sim/run_smoke.sh --live-brain`
-is the one invocation that runs both halves together, and `virtual_moxie --reject-echo` is what
-makes it a claim about the AI seam rather than about the five layers around it: the run **fails**
-if the reply is the echo app's own answer, which is what a silent fallback to `echo` would
-produce while passing every other assertion. `MOXIE_SMOKE_APP=llm|content` picks the brain;
-with no key the harness **skips with status 0** and says so, so it is safe to type anywhere —
-and for exactly that reason the deep tier's step fails on its own `SKIPPED` line.
+- **Fail, don't skip:** every live test skips without credentials locally, but in CI the gateway step
+  fails on an empty key and the voice step fails unless at least 3 of its 4 tests passed.
+- **The join:** `run_smoke.sh --live-brain` is the one run with every layer real at once, and
+  `virtual_moxie --reject-echo` fails it if the reply is the echo app's (a silent fallback).
+- **What it proves:** the gateway answers; the prompt still makes the model emit action tags at the
+  asserted rate; `mqtt/content_modules/starter.json` comes back as a valid `RemoteChatResponse`; and
+  with `voice=true`, the `events/zmq → transcript → reply → CloudTTSResponse` loop works on real audio.
+- Voices are fetched by [`sim/ci/fetch_piper_voices.py`](../../sim/ci/fetch_piper_voices.py) from pinned
+  URLs with recorded sha256 and cached.
 
-**What it proves.** That the gateway answers; that the shipped prompt still makes the model
-emit `<exit>` / `<launch:…>` action tags at the asserted *rate* (the check that caught a 0/5
-baseline); that `mqtt/content_modules/starter.json` comes back on the wire as a
-spec-conformant `RemoteChatResponse`; and — with `voice=true` — that real Piper speech survives
-a real Whisper round trip and the whole `events/zmq → transcript → reply → CloudTTSResponse`
-loop works on actual audio, not the placeholder tone.
+### The deployed check
 
-**Why it fails rather than skips.** Every live test skips cleanly without credentials, which
-would make a secret-less dispatch a green run that proved nothing — the exact silent-skip gap
-this tier exists to close. So the gateway step **fails** on an empty `MOXIE_LLM_API_KEY`, and
-the voice step fails unless at least 3 of its 4 tests really passed. Both write a
-passed/skipped block (and the voice step its `[talk]` measurements) to the job summary.
+[`sim/check_deployed.mjs`](../../sim/check_deployed.mjs) is the only check that looks at what the host
+actually serves. It exists because Cloudflare Pages injects an analytics beacon into every HTML
+response, which our first CSP refused on every production load and nothing local could see. It drives
+a phone-sized browser (390×844, iOS user agent) and asserts:
 
-The two 63 MB Piper voices are git-ignored, so a runner has neither:
-[`sim/ci/fetch_piper_voices.py`](../../sim/ci/fetch_piper_voices.py) fetches them from **pinned**
-`rhasspy/piper-voices` `v1.0.0` URLs with recorded sha256 + size, is idempotent on files that
-already verify, and is paired with an `actions/cache` keyed on that same pinned release (plus
-one for `~/.cache/huggingface`, since faster-whisper downloads `base.en` itself). Details:
-[`sim/ci/README.md`](../../sim/ci/README.md).
-
-## The deployed check — the one tier that looks at what Cloudflare actually serves
-
-Everything above, hermetic and live alike, tests a server we started. **No suite in this repo
-asserted anything about the deployed artifact** until 2026-09-05, and that is a real gap rather
-than a purist one: Cloudflare Pages **injects its Web Analytics beacon into every HTML
-response** — a `static.cloudflareinsights.com` script tag this repo neither writes nor can edit
-— and the first CSP we shipped refused it on *every* production page load. Nothing local could
-have seen it. The long note in [`sim/web/_headers`](../../sim/web/_headers) is that post-mortem.
-
-[`sim/check_deployed.mjs`](../../sim/check_deployed.mjs) drives a real browser at a real
-deployment, phone-sized (390×844, a real iOS UA), and asserts:
-
-1. **the composer is reachable on a fresh load** — no tap on CONTROLS, no scrolling:
-   `#speech-input` and `#speech-btn` each have a non-zero box, lie inside the first viewport,
-   and win a `document.elementFromPoint` hit test at their own centre. Three clauses, because
-   the three ways this has failed each pass the other two;
-2. **the injected beacon loads and the page fires zero `securitypolicyviolation` events.**
+1. the chat box (`#speech-input`, `#speech-btn`) is reachable on a fresh load: non-zero size, inside
+   the first viewport, and winning an `elementFromPoint` hit test;
+2. the injected beacon loads and the page fires zero `securitypolicyviolation` events;
+3. no page asset failed on the wire;
+4. each key script **ran**, by a mark only that script leaves (e.g. `moxie.js` fills `#motors`,
+   `hud.js` labels the motor sliders, `env.js` creates `.env-badge`, `qr.js` draws ink on
+   `#qr-canvas`). An inert 200 OK script produces no console output, so only an effect can reveal it.
 
 ```sh
-node sim/check_deployed.mjs                     # the canonical origin sim/web/index.html declares, + /sim
+node sim/check_deployed.mjs                     # the canonical origin sim/web/index.html declares
 node sim/check_deployed.mjs https://host/sim    # any deployment (or MOXIE_DEPLOYED_URL=…)
-node sim/check_deployed.mjs --selftest          # hermetic teeth; the fast tier runs this every push
-gh workflow run deployed.yml                    # the real thing, on demand
+node sim/check_deployed.mjs --selftest          # hermetic; the fast tier runs this on every push
+gh workflow run deployed.yml                    # on demand in CI
 ```
 
-**It is a monitor, not a merge gate** ([`sim/ci/deployed.yml`](../../sim/ci/deployed.yml),
-schedule + dispatch), and the reasoning is measurement rather than taste. Gating a PR on its
-Pages preview needs a preview URL that is *true for that commit*: this repo's Pages integration
-creates **no GitHub Deployment** (`gh api …/deployments` → `[]`) so `deployment_status` never
-fires; a branch alias **404s before its first build** and serves the previous build after; a
-fork PR gets no preview at all; and — measured — **no `*.pages.dev` host carries the beacon**
-(23,425 bytes on every preview against 23,792 on the custom domain), so a preview cannot
-exercise the half this exists for. A gate that depends on someone else's build finishing is a
-gate people learn to re-run rather than read. What *does* run on every push is `--selftest`, in
-the fast tier's browser job: it serves four loopback copies of `sim/web` under the real
-`_headers` policy and requires the unmutated one to pass every clause while three mutated ones
-each redden a **different** one — a check on the checker, so the scheduled run can never become
-a green light for an instrument that stopped working.
+It is a **monitor, not a merge gate**: Pages previews have no GitHub Deployment to wait on, a branch
+alias serves the previous build until the new one lands, forks get no preview, and `*.pages.dev`
+hosts do not get the beacon. `--selftest` checks the checker: four loopback copies of `sim/web` under
+the real `_headers`, where the healthy one must pass and each mutated one must fail a *different*
+clause.
 
-## The check that deliberately spends — a real voice through the hosted microphone
+### The paid microphone check
 
-[`sim/check_hosted_mic.mjs`](../../sim/check_hosted_mic.mjs) is the complement of the one
-above, and the two are a matched pair: `check_deployed.mjs` **aborts** `/api/chat`,
-`/api/speech` and `/api/transcribe` so it can promise it costs nothing, and this one lets them
-through on purpose. It exists because one question on the live page could not be answered for
-free — *does a voice actually get from a browser microphone into the deployed ears?* Three
-files circle it ([`test_demo_ears.mjs`](../../sim/test_demo_ears.mjs) stubs `fetch`,
-[`test_mic_spend.mjs`](../../sim/test_mic_spend.mjs) replaces the recorder and answers `/api/*`
-at the browser, [`test_live_hosted_ears.py`](../../sim/tests/test_live_hosted_ears.py) POSTs
-with `urllib`), and none of them opens a microphone.
-
-Chromium can play a WAV **into `getUserMedia`** as a capture device
-(`--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=…`), so the whole real
-path runs: the permission grant, `mic.js::wavCapture`'s ScriptProcessor graph, `encodeWav`'s
-48 kHz → 16 kHz decimation, the upload, the route, the brain, the voice. Measured while
-writing it: Chrome **resamples the file to the capture rate** (a 22050 Hz clip captured at
-48000 Hz loops at 0.760 s against its true 0.750 s), and the file **loops with an unobservable
-phase**, which is why the recording runs for more than twice the clip's length.
+[`sim/check_hosted_mic.mjs`](../../sim/check_hosted_mic.mjs) plays a WAV into Chrome's fake microphone
+and drives the real page: `getUserMedia`, `mic.js` capture, 48 → 16 kHz encoding, upload, then what
+the deployment heard, answered and said. It spends (about 3 gateway calls per run; `MOXIE_MIC_BUDGET`,
+default 5, aborts extra requests at the browser).
 
 ```sh
-node sim/check_hosted_mic.mjs --selftest   # hermetic; the fast tier runs this every push
-node sim/check_hosted_mic.mjs --dry-run    # the real site, FREE — every spending route aborted
-node sim/check_hosted_mic.mjs              # the real site, SPENDS ~3 gateway calls
-gh workflow run deployed.yml -f mic=spend  # the same, on demand, in CI
+node sim/check_hosted_mic.mjs --selftest   # hermetic; the fast tier runs this on every push
+node sim/check_hosted_mic.mjs --dry-run    # the real site, free: spending routes aborted
+node sim/check_hosted_mic.mjs              # the real site, spends
+gh workflow run deployed.yml -f mic=spend  # the same in CI
 ```
 
-**First paid run, 2026-09-05, against production:** the microphone played *"Happy birthday! I
-hope your day is amazing."*; the page uploaded **311,340 B of 16 kHz mono PCM16** whose
-envelope correlated **0.985** with the clip played (0.329 against an unrelated one); the
-deployment answered *"Happy birthday, I hope your day is amazing."* — **word overlap 1.00**,
-decoy **0.00** — and the brain replied *"Happy birthday! I hope you have lots of fun today."*,
-at **1 STT + 1 chat + 1 TTS**, with **zero** `securitypolicyviolation` events and zero console
-errors. The budget is an interceptor rather than a promise: `MOXIE_MIC_BUDGET` (default 5)
-aborts request N+1 on a spending route at the browser.
+It is neither a gate nor a schedule, because a scheduled run would eat the budget the public demo
+shares.
 
-**It is neither a merge gate nor a schedule**, and the second half of that is the interesting
-one: `check_deployed.mjs` is free, so a 4×/day cron costs nothing; this one would be ~4,400
-billable calls a year out of the budget the public demo shares, to catch a failure
-`test_live_hosted_ears.py` already catches for nothing. A monitor that eats the thing it
-monitors is not a monitor. So the fast tier runs `--selftest` — four fake microphones against
-`sim/web` on loopback, where **digital silence** must redden *"the captured audio is AUDIBLE"*
-and **a different clip** (real, loud, the wrong words) must redden *"it is the clip the fake
-microphone played"* while the audible clause stays green — and the spending half is a
-`workflow_dispatch` job with `mic: dry` as its default.
+#### The audio clause is an ordering, not a magnitude — and that is a scar
 
-### The audio clause is an ordering, not a magnitude — and that is a scar
+CI runners saturate the captured audio (peak 1.0), which flattens any absolute-amplitude measure, and
+their capture is too degraded to tell the right clip from a decoy reliably. So:
 
-The first version of the audio assertion took the **peak** amplitude envelope, slid the source
-clip across the capture, and demanded an absolute correlation floor. It passed on a developer's
-box at 0.955–0.991 and **failed in CI** (run 34013443378):
+- the check scores the capture against the clip played **and** an unrelated clip, and asserts only
+  that the played clip wins a per-chunk **vote** (threshold 0.60), using log-RMS envelopes matched
+  against the looped template;
+- these capture statistics are asserted only by `--dry-run` and the paid run, and reported in CI;
+- what gates every push is deterministic: a **scorer proof** over committed fixtures (the decoy must
+  lose), a **degradation gauntlet** of seven modelled capture defects over the committed fixture, and
+  **digital silence** through a real capture, which must fail the "audible" clause.
 
-| case | capture peak | vs clip played | vs unrelated clip |
-|---|---|---|---|
-| baseline (the sentence) | **1.0000** | 0.430 | 0.294 |
-| mutation A (silence) | 0.0000 | −1.000 | −1.000 |
-| mutation B (a different clip) | **1.0000** | 0.339 | **0.471** |
-| control C (the golden) | 0.9997 | 0.592 | 0.277 |
+It does not prove a human voice works (the clip is the site's own prerendered speech); point
+`MOXIE_MIC_WAV` and `MOXIE_MIC_TEXT` at a recording to test that.
 
-`peak 1.0000` in three of four cases is the finding: **the runner's own capture saturates.**
-`getUserMedia`'s processing applies gain until the loud parts clip, and a *peak* envelope of a
-clipped signal is a flat top — the environment destroys the exact feature the measure was built
-on. Note what did **not** break: in every single case the clip that was actually played
-out-scored the other one. Saturation halved the magnitudes and left the comparison intact.
+### Browser-suite teeth
 
-Lowering the floor would have been the third per-box tune of one number, and a threshold tuned
-per machine reddens on the next machine. So the failure was reproduced **offline** instead —
-the capture chain modelled as loop → resample → compressor → clip → decimate — and candidate
-measures scored across nine conditions. Three results shaped the rewrite: **RMS beats peak
-under clipping** (0.848 where peak fell to 0.665); the **log** of the RMS envelope is nearly
-invariant to saturation (spread 0.007 across clean/saturated/hard, against peak's 0.316); and
-**no rigid template survives dropped `ScriptProcessor` blocks**, which time-warp the recording,
-so each ~1 s chunk is matched against its best position anywhere in the template instead.
+A green browser suite proves its assertions are present, not that they are load-bearing.
+[`sim/tools/page_teeth_check.py`](../../sim/tools/README.md) serves each suite a deliberately broken
+site (a script deleted, a script served 200 OK but inert, a fetch 404'd, a document emptied, a resource
+stalled) and records which checks stay green. A suite is only in scope for a breakage if its healthy
+run actually requested that resource, and a stall whose throttle did not apply is skipped rather than
+read as a pass.
 
-A fourth finding came from the rewrite's own teeth one run later: **the template has to be the
-looped file, not one period.** Chrome's fake device loops the clip for as long as the stream is
-open, so a chunk of the capture routinely straddles a loop seam and has no matching position in
-a single copy — it matches nothing and votes at random. A 0.45 s chunk of the 0.75 s committed
-golden straddles most of the time, which is exactly how the *short* fixture failed at 52 % while
-the 3.95 s sentence passed at 89 %. Tiling each template with a copy of itself takes the golden
-to **91 %** clean and **89 %** with a tenth of the blocks dropped, while the mutation that must
-fail sits at 22 %. Both sides are tiled, so neither gets more chances at a coincidental match.
+Rules that came out of it, for anyone writing a browser suite:
 
-The clause is now: score the capture against the clip played **and** against an unrelated one —
-same recording, same machine, same code — and assert only that **the played clip wins**.
+- Install **both** a `console` and a `pageerror` listener. A 404'd `<script src>` and a CSP refusal
+  surface only on the console. Use `watchPage()` + `notable()` from
+  [`sim/browser_harness.mjs`](../../sim/browser_harness.mjs), which forgive expected noise **by count**
+  at the interceptor that provokes it, never by widening a pattern.
+- Assert an **effect**, not a flag. Never add a `window.__loaded` marker for a test.
+- Check canvas ink with alpha (`d[i + 3] > 0`), not a colour channel: an untouched canvas is
+  `rgba(0,0,0,0)`.
+- Wait on `img.complete` without swallowing a timeout.
+- Keep suites hermetic: intercept sidecar probes (`:8081`, `:8082`) and `/api/health`, or the result
+  depends on what happens to be running on the machine.
+- Assert recorded state after completion, never a live sample.
 
-*How* it wins took one more measurement. Asserting a difference of scores (`median(played) −
-median(unrelated) ≥ 0.05`) was still too noisy to gate on: on a 24-core box at **load 29**, a
-healthy run scored **+0.058** and the mutation that must fail scored **+0.038**. Twenty
-thousandths between "green" and "the teeth work" is a coin toss with a decimal point. So the
-comparison is a **vote**: each of ~24 one-second chunks is an independent head-to-head, and the
-clause asserts the fraction that chose the played clip. Votes concentrate where a difference of
-medians does not — across the same nine conditions, true positives run **0.750–0.875** and
-inversions **0.208–0.429**, a gap of **0.32** against the difference's 0.02. The threshold is
-0.60, in the middle of that gap and deliberately not 0.5 + ε.
+### `promotion.yml`: was the last promotion finished?
 
-**Then the runner failed a second time, and the second failure changed the design.** The vote
-survived saturation on the runner exactly as predicted — but the same run reported this:
+Squash-merging a `dev → main` PR leaves `dev` one commit behind `main`, and nothing goes red. This
+check reddens if that state persists.
 
-    mutation B (the DECOY clip played)  ->  71 % of 24 chunks voted for the SENTENCE
-                                            medians 0.585 sentence / 0.514 decoy
+```sh
+python3 sim/tools/check_promotion_state.py        # 0 finished · 1 unfinished · 2 could not measure
+gh workflow run promotion.yml                     # the same in CI
+gh workflow run promotion.yml -f grace_seconds=0  # ignore the post-squash window
+```
 
-A **false green** on the one case that proves the audio is the right audio, which is worse than
-a red. The scorer is not at fault: handed the two fixtures directly it separates them **100 % /
-0 %**. The runner's *capture* is degraded past the point where a waveform statistic over it
-means anything, and no model reproduced it — this developer's box votes 20-47 % on that same
-mutant at every load and saturation tried.
-
-A statistic nobody can reproduce is not a thing to gate a merge on. So **both statistics over a
-browser capture — the identity vote and the fidelity magnitude — are asserted only by
-`--dry-run` and the paid run**, against a real deployment where the audio path is somebody's to
-look at, and are *reported* in CI. What gates every push instead is deterministic:
-
-* **the scorer proof** — the same scorer over the committed fixtures with no browser in the
-  path: the sentence must win, the **decoy must lose**, the golden must win. Identical on every
-  machine, and still loud if the measure stops discriminating;
-* **the degradation gauntlet** — the fixture, looped as the fake device loops it, through seven
-  modelled capture defects, each of which must hold *and* must fail with the templates swapped;
-* **mutation A** — digital silence through a real browser capture must redden the *audible*
-  clause. A binary tooth (peak 0.0000 against 0.96) that reddened correctly on the runner too.
-
-The **degradation gauntlet** degrades the *committed fixture* rather than a browser capture,
-and that swap is the same lesson once more: degrading the runner's own already-degraded
-recording proves something only on the machines that happened to record well — run 101437894164
-passed the gauntlet while a real mutant sailed through at 71 %. Over the fixture it is pure
-arithmetic on bytes that are identical everywhere, so it costs nothing, cannot flake, and a
-threshold that only holds on the machine it was tuned on cannot survive it.
-
-**What it does not prove:** the clip is the site's own prerendered speech, not a human being.
-Point `MOXIE_MIC_WAV` + `MOXIE_MIC_TEXT` at a recording of a child and the same run closes that
-too. And a green `--selftest` is **not** "the audio round trip is verified": the fast tier runs
-no ASR (the transcript is a fixture), and it asserts neither recording fidelity **nor that the
-capture is the clip that was played** — both are browser-capture statistics this runner cannot
-carry. It asserts that a device opened, that the upload is a well-formed *audible* 16 kHz WAV,
-and that the scorer still discriminates on committed bytes.
-
-## Teeth on the browser suites — which checks survive a broken page
-
-A green browser suite proves its assertions are **present**. It does not prove they are
-**load-bearing**. On 2026-09-06 five of them turned out not to be, and every one was found by
-luck — a red on an unrelated diff, or somebody noticing while measuring something else (rule 30
-in [`agent-workflow.md`](agent-workflow.md), and that date's status log). Nobody had
-ever swept for them. [`sim/tools/page_teeth_check.py`](../../sim/tools/README.md) makes the
-search deliberate: it serves each suite a **deliberately broken site** and records which of its
-checks stay green.
-
-The breakages are the shapes that actually ship — a script **deleted** (404), a script served
-**200 OK and inert** (no 404, no network error, no code: the subtle one), a fetch **404'd**, a
-document **emptied** behind the same *"Loading…"* placeholder that hid defect 4, and one
-resource **stalled** ~24 s by padding it to 24 MB behind a 1 MB/s throttle. Nothing intercepts
-requests: eleven of these suites intercept for themselves, and a second interceptor would change
-what they are testing.
-
-Two rules keep it an audit rather than a noise generator.
-
-- **Exposure is measured.** A ledger records every URL each suite's browser actually requested
-  on the healthy run, and a suite is in scope for *"delete `qr.js`"* only if it fetched `qr.js`.
-  A green under a breakage a suite never touched is not a finding. **False positives are worse
-  than misses**: one of those sends somebody to fix a test that works.
-- **The instrument may not fail quietly.** The loader hook throws on a moved anchor, and a stall
-  row whose throttle did not apply is *skipped*, never read as "everything stayed green". That
-  bug was in the tool's own first draft — puppeteer 24 takes `{download, upload, latency}` and
-  the CDP field names throw — so a 24 MB file arrived in 231 ms, every suite passed, and the
-  sweep would have reported **no findings** for the whole not-loaded-yet family.
-
-### What the first sweep found: the suites are largely sound
-
-Most breakages are caught, usually by several suites at once, and most of what the tool flags is
-a suite that merely *loads* the broken page without claiming anything about it — rejected by hand,
-not reported. `test_a11y.mjs` is the model to copy: it carries an explicit anti-vacuity guard,
-*"ambient self-talk actually ran (otherwise the next check is vacuous)"*, and that is the check
-that reddened when the corpus 404'd while three quip assertions went vacuously green on `[]`.
-
-Two checks genuinely had no teeth. Both are *"it looked fine"* rather than a missing assertion:
-
-| check | survived | why |
-|---|---|---|
-| `test_csp.mjs` — *"the QR card actually drew a code"*, *"the Wi-Fi QR drew"* | `qr.js` deleted **and** `qr.js` served inert | `if (d[i] < 128) dark++` counts a canvas **nobody drew on**: an untouched 2-D canvas is `rgba(0,0,0,0)`, so its red channel is 0 for every pixel. Both runs reported exactly **45000 dark px** — the whole 300×150 default canvas — against a `> 500` bar, while `hud.js` had bailed at `!window.moxieQR` and the card could not draw at all. |
-| `test_csp.mjs` + `test_docs_explorer.mjs` — *"the README hero … actually DECODED"* | the hero stalled on the wire | both wait on `img.complete` and then `.catch(() => {})` the wait, so an expired wait leaves the check running — and a PNG still arriving does **not** report `naturalWidth === 0`. Chrome fills the dimensions in from the IHDR header. Measured: `{"complete":false,"w":1424,"h":1251}`, green, on an image the page had not decoded. Both files' comments assert the opposite in prose. |
-
-Each fix is two terms — `d[i + 3] > 0` and `hero.complete` — and each carries the control this
-repo asks for: RED against the breakage, GREEN against the healthy page. The canvas one is also
-proved without any suite in the path: a blank 300×150 canvas gives **45000** under the old rule
-and **0** under the new one, while a canvas holding 900 px of real ink gives **900** under both.
-
-### The inert script: a 200 OK that does nothing, and the clause that finally sees it
-
-The sweep's last open finding was `sim/check_deployed.mjs --selftest` **exiting 0 against a page
-that cannot work**. Measured on 2026-09-06 against `dev`: serve `sim/web/hud.js` 200 OK and inert —
-no simulator control wires up at all — and the deployed-artifact checker passed, **88 checks, rc 0**.
-The same for `moxie.js`, for `mode.js`, and for `qr.js`: four different broken pages, four greens.
-
-The reason is structural, and it is why no listener could have closed it. **An inert script produces
-no console output.** The `<script>` tag resolves, the response is a real 200 with a real body, the
-request log is clean, and nothing throws — so a `console`/`pageerror` listener sees nothing, and
-`check_deployed`'s own `deadAssets` clause (an asset that *failed* on the wire) is blind by
-construction. Counting requests is no help either: the inert file **was** fetched, and the count is
-identical.
-
-**The only way to notice an inert script is to assert an observable effect it is supposed to have** —
-a per-script contract, not a generic rule. The three obvious generic approaches are traps: *"a global
-is defined"* is brittle and most of this page is ESM; *"count the network requests"* gives the same
-number; *"snapshot the DOM"* is huge, noisy, and gets loosened the first time it flaps. So
-`check_deployed.mjs` grew a **clause 4** that names one cheap, specific mark per script:
-
-| script | the mark clause 4 asserts | why it is only true if that file ran |
-|---|---|---|
-| `moxie.js` | a `<canvas>` inside `#app`, and `#motors`/`#faces` non-empty | it appends the three.js renderer's own canvas, and `buildPanel()` fills two elements `sim.html` ships **empty** |
-| `hud.js` | every motor slider carries an `aria-label` | `labelMotors()` copies the row's visible text onto the input; `moxie.js` writes those rows *without* one, so the attribute is hud.js's signature |
-| `mode.js` | `body[data-mode]` is not `"boot"` | `env.js` paints that attribute from mode.js's answer and writes the literal `"boot"` when there is no answer |
-| `env.js` | a `.env-badge` exists in the topbar | env.js **creates** the element; `sim.html` has no such node |
-| `qr.js` | pressing **Make** leaves opaque ink on `#qr-canvas`, and prints its JSON payload | the encoders and the canvas renderer are qr.js's whole content; the button's listener is in hud.js and bails at `!window.moxieQR`, so an inert *either* leaves the canvas blank |
-
-None of these is a flag added for the test. **A `window.__loaded` marker or a `data-ran` attribute
-would make the check pass by making the product carry test scaffolding**, and the next person to read
-`sim.html` deletes it as dead weight — after which the check is green forever. Three signals that
-*look* like witnesses were rejected on exactly that reading of the markup: `body[data-bus]` (sim.html
-ships `data-bus="idle"` and hud.js's first `sync()` computes `"idle"` from *"not connected"* — bit for
-bit identical either way), `#link-label` (ships the exact text hud.js would write), and
-`#alive-toggle`'s class and `aria-pressed` (both ship set).
-
-Five new mutations in the file's own `--selftest` hold it: **E** `moxie.js` inert, **F** `hud.js`
-inert, **G** `mode.js` inert, **H** `env.js` inert, **I** `qr.js` inert, each of which must fire the
-clause that names *its* file. E and F are the pair that proves the marks are attributable rather than
-one assertion in five voices: gutting `moxie.js` takes hud.js's mark down with it (no sliders left to
-name), while gutting `hud.js` leaves every moxie.js mark standing.
-
-**One finding that looked caught was caught for the wrong reason.** `qr.js` *deleted* reddened the
-selftest — but not through an assertion: mutation D did `rmSync(dir/qr.js)`, which threw **ENOENT
-during server setup**, before a single probe ran. The exit code was right and the evidence was a stack
-trace; it would have scored identically with every clause in the file deleted. D now deletes with
-`{ force: true }`, each mutation's anchor file is its own named check, and the deletion is caught
-where it always should have been — the **baseline** target 404s on `qr.js` and clause 3 reddens.
-
-**Measured, not reasoned, in both directions.** With `page_teeth_check.py`'s own `gut` applied, the
-same suite's verdict flips: `qr-inert`, `hudjs-inert`, `moxiejs-inert`, `modejs-inert` went **NO
-TEETH (rc 0, 88 checks)** → **caught (rc 1; 38 / 46 / 50 / 32 red)**, and the new `envjs-inert` row
-is caught too — **TIER A findings for this suite: 0**. Each gut reddens exactly the clause that names
-its file and no other: gutting `mode.js` fires **one** check (`data-mode` … got `"boot"`), gutting
-`qr.js` fires **two** (both qr.js clauses, with every moxie.js and hud.js mark still standing). Green
-and stable on the healthy page 3/3 at **25 checks**, and — the run that matters for a monitor — green
-against live production at **29 checks**: `data-mode="live"`, badge `MOXIE ONLINE`, 7 named
-sliders, 14 expression glyphs, **10880 ink px** on a 180×180 QR canvas, 0 console errors.
-
-**What clause 4 does not cover, said out loud.** `sw-reset.js`, `stub.js`, `bridge.js`, `audio.js`,
-`life.js`, `mic.js`, `rail.js`, `turnstile.js`, `cloud-transport.js` and `ambient.js` are all loaded by
-`sim.html` and none is asserted. Several have **no observable effect on an untouched page** —
-`stub.js` and `cloud-transport.js` answer a turn nobody has taken, `turnstile.js` renders nothing
-without a sitekey — which is a finding, not a gap to work around. `ambient.js` does have one, but it
-is ~7 s away and this file must stay well inside that; [`test_ambient_guard.mjs`](../../sim/test_ambient_guard.mjs)
-and [`test_a11y.mjs`](../../sim/test_a11y.mjs) hold that one instead.
-
-The same shape, more widely: **four** of the browser suites installed **no `console` and no
-`pageerror` listener at all** — `test_a11y`, `test_bg_perf`, `test_liveliness`,
-`test_mobile_layout` — and a fifth, `test_console_insights`, held a `pageerror` listener only.
-(An earlier draft of this paragraph listed `test_console_insights` among the four and left
-`test_liveliness` implicit; the counts above are re-measured against `origin/dev@94cb8b4`.
-`sim/test_ambient.mjs` is sometimes counted here and should not be: it opens no browser at all,
-reading `ambient.json`, `audio/index.json` and `sim.html` as **files**.) A page script that 404s
-or throws is structurally invisible to a suite with no listener; it notices a missing script only
-where some behavioural assertion happens to depend on it (`a11y` does, through the Wi-Fi reveal;
-`liveliness` and `mobile_layout` do not, and both exited 0 with `qr.js` deleted).
-
-**`pageerror` alone is not enough**, which is why the fifth suite is on this list too. It fires
-for uncaught exceptions and nothing else; a `<script src>` that 404s raises no exception anywhere
-and surfaces as a **console** message, and so does a CSP refusal. `test_console_insights` was
-blind to a missing `app.js` while holding a listener.
-
-### Giving them eyes (2026-09-06)
-
-`sim/test_ambient_guard.mjs` already had the right idiom — both listeners plus a `notable()`
-filter that forgives provoked noise **by count** rather than by widening a pattern — so it was
-hoisted into [`sim/browser_harness.mjs`](../../sim/browser_harness.mjs) as `watchPage()` +
-`notable()`, and all five suites above now share that definition rather than forking it
-(`test_ambient_guard`'s own check count is unchanged at 36: the hoist is behaviour-neutral).
-
-The assertions are on the absence of **unexpected** output, never on silence, because some of
-these fixtures legitimately produce console errors and an `errs.length === 0` that reddens on
-benign noise gets loosened by the next reader into something that proves nothing:
-
-| suite | what the page legitimately says | how it is forgiven |
-|---|---|---|
-| `test_a11y` | four CSP refusals: it serves the real `_headers` policy on a `127.0.0.1` origin, so `env.js` fires its two optional-sidecar probes at `:8081`/`:8082` and `connect-src 'self'` refuses both — twice each, once as the violation and once as the failed fetch | only when the message names one of those two ports **on this origin** *and* says the CSP refused it, capped at four. A `script-src` refusal matches neither half. |
-| `test_console_insights` | one deliberate `503` (the only way to reach the *"telemetry threw"* render path) and one `404` for a favicon `server/static/` does not ship | counted at the interceptor that causes each one |
-| `test_liveliness` | two refused sidecar probes and one `404` for `/api/health` | counted at the interceptor — see below, because this suite had no interceptor at all |
-| `test_bg_perf`, `test_mobile_layout` | nothing — measured 0 on every page they open | silence is the honest bar; the counters are wired anyway so a later fixture has the correlation ready instead of a widened pattern |
-
-**`test_liveliness` had to become hermetic before it could be given a stable assertion, and
-that is the more useful half of its fix.** It intercepted nothing, so on the `127.0.0.1` origin
-it serves — which `env.js` treats as LOCAL — the two optional-sidecar probes went to the *real*
-loopback ports. On a box running Piper on `:8081` they succeed; in CI they are refused. What the
-page then believes about Piper decides whether `#speech-btn` is the typed turn or the local
-"Say" control, so the chat-dock geometry this suite measures already depended on what happened
-to be running on the machine — and a console assertion written against either environment would
-have been red on the other. Both probes are refused and counted now, and `/api/health` is
-answered `404` explicitly instead of being continued to a static server that holds no such file
-(byte-identical behaviour, now countable). 32 → 36 checks, every pre-existing assertion still
-green.
-
-Red/green controls, one script deleted per suite, run against `origin/dev@94cb8b4` and then
-against the same broken page with the listeners in place:
-
-| suite | script deleted | before | after |
-|---|---|---|---|
-| `test_a11y` | `sim/web/sw-reset.js` | ✅ 69 checks passed | ❌ 404 on the console |
-| `test_bg_perf` | `sim/web/wire-bg.js` | ✅ 25 checks passed | ❌ 404 on the console |
-| `test_mobile_layout` | `sim/web/qr.js` | ✅ 222 checks passed | ❌ 404 on the console |
-| `test_console_insights` | `server/static/style.css` | ✅ 94 checks passed | ❌ 404 on the console |
-| `test_liveliness` | `sim/web/qr.js` | ✅ 32 checks passed | ❌ 404 on the console |
-
-Each suite was then run **three times** against the healthy page: 3/3 green with an identical
-check count every run (a11y 79, bg_perf 30, mobile_layout 235, console_insights 94, liveliness
-36, ambient_guard 36).
-
-**The limit of the instrument, stated plainly:** eyes catch a 404, a CSP refusal and a thrown
-exception. They do **not** catch a script served *200 OK and inert* — the `gut` breakage — which
-produces no console output at all. That family needs a behavioural assertion instead, and it is
-the section above (*"The inert script"*) that supplies one for `check_deployed.mjs`: one named
-observable effect per script, asserted. **The limit is still real for these five suites** —
-nothing was added to them here, and a `watchPage()` listener can never see an inert script by
-construction.
-
-One real defect turned up on the listeners' first run, in a suite's own instrument rather than in
-the page: `test_bg_perf` stretched rAF timestamps by **multiplying** them, so putting `inflate`
-back to 0 stepped the clock backwards by minutes. `bg.js` clamps `dt` from above
-(`Math.min(2.4, elapsed / 16.7)`) and not from below, so that drove a ping radius negative and
-every later frame threw `IndexSizeError: arc(): The radius provided (-53809.6) is negative`. A
-real `requestAnimationFrame` timestamp never decreases, so `bg.js` cannot reach that state on its
-own — the stretch is an accumulated **offset** now, monotonic whatever `inflate` does.
-
-Only [`test_responsive.mjs`](../../sim/test_responsive.mjs) asserts on the 404s it observed, and
-it is the suite that caught the most breakages here.
+It uses read-only repo permissions and gates nothing. It forgives 30 minutes after the squash (the
+longest reconcile observed was 990 s). It is not a fast-tier step because the defect is precisely a
+push that never happened. Its teeth run in the fast tier: `sim/tests/test_promotion_guard.py` builds
+real git repositories with a stubbed `gh` and checks the full truth table.
 
 ## Run it now
 
 ```sh
-# one-shot local proof (broker + supervisor + virtual robot):
-bash sim/run_smoke.sh
+bash sim/run_smoke.sh               # broker + supervisor + virtual robot, echo brain
 # → ✅ SIL round-trip OK — state→config(paired)→remote-chat→reply
 
-# the same round-trip with a REAL brain instead of the echo app (needs a gateway key in
-# the environment or a git-ignored mqtt/.env; skips with status 0 and says why without one):
-bash sim/run_smoke.sh --live-brain
-# → 🧠 live brain reply: "Hello there! I'm so happy to see you. How was your morning?"
-# → ✅ SIL round-trip OK — … (🧠 live brain: the reply is not the echo app's)
+bash sim/run_smoke.sh --live-brain  # the same with a real brain (needs a gateway key;
+                                    # skips with status 0 and says why without one)
 ```
 
 ---
-📖 [MQTT server](../../mqtt/) · [Cloud protocol](../reverse-engineering/protocol/cloud-protocol.md) · [Behavior markup](../reverse-engineering/runtime/behavior-markup.md) · [Hardware map](../reverse-engineering/hardware/hardware-map.md) · [Roadmap](../../ROADMAP.md)
-
-## `promotion.yml` — was the last promotion *finished*?
-
-The second monitor, and the only tier that looks at the **repository** rather than at the product.
-Squash-merging the standing `dev → main` PR leaves two things undone that `gh pr merge` will not do
-for you: `dev` ends **one commit behind `main`** (the squash is a commit `dev` has never seen), and
-the **standing PR is deleted** (merging closes it; nothing re-opens it). Neither is visible from the
-merge output, nothing goes red, and the damage surfaces days later — as a `CONFLICTING` promotion PR,
-or as "is `dev` green?" with no PR to read.
-
-It was written down in four places and **missed after five of the last seven promotions by three
-different actors** (#174, #177, #190, #191, #197), twice *after* all four existed. That is the
-finding the check exists for: prose did not fix it.
-
-```sh
-python3 sim/tools/check_promotion_state.py        # 0 finished · 1 unfinished · 2 could not measure
-gh workflow run promotion.yml                     # the same, in CI, on demand
-gh workflow run promotion.yml -f grace_seconds=0  # ignore the post-squash window
-```
-
-Two probes — `git rev-list --count origin/dev..origin/main` and `gh pr list --base main` — needing
-**repo read only** (`contents: read` + `pull-requests: read` on the workflow's own `GITHUB_TOKEN`;
-no PAT, no new secret). It gates nothing.
-
-**The hard part is the transient, not the detection.** Between the squash and the reconcile both
-conditions are legitimately true, and a check that fires in that window teaches people the alarm
-means nothing — the same reason a 7 %-precision guard was rejected here. So both are gated on one
-clock, the committer date of `main`'s tip, which for a squash promotion *is* the moment both defects
-begin, and forgiven for **30 minutes**. That bound is measured: across the ten promotions in this
-repo's history the reconcile followed the squash by 11s–990s, median 18s, so the grace is 1.8× the
-worst case ever observed. Hourly at :37, so squash → red is at worst ≈ 90 minutes, against the days
-it replaces.
-
-**Why not a step in the fast tier**, which is cheaper and was rejected: `ci.yml` fires on
-`push: [dev]`, and the defect *is* that the reconcile push never happened — in exactly the state we
-want caught, there is no push. It would fire on the next unrelated PR and redden someone else's
-change, which is the gate people re-run rather than read (this repo already paid that once, PR #125).
-
-**Its teeth run in the fast tier, not on the schedule.** `sim/tests/test_promotion_guard.py` builds
-real git repositories — a bare `origin`, a `main` carrying a squash commit with a pinned committer
-date, a `dev` that has or has not merged it — with a stubbed `gh`, and asserts the full eight-row
-truth table, both sides of the grace edge one second apart, that a broken or missing `gh` exits **2**
-rather than 0, and three negative controls that blind one measurement each (the age gate, the behind
-count, the standing-PR lookup) and require the row that clause was holding to flip. So a red from the
-schedule means the repository is in the state, not that the instrument drifted.
+[MQTT server](../../mqtt/) · [Cloud protocol](../reverse-engineering/protocol/cloud-protocol.md) · [Behavior markup](../reverse-engineering/runtime/behavior-markup.md) · [Hardware map](../reverse-engineering/hardware/hardware-map.md) · [Roadmap](../../ROADMAP.md)
