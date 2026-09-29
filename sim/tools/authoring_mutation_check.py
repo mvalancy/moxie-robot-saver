@@ -1,40 +1,17 @@
-"""Remove each guard the ✍️ content editor rests on, and check its test goes red.
+"""Break each guard the content editor rests on; `test_content_authoring.py` must go red.
 
-"A test for every feature, proven in BOTH directions": a green
-`sim/tests/test_content_authoring.py` proves the guards are *present*, and this proves
-they are *load-bearing*. Run it by hand after touching the authoring region of
-`mqtt/supervisor/moxie_runtime/`, `packs.shadow_check` or `render.render_prompt`:
+Row A1 is the one this exists for: `POST /content/item` must call `validate_item`, or an
+authored global with a non-compiling `pattern` crashes `reload_content()` for every item
+(content-authoring.md §6.3). Runner and verdicts: `mutation_runner.py`.
 
-    python3 sim/tools/authoring_mutation_check.py
-
-Every row must say "caught". A row that says NOT CAUGHT means the assertion passes with
-the guard deleted, which means it is not testing what its name claims.
-
-**The row this file exists for is the first one.** `docs/architecture/backlog/
-content-authoring.md` §6.3 names one `if` as the single most important line in the slice:
-`packs.mark_edited` calls `normalize_data` and **not** `validate_item` (`apply_pack` does
-that itself), so `POST /content/item` has to call it. Without that call an authored global
-with a non-compiling `pattern` reaches `Global.from_dict`, which compiles at **load**, and
-a throw inside the loader takes down `reload_content()` for every item at once. Deleting
-the call must redden `test_a_bad_pattern_is_refused_with_validate_items_own_sentence`.
-
-**One guard the brief's M1 lists is deliberately absent: the try budget.** It belongs to
-`POST /content/try`, which is P1 (§9's "not in P0" list) — P0 makes no brain call at all,
-so there is nothing here to budget. `config.AUTHOR_TRY_BUDGET` is declared and read by
-nobody. A row with an anchor that does not exist would be a NO-OP that reads as coverage,
-and `sim/tests/test_mutation_tables.py` fails a table whose anchors do not resolve — so
-the row is named here in prose and added the day the route lands.
-
-Nothing here writes to the tree permanently — each mutation is reverted in a `finally`.
-`PYTHONDONTWRITEBYTECODE` is not a nicety: without it a `__pycache__` entry from an
-earlier mutation can shadow a later one, and a guard reads as un-caught when it is fine.
+    python3 sim/tools/authoring_mutation_check.py [ROW ...]
 """
-import pathlib, subprocess
+from mutation_runner import WT, node_verdict, pytest, run_table  # noqa: F401
 
-WT = pathlib.Path(__file__).resolve().parents[2]
 RT_CONTENT = WT / "mqtt/supervisor/moxie_runtime/content.py"
 PK = WT / "mqtt/moxie_sdk/content/packs/authoring.py"
 REN = WT / "mqtt/moxie_sdk/content/render.py"
+TESTS = "sim/tests/test_content_authoring.py"
 
 MUTATIONS = [
  # ---- §6.3: the one `if` --------------------------------------------------------
@@ -144,55 +121,6 @@ MUTATIONS = [
   "render_reports_stripped or render_prompt_hands_a_caller"),
 ]
 
-TESTS = "sim/tests/test_content_authoring.py"
-
-
-# The runner lives in `main()` behind a `__main__` guard, like the other five checkers:
-# importing a mutation table must never run it (see sim/tests/test_mutation_tables.py,
-# which parses these files with `ast` rather than importing them for exactly that reason).
-def main() -> int:
-    caught = missed = noop = 0
-    for name, path, old, new, sel in MUTATIONS:
-        src = path.read_text()
-        # AMBIGUOUS IS NOT CAUGHT, and it is not a milder NO-OP either. `replace(old, new, 1)`
-        # takes the FIRST match, so a row whose anchor occurs twice is about whichever block
-        # sorts earliest in the file — possibly the guard it names, possibly that guard's twin —
-        # and it prints `caught` either way. Measured 2026-09-05: three rows across this
-        # directory were anchored on a line a deliberate twin guard also carried (a load-time
-        # refusal and its runtime belt-and-braces; `_connack_failed` and `_suback_failed`). All
-        # three happened to hit the intended block by line order alone, which is luck, not proof.
-        # `unit_budget_mutation_check.py` hit the same defect where the WRONG block was patched.
-        # `sim/tests/test_mutation_tables.py` now refuses a non-unique anchor for every table in
-        # the fast tier; this is the same refusal at the point of use, so an operator running one
-        # table by hand is told why rather than reading a `caught` that means nothing.
-        hits = src.count(old)
-        if hits == 0:
-            print(f"  NO-OP       {name}  (anchor not found)"); noop += 1; continue
-        if hits > 1:
-            print(f"  AMBIGUOUS   {name}  (anchor matches {hits} places; "
-                  f"it would mutate whichever comes first)"); noop += 1; continue
-        backup = src
-        path.write_text(src.replace(old, new, 1))
-        try:
-            r = subprocess.run([str(WT / ".venv/bin/python"), "-m", "pytest", TESTS,
-                                "-q", "-k", sel, "-p", "no:cacheprovider"],
-                               cwd=WT, capture_output=True, text=True,
-                               env={"PATH": "/usr/bin:/bin", "MOXIE_LLM_API_KEY": "",
-                                    "HOME": "/home/scubasonar", "PYTHONDONTWRITEBYTECODE": "1"})
-            # A selector that matched NOTHING exits 5 ("no tests ran"), which is not a
-            # red test — it is a row pointing at a test that does not exist, and reading
-            # it as "caught" is exactly the formality this file is written against.
-            if r.returncode == 5:
-                print(f"  NO TEST     {name}  (-k {sel!r} matched nothing)"); noop += 1
-            elif r.returncode == 0:
-                print(f"  NOT CAUGHT  {name}"); missed += 1
-            else:
-                print(f"  caught      {name}"); caught += 1
-        finally:
-            path.write_text(backup)
-    print(f"\nMUTATIONS: {caught} caught, {missed} missed, {noop} no-op")
-    return 1 if (missed or noop) else 0
-
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_table(MUTATIONS, lambda r: pytest(TESTS, r[4]), baseline=[pytest(TESTS)]))

@@ -26,20 +26,20 @@ Hand-run and CI-run tools for the static site, the SIL stack and the test suites
 
 ## Mutation checkers
 
-Each removes one guard at a time and requires the named test to go red; a green suite shows a guard is present, this shows it is load-bearing. None run in CI; `sim/tests/test_mutation_tables.py` (fast tier) checks every anchor matches exactly once and that the row counts below match the tables.
+Each removes one guard at a time and requires the named test to go red; a green suite shows a guard is present, this shows it is load-bearing. All share one runner, [`mutation_runner.py`](mutation_runner.py): it refuses a red baseline, an anchor that is missing or ambiguous, and a `-k` selector that matches no test, and prints `N/N caught`. Pass row names (`X1 D4`) to run only those rows. None run in CI; `sim/tests/test_mutation_tables.py` (fast tier) checks every anchor matches exactly once and no mutation is committed.
 
 ```sh
-python3 sim/tools/authoring_mutation_check.py        # 15 rows; every one must say "caught"
-python3 sim/tools/brain_mutation_check.py            # 22 rows; every one must say "caught"
-python3 sim/tools/ext_mutation_check.py              # 30 rows; every one must say "caught"
-python3 sim/tools/hardening_mutation_check.py        # 38 rows; every one must say "caught"
-python3 sim/tools/hardening_p1_mutation_check.py     # 66 rows; every one must say "caught"
-python3 sim/tools/launch_card_mutation_check.py      # 19 rows; every one must say "caught"
-python3 sim/tools/performance_mutation_check.py      # 39 rows; every one must say "caught"
-python3 sim/tools/subscribe_mutation_check.py        # 25 rows; every one must say "caught"
-python3 sim/tools/telemetry_rollup_mutation_check.py # 12 rows; every one must say "caught"
-python3 sim/tools/turnstile_mutation_check.py        # 57 rows; every one must say "caught"
-python3 sim/tools/unit_budget_mutation_check.py      # 37 rows; every one must say "caught"
+python3 sim/tools/authoring_mutation_check.py
+python3 sim/tools/brain_mutation_check.py
+python3 sim/tools/ext_mutation_check.py
+python3 sim/tools/hardening_mutation_check.py
+python3 sim/tools/hardening_p1_mutation_check.py
+python3 sim/tools/launch_card_mutation_check.py
+python3 sim/tools/performance_mutation_check.py
+python3 sim/tools/subscribe_mutation_check.py
+python3 sim/tools/telemetry_rollup_mutation_check.py
+python3 sim/tools/turnstile_mutation_check.py
+python3 sim/tools/unit_budget_mutation_check.py
 ```
 
 | Table | Guards the… | Run after touching |
