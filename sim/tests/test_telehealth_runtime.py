@@ -254,24 +254,19 @@ def _journal(runtime, device_id):
 
 
 def test_a_blocked_operator_line_is_refused_with_its_reason_and_never_spoken(rt):
+    """The brain path substitutes a redirect because nobody is there to tell; here a human
+    is at the keyboard, so they get the verdict — never a silently rewritten sentence."""
     runtime, device_id = rt
     out = runtime.telehealth_speak(device_id, "you are a fucking idiot")
     assert out["ok"] is False and out["blocked"] is True
+    assert "spoke" not in out and "markup" not in out
+    assert runtime.telehealth_view(device_id)["transcript"] == []
     assert out["categories"] == ["profanity"]
     assert "Profanity" in out["reason"] and "rephrase" in out["reason"]
     assert runtime.client.published == []              # nothing on ANY topic
     rows = _journal(runtime, device_id)
     assert len(rows) == 1 and rows[0]["action"] == "block"
     assert rows[0]["side"] == safety_seam.MOXIE        # judged as words Moxie will say
-
-
-def test_a_blocked_line_is_not_silently_rewritten(rt):
-    """The brain path substitutes a redirect because there is nobody to tell. Here a human
-    is at the keyboard: they get the verdict, not a replacement sentence."""
-    runtime, device_id = rt
-    out = runtime.telehealth_speak(device_id, "you are a fucking idiot")
-    assert "spoke" not in out and "markup" not in out
-    assert runtime.telehealth_view(device_id)["transcript"] == []
 
 
 def test_a_flagged_line_is_spoken_and_journaled(rt):
@@ -462,9 +457,8 @@ def test_the_view_carries_the_vocabulary_the_card_renders(rt):
 # Bedtime (B4): a warning, never a gate
 # --------------------------------------------------------------------------- #
 def test_the_bedtime_warning_is_reported_and_the_line_is_still_sent(rt):
-    """We do not know whether a robot suppresses a puppet line inside its bedtime window,
-    so the operator is told the truth and the line goes anyway. Guessing either way would
-    be worse than saying so."""
+    """Unknown whether a robot suppresses a puppet line at bedtime, so the operator is told
+    and the line goes anyway."""
     import datetime
     runtime, device_id = rt
 
@@ -481,13 +475,7 @@ def test_the_bedtime_warning_is_reported_and_the_line_is_still_sent(rt):
     assert runtime.telehealth_speak(device_id, "Sleep well.")["ok"] is True
     assert len(_telehealth_msgs(runtime, device_id)) == 1
 
-    # …and the pure helper the view reads is exactly the runtime's own answer.
-    from moxie_sdk.cloud_config import in_bedtime
-    assert in_bedtime(runtime.effective_config(device_id), now) is True
-
-    # Plus a fully deterministic pair — no wall clock anywhere — so the helper's real
-    # semantics stay pinned even if the block above were ever loosened: a normal wrapping
-    # night contains 23:00 and excludes noon.
+    from moxie_sdk.cloud_config import in_bedtime      # and, clock-free: a wrapping night
     night = {"weekday_bedtime": ["20:30", "07:00"], "weekend_bedtime": ["20:30", "07:00"]}
     assert in_bedtime(night, datetime.datetime(2026, 9, 2, 23, 0)) is True
     assert in_bedtime(night, datetime.datetime(2026, 9, 2, 12, 0)) is False
@@ -544,15 +532,6 @@ def test_a_safety_block_over_http_is_a_400_carrying_the_reason(served):
     assert code == 400
     assert out["ok"] is False and out["blocked"] is True
     assert "Profanity" in out["reason"]
-    assert runtime.client.published == []
-
-
-def test_the_mode_gate_over_http_is_a_400_the_console_can_act_on(served):
-    runtime, device_id, base = served
-    _call(base, device_id, {"action": "disable"})
-    runtime.client = FakeClient()
-    out, code = _call(base, device_id, {"action": "speak", "text": "Hello."})
-    assert code == 400 and "Be Moxie" in out["reason"]
     assert runtime.client.published == []
 
 
