@@ -1,18 +1,30 @@
-# 🧭 Guides
+# Guides
 
-Task-oriented how-tos for Moxie owners.
+How-tos for Moxie owners and anyone running the backend.
 
-- [`revive-your-moxie.md`](revive-your-moxie.md) — **start here**: the end-to-end path from a dead robot (or no robot) to a talking Moxie — backend + brain + voice, and the three revival paths (simulator / QR re-home / flash).
-- [`one-command-stack.md`](one-command-stack.md) — **`docker compose up`**: the whole backend (broker + supervisor + parent console) from a fresh clone, one `.env`, and the smoke test that proves it.
-- [`child-safety.md`](child-safety.md) — **what Moxie checks, on both sides of every conversation**: which categories stop a turn and which are only flagged, what a flag does and does not mean, where to review and acknowledge them, and how the privacy setting changes what is kept.
-- [`permitting-a-robot.md`](permitting-a-robot.md) — **"pending" and how to permit**: your server serves only robots you have said yes to, so a robot that arrives outside the pairing flow waits in the console's 🔐 Robot access card until you click Permit — what it is (and is not) sent meanwhile, the "let any robot in" switch and why to leave it off.
-- [`what-moxie-remembers.md`](what-moxie-remembers.md) — **the memory Moxie keeps about your child**: what a finished conversation gets written down as (and what never is), where to read every item with the day and activity it came from, the two erase buttons, and why a summary can be confidently wrong until you delete it.
-- [`moxies-look.md`](moxies-look.md) — **letting your child style Moxie's face**: the layers you can change today (eye colour, face colour) and the twelve we have no names for, the house-look-vs-this-robot rule, the texture key that stops Moxie serving yesterday's face, and an honest note that no physical robot has rendered any of it.
-- [`first-time-setup.md`](first-time-setup.md) — set up a Moxie from scratch (Wi-Fi pairing).
-- [`factory-reset-a-paired-moxie.md`](factory-reset-a-paired-moxie.md) — unpair or fully reset a paired robot.
-- [`find-moxie-on-lan.md`](find-moxie-on-lan.md) — find your robot's IP after it joins Wi-Fi.
-- [`gateway-voice-and-ears.md`](gateway-voice-and-ears.md) — speech and listening through an OpenAI-compatible gateway, or locally.
-- [`deploy-cloudflare.md`](deploy-cloudflare.md) — publish the SIL simulator + docs explorer as a static Cloudflare Pages site (and what does/doesn't survive the move off localhost).
+**Getting started**
+
+- [`revive-your-moxie.md`](revive-your-moxie.md) — start here: from a dead robot (or no robot) to a
+  talking Moxie, by firmware version.
+- [`one-command-stack.md`](one-command-stack.md) — run the whole backend with `docker compose up`.
+- [`first-time-setup.md`](first-time-setup.md) — pair a robot and put it on Wi-Fi.
+- [`find-moxie-on-lan.md`](find-moxie-on-lan.md) — find the robot's IP address.
+- [`factory-reset-a-paired-moxie.md`](factory-reset-a-paired-moxie.md) — unpair or reset a robot.
+
+**For parents**
+
+- [`child-safety.md`](child-safety.md) — what Moxie checks in every conversation and where you review it.
+- [`permitting-a-robot.md`](permitting-a-robot.md) — why a robot can be "pending" and how to let it in.
+- [`what-moxie-remembers.md`](what-moxie-remembers.md) — the memory Moxie keeps about your child, and
+  how to erase it.
+- [`moxies-look.md`](moxies-look.md) — letting your child style Moxie's face.
+
+**Operators**
+
+- [`gateway-voice-and-ears.md`](gateway-voice-and-ears.md) — speech and listening through an
+  OpenAI-compatible gateway, or locally.
+- [`deploy-cloudflare.md`](deploy-cloudflare.md) — publish the simulator on Cloudflare Pages, static or
+  live.
 
 ---
-📖 [Docs index](../README.md) · [Back to top](../../README.md)
+[Docs index](../README.md) · [Project README](../../README.md)
