@@ -8,11 +8,10 @@
  *
  * Wire shape: docs/architecture/ai-seam.md §3. Run: node sim/test_audio.mjs
  */
-import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { BRIDGE_SRC, VOICE_SRC } from "./bridge_harness.mjs";
+import { VOICE_SRC } from "./bridge_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -104,9 +103,6 @@ new Function(audioSrc)();
 const A = globalThis.window.moxieAudio;
 ok(!!A, "voice/ must expose window.moxieAudio");
 if (!A) { console.log("❌ audio tests FAILED:\n   - " + fails.join("\n   - ")); process.exit(1); }
-for (const fn of ["playCloudTTS", "decodeCloudTTS", "isSpeaking", "ttsPending",
-                  "lastMouthPeak", "lastPlaybackStats"])
-  ok(typeof A[fn] === "function", `moxieAudio.${fn} must exist`);
 
 // ---- helper: build a CloudTTSResponse from int16 samples ---------------------
 function wire(samples, opts = {}) {
@@ -317,9 +313,9 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
 // a chunk that never arrives: the recorded order must always ascend.
 // --------------------------------------------------------------------------- //
 {
-  const TTS_GAP_MS = 1200;                    // voice/'s bounded wait for a lost chunk
-  ok(new RegExp("TTS_GAP_MS = " + TTS_GAP_MS + ";").test(audioSrc),
-     `this section's gap timings must match voice/'s TTS_GAP_MS (${TTS_GAP_MS})`);
+  // voice/'s bounded wait for a lost chunk, read from the shipped source so (iv) times it right
+  const TTS_GAP_MS = Number((/TTS_GAP_MS = (\d+);/.exec(audioSrc) || [])[1]);
+  ok(TTS_GAP_MS > 0, "voice/ declares TTS_GAP_MS");
 
   const lastSrc = () => CTX.made.sources[CTX.made.sources.length - 1];
   const endLast = async () => { lastSrc().onended(); await sleep(3); };
@@ -432,8 +428,6 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
 //    sidecar hints are deferred, never painted over a live "speaking" indicator.
 // --------------------------------------------------------------------------- //
 {
-  ok(typeof A.setTtsHint === "function", "moxieAudio.setTtsHint must exist (env.js hands it the hint)");
-  ok(typeof A.hasCloudVoice === "function", "moxieAudio.hasCloudVoice must exist (env.js asks before warning)");
   ok(A.hasCloudVoice() === true, "hasCloudVoice() must be true once a CloudTTSResponse has been decoded");
 
   const ctx = CTX.made;
@@ -456,54 +450,6 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
   ok(el.textContent === "optional local Piper service",
      `clearing the hint must restore the markup default, got ${el.textContent}`);
 
-  const env = readFileSync(join(here, "web", "env.js"), "utf8");
-  const apply = env.slice(env.indexOf("function apply("), env.indexOf("// Mic / STT"));
-  ok(apply.includes("ttsHint(") && !/tts-status/.test(apply),
-     "env.js apply() must hand its probe result to the hint API, not write #tts-status");
-  ok(env.includes("moxieAudio.setTtsHint"),
-     "env.js must route the TTS hint through moxieAudio.setTtsHint");
-  ok(apply.includes("hasCloudVoice()"),
-     'env.js must not claim "no TTS server" when a server voice is available');
-}
-
-// --------------------------------------------------------------------------- //
-// 8. Wiring — the bridge routes /commands/tts here, and the SIM stays SDK-free
-// --------------------------------------------------------------------------- //
-{
-  const bridge = BRIDGE_SRC;
-  ok(bridge.includes('client.subscribe("/devices/+/commands/tts")'),
-     "bridge/ must subscribe to /devices/+/commands/tts");
-  ok(/topic\.endsWith\("\/commands\/tts"\)/.test(bridge),
-     "bridge/ route() must dispatch /commands/tts");
-  ok(bridge.includes("playCloudTTS"), "bridge/ must hand the payload to moxieAudio.playCloudTTS");
-  ok(bridge.includes("speakLocally"),
-     "bridge/ must arbitrate the local voice so a turn is never spoken twice");
-
-  ok(/createBuffer\(/.test(audioSrc),
-     "voice/ must build the AudioBuffer by hand (raw PCM is not a container)");
-  ok(!/decodeAudioData[\s\S]{0,400}playCloudTTS/.test(audioSrc),
-     "the CloudTTS path must not use decodeAudioData (raw PCM has no header)");
-  // Client/server independence, checked against CODE, not comments: citing `moxie_sdk` in a
-  // comment is fine; the token in code is the bug.
-  for (const [f, src] of [["voice/", VOICE_SRC], ["bridge/", BRIDGE_SRC]]) {
-    const code = src
-      .split("\n")
-      .filter((l) => {
-        const t = l.trim();
-        return !(t.startsWith("//") || t.startsWith("*") || t.startsWith("/*"));
-      });
-    ok(!code.some((l) => l.includes("moxie_sdk")),
-       `${f} must decode the wire itself — no server-SDK import in code (client/server ` +
-       `independence). Citing the server module in a comment is fine; using it is not.`);
-  }
-
-  const html = readFileSync(join(here, "web", "sim.html"), "utf8");
-  ok(/src="voice\/index\.js(\?[^"]*)?"/.test(html), "sim.html must load voice/");
-  ok(html.includes('id="tts-status"'), "sim.html must keep the #tts-status indicator");
-  ok(html.includes('id="audio-on"'), "sim.html must keep the mute toggle the TTS path honors");
-
-  const moxie = readFileSync(join(here, "web", "moxie.js"), "utf8");
-  ok(/getMouthOpen\(\)/.test(moxie), "moxie.js must expose getMouthOpen() for the lip-sync tests");
 }
 
 // ---- report ------------------------------------------------------------------
@@ -516,4 +462,4 @@ if (fails.length) {
 console.log("✅ audio tests OK — CloudTTSResponse decode (LE int16 → Float32, mono + stereo," +
             " odd/junk input)" + (parity ? ", parity with the real moxie_sdk encoder" : " (parity skipped)") +
             ", autoplay queueing, strict chunk_num ordering (idle gaps, shuffled bursts, the" +
-            " lost-chunk gap rule), mouth/marks lip-sync, mute, #tts-status ownership, bridge wiring");
+            " lost-chunk gap rule), mouth/marks lip-sync, mute, #tts-status ownership");

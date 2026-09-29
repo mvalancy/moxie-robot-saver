@@ -34,6 +34,11 @@ mqttClient._emit("message", "/devices/d_test/events/remote-chat",
 mqttClient._emit("message", "/devices/d_test/events/remote-chat",
   Buffer.from(JSON.stringify({ command: "notify", speech: "echo of Moxie" })));  // must be skipped
 
+// a CloudTTSResponse on commands/tts is handed to voice/ to decode and play
+mqttClient._emit("message", "/devices/d_test/commands/tts", Buffer.from(JSON.stringify(
+  { request_source: "ROBOT_TTS_REQUEST", audio: { buffer: "AAA=", channels: 1, sample_rate: 22050 },
+    marks: [], event_id: "tts-1", chunk_num: 0 })));
+
 mqttClient._emit("message", "/devices/d_test/commands/motor",
   Buffer.from(JSON.stringify({ motors: { "0": 30000, "4": 24000 } })));  // SIL motor channel
 
@@ -157,6 +162,9 @@ ok(voice.sfx.includes("listen"), `child turn still fires sfx("listen"); got ${JS
 ok(!voice.speakClipOnly.some(([t]) => t === "echo of Moxie") && !voice.speak.includes("echo of Moxie"),
    `a 'notify' echo must not be spoken as the child; got ${JSON.stringify(voice.speakClipOnly)}`);
 ok(calls.transcript.includes("Happy birthday!"), "Moxie reply → transcript");
+ok(subscribed.includes("/devices/+/commands/tts") &&
+   voice.cloudTTS.some((p) => (typeof p === "string" ? JSON.parse(p) : p).event_id === "tts-1"),
+   `commands/tts is subscribed and routed to moxieAudio.playCloudTTS; got ${JSON.stringify(voice.cloudTTS)}`);
 ok(calls.setMotor.some(([i, v]) => i === 0 && v === 30000) && calls.setMotor.some(([i, v]) => i === 4 && v === 24000),
    `commands/motor → setMotor(0,30000)+setMotor(4,24000); got ${JSON.stringify(calls.setMotor)}`);
 
