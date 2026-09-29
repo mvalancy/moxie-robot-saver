@@ -5,10 +5,8 @@ import {
 
 const ENV_SRC = readFileSync(join(here, "web", "env.js"), "utf8");
 
-// --------------------------------------------------------------------------- //
-// 5. sim/web/env.js — the badge, the pill, the banner and the needs-backend marks,
-//    driven by the MODE and not by the hostname. Hermetic: a fake DOM, no browser.
-// --------------------------------------------------------------------------- //
+// 5. sim/web/env.js — badge, pill, banner and needs-backend marks, driven by the MODE and not
+//    the hostname. Hermetic: a fake DOM, no browser.
 function fakeEl(id) {
   const el = {
     id: id || "", tagName: "SPAN", textContent: "", innerHTML: "", title: "", hidden: false,
@@ -28,8 +26,7 @@ function fakeEl(id) {
     querySelector: (sel) => {
       const cls = sel.replace(/^\./, "");
       for (const c of el.children) if (c.classList.contains(cls)) return c;
-      // env.js reads `.eb-text` out of an innerHTML string it just wrote, so the fake
-      // element exposes a lazily-created stand-in for it.
+      // env.js reads `.eb-text` out of innerHTML it just wrote: a lazily-created stand-in.
       el._sub = el._sub || {};
       return (el._sub[cls] = el._sub[cls] || fakeEl(cls));
     },
@@ -144,11 +141,8 @@ const snap = (over) => Object.assign({
      "no mode.js: today's exact wording");
 }
 
-// --------------------------------------------------------------------------- //
-// 6. C1, as a repo lint. The repo is PUBLIC: no key, token, account id or deployment
-//    hostname may be committed or shipped to the browser. Run over the WHOLE file
-//    (comments included) on purpose — a real key in a comment is still a leaked key.
-// --------------------------------------------------------------------------- //
+// 6. C1, as a repo lint: the repo is PUBLIC, so no key, account id or deployment hostname in
+//    these files — comments included (a real key in a comment is still leaked).
 {
   const FORBIDDEN = [
     [/mattvalancy/i, "a deployment hostname"],
