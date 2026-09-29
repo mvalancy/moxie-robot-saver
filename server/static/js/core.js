@@ -15,6 +15,17 @@ async function api(path, {method='GET', body, auth=true}={}){
   const ct=r.headers.get('content-type')||''; return ct.includes('json')?r.json():r.text();
 }
 
+/** POST a JSON body (an object, or text already serialized) and return the parsed answer —
+ *  a refusal included, so a card can show its `error`/`conflict` instead of a status code. */
+async function postJson(path, body){
+  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
+                            body:typeof body==='string'?body:JSON.stringify(body)});
+  return r.json();
+}
+
+/** The status line for a caught error. */
+function oops(e, fallback){ return '⚠️ '+(e&&e.message?e.message:fallback); }
+
 // ---- tabs ----
 let monTimer=null;
 function activateTab(name){
