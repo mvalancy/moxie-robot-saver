@@ -1,8 +1,9 @@
 /* browser_harness.mjs — shared plumbing for the headless-browser suites.
  *
  * NOT a test (`sim/tests/test_ci_test_coverage.py` enumerates only `test_*.mjs`). One copy
- * of puppeteer/Chrome discovery, the static server, the console-error "eyes", and the
- * hosted-page instruments shared by the deployed-site checkers and hosted-page suites.
+ * of puppeteer/Chrome discovery, the static server, the console-error "eyes", the SIM page
+ * fixture (`openSim`), and the hosted-page instruments shared by the deployed-site checkers
+ * and the browser suites.
  *
  * Its own static server rather than `sim/serve.py`: `serveWeb({ headers: true })` sends the
  * REAL `sim/web/_headers` `/*` block, so suites test the CSP we ship (only Cloudflare Pages
@@ -137,33 +138,6 @@ export function pagesHeaders() {
   return out;
 }
 
-/**
- * A page's HTML **plus the source of its own scripts** (following relative ES-module
- * imports), as one string to grep — behaviour lives in sibling `.js` files, not inline.
- * `vendor/` is EXCLUDED, or `mermaid.render` inside mermaid.min.js would satisfy
- * "docs.html must render mermaid" for a page that never calls it.
- *
- * @param {string} name e.g. "cloud.html"
- * @returns {string} the HTML followed by each first-party script it references, in order.
- */
-export function pageSource(name) {
-  const html = readFileSync(join(web, name), "utf8");
-  const parts = [html], seen = new Set();
-  const add = (ref, by) => {
-    ref = normalize(ref.split("?")[0].replace(/^\.\//, ""));
-    if (seen.has(ref) || /^[a-z]+:|^\/\//i.test(ref) || ref.startsWith("vendor/") || ref.startsWith("..")) return;
-    seen.add(ref);
-    const f = join(web, ref);
-    if (!existsSync(f)) return;
-    const src = readFileSync(f, "utf8");
-    parts.push(`\n/* ==== ${ref} (loaded by ${by}) ==== */\n` + src);
-    // follow relative ES-module imports (moxie.js -> moxie/*.js)
-    for (const m of src.matchAll(/\bfrom\s+["'](\.{1,2}\/[^"']+)["']/g)) add(join(dirname(ref), m[1]), ref);
-  };
-  for (const m of html.matchAll(/<script[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) add(m[1], name);
-  return parts.join("\n");
-}
-
 async function freePort() {
   return new Promise((res) => {
     const s = net.createServer();
@@ -274,35 +248,6 @@ export function watchPage(page) {
   page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
   page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
   return { errs, aborted };
-}
-
-/**
- * One assertion string for a page's unexplained console output. Kept next to `notable()`
- * so every suite reports the same way: the COUNT plus the first few messages verbatim,
- * because "3 console errors" sends nobody anywhere.
- */
-export function eyesMsg(label, left) {
-  return `${label}: the page must raise no unexplained console errors — ` +
-         `${left.length} of them, first: ${left.slice(0, 3).join(" | ")}`;
-}
-
-/**
- * Per-page eyes for suites whose loaders hand back a bare `page`: `watch(page)` wires
- * `watchPage()` and remembers it; `check(label, page)` asserts (via `eq`) that nothing
- * `notable()` was raised on that page.
- */
-export function pageEyes(eq) {
-  const seenBy = new WeakMap();
-  return {
-    watch(page) { const s = watchPage(page); seenBy.set(page, s); return s; },
-    check(label, page) {
-      const seen = seenBy.get(page) || { errs: [], aborted: null };
-      const left = notable(seen.errs, seen.aborted);
-      eq(left.length, 0,
-         `${label}: the page raised console errors nobody asked for — ${left.length}, ` +
-         `first: ${left.slice(0, 3).join(" | ")}`);
-    },
-  };
 }
 
 /* ---- the SIM page, with its backend answered at the browser ----------------- */
