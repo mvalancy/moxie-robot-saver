@@ -44,10 +44,10 @@ QUERY_TOPIC = "/devices/{d}/commands/query_result"
 # --------------------------------------------------------------------------- #
 
 def test_the_unpaired_config_never_carries_the_child():
-    """The whole point of the gate. `child_pii` is the child's nickname + birthday."""
+    """The whole point of the gate. Every key is the status, the privacy gate or the
+    settings envelope — a new leaky key has to be added deliberately, here."""
     cfg = build_unpaired_cloud_config()
-    assert "child_pii" not in cfg
-    assert "child" not in cfg
+    assert set(cfg) == {"pairing_status", "data_sharing", "settings"}
     blob = json.dumps(cfg)
     assert "nickname" not in blob and "birthday" not in blob
 
@@ -60,13 +60,6 @@ def test_the_unpaired_config_is_not_paired_and_uploads_nothing():
     # The `settings` envelope stays (the robot's config handler expects it) but carries
     # nothing about the household — and no `stt` prop, so we never ask for its microphone.
     assert "props" in cfg["settings"] and "stt" not in cfg["settings"]["props"]
-
-
-def test_the_unpaired_config_is_a_strict_subset_of_nothing_sensitive():
-    """Every key of the un-paired document is either the status, the privacy gate, or
-    the settings envelope — a new leaky key has to be added deliberately, here."""
-    assert set(build_unpaired_cloud_config()) == {
-        "pairing_status", "data_sharing", "settings"}
 
 
 # --------------------------------------------------------------------------- #
@@ -167,23 +160,14 @@ def test_the_env_switch_keeps_a_pre_gate_deployment_working(tmp_path, monkeypatc
     assert rt._push_config(DEVICE)["child_pii"]["nickname"] == "Sam"
 
 
-def test_the_env_switch_can_also_pin_the_gate_shut(tmp_path, monkeypatch):
-    """An explicit `0` beats the stored flag, so an operator can lock an appliance down
-    from the environment without hunting for the toggle."""
-    rt = _runtime(tmp_path)
-    rt.set_allow_unverified_bots(True)
-    monkeypatch.setenv("MOXIE_ALLOW_UNVERIFIED_BOTS", "0")
-    assert rt.allow_unverified_bots() is False
-    assert rt._push_config(DEVICE)["pairing_status"] == UNPAIRED_PAIRING_STATUS
-
-
 def test_precedence_constructor_beats_env_beats_store(tmp_path, monkeypatch):
     monkeypatch.setenv("MOXIE_ALLOW_UNVERIFIED_BOTS", "0")
     rt = _runtime(tmp_path, allow=True)
     assert rt.allow_unverified_bots() is True           # constructor wins
     rt2 = _runtime(tmp_path)
     rt2.set_allow_unverified_bots(True)
-    assert rt2.allow_unverified_bots() is False         # env beats the stored flag
+    assert rt2.allow_unverified_bots() is False         # an explicit env 0 beats the store
+    assert rt2._push_config(DEVICE)["pairing_status"] == UNPAIRED_PAIRING_STATUS
 
 
 # --------------------------------------------------------------------------- #
