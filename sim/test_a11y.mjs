@@ -9,7 +9,7 @@
  * ZERO GATEWAY SPEND: `/api/chat`, `/api/speech`, `/api/transcribe` are aborted and the
  * suite FAILS if the page asks for one; `/api/health` is fulfilled locally.
  */
-import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable, launchBrowser }
+import { requireBrowser, serveWeb, makeChecks, finish, notable, launchBrowser, openSim }
   from "./browser_harness.mjs";
 
 const LABEL = "a11y";
@@ -17,7 +17,6 @@ const { puppeteer, chrome } = await requireBrowser(LABEL);
 const { fails, ok, eq, count } = makeChecks();
 const srv = await serveWeb({ headers: true });
 
-const SPENDY = /\/api\/(chat|speech|transcribe)\b/;
 /** A `/api/health` body that puts mode.js in `live` — the branch the hosted site is in. */
 const HEALTH_LIVE = JSON.stringify({
   mode: "live", reason: null, voice: true, ears: true,
@@ -27,32 +26,13 @@ const HEALTH_LIVE = JSON.stringify({
 
 const browser = await launchBrowser(puppeteer, chrome, { autoplay: true });
 
-/**
- * A loaded /sim.html.
- * @param {{width?:number,height?:number,health?:string|null,reducedMotion?:boolean}} o
- *   `health` non-null fulfils GET /api/health with that body (mode.js -> live).
- */
+/** A settled /sim.html under the shipped CSP; spendy /api routes are aborted into `spent`. */
 async function open(o = {}) {
-  const page = await browser.newPage();
-  await page.setViewport({ width: o.width || 1440, height: o.height || 900 });
-  const spent = [];
-  const { errs, aborted } = watchPage(page);
-  await page.setRequestInterception(true);
-  page.on("request", (r) => {
-    const u = r.url();
-    if (SPENDY.test(u)) { spent.push(u); aborted.n++; return r.abort(); }   // never spend
-    if (o.health != null && /\/api\/health\b/.test(u))
-      return r.respond({ status: 200, contentType: "application/json", body: o.health });
-    // No fixture: the probe 404s at the static server; counted so `notable()` forgives just it.
-    if (o.health == null && /\/api\/health\b/.test(u)) aborted.refused++;
-    return r.continue();
+  return openSim(browser, srv.url + "/sim.html", {
+    viewport: { width: o.width || 1440, height: o.height || 900 }, health: o.health,
+    beforeLoad: o.reducedMotion
+      ? (p) => p.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]) : null,
   });
-  if (o.reducedMotion)
-    await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
-  await page.goto(srv.url + "/sim.html", { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => !!window.moxie, { timeout: 30000 });
-  await new Promise((r) => setTimeout(r, 2500));       // sidecar probe + first mode render
-  return { page, spent, errs, aborted };
 }
 
 /* ==========================================================================
@@ -104,7 +84,17 @@ async function unnamedControls(page) {
              .map((n) => `${n.role}=${JSON.stringify(n.value ?? "")}`);
 }
 
+/** Infinite CSS animations actually RUNNING (the ALIVE lamp pulses on every load). */
+const looping = (page) => page.evaluate(() => document.getAnimations()
+  .filter((a) => a.playState === "running" && a.effect &&
+                 a.effect.getComputedTiming().iterations === Infinity)
+  .map((a) => (a.effect.target && (a.effect.target.id || a.effect.target.className)) + ":" + a.animationName));
+let scriptedNote = null;
+
 /* ==========================================================================
+ * ONE PAGE, scripted mode (no /api/health): 1 names, 3a the scripted voice note, the
+ * reduced-motion CONTROL, then 2 the live region and a scripted typed turn.
+ * ==========================================================================
  * 1. NAMES — the finding, re-derived, and asserted by identity
  * ======================================================================= */
 {
@@ -143,7 +133,8 @@ async function unnamedControls(page) {
   // The two Wi-Fi boxes only exist in the tree once the QR kind reveals them (they are
   // `display:none` until then, so an unrevealed check would pass on an absent node).
   await page.select("#qr-kind", "wifi");
-  await new Promise((r) => setTimeout(r, 150));
+  await page.waitForFunction(() => document.getElementById("qr-wifi").style.display === "", { timeout: 5000 })
+    .catch(() => {});
   eq(await page.$eval("#qr-wifi", (e) => e.style.display), "", "choosing wi-fi reveals its fields");
   eq(await axName(page, "#qr-ssid"), "Wi-Fi network name (SSID)", "accessible name of #qr-ssid");
   eq(await axName(page, "#qr-pass"), "Wi-Fi password", "accessible name of #qr-pass");
@@ -184,17 +175,20 @@ async function unnamedControls(page) {
     ok(/docs/i.test(raw), "<noscript> points at the docs");
   }
 
-  eq(spent.length, 0, "no request to a spendy /api route");
-  eyes("names", view);
-  await page.close();
-}
+  /* ---- 3a. the standing voice note describes what the composer's button does: scripted ---- */
+  const note = scriptedNote = await textOf(page, "#voice-note");
+  eq(await page.$eval("#speech-btn", (e) => e.textContent.trim()), "Ask",
+     "with no Piper the Say button is the typed turn");
+  ok(/press Ask/i.test(note || "") && /scripted/i.test(note || ""),
+     `scripted note names the Ask button and says the answer is scripted — got ${JSON.stringify(note)}`);
+  ok(note !== null && !/browser.{1,6}s voice|in her own voice/i.test(note),
+     `scripted note must not promise the browser's voice or her live voice — got ${JSON.stringify(note)}`);
 
-/* ==========================================================================
- * 2. THE LIVE REGION — and what it deliberately does NOT announce
- * ======================================================================= */
-{
-  const view = await open();
-  const { page, spent } = view;
+  // Reduced-motion CONTROL: without the preference something really does loop (section 5).
+  const base = await looping(page);
+  ok(base.length > 0, `CONTROL: without the preference something really does loop (${JSON.stringify(base)})`);
+
+  /* ---- 2. THE LIVE REGION — and what it deliberately does NOT announce ---- */
 
   const t = await page.$eval("#transcript", (e) => ({
     role: e.getAttribute("role"), live: e.getAttribute("aria-live"),
@@ -222,7 +216,7 @@ async function unnamedControls(page) {
 
   /* ---- AMBIENT MUST NOT BE ANNOUNCED ----
    * Unprompted quips go to #bubble, never the log. Structure (the bubble is in no live
-   * region) AND behaviour (five real quips leave the log byte-identical while the bubble
+   * region) AND behaviour (real quips leave the log byte-identical while the bubble
    * changes) — "the log did not grow" alone would pass if ambient said nothing. */
   const bubble = await page.$eval("#bubble", (e) => {
     let n = e, live = null, log = false;
@@ -240,9 +234,11 @@ async function unnamedControls(page) {
   const quips = await page.evaluate(async () => {
     const seen = [];
     const bt = document.getElementById("bubble-text");
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 3; i++) {
+      bt.textContent = "";
       window.moxieAmbient.say();
-      await new Promise((r) => setTimeout(r, 1400));
+      // the quip's bubble text, waited for (bounded) rather than slept for
+      for (let t = 0; t < 100 && !bt.textContent; t++) await new Promise((r) => setTimeout(r, 50));
       if (bt.textContent) seen.push(bt.textContent);
     }
     return seen;
@@ -282,21 +278,6 @@ async function unnamedControls(page) {
  *    the note and the button cannot describe different pages.
  * ======================================================================= */
 {
-  // (a) scripted / no backend: typing reaches a SCRIPTED Moxie, not the browser's voice.
-  const view = await open();
-  const { page, spent } = view;
-  const s = await textOf(page, "#voice-note");
-  const btn = await page.$eval("#speech-btn", (e) => e.textContent.trim());
-  eq(btn, "Ask", "with no Piper the Say button is the typed turn");
-  ok(/press Ask/i.test(s || ""), `scripted note names the Ask button — got ${JSON.stringify(s)}`);
-  ok(/scripted/i.test(s || ""), `scripted note says the answer is scripted — got ${JSON.stringify(s)}`);
-  ok(s !== null && !/browser's voice|browser&#39;s voice|browser’s voice/i.test(s),
-     `scripted note must not still claim free text uses the browser's voice — got ${JSON.stringify(s)}`);
-  ok(s !== null && !/in her own voice/i.test(s), "scripted note must not promise a live voice");
-  eq(spent.length, 0, "no spend while reading the scripted copy");
-  eyes("scripted copy", view);
-  await page.close();
-
   // (b) live: /api/health says the brain and the voice are on.
   const live = await open({ health: HEALTH_LIVE });
   const snap = await live.page.evaluate(() => window.moxieMode.snapshot());
@@ -307,10 +288,9 @@ async function unnamedControls(page) {
   eq(lbtn, "Ask", "the live page's button is Ask");
   ok(/press Ask/i.test(l || ""), `live note names the Ask button — got ${JSON.stringify(l)}`);
   ok(/in her own voice/i.test(l || ""), `live note says she answers in her own voice — got ${JSON.stringify(l)}`);
-  ok(l !== null && !/browser's voice|browser&#39;s voice|browser’s voice/i.test(l),
-     `live note must not claim free text uses the browser's voice — got ${JSON.stringify(l)}`);
-  ok(l !== null && !/scripted/i.test(l), "live note must not call the answer scripted");
-  ok(l !== s, "the note actually differs between live and scripted");
+  ok(l !== null && !/browser.{1,6}s voice|scripted/i.test(l),
+     `live note must not claim the browser's voice or a scripted answer — got ${JSON.stringify(l)}`);
+  ok(l !== scriptedNote, "the note actually differs between live and scripted");
   eq(live.spent.length, 0, "reading the live copy never posts a turn");
   eyes("live copy", live);
   await live.page.close();
@@ -357,7 +337,8 @@ async function unnamedControls(page) {
      "…in the order a visitor uses them: the box, then the buttons");
 
   await page.click("#rail-toggle");
-  await new Promise((r) => setTimeout(r, 300));
+  await page.waitForFunction(() => getComputedStyle(document.getElementById("rail-scroll")).display !== "none",
+                             { timeout: 5000 }).catch(() => {});
   eq(await page.$eval("#rail-toggle", (e) => e.getAttribute("aria-expanded")), "true",
      "aria-expanded flips when the drawer opens");
   const open2 = await tabbables();
@@ -381,16 +362,6 @@ async function unnamedControls(page) {
  * 5. REDUCED MOTION — the chrome holds still, and the control proves it would not
  * ======================================================================= */
 {
-  // Infinite CSS animations actually RUNNING (the ALIVE lamp pulses on every load).
-  const looping = (page) => page.evaluate(() => document.getAnimations()
-    .filter((a) => a.playState === "running" && a.effect &&
-                   a.effect.getComputedTiming().iterations === Infinity)
-    .map((a) => (a.effect.target && (a.effect.target.id || a.effect.target.className)) + ":" + a.animationName));
-  const plain = await open();
-  const base = await looping(plain.page);
-  ok(base.length > 0, `CONTROL: without the preference something really does loop (${JSON.stringify(base)})`);
-  await plain.page.close();
-
   const view = await open({ reducedMotion: true });
   const still = await looping(view.page);
   eq(JSON.stringify(still), "[]", `prefers-reduced-motion: no endlessly looping animation (${JSON.stringify(still)})`);

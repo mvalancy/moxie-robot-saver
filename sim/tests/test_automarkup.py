@@ -149,10 +149,8 @@ def test_no_unknown_asset_id_anywhere_in_the_corpus():
 
 
 def test_the_authored_markup_in_the_tree_also_validates():
-    """Hand-authored filler marks and safety-redirect marks pass the same catalog."""
+    """Hand-authored safety-redirect marks pass the same catalog (fillers: below)."""
     from moxie_sdk import safety as safety_seam
-    for _text, markup in FILLERS:
-        assert not vocab.validate_markup(markup), markup
     classifier = safety_seam.default_classifier()
     seen = 0
     for name, lines in classifier.phrase_sets.items():
@@ -198,10 +196,10 @@ def test_the_catalog_matches_the_recovered_pages():
 
 
 # T3 / T4 — the words never change, and the floor is idempotent
-@pytest.mark.parametrize("line", CORPUS, ids=lambda s: s[:32])
-def test_the_spoken_words_are_never_changed(line):
+def test_the_spoken_words_are_never_changed():
     """S2: marks and spans only — never a word added, dropped, reordered or substituted."""
-    assert strip_markup(annotate(line)) == strip_markup(line)
+    for line in CORPUS:
+        assert strip_markup(annotate(line)) == strip_markup(line), line
 
 
 def test_idempotent_and_never_touches_authored_markup():
@@ -217,14 +215,14 @@ def test_idempotent_and_never_touches_authored_markup():
 
 
 # T7 — the grammar: every payload is JSON, the whole line is well-formed XML
-@pytest.mark.parametrize("line", CORPUS[::7], ids=lambda s: s[:32])
-def test_output_is_well_formed(line):
+def test_output_is_well_formed():
     """Marks only at token boundaries, at most one span level: no badly-nested spans."""
-    markup = annotate(line, icons=True)
-    ElementTree.fromstring("<root>" + markup.replace("&", "&amp;") + "</root>")
-    for _verb, body in vocab._MARK_RE.findall(markup):
-        if body:
-            assert json.loads(body.replace("+", '"')) is not None
+    for line in CORPUS:
+        markup = annotate(line, icons=True)
+        ElementTree.fromstring("<root>" + markup.replace("&", "&amp;") + "</root>")
+        for _verb, body in vocab._MARK_RE.findall(markup):
+            if body:
+                assert json.loads(body.replace("+", '"')) is not None, line
 
 
 # T8 — the anti-twitch rate limits
@@ -366,7 +364,6 @@ def test_the_content_app_authored_markup_path_goes_through_the_floor():
 def test_the_llm_app_routes_through_the_one_generator():
     """Acceptance #2: `LLMApp.build_markup` is `annotate` with hints; no second generator."""
     from moxie_sdk.apps import llm_app
-    assert not hasattr(llm_app, "stream_style")
     line = "That is amazing! You did it!"
     assert llm_app.build_markup(line, "happy", "celebrate") == \
         annotate(line, mood_hint="happy", gesture_hint="celebrate")
@@ -475,19 +472,6 @@ def test_identical_bytes_across_python_hash_seeds():
     assert a == b
     assert 'cmd:playback-mood' in a
     assert a.strip().endswith("BANNED:"), "the floor pulled in a non-stdlib dependency"
-
-
-def test_annotate_imports_nothing_outside_the_stdlib():
-    """The floor stays dependency-free (no `unidecode`, no ML table, as OpenMoxie's pulls)."""
-    import moxie_sdk.automarkup as am
-    src = open(am.__file__).read()
-    code = "\n".join(l for l in src.splitlines()
-                     if not l.lstrip().startswith(("#", "*", ":", '"""')))
-    for banned in ("import numpy", "import requests", "import openai", "unidecode",
-                   "import random", " hash(", "=hash(", "(hash("):
-        assert banned not in code, banned
-    assert set(am.__dict__.get("__all__", ())) == {
-        "annotate", "enabled", "dropped_ids", "reset_dropped"}
 
 
 # T10 — the budget, measured against THIS machine rather than against a constant

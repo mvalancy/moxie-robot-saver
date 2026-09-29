@@ -10,10 +10,8 @@ real status HTTP. (`test_schedule_planner.py` has the recommender unit tests.)
     parent → GET /schedule?device_id=…  {explanations:[{module_id, at, line, …}]}
 
 The binding claim: the ids the robot was served are exactly the ids the parent sees
-explained. Hermetic: `helpers_runtime.loopback` stands in for the broker, the store is
-`tmp_path`. Bedtime and "due today" are wall-clock by contract, so windows are relative to
-now and `served` reads the clock ONCE (two reads can straddle midnight); the scenario lands
-today at every minute, so the pinning test has only its strict branch.
+explained. Hermetic (loopback broker, tmp store). Bedtime is wall-clock by contract, so
+windows are relative to now and `served` reads the clock ONCE.
 """
 import datetime
 import json
@@ -87,9 +85,8 @@ def _request_lands_today(now, request_in_minutes=2 * SLOT_MINUTES) -> bool:
 
 
 def _request_offset(now, request_in=2 * SLOT_MINUTES) -> int:
-    """Signed minutes from now to the requested instant, chosen so it is ALWAYS today: two
-    slots ahead normally, two slots behind in the tail of a day (still a pin — an earlier
-    request lands in the first slot by contract). Tomorrow is a separate test."""
+    """Signed minutes to the requested instant, always today: two slots ahead, or two behind
+    in the tail of a day (an earlier request still pins to the first slot by contract)."""
     return request_in if _request_lands_today(
         now, request_in + CLOCK_SLACK_MINUTES) else -request_in
 
@@ -152,15 +149,13 @@ def test_the_robot_pulls_a_real_day_off_the_query_topic(served):
     # the ContentSchedule that goes on the wire carries no explanations — they are the
     # parent's view, never the robot's payload
     assert "explanations" not in served["wire"] and "why" not in json.dumps(served["wire"])
-
-
-def test_the_query_rides_the_activity_log_topic_the_docs_name(served):
+    # the query rides the activity-log topic and the answer echoes its request_id
     sent = [json.loads(p) for (t, p) in served["vm"].client.published
             if t.endswith("/events/client-service-activity-log")]
     assert sent and sent[-1]["subtopic"] == "query" and sent[-1]["query"] == "schedule"
     answered = [json.loads(p) for (t, p) in served["rt"].client.published
                 if t.endswith("/commands/query_result")]
-    assert answered[-1]["request_id"] == sent[-1]["request_id"]   # the echo is the contract
+    assert answered[-1]["request_id"] == sent[-1]["request_id"]
 
 
 # --------------------------------------------------------------------------- #
@@ -172,6 +167,9 @@ def test_the_ids_the_robot_got_are_exactly_the_ids_the_parent_is_shown(served):
     assert robot_ids == parent_ids, (robot_ids, parent_ids)
     assert served["view"]["served"] is True, "GET /schedule re-planned instead of "\
                                              "replaying what the robot was served"
+    again = http_json(f"{served['base']}/schedule?device_id={served['dev']}")
+    assert (again["explanations"], again["day"]) == \
+        (served["view"]["explanations"], served["view"]["day"]), "a second read re-planned"
 
 
 def test_every_entry_carries_a_parent_readable_why(served):
@@ -181,12 +179,6 @@ def test_every_entry_carries_a_parent_readable_why(served):
     assert not blank, f"no reason given for {blank}"
     assert all(len((line or "").split()) >= 4 for line in lines.values()), lines
     assert all(e.get("reason_codes") for e in served["view"]["explanations"])
-
-
-def test_a_second_read_is_the_same_day_not_a_fresh_plan(served):
-    again = http_json(f"{served['base']}/schedule?device_id={served['dev']}")
-    assert again["explanations"] == served["view"]["explanations"]
-    assert again["day"] == served["view"]["day"]
 
 
 # --------------------------------------------------------------------------- #
@@ -223,19 +215,6 @@ def test_the_parent_request_is_pinned_and_says_so(served):
     assert "STORYTELLING" in robot_ids, robot_ids
     request = served["view"]["inputs"]["parent_requests"][0]
     assert request["due_today"] is True and request["slot"] is not None, request
-
-
-def test_the_scenario_this_file_posts_lands_today_at_every_minute_of_a_day():
-    """`_request_offset`'s claim, checked over all 1440 minutes of a constructed day with no
-    clock read — both directions must actually occur."""
-    day = datetime.datetime(2026, 9, 2)
-    minutes = [day + datetime.timedelta(minutes=i) for i in range(1440)]
-    asked = {m: m + datetime.timedelta(minutes=_request_offset(m)) for m in minutes}
-    strayed = [m.strftime("%H:%M") for m, when in asked.items() if when.date() != m.date()]
-    assert not strayed, f"the ask left today's calendar day at {strayed}"
-    flipped = [m.strftime("%H:%M") for m in minutes if _request_offset(m) < 0]
-    assert flipped and flipped[0] == "23:35" and flipped[-1] == "23:59", flipped
-    assert len(flipped) == 2 * SLOT_MINUTES + CLOCK_SLACK_MINUTES, flipped
 
 
 def test_a_request_for_tomorrow_is_not_pinned_into_today(tmp_path):

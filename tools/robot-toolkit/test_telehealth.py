@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
-"""
-Round-trip test for the telehealth (remote-puppet) builders in moxie_toolkit.cloud.
-
-Builds each Action of a telehealth session, wraps in the publishable
-TelehealthRobotCommand, serializes + re-parses, and checks the fields survive — the
-exact cloud->robot path a revival server uses. Also round-trips a robot->cloud
-TelehealthRobotEvent. See docs/reverse-engineering/protocol/telehealth.md.
+"""The telehealth (remote-puppet) builders in moxie_toolkit.cloud: each session Action, the
+publishable TelehealthRobotCommand and its topic, and the robot->cloud event parser. See
+docs/reverse-engineering/protocol/telehealth.md.
 
     python3 tools/robot-toolkit/test_telehealth.py
 """
@@ -23,44 +19,26 @@ except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  telehealth toolkit test skipped — {e}")
     sys.exit(0)
 
-DEV = "d_test-device"
-
-# topic
-ok(cloud.telehealth_topic(DEV) == f"/devices/{DEV}/commands/telehealth",
-   f"telehealth_topic wrong: {cloud.telehealth_topic(DEV)}")
-
-# START_SESSION
+ok(cloud.telehealth_topic("d_x") == "/devices/d_x/commands/telehealth",
+   f"telehealth_topic wrong: {cloud.telehealth_topic('d_x')}")
 start = cloud.telehealth_session(TH.START_SESSION, session_id="s1")
 ok(start.action == TH.START_SESSION and start.session_id == "s1", "START_SESSION message wrong")
+for action in (TH.INTERRUPT, TH.END_SESSION):
+    ok(cloud.telehealth_session(action).action == action, f"session action {action} wrong")
 
-# PLAY_OUTPUT with text + behavior markup + templated params
 markup = '<mark name="cmd:playback-mood,data:{+mood+:1,+intensity+:1}"/>'
 play = cloud.telehealth_play_output("Hi there!", markup, session_id="s1",
                                     line_id="greet", line_params=["Alex"])
 ok(play.action == TH.PLAY_OUTPUT, "PLAY_OUTPUT action wrong")
-ok(play.output.text == "Hi there!" and play.output.markup == markup, "Output text/markup wrong")
-ok(list(play.output.line_params) == ["Alex"] and play.output.line_id == "greet", "Output params wrong")
-
-# INTERRUPT + END_SESSION
-ok(cloud.telehealth_session(TH.INTERRUPT).action == TH.INTERRUPT, "INTERRUPT wrong")
-ok(cloud.telehealth_session(TH.END_SESSION).action == TH.END_SESSION, "END_SESSION wrong")
-
-# publishable command wrapper — serialize + re-parse (the wire round-trip)
+ok((play.output.text, play.output.markup, play.output.line_id, list(play.output.line_params))
+   == ("Hi there!", markup, "greet", ["Alex"]), "Output fields wrong")
 cmd = cloud.telehealth_command(play, command="play")
-wire = cmd.SerializeToString()
-rt = TH.TelehealthRobotCommand()
-rt.ParseFromString(wire)
-ok(rt.command == "play", "command field lost on round-trip")
-ok(rt.message.action == TH.PLAY_OUTPUT and rt.message.output.text == "Hi there!",
-   "message lost on round-trip")
-ok(rt.message.output.markup == markup, "markup lost on round-trip")
+ok(cmd.command == "play" and cmd.message == play, "telehealth_command must wrap the message as given")
 
-# robot -> cloud event round-trip
 ev = TH.TelehealthRobotEvent(subtopic="telehealth",
                              message=TH.TelehealthMessage(action=TH.UPDATE_STATE, state=TH.IN_SESSION))
 parsed = cloud.parse_telehealth_event(ev.SerializeToString())
 ok(parsed.subtopic == "telehealth" and parsed.message.state == TH.IN_SESSION,
-   "TelehealthRobotEvent round-trip failed")
+   "parse_telehealth_event wrong")
 
-report("telehealth", "START/PLAY_OUTPUT(text+markup)/INTERRUPT/END + command & event "
-       "round-trip through TelehealthRobotCommand/Event")
+report("telehealth", "START/PLAY_OUTPUT(text+markup)/INTERRUPT/END + command wrapper/topic + event parser")

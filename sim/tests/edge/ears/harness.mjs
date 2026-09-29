@@ -159,11 +159,8 @@ export async function recordToCap(w) {
 export const pendingTimers = () => timers.length;
 
 /* ---- a fake recorder ------------------------------------------------------ */
-/**
- * The `MediaRecorder` surface `mic.js` actually uses, and nothing more. It records every
- * call so a test can assert THE RECORDER WAS STOPPED, rather than sampling a device.
- * **No live microphone is opened anywhere in this file.**
- */
+/** The `MediaRecorder` surface `mic.js` uses; it logs calls so a test can assert THE RECORDER
+ *  WAS STOPPED. No live microphone is opened anywhere in this file. */
 export function makeRecorder(o) {
   const opts = o || {};
   const log = [];
@@ -229,7 +226,6 @@ export function bootMic(o) {
   } });
   globalThis.MediaRecorder = function () { throw new Error("a test must never construct a real MediaRecorder"); };
   const audioCtx = { closed: false, processors: [] };
-  globalThis.window = globalThis.window || {};
   globalThis.AudioContext = function () {
     const ctx = {
       sampleRate: opts.sampleRate || 48000,
@@ -246,11 +242,9 @@ export function bootMic(o) {
     return ctx;
   };
   globalThis.AbortSignal = { timeout: () => ({ aborted: false, addEventListener() {} }) };
-  const RealBlob = globalThis.__realBlob || (globalThis.__realBlob = globalThis.Blob);
   globalThis.Blob = class FakeBlob {
     constructor(parts, o2) {
-      const list = parts || [];
-      // Real bytes are kept whole, so a test can assert on what would be uploaded.
+      const list = parts || [];   // real bytes are kept whole, to assert on what is uploaded
       this.parts = list;
       this.size = list.reduce(
         (n, p) => n + (p && p.size !== undefined ? p.size : (p && p.byteLength) || 0), 0);
@@ -259,7 +253,6 @@ export function bootMic(o) {
       this.bytes = bytes || (list[0] && list[0].bytes) || null;
     }
   };
-  void RealBlob;
 
   const published = [];   // reached window.moxieBridge.sendUserTurn — THE PAID PATH
   const scripted = [];    // reached window.moxieBridge.sendScriptedTurn — the free one
@@ -304,10 +297,8 @@ export function bootMic(o) {
   (0, eval)(MIC_SRC);
   const mic = globalThis.window.moxieMic;
   const rec = makeRecorder(opts.recorder);
-  // `realCapture` leaves mic.js to choose its OWN capture (the WAV encoder block needs
-  // that); otherwise a fake recorder is injected. `level(rms)` drives the same
-  // `setLevelListener` seam the hosted capture uses, so the silence auto-stop runs through
-  // the real code path.
+  // `realCapture` leaves mic.js its OWN capture (the WAV encoder); otherwise a fake recorder.
+  // `level(rms)` drives the real `setLevelListener` seam the silence auto-stop reads.
   let levelFn = null;
   if (!opts.realCapture) {
     mic.setCapture(() => Promise.resolve({

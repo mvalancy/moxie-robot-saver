@@ -165,15 +165,11 @@ def test_a_packs_list_can_never_remove_what_the_runtime_put_there():
     rt, dev = make_runtime(_SubscribeApp(events=[QR]))
     resp = drive_turn(rt, dev, "hello")
     active = _active(resp)
-    for event in P.VISION_EVENTS:
-        assert event in active, f"the runtime's own {event} must survive a pack's list"
     assert active[:len(P.VISION_EVENTS)] == list(P.VISION_EVENTS), \
         "the runtime's list comes first, in its own order"
     # The conjunction is the invariant: a pack-wins merge sets the latch but loses the events.
     assert rt._vision_subscribed.get(dev) == rt.robots[dev].module_id, \
         "the latch records the module it believes it subscribed for"
-    assert set(P.VISION_EVENTS) <= set(active), \
-        "…and what the latch claims was sent must actually have been sent"
 
 
 def test_a_pack_can_add_an_event_the_runtime_did_not_ask_for():

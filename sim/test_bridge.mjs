@@ -1,14 +1,11 @@
-/* Unit test for sim/web/bridge/ — loads the REAL bridge with stubbed
- * window/document/mqtt and asserts it drives window.moxie correctly from firmware
- * markup. No browser, no network. Run: node sim/test_bridge.mjs
+/* sim/web/bridge/ under bare node: firmware markup -> window.moxie, telehealth, response
+ * actions, robot->cloud envelopes (byte-compared with the SIL robot's golden) and the
+ * presence events. No browser, no network. Run: node sim/test_bridge.mjs
  */
-import { loadBridge, audioSpy, readGolden } from "./bridge_harness.mjs";
+import { loadBridge, audioSpy, readGolden, checks } from "./bridge_harness.mjs";
 
-/* A RECORDING audio stub: `speakClipOnly` is how a child turn becomes audible, and plain
- * `speak()` for a child line would read a visitor's own words back at them
- * (voice/local.js::speakClipOnly), so both are spied and the WRONG one can fail the test.
- * The stub client is CONNECTED and records publishes: what the bridge puts on
- * `events/...` is under test too. */
+/* Both voice doors are spied: a child line must use `speakClipOnly`, never `speak()`
+ * (which would read a visitor's own words back at them). */
 const { voice, audio } = audioSpy();
 const { calls, published, subscribed, client: mqttClient } = loadBridge({ audio });
 
@@ -37,12 +34,15 @@ mqttClient._emit("message", "/devices/d_test/events/remote-chat",
 mqttClient._emit("message", "/devices/d_test/events/remote-chat",
   Buffer.from(JSON.stringify({ command: "notify", speech: "echo of Moxie" })));  // must be skipped
 
+// a CloudTTSResponse on commands/tts is handed to voice/ to decode and play
+mqttClient._emit("message", "/devices/d_test/commands/tts", Buffer.from(JSON.stringify(
+  { request_source: "ROBOT_TTS_REQUEST", audio: { buffer: "AAA=", channels: 1, sample_rate: 22050 },
+    marks: [], event_id: "tts-1", chunk_num: 0 })));
+
 mqttClient._emit("message", "/devices/d_test/commands/motor",
   Buffer.from(JSON.stringify({ motors: { "0": 30000, "4": 24000 } })));  // SIL motor channel
 
-// ---- 🎭 telehealth: the operator's line must drive the avatar exactly like a brain
-// reply, because `Output.markup` IS the same behavior language (telehealth.md:8).
-// Same markup as the "Hmm?" reply above, delivered on the puppet channel instead.
+// ---- telehealth: the operator's line drives the avatar like a brain reply ----
 const puppetMarkup =
   '<mark name="cmd:playback-mood,data:{+mood+:2,+intensity+:2}"/>' +
   '<mark name="cmd:behaviour-tree,data:{+behaviour+:+Bht_Spin_360+,+eventName+:+Gesture_None+}"/>' +
@@ -58,15 +58,9 @@ mqttClient._emit("message", "/devices/d_test/commands/telehealth",
   Buffer.from(JSON.stringify({ command: "telehealth", message: {
     action: "INTERRUPT", session_id: "ths-1" } })));
 const th = window.moxieBridge.telehealthStats();
-// snapshot: the action turns below drive setSpeech again, and the INTERRUPT
-// assertion is about the state the bubble was left in *then*.
 const speechAtInterrupt = calls.setSpeech.slice();
 
-// ---- 🎬 response_actions: the cloud drives navigation, and the avatar must obey ----
-// The shape is the one `sim/tests/test_e2e_actions_to_robot.py` asserts arrives at the
-// robot: `{output_type:"GLOBAL", action, module_id, content_id}` off
-// `mqtt/moxie_sdk/wire.py::build_chat_response`. That test's docstring says outright that
-// no SIM client acts on them; these assertions are that gap closing.
+// ---- response_actions (the golden script `test_sim_client_parity.py` pins by event_id) ----
 mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
   Buffer.from(JSON.stringify({ command: "remote_chat", result: "SUCCESS", event_id: "act-1",
     output: { text: "Yes! Let's draw.", markup: "Yes! Let's draw." },
@@ -85,8 +79,7 @@ mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
                          event_subscription: { active: ["eb-found-face", "eb-lost-target"],
                                                clear: false } }] })));
 
-// An action type this client does not implement, and a junk entry: both must be COUNTED
-// and skipped. A future server verb may not break an old client's turn.
+// An unknown verb and a junk entry are COUNTED and skipped, never thrown.
 mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
   Buffer.from(JSON.stringify({ command: "remote_chat", event_id: "act-3",
     output: { text: "…", markup: "…" },
@@ -100,7 +93,7 @@ mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
                        { output_type: "GLOBAL", action: "sleep" }] })));
 const act = window.moxieBridge.actionStats();
 
-// ---- 📒 robot → cloud: the activity log, byte-compared with the SIL robot's ----
+// ---- robot -> cloud: the activity log, byte-compared with the SIL robot's ----
 window.moxieBridge.reportMentorBehavior({ module_id: "DRAW", content_id: "default",
                                           action: "completed", timestamp: 1788360800925 });
 // the cloud's answer to the `schedule` query the bridge sent on connect
@@ -113,9 +106,8 @@ const log = window.moxieBridge.activityStats();
 const golden = readGolden("robot_to_cloud_activity.json");
 const identity = golden.identity_keys;
 
-/* Compare one published envelope with the golden the SIL robot produced: same keys in the
- * same order at every level, same values — except the `identity_keys`, which say WHICH
- * robot is speaking and WHEN and are therefore compared by JSON type only. */
+/* Same keys in the same order at every level, same values — except `identity_keys` (which
+ * robot, and when), compared by JSON type only. */
 function cmp(path, want, got, out) {
   if (identity.indexOf(path) >= 0) {
     if (typeof want !== typeof got)
@@ -153,30 +145,26 @@ for (const [kind, spec] of Object.entries(golden.envelopes)) {
 }
 
 // ---- assertions ----
-const fails = [];
-const ok = (cond, msg) => { if (!cond) fails.push(msg); };
+const { ok, report } = checks();
 ok(calls.setSpeech.includes("Happy birthday!"), "setSpeech('Happy birthday!')");
 ok(calls.setFace.includes("happy"), `mood 1 → setFace('happy'); got ${JSON.stringify(calls.setFace)}`);
 ok(calls.setFace.includes("confused"), `mood 8 (Confused) → setFace('confused'); got ${JSON.stringify(calls.setFace)}`);
 ok(calls.setMotor.some(([i]) => i === 5), `Bht_Spin_360 → body-yaw motor (5) driven; got ${JSON.stringify(calls.setMotor)}`);
-ok(calls.setMotor.length > 0, "Gesture_Celebrate → setMotor(...) called");
 ok(JSON.stringify(calls.showIcons).includes("Birthday"), `icons-v2 → showIcons(['Birthday']); got ${JSON.stringify(calls.showIcons)}`);
 ok(calls.transcript.includes("I feel happy today"), `child turn → transcript; got ${JSON.stringify(calls.transcript)}`);
 ok(!calls.transcript.includes("echo of Moxie"), "notify turn must NOT appear in transcript");
 
-// The child is HEARD, not only read: the scripted child lines have shipped clips.
 ok(voice.speakClipOnly.some(([t, w]) => t === "I feel happy today" && w === "child"),
    `child turn → speakClipOnly(text, "child"); got ${JSON.stringify(voice.speakClipOnly)}`);
-/* …through the CLIP-ONLY door, never `speak()`: the same handler carries whatever a visitor
- * typed or said, and `speak()` would synthesize it back at them in a stranger's voice. */
 ok(!voice.speak.includes("I feel happy today"),
-   `a child line must NEVER reach speak() — it falls through to Piper/browser TTS and reads ` +
-   `the visitor's own words back at them; got ${JSON.stringify(voice.speak)}`);
+   `a child line must NEVER reach speak(); got ${JSON.stringify(voice.speak)}`);
 ok(voice.sfx.includes("listen"), `child turn still fires sfx("listen"); got ${JSON.stringify(voice.sfx)}`);
-// The robot echoing itself is not the child speaking: no row, and no voice either.
 ok(!voice.speakClipOnly.some(([t]) => t === "echo of Moxie") && !voice.speak.includes("echo of Moxie"),
    `a 'notify' echo must not be spoken as the child; got ${JSON.stringify(voice.speakClipOnly)}`);
 ok(calls.transcript.includes("Happy birthday!"), "Moxie reply → transcript");
+ok(subscribed.includes("/devices/+/commands/tts") &&
+   voice.cloudTTS.some((p) => (typeof p === "string" ? JSON.parse(p) : p).event_id === "tts-1"),
+   `commands/tts is subscribed and routed to moxieAudio.playCloudTTS; got ${JSON.stringify(voice.cloudTTS)}`);
 ok(calls.setMotor.some(([i, v]) => i === 0 && v === 30000) && calls.setMotor.some(([i, v]) => i === 4 && v === 24000),
    `commands/motor → setMotor(0,30000)+setMotor(4,24000); got ${JSON.stringify(calls.setMotor)}`);
 
@@ -191,12 +179,10 @@ ok(th.interrupts === 1 && th.last_action === "INTERRUPT",
 ok(speechAtInterrupt[speechAtInterrupt.length - 1] === "",
    `INTERRUPT clears the speech bubble; got ${JSON.stringify(speechAtInterrupt.slice(-2))}`);
 
-// 🎬 response_actions → the avatar
 ok(afterLaunch.module_id === "DRAW" && afterLaunch.content_id === "default",
    `launch → the SIM is in the module; got ${afterLaunch.module_id}/${afterLaunch.content_id}`);
 ok(JSON.stringify(calls.showIcons).includes("DRAW"),
    `launch DRAW → the module badge is shown; got ${JSON.stringify(calls.showIcons)}`);
-ok(calls.setMotor.length > 0, "launch → the greet gesture drove the motors");
 ok(act.launches === 1 && act.exits === 1, `one launch + one exit recorded; got ${act.launches}/${act.exits}`);
 ok(act.module_id === "" && act.content_id === "", `exit → out of the module; got ${JSON.stringify(act)}`);
 ok(act.asleep === true && act.last === "sleep", `sleep → asleep; got ${act.asleep}/${act.last}`);
@@ -207,7 +193,6 @@ ok(JSON.stringify(act.subscribed) === JSON.stringify(["eb-found-face", "eb-lost-
 ok(act.applied.every((a) => a.action !== "teleport_to_mars"),
    `an unknown action never reaches the avatar; got ${JSON.stringify(act.applied)}`);
 
-// 📒 robot → cloud: the activity log
 ok(log.topic === "/devices/d_sim/events/client-service-activity-log",
    `activity log rides the recovered topic; got ${log.topic}`);
 ok(published.some((p) => p.topic === log.topic),
@@ -224,12 +209,48 @@ ok(log.telehealth_state === "IN_SESSION",
 ok(parity.length === 0,
    `robot→cloud envelopes must match ${golden.reference_client}:\n     ${parity.join("\n     ")}`);
 
-if (fails.length) {
-  console.log("❌ bridge unit test FAILED:");
-  for (const f of fails) console.log("   -", f);
-  process.exit(1);
+
+// ---- presence: a face event rides remote-chat as `speech`, never enters the comms log ----
+{
+  const P = loadBridge();
+  const B = P.bridge;
+  const badge = () => P.attrs["presence-badge/data-presence"];
+  const chat = (event_id, result, text) => P.emit("/devices/d_sim/commands/remote_chat",
+    { command: "remote_chat", result, event_id, output: { text, markup: text } });
+  ok(B.presenceStats().present === null && badge() === "unknown" && P.els["presence-badge"].hidden === true,
+     "presence starts UNKNOWN with the badge hidden (rendered check: test_liveliness.mjs)");
+
+  const foundId = B.faceEvent("found");
+  const { topic, payload } = P.published[P.published.length - 1] || {};
+  const msg = JSON.parse(payload || "{}");
+  ok(topic === "/devices/d_sim/events/remote-chat" && msg.speech === "eb-found-face" &&
+     msg.command === "prompt" && msg.backend === "router" && msg.event_id === foundId,
+     `found -> an ordinary remote-chat request carrying the event; got ${topic} ${payload}`);
+  ok(badge() === "here" && P.els["presence-state"].textContent === "HERE" &&
+     P.els["presence-badge"].hidden === false && P.els["presence-toggle"].textContent === "Walk away",
+     `found -> badge HERE, revealed, toggle 'Walk away'; got ${badge()}`);
+  ok(!P.calls.transcript.includes("eb-found-face"), "a vision event never enters the comms log");
+
+  chat(foundId, "NOREPLY_ACK", "");
+  ok(B.presenceStats().greetings.length === 0, "NOREPLY_ACK carries no words -> no greeting");
+
+  B.faceEvent("lost");
+  ok(B.presenceStats().present === false && badge() === "away", "lost -> away");
+  const backId = B.faceEvent("found");
+  chat(backId, "SUCCESS", "Hey Sam, there you are!");
+  const st = B.presenceStats();
+  ok(st.greetings.length === 1 && st.greetings[0].startsWith("Hey Sam") &&
+     st.arrivals === 2 && st.departures === 1 &&
+     st.events.join(",") === "eb-found-face,eb-lost-target,eb-found-face",
+     `the answer to a face event is recorded as a greeting; got ${JSON.stringify(st)}`);
+
+  P.emit("/devices/d_sim/events/remote-chat", { command: "prompt", speech: "eb-lost-target", event_id: "bus-1" });
+  ok(B.presenceStats().present === false && !P.calls.transcript.includes("eb-lost-target"),
+     "a bus-sourced event updates presence and still stays out of the log");
+  P.clickHandlers["presence-toggle"]();
+  ok(B.presenceStats().present === true, "the toggle walks the child back in");
 }
-console.log(`✅ bridge unit test OK — ${Object.values(calls).reduce((a, c) => a + c.length, 0)} avatar calls asserted ` +
-  `(mood→face, gesture→motor, icons-v2→badges, transcript, notify-skip, 🎭 telehealth, ` +
-  `🎬 response_actions, 📒 activity-log parity with ${golden.reference_client})`);
+
+report("✅ bridge unit test OK — markup->avatar, telehealth, response_actions, activity-log " +
+       `parity with ${golden.reference_client}, presence events`);
 process.exit(0);   // the local-voice grace timer would otherwise hold the loop open

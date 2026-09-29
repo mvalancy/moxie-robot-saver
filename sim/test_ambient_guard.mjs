@@ -11,9 +11,9 @@
  *
  * Blocks: 1 hosted+live end to end (ambient fires idle, the answer is never cut, the hold,
  * resume); 2 NEGATIVE CONTROL (the guard bypassed really does cut — what makes 1 mean
- * something); 3 hosted+degraded (the narrow `isSpeaking()` is false while she talks); 4 the
- * ~400 ms seam between stop() and the next clip; 5 the loading seam (a quip still fetching
- * when the answer lands).
+ * something); 3 hosted+degraded (the narrow `isSpeaking()` is false while she talks) and,
+ * on the same page, 4 the ~400 ms seam between stop() and the next clip; 5 the loading seam
+ * (a quip still fetching when the answer lands).
  *
  * Not asserted: silence while a turn is in flight before any audio exists — she is genuinely
  * silent there (gap recorded in ROADMAP.md).
@@ -23,62 +23,23 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo, web, watchPage, notable, launchBrowser } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, web, notable, launchBrowser,
+         openSim, liveFixture, instrumentWebAudio } from "./browser_harness.mjs";
 
 const LABEL = "ambient-guard test";
-const { puppeteer, chrome, skip } = await requireBrowser(LABEL);
+const { puppeteer, chrome } = await requireBrowser(LABEL);
 const { fails, ok, eq, count } = makeChecks();
 
 const site = await serveWeb();
 const HOSTED = `http://moxie.hosted.test:${site.port}/sim.html`;
-
-/* The real Function builds the health envelope, so this suite can never drift from what
- * the route answers (the trick `sim/test_env_hosted.mjs` established). */
-const health = await import(join(repo, "functions", "api", "health.js"));
-const envelope = await import(join(repo, "functions", "api", "_lib", "envelope.js"));
-const HEALTH_BARE = await (await health.onRequestGet({ env: {} })).text();
-const HEALTH_LIVE = await (await health.onRequestGet({
-  env: {
-    DEMO_GATEWAY_BASE_URL: "https://gw.invalid.test/v1",
-    DEMO_GATEWAY_API_KEY: "sk-testonly-abcdefghijklmnop",
-    DEMO_CHAT_MODEL: "test-brain-model",
-    DEMO_TTS_MODEL: "test-voice-model",
-    DEMO_STT_MODEL: "test-ears-model",
-  },
-})).text();
 
 /* THE ANSWER at a real turn's measured length (105 332 frames @ 22 050 Hz = 4.78 s): a
  * short tone would hide the collision with the ambient window. */
 const RATE = 22050, WANT_FRAMES = 105332;
 const TONE = pcmToneBase64({ seconds: WANT_FRAMES / RATE, rate: RATE, freq: 440, amp: 0.8 });
 const ANSWER_MS = (TONE.frames / RATE) * 1000;
-
-const EID = "sim-ambientguard01";
-const REPLY = "Hi there! What would you like to play?";
-
-const chatBody = JSON.stringify(envelope.envelope({
-  ok: true, mode: "live", voice: true, ears: true,
-  messages: [{
-    topic: "/devices/d_sim/commands/remote_chat",
-    payload: JSON.stringify({
-      command: "remote_chat", result: "SUCCESS", backend: "router", event_id: EID,
-      output: { text: REPLY, markup: REPLY }, end_turn: false,
-    }),
-  }],
-  speech: [{ ticket: "v1.TESTTICKET.MAC", event_id: EID, chunk_num: 0 }],
-  context: "v1.CTX.MAC",
-}));
-const speechBody = JSON.stringify(envelope.envelope({
-  ok: true, mode: "live", voice: true, ears: true,
-  messages: [{
-    topic: "/devices/d_sim/commands/tts",
-    payload: JSON.stringify({
-      request_source: "ROBOT_TTS_REQUEST",
-      audio: { buffer: TONE.base64, channels: 1, sample_rate: TONE.rate },
-      marks: [], event_id: EID, chunk_num: 0,
-    }),
-  }],
-}));
+const FX = await liveFixture({ eid: "sim-ambientguard01", reply: "Hi there! What would you like to play?", tone: TONE });
+const LIVE = { health: FX.health, chat: FX.chat, speech: FX.speech };
 
 /* A real ambient line, read from the shipped file — so the negative control speaks exactly
  * what `perform()` would have spoken, and cannot drift from what the site ships. */
@@ -87,93 +48,25 @@ const AMBIENT_LINE = JSON.parse(readFileSync(join(web, "ambient.json"), "utf8"))
 const browser = await launchBrowser(puppeteer, chrome,
   { autoplay: true, hosts: { "moxie.hosted.test": site.port } });
 
-/** Open sim.html with `/api/*` answered at the browser and Web Audio fully instrumented. */
-async function open(url, opts) {
-  const page = await browser.newPage();
-  // >=900px: below that the rail starts as a CLOSED drawer and nothing in it is clickable.
-  await page.setViewport({ width: 1440, height: 900 });
-  const { errs, aborted } = watchPage(page);
-  /* Hold clip FETCHES open on demand: block 5 needs a clip still in flight when the answer
-   * starts, so the fixture creates that condition instead of racing the network for it. */
+/** sim.html on the hosted origin, `/api/*` answered at the browser (openSim), Web Audio
+ * instrumented where sound is made (`__audio.plays`: "pcm" = the gateway answer, "clip" = a
+ * decoded file; `__audio.stops`: the literal mechanism of the defect). Clip FETCHES can be
+ * held open (`clipNet.stall`): block 5 needs a quip still in flight when the answer starts. */
+async function open(o) {
   const clipNet = { stall: false, held: [] };
-
-  /* THE RECORDER: every buffer source started or stopped, tagged by how its buffer was
-   * built. `stop` is the literal mechanism of the defect, so "was the answer cut?" is a fact. */
-  await page.evaluateOnNewDocument(() => {
-    const rec = (window.__rec = { events: [], seq: 0 });
-    const tag = new WeakMap();
-    const C = window.AudioContext || window.webkitAudioContext;
-    if (!C) return;
-    const cb = C.prototype.createBuffer;
-    C.prototype.createBuffer = function (...a) {
-      const b = cb.apply(this, a); tag.set(b, "pcm"); return b;
-    };
-    const da = C.prototype.decodeAudioData;
-    C.prototype.decodeAudioData = function (...a) {
-      const p = da.apply(this, a);
-      return p && p.then ? p.then((b) => { tag.set(b, "clip"); return b; }) : p;
-    };
-    const cbs = C.prototype.createBufferSource;
-    C.prototype.createBufferSource = function () {
-      const node = cbs.call(this);
-      const id = ++rec.seq;
-      const start = node.start.bind(node), stop = node.stop.bind(node);
-      node.start = function (...a) {
-        const b = node.buffer;
-        let peak = 0, frames = 0, rate = 0, src = "?";
-        if (b) {
-          frames = b.length; rate = b.sampleRate; src = tag.get(b) || "?";
-          const d = b.getChannelData(0);
-          for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; }
-        }
-        rec.events.push({ ev: "start", id, src, frames, rate, peak,
-                          dur: rate ? (frames / rate) * 1000 : 0, t: performance.now() });
-        return start(...a);
-      };
-      node.stop = function (...a) {
-        rec.events.push({ ev: "stop", id, t: performance.now() });
-        return stop(...a);
-      };
-      return node;
-    };
+  const v = await openSim(browser, HOSTED, { ...o,
+    beforeLoad: (p) => p.evaluateOnNewDocument(instrumentWebAudio),
+    route: (r, u) => (clipNet.stall && /\/audio\/.+\.(wav|mp3|ogg|m4a)$/i.test(u)) ? (clipNet.held.push(r), true) : false,
   });
-
-  await page.setRequestInterception(true);
-  page.on("request", (r) => {
-    if (r.isInterceptResolutionHandled()) return;
-    const u = r.url();
-    if (/\/api\/health\b/.test(u)) {
-      if (opts.health)
-        return r.respond({ status: 200, contentType: "application/json", body: opts.health });
-      aborted.refused++;
-      return r.respond({ status: 404, contentType: "text/plain", body: "not found" });
-    }
-    if (/\/api\/chat\b/.test(u))
-      return opts.chat
-        ? r.respond({ status: 200, contentType: "application/json", body: chatBody })
-        : r.respond({ status: 404, contentType: "application/json", body: "{}" });
-    if (/\/api\/speech\b/.test(u))
-      return opts.chat
-        ? r.respond({ status: 200, contentType: "application/json", body: speechBody })
-        : r.respond({ status: 404, contentType: "application/json", body: "{}" });
-    if (/:808[12]\//.test(u)) { aborted.n++; return r.abort("connectionrefused"); }
-    if (clipNet.stall && /\/audio\/.+\.(wav|mp3|ogg|m4a)$/i.test(u)) { clipNet.held.push(r); return; }
-    return r.continue();
-  });
-
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
-  await page.waitForFunction("!!window.moxieAudio && !!window.moxieAmbient && !!window.moxieBridge",
-                             { timeout: 15000 });
-  // env.js's sidecar probe settles in <2.5 s and mode.js's first /api/health right away.
-  await new Promise((r) => setTimeout(r, 3500));
-  return { page, errs, aborted, clipNet };
+  await v.page.waitForFunction("!!window.moxieAudio && !!window.moxieAmbient", { timeout: 15000 });
+  return { ...v, clipNet };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const starts = (evs, src) => evs.filter((e) => e.ev === "start" && (!src || e.src === src));
-const timeline = (page) => page.evaluate(() => window.__rec.events);
-/** `stop()` events that cut `node` more than 50 ms before its audio ran out. */
-const cutsOf = (evs, node) => evs.filter((e) => e.ev === "stop" && e.id === node.id && e.t < node.t + node.dur - 50);
+const starts = (A, src) => A.plays.filter((e) => !src || e.src === src);
+const timeline = (page) => page.evaluate(() => window.__audio);
+/** `stop()` calls that cut `node` more than 50 ms before its audio ran out. */
+const cutsOf = (A, node) => A.stops.filter((e) => e.id === node.id && e.t < node.t + node.dur - 50);
 
 /** Fire one ambient tick the way the scheduler does, recording what the guard could see. */
 const tickAmbient = (page) => page.evaluate(() => {
@@ -196,7 +89,7 @@ async function type(page, text) {
 async function settleDegradedLine(page) {
   await page.waitForFunction("window.moxieAmbient.degradedState().said === true", { timeout: 15000 });
   await page.waitForFunction(
-    `window.__rec.events.some(e => e.ev === "start" && e.src === "clip")`, { timeout: 15000 });
+    `window.__audio.plays.some(e => e.src === "clip")`, { timeout: 15000 });
 
   /* STOP THE SCHEDULER *BEFORE* WAITING OUT THE ANNOUNCEMENT: the wait ends at exactly the
    * instant ambient may speak again, so stopping after it raced (~1 in 5) and block 3 then
@@ -214,14 +107,14 @@ try {
    * answering, a beat to finish, back to life afterwards.
    * ===================================================================== */
   {
-    const { page, errs, aborted } = await open(HOSTED, { health: HEALTH_LIVE, chat: true });
+    const { page, errs, aborted } = await open(LIVE);
 
     /* --- 1a. AMBIENT STILL FIRES WHEN SHE IS IDLE (a fix that kills ambient is worse than the
      * bug). Also warms ambient.json and the manifest so later ticks are not cold fetches. */
     await page.click("body");                    // browser autoplay unlock
     const idle = await tickAmbient(page);
     await page.waitForFunction(
-      `window.__rec.events.some(e => e.ev === "start" && e.src === "clip")`, { timeout: 15000 })
+      `window.__audio.plays.some(e => e.src === "clip")`, { timeout: 15000 })
       .catch(() => {});                      // a miss must FAIL the check below, not throw
     let evs = await timeline(page);
     const idleClips = starts(evs, "clip");
@@ -239,7 +132,7 @@ try {
      * and ~2.4 s into 4.78 s of speech, both squarely inside it. */
     await type(page, "hello moxie");
     await page.waitForFunction(
-      `window.__rec.events.some(e => e.ev === "start" && e.src === "pcm")`, { timeout: 20000 });
+      `window.__audio.plays.some(e => e.src === "pcm")`, { timeout: 20000 });
 
     await sleep(600);
     const mid1 = await tickAmbient(page);
@@ -331,11 +224,11 @@ try {
    * cut the answer, or block 1 proves nothing.
    * ===================================================================== */
   {
-    const { page } = await open(HOSTED, { health: HEALTH_LIVE, chat: true });
+    const { page } = await open(LIVE);
     await page.click("body");
     await type(page, "hello moxie");
     await page.waitForFunction(
-      `window.__rec.events.some(e => e.ev === "start" && e.src === "pcm")`, { timeout: 20000 });
+      `window.__audio.plays.some(e => e.src === "pcm")`, { timeout: 20000 });
     await sleep(700);
     await page.evaluate((t) => window.moxieAudio.speak(t, "ambient"), AMBIENT_LINE);
     await sleep(2000);
@@ -358,16 +251,16 @@ try {
    * fallback deployment unguarded. Both halves asserted.
    * ===================================================================== */
   {
-    const { page, errs, aborted } = await open(HOSTED, { health: HEALTH_BARE });
+    const { page, errs, aborted } = await open({ health: FX.bareHealth });
     /* A degraded page first speaks its own ~5 s `degraded` line (live-sim-demo.md §6.2); it
      * must play out or it would be measured as the reply. */
     await page.click("body");
     await settleDegradedLine(page);
 
-    const mark = (await timeline(page)).length;
+    const mark = (await timeline(page)).plays.length;
     await type(page, "tell me a joke");
     await page.waitForFunction(
-      `window.__rec.events.slice(${mark}).some(e => e.ev === "start" && e.src === "clip")`,
+      `window.__audio.plays.slice(${mark}).some(e => e.src === "clip")`,
       { timeout: 20000 });
     await sleep(200);
 
@@ -378,7 +271,7 @@ try {
     eq(probe.pred.broad, true, "…the BROAD isMoxieSpeaking() sees the clip, which is why it is used");
     eq(probe.pred.busy, true, "…so the guard stands down on the degraded path too");
 
-    const reply = starts((await timeline(page)).slice(mark), "clip")[0] || {};
+    const reply = (await timeline(page)).plays.slice(mark).filter((e) => e.src === "clip")[0] || {};
     ok(reply.peak > 0.01, `the scripted reply is audible (peak ${(reply.peak || 0).toFixed(3)})`);
     // say() re-armed the scheduler, but its next tick is 11–24 s out, past this ~4.3 s reply.
     await sleep(Math.max(600, reply.dur - 200) + 400);
@@ -392,20 +285,12 @@ try {
 
     eq(notable(errs, aborted).length, 0,
        `no console errors on the degraded path: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
-    await page.close();
-  }
 
-  /* =======================================================================
-   * 4. THE SEAM — `speak()` stops the old clip and only THEN fetches/decodes the next, so for
-   * ~400 ms the broad predicate reads FALSE mid-reply. A bare `if (isMoxieSpeaking())` guard
-   * would let a tick through; the `spokeUntil` grace beat closes it. The page is held inside
-   * the seam and all three predicates asserted.
-   * ===================================================================== */
-  {
-    const { page } = await open(HOSTED, { health: HEALTH_BARE });
-    await page.click("body");
-    await settleDegradedLine(page);
-
+    /* ---- 4. THE SEAM (same page) — `speak()` stops the old clip and only THEN fetches/decodes
+     * the next, so for ~400 ms the broad predicate reads FALSE mid-reply. A bare
+     * `if (isMoxieSpeaking())` guard would let a tick through; the `spokeUntil` grace beat
+     * closes it. The page is held inside the seam and the predicates asserted. */
+    await page.waitForFunction("!window.moxieAudio.isMoxieBusy(1600)", { timeout: 25000 });
     // Speak a long clip, then cut it the way a reply does, and read the predicates in the
     // gap before the replacement can possibly have decoded.
     await page.evaluate((t) => window.moxieAudio.speak(t, "ambient"), AMBIENT_LINE);
@@ -431,7 +316,7 @@ try {
    * `floor` (voice/, THE THIRD SEAM) it starts on top of the answer every time.
    * ===================================================================== */
   {
-    const { page, errs, aborted, clipNet } = await open(HOSTED, { health: HEALTH_LIVE, chat: true });
+    const { page, errs, aborted, clipNet } = await open(LIVE);
     await page.click("body");
     await page.evaluate(() => window.moxieAmbient.stop());   // drive tick() explicitly
     await page.waitForFunction("!window.moxieAudio.isMoxieBusy(1600)", { timeout: 25000 });
@@ -443,7 +328,7 @@ try {
 
     await type(page, "hello moxie");
     await page.waitForFunction(
-      `window.__rec.events.some(e => e.ev === "start" && e.src === "pcm")`, { timeout: 20000 });
+      `window.__audio.plays.some(e => e.src === "pcm")`, { timeout: 20000 });
     const ansT = starts(await timeline(page), "pcm")[0].t;
 
     ok(clipNet.held.length >= 1,

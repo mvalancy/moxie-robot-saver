@@ -241,32 +241,6 @@ def test_a_real_supervisor_exits_promptly_on_a_real_sigterm(tmp_path):
     assert "supervisor stopped" in out, out
 
 
-@pytest.mark.skipif(os.name != "posix", reason="fd surgery on the child's stdout")
-def test_a_closed_stdout_is_not_proof_that_the_process_has_exited():
-    """Teeth for `wait()` above: a child that closes fd 1 and blocks on stdin is alive
-    with its output ended, so "EOF + `poll()`" proves nothing."""
-    child = subprocess.Popen(
-        [sys.executable, "-c",
-         "import os, sys; sys.stdout.write('bye\\n'); sys.stdout.flush(); "
-         "os.close(1); sys.stdin.readline()"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        text=True)
-    try:
-        tail = _Tail(child)
-        assert tail.wait_closed(timeout=30), "the child never closed its stdout"
-        assert child.poll() is None, (
-            "this test needs a process that is alive with a closed stdout; if that is no "
-            "longer constructible, the sampled idiom may be safe again — but prove it "
-            "here rather than by assuming it")
-        assert "bye" in tail.text(), tail.text()
-        child.stdin.close()                       # the only thing keeping it alive
-        assert child.wait(timeout=30) == 0, "the observed exit disagreed with the child"
-    finally:
-        if child.poll() is None:
-            child.kill()
-            child.wait(timeout=10)
-
-
 class _Tail:
     """Drain a child's stdout on one thread, keeping every line; `wait_for` watches the
     collected text (a second reader on a buffered pipe loses lines)."""

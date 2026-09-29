@@ -1,12 +1,9 @@
 """
 Unit tests for the durable per-robot store (`mqtt/moxie_sdk/store.py`). Pure: a tmp
-directory, no MQTT. Cross-process locking is `test_store_concurrency.py`.
+directory, no MQTT. Thread and cross-process locking is `test_store_concurrency.py`.
 """
 import json
 import os
-import threading
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from moxie_sdk.store import JsonStore, data_dir, safe_name   # noqa: E402
 
@@ -88,18 +85,6 @@ def test_unserializable_value_fails_cleanly_without_clobbering(tmp_path):
     assert s.write("d_1", "x", {"bad": object()}) is False
     assert s.read("d_1", "x") == {"v": 1}                  # previous good value survives
     assert [f for f in os.listdir(s.device_dir("d_1")) if f.endswith(".tmp")] == []
-
-
-def test_concurrent_appends_do_not_lose_records(tmp_path):
-    """The runtime ingests reports on a worker pool — read-modify-write must be locked."""
-    s = JsonStore(str(tmp_path))
-    threads = [threading.Thread(target=s.append, args=("d_1", "mentor_behaviors", {"i": i}))
-               for i in range(25)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert len(s.read("d_1", "mentor_behaviors")) == 25
 
 
 def test_data_dir_honors_the_env_override(monkeypatch, tmp_path):

@@ -1,21 +1,9 @@
-/* test_demo_proxy.mjs — the two spending routes (`/api/chat`, `/api/speech`) under bare
- * node, with no Cloudflare account and no network.
- *
- * Spec: docs/architecture/backlog/live-sim-demo.md §8.1 test 1, plus §3.2 (both route
- * contracts), §4.1 (every cap), §4.2 (what the browser may know), §4.3 (the origin pin),
- * §4.5 (the status table), §2.2 (the wire field set).
- *
- * The handlers are imported and called with a synthetic `Request` and a plain object as
- * `context.env`; `fetch` is stubbed. The sections live in `sim/tests/edge/demo_proxy/`
- * and run in order against one shared harness (`harness.mjs` there). Above all the caps,
- * the suite proves two things:
- *
- *   1. THE KEY AND THE GATEWAY URL NEVER APPEAR IN A RESPONSE. `assertClean()` sweeps the
- *      body, every header and any decoded audio of EVERY response produced, including
- *      hostile upstream bodies that name a model and a key prefix.
- *   2. A REFUSAL MAKES ZERO UPSTREAM CALLS. `_lib/limits.js::noteUpstreamCall()` sits
- *      immediately before the one `fetch()` in each route, so `upstreamCalls` is a
- *      recorded fact rather than an inference from a stub.
+/* test_demo_proxy.mjs — the two spending routes (`/api/chat`, `/api/speech`) under bare node:
+ * real handlers, a synthetic `Request`, a plain `env`, a stubbed `fetch`, no network.
+ * Spec: docs/architecture/backlog/live-sim-demo.md §8.1 test 1 (+ §3.2, §4.1–4.6, §2.2).
+ * Above every cap it proves (1) the key and gateway URL never appear in any response —
+ * `assertClean()` sweeps body, headers and decoded audio of EVERY response — and (2) a
+ * refusal makes zero upstream calls (`limits.js::noteUpstreamCall()` sits before each fetch).
  *
  *   node sim/test_demo_proxy.mjs
  */

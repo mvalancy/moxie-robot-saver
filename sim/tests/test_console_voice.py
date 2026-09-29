@@ -1,12 +1,5 @@
-"""
-The console's Speech and Listening pickers against the supervisor's REAL voice verbs.
-
-The console never keeps a list of voices: it renders what the supervisor says this
-appliance can genuinely use. This is that seam — the URL the card builds, the body it
-posts, and the 400 a stale page earns. Validation, persistence and the engine swap are
-the runtime's own; only the engine builders are faked (`helpers_console_supervisor`).
-Every test that picks a voice resets the pick afterwards.
-"""
+"""The Speech/Listening pickers against the supervisor's REAL voice verbs: the card renders
+what the appliance can genuinely use, and a stale page gets a 400. Picks are reset after."""
 import pytest
 
 pytest.importorskip("fastapi", reason="console tests need fastapi")

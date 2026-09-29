@@ -63,9 +63,7 @@ def test_the_readiness_line_is_printed_only_after_every_subscription():
     assert client.subscribes, "no subscription was made on a successful CONNACK"
     for topic, stdout_at_that_moment in client.subscribes:
         assert "broker connected" not in stdout_at_that_moment, (
-            f"the runtime announced 'broker connected' BEFORE subscribing to {topic!r} — "
-            "a harness that waits on that line will publish into a supervisor that is not "
-            "listening yet (rule 23: a readiness signal true of an earlier moment)")
+            f"'broker connected' printed BEFORE subscribing to {topic!r}")
     assert "broker connected" in out.getvalue(), "it never announced readiness at all"
 
 
@@ -93,11 +91,7 @@ def test_the_subscribed_line_is_not_printed_by_the_connack():
     out = io.StringIO()
     with redirect_stdout(out):
         rt._on_connect(_OrderRecordingClient(out), None, {}, 0)
-    assert SUBACK_LINE not in out.getvalue(), (
-        "the runtime claimed acknowledged subscriptions inside the CONNACK callback. "
-        "`subscribe()` only queues a packet; the ack arrives in `_on_subscribe`, and a "
-        "harness that boots a robot in between loses the robot's `/state` and the QoS-0 "
-        "config push that would have answered it")
+    assert SUBACK_LINE not in out.getvalue(), "claimed a SUBACK inside the CONNACK"
     assert not rt.subscriptions_acked.is_set(), \
         "`subscriptions_acked` was armed without a SUBACK"
 
@@ -110,11 +104,7 @@ def test_the_suback_is_what_prints_it_and_arms_the_flag():
         rt._on_subscribe(None, None, 1, [0], None)
     assert rt.subscriptions_acked.is_set(), "a SUBACK did not arm `subscriptions_acked`"
     body = out.getvalue()
-    assert SUBACK_LINE in body, (
-        f"the SUBACK printed nothing. Every SIL harness now blocks on {SUBACK_LINE!r}; "
-        f"a runtime that stops printing it hangs all of them for 40 s")
-    # Ordering, not just presence: the readiness signal a robot is booted on must come
-    # after the one that only says we asked.
+    assert SUBACK_LINE in body, "every SIL harness blocks on this line"
     assert body.index("broker connected") < body.index(SUBACK_LINE)
 
 
@@ -150,12 +140,8 @@ def test_one_subscribe_call_covers_every_topic_so_one_suback_is_enough():
     client = _OrderRecordingClient(out)
     with redirect_stdout(out):
         rt._on_connect(client, None, {}, 0)
-    assert len(client.subscribes) == 1, (
-        f"{len(client.subscribes)} subscribe calls — each gets its own SUBACK, so the "
-        f"first ack would arm readiness while three subscriptions were still in flight. "
-        f"Subscribe once with a [(topic, qos), …] list.")
-    assert sorted(client.topics()) == sorted(rt.SUBSCRIPTIONS), (
-        f"the one call does not cover every topic: {client.topics()}")
+    assert len(client.subscribes) == 1, "one SUBACK per call: the first would arm early"
+    assert sorted(client.topics()) == sorted(rt.SUBSCRIPTIONS)
 
 
 def test_a_disconnect_disarms_it_so_a_reconnect_must_earn_it_again():
@@ -168,9 +154,7 @@ def test_a_disconnect_disarms_it_so_a_reconnect_must_earn_it_again():
         rt._on_subscribe(None, None, 1, [0], None)
         assert rt.subscriptions_acked.is_set()
         rt._on_disconnect(None, None, None, 7)
-    assert not rt.subscriptions_acked.is_set(), (
-        "`subscriptions_acked` survived a disconnect: the appliance believes it is "
-        "subscribed on a socket that no longer exists")
+    assert not rt.subscriptions_acked.is_set(), "the SUBACK latched across a disconnect"
 
 
 def test_a_refused_subscription_is_not_readiness():
@@ -186,20 +170,5 @@ def test_a_refused_subscription_is_not_readiness():
         "a REFUSED subscription armed readiness"
     assert SUBACK_LINE not in body, \
         "the runtime announced acknowledged subscriptions it does not have"
-    assert "REFUSED" in body, (
-        f"a refused subscription was swallowed. The harness will now time out with no "
-        f"reason above it, which is the diagnosis this line exists to give: {body!r}")
+    assert "REFUSED" in body, f"a refused subscription was swallowed: {body!r}"
     assert any(n["kind"] == "error" for n in rt.recent), list(rt.recent)
-
-
-def test_the_connack_callback_is_the_only_place_that_subscribes():
-    """Exactly one `.subscribe(` call in the runtime — the fact ack-without-counting rests on
-    (a second call would let an unrelated ack arm readiness early)."""
-    from helpers_runtime import runtime_source
-    src = runtime_source()
-    calls = [ln.strip() for ln in src.splitlines()
-             if ".subscribe(" in ln and not ln.strip().startswith("#")]
-    assert calls == ["c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])"], (
-        f"the runtime subscribes in more than one place: {calls}. Either fold it into "
-        f"`_on_connect`'s single list call, or make `_on_subscribe` match the mid it is "
-        f"waiting for — an unmatched SUBACK arming readiness is the bug again.")

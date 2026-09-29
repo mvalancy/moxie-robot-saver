@@ -1,8 +1,9 @@
 /* browser_harness.mjs — shared plumbing for the headless-browser suites.
  *
  * NOT a test (`sim/tests/test_ci_test_coverage.py` enumerates only `test_*.mjs`). One copy
- * of puppeteer/Chrome discovery, the static server, the console-error "eyes", and the
- * hosted-page instruments shared by the deployed-site checkers and hosted-page suites.
+ * of puppeteer/Chrome discovery, the static server, the console-error "eyes", the SIM page
+ * fixture (`openSim`), and the hosted-page instruments shared by the deployed-site checkers
+ * and the browser suites.
  *
  * Its own static server rather than `sim/serve.py`: `serveWeb({ headers: true })` sends the
  * REAL `sim/web/_headers` `/*` block, so suites test the CSP we ship (only Cloudflare Pages
@@ -137,33 +138,6 @@ export function pagesHeaders() {
   return out;
 }
 
-/**
- * A page's HTML **plus the source of its own scripts** (following relative ES-module
- * imports), as one string to grep — behaviour lives in sibling `.js` files, not inline.
- * `vendor/` is EXCLUDED, or `mermaid.render` inside mermaid.min.js would satisfy
- * "docs.html must render mermaid" for a page that never calls it.
- *
- * @param {string} name e.g. "cloud.html"
- * @returns {string} the HTML followed by each first-party script it references, in order.
- */
-export function pageSource(name) {
-  const html = readFileSync(join(web, name), "utf8");
-  const parts = [html], seen = new Set();
-  const add = (ref, by) => {
-    ref = normalize(ref.split("?")[0].replace(/^\.\//, ""));
-    if (seen.has(ref) || /^[a-z]+:|^\/\//i.test(ref) || ref.startsWith("vendor/") || ref.startsWith("..")) return;
-    seen.add(ref);
-    const f = join(web, ref);
-    if (!existsSync(f)) return;
-    const src = readFileSync(f, "utf8");
-    parts.push(`\n/* ==== ${ref} (loaded by ${by}) ==== */\n` + src);
-    // follow relative ES-module imports (moxie.js -> moxie/*.js)
-    for (const m of src.matchAll(/\bfrom\s+["'](\.{1,2}\/[^"']+)["']/g)) add(join(dirname(ref), m[1]), ref);
-  };
-  for (const m of html.matchAll(/<script[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) add(m[1], name);
-  return parts.join("\n");
-}
-
 async function freePort() {
   return new Promise((res) => {
     const s = net.createServer();
@@ -276,32 +250,94 @@ export function watchPage(page) {
   return { errs, aborted };
 }
 
+/* ---- the SIM page, with its backend answered at the browser ----------------- */
+
 /**
- * One assertion string for a page's unexplained console output. Kept next to `notable()`
- * so every suite reports the same way: the COUNT plus the first few messages verbatim,
- * because "3 console errors" sends nobody anywhere.
+ * Wait until sim.html has DECIDED, instead of sleeping: the WebGL app is up, mode.js has left
+ * `boot` (its /api/health answer arrived), the document finished loading, and two frames plus
+ * a macrotask have passed so the paint that decision caused (banner, adoption) has landed.
  */
-export function eyesMsg(label, left) {
-  return `${label}: the page must raise no unexplained console errors — ` +
-         `${left.length} of them, first: ${left.slice(0, 3).join(" | ")}`;
+export async function simSettled(page, timeout = 30000) {
+  await page.waitForFunction(() => !!window.moxie && !!window.moxieMode &&
+    window.moxieMode.state() !== "boot" && document.readyState === "complete",
+  { timeout, polling: 50 });
+  await page.evaluate(() => new Promise((r) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50)))));
 }
 
 /**
- * Per-page eyes for suites whose loaders hand back a bare `page`: `watch(page)` wires
- * `watchPage()` and remembers it; `check(label, page)` asserts (via `eq`) that nothing
- * `notable()` was raised on that page.
+ * Open a SIM page with every backend answered AT THE BROWSER — no network, never a gateway:
+ *   · GET /api/health → `o.health` (a body string), or a 404 when absent (the static/offline path);
+ *   · POST /api/chat, /api/speech → `o.chat` / `o.speech` bodies, else ABORTED and recorded in
+ *     `spent` (a suite that expects no spend asserts it is empty); /api/transcribe likewise;
+ *   · the :8081 Piper sidecar → `o.piper` (a WAV Buffer) or refused; :8082 always refused.
+ * Every refusal is counted into `aborted`, so `notable(errs, aborted)` forgives exactly those.
+ * `o.route(r, url)` may answer a request first (truthy = handled); `o.beforeLoad(page)` runs
+ * before navigation (instrumentation). Waits for `simSettled` unless `o.settle === false`.
+ *
+ * @returns {Promise<{page, errs:string[], aborted:{n:number,refused:number}, reqs:string[],
+ *                    bodies:{url:string,body:string}[], spent:string[]}>}
  */
-export function pageEyes(eq) {
-  const seenBy = new WeakMap();
+export async function openSim(browser, url, o = {}) {
+  const page = await browser.newPage();
+  await page.setViewport(o.viewport || { width: 1440, height: 900 });
+  const { errs, aborted } = watchPage(page);
+  const reqs = [], bodies = [], spent = [];
+  if (o.beforeLoad) await o.beforeLoad(page);
+  await page.setRequestInterception(true);
+  const CORS = { "Access-Control-Allow-Origin": "*" };
+  const json = (r, body) => r.respond({ status: 200, contentType: "application/json", body });
+  page.on("request", (r) => {
+    if (r.isInterceptResolutionHandled()) return;
+    const u = r.url();
+    reqs.push(u);
+    if (/\/api\/(chat|speech|transcribe)\b/.test(u)) bodies.push({ url: u, body: r.postData() || "" });
+    if (o.route && o.route(r, u)) return;
+    if (/\/api\/health\b/.test(u)) {
+      if (o.health != null) return json(r, o.health);
+      aborted.refused++;
+      return r.respond({ status: 404, contentType: "text/plain", body: "not found" });
+    }
+    if (/\/api\/chat\b/.test(u) && o.chat) return json(r, o.chat);
+    if (/\/api\/speech\b/.test(u) && o.speech) return json(r, o.speech);
+    if (/\/api\/(chat|speech|transcribe)\b/.test(u)) { spent.push(u); aborted.n++; return r.abort(); }
+    if (/:8081\//.test(u) && o.piper) {
+      // Cross-origin: answered the way sim/tts/server.py does, with CORS, or the browser refuses it.
+      if (/\/health\b/.test(u))
+        return r.respond({ status: 200, contentType: "application/json", headers: CORS,
+                           body: '{"ok":true,"voice":"test"}' });
+      return r.respond({ status: 200, contentType: "audio/wav", headers: CORS, body: o.piper });
+    }
+    if (/:808[12]\//.test(u)) { aborted.n++; return r.abort("connectionrefused"); }
+    return r.continue();
+  });
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+  if (o.settle !== false) await simSettled(page);
+  return { page, errs, aborted, reqs, bodies, spent };
+}
+
+/** PAGE-SIDE (pass to `page.evaluate` with a selector): who receives a tap at the centre of
+ *  `sel`, and is the box inside the first viewport? `self` counts descendants. */
+export function hitTest(sel) {
+  const el = document.querySelector(sel);
+  if (!el) return { found: false, sel };
+  const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const sized = r.width > 0 && r.height > 0;
+  const hit = sized ? document.elementFromPoint(Math.round(r.left + r.width / 2),
+                                               Math.round(r.top + r.height / 2)) : null;
   return {
-    watch(page) { const s = watchPage(page); seenBy.set(page, s); return s; },
-    check(label, page) {
-      const seen = seenBy.get(page) || { errs: [], aborted: null };
-      const left = notable(seen.errs, seen.aborted);
-      eq(left.length, 0,
-         `${label}: the page raised console errors nobody asked for — ${left.length}, ` +
-         `first: ${left.slice(0, 3).join(" | ")}`);
-    },
+    found: true, sel, sized, w: Math.round(r.width), h: Math.round(r.height),
+    top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left),
+    right: Math.round(r.right), vw, vh, scrollY: window.scrollY,
+    shown: sized && cs.display !== "none" && cs.visibility !== "hidden",
+    // `+0.5`: a fractional layout can put `bottom` a hair past an integer height.
+    inFold: sized && r.top >= 0 && r.bottom <= vh + 0.5 && r.left >= -0.5 && r.right <= vw + 0.5,
+    self: !!hit && (hit === el || el.contains(hit)),
+    hit: hit ? (hit.id ? "#" + hit.id : hit.tagName.toLowerCase() +
+                (hit.className && typeof hit.className === "string" ? "." + hit.className.trim().split(/\s+/)[0] : ""))
+             : "null",
+    text: (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 90),
   };
 }
 
@@ -388,12 +424,13 @@ export function recordCspViolations() {
 
 /**
  * PAGE-SIDE (pass to `evaluateOnNewDocument`): instrument Web Audio where sound is MADE.
- * Every scheduled buffer lands in `window.__audio.plays` with its peak, and with the byte
- * length of the file `decodeAudioData` built it from — so `bytes == null` is a buffer built
- * by hand from gateway PCM (her live voice), and `bytes` names a pre-rendered clip.
+ * Every scheduled buffer lands in `window.__audio.plays` with its node id, start time,
+ * duration, peak, and the byte length of the file `decodeAudioData` built it from — so
+ * `bytes == null` is a buffer built by hand from gateway PCM (her live voice), and `bytes`
+ * names a pre-rendered clip. Every `stop()` lands in `window.__audio.stops`.
  */
 export function instrumentWebAudio() {
-  window.__audio = { created: 0, decoded: 0, started: 0, peak: 0, rate: 0, frames: 0, plays: [] };
+  window.__audio = { created: 0, decoded: 0, started: 0, peak: 0, rate: 0, frames: 0, plays: [], stops: [] };
   const C = window.AudioContext || window.webkitAudioContext;
   if (!C) return;
   const src = new WeakMap();                 // AudioBuffer -> bytes of the file it decoded from
@@ -407,9 +444,11 @@ export function instrumentWebAudio() {
     return p && p.then ? p.then((b) => { try { src.set(b, bytes); } catch (e) {} return b; }) : p;
   };
   const cbs = C.prototype.createBufferSource;
+  let ids = 0;
   C.prototype.createBufferSource = function () {
     const node = cbs.call(this);
-    const start = node.start.bind(node);
+    const id = ++ids;
+    const start = node.start.bind(node), stop = node.stop.bind(node);
     node.start = function (...a) {
       const b = node.buffer;
       if (b) {
@@ -421,10 +460,15 @@ export function instrumentWebAudio() {
         if (p > A.peak) A.peak = p;
         let bytes = null;
         try { bytes = src.has(b) ? src.get(b) : null; } catch (e) {}
-        A.plays.push({ bytes, frames: b.length, rate: b.sampleRate, peak: p });
+        // `src`: "pcm" = built by hand from gateway PCM (her live voice), "clip" = a decoded file.
+        A.plays.push({ id, bytes, src: bytes == null ? "pcm" : "clip", frames: b.length,
+                       rate: b.sampleRate, peak: p, t: performance.now(),
+                       dur: (b.length / b.sampleRate) * 1000 });
       }
       return start(...a);
     };
+    // `stop()` is how one voice cuts another, so every call is recorded with its node.
+    node.stop = function (...a) { window.__audio.stops.push({ id, t: performance.now() }); return stop(...a); };
     return node;
   };
 }
@@ -468,18 +512,22 @@ const FAKE_LIVE_ENV = {
 
 /**
  * Canned `/api/*` answers for a LIVE hosted page, built by the REAL Functions so a fixture
- * can never drift from what the routes answer: `health` (text), `limits`, and `chat` /
- * `speech` bodies for one turn whose voice is `tone` (a `pcmToneBase64` result).
+ * can never drift from what the routes answer: `health` (text), `bareHealth` (the degraded
+ * answer of an unconfigured deployment), `limits`, and `chat` / `speech` bodies for one turn
+ * whose voice is `tone` (a `pcmToneBase64` result).
  */
 export async function liveFixture({ eid, reply, tone, ticket = "v1.TESTTICKET.MAC" }) {
   const health = await import(join(repo, "functions", "api", "health.js"));
   const envelope = await import(join(repo, "functions", "api", "_lib", "envelope.js"));
   const healthText = await (await health.onRequestGet({ env: FAKE_LIVE_ENV })).text();
+  // The same route with no gateway configured: `degraded`, the scripted fallback.
+  const bareHealth = await (await health.onRequestGet({ env: {} })).text();
   const live = { ok: true, mode: "live", voice: true, ears: true };
   const env = (o) => JSON.stringify(envelope.envelope({ ...live, ...o }));
   return {
     envelope: envelope.envelope,
     health: healthText,
+    bareHealth,
     limits: JSON.parse(healthText).limits,
     env,
     chat: env({

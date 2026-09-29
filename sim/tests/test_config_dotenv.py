@@ -1,17 +1,6 @@
-"""
-"Nothing is configured" has to be able to MEAN nothing.
-
-`mqtt/config.py` loads `mqtt/.env` with `setdefault` at import — right for an appliance,
-wrong for a test suite: a test that deletes a variable and reloads the module had it
-**refilled from the file**, so on any machine with a real `mqtt/.env` those tests asserted
-that developer's configuration. Invisible where the suite normally runs (the file is
-git-ignored: no CI runner or worktree has it). Playbook rule 20.
-
-The opt-out, `MOXIE_SKIP_DOTENV`, is checked before the file is opened, and `MOXIE_DOTENV`
-points the loader at another file — which lets this file test the loader against a real
-dotenv without touching a developer's own. Both are read from the ENVIRONMENT only (a file
-cannot carry the flag that decides whether it is read), and an env flag is the only
-opt-out `importlib.reload` can reach: module-level `_load_env()` takes no arguments.
+"""`config` loads `mqtt/.env` with `setdefault` at import; `MOXIE_SKIP_DOTENV` (env only,
+checked before the file is opened) must be able to make "nothing is configured" mean nothing,
+and `MOXIE_DOTENV` points the loader at another file. Playbook rule 20.
 """
 import importlib
 import os
@@ -21,9 +10,6 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MQTT = os.path.join(REPO, "mqtt")
 sys.path.insert(0, MQTT)
 sys.path.insert(0, os.path.join(MQTT, "supervisor"))
-
-#: The repo's own git-ignored dotenv. Its EXISTENCE is all this file ever looks at.
-REPO_DOTENV = os.path.join(MQTT, ".env")
 
 #: A variable with no default and no other source, so its value can only have come from
 #: whichever file the loader read.
@@ -101,19 +87,3 @@ def test_a_missing_file_is_not_an_error(monkeypatch, tmp_path):
     """A bare-metal supervisor with no dotenv at all is a supported deployment."""
     c = _fresh(monkeypatch, dotenv=str(tmp_path / "nope"))
     assert c.DOTENV_LOADED is None
-
-
-# ---------------------------------------------------------------------------------
-# The acceptance test. The ONLY thing here that touches the repo's own `mqtt/.env`: it
-# asks whether the file exists and never opens it; elsewhere it skips, visibly.
-# ---------------------------------------------------------------------------------
-
-def test_the_repos_own_dotenv_is_invisible_to_a_test_that_opts_out(monkeypatch):
-    import pytest
-    if not os.path.exists(REPO_DOTENV):
-        pytest.skip("no mqtt/.env in this checkout (a worktree or CI) — "
-                    "the defect this pins is only visible in a main checkout")
-    monkeypatch.delenv("MOXIE_DOTENV", raising=False)
-    monkeypatch.setenv("MOXIE_SKIP_DOTENV", "1")
-    import config as _c
-    assert importlib.reload(_c).DOTENV_LOADED is None

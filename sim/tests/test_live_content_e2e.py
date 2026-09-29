@@ -7,7 +7,8 @@ driven by a REAL gateway completion, comes back as a **spec-conformant**
 echoed), and a `globals[]` entry short-circuits the turn **without an LLM call**.
 
 Gateway-key only; skips otherwise. ONE live completion for the module — the
-global-handler test asserts the count stays at zero.
+global-handler test asserts the count stays at zero. (That an UNMATCHED global falls
+through to the brain is hermetic: `test_content_app.py`.)
 """
 import json
 import os
@@ -111,28 +112,3 @@ def test_a_global_short_circuits_the_turn_with_no_llm_call():
     assert chat.calls == 0, "a matched global must not spend an LLM call"
     assert resp["output"]["text"] == "Okay! A timer for 5 minutes. Go!"
 
-
-def test_an_unmatched_global_falls_through_to_the_conversation():
-    """The short-circuit is a match, not a bypass: speech the Timer regex does not
-    match must still reach the brain. Asserted WITHOUT a live call by failing the
-    chat callable loudly — reaching it is the proof."""
-    _sdk_or_skip()
-    from moxie_sdk.content import ContentApp, load_modules
-    from moxie_sdk.types import ChildProfile, RobotContext, Turn
-
-    reached = []
-
-    def _brain(messages):
-        reached.append(messages)
-        return "Ask me anything!"
-
-    with open(STARTER) as fh:
-        module = load_modules(json.load(fh))
-    app = ContentApp(module, _brain,
-                     global_handlers={"Timer": lambda v, s: v.set_output("timer!")})
-    conv = module.conversations[0]
-    robot = RobotContext(device_id="d1", child=ChildProfile(nickname="Sam"),
-                         module_id=conv.module_id, content_id=conv.content_id)
-    reply = app.respond(Turn(robot=robot, speech="what is a timer, anyway?"))
-    assert reached, "an unmatched global swallowed the turn"
-    assert reply.text == "Ask me anything!"

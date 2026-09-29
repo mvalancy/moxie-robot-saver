@@ -1,48 +1,15 @@
-#!/usr/bin/env python3
-"""📈 Delete one durable-telemetry guard at a time and require a test to go red.
+"""Break each guard that keeps the telemetry ring and its daily roll-up from durably
+disagreeing — the write ORDER, the shared critical section, the `seq`/`through_seq`
+watermark; the three telemetry suites must go red. Runner: `mutation_runner.py`.
 
-The house rule is that a feature's tests are proven in BOTH directions: green with the
-guard, red without it. This is the sibling of `sim/tools/brain_mutation_check.py` and
-`sim/tools/subscribe_mutation_check.py` for the thing a red `sil` job on 2026-09-05
-exposed — **the ring and the daily roll-up disagreeing across a restart**, on a PR whose
-diff could not reach either of them.
-
-The property the table exists to keep load-bearing is one sentence: *the two telemetry
-records cannot durably disagree, because one is a log and the other is a view over it.*
-Three mechanisms hold it up and each row deletes exactly one of them —
-
-  * the **order** (the exact record written before the bounded one, so no observer whose
-    leading edge is the ring can read an under-count),
-  * the **critical section** (both writes as one, so two ingests cannot lose a roll-up
-    update the ring keeps),
-  * the **watermark** (`seq` on the envelope, `through_seq` on the roll-up, so
-    *"already counted"* is a fact on disk and a lost roll-up write is replayable).
-
-A mutation that leaves the suite GREEN is a hole in the tests, not a pass. One row had to
-be rewritten before this table was honest: the first draft of M2 locked the *other* record
-instead of deleting the lock, and in-process every `transaction()` is serialized by one
-RLock whatever record it names — so the mutation was unobservable without a second
-process, and the row proved nothing. It now deletes the section outright.
-
-    python3 sim/tools/telemetry_rollup_mutation_check.py      # from the repo root
-
-Uses the repo's own virtualenv if it has one, else the interpreter running this script.
+    python3 sim/tools/telemetry_rollup_mutation_check.py [ROW ...]
 """
-import os
-import pathlib
-import subprocess
-import sys
-
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-PY = ROOT / ".venv/bin/python"
-if not PY.exists():
-    PY = pathlib.Path(sys.executable)
-TESTS = ["sim/tests/test_telemetry_rollup_repair.py",
-         "sim/tests/test_telemetry.py",
-         "sim/tests/test_telemetry_runtime.py"]
+from mutation_runner import WT, node_verdict, pytest, run_table  # noqa: F401
 
 T = "mqtt/moxie_sdk/telemetry.py"
 R_TELEMETRY = "mqtt/supervisor/moxie_runtime/telemetry.py"
+TESTS = ["sim/tests/test_telemetry_rollup_repair.py", "sim/tests/test_telemetry.py",
+         "sim/tests/test_telemetry_runtime.py"]
 
 MUTATIONS = [
     ("M1  the ring is written before the roll-up again (the 2026-09-05 red)", R_TELEMETRY,
@@ -105,47 +72,5 @@ MUTATIONS = [
 ]
 
 
-def run():
-    proc = subprocess.run([str(PY), "-m", "pytest", *TESTS, "-q", "--no-header"],
-                          cwd=ROOT, capture_output=True, text=True,
-                          env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                               "HOME": os.environ.get("HOME", "/tmp"),
-                               # Blanked explicitly: a bare run finds the main worktree's
-                               # `mqtt/.env` and would spend real gateway calls.
-                               "MOXIE_LLM_API_KEY": "", "MOXIE_LLM_BASE_URL": "",
-                               "MOXIE_VOICE_BASE_URL": "", "MOXIE_STT_BASE_URL": "",
-                               "MOXIE_SKIP_DOTENV": "1"})
-    return proc.returncode, proc.stdout.strip().splitlines()[-1] if proc.stdout else ""
-
-
-def main():
-    caught, missed = 0, []
-    for label, rel, old, new in MUTATIONS:
-        path = ROOT / rel
-        backup = path.read_text()
-        # EXACTLY once, not merely "at least once" (the rule PR #164 made repo-wide): an
-        # anchor that matches twice mutates whichever copy `str.replace` reaches first,
-        # so the row proves something about a line nobody chose.
-        found = backup.count(old)
-        if found != 1:
-            missed.append(f"{label}: {'AMBIGUOUS' if found > 1 else 'NO-OP'} anchor "
-                          f"({found} matches)")
-            continue
-        path.write_text(backup.replace(old, new, 1))
-        try:
-            code, tail = run()
-        finally:
-            path.write_text(backup)
-        if code == 0:
-            missed.append(f"{label}: STILL GREEN — {tail}")
-        else:
-            caught += 1
-            print(f"✅ {label} → {tail}")
-    print(f"\n{caught}/{len(MUTATIONS)} mutations caught")
-    for m in missed:
-        print("❌ " + m)
-    return 1 if missed else 0
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(run_table(MUTATIONS, lambda r: pytest(TESTS), baseline=[pytest(TESTS)]))

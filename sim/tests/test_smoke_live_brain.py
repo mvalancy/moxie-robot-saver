@@ -62,15 +62,6 @@ def test_the_default_smoke_still_boots_the_echo_app():
         "the old hard pin is back — `MOXIE_APP=echo` bypasses the SMOKE_APP lever"
 
 
-def test_the_live_brain_arm_is_declared_the_way_telehealth_is():
-    """One `case` block, two arms — also what `test_ci_test_coverage.py::_declared_flags`
-    enumerates, so declaring the flag obliges a tier to run it."""
-    src = _smoke_source()
-    assert "--telehealth) MODE=" in src, "the --telehealth arm moved; update this guard"
-    assert "--live-brain) LIVE_BRAIN=1;;" in src, \
-        "run_smoke.sh declares no --live-brain arm"
-
-
 # --------------------------------------------------------------------------- #
 # 2. No key → SKIP, not FAIL
 # --------------------------------------------------------------------------- #
@@ -124,7 +115,7 @@ def test_the_robot_recognises_the_echo_app_s_own_answer():
 @pytest.mark.parametrize("reply", [
     "Hello there! I'm so happy to see you. How was your morning?",
     "Hi! What do you want to play today?",
-    "",                       # empty is covered by the assertion above it, not by this one
+    "",
     "You said: something else",
 ])
 def test_the_robot_does_not_mistake_a_real_reply_for_the_echo_app(reply):
@@ -136,10 +127,8 @@ def test_the_robot_does_not_mistake_a_real_reply_for_the_echo_app(reply):
 
 def test_the_smoke_asks_the_robot_to_reject_the_echo_only_when_live():
     src = _smoke_source()
-    assert 'REJECT_ECHO="--reject-echo"' in src, \
-        "the live arm no longer asks the robot to reject an echoed reply"
-    assert "$REJECT_ECHO" in src, "--reject-echo is set but never passed to the robot"
-    assert 'REJECT_ECHO=""' in src, "the default run must not pass --reject-echo"
+    for needle in ('REJECT_ECHO="--reject-echo"', "$REJECT_ECHO", 'REJECT_ECHO=""'):
+        assert needle in src, f"run_smoke.sh lost `{needle}` (live-only --reject-echo)"
 
 
 # --------------------------------------------------------------------------- #

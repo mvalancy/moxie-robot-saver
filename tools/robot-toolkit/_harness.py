@@ -1,6 +1,11 @@
-"""Shared scaffolding for the toolkit round-trip scripts (`test_*.py`, run by
-`run_tests.py`): collect failures with `ok`, round-trip a message with `rt`, finish with
-`report` (exit 1 listing every failure, else one ✅ line)."""
+"""Shared scaffolding for the toolkit scripts (`test_*.py`, run by `run_tests.py`): collect
+failures with `ok`, finish with `report` (exit 1 listing every failure, else one ✅ line).
+
+What these scripts prove: the committed `embodied.*` bindings still carry the recovered
+message/field/enum names and values (building a message with a missing field raises), the
+`bus` registries name the right classes, and our builders/parsers produce the right message.
+Serializing a message and parsing it back with the same binding proves only protobuf, so
+they do not do that."""
 import sys
 
 fails = []
@@ -9,13 +14,6 @@ fails = []
 def ok(cond, msg):
     if not cond:
         fails.append(msg)
-
-
-def rt(msg):
-    """`msg` serialized and parsed back — the round trip under test."""
-    out = type(msg)()
-    out.ParseFromString(msg.SerializeToString())
-    return out
 
 
 def report(name, summary):

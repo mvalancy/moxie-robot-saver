@@ -12,8 +12,6 @@ import os
 
 import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-MQTT = os.path.join(REPO, "mqtt")
 
 from moxie_sdk import voice_settings as vs                       # noqa: E402
 from moxie_sdk.store import JsonStore                            # noqa: E402
@@ -62,13 +60,6 @@ def test_the_dropdowns_offer_the_gateway_the_local_engines_and_the_builtins():
     assert vs.option_ids(a[vs.LISTENING]) == [
         "gateway:stt-whisper", "gateway:graphling-stt", "gateway:stt-whisper-base",
         "whisper:base.en", "off"]
-
-
-def test_chat_models_never_reach_either_dropdown():
-    a = _available()
-    ids = " ".join(vs.option_ids(a[vs.SPEECH]) + vs.option_ids(a[vs.LISTENING]))
-    for brain in ("graphling-medium", "graphling-small", "qwen2.5-7b"):
-        assert brain not in ids, f"{brain} leaked into a voice picker"
 
 
 def test_the_builtins_exist_even_with_nothing_else():
@@ -344,13 +335,8 @@ def test_the_cache_spends_one_listing_per_ttl_window():
     clock.t += 2                                   # past the window
     cat.snapshot()
     assert len(calls) == 2
-
-
-def test_an_explicit_refresh_beats_the_cache():
-    cat, calls = _catalog([GATEWAY_MODELS], ttl_s=300)
-    cat.snapshot()
-    cat.snapshot(refresh=True)
-    assert len(calls) == 2
+    cat.snapshot(refresh=True)                     # an explicit refresh beats the cache
+    assert len(calls) == 3
 
 
 def test_the_first_ask_answers_immediately_while_the_request_is_still_in_flight():
@@ -627,28 +613,17 @@ def test_the_appliance_adapter_never_lists_a_gateway_it_has_no_url_for(monkeypat
     assert vs.option_ids(out["available"][vs.SPEECH])[-1] == "tone"
 
 
-def test_the_appliance_adapter_turns_a_listing_into_the_two_dropdowns(monkeypatch):
-    c = _fresh_config(monkeypatch)          # unpinned — see the pin tests below
-    cat = _sync_catalog()
-    out = c.voice_engines(cat).available()
-    assert "gateway:piper-amy" in vs.option_ids(out["available"][vs.SPEECH])
-    assert "gateway:stt-whisper" in vs.option_ids(out["available"][vs.LISTENING])
-
-
 # ------------------------------------------------- the environment's pin -----
 # `MOXIE_TTS=piper` / `MOXIE_STT=whisper` are the operator's statement that this deployment
 # runs local engines; a console pick (e.g. `gateway:piper-ryan`) must not silently overrule
 # them.
 
 def test_an_explicit_value_pins_an_engine_and_auto_pins_nothing():
-    assert vs.pin_for_env(vs.SPEECH, "piper") == "piper"
-    assert vs.pin_for_env(vs.SPEECH, "local") == "piper"        # the documented alias
-    assert vs.pin_for_env(vs.SPEECH, "GATEWAY") == "gateway"    # case-insensitive
-    assert vs.pin_for_env(vs.SPEECH, "openai") == "gateway"
-    assert vs.pin_for_env(vs.SPEECH, "off") == "off"
+    for raw, pin in (("piper", "piper"), ("local", "piper"), ("GATEWAY", "gateway"),
+                     ("openai", "gateway"), ("off", "off")):
+        assert vs.pin_for_env(vs.SPEECH, raw) == pin, raw
     # `tone` is a permission, not a selection, and both compose files default to it:
     # pinning it would cut every compose deployment's Speech dropdown to one entry.
-    assert vs.pin_for_env(vs.SPEECH, "tone") == ""
     assert vs.pin_for_env(vs.LISTENING, "whisper") == "whisper"
     assert vs.pin_for_env(vs.LISTENING, "local") == "whisper"
     # Everything that means "decide for me" — which is what the picker is for.

@@ -1,54 +1,36 @@
-// test_mermaid.mjs — every Mermaid diagram in the docs explorer must render CLEANLY.
-//
-// Guards: 1. parse errors (an `.err` box), 2. clipped labels (text measured before the
-// webfont loaded, or literal `\n`), 3. literal "\n" in rendered text (use `<br/>`).
-// Renders each doc the index marks as having Mermaid in docs.html in a real browser.
+// test_mermaid.mjs — every Mermaid diagram in the docs explorer must render CLEANLY:
+// no parse error (an `.err` box), no clipped label (text measured before the webfont
+// loaded), no literal "\n" (use `<br/>`). Renders, in a real browser, each doc the index
+// marks as having Mermaid.
 //
 //   node sim/test_mermaid.mjs
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import net from "node:net";
-import { requireBrowser, launchBrowser } from "./browser_harness.mjs";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { requireBrowser, launchBrowser, serveWeb, makeChecks, finish, web } from "./browser_harness.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const repo = join(here, "..");
-
-/* Browser discovery lives in ONE place (requireBrowser: a missing browser FAILS under CI). */
-const { puppeteer, chrome, skip } = await requireBrowser("mermaid tests");
-
-const port = await new Promise((res) => {
-  const s = net.createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); });
-});
-const base = `http://127.0.0.1:${port}`;
-const server = spawn("python3", [join(repo, "sim", "serve.py"), String(port)], { cwd: repo, stdio: "ignore" });
-async function waitUp(n = 50) {
-  for (let i = 0; i < n; i++) {
-    try { const r = await fetch(base + "/", { signal: AbortSignal.timeout(1000) }); if (r.ok) return true; } catch {}
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  return false;
-}
-function cleanup() { try { server.kill("SIGKILL"); } catch {} }
-if (!(await waitUp())) { cleanup(); skip("serve.py did not come up"); }
-
-const fails = [];
+const LABEL = "mermaid tests";
+const { puppeteer, chrome } = await requireBrowser(LABEL);
+const { fails, ok, count } = makeChecks();
+const site = await serveWeb();
 const browser = await launchBrowser(puppeteer, chrome);
-let docs = [], totalSvg = 0;
+
+const docs = JSON.parse(readFileSync(join(web, "docs-index.json"), "utf8"))
+  .files.filter((f) => f.mermaid > 0);
+let totalSvg = 0;
 try {
-  const idx = await (await fetch(base + "/docs-index.json")).json();
-  docs = idx.files.filter((f) => f.mermaid > 0).map((f) => f.path);
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 1200 });
-
-  for (const d of docs) {
-    await page.goto(`${base}/docs.html#${d}`, { waitUntil: "domcontentloaded" });
-    await page.waitForFunction(
-      'document.querySelectorAll("article .mermaid svg, article .mermaid .err").length>0',
-      { timeout: 9000 }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 700));
+  for (const { path: d, mermaid: want } of docs) {
+    // A fresh document per doc, so a wait can never be satisfied by the previous doc's diagrams.
+    await page.goto("about:blank");
+    await page.goto(`${site.url}/docs.html#${d}`, { waitUntil: "domcontentloaded" });
+    // Settled = as many diagram blocks as the index promises, each holding an <svg> or an error.
+    await page.waitForFunction((n) => {
+      const blocks = document.querySelectorAll("article .mermaid");
+      return blocks.length >= n && [...blocks].every((b) => b.querySelector("svg, .err"));
+    }, { timeout: 15000, polling: 100 }, want).catch(() => {});
     const res = await page.evaluate(() => {
-      const out = { svgs: 0, errs: 0, clipped: 0, literalNL: 0, details: [] };
+      const out = { svgs: 0, errs: 0, clipped: [], literalNL: 0 };
       out.errs = document.querySelectorAll("article .mermaid .err").length;
       const svgs = document.querySelectorAll("article .mermaid svg");
       out.svgs = svgs.length;
@@ -58,39 +40,26 @@ try {
           const el = fo.querySelector("div, span"); if (!el) return;
           if ((el.textContent || "").includes("\\n")) out.literalNL++;
           const lb = el.getBoundingClientRect();
-          if (lb.bottom > sb.bottom + 2 || lb.right > sb.right + 2 || lb.top < sb.top - 2) {
-            out.clipped++; out.details.push(`[${si}] "${(el.textContent || "").slice(0, 24)}"`);
-          }
+          if (lb.bottom > sb.bottom + 2 || lb.right > sb.right + 2 || lb.top < sb.top - 2)
+            out.clipped.push(`[${si}] "${(el.textContent || "").slice(0, 24)}"`);
         });
         svg.querySelectorAll("text").forEach((t) => { if ((t.textContent || "").includes("\\n")) out.literalNL++; });
       });
       return out;
     });
     totalSvg += res.svgs;
-    if (res.errs) fails.push(`${d}: ${res.errs} diagram(s) failed to render (parse error)`);
-    if (res.clipped) fails.push(`${d}: ${res.clipped} clipped label(s) ${res.details.slice(0, 3).join(", ")}`);
-    if (res.literalNL) fails.push(`${d}: ${res.literalNL} literal "\\n" in a label (use <br/>)`);
-    if (res.svgs === 0 && !res.errs) fails.push(`${d}: no diagram rendered`);
+    ok(res.errs === 0, `${d}: ${res.errs} diagram(s) failed to render (parse error)`);
+    ok(res.clipped.length === 0, `${d}: ${res.clipped.length} clipped label(s) ${res.clipped.slice(0, 3).join(", ")}`);
+    ok(res.literalNL === 0, `${d}: ${res.literalNL} literal "\\n" in a label (use <br/>)`);
+    ok(res.svgs + res.errs >= want, `${d}: the index promises ${want} diagram(s), ${res.svgs} rendered`);
   }
 } finally {
   await browser.close();
-  cleanup();
+  site.close();
 }
 
-/* A TEST THAT CANNOT FAIL IS NOT A TEST: if the index stops writing `mermaid`, the filter
- * is empty and the loop "passes" with 0 diagrams. These floors are a tripwire for a
- * COLLAPSE, well under today's counts; move them deliberately if the tree shrinks. */
-const FLOOR_DOCS = 25, FLOOR_SVG = 35;
-if (docs.length < FLOOR_DOCS)
-  fails.push(`only ${docs.length} docs claim a Mermaid diagram (floor ${FLOOR_DOCS}) — ` +
-             `docs-index.json's "mermaid" field looks broken, so this suite rendered almost nothing`);
-if (totalSvg < FLOOR_SVG)
-  fails.push(`only ${totalSvg} diagrams actually rendered (floor ${FLOOR_SVG}) — ` +
-             `the loop ran but the page produced no SVG`);
-
-if (fails.length) {
-  console.log("❌ mermaid tests FAILED:");
-  for (const f of fails) console.log("   -", f);
-  process.exit(1);
-}
-console.log(`✅ mermaid tests OK — ${totalSvg} diagrams across ${docs.length} docs render clean (no errors, no clipped labels, no literal \\n)`);
+/* A collapse tripwire, well under today's counts: an index that stops writing `mermaid`
+ * would otherwise make this loop "pass" over nothing. */
+ok(docs.length >= 25, `only ${docs.length} docs claim a Mermaid diagram — docs-index.json's "mermaid" field looks broken`);
+ok(totalSvg >= 35, `only ${totalSvg} diagrams actually rendered — the page produced no SVG`);
+finish(LABEL, { fails, count });

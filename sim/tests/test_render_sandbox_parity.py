@@ -21,7 +21,6 @@ from __future__ import annotations
 import glob
 import json
 import os
-import sys
 
 import pytest
 
@@ -121,26 +120,18 @@ def _shipped_templates():
 
 SHIPPED = _shipped_templates()
 
-#: The corpus has to be non-empty or every parametrized test below silently passes.
-#: 4 is a floor under what `content_modules/` carries (starter: opener + prompt;
-#: memory_chat: opener + two prompts).
-MIN_SHIPPED_TEMPLATES = 4
-
-
-def test_the_shipped_corpus_is_not_empty():
-    """A globbed corpus that finds nothing is a green test that proves nothing."""
-    assert len(SHIPPED) >= MIN_SHIPPED_TEMPLATES, \
-        f"only {len(SHIPPED)} Jinja-bearing strings found under {MODULE_DIR}"
-
-
 @pytest.mark.parametrize("ctx_name", sorted(CONTEXTS))
 @pytest.mark.parametrize("label,template", SHIPPED, ids=[l for l, _ in SHIPPED])
 def test_a_shipped_prompt_renders_identically_through_the_sandbox(label, template,
                                                                   ctx_name):
-    """The differential assertion: sandbox output == pre-sandbox output, byte for byte."""
+    """The differential assertion: sandbox output == pre-sandbox output, byte for byte, and
+    `BLOCKED` does not move (a refusal of an already-empty value is invisible in output).
+    The corpus's non-emptiness is `test_render_fallback.test_the_corpora_are_not_empty`."""
     ctx = CONTEXTS[ctx_name]()
     expected = _plain_render(template, ctx)
+    before = R.BLOCKED
     got = R.render_prompt(template, ctx)
+    assert R.BLOCKED == before, f"{label} tripped the sandbox — a legitimate refusal is a bug"
     assert got == expected, (
         f"{label} under {ctx_name} changed when the sandbox landed:\n"
         f"  pre-sandbox: {expected!r}\n  sandboxed:   {got!r}")
@@ -156,17 +147,6 @@ def test_a_shipped_prompt_still_renders_non_empty_and_personalised(label, templa
     assert out.strip(), f"{label} rendered empty"
     assert "{{" not in out and "{%" not in out, f"{label} left raw Jinja: {out[:120]!r}"
     assert "Sam" in out, f"{label} never substituted child_pii.nickname: {out[:200]!r}"
-
-
-@pytest.mark.parametrize("label,template", SHIPPED, ids=[l for l, _ in SHIPPED])
-def test_a_shipped_prompt_never_trips_the_refusal_counter(label, template):
-    """`BLOCKED` moving on our own content would mean the sandbox is refusing something
-    legitimate — invisible in the output whenever the refused value was empty anyway."""
-    before = R.BLOCKED
-    for make in CONTEXTS.values():
-        R.render_prompt(template, make())
-    assert R.BLOCKED == before, \
-        f"{label} tripped the sandbox {R.BLOCKED - before}x — a legitimate refusal is a bug"
 
 
 def test_the_remembered_facts_reach_the_prompt_as_bullets():
@@ -234,28 +214,18 @@ LEGIT = {
 @pytest.mark.parametrize("ctx_name", sorted(CONTEXTS))
 @pytest.mark.parametrize("name", sorted(LEGIT))
 def test_a_documented_construct_renders_identically_through_the_sandbox(name, ctx_name):
+    """Equal to the pre-sandbox render, not refused, and — so parity with a renderer that
+    also returned "" is not worthless — non-empty when there is something remembered."""
     ctx = CONTEXTS[ctx_name]()
     template = LEGIT[name]
     expected = _plain_render(template, ctx)
+    before = R.BLOCKED
     got = R.render_prompt(template, ctx)
+    assert R.BLOCKED == before, f"{name} tripped the sandbox — legitimate Jinja refused"
     assert got == expected, (f"{name} under {ctx_name}: pre-sandbox {expected!r} != "
                              f"sandboxed {got!r}")
-
-
-@pytest.mark.parametrize("name", sorted(LEGIT))
-def test_a_documented_construct_does_not_trip_the_counter(name):
-    before = R.BLOCKED
-    for make in CONTEXTS.values():
-        R.render_prompt(LEGIT[name], make())
-    assert R.BLOCKED == before, f"{name} tripped the sandbox — legitimate Jinja refused"
-
-
-@pytest.mark.parametrize("name", sorted(LEGIT))
-def test_a_documented_construct_produces_something(name):
-    """Parity with a renderer that also returned "" would be worthless. Every construct
-    above must actually put characters on the page under the remembering context."""
-    out = R.render_prompt(LEGIT[name], _child_context())
-    assert out.strip(), f"{name} rendered empty"
+    if ctx_name == "remembering":
+        assert got.strip(), f"{name} rendered empty"
 
 
 def test_the_fence_would_notice_an_over_tight_sandbox():
@@ -284,76 +254,6 @@ def test_the_fence_would_notice_an_over_tight_sandbox():
     assert len(caught) == len(SHIPPED), (
         "a sandbox that refuses every attribute did NOT change every shipped prompt, "
         f"so the parity assertion is not load-bearing (missed {len(SHIPPED) - len(caught)})")
-
-
-# ------------------------------------ the renderer a BARE-METAL install still uses --
-#
-# The container ships jinja2 (`test_render_container_deps.py`), but `pyproject.toml` keeps it
-# behind the `content` extra, so a bare `pip install moxie-cloud-sdk` renders with
-# `_minimal_render`. Every shipped module must render there too.
-
-def _no_jinja2_render(template: str, context: dict) -> str:
-    """`render_prompt` with jinja2 made unimportable (import blocked, nothing uninstalled —
-    as in `test_package_contents.py`)."""
-    import builtins
-    real_import = builtins.__import__
-
-    def _blocked(name, *a, **kw):
-        if name == "jinja2" or name.startswith("jinja2."):
-            raise ImportError("blocked: simulating the shipped container")
-        return real_import(name, *a, **kw)
-
-    saved = {k: v for k, v in sys.modules.items() if k.split(".")[0] == "jinja2"}
-    for k in saved:
-        del sys.modules[k]
-    builtins.__import__ = _blocked
-    try:
-        return R.render_prompt(template, context)
-    finally:
-        builtins.__import__ = real_import
-        sys.modules.update(saved)
-
-
-@pytest.mark.parametrize("label,template", SHIPPED, ids=[l for l, _ in SHIPPED])
-def test_a_shipped_prompt_also_renders_without_jinja2_at_all(label, template):
-    """Every module we ship uses only `{{ dotted.path }}`, which is exactly the subset
-    the dependency-free fallback covers — so the container renders them personalised
-    too. If a future shipped module reaches for a filter or a block, this fails here
-    rather than in a parent's living room."""
-    out = _no_jinja2_render(template, _child_context())
-    assert out.strip() and "Sam" in out, f"{label} did not render without jinja2: {out[:160]!r}"
-    assert "{{" not in out and "{%" not in out, \
-        f"{label} left template syntax in the prompt the brain receives: {out[:200]!r}"
-
-
-def test_the_fallback_reaches_memory_the_same_way_jinja_does():
-    """`FactList.__str__` is why `persist_data` renders as bullets in *both* renderers
-    (`memory.py`:88-91 says so). Asserted, because it is the one place the two paths
-    could silently disagree about the child's own remembered facts."""
-    with open(os.path.join(MODULE_DIR, "memory_chat.json")) as fh:
-        prompt = json.load(fh)["conversations"][0]["prompt"]
-    ctx = _child_context()
-    assert _no_jinja2_render(prompt, ctx) == R.render_prompt(prompt, ctx)
-
-
-def test_a_block_construct_is_no_longer_a_hole_in_the_fallback():
-    """Without jinja2 the fallback EVALUATES a simple `{% if dotted.path %}` (the documented
-    form) byte-identically to jinja2 and strips what it cannot evaluate, counting it in
-    `render.STRIPPED`. The two asserts are the two branches; a guessing fallback would get
-    one wrong."""
-    tail = "Hi {{ volley.config.child_pii.nickname }}"
-    template = "{% if presence.face_present %}They are here.{% endif %}" + tail
-    ctx = _child_context()
-    assert ctx["presence"]["face_present"] is True
-    assert _no_jinja2_render(template, ctx) == "They are here.Hi Sam"
-
-    ctx["presence"]["face_present"] = False
-    assert _no_jinja2_render(template, ctx) == "Hi Sam"
-
-    # And the promise generalises: identical to the real renderer, both ways.
-    for face in (True, False):
-        ctx["presence"]["face_present"] = face
-        assert _no_jinja2_render(template, ctx) == _plain_render(template, ctx)
 
 
 # ------------------------------------------------------- the whole-path proof --

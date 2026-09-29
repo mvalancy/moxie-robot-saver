@@ -1,25 +1,15 @@
-"""
-Memory through the REAL runtime — the end-of-conversation hook and the parent's read/erase.
-
-`test_memory.py` covers the store and summarizer. Here, what only the runtime does:
-
-  * notice a conversation ended (`<exit>`, a module switch, the robot going offline) and
-    call `MoxieApp.on_session_end`, where long-term memory is written;
-  * serve it to a parent: `GET /memory` (by namespace, with provenance) and `DELETE` /
-    `POST /memory` (erase one namespace or all) on the localhost status server — memory a
-    parent cannot read or erase is unacceptable on a child's device (audit §4.2 BEYOND #4).
-
-Hermetic: fake transport, fake brain, tmp storage, no sleeps, no `openai`.
+"""Memory through the REAL runtime (`test_memory.py` covers the store and summarizer): the
+end-of-conversation hook (`<exit>`, module switch, disconnect → `on_session_end`) and the
+parent's read/erase/edit over the status server — memory a parent cannot read or erase is
+unacceptable on a child's device (audit §4.2 BEYOND #4). Hermetic: fakes, tmp storage.
 """
 import json
-import os
-import socket
 import urllib.error
-import urllib.request
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+import pytest
 
-from helpers_runtime import CHAT_TOPIC, LatchClient, make_runtime  # noqa: E402
+from helpers_runtime import (CHAT_TOPIC, LatchClient, http_json, make_runtime,  # noqa: E402
+                             status_server)
 import moxie_runtime  # noqa: E402
 from moxie_sdk.app import MoxieApp  # noqa: E402
 from moxie_sdk.cloud_config import LoggingPolicy  # noqa: E402
@@ -239,27 +229,16 @@ def test_memory_view_and_erase_by_namespace(tmp_path):
     assert out["ok"] and out["erased"] is True and out["namespaces"] == {}
 
 
-def test_memory_view_404s_for_an_unknown_device(tmp_path):
-    rt, _did, _app = _content_runtime(tmp_path)
-    out = rt.memory_view("d_nope")
-    assert out["ok"] is False and "unknown device_id" in out["error"]
-
-
 def test_memory_endpoints_over_http(tmp_path):
     """GET /memory, DELETE /memory and POST /memory on the real status server."""
     rt, did, app = _content_runtime(tmp_path)
     app.memory.merge(did, "mchat", {"facts": ["has a dog"]},
                      provenance={"module_id": "MCHAT", "turns": 2})
     app.memory.merge(did, "free_chat", {"facts": ["likes red"]})
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
-    rt._start_status_server(port)
-    base = f"http://127.0.0.1:{port}"
+    base = status_server(rt)
 
     def _req(path, method="GET", body=None):
-        req = urllib.request.Request(base + path, method=method,
-                                     data=json.dumps(body).encode() if body else None)
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return json.loads(r.read().decode())
+        return http_json(base + path, method=method, body=body)
 
     view = _req(f"/memory?device_id={did}")
     assert view["ok"] and set(view["namespaces"]) == {"mchat", "free_chat"}
@@ -272,11 +251,9 @@ def test_memory_endpoints_over_http(tmp_path):
     assert cleared["ok"] and cleared["namespaces"] == {}
     assert app.memory.load(did) == {}
 
-    try:
+    with pytest.raises(urllib.error.HTTPError) as e:
         _req("/memory?device_id=d_missing")
-        assert False, "unknown device should 404"
-    except urllib.error.HTTPError as e:
-        assert e.code == 404
+    assert e.value.code == 404
 
 
 def test_per_item_erase_and_edit_through_the_runtime(tmp_path):
@@ -316,11 +293,8 @@ def test_a_refused_edit_changes_nothing(tmp_path):
                         "content": "my grandma lives on Elm Street in the yellow house"}]
     for bad in ("I want to kill myself",
                 "my grandma lives on Elm Street in the yellow house", ""):
-        try:
+        with pytest.raises(ValueError, match="."):
             rt.edit_memory_item(did, "mchat", one, bad)
-            assert False, f"{bad!r} should have been refused"
-        except ValueError as e:
-            assert str(e)
     assert texts(app.memory.load(did)["mchat"]["facts"]) == ["has a dog"]
 
 
@@ -330,15 +304,10 @@ def test_per_item_endpoints_over_http(tmp_path):
     app.memory.merge(did, "mchat", {"facts": ["Puppy sleeps on his bed", "likes red"]},
                      provenance={"module_id": "MCHAT", "turns": 2})
     wrong, other = [f["id"] for f in app.memory.load(did)["mchat"]["facts"]]
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
-    rt._start_status_server(port)
-    base = f"http://127.0.0.1:{port}"
+    base = status_server(rt)
 
     def _req(path, method="GET", body=None):
-        req = urllib.request.Request(base + path, method=method,
-                                     data=json.dumps(body).encode() if body else None)
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return json.loads(r.read().decode())
+        return http_json(base + path, method=method, body=body)
 
     out = _req(f"/memory?device_id={did}", method="POST",
                body={"edit": {"namespace": "mchat", "item": wrong,
@@ -350,13 +319,11 @@ def test_per_item_endpoints_over_http(tmp_path):
     assert out["erased"] is True and out["item"] == other
     assert texts(app.memory.load(did)["mchat"]["facts"]) == ["Puppy sleeps on my bed"]
 
-    try:
+    with pytest.raises(urllib.error.HTTPError) as e:            # an unsafe correction
         _req(f"/memory?device_id={did}", method="POST",
              body={"edit": {"namespace": "mchat", "item": wrong,
                             "text": "I want to kill myself"}})
-        assert False, "an unsafe correction must be refused"
-    except urllib.error.HTTPError as e:
-        assert e.code == 400 and json.loads(e.read().decode())["ok"] is False
+    assert e.value.code == 400 and json.loads(e.value.read().decode())["ok"] is False
 
 
 def test_memory_endpoint_answers_for_an_app_without_a_memory_store(tmp_path):

@@ -1,28 +1,11 @@
-"""The behavior planner on the wire — scored output, rehearsal, and all four slices at once.
+"""The behavior planner on the wire — scored output, rehearsal, and all slices at once.
 
-The hermetic planner tests use an in-process runtime with a fake MQTT client, so a scored
-field dropped by `json.dumps`, `build_chat_response`'s omit-when-empty rules or the chunk
-path's arguments would pass them and reach no robot. This file asserts the same claims
-through a real mosquitto, `mqtt/run.py` as its own process, and robots reading
-`commands/remote_chat` off the wire:
-
-  1. The single reply carries the five scored fields as the contract spells them
-     (`mood`, `mood_intensity`, `dialog_act`, `emotion`, `signals` — plural on the wire,
-     the planner's singular `signal` renamed in `_publish_chat`).
-  2. Every streamed chunk carries them too, including the closing `SUCCESS`, and a chunk
-     past the first plans no mood (§2.2) — a claim about the markup, on the wire.
-  3. Zero unknown ids in the markup a robot actually received.
-  4. The 🎬 rehearsal card end to end: `POST /preview` on the supervisor and
-     `POST /local/robots/{id}/preview` on the console, then the captured payloads played
-     through the real `sim/web/bridge/`.
-  5. All four slices at once: extensions, per-robot brains, the planner and the child's
-     voice — `content`, `echo` and streaming `llm` robots on one supervisor.
-  6. `MOXIE_EXPRESSIVE=floor` (the rollback lever) does not strip the score.
-
-The brain is the local OpenAI-compatible stub in `sim/tools/first_audio_ab.py`, streaming
-a fixed four-sentence answer at a fixed pace. No credentials, no network.
-
-    .venv/bin/python -m pytest sim/tests/test_sil_performance_e2e.py -q
+The hermetic planner tests use a fake MQTT client, so a scored field dropped by `json.dumps`,
+`build_chat_response`'s omit-when-empty rules or the chunk path would pass them. Here: a real
+broker, `mqtt/run.py` as a process, and robots reading `commands/remote_chat` off the wire —
+single replies and every streamed chunk carry the five scored fields, markup has no unknown
+ids, the rehearsal card works via supervisor and console, and `MOXIE_EXPRESSIVE=floor` still
+scores. The brain is the streaming stub in `sim/tools/first_audio_ab.py`.
 """
 from __future__ import annotations
 
@@ -261,20 +244,11 @@ def test_a_single_reply_turn_carries_every_scored_field_on_the_wire(plain):
     got = _scored(reply)
     missing = [f for f in SCORED_FIELDS if f not in got]
     assert not missing, f"the wire dropped {missing}; output was {reply.get('output')}"
-    assert isinstance(got["signals"], list) and got["signals"], got
     assert isinstance(got["mood_intensity"], int), got
     assert (reply["output"]["markup"] or "").startswith("<mark "), reply["output"]["markup"]
-
-
-def test_the_score_on_the_wire_is_the_planners_and_not_a_leftover_default(plain):
-    """`echo` sets no mood and no act of its own — every scored field here was minted by
-    `_stage`. An `opening` on a greeting is the classifier's answer, so a wire that came
-    back `statement_non_opinion` would mean the seam ran on the wrong text."""
-    reply = plain.ask("hi there Moxie")[0]
-    got = _scored(reply)
-    assert got["dialog_act"] in vocab.DIALOG_ACTS, got
-    assert got["emotion"] in vocab.EMOTION_STATES, got
-    assert all(s in vocab.SIGNALS for s in got["signals"]), got
+    # `echo` sets no mood or act of its own, so every value was minted by the planner
+    assert got["signals"] and all(s in vocab.SIGNALS for s in got["signals"]), got
+    assert got["dialog_act"] in vocab.DIALOG_ACTS and got["emotion"] in vocab.EMOTION_STATES
     assert got["mood"] in vocab.MOODS, got
 
 
@@ -320,12 +294,7 @@ def test_only_the_first_chunk_wears_a_face(streamed):
     for c in streamed[1:]:
         assert "cmd:playback-mood" not in c["output"]["markup"], (
             f"chunk {c['chunk_num']} re-set the face mid-answer: {c['output']['markup']}")
-
-
-def test_every_chunk_still_performs_even_without_a_mood_mark(streamed):
-    """The other half of the rule above: "no mood" must not mean "no performance"."""
-    for c in streamed[1:]:
-        assert "<mark " in c["output"]["markup"], c["output"]
+        assert "<mark " in c["output"]["markup"], "no mood must not mean no performance"
 
 
 # --------------------------------------------------------------------------- #
@@ -353,6 +322,8 @@ def test_three_brains_three_robots_one_supervisor_all_scored(lab, plain, chatty,
     ext = clock.ask("what time is it")
     assert lab["stub"].calls == before, "the clock extension cost a model call"
     assert ext[-1]["output"]["text"].startswith("The time is "), ext[-1]["output"]
+    # an extension writes a bare sentence, so a mood mark proves the planner ran after it
+    assert "cmd:playback-mood" in ext[-1]["output"]["markup"], ext[-1]["output"]
 
     echoed = plain.ask("bob is here")
     assert "You said: bob is here" in echoed[-1]["output"]["text"], echoed[-1]["output"]
@@ -373,16 +344,6 @@ def test_three_brains_three_robots_one_supervisor_all_scored(lab, plain, chatty,
         for c in chats:
             missing = [f for f in SCORED_FIELDS if f not in (c.get("output") or {})]
             assert not missing, f"{name} chunk dropped {missing}: {c.get('output')}"
-
-
-def test_the_extension_answer_is_scored_by_the_planner_not_by_the_app(clock):
-    """An extension writes a sentence and nothing else — no mood, no act. So a scored
-    extension line is proof the seam runs *after* whichever app answered, which is the
-    property C4/C5 claim for `_publish_chat` as a whole rather than for `LLMApp`."""
-    reply = clock.ask("please tell me the time")[-1]
-    got = _scored(reply)
-    assert got["dialog_act"] in vocab.DIALOG_ACTS, got
-    assert "cmd:playback-mood" in reply["output"]["markup"], reply["output"]
 
 
 # --------------------------------------------------------------------------- #
@@ -452,16 +413,16 @@ def test_preview_distinguishes_the_acts_an_author_is_rehearsing(rehearsed):
     assert len(moods) >= 3, moods
 
 
-def test_preview_calls_no_brain_and_records_no_turn(lab, plain):
-    """"No brain is called, no history is written, no turn is recorded." The first is a
-    number this test reads; the second and third show as the shape of what was published
-    — a bare `SUCCESS` with no chunk sequence, on an id no turn ever mints."""
+def test_preview_calls_no_brain(lab, chatty):
+    """Rehearsed on the robot whose brain IS the model: a preview must still cost no call
+    (on an `echo` robot this could not fail)."""
     before = lab["stub"].calls
-    plain.reset()
-    body, code = _req(f"{lab['status']}/preview?device_id={plain.device_id}",
+    chatty.reset()
+    body, code = _req(f"{lab['status']}/preview?device_id={chatty.device_id}",
                       {"text": "This is a rehearsal."}, method="POST")
     assert code == 200 and body.get("ok"), body
-    plain.wait(20)
+    got = chatty.wait(20)
+    assert len(got) == 1 and got[0]["event_id"].startswith("preview-"), got
     assert lab["stub"].calls == before, "a rehearsal spent a model call"
 
 

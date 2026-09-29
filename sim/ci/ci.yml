@@ -99,8 +99,10 @@ jobs:
           node sim/test_fallback_coverage.mjs
       - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
         run: bash sim/run_smoke.sh
-      - name: Bridge markup→avatar unit test
+      - name: Bridge markup→avatar unit test (incl. presence events)
         run: node sim/test_bridge.mjs
+      - name: Ambient self-talk corpus (faces, gestures, pre-cached clips, filler parity)
+        run: node sim/test_ambient.mjs
       - name: 🎬 Action-payload parity (an `execute` is named identically by BOTH SIM clients)
         # DoD criterion 4's last open clause on this channel. PR #119 put `function_id` /
         # `function_args` / `action_args` on the wire and `bridge.js::applyAction` read
@@ -108,9 +110,8 @@ jobs:
         # as `(unnamed)` while `sim/virtual_moxie.py` named it. This drives the REAL bridge
         # over the same golden script the SIL robot is driven over
         # (sim/tests/goldens/cloud_to_robot_actions.json) and compares the decode entry by
-        # entry — and it carries a NEGATIVE CONTROL: it reverts the fix in the bridge source
-        # and requires the same comparison to go red, so it cannot pass vacuously. Node only,
-        # no browser. Guarded by sim/tests/test_ci_test_coverage.py.
+        # entry (reverting the fix reddens 9 checks). Node only, no browser. Guarded by
+        # sim/tests/test_ci_test_coverage.py.
         run: node sim/test_action_payload.mjs
       - name: Markup-floor render test (the 8 goldens through the real bridge)
         run: node sim/test_automarkup_render.mjs

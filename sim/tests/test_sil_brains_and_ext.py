@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "sim"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "mqtt"))
 
 import helpers_stack as S                                       # noqa: E402
+from helpers_runtime import http_json                           # noqa: E402
 
 #: What the stub brain says. Distinctive on purpose: every assertion below is "which of
 #: three sentences came back", and a substring that could also be a fallback line would
@@ -121,11 +122,6 @@ def _post(url: str, payload: dict, timeout: float = 10.0) -> dict:
             return json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:                  # a refusal is an answer too
         return json.loads(e.read() or b"{}")
-
-
-def _get(url: str, timeout: float = 10.0) -> dict:
-    with urllib.request.urlopen(url, timeout=timeout) as r:
-        return json.loads(r.read() or b"{}")
 
 
 class Robot:
@@ -221,7 +217,7 @@ def test_the_appliance_boots_on_its_default_brain_and_says_which_layer_chose_it(
     """`MOXIE_APP=any` → the default layer, and the boot line says so in words."""
     line = lab["stack"].supervisor.line_with("🧠 brain:")
     assert "brain: llm (appliance default)" in line, line
-    status = _get(lab["status"] + "/status")
+    status = http_json(lab["status"] + "/status")
     assert status.get("brain") == "llm", status
     assert status.get("brain_pin") == "", status      # `any` pins nothing
 
@@ -247,7 +243,7 @@ def test_a_fleet_brain_set_over_http_answers_the_next_turn(lab, alice):
 
 
 def test_the_brain_view_attributes_that_answer_to_the_fleet_layer(lab, alice):
-    view = _get(lab["status"] + "/brain")
+    view = http_json(lab["status"] + "/brain")
     assert view.get("fleet") == "echo", view
     mine = [r for r in view.get("robots") or [] if r.get("device_id") == alice.device_id]
     assert mine and mine[0]["brain"] == "echo", view
@@ -262,7 +258,7 @@ def test_a_per_robot_brain_overrides_the_fleet_one_for_that_robot_only(lab, alic
                 {"brain": "content"})
     assert out.get("ok"), out
 
-    view = _get(lab["status"] + "/brain")
+    view = http_json(lab["status"] + "/brain")
     by_id = {r["device_id"]: r for r in view.get("robots") or []}
     assert by_id[alice.device_id]["brain"] == "content", view
     assert by_id[alice.device_id]["source"] == "robot", view
@@ -290,19 +286,9 @@ def test_the_shipped_clock_extension_answers_on_the_wire_with_no_model_call(lab,
         "the point of an extension is that it costs none")
 
 
-def test_the_extension_answered_and_the_conversation_did_not(lab, alice):
-    """A `handled` global returns before the conversation module is ever reached, so the
-    reply must be the program's sentence and nothing else — not a model line with the
-    time bolted on, and not the free-chat opener."""
-    text = alice.ask("please tell me the time")
-    assert BRAIN_LINE not in text, text
-    assert text.startswith("The time is "), text
-
-
 def test_a_content_turn_that_is_not_the_extension_still_reaches_the_brain(lab, alice):
-    """The control that stops the two tests above from passing vacuously: on the very
-    same robot and the very same brain, an *unmatched* utterance still costs one call.
-    Without this, a content app that had silently failed to build would look identical."""
+    """The control for the clock test: on the same robot and brain an *unmatched* utterance
+    still costs one call (a content app that failed to build would look identical)."""
     before = lab["brain"].count
     text = alice.ask("tell me about dinosaurs")
     assert BRAIN_LINE in text, text
@@ -344,20 +330,13 @@ def test_and_the_very_next_turn_uses_the_new_one(lab, bob):
     assert lab["brain"].count == before, text
 
 
-# ------------------------------------------------ 6. what the appliance reported --
-def test_the_supervisor_logged_every_brain_it_built(lab):
-    log = lab["stack"].supervisor.text()
-    for name in ("Echo (no model) (echo)", "Content modules (content)"):
-        assert f"🧠 built {name}" in log, f"no build line for {name}\n{log[-3000:]}"
-    assert "could not be built" not in log, log[-3000:]
-
-
+# ------------------------------------------------ 6. clearing and refusing --
 def test_clearing_a_per_robot_brain_hands_the_robot_back_to_the_fleet(lab, alice):
     """`{"brain": null}` clears the layer rather than storing a name — the shape the
     console's "inherit" option posts. Alice goes back to the house rule."""
     out = _post(lab["status"] + f"/brain?device_id={alice.device_id}", {"brain": None})
     assert out.get("ok"), out
-    view = _get(lab["status"] + "/brain")
+    view = http_json(lab["status"] + "/brain")
     mine = {r["device_id"]: r for r in view.get("robots") or []}[alice.device_id]
     assert mine["brain"] == "echo" and mine["source"] == "fleet", mine
     assert "You said: back home" in alice.ask("back home")

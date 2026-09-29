@@ -3,12 +3,9 @@ import {
   ok, eq, deep, lib, env2, FULL,
 } from "./harness.mjs";
 
-// --------------------------------------------------------------------------- //
-// 1. functions/api/_lib/env.js — §5's table, the clamps, and the fail-safe default
-// --------------------------------------------------------------------------- //
+// 1. functions/api/_lib/env.js — §5's table, the clamps, and the fail-safe default.
 {
-  // C5: with NO variables at all the answer is "not configured". This is the single most
-  // important assertion in the file: it is what makes a keyless branch preview safe.
+  // C5: with NO variables at all the answer is "not configured" — what makes a keyless preview safe.
   const bare = lib.readConfig({});
   eq(bare.configured, false, "no variables at all must not be `configured`");
   eq(lib.modeOf(bare, null).mode, "degraded", "no variables => degraded");
@@ -18,8 +15,7 @@ import {
   deep(bare.missing, ["DEMO_GATEWAY_BASE_URL", "DEMO_GATEWAY_API_KEY", "DEMO_CHAT_MODEL"],
        "the three required values must be named");
 
-  // C3: no default may exist for the gateway. `mqtt/config.py` carries a Python default
-  // for the local stack; copying it here would make an unconfigured fork call OUR gateway.
+  // C3: no default may exist for the gateway, or an unconfigured fork would call OURS.
   for (const name of lib.REQUIRED_FOR_LIVE)
     ok(!(name in lib.DEFAULTS), `${name} must have NO default (unset means degraded, never "guess ours")`);
 
@@ -32,12 +28,10 @@ import {
   eq(lib.readConfig({ ...FULL, DEMO_TTS_MODEL: "" }).voice, false, "no TTS model => no voice");
   eq(lib.readConfig({ ...FULL, DEMO_STT_MODEL: "" }).ears, false, "no STT model => no ears");
 
-  // A TTS model with no gateway to call is not a voice.
-  const voiceOnly = lib.readConfig({ DEMO_TTS_MODEL: "test-voice-model" });
-  eq(voiceOnly.voice, false, "a TTS model without a gateway must not claim a voice");
+  eq(lib.readConfig({ DEMO_TTS_MODEL: "test-voice-model" }).voice, false,
+     "a TTS model without a gateway must not claim a voice");
 
-  // The kill switch: degraded WITHOUT deleting the secret (§4.1, the fastest incident
-  // response there is).
+  // The kill switch: degraded WITHOUT deleting the secret (§4.1).
   for (const off of ["0", "false", "no", "off", "OFF"])
     eq(lib.modeOf(lib.readConfig({ ...FULL, DEMO_ENABLED: off }), null).reason,
        "gateway_not_configured", `DEMO_ENABLED=${off} must force the degraded answer`);
@@ -51,8 +45,7 @@ import {
        `missing ${drop} => gateway_not_configured`);
   }
 
-  // §5's defaults, exactly. (Context and history were raised TOGETHER: more turns without
-  // the byte budget would be trimmed oldest-first by `hmac.js` anyway.)
+  // §5's defaults, exactly.
   const d = lib.readConfig({});
   for (const [k, want, label] of [
     ["maxTokens", 160, "DEMO_MAX_TOKENS default"],
@@ -83,21 +76,19 @@ import {
   ]) eq(d[k], want, label);
   ok(d.persona.length > 40, "a built-in persona must ship, so a fork is not a bare model");
 
-  // The allowlist idiom (cloud_config.py:435-475): coerce, clamp, and NEVER let a bad
-  // value become a bigger cap than the default.
-  eq(lib.readConfig({ DEMO_MAX_INPUT_CHARS: "banana" }).maxInputChars, 500, "garbage falls back");
-  eq(lib.readConfig({ DEMO_MAX_INPUT_CHARS: "1e9" }).maxInputChars, 500, "out of range falls back");
-  eq(lib.readConfig({ DEMO_MAX_INPUT_CHARS: "-5" }).maxInputChars, 500, "negative falls back");
-  eq(lib.readConfig({ DEMO_MAX_INPUT_CHARS: "12.5" }).maxInputChars, 500, "non-integer falls back");
-  eq(lib.readConfig({ DEMO_MAX_INPUT_CHARS: " 250 " }).maxInputChars, 250, "a good value is taken");
-  eq(lib.readConfig({ DEMO_MAX_TOKENS: "999999" }).maxTokens, 160, "an absurd token cap falls back");
-  // Only wav/pcm are decodable by voice/ (§5, mirroring mqtt/config.py:101).
-  eq(lib.readConfig({ DEMO_TTS_FORMAT: "mp3" }).ttsFormat, "wav", "an undecodable format falls back to wav");
-  eq(lib.readConfig({ DEMO_TTS_FORMAT: "PCM" }).ttsFormat, "pcm", "pcm is accepted, case-insensitively");
-  // voice/:617-618 clamps the rate; a configured rate the decoder would refuse is not
-  // allowed to reach it.
-  eq(lib.readConfig({ DEMO_TTS_SAMPLE_RATE: "1000" }).ttsSampleRate, 22050, "a sub-3 kHz rate falls back");
-  eq(lib.readConfig({ DEMO_TTS_SAMPLE_RATE: "16000" }).ttsSampleRate, 16000, "a good rate is taken");
+  // Coerce, clamp, and NEVER let a bad value become a bigger cap than the default.
+  for (const [k, v, field, want, label] of [
+    ["DEMO_MAX_INPUT_CHARS", "banana", "maxInputChars", 500, "garbage falls back"],
+    ["DEMO_MAX_INPUT_CHARS", "1e9", "maxInputChars", 500, "out of range falls back"],
+    ["DEMO_MAX_INPUT_CHARS", "-5", "maxInputChars", 500, "negative falls back"],
+    ["DEMO_MAX_INPUT_CHARS", "12.5", "maxInputChars", 500, "non-integer falls back"],
+    ["DEMO_MAX_INPUT_CHARS", " 250 ", "maxInputChars", 250, "a good value is taken"],
+    ["DEMO_MAX_TOKENS", "999999", "maxTokens", 160, "an absurd token cap falls back"],
+    ["DEMO_TTS_FORMAT", "mp3", "ttsFormat", "wav", "an undecodable format falls back to wav"],
+    ["DEMO_TTS_FORMAT", "PCM", "ttsFormat", "pcm", "pcm is accepted, case-insensitively"],
+    ["DEMO_TTS_SAMPLE_RATE", "1000", "ttsSampleRate", 22050, "a sub-3 kHz rate falls back"],
+    ["DEMO_TTS_SAMPLE_RATE", "16000", "ttsSampleRate", 16000, "a good rate is taken"],
+  ]) eq(lib.readConfig({ [k]: v })[field], want, `${k}=${JSON.stringify(v)}: ${label}`);
 
   // §5: empty DEMO_ALLOWED_ORIGINS means "the request's own origin only" (C3).
   deep(lib.readConfig({}).allowedOrigins, [], "no extra origins by default");
@@ -107,8 +98,7 @@ import {
   // Budget is a COUNTER state, so it is passed in rather than guessed.
   eq(lib.modeOf(full, { exhausted: true }).reason, "budget_exhausted", "an exhausted budget degrades");
 
-  // C1, structurally: JSON.stringify(cfg) is the shape of every accidental leak, and the
-  // three values worth stealing are non-enumerable.
+  // C1, structurally: JSON.stringify(cfg) is the shape of every accidental leak.
   const text = JSON.stringify(full);
   ok(!text.includes(FULL.DEMO_GATEWAY_API_KEY), "the gateway key must not survive JSON.stringify(config)");
   ok(!text.includes(FULL.DEMO_GATEWAY_BASE_URL), "the gateway base URL must not survive JSON.stringify(config)");
@@ -123,15 +113,12 @@ import {
   ok(!/http/i.test(limitText), "no URL may appear in `limits`");
 }
 
-// --------------------------------------------------------------------------- //
-// 2. functions/api/_lib/envelope.js — one shape, a closed reason set, §4.5's statuses
-// --------------------------------------------------------------------------- //
+// 2. functions/api/_lib/envelope.js — one shape, a closed reason set, §4.5's statuses.
 {
   const e = env2.envelope({});
   deep(Object.keys(e), [...env2.PUBLIC_KEYS], "the envelope is exactly PUBLIC_KEYS, in order");
 
-  // The allowlist IS the control: an unknown key cannot ride along, because nothing
-  // copies unknown keys.
+  // The allowlist IS the control: nothing copies unknown keys.
   const poisoned = env2.envelope({
     base_url: "https://gw.invalid.test/v1",
     api_key: "sk-testonly-abcdefghijklmnop",
@@ -139,10 +126,8 @@ import {
     upstream_status: 500,
   });
   deep(Object.keys(poisoned), [...env2.PUBLIC_KEYS], "unknown keys are dropped, not rejected");
-  const ptext = JSON.stringify(poisoned);
-  ok(!ptext.includes("gw.invalid.test"), "a gateway URL handed in cannot appear in a response");
-  ok(!ptext.includes("sk-testonly"), "a key handed in cannot appear in a response");
-  ok(!ptext.includes("test-brain-model"), "a model id handed in cannot appear in a response");
+  ok(!/gw\.invalid\.test|sk-testonly|test-brain-model/.test(JSON.stringify(poisoned)),
+     "a gateway URL, key or model id handed in cannot appear in a response");
 
   // `message` is the one free-text field, so it is scrubbed as well as allowlisted.
   eq(env2.sanitizeMessage("see https://gw.invalid.test/v1/chat for details"),
@@ -174,26 +159,19 @@ import {
   ]) eq(st(reason), code, label);
   // §4.1: a blocked turn is not an error — it answers ok/degraded and spends nothing.
   eq(st("blocked"), 200, "a blocked turn is 200");
-  eq(env2.envelope({ reason: "blocked" }).ok, true, "a blocked turn is ok:true");
-  eq(env2.envelope({ reason: "blocked" }).degraded, true, "...and degraded:true");
+  deep([env2.envelope({ reason: "blocked" }).ok, env2.envelope({ reason: "blocked" }).degraded], [true, true],
+       "a blocked turn is ok:true, degraded:true");
 
-  // Retry-After.
-  eq(env2.retryAfterFor(env2.envelope({ reason: "at_capacity" })), 15, "at_capacity => Retry-After 15");
-  eq(env2.retryAfterFor(env2.envelope({ reason: "upstream_down" })), 60, "upstream_down => Retry-After 60");
-  eq(env2.retryAfterFor(env2.envelope({ reason: "timeout" })), 10, "timeout => Retry-After 10");
-  eq(env2.retryAfterFor(env2.envelope({ reason: "gateway_not_configured" })), null,
-     "gateway_not_configured sends no Retry-After (it is not going to change on a timer)");
-  eq(env2.retryAfterFor(env2.envelope({ reason: "rate_limited", retry_after_s: 7 })), 7,
-     "a window-derived Retry-After is carried through");
-  eq(env2.retryAfterFor(env2.envelope({})), null, "a clean reply sends no Retry-After");
+  const ra = (over) => env2.retryAfterFor(env2.envelope(over));
+  deep([ra({ reason: "at_capacity" }), ra({ reason: "upstream_down" }), ra({ reason: "timeout" }),
+        ra({ reason: "gateway_not_configured" }), ra({ reason: "rate_limited", retry_after_s: 7 }), ra({})],
+       [15, 60, 10, null, 7, null],
+       "Retry-After: at_capacity 15, upstream_down 60, timeout 10, none for not-configured or a clean " +
+       "reply, and a window-derived value is carried through");
 
-  // §7's capacity levels.
-  eq(env2.loadLevel(0, 4), "ok", "0/4 is ok");
-  eq(env2.loadLevel(2, 4), "ok", "2/4 (50%) is still ok");
-  eq(env2.loadLevel(3, 4), "busy", "3/4 (>=60%) is busy");
-  eq(env2.loadLevel(4, 4), "full", "4/4 is full");
-  eq(env2.loadLevel(9, 4), "full", "over the ceiling is full");
-  eq(env2.loadLevel(1, 0), "ok", "an unknown capacity is not a panic");
+  deep([[0, 4], [2, 4], [3, 4], [4, 4], [9, 4], [1, 0]].map(([n, c]) => env2.loadLevel(n, c)),
+       ["ok", "ok", "busy", "full", "full", "ok"],
+       "§7's capacity levels: busy at >=60%, full at the ceiling, an unknown capacity is not a panic");
 
   // Headers on every reply, not just the rejections (§4.5).
   const r = env2.respond({ reason: "rate_limited", retry_after_s: 7, mode: "live" },

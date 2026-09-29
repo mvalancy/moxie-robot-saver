@@ -1,45 +1,18 @@
 // test_docs_explorer.mjs — headless functional test of the docs explorer (docs.html).
 //
-// test_docs.mjs checks the STATIC wiring; this checks RUNTIME behavior in a real browser:
-// the tree populates, markdown + Mermaid render, code is highlighted, search filters the
-// tree, and opening a hit highlights and scrolls to the term. Skips without a browser
-// locally; fails under CI (browser_harness.requireBrowser).
+// test_docs.mjs checks the bundle; this checks RUNTIME behavior in a real browser: the tree
+// populates, markdown renders (with its hero image), code is highlighted, search filters and
+// ranks, a hit highlights and scrolls to the term, keyboard shortcuts and deep links work.
+// Every diagram's rendering is test_mermaid.mjs's.
 //
 //   node sim/test_docs_explorer.mjs
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import net from "node:net";
-import { requireBrowser, makeChecks, finish, launchBrowser } from "./browser_harness.mjs";
+import { requireBrowser, makeChecks, finish, launchBrowser, serveWeb } from "./browser_harness.mjs";
 
 const LABEL = "docs-explorer tests";
-const here = dirname(fileURLToPath(import.meta.url));
-const repo = join(here, "..");
-
-/* Browser discovery lives in ONE place (requireBrowser): a private copy is how a suite
- * skipped on every runner while the badge stayed green. */
-const { puppeteer, chrome, skip } = await requireBrowser(LABEL);
-
-const port = await new Promise((res) => {
-  const s = net.createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); });
-});
-const base = `http://127.0.0.1:${port}`;
-const server = spawn("python3", [join(repo, "sim", "serve.py"), String(port)], { cwd: repo, stdio: "ignore" });
-async function waitUp(n = 50) {
-  for (let i = 0; i < n; i++) {
-    try { const r = await fetch(base + "/", { signal: AbortSignal.timeout(1000) }); if (r.ok) return true; } catch {}
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  return false;
-}
-function cleanup() { try { server.kill("SIGKILL"); } catch {} }
-
-/* `makeChecks` for the COUNT: "N checks passed" changes when a conditional assertion
- * silently stops running. */
+const { puppeteer, chrome } = await requireBrowser(LABEL);
 const { fails, ok, count } = makeChecks();
-
-if (!(await waitUp())) { cleanup(); skip("serve.py did not come up"); }
-
+const site = await serveWeb();
+const base = site.url;
 const browser = await launchBrowser(puppeteer, chrome);
 
 try {
@@ -116,11 +89,10 @@ try {
      subheads.some((t) => /Firmware/.test(t)) && subheads.some((t) => /Manifests/.test(t)),
      `tree should show folder sub-group headers incl. Manifests (got ${subheads.join(", ")})`);
 
-  // 2) Mermaid renders on a diagram-heavy doc + the topbar meta shows reading time + diagram count
+  // 2) the topbar meta shows reading time + diagram count
   await page.goto(base + "/docs.html#reverse-engineering/architecture-diagrams.md", { waitUntil: "domcontentloaded" });
-  await page.waitForFunction('document.querySelectorAll("article svg").length>0', { timeout: 8000 }).catch(() => {});
-  const svgs = await page.evaluate(() => document.querySelectorAll("article svg").length);
-  ok(svgs > 0, "Mermaid diagrams should render to SVG");
+  await page.waitForFunction(() => /diagram/.test((document.getElementById("docmeta") || {}).textContent || ""),
+                             { timeout: 8000 }).catch(() => {});
   const meta = await page.evaluate(() => (document.getElementById("docmeta") || {}).textContent || "");
   ok(/~\d+ min/.test(meta) && /diagram/.test(meta), `topbar should show reading time + diagram count (got "${meta}")`);
 
@@ -147,15 +119,18 @@ try {
   await page.waitForSelector("a.doc", { timeout: 8000 }).catch(() => {});
   await page.evaluate(() => { document.getElementById("q").value = ""; });
   await page.type("#q", "projectorfanpid");           // appears only in body text
-  await new Promise((r) => setTimeout(r, 800));        // debounce + lazy docs-search.json fetch
+  // debounce + the lazy docs-search.json fetch: wait for the filter to land
+  await page.waitForSelector("a.doc.hit", { timeout: 30000 }).catch(() => {});
   const hits = await page.$$eval("a.doc.hit", (els) => els.length).catch(() => 0);
   ok(hits > 0, "full-text search should filter the tree to matching docs");
 
   // 4b) search hits are ranked by relevance within a section: a proto message name
   //     should surface the doc that documents it ahead of the section README.
   await page.evaluate(() => { const q = document.getElementById("q"); q.value = ""; q.dispatchEvent(new Event("input")); });
+  await page.waitForFunction(() => !document.querySelector("a.doc.hit"), { timeout: 5000 }).catch(() => {});
   await page.type("#q", "SystemVolumeModify");         // documented in runtime-control.md; README only lists it
-  await new Promise((r) => setTimeout(r, 800));
+  await page.waitForFunction(() => [...document.querySelectorAll("a.doc.hit")]
+    .some((a) => /runtime-control\.md$/.test(a.dataset.path || "")), { timeout: 10000 }).catch(() => {});
   const reOrder = await page.evaluate(() => {
     for (const g of document.querySelectorAll(".grp")) {
       const h = g.querySelector(".gh span");
@@ -174,10 +149,12 @@ try {
 
   // 5) opening a search hit highlights the term in the doc + scrolls to it
   await page.evaluate(() => { const q = document.getElementById("q"); q.value = ""; q.dispatchEvent(new Event("input")); });
+  await page.waitForFunction(() => !document.querySelector("a.doc.hit"), { timeout: 5000 }).catch(() => {});
   await page.type("#q", "projectorfanpid");
-  await new Promise((r) => setTimeout(r, 700));
+  await page.waitForSelector("a.doc.hit", { timeout: 10000 }).catch(() => {});
   await page.evaluate(() => { const a = document.querySelector("a.doc.hit") || document.querySelector("a.doc"); a && a.click(); });
-  await new Promise((r) => setTimeout(r, 700));
+  await page.waitForFunction(() => !!document.querySelector("article mark.qmatch-first") &&
+    document.getElementById("main").scrollTop > 30, { timeout: 8000 }).catch(() => {});
   const hl = await page.evaluate(() => ({
     marks: document.querySelectorAll("article mark.qmatch").length,
     first: !!document.querySelector("article mark.qmatch-first"),
@@ -192,14 +169,14 @@ try {
     const q = document.getElementById("q"); q.value = ""; q.dispatchEvent(new Event("input")); q.blur();
     location.hash = "_root/README.md";
   });
-  await new Promise((r) => setTimeout(r, 300));
+  await page.waitForFunction(() => !document.querySelector("a.doc.hit"), { timeout: 5000 }).catch(() => {});
   await page.keyboard.press("Slash");
   ok(await page.evaluate(() => document.activeElement && document.activeElement.id === "q"),
      '"/" should focus the search box');
   await page.evaluate(() => document.getElementById("q").blur());
   const beforeHash = await page.evaluate(() => location.hash);
   await page.keyboard.press("BracketRight");
-  await new Promise((r) => setTimeout(r, 250));
+  await page.waitForFunction((h) => location.hash !== h, { timeout: 5000 }, beforeHash).catch(() => {});
   const afterHash = await page.evaluate(() => location.hash);
   ok(afterHash && afterHash !== beforeHash, `"]" should open the next doc (got ${beforeHash} → ${afterHash})`);
 
@@ -217,7 +194,8 @@ try {
    * which is the precise failure this branch exists to close. */
   ok(clickedAnchor, "the cross-doc heading link should still exist in the rendered doc");
   if (clickedAnchor) {
-    await new Promise((r) => setTimeout(r, 1400));
+    await page.waitForFunction(() => /hardware-map/.test(location.hash) &&
+      document.getElementById("main").scrollTop > 200, { timeout: 8000 }).catch(() => {});
     const anc = await page.evaluate(() => ({
       hash: location.hash, scroll: document.getElementById("main").scrollTop,
     }));
@@ -229,8 +207,8 @@ try {
   //    section heading has a copyable "#" permalink.
   await page.goto(base + "/docs.html#reverse-engineering/hardware/hardware-map.md#raw-uart-command-set-lizzerfacecommands",
                   { waitUntil: "domcontentloaded" });
-  await page.waitForFunction('document.querySelectorAll("article h2[id]").length>0', { timeout: 9000 }).catch(() => {});
-  await new Promise((r) => setTimeout(r, 1400));
+  await page.waitForFunction('document.querySelectorAll("article h2[id]").length>0 && ' +
+    'document.getElementById("main").scrollTop > 200', { timeout: 9000 }).catch(() => {});
   const deep = await page.evaluate(() => ({
     scroll: document.getElementById("main").scrollTop,
     permalinks: document.querySelectorAll("article h2 .hlink, article h3 .hlink").length,
@@ -266,7 +244,7 @@ try {
      `the docs explorer should make ZERO off-origin requests (blocked ${blocked.n}: ${blocked.urls.join(", ")})`);
 } finally {
   await browser.close();
-  cleanup();
+  site.close();
 }
 
 finish(LABEL, { fails, count });

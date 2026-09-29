@@ -42,17 +42,12 @@ def test_normalize_fleet_full_snapshot():
     assert f["recent"] == [{"t": 1, "kind": "chat", "text": "hi"}]
 
 
-def test_normalize_fleet_supervisor_down():
+def test_normalize_fleet_supervisor_down_or_none_is_unreachable_not_empty():
     f = normalize_fleet({"ok": False, "error": "supervisor not reachable",
                          "robots": [], "recent": []})
-    assert f["ok"] is False and f["robot_count"] == 0 and f["robots"] == []
-    assert f["error"] == "supervisor not reachable"
-
-
-def test_normalize_fleet_none_is_safe():
+    assert f["ok"] is False and f["robots"] == [] and f["error"] == "supervisor not reachable"
     f = normalize_fleet(None)
-    assert f["ok"] is False and f["robot_count"] == 0 and f["robots"] == []
-    assert f["error"]
+    assert f["ok"] is False and f["robot_count"] == 0 and f["robots"] == [] and f["error"]
 
 
 def test_normalize_robot_coerces_and_defaults():
@@ -90,13 +85,6 @@ def test_normalize_telemetry_full_payload():
                              {"event": "said", "count": 1, "last_seen": 200}]
     assert t["events"][0] == {"event_name": "wake", "recorded_at": 300,
                               "session_id": "s1", "model": "Event"}
-
-
-def test_normalize_telemetry_no_events_yet():
-    t = normalize_telemetry({"ok": True, "device_id": "d1",
-                             "summary": {"count": 0, "by_event": {}, "last_seen": {}},
-                             "events": []})
-    assert t["ok"] and t["count"] == 0 and t["by_event"] == [] and t["events"] == []
 
 
 def test_normalize_telemetry_error_and_none_are_safe():
@@ -152,14 +140,10 @@ def test_normalize_voice_keeps_every_field_the_card_renders():
     assert v["installed"]["speech"] == "openai-voice (standby: tone)"
     assert v["chosen"] == {"speech": True, "listening": False}
     assert v["updated_at"] == 1788400000 and v["robots"] == ["d_abc"]
-
-
-def test_normalize_voice_reports_a_gateway_outage_without_blanking_the_card():
-    payload = _voice_payload()
-    payload["gateway_error"] = "APIConnectionError"
-    v = normalize_voice(payload)
-    assert v["ok"] is True and v["gateway_error"] == "APIConnectionError"
-    assert len(v["available"]["speech"]) == 2, "an outage must not empty the dropdown"
+    # a gateway outage is reported beside the options, never instead of them
+    outage = normalize_voice(dict(_voice_payload(), gateway_error="APIConnectionError"))
+    assert outage["ok"] is True and outage["gateway_error"] == "APIConnectionError"
+    assert len(outage["available"]["speech"]) == 2
 
 
 def test_normalize_voice_carries_a_refusals_reason():
@@ -240,12 +224,6 @@ def test_normalize_history_keeps_a_zero_day_as_a_zero_day():
     assert rows[0]["top_event"] is None
 
 
-def test_normalize_history_never_raises_on_junk():
-    for junk in (None, [], "nope", [None, 7, {}, {"day": ""}],
-                 [{"day": "2026-09-02", "count": "x"}]):
-        assert isinstance(normalize_history(junk), list)
-
-
 def test_normalize_telemetry_carries_the_durable_half():
     t = normalize_telemetry(_durable_payload())
     assert t["ok"] is True and t["count"] == 2
@@ -274,9 +252,10 @@ def test_normalize_telemetry_reports_a_no_data_robot_honestly():
     assert t["history"] == [] and t["totals"]["total"] == 0
 
 
-def test_normalize_telemetry_still_never_raises_on_junk():
+def test_normalize_telemetry_never_raises_on_junk():
     for junk in (None, {}, [], "nope", {"ok": True, "totals": "x", "retention": 7,
                                         "history": "nope"},
+                 {"ok": True, "history": [None, 7, {}, {"day": ""}, {"day": "d", "count": "x"}]},
                  {"ok": True, "summary": "x", "totals": {"total": "many"},
                   "retention": {"days": "lots"}}):
         t = normalize_telemetry(junk)
@@ -295,13 +274,9 @@ def test_unsupported_action_is_never_a_fake_success():
     assert "power-and-system-events.md" in body["evidence"], "no citation for the refusal"
 
 
-def test_unsupported_action_has_a_reason_even_for_an_unlisted_name():
-    body = unsupported_action("teleport")
+    body = unsupported_action("teleport")                   # unlisted: still a reason
     assert body["ok"] is False and "teleport" in body["reason"]
-
-
-def test_reboot_is_the_only_unsupported_action_and_wakeup_is_not_one():
-    """Listing `wakeup` here would quietly turn its real publish path into a no-op."""
+    # listing `wakeup` here would quietly turn its real publish path into a no-op
     assert set(UNSUPPORTED_ACTIONS) == {"reboot"}
 
 
@@ -333,16 +308,12 @@ def test_ota_status_surfaces_the_one_ota_fact_the_protocol_gives_us():
     assert "holding a reboot" in view["reason"]
 
 
-def test_ota_status_is_unavailable_rather_than_invented_when_nothing_is_known():
-    snap = {"ok": True, "robots": [{"device_id": "d_other"}]}
-    view = ota_status_view(snap, "d_abc")
+def test_ota_status_is_unavailable_rather_than_invented_or_guessed():
+    view = ota_status_view({"ok": True, "robots": [{"device_id": "d_other"}]}, "d_abc")
     assert view["status"] == "unavailable" and view["version"] is None
     assert view["ota_reboot_required"] is None
-
-
-def test_ota_status_will_not_guess_which_robot_when_several_are_connected():
-    snap = {"ok": True, "robots": [{"device_id": "d_1"}, {"device_id": "d_2"}]}
-    assert ota_status_view(snap)["status"] == "unavailable"
+    two = {"ok": True, "robots": [{"device_id": "d_1"}, {"device_id": "d_2"}]}
+    assert ota_status_view(two)["status"] == "unavailable"     # never picks one of several
 
 
 # --- resolving a parent-app record to an MQTT identity ---

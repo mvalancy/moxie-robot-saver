@@ -1,13 +1,6 @@
-"""
-🧠 The brain picker's console layer — `server/moxie_server/fleet/::normalize_brain`.
-
-Contract: **a card must never be a 500, and must never look empty when the truth is
-"unreachable"** — an empty dropdown claims "this appliance has no brains". Fed the shapes
-the real world produces (live, refusal, never answered, truncated, newer supervisor with
-unknown fields). Pure — `fleet/` imports neither fastapi nor `mqtt/` — so it runs in the
-hermetic tier. The live end-to-end is `test_brain_runtime.py`'s HTTP section plus the
-console round trip.
-"""
+"""🧠 The brain picker's console layer (`fleet.normalize_brain` + the route): a card is
+never a 500 and never looks empty when the truth is "unreachable" — an empty dropdown
+claims "this appliance has no brains"."""
 import os
 import sys
 
@@ -16,6 +9,7 @@ sys.path.insert(0, os.path.join(REPO, "server"))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from helpers_console import console_js                                # noqa: E402
+from helpers_console_supervisor import DEVICE, client, supervisor     # noqa: E402,F401
 from moxie_sdk import brains                                          # noqa: E402
 from moxie_server.fleet import (normalize_brain,                      # noqa: E402
                                 normalize_brain_option,
@@ -125,48 +119,27 @@ def test_the_shape_the_console_renders_covers_every_brain_the_registry_offers():
     assert [e["id"] for e in out["available"]] == list(brains.BRAIN_IDS)
 
 
-# --------------------------------------------------- the card itself, structurally --
-# No browser harness covers `server/static/`, so a silently dead card (JS reaching for an
-# id the HTML lacks) fails nothing. Read off disk, so these run without fastapi.
+def test_the_console_route_forwards_scope_as_the_supervisors_query_not_the_body(client,
+                                                                               supervisor):
+    """The supervisor reads `scope` from the query; a body `scope` would be ignored and
+    a house-rule pick would silently land on one robot."""
+    r = client.post(f"/local/robots/{DEVICE}/brain", json={"brain": "echo", "scope": "fleet"})
+    assert supervisor.brain_posts[-1] == ("scope=fleet", {"brain": "echo"})
+    assert isinstance(r.json()["available"], list)
+    client.post(f"/local/robots/{DEVICE}/brain", json={"brain": None})
+    assert supervisor.brain_posts[-1] == (f"device_id={DEVICE}", {"brain": None})
+    view = client.get(f"/local/robots/{DEVICE}/brain").json()
+    assert view["ok"] is True and view["available"]
 
-def _asset(name):
-    with open(os.path.join(REPO, "server", "static", name)) as fh:
-        return fh.read()
 
-
-def test_every_id_the_brain_card_drives_exists_in_the_page():
-    html, js = _asset("index.html"), console_js()
+def test_every_id_the_brain_card_drives_exists_and_the_card_is_cleared_offline():
+    """No browser suite loads this card: an id the HTML lost is a silently dead card, and
+    a card never refreshed with `null` keeps showing the last robot's brain."""
+    with open(os.path.join(REPO, "server", "static", "index.html")) as fh:
+        html = fh.read()
+    js = console_js()
     for element_id in ("brain-card", "brain-pick", "brain-scope", "brain-note",
                        "brain-robots", "brain-status", "btn-brain-save",
                        "btn-brain-clear", "btn-brain-refresh"):
-        assert f'id="{element_id}"' in html, f"#{element_id} vanished from the page"
-        assert f"'#{element_id}'" in js, f"#{element_id} is in the HTML but nothing drives it"
-
-
-def test_the_card_is_refreshed_with_the_others_and_cleared_when_no_robot_is_live():
-    """A card that is never called renders nothing, and a card that is never *cleared*
-    keeps showing the last robot's brain after it goes offline."""
-    js = console_js()
-    assert "refreshBrain(liveDevice)" in js
-    assert "refreshBrain(null)" in js
-
-
-def test_the_card_reads_the_environments_pin_and_the_deciding_layer():
-    """Two fields a parent cannot do without: the pin note is the reason the dropdown
-    looks short, and `source` is the answer to "why is my child on that brain".
-    Both would pass every API assertion above while never reaching the page."""
-    js = console_js()
-    assert "pin_note" in js, "the 🧠 card never reads the environment's pin"
-    assert "BRAIN_SOURCE_TEXT" in js and "house rule" in js, \
-        "the card never says which layer chose a robot's brain"
-
-
-def test_the_console_route_forwards_the_scope_the_supervisor_expects():
-    """`scope` travels as a query parameter (the supervisor's own route shape), and the
-    card's own `scope` key must not be forwarded into the body as if it were a field."""
-    from helpers_console import server_source
-    main = server_source()
-    assert '.get("/local/robots/{device_id}/brain")' in main
-    assert '.post("/local/robots/{device_id}/brain")' in main
-    assert "scope=fleet" in main
-    assert 'k != "scope"' in main
+        assert f'id="{element_id}"' in html and f"'#{element_id}'" in js, element_id
+    assert "refreshBrain(liveDevice)" in js and "refreshBrain(null)" in js

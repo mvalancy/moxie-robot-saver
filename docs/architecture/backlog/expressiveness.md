@@ -272,7 +272,7 @@ the supervisor's `POST /preview` ([`status_http.py`](../../../mqtt/supervisor/mo
 | Renderer | the floor's invariants (words unchanged, well-formed, rate limits) apply unchanged |
 | Streaming | scored fields on every chunk; at most **one mood transition per line** (`MAX_MOOD_MARKS = 2`); a chunk after the first plans no mood |
 | Degradation | fault injection at `plan`, `validate`, `render`, plus the budget breaker — each lands on the floor |
-| SIM | [`sim/test_performance_render.mjs`](../../../sim/test_performance_render.mjs) plays all 22 goldens through the real `bridge.js` (no browser) and writes `sim/artifacts/performance-contact-sheet.html` |
+| SIM | [`sim/test_performance_render.mjs`](../../../sim/test_performance_render.mjs) plays all 22 goldens through the real `bridge.js` (no browser) and asserts each act's face and motion |
 | End to end | [`test_sil_performance_e2e.py`](../../../sim/tests/test_sil_performance_e2e.py) on a real broker: scored fields on single and streamed turns, the preview path, the C6 pin; `sim/run_smoke.sh --expect-scored` in the stack smoke |
 | Mutation | [`sim/tools/performance_mutation_check.py`](../../../sim/tools/performance_mutation_check.py): 39 mutations, each must turn a test red (run by hand) |
 

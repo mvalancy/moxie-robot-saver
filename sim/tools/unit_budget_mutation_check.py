@@ -1,65 +1,21 @@
-"""Remove each guard the SHARED day/hour ceilings rest on, and check its test goes red.
+"""Break each guard the SHARED minute/hour/day ceilings rest on; the row's node suite must
+go red ON THE CHECK its selector names. U* rows run `test_demo_proxy.mjs`; W*/D* run
+`helpers_shared_ceilings.mjs`.
 
-A green `sim/test_demo_proxy.mjs` §15i and `sim/tests/helpers_shared_ceilings.mjs` prove
-the guards are PRESENT; this proves they are LOAD-BEARING. Each row names a runner that
-prints one `  - <label>` line per failed check, and a row is caught only when its
-selector appears IN A FAILING LABEL — a mutation that broke some unrelated assertion
-would otherwise read as caught while its guard was never exercised. Rows `U*` run
-`test_demo_proxy.mjs` (the shared minute window and the budget's hour); `W*`/`D*` run
-`helpers_shared_ceilings.mjs` (the per-IP hour/day windows and the budget's day).
+Two families: undercounts (a bigger gateway bill nobody notices) and OVERCOUNTS / fail-
+closed (real visitors get `budget_exhausted` and a scripted page — the direction
+`sharedtier.js::sharedBudgetVerdict` may never fail in). D4 actually shipped: deleting
+`unaccrueDayPending()` left every suite green until a hand-run sweep found it.
 
-    python3 sim/tools/unit_budget_mutation_check.py            # the whole table, ~45 s
-    python3 sim/tools/unit_budget_mutation_check.py U3 D4      # two rows, ~1.5 s
-
-Run it after touching `functions/api/_lib/limits.js`, `counters.js` or `sharedtier.js`.
-
-Why this table matters: the shared budget's usual failure is an admission that should
-have been a refusal — a slightly larger gateway bill nobody notices — and its catastrophic
-one is the mirror: a lost or doubled write that makes the colo's hour look fuller than it
-is, so real visitors get `budget_exhausted` and a SCRIPTED page. Neither shows in a green
-suite; both are one deleted line. So the rows come in two families:
-
-  · undercounts (the counter stops counting): U1, U7, U8, U11, U13, U14, U17, W5, W7, W8,
-    D3, D5, D6, D10, D11;
-  · OVERCOUNTS or fail-CLOSED — the direction `sharedtier.js::sharedBudgetVerdict` says this
-    tier may never fail in: U2-U6, U9, U10, U12, U16, U18, U19, W1-W3, W6, D1, D2, D4, D7-D9.
-
-U1 and U3 are rejected designs rather than typos (charge the colo at admission and refund
-only locally; keep unpublished units after a write attempt to retry them). D4 is the one
-that actually shipped: the day ceiling copied the hour's design without its proof, and
-deleting `unaccrueDayPending()` left every suite green until a hand-run sweep found it.
-
-It never touches your checkout: every mutation runs in a throwaway `cp -al` copy with the
-mutated files replaced by real copies, so no write reaches the original inode.
+    python3 sim/tools/unit_budget_mutation_check.py [ROW ...]      # whole table ~45 s
 """
-import pathlib
-import shutil
-import subprocess
-import tempfile
+from mutation_runner import WT, node_verdict, pytest, run_table  # noqa: F401
 
-WT = pathlib.Path(__file__).resolve().parents[2]
-
-#: The subtrees the suites read (`mqtt/` only for an optional §5 oracle — copied so the
-#: run is not narrated by an unrelated Python traceback).
-TREES = ("functions", "sim", "mqtt")
-
-#: Loose root files the suite opens: without `wrangler.toml` §12 throws before any check.
-ROOT_FILES = ("wrangler.toml",)
-
-#: The files this table mutates: `admit()`'s arithmetic, the isolate-local ledger, and
-#: the Cache API sub-tiers that publish it.
 LIMITS = WT / "functions/api/_lib/limits.js"
 COUNTERS = WT / "functions/api/_lib/counters.js"
 SHARED = WT / "functions/api/_lib/sharedtier.js"
-
-#: Run whole (~1.5 s), so the selector column can check the RIGHT assertion reddened.
 SUITE = "sim/test_demo_proxy.mjs"
-
-#: The DAY/WIDE tier's suite, run by `sim/tests/test_shared_ceilings.py`. Same output
-#: contract, so the row format does not change.
 CEILINGS = "sim/tests/helpers_shared_ceilings.mjs"
-
-#: A mutation that wedges a deadline is caught, but only if something ends the run.
 MUTATION_TIMEOUT_S = 90
 
 MUTATIONS = [
@@ -420,88 +376,8 @@ MUTATIONS = [
 ]
 
 
-def _scratch_tree() -> pathlib.Path:
-    """A throwaway `cp -al` copy of the subtrees the suite reads. A hardlink shares its
-    inode and a write would truncate THROUGH to the checkout, so every file the table can
-    mutate is replaced by a real copy before any row runs."""
-    root = pathlib.Path(tempfile.mkdtemp(prefix="unit-budget-mutation-"))
-    for tree in TREES:
-        subprocess.run(["cp", "-al", str(WT / tree), str(root / tree)], check=True)
-    for name in ROOT_FILES:
-        shutil.copyfile(WT / name, root / name)
-    for real in sorted({row[1] for row in MUTATIONS}):
-        target = root / real.relative_to(WT)
-        data = real.read_bytes()
-        target.unlink()  # break the hardlink; do NOT truncate through it
-        target.write_bytes(data)
-        assert target.stat().st_nlink == 1, f"{real} is still hardlinked to the checkout"
-    return root
-
-
-def main(argv=()) -> int:
-    """Run the table, or only the rows whose name starts with one of `argv`."""
-    rows = [r for r in MUTATIONS
-            if not argv or any(r[0].split()[0] == a or r[0].startswith(a) for a in argv)]
-    if argv and not rows:
-        print(f"no row matches {list(argv)}; rows are: "
-              + ", ".join(r[0].split()[0] for r in MUTATIONS))
-        return 1
-    root = _scratch_tree()
-    print(f"  (mutating a throwaway copy at {root} — the checkout is never written)")
-    caught = missed = noop = wrong = 0
-    try:
-        for name, real, old, new, suite, selector in rows:
-            path = root / real.relative_to(WT)
-            pristine = real.read_text()
-            src = path.read_text()
-            hits_in_src = src.count(old)
-            if hits_in_src == 0:
-                print(f"  NO-OP       {name}  (anchor not found)")
-                noop += 1
-                continue
-            if hits_in_src > 1:
-                # AMBIGUOUS IS NOT CAUGHT: `replace(old, new, 1)` would mutate whichever
-                # copy comes first, and the row would test a guard it is not about.
-                print(f"  AMBIGUOUS   {name}  (anchor matches {hits_in_src} places; "
-                      f"it would mutate whichever comes first)")
-                noop += 1
-                continue
-            path.write_text(src.replace(old, new, 1))
-            try:
-                try:
-                    r = subprocess.run(
-                        ["node", suite], cwd=root, capture_output=True, text=True,
-                        timeout=MUTATION_TIMEOUT_S)
-                except subprocess.TimeoutExpired:
-                    print(f"  caught      {name}  (hung — killed after {MUTATION_TIMEOUT_S}s)")
-                    caught += 1
-                    continue
-                out = r.stdout + r.stderr
-                #: `sim/test_demo_proxy.mjs` prints `  - <label>` per failed check.
-                failing = [ln for ln in out.splitlines() if ln.startswith("  - ")]
-                if r.returncode == 0:
-                    print(f"  NOT CAUGHT  {name}")
-                    missed += 1
-                elif any(selector in ln for ln in failing):
-                    hits = sum(1 for ln in failing if selector in ln)
-                    print(f"  caught      {name}  ({len(failing)} red, {hits} naming {selector!r})")
-                    caught += 1
-                else:
-                    # red, but not on this row's assertion: NOT a pass
-                    print(f"  WRONG CHECK {name}  ({len(failing)} red, none naming {selector!r})")
-                    if failing:
-                        print(f"                 first red: {failing[0].strip()[:120]}")
-                    wrong += 1
-            finally:
-                path.write_text(pristine)
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-    total = caught + missed + noop + wrong
-    print(f"\nMUTATIONS: {caught} caught, {missed} missed, {noop} no-op, {wrong} wrong-check "
-          f"({total} rows run, {len(MUTATIONS)} in the table)")
-    return 1 if (missed or noop or wrong) else 0
-
-
 if __name__ == "__main__":
-    import sys
-    raise SystemExit(main([a for a in sys.argv[1:] if not a.startswith("-")]))
+    raise SystemExit(run_table(MUTATIONS, lambda r: ["node", r[4]], verdict=node_verdict,
+                     timeout=MUTATION_TIMEOUT_S, scratch=("functions", "sim", "mqtt"),
+                     root_files=("wrangler.toml",),
+                     baseline=[["node", SUITE], ["node", CEILINGS]]))

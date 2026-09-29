@@ -1,9 +1,5 @@
-"""
-SIM audio-playback test — the virtual robot consumes a CloudTTSResponse on
-/commands/tts and records that Moxie spoke (bytes + rate + marks), closing the
-talk-e2e loop on the client side. The SIM decodes the wire directly (no server-SDK
-import), like a real robot's firmware, so this also guards client/server independence.
-"""
+"""The virtual robot consumes a CloudTTSResponse on /commands/tts and records that Moxie
+spoke. It decodes the wire itself (no server-SDK import), like real firmware."""
 import base64
 import os
 import sys
@@ -17,42 +13,25 @@ pytest.importorskip("paho.mqtt.client")            # SIM client needs paho
 from virtual_moxie import VirtualMoxie              # noqa: E402
 
 
-def _tts_wire(audio: bytes, *, rate=22050, event_id="e1", marks=None):
-    return {
-        "request_source": "ROBOT_TTS_REQUEST",
-        "audio": {"buffer": base64.b64encode(audio).decode(), "channels": 1,
-                  "sample_rate": rate},
-        "marks": marks or [],
-        "event_id": event_id,
-        "chunk_num": 0,
-    }
+def _vm():
+    return VirtualMoxie(host="127.0.0.1", port=1, device_id="d_test", verbose=False)
 
 
-def _client():
-    vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_test", verbose=False)
-    return vm
-
-
-def test_sim_plays_tts_and_records_it():
-    vm = _client()
-    vm._play_tts(_tts_wire(b"\x01\x02\x03\x04", rate=22050, event_id="evt-9",
-                           marks=[{"type": "word", "value": "Hi"}]))
-    assert vm.got_tts.is_set()
-    assert vm.spoke is not None
-    assert vm.spoke["audio"] == b"\x01\x02\x03\x04"
-    assert vm.spoke["sample_rate"] == 22050 and vm.spoke["event_id"] == "evt-9"
-    assert vm.spoke["marks"] == [{"type": "word", "value": "Hi"}]
-    assert not vm.errors
-
-
-def test_sim_tts_handles_empty_audio():
-    vm = _client()
-    vm._play_tts(_tts_wire(b"", event_id="quiet"))
-    assert vm.got_tts.is_set() and vm.spoke["audio"] == b"" and not vm.errors
+@pytest.mark.parametrize("audio", [b"\x01\x02\x03\x04", b""])
+def test_sim_plays_tts_and_records_it(audio):
+    vm = _vm()
+    marks = [{"type": "word", "value": "Hi"}]
+    vm._play_tts({"request_source": "ROBOT_TTS_REQUEST", "event_id": "evt-9", "chunk_num": 0,
+                  "audio": {"buffer": base64.b64encode(audio).decode(), "channels": 1,
+                            "sample_rate": 22050},
+                  "marks": marks})
+    assert vm.got_tts.is_set() and not vm.errors
+    assert vm.spoke == {"audio": audio, "sample_rate": 22050, "channels": 1,
+                        "marks": marks, "event_id": "evt-9"}
 
 
 def test_sim_tts_bad_payload_is_recorded_not_raised():
-    vm = _client()
+    vm = _vm()
     vm._play_tts({"audio": {"buffer": "!!!not base64!!!"}})   # must not raise
-    # tolerant decode: either records an error or yields empty audio, never crashes
-    assert vm.spoke is None or vm.spoke["audio"] == b"" or vm.errors
+    assert vm.spoke is None and not vm.got_tts.is_set()
+    assert vm.errors and "tts decode failed" in vm.errors[0]

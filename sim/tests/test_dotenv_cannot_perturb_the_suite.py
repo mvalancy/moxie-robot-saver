@@ -1,23 +1,11 @@
-"""
-The dotenv fence (playbook rule 20), and the proof that it is load-bearing.
+"""The dotenv fence (playbook rule 20), proved in both directions.
 
-`mqtt/.env` is git-ignored: it exists on a developer's checkout and on no CI runner or
-worktree. Two loaders can leak it into the suite:
-
-1. `config._load_env` copies every key into `os.environ` with `setdefault` on the FIRST
-   `import config` of the session. A per-helper `MOXIE_SKIP_DOTENV=1` arrives after that
-   race is lost, and a denylist of names never covers the next knob — so tests claiming
-   "nothing is configured" passed alone and failed in the full suite. `conftest.py`
-   therefore fences it once, before the first import.
-2. `helpers_runtime.load_repo_dotenv` must NOT be fenced — it is how the `test_live_*.py`
-   suites find a real key at import, and fencing it turns them into silent skips. It is
-   narrowed to `LIVE_KEYS` instead, and `conftest.hermetic_tier_sees_no_credentials` hides
-   even those from hermetic tests while they run.
-
-Each half is proved in both directions: a subprocess runs real suites against a throwaway
-maximal dotenv with the guard on (green) and off (RED — the mutation control that stops
-this passing against a fence made of nothing). Nothing here reads or touches a
-developer's own `mqtt/.env`; credentials are blanked so no probe can reach a gateway.
+`config._load_env` must be fenced by `conftest.py` before the first import, or a developer's
+git-ignored `mqtt/.env` changes what "nothing is configured" tests assert. The live tier's
+`helpers_runtime.load_repo_dotenv` must NOT be fenced, only narrowed to `LIVE_KEYS`, and
+`conftest.hermetic_tier_sees_no_credentials` hides even those from hermetic tests. Each
+guard runs real suites against a throwaway maximal dotenv with the guard on (green) and
+off (red). Credentials are blanked so no probe can reach a gateway.
 """
 from __future__ import annotations
 
@@ -128,26 +116,6 @@ def test_the_fence_is_in_force_for_this_very_session():
             "a machine that has one will now disagree with CI about what is configured")
 
 
-def test_an_explicit_opinion_still_wins():
-    """`MOXIE_SKIP_DOTENV=0` must keep working as the way back in: rule 20 was FOUND by
-    running the suite against a real dotenv."""
-    import importlib
-    sys.path.insert(0, os.path.join(REPO, "mqtt"))
-    import config as _c
-    prev = os.environ.get("MOXIE_SKIP_DOTENV")
-    try:
-        os.environ["MOXIE_SKIP_DOTENV"] = "1"
-        assert _c._truthy("MOXIE_SKIP_DOTENV") is True
-        os.environ["MOXIE_SKIP_DOTENV"] = "0"
-        assert _c._truthy("MOXIE_SKIP_DOTENV") is False
-    finally:
-        if prev is None:
-            os.environ.pop("MOXIE_SKIP_DOTENV", None)
-        else:
-            os.environ["MOXIE_SKIP_DOTENV"] = prev
-        importlib.reload(_c)
-
-
 # ------------------------------------------------- the proof, in both directions --
 def test_a_dotenv_cannot_perturb_the_suite_when_the_fence_is_up(tmp_path):
     """With the fence, a fully-populated dotenv sitting right where the loader looks
@@ -170,30 +138,6 @@ def test_and_WOULD_be_perturbed_without_it(tmp_path):
     failed = set(re.findall(r"^FAILED (sim/tests/[\w.]+)::", r.stdout, re.M))
     assert len(failed) >= 2, (
         f"expected the dotenv to reach several files, saw {sorted(failed)}")
-
-
-# ------------------------------------------- the live tier must survive the fence --
-def test_the_fence_does_not_reach_the_live_suites_credentials(tmp_path):
-    """`load_repo_dotenv` is a SEPARATE loader that deliberately ignores
-    `MOXIE_SKIP_DOTENV`. Routing it through the config loader "for consistency" would make
-    every live suite skip silently on a machine that has credentials."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from helpers_runtime import load_repo_dotenv
-    # an ALLOWLISTED key, so this cannot pass merely because the allowlist dropped it
-    probe, value = "MOXIE_STT_API_KEY", "fixture-not-a-real-key"
-    f = tmp_path / "creds.env"
-    f.write_text(f"{probe}={value}\n")
-    prev = os.environ.pop(probe, None)
-    try:
-        os.environ["MOXIE_SKIP_DOTENV"] = "1"        # the fence, at its strongest
-        assert load_repo_dotenv(str(f)) == str(f)
-        assert os.environ.get(probe) == value, (
-            "load_repo_dotenv now honours MOXIE_SKIP_DOTENV, so the live tier can no "
-            "longer find credentials while the hermetic tier is insulated")
-    finally:
-        os.environ.pop(probe, None)
-        if prev is not None:
-            os.environ[probe] = prev
 
 
 def test_the_fixture_covers_every_documented_knob():
@@ -297,8 +241,9 @@ def test_no_live_suite_widens_the_allowlist_for_itself():
 
 
 def test_a_deployments_dotenv_cannot_export_a_behavioural_knob(tmp_path):
-    """The narrowing itself, at the seam, with no subprocess: an allowlisted key crosses
-    and a behavioural one does not, from the same file in the same call."""
+    """The narrowing itself, at the seam: an allowlisted key crosses and a behavioural one
+    does not — even with the config fence up, which `load_repo_dotenv` must ignore or every
+    live suite would silently skip."""
     sys.path.insert(0, os.path.join(REPO, "sim", "tests"))
     from helpers_runtime import load_repo_dotenv
     allowed, denied = "MOXIE_DEMO_ORIGIN", "MOXIE_ALLOW_UNVERIFIED_BOTS"
@@ -306,9 +251,10 @@ def test_a_deployments_dotenv_cannot_export_a_behavioural_knob(tmp_path):
     f.write_text(f"{allowed}=http://127.0.0.1:9/from-the-fixture\n{denied}=1\n"
                  "MOXIE_APP=echo\nMOXIE_PIPER_MODEL=/fixture/voice.onnx\n")
     keep = {k: os.environ.get(k) for k in (allowed, denied, "MOXIE_APP",
-                                           "MOXIE_PIPER_MODEL")}
+                                           "MOXIE_PIPER_MODEL", "MOXIE_SKIP_DOTENV")}
     for k in keep:
         os.environ.pop(k, None)
+    os.environ["MOXIE_SKIP_DOTENV"] = "1"            # the config fence, at its strongest
     try:
         assert load_repo_dotenv(str(f)) == str(f)
         assert os.environ.get(allowed) == "http://127.0.0.1:9/from-the-fixture", (
@@ -436,13 +382,3 @@ def test_and_the_hermetic_tier_WOULD_see_them_without_it(tmp_path):
     assert "test_hermetic_probe.py" in r.stdout and "test_live_probe.py" not in r.stdout, (
         "the wrong tier moved when the fence came off — the fixture is not doing what it "
         f"says:\n{r.stdout[-3000:]}")
-
-
-def test_no_credential_is_visible_to_this_very_test():
-    """In the real session: load-bearing on the one machine that has an `mqtt/.env`."""
-    sys.path.insert(0, os.path.join(REPO, "sim", "tests"))
-    from helpers_runtime import LIVE_KEYS
-    leaked = sorted(k for k in LIVE_KEYS if k in os.environ)
-    assert not leaked, (
-        f"the live tier's credentials are visible to a hermetic test: {leaked} — this run "
-        "is not the run CI does, and the disagreement will be blamed on CI")

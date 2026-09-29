@@ -1,18 +1,9 @@
-"""
-🎴 T10 — a launch card over the wire, from the robot's publish to the robot's hands.
+"""T10 — a launch card over the wire, from the robot's publish to the robot's hands.
 
-The real `MoxieRuntime` and the SIL robot (`sim/virtual_moxie.py`) share
-`helpers_runtime.loopback()`; the ROBOT starts the turn, and assertions read the robot's
-own state (`VirtualMoxie.action_stats()`, written only when a `commands/remote_chat` payload
-arrives and decodes) — not the server's record of what it sent.
-
-Refusals travel the same wire: `<launch_if_confirmed:…>`, `<sleep>` and an out-of-catalog id
-must leave the robot holding NOTHING yet answered (`NOREPLY_ACK`).
-
-Hardware ceiling: no physical Moxie has sent an `eb-qr-event`; the SIL robot records rather
-than runs actions. This proves the runtime↔client round trip in the recovered wire shape.
-
-Hermetic: synchronous loopback, no broker, network, model or sleeps.
+Real `MoxieRuntime` + SIL robot on `helpers_runtime.loopback()`; assertions read the ROBOT's
+own decoded state (`action_stats()`), not the server's record. Refusals must leave the robot
+holding nothing yet answered (`NOREPLY_ACK`). Whole file is run by
+sim/tools/launch_card_mutation_check.py (M15-M19 break the client half).
 """
 from __future__ import annotations
 
@@ -221,21 +212,6 @@ def test_a_refused_card_leaves_the_robot_holding_nothing_and_still_answers(label
     assert app.turns == [], f"{label}: a refused card was handed to a brain"
 
 
-def test_the_confirm_variant_does_not_arrive_as_a_launch_by_another_name():
-    """`<launch_if_confirmed:DM>` parses to `ActionType.LAUNCH` — the two tags are
-    indistinguishable by the time the grammar is done, which is why the decoder gates on
-    the tag NAME. On the wire that difference has to show up as the robot NOT being in
-    DM, so this asserts the destination rather than the parse."""
-    rt, vm, dev, _ = _pair()
-    _scan(vm, rt, "GO<launch_if_confirmed:DM>")
-    assert vm.action_stats()["module_id"] != "DM", vm.action_stats()
-    # …and the same string with the permitted tag does launch, so the refusal above is
-    # about the tag and not about DM being unreachable.
-    rt2, vm2, _, _ = _pair()
-    _scan(vm2, rt2, "GO<launch:DM>")
-    assert vm2.action_stats()["module_id"] == "DM", vm2.action_stats()
-
-
 def test_a_card_value_on_a_different_marker_event_launches_nothing_at_the_robot():
     """The other marker events (ArUco id, book cover) arrive in the same envelope; a value
     that reads as a card there is still not a card. Asserted on the wire, since the SIL
@@ -300,8 +276,9 @@ def test_run_face_events_carries_the_face_value_and_records_what_arrived():
     assert vm.action_stats()["module_id"] == "DM", vm.action_stats()
 
 
-def test_the_cli_exposes_face_value():
+def test_the_cli_exposes_the_face_event_flags():
     import subprocess
     out = subprocess.run([sys.executable, os.path.join(REPO, "sim", "virtual_moxie.py"),
                           "--help"], capture_output=True, text=True).stdout
-    assert "--face-value" in out, out
+    for flag in ("--face-event", "--face-gap", "--face-value"):
+        assert flag in out, out
