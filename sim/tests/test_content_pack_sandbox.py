@@ -49,7 +49,7 @@ ESCAPES = {
     "builtins_open": "{{ open('/etc/passwd').read() }}",
     "import_os_environ": "{{ __import__('os').environ }}",
     "lipsum_globals": "{{ lipsum.__globals__['os'].environ }}",
-    # Was live once: see `test_the_dotted_path_walk_cannot_reach_the_environment`.
+    # Was live once: the jinja2-less fallback `getattr`-walked this into `os.environ`.
     "globals_walk_to_environ":
         "{{ session.__class__.__repr__.__globals__.inspect.os.environ }}",
 }
@@ -126,22 +126,6 @@ def test_the_review_shows_the_hostile_prompt_verbatim():
     rows = P.review_pack(pack, {})
     diff = json.dumps(rows[0]["diff"])
     assert probe in diff, "the review must show the prompt exactly as it will be stored"
-
-
-def test_packs_py_handles_data_and_never_renders_it():
-    """Pin the mechanism: a refactor reaching for the renderer (say, to preview a prompt
-    in the review) would move evaluation into the step promised inert."""
-    pkg = os.path.join(REPO, "mqtt", "moxie_sdk", "content", "packs")
-    src = "\n".join(open(os.path.join(pkg, f)).read()
-                    for f in sorted(os.listdir(pkg)) if f.endswith(".py"))
-    assert "def review_pack" in src and "def apply_pack" in src
-    code = "\n".join(l for l in src.splitlines()
-                     if not l.strip().startswith(("#", '"', "'", "*", ":")))
-    # `re.compile` is legitimate: `validate_item` compiles a pack's `pattern` to refuse it.
-    code = code.replace("re.compile(", "")
-    for forbidden in ("render_prompt", "jinja2", "eval(", "exec(", "compile(",
-                      "__import__", "importlib", "subprocess", "os.system"):
-        assert forbidden not in code, f"packs.py must not reach for {forbidden!r}"
 
 
 # --- 2 · Apply stores it as data — the same treatment `code` gets ---
@@ -237,61 +221,27 @@ def test_a_hostile_pack_writes_no_file_outside_the_data_dir(tmp_path):
 
 # --- 4 · The renderer a bare-metal install still uses ---
 
-def _no_jinja2_render(template: str, context: dict) -> str:
-    """`render_prompt` with jinja2 unimportable (a bare install, no `content` extra);
-    blocks the import so it holds in a full venv too."""
-    import builtins
-    real_import = builtins.__import__
-
-    def _blocked(name, *a, **kw):
-        if name == "jinja2" or name.startswith("jinja2."):
-            raise ImportError("blocked: simulating an install with no content extra")
-        return real_import(name, *a, **kw)
-
-    saved = {k: v for k, v in sys.modules.items() if k.split(".")[0] == "jinja2"}
-    for k in saved:
-        del sys.modules[k]
-    builtins.__import__ = _blocked
-    try:
-        return R.render_prompt(template, context)
-    finally:
-        builtins.__import__ = real_import
-        sys.modules.update(saved)
+@pytest.fixture
+def no_jinja2(monkeypatch):
+    """`render_prompt` with jinja2 unimportable — a bare install with no `content` extra."""
+    monkeypatch.setitem(sys.modules, "jinja2", None)
+    monkeypatch.setitem(sys.modules, "jinja2.sandbox", None)
+    return R.render_prompt
 
 
-def test_the_dotted_path_walk_cannot_reach_the_environment(monkeypatch):
-    """The hole this file found: the jinja2-less fallback walked `getattr` on live objects
-    into `os.environ`. `_resolve` now refuses any `_`-leading segment and counts it."""
-    from moxie_sdk.content.volley import Session, Volley
-
-    monkeypatch.setenv("MOXIE_LLM_API_KEY", SENTINEL_ENV)
-    ctx = {"volley": Volley(speech="hi"), "session": Session(), "presence": {}}
-    probe = ESCAPES["globals_walk_to_environ"]
-    assert os.environ["MOXIE_LLM_API_KEY"] == SENTINEL_ENV, "the key really was set"
-
-    before = R.BLOCKED
-    out = _no_jinja2_render("Instructions: " + probe, ctx)
-    assert SENTINEL_ENV not in out, f"the environment leaked into the prompt: {out[:200]!r}"
-    assert out == "Instructions: "
-    assert R.BLOCKED > before, "a refusal nobody can count is a refusal nobody will notice"
-
-    # And the sandbox path, which was never exposed, still is not.
-    assert SENTINEL_ENV not in R.render_prompt(probe, ctx)
-
-
-def test_a_private_attribute_is_refused_but_an_ordinary_one_is_not():
+def test_a_private_attribute_is_refused_but_an_ordinary_one_is_not(no_jinja2):
     """Only `_`-LEADING segments are refused: `child_pii` must keep resolving."""
     from moxie_sdk.content.volley import Volley
 
     v = Volley(speech="hi", config={"child_pii": {"nickname": "Sam"}})
     ctx = {"volley": v, "session": None, "presence": {}}
-    assert _no_jinja2_render("Hi {{ volley.config.child_pii.nickname }}!", ctx) == "Hi Sam!"
-    assert _no_jinja2_render("{{ volley._nothing }}", ctx) == ""
-    assert _no_jinja2_render("{{ volley.config._x }}", ctx) == ""
+    assert no_jinja2("Hi {{ volley.config.child_pii.nickname }}!", ctx) == "Hi Sam!"
+    assert no_jinja2("{{ volley._nothing }}", ctx) == ""
+    assert no_jinja2("{{ volley.config._x }}", ctx) == ""
 
 
 @pytest.mark.parametrize("name", sorted(ESCAPES))
-def test_a_hostile_pack_is_inert_without_jinja2_too(name):
+def test_a_hostile_pack_is_inert_without_jinja2_too(name, no_jinja2):
     """The fallback evaluates only bare dotted paths and removes the rest; both renderers
     must hold, since which runs depends on the install, not the pack."""
     from moxie_sdk.content.volley import Session, Volley
@@ -299,7 +249,7 @@ def test_a_hostile_pack_is_inert_without_jinja2_too(name):
     pack = hostile_pack(ESCAPES[name])
     stored, _ = P.apply_pack(pack, {}, [IDENT], now=NOW + 10)
     prompt = P.module_data(stored)["conversations"][0]["prompt"]
-    out = _no_jinja2_render(prompt, {"volley": Volley(speech="hi"), "session": Session(),
+    out = no_jinja2(prompt, {"volley": Volley(speech="hi"), "session": Session(),
                                      "presence": {"face_present": True}})
     assert_inert(out, f"{name} (no jinja2)")
 

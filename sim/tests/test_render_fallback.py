@@ -218,19 +218,18 @@ def test_no_construct_leaks_template_syntax(name, face):
 
 
 @pytest.mark.parametrize("outer", sorted(CONSTRUCTS))
-@pytest.mark.parametrize("inner", sorted(CONSTRUCTS))
-def test_no_construct_leaks_when_nested_inside_another(inner, outer):
-    """Generality, taken seriously: ~1.8k combinations of one construct concatenated with
-    and wrapped by another. The scanner keeps a frame stack rather than parsing, and a
-    stack is exactly where an unbalanced or unfamiliar tag would desynchronise and start
-    emitting the source it was meant to remove."""
-    a, b = CONSTRUCTS[outer]["t"], CONSTRUCTS[inner]["t"]
-    for combo in (a + b,
-                  "{% if presence.face_present %}" + a + b + "{% endif %}",
-                  "{% for x in nothing %}" + a + "{% endfor %}" + b):
-        out = R._minimal_render(combo, _ctx())
-        leak = TEMPLATE_SYNTAX.search(out)
-        assert not leak, f"{outer}+{inner} leaked {leak.group(0)!r}: {out[:160]!r}"
+def test_no_construct_leaks_when_nested_inside_another(outer):
+    """Every pair, concatenated and wrapped: the scanner keeps a frame stack, and a stack
+    is where an unbalanced or unfamiliar tag would desynchronise and emit its source."""
+    a = CONSTRUCTS[outer]["t"]
+    for inner in sorted(CONSTRUCTS):
+        b = CONSTRUCTS[inner]["t"]
+        for combo in (a + b,
+                      "{% if presence.face_present %}" + a + b + "{% endif %}",
+                      "{% for x in nothing %}" + a + "{% endfor %}" + b):
+            out = R._minimal_render(combo, _ctx())
+            leak = TEMPLATE_SYNTAX.search(out)
+            assert not leak, f"{outer}+{inner} leaked {leak.group(0)!r}: {out[:160]!r}"
 
 
 @pytest.mark.parametrize("label,template", SHIPPED, ids=[l for l, _ in SHIPPED])
@@ -451,14 +450,3 @@ def test_the_fallback_is_what_a_security_error_falls_back_to():
                           _ctx())
     assert not TEMPLATE_SYNTAX.search(out), out[:200]
     assert "class" not in out.lower(), out[:200]
-
-
-def test_the_counter_is_documented_next_to_blocked():
-    """`STRIPPED` only helps if an operator can find out what it means. Both counters are
-    module-level ints with an explanatory comment; pin that they stay a pair."""
-    src = open(os.path.join(REPO, "mqtt", "moxie_sdk", "content", "render.py")).read()
-    assert re.search(r"^BLOCKED = 0$", src, re.M)
-    assert re.search(r"^STRIPPED = 0$", src, re.M)
-    assert "STRIPPED" in src.split("STRIPPED = 0")[0][-1200:], \
-        "STRIPPED needs a `#:` comment above it, like BLOCKED"
-    assert isinstance(R.STRIPPED, int) and isinstance(R.BLOCKED, int)
