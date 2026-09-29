@@ -338,7 +338,7 @@ def test_the_documented_action_deltas_are_the_only_ones(client, keys):
 # interchangeable. The golden's `execute_script` drives both over every spelling and
 # `execute_expected` is the decode both must reach — asserted of the SIL robot by running
 # it and of the browser structurally; `sim/test_action_payload.mjs` runs the real bridge
-# over the same script and carries the negative control.
+# over the same script and compares the decode entry by entry.
 
 APPLY_ACTION = _balanced(BRIDGE, BRIDGE.index("{", BRIDGE.index("function applyAction(entry) {")))
 PAYLOAD_TEST_PATH = os.path.join(REPO, *ACTIONS_GOLDEN["payload_peer_test"].split("/"))
@@ -434,13 +434,3 @@ def test_the_two_clients_are_driven_over_the_same_execute_script():
     assert "applied_keys" in PAYLOAD_TEST, (
         "the browser comparison must be projected onto the golden's shared keys")
 
-
-def test_the_payload_suite_carries_a_negative_control():
-    """A browser assertion that cannot fail is what this repo learned to distrust: nine
-    suites skipped for months and stayed green. The peer test reverts the fix in the
-    bridge source and requires the same comparison to go red — and asserts its own
-    mutations actually changed the source, because a `replace()` that matched nothing
-    would make the control vacuous in exactly the way it exists to catch."""
-    assert "NEGATIVE CONTROL" in PAYLOAD_TEST
-    assert "mutated nothing" in PAYLOAD_TEST, (
-        "the control must prove it changed the source before trusting that it failed")

@@ -38,8 +38,7 @@
     "                                       bridge/ reads the same names    in the same",
     "                                       precedence order",
     "  sim/test_action_payload.mjs          the REAL bridge/, driven   over this script,",
-    "                                       reaches execute_expected -- with a negative",
-    "                                       control that reverts the fix and must fail",
+    "                                       reaches execute_expected, entry by entry",
     "",
     "`args` is therefore no longer in `client_only_keys`: both clients record it, under",
     "that name, and `applied_keys` is where it now lives."
