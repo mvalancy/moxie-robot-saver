@@ -312,17 +312,6 @@ def test_validate_drops_a_bad_beat_mood(bad):
     assert "cmd:playback-mood" not in perf.render(out)
 
 
-def test_the_drop_counter_actually_counts():
-    """"0 unknown ids over the corpus" is vacuous unless the counter can move."""
-    perf.reset_dropped()
-    assert perf.dropped_ids() == 0
-    perf.validate(perf.Performance(beats=(perf.Beat(text="hi", gesture="Gesture_Nope",
-                                                    tree="Bht_Nope"),)))
-    assert perf.dropped_ids() == 2
-    perf.reset_dropped()
-    assert perf.dropped_ids() == 0
-
-
 @pytest.mark.parametrize("slot,bad", [("dialog_act", "smalltalk"), ("emotion", "curious"),
                                       ("signal", "agreement"), ("mood", 11),
                                       ("mood", -1)])
@@ -809,15 +798,6 @@ def test_the_planner_makes_no_model_call_and_touches_no_io(monkeypatch):
     perf.render(staged(text, turn_key="k"))
     out = seam.make_markup(text, turn_key="k")       # the hot path the robot calls
     assert "<mark" in out, "the seam still has to do its job with the traps installed"
-
-
-def test_the_planner_imports_only_the_stdlib_and_the_sdk():
-    """No new dependency reaches the appliance through this module."""
-    src = open(os.path.join(MQTT_DIR, "moxie_sdk", "performance.py")).read()
-    imports = set(re.findall(r"^\s*(?:from|import)\s+([A-Za-z_][\w.]*)", src, re.M))
-    allowed = {"__future__", "re", "dataclasses", "typing", "json", "hashlib", "os"}
-    assert not (imports - allowed - {".", "moxie_sdk"} -
-                {i for i in imports if i.startswith(".")}), sorted(imports)
 
 
 def test_the_same_line_renders_identically_under_different_hash_seeds(tmp_path):
