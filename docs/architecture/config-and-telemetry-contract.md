@@ -103,7 +103,7 @@ catalogued at [`proto-catalog.md`](../reverse-engineering/protocol/proto-catalog
 twin `ChildEncrypted.face_options = 16` is Cloud.proto:144 · proto-catalog.md:313). It is **not** one of
 the encrypted fields: both
 [`device-config-and-telemetry.md`](../reverse-engineering/protocol/device-config-and-telemetry.md):52-54
-and [`crypto-and-keys.md`](../reverse-engineering/phone/crypto-and-keys.md):506-508 list it among the
+and [`crypto-and-keys.md`](../reverse-engineering/phone/crypto-and-keys.md):358-362 list it among the
 *clear* metadata sitting beside the `*_encrypted` blobs, so a server fills it in directly.
 
 **The anatomy — 14 layers, cited.**
