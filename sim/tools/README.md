@@ -1,327 +1,70 @@
-# `sim/tools/` — build helpers for the static site, and one proof
+# 🛠️ `sim/tools/` — build helpers, probes and mutation checkers
 
-- **`check_promotion_state.py`** — the only tool here that looks at the *repository* rather than at
-  the product. It answers one question: **was the last `dev → main` promotion finished?** A squash
-  merge leaves `dev` one commit behind `main`, and `gh pr merge` does not reconcile it. Nothing goes
-  red — measured 2026-09-06, that was missed after five
-  of the last seven promotions by three different actors, *after* being written down in four places.
-  So it is a check instead: `git rev-list --count origin/dev..origin/main`, gated on one clock —
-  the committer date of `main`'s tip — and
-  forgiven for 30 minutes, because between a squash and its reconcile the defect state is
-  legitimate and a check that fires there is worse than no check. The bound is the measured one:
-  the ten promotions in history reconciled in 11s–990s. Exit **0** finished (or inside the window),
-  **1** unfinished, **2** *could not measure* — a third code on purpose, because a monitor that
-  says all-clear when its probe is broken is the failure this repo spent a day deleting. Called
-  hourly by [`../ci/promotion.yml`](../ci/README.md); its teeth are
-  [`../tests/test_promotion_guard.py`](../tests/), which builds real git repositories and blinds
-  each measurement in turn to prove every clause is load-bearing. A standing PR is not required;
-  promotion PRs exist only for owner-approved major milestones.
+Hand-run and CI-run tools for the static site, the SIL stack and the test suites themselves. Run everything from the repo root.
 
-- **`build_docs_bundle.py`** — copies every Markdown doc under `docs/` (+ top-level `README`/`ROADMAP`)
-  into [`../web/docs-bundle/`](../web/) and writes `../web/docs-index.json`, so the **docs explorer**
-  ([`../web/docs.html`](../web/docs.html)) can browse them on a static Cloudflare Pages deploy with no
-  server. Byte-for-byte copies; re-run it whenever docs change (`node ../test_docs.mjs` fails if the
-  bundle is stale). The generated bundle **is committed** so the deploy needs no build step.
-  Because it is *generated* **and** *committed*, every branch that touches a doc rewrites it, so the
-  output is deliberately shaped to survive a plain 3-way merge: **no global content-derived value**
-  in either JSON (a top-level `generated` hash made them conflict on every pair of doc-touching
-  branches, and nothing read it), and **one doc per line, blank-line separated**, in
-  `docs-search.json` (it used to be one ~3 MB line, which gave the merge no granularity at all).
-  Two branches editing different docs now merge cleanly and byte-identically to a rebuild. Keep both
-  properties; the header comment in the script says why, and `check_bundle_fresh.py` stays the sole
-  authority on freshness.
-- **`run_live_action_tags.sh`** — the only bounded goodbye-adherence entry point. Its Python
-  supervisor runs one selected three-trial campaign, enforces six attempts and a total deadline,
-  discards untrusted child output, and prints only allow-listed aggregate counts/categories. A
-  completed 2/3 is distinct from an incomplete campaign; activity and wire probes are excluded.
-- **`prerender_audio.py`** — renders scripted session lines with Piper into `../web/audio/` for the
-  static demo (both sides of the conversation). See [`../../docs/guides/deploy-cloudflare.md`](../../docs/guides/deploy-cloudflare.md).
-- **`build_ext_conformance.py`** — regenerates
-  [`../tests/data/ext_conformance.json`](../tests/data/README.md), the six hand-ported OpenMoxie
-  hooks that are the golden set for [sandboxed content
-  extensions](../../docs/architecture/backlog/sandboxed-extensions.md) §8. The goldens are
-  committed and the test reads the *file*, never this script, so a bug here cannot quietly rewrite
-  what it is meant to be checked against. Note the deliberate `sort_keys=False`: `let` is an
-  **ordered** map, so sorting the keys would silently reorder every program in the file — the
-  escape suite caught exactly that.
-- **`ext_mutation_check.py`** — the other direction of *"a test for every feature"*. It removes each
-  of **28 guards** the extension sandbox rests on ⚠️ *(unverified as of 2026-09-05 and left rather than guessed at — the table has **30 rows** across **12 distinct guard ids** (`X1`–`X12`), so 28 matches neither unit; whoever knows what it enumerated should correct it)* — the `_`-segment path refusal, the fact-root
-  refusal, the step and wall-clock budgets, the byte caps, both depth caps, the injected clock and
-  seed, the NFKC identity check, the memory-key grammar, the host-supplied namespace, the two
-  capability-equality checks, the all-or-nothing effect list, the jinja2 sandbox, the pattern cap —
-  and requires the corresponding test to go **red**. All 28 are caught. Run it by hand after
-  touching `ext/`, `render.py`, `ext_host.py` or `packs/`'s pattern cap; a green
-  suite proves a guard is *present*, and only this proves it is *load-bearing*.
-- **`subscribe_mutation_check.py`** — the same proof for the `subscribe` capability's **25 guards**:
-  the load-time event allowlist, the width of `ext.SUBSCRIBE_EVENTS`, the P1 gate, both host
-  boundaries, both de-duplications, the two **merge-direction** rows, `MOXIE_VISION`, the pairing
-  gate, four *set-but-never-sent* shapes, and — since the inbound half landed on 2026-09-05 — nine
-  more for being **woken**: the subscribed-only gate, its module keying, both inbound gates, the
-  record and *where* it is written, the module-exit forget, the empty-answer fall-through, and S17,
-  which routes a perceived event to `app.respond` instead of to the pack's local evaluator. S17 is
-  the sharpest row in the file because every visible behaviour survives it — the pack answers, the
-  child hears a line, the wire is well formed — and the only thing that notices is
-  `moxie_sdk.chat.model_calls()`. **25/25 caught.** A separate table from
-  `ext_mutation_check.py` because half these guards live in `mqtt/supervisor/moxie_runtime/`, which
-  that checker's single-file runner cannot see. Two rows earn the file on their own: a merge in which a
-  content pack's event list **replaces** the supervisor's fails *silently*, because
-  `_vision_subscription` latches *"subscribed"* for a `(device, module)` at the moment it hands its
-  list over — so presence, the greeting rule and launch cards would go quiet with nothing logged. The
-  run also found a **weak test**: rows S12/S13 left the wire assertion green in its first draft,
-  because every grantable event is in the runtime's own list and the assertion was satisfied without
-  the pack's contribution at all.
-- **`build_performance_goldens.py`** — regenerates
-  [`../tests/goldens/performance.json`](../tests/goldens/), the behavior planner's 22
-  dialog-act goldens as JSON `Performance` objects **plus** the markup each renders to
-  ([`expressiveness.md`](../../docs/architecture/backlog/expressiveness.md) §2.5). The
-  goldens are committed and both `sim/tests/test_performance.py` and
-  `../test_performance_render.mjs` read the *file*, so this script can never quietly
-  rewrite what it is checked against.
-- **`performance_mutation_check.py`** / **`ext_mutation_check.py`** / **`brain_mutation_check.py`**
-  — the "a guard is *present*" → "a guard is *load-bearing*" step for the planner (39
-  mutations), the extension sandbox (28) and the brain registry. Each removes one guard at
-  a time and requires a test to go red. Run by hand after touching the code they cover.
-- **`first_audio_ab.py`** — the first-audio latency A/B across `MOXIE_EXPRESSIVE`. Boots
-  the real stack (a real broker, `mqtt/run.py` as its own process), connects a
-  protocol-faithful robot, and times from the robot's own `events/remote-chat` publish to
-  the first `commands/remote_chat` carrying words and the first `commands/tts` carrying
-  audio — one supervisor boot per arm. `--brain stub` streams a fixed answer at a fixed
-  pace so the seam is measurable at high N for free; `--brain live` spends one chat
-  completion per turn and is the only number comparable to PR #15's 1.52 s. Written
-  because [`expressiveness.md`](../../docs/architecture/backlog/expressiveness.md) §2.7
-  criterion (f) had a *bench* measurement and said so.
-- **`build_csp_hashes.py`** — regenerates the SHA-256 sources in `sim/web/_headers`' `script-src`
-  from the inline `<script>` blocks in `sim/web/*.html`, and fails the build on an inline
-  `on*=` attribute or a `javascript:` URL (which no hash this policy grants can cover, and
-  which fail *silently* — the handler never fires). `--check` proves the committed header
-  still matches the pages; it runs as its own CI step, again from `sim/tests/test_csp_hashes.py`,
-  and a third time inside `sim/test_csp.mjs`. Three places for one guard is deliberate: a hash
-  that drifts from its block does not degrade, it **blanks the page**, and only Cloudflare Pages
-  ever sends `_headers`, so nothing local would otherwise see it. It owns the hash list and
-  nothing else — every other `script-src` source is carried through untouched.
-- **`check_bundle_fresh.py`** — asserts the committed docs bundle matches `docs/`, so a
-  doc edit that forgets `build_docs_bundle.py` fails locally instead of shipping stale.
-- **`probe_demo_gateway.mjs`** — probes a deployed demo's gateway routes from outside,
-  the way a visitor's browser reaches them.
-- **`grounding_probe.mjs`** — compares the hosted model's answer with and without the locally
-  retrieved passage. It is opt-in and paid: `--yes`, `--max-attempts 4..6`, and
-  `--timeout-ms 1000..60000` are all required. One [`probe_budget.mjs`](probe_budget.mjs) instance
-  wraps every actual fetch across both controls, including retries and timeouts, refuses redirects, and
-  holds the deadline through the complete response body; the probe prints its used/allowed count. The
-  transport boundary is hermetically guarded with real loopback HTTP by the focused grounding-budget
-  block in [`../test_mode.mjs`](../test_mode.mjs). **Do not spend on the current scoring probe:** its
-  no-passage negative arm is tautological; the tracked brief names the required discriminator repair.
-- **`prove_broker_acl.py`** — the assertions behind [`../run_acl_proof.sh`](../run_acl_proof.sh)
-  (broker hardening P0, [`security-broker-auth.md`](../../docs/architecture/backlog/security-broker-auth.md)
-  §2). Driven against a throwaway mosquitto the shell script starts from the repo's own broker config and
-  ACLs. Every check is **delivery-based**: MQTT 3.1.1 PUBACKs a publish the broker then drops for ACL
-  reasons and SUBACKs a subscription it will never deliver on, so a proof written against acks would pass
-  on a broker with no ACL at all.
-- **`hardening_mutation_check.py`** — the same proof for [production
-  hardening](../../docs/architecture/backlog/production-hardening.md) P0: **38 mutations** across
-  `moxie_sdk/store.py`'s cross-process lock and the connection region of
-  `supervisor/moxie_runtime/`. Two of them are deliberately the *half-done fixes* the brief warns
-  about rather than deleted guards — `connect_async` without `retry_first_connection=True` (a no-op
-  under `loop_forever`, risk R2) and the lock moved from the `.lock` sidecar onto the data file
-  (looks correct, serializes nothing, because `os.replace` swaps the inode — risk R1) — because that
-  is what a plausible patch actually looks like. All 35 are caught; the run that got there found
-  **five** holes, four of them the same disease: two guards each covering for the other's absence, so
-  neither was individually load-bearing. Run it after touching either file.
-- **`hardening_p1_mutation_check.py`** — the same proof for production hardening **P1**: **66
-  mutations** across `moxie_sdk/roster.py`, `moxie_sdk/conn_telemetry.py`, `store.py::_append_path`, the
-  connection/shutdown/onboarding regions of `supervisor/moxie_runtime/` and the console's connection
-  normalizer. Several are deliberately *plausible patches rather than deletions*, because that is what a
-  regression looks like in review — the roster resume marking rostered robots as **connected** (a status
-  field reporting a belief instead of an observation), `gap_since` returning `0.0` instead of `None` for a
-  first connect, the shutdown row written *after* `disconnect()`, and `_stopping` hard-wired True, which
-  passes *"a clean stop is not an outage"* while silently erasing every real outage. Four of them found
-  real holes: a test that asserted the roster's key negative property about **a code
-  path it never called**, a missing-lock mutation no single-writer test could ever see, and
-  `JsonStore.append` ignoring its own write's return code — plus an `OverflowError` in the lock backoff that had been reported as a *flake* (`2 ** attempt` past 1024). One benign finding worth keeping: a property
-  guarded **twice**, where neither guard is individually load-bearing — so the mutation had to remove both
-  at once. The checker also reports a `-k` selector that matched **no test** as a NO-OP, because a renamed
-  test is how a mutation table rots into reporting "caught" forever.
-- **`turnstile_mutation_check.py`** — the same proof for the **Cloudflare Turnstile bot control**
-  in front of `POST /api/chat` **and** `POST /api/transcribe`: **57 mutations** across
-  [`functions/api/_lib/turnstile.js`](../../functions/api/_lib/turnstile.js), the guard step in
-  [`chat.js`](../../functions/api/chat.js) and [`transcribe.js`](../../functions/api/transcribe.js),
-  the budget refund in [`_lib/limits.js`](../../functions/api/_lib/limits.js), the sitekey's one
-  delivery path in [`health.js`](../../functions/api/health.js), `_lib/env.js`'s config pair, the
-  app-script cache list in [`sim/web/_headers`](../../sim/web/_headers), and the three browser files —
-  [`sim/web/turnstile.js`](../../sim/web/turnstile.js),
-  [`cloud-transport.js`](../../sim/web/cloud-transport.js) and [`mic.js`](../../sim/web/mic.js).
-  **IT NEVER TOUCHES THE CHECKOUT**: it hardlink-copies `functions/` and `sim/` into a throwaway
-  directory (~0.2 s, because hardlinks copy metadata and not bytes), replaces the files it mutates with
-  real copies so no write can reach the original inode, and runs `node` there. The first version rewrote
-  the live worktree and restored it in a `finally` — which left mandatory check 2 **disabled in the tree**
-  after a run that was killed, and made two concurrent runs redden each other's suites on rows that had
-  no defect behind them. **It is STRICTER than the five tables above,
-  deliberately**: they run `pytest -k <selector>` and treat any non-zero exit as *caught*, which for a
-  security control is too weak — a mutation that broke some unrelated assertion would read as caught
-  while the guard it targeted went unexercised. This one runs `node sim/test_turnstile.mjs` and requires
-  the selector to appear in **a failing check's own label**, so a row is caught only when the check that
-  *names that guard* is the one that reddened. That strictness paid for itself on the first run: four
-  rows came back **NOT CAUGHT or WRONG CHECK**, and each was a real hole in the tests — a `success:false`
-  case that was actually being refused by the *action* check (so deleting the success check changed
-  nothing), a suffix-matching mutation that only touched the `DEMO_TURNSTILE_HOSTS` branch no test
-  exercised, a `!res.ok` deletion that fell open by accident because the 500 in the fixture had an empty
-  body, and a `publicTurnstile` mutation invisible because no test configured a sitekey **without** a
-  secret. Rows include both halves of the fail-open/fail-closed split (a control that lets the refused
-  case through, and a Cloudflare outage that takes the whole demo down), the concurrency-slot release
-  **and its negative control** — the release neutered in `limits.js`, so *"the in-flight count is back to
-  zero"* cannot pass on a counter that is always zero — and the plausible-patch shape the other tables
-  favour: the refusal hoisted *outside* the `try` whose `finally` returns the slot, which reads as tidier
-  and leaks a slot for ever. One row is caught by **hanging** (no deadline on the verification call, which
-  holds a concurrency slot) and says so, because "it never finished" is a different fact from "it went
-  red". Pass a row name to re-check one without waiting out that hang:
-  `python3 sim/tools/turnstile_mutation_check.py D3e`.
-  The 2026-09-05 review pass added 29 rows and they found five more holes of the same kind: the action
-  compared with `startsWith` or case-folded (both served a `chat-newsletter` token on the expensive
-  route and both passed green), the ears verifying nothing at all, a refusal that kept the units
-  admission charged (a *free* budget drain in place of a paid one), `/api/health` no longer publishing
-  the sitekey — the browser's ONLY source of it — with **eleven** suites still green, and a client that
-  memoised a failed script load and so disabled every turn for the life of the page. `sim/tests/
-  test_mutation_tables.py` now also pins the row COUNT stated in the docs against the table, because a
-  README that said 26 while the table held 28 is how a reader loses the ability to tell a table that grew
-  from a selector that silently stopped matching.
-- **`unit_budget_mutation_check.py`** — the same proof for the **shared per-colo ceilings** of
-  [`live-sim-demo.md` §4.6.1–§4.6.3](../../docs/architecture/backlog/live-sim-demo.md): every guard
-  the per-colo spend ceiling and the per-IP window tier rest on, all of them in
-  [`functions/api/_lib/limits.js`](../../functions/api/_lib/limits.js), checked against
-  [`sim/test_demo_proxy.mjs`](../test_demo_proxy.mjs) §15i (rows `U*`, the shared minute window and
-  the budget's HOUR) and [`sim/tests/helpers_shared_ceilings.mjs`](../tests/helpers_shared_ceilings.mjs)
-  (rows `W*`/`D*`, the per-IP HOUR/DAY windows and the budget's DAY). `U18`/`U19` cover the
-  RE-ROLL's extra charge (§4.9): the second gateway call inside one admitted turn, which may
-  neither be spent past a ceiling that refused it nor be forgotten by a refund.
-  `python3 sim/tools/unit_budget_mutation_check.py        # 37 rows; every one must say "caught"`
-  (about 45 s; pass a row name — `U3`, `D4` — to re-check one in ~1.5 s). **The `W*`/`D*` block was
-  added on 2026-09-06 because its absence had already cost something.** PR #178 lifted the day
-  ceiling onto `caches.default` by copying the hour's proven design without the hour's proof, and
-  deleting `unaccrueDayPending()` left the ceilings suite 151/151 green and `test_demo_proxy.mjs`
-  green while the hour's byte-identical branch (`U2`) reddens instantly — a dead branch that survived
-  review, a passing 151-check suite and a merge, found only by a hand-run sweep (fixed in #180; row
-  `D4` is the lock). Adding the block found **five** more assertions that could not fail: §G's *"the colo
-  holds 3 units, not 6"* (the double charge is only visible on a THIRD admission, which did not
-  exist), §H's missing wide-entry `max-age`, §F's fail-open cases seeded with exactly the bytes a
-  fresh write produces, §J watching the sub-tier rather than the ledger `release()` accrues to, and
-  the wide window's **narrowest-first** scale order, which was visible only as the field order of a
-  JSON body until §F got a case where the hour and the day are spent at once. All five are now
-  asserted, and `test_shared_ceilings.py`'s F/G/H/J floors are pinned to the exact counts so a row
-  cannot be quietly unhooked from its proof. It inherits
-  `turnstile_mutation_check.py`'s **strictness** (the selector must appear in a *failing check's own
-  label*, so a row is caught only when the check that names that guard is the one that reddened) and its
-  **throwaway hardlink tree**, and it adds one thing the other six do not have: **an AMBIGUOUS verdict
-  when an anchor matches more than one place.** That is not a refinement invented on paper — on this
-  table's first run, row `U5`'s anchor matched the per-IP window sub-tier's fail-open block *as well as*
-  the budget sub-tier's, because the two were byte-identical; `str.replace(old, new, 1)` mutated the
-  first, and the row spent an entire run checking a guard it is not about. The other tables here share
-  that latent defect. Two rows are the shipped form of a **rejected design** rather than a typo: `U1`
-  charges the colo at admission and refunds only locally (the reading of §4.6.1's *"the same fail-open
-  rules apply verbatim"* that re-opens the free drain), and `U3` keeps the unpublished units to retry
-  them, which reads as resilience and double-charges whenever a `put` lands and then times out. The
-  second run also found a test defect the first hid: `U3`'s own assertion could never be the failing one,
-  because the over-publish crossed the 12-unit ceiling three checks earlier — so the row is now driven at
-  the production ceiling, out of the way.
-- **`telemetry_rollup_mutation_check.py`** — the same proof for **durable telemetry's two records**,
-  after a `sil` red on 2026-09-05 (PR #164) whose diff could not reach the code it reddened: the ring
-  (`telemetry_packets.json`) held three envelopes and the daily roll-up (`telemetry_daily.json`) had
-  counted two. The property is that the two **cannot durably disagree, because one is a log and the
-  other is a view over it** — an envelope carries a monotonic `seq`, the roll-up carries `through_seq`,
-  and `reconcile_rollup` replays the difference. Each row deletes one of the three mechanisms it rests
-  on: the write **order** (the exact record before the bounded one), the **critical section** (both
-  writes as one, so two ingests cannot lose an update the ring keeps), and the **watermark** itself.
-  `python3 sim/tools/telemetry_rollup_mutation_check.py   # 12 rows; every one must say "caught"`
-  (about 30 s), checked against [`../tests/test_telemetry_rollup_repair.py`](../tests/README.md) plus the
-  two older telemetry suites. Two notes worth keeping. **M2's first draft proved nothing**: it locked the
-  *other* record instead of deleting the lock, and in-process `JsonStore._transaction_path` serialises
-  every transaction on one RLock whatever record it names — so the mutation was invisible without a
-  second process. And **M8 is the shipped form of a rejected design**: treating an unstamped legacy
-  envelope as *unfolded* would double the lifetime total of every appliance on its first read after the
-  upgrade, which is a wrong number that grows on refresh.
-- **`page_teeth_check.py`** (+ `teeth_ledger.mjs`, `teeth_hook.mjs`) — the same proof turned on the
-  **page** instead of the product. The checkers above delete a guard from the code and require its
-  test to redden; this serves each **browser suite** a deliberately broken site — a script deleted, a
-  script served 200 OK and inert, a fetch 404'd, a document emptied, one resource stalled ~24 s behind
-  a throttle — and reports **which of its checks stay green**. It exists because on 2026-09-06 five
-  checks were found passing against a system that was actually broken (`test_bg_perf`'s Node-side
-  baseline, two unwaited `naturalWidth` samples, `article p` matching the *"Loading docs…"* spinner,
-  and `check_deployed.mjs` printing `failed requests: 0` without asserting it) and **every one was
-  found by luck**. Nobody had ever swept for them.
-  `python3 sim/tools/page_teeth_check.py --selftest        # ~1 min, both directions`
-  `python3 sim/tools/page_teeth_check.py --baseline-dir /tmp/teeth   # the full sweep`
-  Three things make it an audit rather than a noise generator. **Exposure is measured**: the ledger
-  records every URL each suite's browser actually requested on the healthy run, and a suite is only in
-  scope for "delete `qr.js`" if it fetched `qr.js` — a green under a breakage a suite never touched is
-  not a finding, and reporting one would send someone to fix a test that works. **Instrumentation
-  cannot fail quietly**: the loader hook throws on a moved anchor, and a `stall` row whose throttle did
-  not apply is SKIPPED rather than read as "everything stayed green" — that exact bug was in the
-  tool's own first draft (puppeteer 24 takes `{download, upload, latency}`; the CDP field names throw)
-  and it would have reported *no findings* for the whole not-loaded-yet family. **A check's identity is
-  its call site**, `file:line:col`, not its message: several suites interpolate live values — including
-  a list of image responses *in arrival order* — so a text key drops the very assertion under audit
-  from the comparison on the run that matters.
-  It is **not wired into CI** as it stands: the full sweep took **~2.5 hours** on this box (a suite
-  whose waits all expire runs far longer broken than healthy — `test_mermaid` went 37 s → 448 s with
-  `docs.js` inert), and it mutates `sim/web` transiently. `--selftest` is the half that could gate a
-  PR: **41 s**, hermetic, and it fails in both directions. Run the sweep by hand after touching a page
-  or a browser suite; `--check-tree` proves it left no tracked file behind, and `--check-tree
-  --restore` undoes a breakage an interrupted run left in place. That is not hypothetical — the first
-  full sweep was killed by its supervisor mid-row and the `finally` never ran.
-  First sweep's findings are in
-  [`sil-and-cicd.md`](../../docs/architecture/sil-and-cicd.md): the suites are largely sound, two
-  checks in `test_csp.mjs`/`test_docs_explorer.mjs` had no teeth and are fixed, and
-  `sim/check_deployed.mjs --selftest` exited **0** against four different broken pages — the
-  **inert-script** rows, which are the ones no console listener and no network log can ever see.
-  That last one is closed as of 2026-09-06: `check_deployed.mjs` grew a **clause 4** that names one
-  observable effect per script (`moxie.js` builds the stage canvas and the motor panel, `hud.js` puts
-  the accessible name on each slider, `mode.js` moves `body[data-mode]` off `"boot"`, `env.js` creates
-  the badge, `qr.js` draws real ink when **Make** is pressed) and five new mutations, **E**–**I**, that
-  gut one script apiece and must each redden the clause that names it. `envjs-inert` was added to the
-  rows above at the same time, so the marks that `env.js` paints are themselves under audit.
-  **`turnstilejs-inert` joined them on 2026-09-06**, with the fix for
-  [`turnstile-layout-collision.md`](../../docs/architecture/backlog/turnstile-layout-collision.md):
-  `sim/web/turnstile.js` is the only file that builds `#turnstile-holder` and decides where the
-  challenge lands, and two blocks of `test_mobile_layout.mjs` now aim at it. Its first run paid for
-  itself — TIER A **0**, but **two TIER B** checks that said *"with a challenge on screen"* stayed
-  green against a page with no challenge on it at all. Both now require the challenge to have been
-  drawn, and the row reports TIER A 0 / TIER B 0.
-- **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
-  ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
-  a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.
-  Three profiles (`smoke` ~1 min · `quick` ~5 min · `week` 60 min) and **twelve** numeric bars printed
-  pass or fail, never inferred — with §5.4 under every report, because *"a week in an hour"* is a **rate
-  substitution** and not a duration. Two design points: every turn is stamped with whether the broker was
-  up **when it was issued** (A1 counts only those; a bare pass/fail could not tell a bug from an injected
-  fault), and the contention probe checks an **identity** rather than a survival count —
-  `attempted == on_disk + refused`, which is the only thing that distinguishes a *silent loss* (A5, must
-  be 0) from the *recorded refusal* §3.2 point 4 explicitly accepts. It restarts the supervisor with
-  **SIGTERM**, so the clean-shutdown path is exercised by the harness and not only by a unit test.
+## Build helpers (their output is committed)
+
+- [`build_docs_bundle.py`](build_docs_bundle.py) — copies `docs/` (+ top-level `README`/`ROADMAP`) into `sim/web/docs-bundle/` and writes `docs-index.json` / `docs-search.json` for the docs explorer.
+- [`check_bundle_fresh.py`](check_bundle_fresh.py) — exit 1 if the committed docs bundle differs from a fresh rebuild.
+- [`build_csp_hashes.py`](build_csp_hashes.py) — regenerates the `script-src` SHA-256 hashes in `sim/web/_headers` from the pages' inline `<script>` blocks; `--check` verifies. Refuses inline `on*=` handlers and `javascript:` URLs.
+- [`prerender_audio.py`](prerender_audio.py) — renders scripted lines with Piper to `sim/web/audio/{moxie,child,ambient}/<hash>.mp3` + `index.json` for the static demo.
+- [`build_ext_conformance.py`](build_ext_conformance.py) — regenerates `sim/tests/data/ext_conformance.json`, the six hand-ported OpenMoxie hooks.
+- [`build_performance_goldens.py`](build_performance_goldens.py) — regenerates `sim/tests/goldens/performance.json`, the behavior planner's 22 dialog-act goldens.
+
+## Probes and harnesses
+
+- [`check_promotion_state.py`](check_promotion_state.py) — was the last `dev → main` squash reconciled back into `dev`? Exit 0 yes (or within the 30-minute grace), 1 no, 2 could not measure. Run hourly by [`../ci/promotion.yml`](../ci/README.md).
+- [`soak.py`](soak.py) — the SIL soak behind [`../run_soak.sh`](../run_soak.sh): real mosquitto (container), real `mqtt/run.py`, virtual robots, `MOXIE_APP=echo`; profiles `smoke` / `quick` / `week`, numeric bars printed pass or fail.
+- [`first_audio_ab.py`](first_audio_ab.py) — first-audio latency A/B across `MOXIE_EXPRESSIVE` on the real stack; `--brain stub` (free) or `--brain live` (one completion per turn).
+- [`prove_broker_acl.py`](prove_broker_acl.py) — delivery-based assertions that a real mosquitto enforces the P0 ACL; driven by [`../run_acl_proof.sh`](../run_acl_proof.sh).
+- [`assert_no_secret_in_log.py`](assert_no_secret_in_log.py) — fails if a log contains a gateway credential, without ever printing it; used by `sim/run_smoke.sh --live-brain`.
+- [`probe_demo_gateway.mjs`](probe_demo_gateway.mjs) — POSTs the bodies the Pages Functions build to the real gateway and reports response shapes (hand-run, reads `mqtt/.env` or `MOXIE_ENV_FILE`; `--dry-run`, `--only=`).
+- [`grounding_probe.mjs`](grounding_probe.mjs) / [`grounding_score.mjs`](grounding_score.mjs) — paid A/B of the model's answer with and without the retrieved passage, and its pure scoring seam. Requires `--yes --max-attempts 4..6 --timeout-ms 1000..60000`.
+- [`probe_budget.mjs`](probe_budget.mjs) — shared outbound-fetch counter and deadline for opt-in live probes; guarded in [`../test_mode.mjs`](../test_mode.mjs).
+- [`run_live_action_tags.sh`](run_live_action_tags.sh) → [`run_live_action_tags.py`](run_live_action_tags.py) + [`action_tag_campaign.py`](action_tag_campaign.py) — the one bounded live goodbye-tag campaign: six-attempt ceiling, total deadline (`MOXIE_CAMPAIGN_TIMEOUT_SECONDS`, default 360), prints only allow-listed counts.
+- [`page_teeth_check.py`](page_teeth_check.py) + [`teeth_ledger.mjs`](teeth_ledger.mjs) + [`teeth_hook.mjs`](teeth_hook.mjs) — serves each browser suite a deliberately broken site (script deleted, inert, 404'd, stalled) and reports which checks stay green. Not in CI.
+
+## Mutation checkers
+
+Each removes one guard at a time and requires the named test to go red; a green suite shows a guard is present, this shows it is load-bearing. None run in CI; `sim/tests/test_mutation_tables.py` (fast tier) checks every anchor matches exactly once and that the row counts below match the tables.
+
+```sh
+python3 sim/tools/authoring_mutation_check.py        # 15 rows; every one must say "caught"
+python3 sim/tools/brain_mutation_check.py            # 22 rows; every one must say "caught"
+python3 sim/tools/ext_mutation_check.py              # 30 rows; every one must say "caught"
+python3 sim/tools/hardening_mutation_check.py        # 38 rows; every one must say "caught"
+python3 sim/tools/hardening_p1_mutation_check.py     # 66 rows; every one must say "caught"
+python3 sim/tools/launch_card_mutation_check.py      # 19 rows; every one must say "caught"
+python3 sim/tools/performance_mutation_check.py      # 39 rows; every one must say "caught"
+python3 sim/tools/subscribe_mutation_check.py        # 25 rows; every one must say "caught"
+python3 sim/tools/telemetry_rollup_mutation_check.py # 12 rows; every one must say "caught"
+python3 sim/tools/turnstile_mutation_check.py        # 57 rows; every one must say "caught"
+python3 sim/tools/unit_budget_mutation_check.py      # 37 rows; every one must say "caught"
+```
+
+| Table | Guards the… | Run after touching |
+|---|---|---|
+| `authoring` | content editor | authoring region of `moxie_runtime/`, `packs.shadow_check`, `render.render_prompt` |
+| `brain` | brain registry | `moxie_sdk/brains.py` and its runtime |
+| `ext` | extension sandbox | `ext/`, `render.py`, `ext_host.py`, `packs/` pattern cap |
+| `hardening` | P0: store lock, connection region | `moxie_sdk/store.py`, `moxie_runtime/` connection code |
+| `hardening_p1` | P1: roster, conn telemetry, shutdown | `moxie_sdk/{roster,conn_telemetry}.py`, `fleet/activity.py` |
+| `launch_card` | launch-card QR allowlist | `moxie_sdk/launch_cards.py` |
+| `performance` | behavior planner | `moxie_sdk/performance.py` |
+| `subscribe` | `subscribe` capability | `moxie_runtime/` subscription merge, `ext.SUBSCRIBE_EVENTS` |
+| `telemetry_rollup` | ring vs. daily roll-up | `moxie_sdk/telemetry.py`, `moxie_runtime/telemetry.py` |
+| `turnstile` | Turnstile bot control | `functions/api/_lib/turnstile.js`, `chat.js`, `transcribe.js`, `sim/web/turnstile.js` |
+| `unit_budget` | shared per-colo / per-IP ceilings | `functions/api/_lib/{limits,counters,sharedtier}.js` |
+
+## Gotchas
+
+- `turnstile` and `unit_budget` never touch the checkout: they mutate a throwaway hardlink copy, and a row counts as caught only if its selector appears in a failing check's own label. Pass row names (`U3 D4`) to re-check a few rows in seconds.
+- An anchor must match exactly once: `str.replace(old, new, 1)` would otherwise mutate whichever copy comes first and still print "caught". The runners refuse a non-unique anchor, and `test_mutation_tables.py` enforces it for every table.
+- The pytest-based tables run the repo's `.venv/bin/python`; create the venv first.
+- `ext` and the pytest-based tables revert in a `finally` and set `PYTHONDONTWRITEBYTECODE`; a killed run can leave the tree mutated, so check `git status` afterwards.
+- `page_teeth_check.py --selftest` takes about a minute; the full sweep (`--baseline-dir DIR`) takes hours and mutates `sim/web` transiently. `--check-tree --restore` undoes a breakage an interrupted run left behind.
+- The docs bundle is generated and committed; it is laid out one doc per line with no global hash so branches merge cleanly. `check_bundle_fresh.py` is the only authority on freshness.
+- `prerender_audio.py` keys `index.json` by the exact utterance string; punctuation must match `stub.js` / `ambient.json` / `filler.py` (guarded by `sim/test_fallback_coverage.mjs`).
 
 ---
-
-## An anchor must match exactly once
-
-A mutation row locates its target by a code snippet and applies `replace(old, new, 1)`. If that
-snippet appears **more than once in the file**, the row patches whichever copy comes first — so it
-can report `caught` while having proved nothing about the guard it names.
-
-Not hypothetical. Audited 2026-09-05 across all nine tables: **311 rows, 308 unique, 3 ambiguous** —
-`ext` X1 and X10, and `hardening` S4. Each was anchored on a line that a *deliberate twin guard* also
-carries: a load-time refusal beside its runtime belt-and-braces, the function half beside the event
-half, `_connack_failed` beside `_suback_failed`. All three happened to hit the intended block **by
-line order alone**.
-
-**The split was causal, not stylistic**, and that is the part worth keeping. The four tables whose
-runners already refused a non-unique anchor had **zero** ambiguous rows; the five without that check
-held all three — and `subscribe`'s S4, which targets the *other* half of `ext` X10's pair, was written
-disambiguated from the start **because its own table forced it**. The property is only reliably true
-where something mechanically insists on it.
-
-So it is insisted on in two places now: every runner prints `AMBIGUOUS` and exits 1, and
-`sim/tests/test_mutation_tables.py` enforces uniqueness for **every table, including ones not yet
-written**, in about a second. That second place matters because the mutation checkers are **not in
-CI** — that fast-tier test is the only automated guard over them.
-
-A related trap the same audit found: ambiguity silently disabled the *captured-mutation* half of
-`test_mutation_tables.py`, which only looks for the replacement once the original is gone. An
-ambiguous original still matches at the twin, so the check passed while measuring nothing.
+📖 [sim](../README.md) · [Back to top](../../README.md)
