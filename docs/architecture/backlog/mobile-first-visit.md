@@ -1,102 +1,74 @@
-# 📱 On a phone, the Talk box is 2 095 px below the fold
+# The composer dock: talking to Moxie on a phone
 
-> **Filed 2026-09-05 from measurements against production · ✅ BUILT 2026-09-05 on
-> `feat/composer` · effort S/M as filed.**
-> Not broken — **buried**. The distinction is the whole point of this document.
->
-> **What shipped, and what this page is now for.** `sim/web/sim.html` grew `#chat-dock`:
-> the page's own bottom grid row, holding a one-line cue that names the action, the
-> `#transcript` moved out of the rail, and one row with `#speech-input`, `#mic-btn` and
-> `#speech-btn` in it. The four controls were **moved, not copied** — this document's own
-> "Suggested shape" below asked for exactly that and warned that a second control is the
-> trap. The rail keeps everything else and is otherwise untouched: `rail.js` is
-> byte-unchanged, the drawer still starts closed below 900 px, the desktop column is still
-> a permanent column. **The acceptance list below was met as written**, and the checks that
-> met it are in `sim/test_mobile_layout.mjs` (66 → 222). **Left for the reader:** the
-> measurements in this page are still the production ones taken before the fix. Nobody has
-> re-measured `moxie.mattvalancy.com/sim` after a deploy, so treat every number below as
-> the *defect*, not as the current state.
+**Status:** shipped — `#chat-dock` in [`sim/web/sim.html`](../../../sim/web/sim.html), styled by
+[`sim/web/css/dock.css`](../../../sim/web/css/dock.css); tested by
+[`sim/test_mobile_layout.mjs`](../../../sim/test_mobile_layout.mjs) (blocks 6–8),
+[`sim/test_a11y.mjs`](../../../sim/test_a11y.mjs) (block 4), `sim/test_typed_turn.mjs` and
+`sim/test_responsive.mjs`.
 
-## What a first-time phone visitor actually gets
+## The problem it fixed
 
-Measured against `https://moxie.mattvalancy.com/sim` in a fresh incognito profile, cache disabled,
-390 × 844 (iPhone-class), real iOS user agent:
+The text box was the only way to talk to Moxie, and it lived inside the engineering rail
+(`<aside id="panel">`), which starts as a closed drawer below 900 px. Measured on the live site at
+390×844 in a fresh profile:
 
-| | desktop 1440 | iPhone 390 |
-|---|---|---|
-| DOM ready | 2 202 ms | 2 003 ms |
-| `window.moxie` ready | 3 118 ms | 2 659 ms |
-| mode | `live` | `live` |
-| CSP violations | 0 | 0 |
-| console errors | 0 | 0 |
-| horizontal scroll | none | none |
-| **visible tappable controls** | — | **6** |
-| **Talk box in viewport** | yes | **no — 0 × 0** |
+| state | `#speech-input` |
+|---|---|
+| on load | 0×0 |
+| after tapping `CONTROLS` | 262×40 at y = 2 095, far below an 844 px viewport |
+| after `scrollIntoView` | reachable, and the turn completed normally |
 
-The six things a phone visitor can see are: `Hub`, `ALIVE`, `GITHUB ↗`, `CONTROLS`, `Run it locally →`
-and a `✕`. **None of them says "talk to Moxie".**
+So the turn always *worked*; it was *unreachable*. None of the six visible controls (Hub, ALIVE,
+GitHub, CONTROLS, Run it locally, ✕) said "talk to Moxie", and she speaks unprompted after about
+7 s — a visitor heard her and had no visible way to answer.
 
-## The sequence, measured
+## How it works
 
-1. Land. The Talk box exists in the DOM inside an `<aside>` with a **0 × 0** rect.
-2. Moxie speaks unprompted after ~7 s — 237 400 frames @ 48 kHz, 4.95 s of ambient. **So a visitor
-   hears her and cannot answer.** That is the worst ordering of those two facts.
-3. Tap `CONTROLS` (`#rail-toggle`). The drawer opens: the box becomes **262 × 40 at y = 2 095**, still
-   outside an 844 px viewport. Waiting longer does not help — measured again at +2 s, unchanged.
-4. `scrollIntoView` puts it at y = 663, and **the turn then completes**: `sent=true`,
-   transcript grew.
+`#chat-dock` is the page's own bottom grid row at every viewport width. It holds:
 
-**It works.** A visitor who taps a button labelled `CONTROLS` and then scrolls roughly 2 000 px inside
-the drawer can talk to Moxie, and she answers. Almost nobody will do that.
+- `#chat-cue` — a one-line cue that names the action ("Talk to Moxie").
+- `#transcript` — the conversation log, moved out of the rail. It scrolls within a bounded
+  `max-height`, has `role="log"`, and `tabindex="0"` so keyboard users can scroll it.
+- `#chat-openers` — three one-tap conversation starters that send a real turn (see
+  [`gamify-the-public-sim.md`](gamify-the-public-sim.md)).
+- One row with `#speech-input`, `#mic-btn` and `#speech-btn`.
 
-## Why this is filed as the top live-page item
+The dock claims only its own footprint; `#hud` is `pointer-events: none`, so the rest of the stage
+stays orbit-draggable. `env(safe-area-inset-bottom)` keeps the row off an iPhone's home indicator.
+`moxie.js` frames Moxie above the dock so she is never behind it.
 
-The owner's stated goal is the live public page. A link to a demo is opened on a phone more often than
-on a desktop, and the primary interaction is currently two non-obvious steps and a very long scroll
-below the fold — **after** the page has already spoken to the visitor.
+## Decisions
 
-## What NOT to do
+- **Move the controls, never copy them.** These are the same nodes that lived in the rail. Every
+  listener binds by id (`hud.js`, `mic.js`, `env.js`, `cloud-transport.js::adoptSpeechControl`, the
+  `moxie.js` speech wiring), so re-parenting changed no behaviour. A second text box is the trap:
+  visitors try the first box they see, and two boxes would disagree.
+- **Do not open the drawer on load.** The drawer still starts closed at every phone width
+  (`rail.js`, breakpoint `(max-width: 899px)`). The composer is reachable because it left the drawer,
+  not because the drawer opened.
+- **The rail is otherwise untouched.** At ≥ 900 px it is still a permanent column; the composer is
+  also present on desktop, at the bottom of the stage column, on purpose — one composer, not a
+  phone-only special case.
+- **`section.sub` on the composer is load-bearing.** `cloud-transport.js::ensureStatus` puts
+  `#chat-status` ("thinking…", refusals, the over-long warning) into
+  `#speech-btn.closest("section.sub")`, and `sim/test_typed_turn.mjs` asserts the status lands there.
 
-- **Do not "fix" it by opening the drawer on load.** `sim/test_mobile_layout.mjs` deliberately asserts
-  the closed-drawer start below 900 px; that decision was made for a reason and there is a test that
-  will tell you so. If it should change, change the test *and* argue it.
-  *(Obeyed. The drawer still starts closed at every phone width, and the shipped fix asserts
-  that it is closed on a cold load and stays closed through a whole typed turn — the
-  composer is reachable **because it left the drawer**, not because the drawer opened.)*
-- **Do not move the whole rail.** The controls are a legitimate side panel on desktop; this is about
-  the *one* control a first-time visitor needs.
+## Tests
 
-## Suggested shape, to argue with rather than follow
+- `sim/test_mobile_layout.mjs` block 6 — on a **cold** load (no tap, no scroll, drawer shut), the
+  composer has a non-zero rect inside the initial viewport whose centre hit-tests to itself. Never
+  `element.exists`: the defect was exactly the gap between existing and reachable.
+- Block 7 — a whole typed turn with the rail never opened; the drawer stays closed throughout.
+- Block 8 — the openers live in the dock and send a turn.
+- `sim/test_a11y.mjs` block 4 — the composer is keyboard-reachable with the drawer shut, and a
+  collapsed drawer leaves no tab stops behind it.
+- `sim/test_responsive.mjs` — seven viewports from phone to ultrawide, canvas still full-bleed.
 
-Put a single, obvious "Talk to Moxie" affordance **above the fold** on narrow viewports that focuses
-the existing input — reusing `#speech-input` and `#speech-btn` rather than adding a second control
-with its own state. The drawer keeps everything else.
+## Known gaps
 
-## Acceptance
+The production numbers above are the *defect*, taken before the fix; the live site has not been
+re-measured by hand since. Layout-over-time issues (the dock grows as the log fills) are covered in
+[`turnstile-layout-collision.md`](turnstile-layout-collision.md).
 
-- On 390 × 844, from a cold incognito load, a visitor can send a turn with **no scrolling** and at most
-  one tap, and the transcript grows.
-- Assert on the **rect in the viewport**, not on the element existing — this whole finding is the
-  difference between those two.
-- 360 px and 414 px behave the same; desktop ≥ 900 px is **unchanged**, pinned by a test.
-  *(Met with one honest qualification: the rail on desktop is byte-for-byte the column it
-  was — same width, same open-by-default, `rail.js` untouched — and `sim/test_responsive.mjs`
-  is green across all seven viewports with the canvas still full-bleed. What did change on
-  desktop is that the composer is there too, at the bottom of the stage column, centred and
-  capped at 760 px. That is not "unchanged"; it is the same fix applied at a width that did
-  not need it, and it is deliberate — one composer, not a phone-only special case.)*
-- Whatever the new affordance is, it must not fire before `window.moxie` exists, or the first tap is
-  swallowed.
-- `sim/test_mobile_layout.mjs` (48 checks when this was filed, 66 by the time it was built)
-  stays green or its change is argued in the PR. *(It is green at **222** checks. Two of its
-  teeth blocks were re-aimed and the change is argued in place, in the file: the hosted
-  banner's collision teeth and the Turnstile holder's both hit-tested `#rail-toggle`, which
-  stopped being the lowest control on the page the moment the composer took the bottom row,
-  so both would have reported "no collision" and gone green while measuring nothing.)*
-
-## Honest note
-
-Nothing here is a regression: the responsive work in `test_mobile_layout.mjs` does what it says, and
-the drawer-closed default is deliberate. This is a **first-visit discoverability** gap that the
-existing tests were never asked to catch, found by driving the page as a stranger with a phone rather
-than as a developer who knows where the controls live.
+---
+📖 [Backlog index](README.md) · [Live Sim demo](live-sim-demo.md)

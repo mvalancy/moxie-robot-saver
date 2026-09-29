@@ -41,31 +41,27 @@ table.
 
 | Brief | Topic |
 |---|---|
-| [`expressiveness.md`](backlog/expressiveness.md) | Behavior markup and the behavior planner |
-| [`security-broker-auth.md`](backlog/security-broker-auth.md) | Broker ACL, device credentials, spoof-proofing |
-| [`telehealth.md`](backlog/telehealth.md) | Puppet mode: an operator drives Moxie |
-| [`voice-picker.md`](backlog/voice-picker.md) | Choosing speech and listening models in the console |
-| [`content-packs.md`](backlog/content-packs.md) | Exporting and importing content packs |
 | [`live-sim-demo.md`](backlog/live-sim-demo.md) | The hosted simulator with a real brain, voice and ears |
-| [`sandboxed-extensions.md`](backlog/sandboxed-extensions.md) | Content packs that can run rules safely |
-| [`brain-picker.md`](backlog/brain-picker.md) | Any brain, hot-swappable, per child |
+| [`expressiveness.md`](backlog/expressiveness.md) | Behavior markup and the behavior planner |
+| [`telehealth.md`](backlog/telehealth.md) | Puppet mode: an operator drives Moxie |
 | [`production-hardening.md`](backlog/production-hardening.md) | Reconnection, a shared store, and a soak test |
+| [`security-broker-auth.md`](backlog/security-broker-auth.md) | Broker ACL, device credentials, spoof-proofing |
+| [`content-packs.md`](backlog/content-packs.md) | Exporting and importing content packs |
 | [`content-authoring.md`](backlog/content-authoring.md) | Authoring content without programming |
+| [`sandboxed-extensions.md`](backlog/sandboxed-extensions.md) | Content packs that can run rules safely |
+| [`voice-picker.md`](backlog/voice-picker.md) | Choosing speech and listening models in the console |
+| [`brain-picker.md`](backlog/brain-picker.md) | Any brain, hot-swappable, per child |
 | [`qr-launch-cards.md`](backlog/qr-launch-cards.md) | Printable QR cards that start an activity |
 | [`insights.md`](backlog/insights.md) | Parent insights built from real activity |
 | [`mobile-first-visit.md`](backlog/mobile-first-visit.md) | The first visit on a phone |
-| [`vendor-the-readme-hero.md`](backlog/vendor-the-readme-hero.md) | Hosting the README image in the repo |
-| [`ota-push.md`](backlog/ota-push.md) | Firmware push: the spec, and why not to build it yet |
-| [`visemes.md`](backlog/visemes.md) | Lip-sync from phoneme timings |
-| [`community-signals.md`](backlog/community-signals.md) | What real owners report, ranked by evidence |
 | [`turnstile-layout-collision.md`](backlog/turnstile-layout-collision.md) | A mobile layout collision with the bot challenge |
-| [`smoke-load-sensitivity.md`](backlog/smoke-load-sensitivity.md) | The smoke test failing under load |
-| [`head-sweep-wait.md`](backlog/head-sweep-wait.md) | Head-sweep animation timing |
-| [`action-tag-drift.md`](backlog/action-tag-drift.md) | The model not emitting `<exit>` |
-| [`one-brain-no-failover.md`](backlog/one-brain-no-failover.md) | The hosted demo has one LLM provider |
-| [`grounding-gate-unrun.md`](backlog/grounding-gate-unrun.md) | An unrun end-to-end grounding check |
-| [`head-travel-threshold.md`](backlog/head-travel-threshold.md) | A load-sensitive head-travel test |
+| [`vendor-the-readme-hero.md`](backlog/vendor-the-readme-hero.md) | Hosting the README image in the repo |
 | [`gamify-the-public-sim.md`](backlog/gamify-the-public-sim.md) | Evidence on making the public simulator a game |
+| [`visemes.md`](backlog/visemes.md) | Lip-sync from phoneme timings |
+| [`ota-push.md`](backlog/ota-push.md) | Firmware push: the spec, and why not to build it yet |
+| [`live-brain-open-issues.md`](backlog/live-brain-open-issues.md) | Open issues with the hosted brain: `<exit>` tags, grounding, a single provider |
+| [`test-timing-under-load.md`](backlog/test-timing-under-load.md) | Tests that fail under load: smoke, head sweep, head travel |
+| [`community-signals.md`](backlog/community-signals.md) | What real owners report, ranked by evidence |
 
 ---
 [Docs index](../README.md) · [Project README](../../README.md)

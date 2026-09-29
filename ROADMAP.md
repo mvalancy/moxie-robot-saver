@@ -74,9 +74,9 @@ Ordered by priority.
 2. **Spending protection.** The edge rate-limit counters are per-colo and fail open, so they are not a
    global ceiling. Confirm a hard budget at the gateway before claiming one.
 3. **Answer quality on the hosted demo.** Run the grounding check with a real negative control
-   ([brief](docs/architecture/backlog/grounding-gate-unrun.md)).
+   ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
 4. **A second brain for the demo.** Today one gateway outage silences it. Needs a second credential
-   and an owner cost decision ([brief](docs/architecture/backlog/one-brain-no-failover.md)).
+   and an owner cost decision ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
 5. **Parent app depth.** Factory reset and unpair from the web UI; they are specified in
    [`docs/features/robot-lifecycle.md`](docs/features/robot-lifecycle.md) but not built.
 6. **Storage.** Per-robot state is JSON files. That is fine for one home; move to a database only if
