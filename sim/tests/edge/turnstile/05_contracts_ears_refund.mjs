@@ -87,8 +87,8 @@ import {
   /* ---- TRAP B, AS A CLASS AND NOT AS ONE FILENAME ------------------------- *
    * A client script missing from the app-script no-cache list gets Pages' default caching,
    * so a redeploy can leave a visitor running yesterday's minter against today's route.
-   * ENUMERATED, so the next new script is covered too (`sim/test_csp.mjs` block 9 checks
-   * the same in a real browser; this copy keeps it in the fast tier). */
+   * ENUMERATED, so the next new script is covered too (the one copy of this list;
+   * `sim/test_csp.mjs` checks the per-directory rules). */
   {
     const listed = new Set();
     for (const m of headers.matchAll(/^\/([A-Za-z0-9._-]+\.js)\n\s+Cache-Control:\s*no-cache$/gm)) {

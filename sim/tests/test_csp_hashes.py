@@ -3,8 +3,8 @@
 The failure is a BLANK page, not a degraded one: `_headers` is only ever sent by
 Cloudflare Pages, so an edited inline `<script>` whose SHA-256 is not listed is refused on
 the live domain — silently, because local suites serve the bytes they just built. This is
-the browser-free half (runs in ~1 ms); `sim/test_csp.mjs` block 6 asserts it again from
-the headers a browser received.
+the browser-free half (runs in ~1 ms); in `sim/test_csp.mjs` sim.html must boot under the
+headers a browser received, which it cannot with a stale hash.
 
 Run:  MOXIE_LLM_API_KEY= .venv/bin/python -m pytest sim/tests/test_csp_hashes.py -q
 """
