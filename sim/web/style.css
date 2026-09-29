@@ -371,6 +371,19 @@ body[data-env="hosted"][data-mode="live"] #env-banner {
   border-radius: 4px;
 }
 
+/* Reduced motion: the page's own chrome holds still — the ALIVE / link / rec lamps stop
+ * pulsing (they settle on their lit frame) and hovers, drawers and fades snap. The robot
+ * herself is the subject of the page and keeps moving; bg.js and the bubble's typewriter
+ * already honour the setting on their own. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ---- THE THREE OPENERS (#chat-openers) ------------------------------------
  * Three buttons in #chat-dock that each SEND A TURN (hud.js wireOpeners). Deliberately no
  * class shared with the rail's phrase chips (.chip), which play shipped audio.
