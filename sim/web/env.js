@@ -57,6 +57,8 @@
       badgeEl.textContent = (snap && snap.badge) || "HOSTED DEMO";
       badgeEl.title = (snap && snap.state === "live" && snap.liveTurns) ? LIVE_TITLE : HOSTED_TITLE;
     }
+    // Online reads mint; every fallback keeps the caution amber (style.css).
+    badgeEl.classList.toggle("online", !isLocal && badgeEl.textContent === "MOXIE ONLINE");
     if (document.body)
       document.body.setAttribute("data-mode", (snap && snap.state) || "boot");
     if (!pillEl) return;

@@ -149,6 +149,7 @@ async function load(url, opts = {}) {
       env: document.body.getAttribute("data-env"),
       mode: document.body.getAttribute("data-mode"),
       badge: (q(".env-badge") || {}).textContent || "",
+      badgeColor: q(".env-badge") ? getComputedStyle(q(".env-badge")).color : "",
       pill: pill ? pill.textContent : null,
       pillShown: !!(pill && !pill.hidden),
       banner: (q("#env-banner .eb-text") || {}).textContent || "",
@@ -258,6 +259,11 @@ try {
   ok(noTr.state === "live", `the mode is still live (got ${noTr.state})`);
   ok(noTr.badge === "HOSTED DEMO · SCRIPTED",
      `a live mode with no transport must read SCRIPTED (got "${noTr.badge}")`);
+  /* The badge's COLOUR is part of its honesty: online in the same caution amber as every
+   * fallback made "the brain is here" and "you are talking to a script" look alike. */
+  ok(live.badgeColor !== deg.badgeColor && live.badgeColor !== noTr.badgeColor,
+     `…and it does not share the fallback badges' colour (online ${live.badgeColor}, ` +
+     `degraded ${deg.badgeColor}, scripted ${noTr.badgeColor})`);
   ok(noTr.pillShown === true && /no live transport/.test(noTr.pill || ""),
      `...and say why (got "${noTr.pill}")`);
   ok(noTr.errs.length === 0, `no-transport console errors: ${noTr.errs.slice(0, 3).join(" | ")}`);
