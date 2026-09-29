@@ -3,7 +3,7 @@ Filler lines — what Moxie says while a slow brain is still thinking.
 
 The robot re-prompts after ~20 s of cloud silence, so a slow brain's turn opens with one
 of these as a REPLY_PENDING chunk 0 and the real answer follows
-(remote-chat-protocol.md:63). Pattern credit: OpenMoxie Fork A's rotating interludes
+(remote-chat-protocol.md:50). Pattern credit: OpenMoxie Fork A's rotating interludes
 (MIT); the lines and markup are ours. Each line carries hand-written behavior markup (a
 mood plus a thinking behaviour tree, behavior-markup.md); TTS strips it.
 """

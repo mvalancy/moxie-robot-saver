@@ -50,17 +50,15 @@ clean-room build reproduces *without* Moxie's art:
   (`Hold→Open`), reopen (`Open→End`) to a fully-closed blend of `100` — modulated by the current mood (a
   squint-happy blink ≠ a wide-surprised one) and re-timable via `TriggerProceduralBlink(profile, speed)`;
   independent L/R lids allow winks (§5).
-- **Parametric vs. art:** the *timing, structure, and repertoire* above are RE-derived — reproduce them
-  for faithful behavior. The specific *geometry and palette* live in Moxie's `rig3` mesh + `rig3animations`
-  bundle, so a clean-room build supplies its **own** eye/face art driven by the same blendshape roles (this
-  project's independent take is the [SIL face](../../architecture/sil-and-cicd.md)).
+- **Parametric vs. art:** timing, structure and repertoire are RE-derived — reproduce them. Geometry and
+  palette live in Moxie's `rig3` mesh + `rig3animations` bundle, so a clean-room build supplies its **own**
+  art driven by the same blendshape roles (this project's take: the [SIL face](../../architecture/sil-and-cicd.md)).
 
 ## 1. The face rig — `Rig3Robot`, blendshapes
 
-Moxie's face is **rig 3** (`Rig3Robot` / `Rig3`): a Unity **`SkinnedMeshRenderer`** (`FaceMesh`) driven by
-**blendshapes** + a skeleton (head/jaw bones). The mesh (`rig3_faceMesh01`) carries a **deliberately small
-morph set — exactly 10 blendshapes** (confirmed via UnityPy on `sharedassets1`, `v24.10.803`), namespaced
-`karuBlendShapes.` (`bs` = blendshape, `L`/`R` = side):
+**Rig 3** (`Rig3Robot` / `Rig3`): a Unity **`SkinnedMeshRenderer`** (`FaceMesh`) driven by blendshapes + a
+skeleton (head/jaw bones). The mesh `rig3_faceMesh01` has **exactly 10 blendshapes** (UnityPy on
+`sharedassets1`, `v24.10.803`), namespaced `karuBlendShapes.` (`bs` = blendshape, `L`/`R` = side):
 
 ```
 rig3_bs_{L,R}_upperLid01   rig3_bs_{L,R}_lowerLid01   ← the 4 blink lids
@@ -68,170 +66,142 @@ rig3_bs_{L,R}_cheekAir01   ← cheek puff
 rig3_bs_{L,R}_happyEyes01  rig3_bs_{L,R}_sadEyes01    ← eye-squash for happy / sad
 ```
 
-So **only** the lids, cheeks, and happy/sad eye-squash are shape keys — **everything else (the 11 eyeseme
-moods, the 41 visemes, gestures) is *bone/animation-clip*-driven**, not morphs. That's the key rig fact for
-a clean-room build: a tiny blendshape set + a rich bone rig, animated by clips (the [`rig3animations`
-bundle](../firmware/unity-assets.md)). The **blink** layer applies the four lid shapes *post-process* over
-the base animation each frame — the C# references them by a `…_postp_blink` param name (§5).
+Everything else — the 11 eyeseme moods, 41 visemes, gestures — is **bone/animation-clip-driven** (the
+[`rig3animations` bundle](../firmware/unity-assets.md)), not morphs. The blink layer applies the four lid
+shapes post-process each frame (C# param name `…_postp_blink`, §5).
 
 ## 2. The animation controller — the `EBAnimGrinder`
 
-The Animator isn't hand-built in the Unity editor; it's **generated** by the **`EBAnimGrinder`**, a
-build-time tool that "grinds" an **XML spec** + the **`rig3animations`** asset bundle into a Unity
-`AnimationController` (+ an `EBAnimGrinderGeneratedData` companion). It only rebuilds when the source
-changes — `sourceMD5 => GetDirectoryMD5Hash(…"rig3animations")` vs `lastSuccessfulGrindSourceMD5`.
-
-The XML model (all `[XmlAttribute]`-serialized) is a full state machine:
+The Animator is **generated** at build time by the **`EBAnimGrinder`**, which "grinds" an **XML spec** +
+the `rig3animations` bundle into a Unity `AnimationController` (+ `EBAnimGrinderGeneratedData`). It rebuilds
+only when `sourceMD5 => GetDirectoryMD5Hash(…"rig3animations")` differs from `lastSuccessfulGrindSourceMD5`.
+The XML model (`[XmlAttribute]`-serialized):
 
 | Class | Role |
 |---|---|
-| `EBAnimGrinderLayer` | one Animator layer — `index`, `entry` state, `weight`, **`maskPath`** (avatar mask), and a binding to behavior code via `ParamsGameTaskType` / `AnimTriggerGameTaskType` / `AnimStateGameTaskType` |
-| `EBAnimGrinderStateMachine` | the layer's states + transitions + its animation clips |
-| `EBAnimGrinderState` | one state — a `clipName` (+ `animSpeed`) **or** a `blender` |
-| `EBAnimGrinderBlender` / `…Control` | blend several animations by `values` (a blend tree) over `bases` |
+| `EBAnimGrinderLayer` | one Animator layer — `index`, `entry` state, `weight`, **`maskPath`** (avatar mask), bound to behavior code via `ParamsGameTaskType` / `AnimTriggerGameTaskType` / `AnimStateGameTaskType` |
+| `EBAnimGrinderStateMachine` | the layer's states + transitions + clips |
+| `EBAnimGrinderState` | a `clipName` (+ `animSpeed`) **or** a `blender` |
+| `EBAnimGrinderBlender` / `…Control` | blend tree — animations blended by `values` over `bases` |
 | `EBAnimGrinderTransition` | `origState → destState`, gated by `EBAnimGrinderParameter{name, threshold}` |
 
-So the face is a **multi-layer, masked Animator** where each layer is **bound to a behavior-tree GameTask
-type** — that binding (`*GameTaskType`) is the wire from NodeCanvas
-([behavior-tree-engine](behavior-tree-engine.md)) into the layer's parameters, triggers, and state
-selection.
+Each masked layer is **bound to a behavior-tree GameTask type** — the `*GameTaskType` binding is the wire
+from NodeCanvas ([behavior-tree-engine](behavior-tree-engine.md)) into layer parameters, triggers and states.
 
 ## 3. The runtime players
 
-Two systems drive the rig each frame:
-
-- **The base Animator** (Mecanim) — the grinder-generated controller, layered and masked, its parameters
-  set by **`EBGameTaskAnimStateBase`** / `EBGameTaskAnimTrigger` / `EBGameTaskAnimLayer` (behavior tasks
-  that `Animator.StringToHash(stateName)` a state onto an `EBAnimatorLayer` with `layerBlendInTime` /
-  `layerBlendOutTime`).
-- **`EBCompositeAnimPlayer`** — a **Unity Playables** compositor (`PlayableGraph`,
-  `AnimationClipPlayable`, `AnimationPlayableUtilities.PlayClip`) that plays **one-shot clips at a
-  priority** (`outputTaskPriority`) *on top of* the base Animator, auto-pausing a non-looping clip at its
-  end. It's driven by **`EBGameTaskPlayCompositeAnim`** — the task a behavior/markup node fires to play a
-  specific animation (a gesture, a reaction) over whatever the base layers are doing.
-
-Blending between all of this uses the **`EB*` layer blenders** (`EBAnimLayerBlender`, `EBXFormLayerBlender`)
-and a small **easing library** — `EBBlendLinear`, `EBBlendCubic`, `EBBlendEase[In|Out|InOut]`,
-`EBBlendSpring`, `EBBlendTimed`, `EBBlendLinearVelocity`, `EBBlendCut` — so a layer can fade in with a
-spring, an ease, or a hard cut.
+- **Base Animator** (Mecanim) — the grinder-generated controller; parameters set by
+  **`EBGameTaskAnimStateBase`** / `EBGameTaskAnimTrigger` / `EBGameTaskAnimLayer`, which
+  `Animator.StringToHash(stateName)` a state onto an `EBAnimatorLayer` with `layerBlendInTime` /
+  `layerBlendOutTime`.
+- **`EBCompositeAnimPlayer`** — a **Unity Playables** compositor (`PlayableGraph`, `AnimationClipPlayable`,
+  `AnimationPlayableUtilities.PlayClip`) playing **one-shot clips at a priority** (`outputTaskPriority`)
+  over the base Animator, auto-pausing a non-looping clip at its end. Driven by
+  **`EBGameTaskPlayCompositeAnim`** (gestures, reactions) — see the [task scheduler](task-scheduler.md).
+- Blending: layer blenders `EBAnimLayerBlender`, `EBXFormLayerBlender` and an easing library —
+  `EBBlendLinear`, `EBBlendCubic`, `EBBlendEase[In|Out|InOut]`, `EBBlendSpring`, `EBBlendTimed`,
+  `EBBlendLinearVelocity`, `EBBlendCut`.
 
 ## 4. The blackboard bridge — `StateVariables`
 
-The single source of truth the whole engine reads is **`StateVariables : EBSingletonBase<StateVariables>`**
-— a blackboard of `CreateVar(...)` entries the behavior tree/perception write and the animation tasks
-consume. The face-relevant set (with defaults):
+**`StateVariables : EBSingletonBase<StateVariables>`** — a blackboard of `CreateVar(...)` entries the
+behavior tree/perception write and animation tasks read. Face-relevant set (with defaults):
 
 | Group | Variables |
 |---|---|
 | **Expression** | `RobotState_PlaybackMood` (`ePlaybackMood`, default Neutral), `RobotState_PlaybackIntensity` (int), `RobotState_IsPlayingMarkupGraph` |
 | **Eyes / Eyeseme** | `RobotState_EyesemeState` (`ePlaybackMood`), `RobotState_EyesemeEnabled`, `…LayerBlendInTime`/`…OutTime` (3s), `…TransitionTime` (2s), `…BlinkLayerBlendInTime`/`…OutTime` (3s) |
 | **Gaze target** | `RobotState_GazeControlEnabled`, `…HasTarget`/`…HasChatTarget`, `…GazeTargetPosition` (Vector3), `…Yaw`/`…RelativeYaw`/`…Height`/`…Distance2d`, `…Engaged`/`…Engagement` (0.5), `…Smiling`/`…Speaking`/`…Visible`, `RobotState_FaceLookAtTime` |
-| **Turn-taking mirror** | `RobotState_TurnTaking_InTurn`/`_MoxieState`/`_MentorState`/`_EngagementState`/`_AssistState` (+ `…Time`) — copies of [`TurnTakingState`](turn-taking.md) so the face reacts to the conversation |
+| **Turn-taking mirror** | `RobotState_TurnTaking_InTurn`/`_MoxieState`/`_MentorState`/`_EngagementState`/`_AssistState` (+ `…Time`) — copies of [`TurnTakingState`](turn-taking.md) |
 | **Sensory / body** | `RobotState_SensoryMode` (`SensoryMode`), `RobotState_SensoryModeDuration`, `RobotState_Yaw`, `RobotState_SeenFaces`, `RobotState_TimeSinceFaceSeen` |
 | **Global gates** | `GlobalSettings_LessMotion`, `…HideRobotVisualEffects`, `…HideRobotHUDAnimatorAttachments`, `…MuteRobotSoundEffects`, `…SlowSpeech` |
 
-This is the exact contract a custom brain must fill (or a custom renderer must read) to animate the face —
-it's the in-memory counterpart of the behavior/markup layer.
+This is the contract a custom brain fills (or a custom renderer reads); the [BT nodes](behavior-tree-engine.md#the-node-catalog-the-65-robotbt_-nodes)
+are its authoring API.
 
 ## 5. The eyes — Eyeseme + blink
 
-**Eyeseme** is the eye-expression layer. `RobotState_EyesemeState` is an **`ePlaybackMood`** — 11 moods:
+`RobotState_EyesemeState` is an **`ePlaybackMood`** (values/order in [behavior-markup](behavior-markup.md)):
 
 ```
 Neutral · Happy · Sad · Angry · Shy · Surprised · Afraid · Concerned · Confused · Curious · Embarrassed
 ```
 
-The layer cross-fades between moods over `EyesemeTransitionTime` (2s) and fades the whole layer in/out over
-`EyesemeLayerBlendIn/OutTime` (3s). Each mood also carries a **`VisemeIndices[mood]`** — so the *same*
-spoken phoneme is shaped differently by mood (a happy "aa" ≠ a sad "aa").
+The layer cross-fades between moods over `EyesemeTransitionTime` (2s) and fades in/out over
+`EyesemeLayerBlendIn/OutTime` (3s). Each mood carries a **`VisemeIndices[mood]`**, so the same phoneme is
+shaped differently by mood (a happy "aa" ≠ a sad "aa").
 
-**Blink** is a **separate post-process layer** on top: `EyesemeBlinkParams{ EyesemeActivationPercentage,
-EyelidUpperBlinkValue, EyelidLowerBlinkValue }` drives the four `rig3_bs_*_postp_blink` eyelid blendshapes,
-and — crucially — the blink is **modulated by the current eyeseme** (`EyesemeActivationPercentage`), so a
-squinting-happy blink differs from a wide-surprised one. `BlinkControlMarkUpGenerator` exposes blink as a
-`<mark>` command ([behavior-markup](behavior-markup.md)).
+**Blink** is a separate post-process layer: `EyesemeBlinkParams{ EyesemeActivationPercentage,
+EyelidUpperBlinkValue, EyelidLowerBlinkValue }` drives the four `rig3_bs_*_postp_blink` lid shapes,
+modulated by the current eyeseme (`EyesemeActivationPercentage`). `BlinkControlMarkUpGenerator` exposes
+blink as a `<mark>` command ([behavior-markup](behavior-markup.md)).
 
 ## 6. The mouth — visemes (lip-sync)
 
-Speech drives the mouth through a **viseme** pipeline. `Viseme : SpeechMarkupElement` defines a
-**`VisemeType`** of **41 ARPABET phonemes** (`aa ae ah ao aw ax ay b ch d dx dh eh er ey f g hh ih iy jh k
-l m n ng ow oy p r s sh t th uh uw v w y z zh`), each mapped by a **`LayerLookupTable<VisemeType, string>`**
-to a mouth-shape (blendshape) layer. The stream of visemes comes from **two interchangeable sources**:
+`Viseme : SpeechMarkupElement` defines **`VisemeType`** — **41 ARPABET phonemes** (`aa ae ah ao aw ax ay b
+ch d dx dh eh er ey f g hh ih iy jh k l m n ng ow oy p r s sh t th uh uw v w y z zh`), each mapped by a
+**`LayerLookupTable<VisemeType, string>`** to a mouth-shape layer. Two interchangeable sources:
 
-- **Local CereVoice** — `VisemeConverter.LookupTable` maps CereVoice phoneme strings → `VisemeType`
-  (`CereVoicePhoneme`, [perception-pipeline](perception-pipeline.md)).
-- **Cloud TTS** — `CloudTTSVisemeUtils.VisemeLookupTable` maps the `TTSMark`s in a
-  [`CloudTTSResponse`](../protocol/unity-mainapp-interface.md#audio-out-tts-sfx-playback-control) → `VisemeType`.
+- **Local CereVoice** — `VisemeConverter.LookupTable`: CereVoice phoneme strings (`CereVoicePhoneme`) → `VisemeType`.
+- **Cloud TTS** — `CloudTTSVisemeUtils.VisemeLookupTable`: the `TTSMark`s in a
+  [`CloudTTSResponse`](../protocol/unity-mainapp-interface.md#audio-out-tts-sfx-playback-control) → `VisemeType`
+  ([perception-pipeline](perception-pipeline.md#output-side-tts-embodiedunity)).
 
-A spoken line is parsed into a **`SpeechMarkupElement` graph** — `Sentence` → `Word` → `Viseme`/`Marker`
-— and while it plays, `RobotState_IsPlayingMarkupGraph` is set and the mouth layer follows the timed
-visemes. This is why the same server-supplied `text + markup + audio` lip-syncs identically whether the
-audio came from CereVoice or a cloud engine — only the phoneme→viseme table differs.
+A line is parsed into a **`SpeechMarkupElement` graph** (`Sentence` → `Word` → `Viseme`/`Marker`); while it
+plays, `RobotState_IsPlayingMarkupGraph` is set and the mouth follows the timed visemes. Only the
+phoneme→viseme table differs between sources.
 
 ## 7. Gaze / look-at
 
-The gaze layer aims the head + eyes at `RobotState_GazeTargetPosition` (and reads `…Yaw`/`…Height`/
-`…Engagement`/`…Smiling`/`…Speaking`). The mover is **`EBAnimIKLookAtHandler : EBIKHandler`** — an IK
-handler with a `Stage` machine and a `BlendParam{ fractionPosition, fractionRotation }` that blends the
-IK influence in/out so the look-at layers over the base animation smoothly. The *decision* of where to
-look (interest points, saccade timing, the 10° hysteresis) is the attention system in
-[`gaze-and-attention.md`](gaze-and-attention.md); this section is the **motor** that executes it on the
-rig.
+Aims head + eyes at `RobotState_GazeTargetPosition` (reading `…Yaw`/`…Height`/`…Engagement`/`…Smiling`/
+`…Speaking`). The mover is **`EBAnimIKLookAtHandler : EBIKHandler`** — a `Stage` machine with a
+`BlendParam{ fractionPosition, fractionRotation }` blending IK influence over the base animation. Where to
+look (interest points, saccades, 10° hysteresis) is [gaze-and-attention](gaze-and-attention.md).
 
 ## 8. The sensory / idle layer — `SensoryMode`
 
-When Moxie isn't executing a scripted beat, an ambient layer keeps it alive, selected by **`SensoryMode`**
-(8 states):
+The ambient layer when no scripted beat runs, selected by **`SensoryMode`** (8 states):
 
 ```
 NoTarget · Disabled · Engaged · UnEngaged · Listening · Talking · Seeking · Earmuffs
 ```
 
-`RobotState_SensoryMode` is set from perception + [turn-taking](turn-taking.md) (e.g. `Talking` while
-Moxie speaks, `Listening` while the child does, `Seeking` when looking for a person, `Earmuffs` when
-disengaged), and it selects the idle-pose behavior (e.g. the `Bht_Talking_Poses` tree). This is the layer
-behind the [SIL's "imaginary life" ambient motion](../../architecture/sil-and-cicd.md).
+`RobotState_SensoryMode` is set from perception + [turn-taking](turn-taking.md) (`Talking` while Moxie
+speaks, `Listening` while the child does, `Seeking` when looking for a person, `Earmuffs` when disengaged)
+and selects the idle-pose behavior (e.g. `Bht_Talking_Poses`). The SIL's ambient "imaginary life" is this
+layer's analogue ([SIL](../../architecture/sil-and-cicd.md)).
 
 ## 9. Accessibility & global gates
 
-Five **`GlobalSettings_*`** blackboard flags gate the whole engine — the render-side of the accessibility
-surface ([settings-schema](../firmware/settings-schema.md), [runtime-control](../protocol/runtime-control.md#accessibility-pacing-systemslowinputmodify)):
+Five **`GlobalSettings_*`** flags gate the engine — the render side of accessibility
+([settings-schema](../firmware/settings-schema.md), [runtime-control](../protocol/runtime-control.md#accessibility-pacing-systemslowinputmodify)):
 
 | Flag | Effect |
 |---|---|
-| `LessMotion` | reduce/limit animation amplitude (motion-sensitivity) |
+| `LessMotion` | reduce/limit animation amplitude |
 | `HideRobotVisualEffects` | suppress particle/visual FX |
 | `HideRobotHUDAnimatorAttachments` | hide on-face HUD attachments (Bangle etc.) |
 | `MuteRobotSoundEffects` | silence SFX |
-| `SlowSpeech` | slow the speech/viseme pacing |
+| `SlowSpeech` | slow speech/viseme pacing |
 
-A faithful custom build must honor these — they're a child-accessibility contract, not cosmetic.
+A faithful build must honor these — a child-accessibility contract, not cosmetic.
 
 ## 10. The per-frame picture
 
-Putting it together, each frame the face is: **base Animator layers** (mood/body/idle, grinder-generated,
-masked, parameters set from the blackboard) **+ composite one-shots** (gestures/reactions via Playables at
-priority) **+ the Eyeseme mood layer** (cross-faded) **+ the blink post-process** **+ the viseme mouth
-layer** (timed to phonemes) **+ the IK look-at** — all summed into blendshape weights + bone poses on the
-`rig3` mesh, subject to the `GlobalSettings_*` gates.
+Each frame: **base Animator layers** (mood/body/idle, masked, blackboard-driven) **+ composite one-shots**
+(Playables, at priority) **+ Eyeseme mood layer** **+ blink post-process** **+ viseme mouth layer** **+ IK
+look-at**, summed into blendshape weights + bone poses on `rig3`, subject to the `GlobalSettings_*` gates.
 
-## What this means for the three goals
+## Implications
 
-**① Custom firmware — the headline.** The complete face architecture, clean-room. To **build a custom
-face**, design the [avatar](#the-face-itself-a-customizable-avatar-clean-room-visual-spec) (640×480, the
-customization slots, your own eye/face art) then reproduce the engine: a blendshape rig, a layered/masked
-animator, the `RobotState_*` blackboard, an Eyeseme mood layer (11 moods) + post-process blink, a viseme
-mouth layer fed by a phoneme→viseme table, an IK look-at, and the `SensoryMode` idle selector — authored
-via the `EBAnimGrinder` pipeline (XML + `rig3animations` → controller). To keep the *stock* face, you just
-write the blackboard.
-
-**② Server revival.** The server never runs this — it stays on-device. The server's job is upstream:
-supply the **mood/markup** ([behavior-markup](behavior-markup.md)) and the **TTS audio + marks**
-([the seam](../protocol/unity-mainapp-interface.md#audio-out-tts-sfx-playback-control)) that set
-`RobotState_PlaybackMood` and feed the viseme layer. Get those right and the stock engine renders a
-fully-expressive, lip-synced face.
-
-**③ Pre-801 revival.** No new lever; the face engine is internal to the app, above the network boundary.
+- **Custom face:** design the [avatar](#the-face-itself-a-customizable-avatar-clean-room-visual-spec)
+  (640×480, the slots, own art), then reproduce the engine: small blendshape rig, layered/masked animator,
+  `RobotState_*` blackboard, Eyeseme (11 moods) + post-process blink, viseme mouth via a phoneme table, IK
+  look-at, `SensoryMode` idle selector — authored via the `EBAnimGrinder` pipeline. To keep the stock face,
+  just write the blackboard.
+- **Server revival:** stays on-device; the server supplies mood/markup ([behavior-markup](behavior-markup.md))
+  and TTS audio + marks ([the seam](../protocol/unity-mainapp-interface.md#audio-out-tts-sfx-playback-control)).
+  Pre-801: no new lever.
 
 ---
 📖 [Reverse-engineering index](../README.md) · [MAINAPP interface](../protocol/unity-mainapp-interface.md) · [Unity assets](../firmware/unity-assets.md) · [Behavior-tree engine](behavior-tree-engine.md) · [Behavior markup](behavior-markup.md) · [Gaze & attention](gaze-and-attention.md) · [Perception pipeline](perception-pipeline.md)

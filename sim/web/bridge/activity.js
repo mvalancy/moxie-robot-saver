@@ -64,7 +64,7 @@
     return rec;
   }
 
-  // A TelehealthRobotEvent (docs/reverse-engineering/protocol/telehealth.md:88-91).
+  // A TelehealthRobotEvent (docs/reverse-engineering/protocol/telehealth.md:74-77).
   function reportTelehealthState(state, sessionId) {
     activity.telehealth_state = state;
     return publishActivity({ subtopic: "telehealth",

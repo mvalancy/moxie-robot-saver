@@ -1,5 +1,5 @@
 """
-protoref — query the recovered Moxie protocol (120 .proto files, ~360 messages) without opening files.
+protoref — query the recovered Moxie protocol (120 .proto files, 382 messages) without opening files.
 
     python -m moxie_toolkit.protoref QRCommand          # show a message's fields
     python -m moxie_toolkit.protoref IOTEndpoint         # show an enum's values

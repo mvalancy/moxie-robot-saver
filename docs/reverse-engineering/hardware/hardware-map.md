@@ -1,10 +1,12 @@
 # 🦾 Hardware map — motors, sensors, LEDs, power (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
-> **What this is.** Moxie's physical hardware, enumerated straight from the firmware's own MCU
-> protobufs (`embodied.lizzerface`, recovered under [`recovered-proto/`](../protocol/recovered-proto/)) and the
-> vendor init scripts. The **"Lizard"** board is the microcontroller that owns motors, touch, IMU,
-> battery, and LEDs; the RK3288 (Android) talks to it over UART and drives it with the messages below.
-> This is the actuator/sensor contract a custom firmware must honor to move the robot.
+Moxie's actuators, sensors, LEDs and power, enumerated from the firmware's own MCU protobufs
+(`embodied.lizzerface`, in [`recovered-proto/`](../protocol/recovered-proto/)), the factory motor apps and
+the vendor init scripts. This is the contract a custom firmware must honor to move the robot.
+- The **"Lizard"** board is an **STM32F071VBT6** MCU that owns motors, touch, IMU, battery and LEDs. The
+  RK3288 talks to it over **UART `/dev/ttyS3`** with a byte-opcode protocol, wrapped as protobuf messages on the ZMQ bus.
+- Motor positions are **encoder counts `0..32767`**; there are no joint angles anywhere in the firmware.
+- There are **two motor index spaces** (proto `Motor` enum vs `libmotionlib` 0–6). They diverge after index 3.
 
 ## Hardware revisions (`Revision_Level`)
 
@@ -38,27 +40,20 @@ Codenames trace the program's history — **Bo → Karu → Moxie**:
 
 ### Arm anatomy — what `ARM_IN_OUT` actually is
 
-The proto enum names *motions* (`L_ARM_UP_DN`, `L_ARM_IN_OUT`), not anatomy, so the arm's joint
-structure has to be inferred. What the firmware does tell us:
+The proto enum names motions, not anatomy, so the joint structure is inferred:
 
-- **The engineering motor test drives the two axes very differently** (`MotorEngActivity`): the
-  **shoulders (0/2) are swept bidirectionally** — to both `8191` *and* `24575`, i.e. driven up *and*
-  down — while the **elbows (1/3) are only ever driven toward `MOTOR_MAX_POS`**, never to a low value.
-  A joint that is powered in **one direction only** is the signature of a **spring/gravity return**:
-  the motor pulls it one way, and the forearm falls back under its own weight.
-- Practical reading (matches observed hardware): the **shoulder is the actuated joint** — it rotates and
-  extends the arm — and the **forearm is spring-returned**. The **spring pulls the elbow closed**, and the
-  **body pushes it back open** when the arm rests against the side: so the forearm's resting position is a
-  **function of the shoulder angle** (arm down → held open by the body; arm lifted clear → spring folds
-  it), with the motor only ever **adding** fold. That is exactly the asymmetry seen above.
-- ⚠️ **Not proven from the image.** There is no kinematic description in the firmware, and
-  ([as established](#driving-a-motor)) **no joint angles at all** — only counts. Confirming whether the
-  forearm segment is spring-loaded, damped, or free needs a **bench unit**.
+- The engineering motor test (`MotorEngActivity`) sweeps the **shoulders (0/2) both ways** (to `8191`
+  *and* `24575`), but drives the **elbows (1/3) only toward `MOTOR_MAX_POS`**. A joint powered in one
+  direction only is the signature of a **spring/gravity return**.
+- Reading (matches observed hardware): the **shoulder is the actuated joint** and the **forearm is
+  spring-returned**. The spring pulls the elbow closed and the body pushes it open when the arm rests
+  against the side, so forearm position is a function of shoulder angle, with the motor only adding fold.
+- **Not proven from the image:** there is no kinematic description and no joint angles, only counts.
+  Confirming spring-loaded vs damped vs free needs a bench unit.
 
-> 🚫 **False lead, recorded so nobody repeats it:** `FabTestSoftware.apk` contains the strings
-> `L Shoulder / L Elbow / R Shoulder / R Elbow / L Wrist / R Wrist / L Hip / R Knee / Nose / Neck`.
-> These are **human pose-estimation keypoints** (Moxie has no wrists, hips, or knees) — the vision
-> model's skeleton labels, **not** Moxie's motor names. They say nothing about the robot's joints.
+> **False lead:** `FabTestSoftware.apk` contains `L Shoulder / L Elbow / R Shoulder / R Elbow / L Wrist /
+> R Wrist / L Hip / R Knee / Nose / Neck`. These are **human pose-estimation keypoints** (Moxie has no
+> wrists, hips or knees), the vision model's skeleton labels, not motor names.
 
 ### Driving a motor
 
@@ -79,9 +74,8 @@ is_stalled }`.
 
 ### Native motion API (factory `libmotionlib` / `liblizardJNI`)
 
-Besides the ZMQ/proto path above, the firmware carries a **native JNI motor API**, recovered from the
-factory motor-test app (`bo_motor_test` → `libmotionlib.so`) and the shared `liblizardJNI.so`. This is
-the lower-level path a Java/native component uses to drive the body directly:
+A lower-level **native JNI motor API**, from the factory motor-test app (`bo_motor_test` →
+`libmotionlib.so`) and the shared `liblizardJNI.so`:
 
 ```java
 // com.embodied.motionlib.MotionPlanning (libmotionlib.so)
@@ -109,23 +103,20 @@ void LogLizardErrorState();
 | 5 | `baseCurrent` | base (rotate) |
 | 6 | `bodyCurrent` | body (torso lean) |
 
-> ⚠️ **This index is _not_ the `Motor` proto enum above.** It coincides for the four arm motors
-> (0–3) but then diverges — `libmotionlib` 5/6 = base/body, whereas the proto enum 5/6 = `HEAD_L_R`/
-> `HEAD_TILT`. Treat the two index spaces as distinct: the proto `Motor` enum is the runtime bus
-> vocabulary; `libmotionlib`'s 0–6 is the factory app's own ordering. When driving motors, use the
-> index that matches the API you're calling.
+> **This index is not the `Motor` proto enum.** It matches for the four arm motors (0–3), then
+> diverges: `libmotionlib` 5/6 = base/body, proto 5/6 = `HEAD_L_R`/`HEAD_TILT`. The proto enum is the
+> runtime bus vocabulary; 0–6 is the factory app's ordering. Use the index of the API you call. The
+> board silkscreen confirms it ([fcc-teardown](fcc-teardown.md#cross-check-the-motor-list-vs-our-two-index-spaces)).
 
 **Position units:** `MOTOR_MAX_POS = 32767` — positions are a 15-bit range (`0..32767`), rest ≈ `16384`.
 `setMotorPositionDt`/`MoveToPositionVt` interpolate to the target over a millisecond duration (a
 timed/trajectory move, not an instant set-point). A `SingleMotorTune` activity + a
 record/`playBackRunnable` path let the factory capture and replay motor trajectories.
 
-> ⚠️ **There are no joint angles (degrees) anywhere in the firmware.** Everything is **encoder counts**
-> in the `0..32767` space; the *mechanical* end-stops are enforced per motor by the MCU via
-> **`CONFIG_LIMIT`** (with `CONFIG_ADJ` for the zero/offset), set at factory calibration — so counts→degrees
-> is a **per-unit calibration constant that isn't in the image**. Anyone building motion (custom firmware
-> or a [simulator](../../architecture/sil-and-cicd.md)) must derive the mapping empirically on a bench unit,
-> or pick visually sensible angles. The count ranges below are the only travel data the firmware gives.
+> **No joint angles (degrees) exist in the firmware.** Mechanical end-stops are enforced per motor by
+> the MCU via **`CONFIG_LIMIT`** (with `CONFIG_ADJ` for zero/offset), set at factory calibration, so
+> counts→degrees is a per-unit constant not in the image. Custom firmware or a
+> [simulator](../../architecture/sil-and-cicd.md) must measure it on a bench unit or pick sensible angles.
 
 **Per-motor travel limits & timing** — from the engineering motor test (`MotorEngActivity`, which sweeps
 each joint to its endpoints via `MoveToPositionVt(idx, cur, target, milliSecs, segmentTime, mode)`):
@@ -137,16 +128,10 @@ each joint to its endpoints via `MoveToPositionVt(idx, cur, target, milliSecs, s
 | 2 | R arm up/down (shoulder) | **8191 – 24575** | 1050 ms | |
 | 3 | R arm in/out (elbow) | **0 – 32767** (full) | 700 ms | |
 
-Both calls use **`segmentTime = 35 ms`** (the motion-planner tick) and **`motionPlanMode = 1`**. So the
-**shoulders are software-limited to the middle half of the range** (don't drive them to 0 or 32767), while
-the **elbows travel the full span**; a custom motion system (or the [SIL](../../architecture/sil-and-cicd.md))
-should clamp/scale per-joint accordingly. (Head/base/body indices 4–6 aren't swept by this arm-focused
-test; treat their limits as bench-TBD.)
-
-**For custom firmware / bench work:** this JNI API and the proto bus are two faces of the same MCU —
-either drives the Lizard board. The proto/ZMQ path ([`robot-ipc-protocol.md`](../protocol/robot-ipc-protocol.md))
-is the cleaner seam for a replacement brain; `libmotionlib` documents the exact position units and
-timed-move semantics to reproduce.
+Both calls use **`segmentTime = 35 ms`** (the motion-planner tick) and **`motionPlanMode = 1`**. Clamp the
+shoulders to the middle half of the range; the elbows travel the full span. Head/base/body (4–6) are
+not swept by this test; their limits are bench-TBD. The JNI API and the proto bus drive the same MCU;
+the proto/ZMQ path ([robot-ipc-protocol](../protocol/robot-ipc-protocol.md)) is the cleaner seam for a new brain.
 
 ## Touch & switches
 
@@ -172,9 +157,8 @@ Emitted as `MpuEventPB{ ID }` — this is how the robot knows it's been picked u
 
 ### Semantic handling events (`embodied.unity`)
 
-Above the raw `MpuEventPB{ID}` state, the brain publishes richer **handling events** (from
-`embodied/unity/MpuPickup.proto`) that behavior reacts to — the reason Moxie giggles when shaken or
-settles when set down:
+Above the raw `MpuEventPB{ID}`, the brain publishes richer **handling events**
+(`embodied/unity/MpuPickup.proto`), which is why Moxie giggles when shaken or settles when set down:
 
 | Message | Payload | Meaning |
 |---|---|---|
@@ -185,18 +169,14 @@ settles when set down:
 | `MpuPutDownEventPB` | — | set back down |
 | `MpuIsNoisyEventPB` | `state` (bool) | the **IMU-noise gate** (below) |
 
-**`MpuShakeDirection`** — the shake axis, so content can respond to *how* the child moved Moxie:
+**`MpuShakeDirection`** (the shake axis):
 `Up` (0), `Roll` (1), `Pitch` (2), `Yaw` (3), `LeftRight` (4), `ForwardBack` (5), `Invalid` (6).
 
-**`MpuIsNoisyEventPB{state}`** is the clever bit: when Moxie's **own motors move**, the IMU sees that
-motion too, which would fire false pickup/tilt events. This flag goes `true` while the signal is
-untrustworthy so the handling detector **gates itself off during self-motion** — a custom firmware that
-skips this will report phantom "picked up" events every time the robot gestures.
-
-> **For a server / custom brain (goals ① ②):** these arrive on the bus like any other input event
-> ([behavior-input-events](../runtime/behavior-input-events.md)); a server puppeting Moxie ([telehealth](../protocol/telehealth.md))
-> can react to being shaken/held, and a custom build must reproduce the `MpuIsNoisy` gating to avoid
-> false positives.
+**`MpuIsNoisyEventPB{state}`**: when Moxie's own motors move, the IMU sees it too. This flag goes `true`
+while the signal is untrustworthy so the handling detector **gates itself off during self-motion**. A
+custom build that skips it reports phantom "picked up" events on every gesture. These events arrive on
+the bus like any other input ([behavior-input-events](../runtime/behavior-input-events.md)), so a server
+puppeting Moxie ([telehealth](../protocol/telehealth.md)) can react to being shaken or held.
 
 ## LEDs & the face
 
@@ -228,8 +208,9 @@ feeds the projector light engine; `POWER_MUTE`/`POWER_SPEAKER` gate audio; `Powe
 
 ## Lizard MCU firmware update (bootloader "GOBY")
 
-The Lizard board is a separate **STM32F071VBT6** microcontroller (ARM Cortex-M0, LQFP-100, 128 KB flash — part number read directly off the die in the FCC internal photos, see [`fcc-teardown.md`](fcc-teardown.md)) with its own firmware, updated
-from Android over UART by `bo-firmwareUpdate` / `me.embodied.firmwareupdatelib.fwUpdateLibEntry`
+The Lizard board is an **STM32F071VBT6** (ARM Cortex-M0, LQFP-100, 128 KB flash; part number read off
+the chip in the FCC photos, [fcc-teardown](fcc-teardown.md)) with its own firmware, updated from Android
+over UART by `bo-firmwareUpdate` / `me.embodied.firmwareupdatelib.fwUpdateLibEntry`
 (native `libnative-lib.so`, class `lizardPktAssembler`).
 
 | Aspect | Detail |
@@ -273,10 +254,9 @@ Eight per-revision Intel-HEX images (~220–310 KB each) — **extractable**:
 | `v7_7_ep1_firmware` · `v7_7_fep_firmware` · `v7_7_fep2_firmware` | EP1 / FEP / FEP2 (fw v7.7) |
 | `v7_7_p8_firmware` · `v7_7_p9_firmware` | P8 / P9 (fw v7.7) |
 
-Each file begins with a **SHA-1 line** then Intel-HEX records. For custom firmware / a bench MCU, this
-is the complete flash path (UART `/dev/ttyS3`, GOBY bootloader, Intel HEX @ `0x08000000`). The MCU's
-runtime protocol (motors/sensors/LEDs) is the `embodied.lizzerface` set above; MCU faults surface as
-`LizardErrorEventPB` (`FIRMWARE_*` = this DFU path's error space).
+Each file begins with a **SHA-1 line** then Intel-HEX records. DFU faults surface as
+`LizardErrorEventPB` `FIRMWARE_*` codes. The MCU also has a direct SWD/UART header
+([fcc-teardown](fcc-teardown.md#stm32f071vbt6-the-lizard-motor-mcu)).
 
 ## MCU firmware & health (`LizardErrorEventPB.LizardErrorEventID`)
 
@@ -284,12 +264,12 @@ The Lizard board reports a rich error/status stream (`1000`–`1051`), including
 (`1001`), motor-IC alerts (`1004`), IMU/LED-IC loss (`1006`/`1007`), the whole **firmware-download
 state machine** (`FIRMWARE_*`, `1009`–`1031`), motor stall (`1045`), charging (`CHARGING_EVENT=1050`),
 and **`WAKEUP_ANDROID_EVENT=1051`** — the MCU waking the Android SoC. `bo-firmwareUpdate` /
-`RobotControlFirmwareEventPB{ CONTROL_RESET_MOTOR_IC }` drive MCU DFU over UART. Custom firmware that
-replaces the Android side can leave the Lizard MCU stock and just speak this protocol.
+`RobotControlFirmwareEventPB{ CONTROL_RESET_MOTOR_IC }` drive MCU DFU over UART. Custom firmware can
+leave the Lizard MCU stock and just speak this protocol.
 
 ### The remaining MCU control messages
 
-For completeness, the last few `embodied.lizzerface` control messages (closing the namespace):
+The last `embodied.lizzerface` control messages (closing the namespace):
 
 | Message | Meaning |
 |---|---|
@@ -298,9 +278,6 @@ For completeness, the last few `embodied.lizzerface` control messages (closing t
 | `RobotEchoEventPB { string message }` | echo/ping the MCU with a payload string (the round-trip link test; native `robot_echo`, [native-boundary](../runtime/native-boundary.md#1-in-process-native-dllimport)) |
 | `RevisionLevelEventPB { Revision_Level level }` | the MCU reporting its **hardware revision** (`Revision_Level`, [hardware revisions](#hardware-revisions-revision_level)) |
 | `BangEventPB {}` | a **payload-less MCU event** — a discrete "bang"/impact-style trigger (no data, just the edge) |
-
-These plus the motor/sensor/LED/power/error messages above make the full `lizzerface` MCU protocol —
-everything a custom Android-side build sends to, or receives from, a stock Lizard board.
 
 ## Raw UART command set (`Lizzerface.Commands`)
 
@@ -334,12 +311,12 @@ are **host→MCU** commands:
 | `PublishBatteryStatus()` | request/emit a battery report |
 
 **Real-time motor loop.** `Lizzerface` runs a dedicated `Lizzeface.EventReciever` thread at a fixed
-**16.667 ms cadence (≈60 Hz)** (`MSPERLOOP = 16.666668`). Each tick it reads the motor-position
-feedback frame (opcode `0x220` → body/waist/head values), republishes it on the on-device **ZeroMQ**
-bus (as the camera/motor event other modules consume — see [`robot-ipc-protocol.md`](../protocol/robot-ipc-protocol.md)),
-and paces the next command. A flood guard (`HOST_MESSY_CMD`, ≥40 cmds / 1.5 s → fault `183`) protects the
-MCU. So a custom Android replacement drives the body by writing `motor_set_pos` frames at ~60 Hz and
-consuming the `0x220` feedback — the position servo lives in the MCU, not the SoC.
+**16.667 ms cadence (≈60 Hz)** (`MSPERLOOP = 16.666668`). Each tick it reads the motor-position feedback
+frame (opcode `220`, i.e. `0xDC`: body/waist/head values), republishes it on the **ZeroMQ** bus
+([robot-ipc-protocol](../protocol/robot-ipc-protocol.md)), and paces the next command. A flood guard
+(`HOST_MESSY_CMD`, ≥40 cmds / 1.5 s → fault `183`) protects the MCU. A custom Android side drives the
+body by writing `motor_set_pos` frames at ~60 Hz and consuming the `220` feedback; the position servo
+lives in the MCU, not the SoC.
 
 ---
 📖 [Reverse-engineering index](../README.md) · [IPC protocol](../protocol/robot-ipc-protocol.md) · [Docs index](../../README.md) · [Back to top](../../../README.md)

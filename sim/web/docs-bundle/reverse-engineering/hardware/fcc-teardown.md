@@ -1,14 +1,17 @@
 # 📷 FCC filings — board-level hardware map (rev1 vs rev2)
 
-> **What this is.** Facts extracted from Moxie's **public FCC equipment-authorization exhibits** —
-> the independent, outside confirmation of the hardware our firmware analysis
-> (**v3.6.4-Zephyr / OTA v24.10.803**) inferred from software. Written per the
-> [self-sufficiency doctrine](../external-sources.md#self-sufficiency-doctrine-assume-every-link-dies-tomorrow):
-> the **facts live here**, so this document stands alone if the filings ever become unreachable.
-> Photos are **described, not re-hosted** (see the [provenance policy](../external-sources.md#provenance-the-law-can-we-use-this)).
->
-> **Sources:** FCC ID **`2AV9N-EMBODIEDMOXIEA`** (rev1) and **`2AV9N-EMBMOXIEVTWO`** (rev2/V2),
-> grantee **Embodied, Inc.** (grantee code `2AV9N`), internal/external photo + test-report exhibits.
+Facts from Moxie's **public FCC equipment-authorization exhibits**, the outside confirmation of the
+hardware our firmware analysis (**v3.6.4-Zephyr / OTA v24.10.803**) inferred from software. The facts
+live here so this page stands alone if the filings disappear
+([self-sufficiency doctrine](../external-sources.md#self-sufficiency-doctrine-assume-every-link-dies-tomorrow));
+photos are described, not re-hosted ([provenance policy](../external-sources.md#provenance-the-law-can-we-use-this)).
+- **Read off the silicon:** the XMOS **VSM02C** audio DSP and the Lizard MCU **STM32F071VBT6**.
+- **Bench finds:** a **`LOAD`** download-mode button on the mainboard, and an **`ISP & DEBUG`** SWD + UART
+  header on the Lizard board.
+- **Still open:** SoC marking (under thermal paste), SoC UART pads, and whether anything is reachable without opening the shell.
+
+**Sources:** FCC ID **`2AV9N-EMBODIEDMOXIEA`** (rev1) and **`2AV9N-EMBMOXIEVTWO`** (rev2/V2), grantee
+**Embodied, Inc.** (grantee code `2AV9N`): internal/external photo and test-report exhibits ([References](#references)).
 
 ## The two filings at a glance
 
@@ -23,33 +26,28 @@
 | Modular equipment | Does not apply (integrated radio) | Does not apply |
 | Confidentiality | — | Short-term confidentiality to **2024-05-18**; photos public after |
 
-**Key band fact:** both revisions are granted on **5180–5240 MHz** — the **5 GHz U-NII-1** block
-(802.11a/n/ac channels 36–48). This independently corroborates a **dual-band** radio, consistent with
-the **BCM4339** (1×1 802.11ac) identified in [`device-tree.md`](device-tree.md) — a 2.4 GHz-only part
-could not hold this grant. It also confirms the practical Wi-Fi guidance in
-[`qr-commands.md`](../protocol/qr-commands.md#wi-fi-provisioning-support-what-networks-work): a 5 GHz network works,
-but **only the lower U-NII-1 channels are certified** — put the robot on **channels 36–48** (or 2.4 GHz)
-rather than upper-band 5 GHz (149+), which this grant does not cover.
+**Band:** both revisions are granted on **5180–5240 MHz**, the **5 GHz U-NII-1** block (802.11a/n/ac
+channels 36–48). That corroborates a **dual-band** radio, consistent with the **BCM4339** (1×1 802.11ac)
+in the [device tree](device-tree.md); a 2.4 GHz-only part could not hold this grant. Practical guidance
+([qr-commands](../protocol/qr-commands.md#wi-fi-provisioning-support-what-networks-work)): use 2.4 GHz or
+5 GHz **channels 36–48**, not upper-band 5 GHz (149+), which the grant does not cover.
 
 ## rev1 — the main compute board
 
 Silkscreen **`100438`**, branded **`embodied`**, dated **`EB001+004+01 12-12-2019`** on a sibling board.
 What the internal photos show:
 
-- **A large BGA at board centre, covered in white thermal compound** (hence a heat-spreader/heatsink) —
-  position, size, and the surrounding DDR3 packages are consistent with the **Rockchip RK3288**
-  established from firmware. ⚠️ **Honest limit:** the thermal paste **obscures the part marking**, so
-  the photo *corroborates* (BGA + 2× DRAM + eMMC topology) rather than *reads* the SoC number. The
-  authoritative RK3288 identification remains the firmware/DTB
-  ([`firmware-803-reference.md`](../firmware/firmware-803-reference.md), [`device-tree.md`](device-tree.md)).
+- **A large BGA at board centre under white thermal compound** (heat-spreader/heatsink). Position, size
+  and the surrounding DDR3 are consistent with the **RK3288**, but the paste **hides the marking**, so the
+  photo corroborates the topology (BGA + 2× DRAM + eMMC) rather than reading the part. The RK3288 ID
+  rests on the firmware/DTB ([firmware reference](../firmware/firmware-803-reference.md), [device tree](device-tree.md)).
 - **Two DDR3 SDRAM packages** flanking the SoC, plus additional memory packages (eMMC/DRAM) to the right.
-- **XMOS audio DSP — read directly off the silicon:** a large QFP marked **`XMOS VSM02C` / `GT170802`**
-  on the sibling board (`100438` area). This is the **first outside confirmation** of the XMOS DSP that
-  [`perception-pipeline.md`](../runtime/perception-pipeline.md) derived from `xmosdfu`/firmware alone.
-- **Wi-Fi:** a **shielded RF module** with a **u.FL/IPEX antenna connector silkscreened `WIFI` (`J3`)**,
-  near `U16`/`TP17`. Discrete module + external antenna pigtail. The DTB names it **`ap6335`**, i.e. an
-  **AmPak AP6335** (Broadcom BCM4339 inside) — so "AMPAK" community notes are **correct**; the FCC photo
-  can't read the shield marking, so it corroborates a discrete BCM4339 module without refuting AMPAK.
+- **XMOS audio DSP, read off the silicon:** a large QFP marked **`XMOS VSM02C` / `GT170802`** in the
+  `100438` area. The first outside confirmation of the DSP that [perception-pipeline](../runtime/perception-pipeline.md)
+  derived from firmware.
+- **Wi-Fi:** a **shielded RF module** with a **u.FL/IPEX connector silkscreened `WIFI` (`J3`)**, near
+  `U16`/`TP17` (discrete module + antenna pigtail). The DTB names it **`ap6335`** (AmPak AP6335, BCM4339
+  inside), so community "AMPAK" notes are correct; the shield marking itself is not legible.
 - **Silkscreened connectors:** **`LIZARD`** (the MCU board), **`LED`**, **`SPK`**, **`MICS`** (FFC),
   **`PROJECTOR`** (FFC, `J4`), **`CAMERA`**, plus power.
 
@@ -64,46 +62,36 @@ connector; the same `SPACE MOUSE` silk also appears on the mainboard **[R1‑INT
 the camera module **[R1‑INT p.9, p.12]**, the DLP projector engine **[R1‑INT p.15]**, sub-boards
 **[R1‑INT p.18–39]**, and the **Wi‑Fi antenna** (flex PIFA, silk `2014.07.22 RoHS`) **[R1‑INT p.42]**.
 
-> **Honest limit of the photo pass:** the **RK808 PMIC**, **RT5640 codec**, and **DLPC3430** are not
-> marking-legible in any rev1 page (they sit in the dense mainboard area around the paste-covered SoC),
-> so they remain **DTB/firmware-sourced** (#7, #9, #10 above) rather than photo-confirmed. The camera
-> sensor markings (OV2710/GC2053) are likewise not legible on the module close-ups.
+> **Limit of the photo pass:** the **RK808 PMIC**, **RT5640 codec**, **DLPC3430** and the camera
+> sensors (OV2710/GC2053) are not marking-legible in any rev1 page, so they remain DTB/firmware-sourced
+> (#7, #9–#11 in the [chip inventory](#complete-chip-inventory-with-provenance)).
 
-### 🔑 `RESET` · `LOAD` · `POWER` — on-board buttons (major bench finding)
+### `RESET` · `LOAD` · `POWER` — on-board buttons (major bench finding)
 
 The rev1 mainboard carries **three tactile buttons, silkscreened `RESET`, `LOAD` (S1), and `POWER` (S2)**,
 clustered at the board edge beside the `MICS` FFC.
 
-**`LOAD` is the Rockchip download-mode button.** On RK-family boards, a `LOAD`/`RECOVERY` key held at
-power-on drives the SoC into **maskrom / rockusb download mode** — exactly the unsigned-flash entry
-described in [`hardware-access.md`](hardware-access.md#the-rockchip-boot-download-modes-rk3288) and the
-one that bypasses the signed-OTA gate blocking pre-801 revival. This resolves part of a long-standing
-open question: **a dedicated download-mode button physically exists on the mainboard** — no test-point
-soldering or shorting required *once the shell is open*.
-
-> ⚠️ Two things this does **not** settle, both still bench items: (a) whether `LOAD` is reachable
-> **without disassembly** (the FCC photos are of a stripped board, so they say nothing about shell
-> access), and (b) whether the external **Macro button** maps to this function via the SARADC key path.
-> The `LOAD` button is the *known-good* download-mode entry; the no-open route remains unproven.
+**`LOAD` is the Rockchip download-mode button.** On RK-family boards a `LOAD`/`RECOVERY` key held at
+power-on enters **maskrom / rockusb download mode**, the unsigned-flash entry in
+[hardware-access](hardware-access.md#the-rockchip-boot-download-modes-rk3288) that bypasses the
+signed-OTA gate. So a dedicated download-mode button exists: no test-point shorting is needed once the
+shell is open. Still bench items: (a) whether `LOAD` is reachable **without disassembly** (the photos
+show a stripped board), and (b) whether the external **Macro** button maps to the same function via the
+SARADC key path.
 
 ## rev2 — "THE LIZARD" MCU board (the best find)
 
-rev2's internal photos include the **motor-control board itself**, silkscreened **`"THE LIZARD"`** with a
-lizard illustration, **`#101557`**, `d6b`, `Embodied` — confirming the "Lizard" name our firmware RE
-recovered from `liblizardJNI`/`lizzerface` was the **literal board name**, not a codename.
+rev2's internal photos include the motor-control board, silkscreened **`"THE LIZARD"`** with a lizard
+illustration, **`#101557`**, `d6b`, `Embodied`. "Lizard" (from `liblizardJNI`/`lizzerface`) is the literal board name.
 
-- **MCU read directly off the chip: `STM32F071VBT6`** (ST, LQFP-100, ARM Cortex-M0; marking
-  `STM32F071 VBT6 / AA027 98 / TWN AA 105`). This **confirms and sharpens** the "STM32 Cortex-M" in
-  [`hardware-map.md`](hardware-map.md) to an exact part — a **STM32F071**, 128 KB flash, which matches
-  the Intel-HEX-at-`0x08000000` DFU image in the GOBY bootloader path.
-- **🔑 `ISP & DEBUG` header** — a **6-pin header** silkscreened `ISP & DEBUG`, adjacent to a `SWITCH`
-  header and an MCU-local **`RESET`** button (`SW1`). Nearby test points are labelled **`SWDIO`,
-  `SWCLK`, `NRST`, `3.3V`, `GND`, `RX`, `TX`** (`TP1`, `TP5`, `TP7`, `TP10`, `TP11`, `TP12`, `TP23`).
-  That is a complete **SWD debug + UART** surface for the motor MCU: it means the Lizard firmware can be
-  **read, debugged, or reflashed directly**, independent of the Android side and independent of the
-  GOBY/UART3 DFU path in [`hardware-map.md`](hardware-map.md#lizard-mcu-firmware-update-bootloader-goby).
-- **Motor connectors, individually silkscreened and colour-coded** — the authoritative DOF list,
-  read straight off the board: **`BODY L/R`**, **`HEAD UP/DN`**, **`L ARM UP/DN`**, **`L ARM IN/OUT`**,
+- **MCU read off the chip: `STM32F071VBT6`** (ST, LQFP-100, ARM Cortex-M0, 128 KB flash; marking
+  `STM32F071 VBT6 / AA027 98 / TWN AA 105`). This matches the Intel-HEX-at-`0x08000000` GOBY DFU image
+  in [hardware-map](hardware-map.md#lizard-mcu-firmware-update-bootloader-goby).
+- **`ISP & DEBUG` header:** a **6-pin header** next to a `SWITCH` header and an MCU-local **`RESET`**
+  button (`SW1`). Nearby test points: **`SWDIO`, `SWCLK`, `NRST`, `3.3V`, `GND`, `RX`, `TX`** (`TP1`,
+  `TP5`, `TP7`, `TP10`, `TP11`, `TP12`, `TP23`). A complete **SWD + UART** surface: the Lizard firmware can
+  be read, debugged or reflashed directly, independent of Android and of the GOBY/UART3 path.
+- **Motor connectors, individually silkscreened and colour-coded** (the authoritative DOF list): **`BODY L/R`**, **`HEAD UP/DN`**, **`L ARM UP/DN`**, **`L ARM IN/OUT`**,
   **`R ARM UP/DN`**, **`R ARM IN/OUT`**, **`BODY F/B`**.
 - Other labelled headers: **`BACK`**, **`TUMMY`** (touch zones), **`SWITCH`**, **`I2C/3G`**,
   **`BATTERY`**, **`ON/OFF SWITCH`**, **`12V IN`/`12V OUT`**.
@@ -112,9 +100,9 @@ recovered from `liblizardJNI`/`lizzerface` was the **literal board name**, not a
 
 ### Cross-check: the motor list vs. our two index spaces
 
-The seven silkscreened motor connectors match the **7-entry `libmotionlib` index** documented in
-[`hardware-map.md`](hardware-map.md#native-motion-api-factory-libmotionlib-liblizardjni) — including
-its divergence from the `Motor` proto enum:
+The seven connectors match the **7-entry `libmotionlib` index**
+([hardware-map](hardware-map.md#native-motion-api-factory-libmotionlib-liblizardjni)), including its
+divergence from the `Motor` proto enum:
 
 | Board silkscreen | `libmotionlib` idx | Notes |
 |---|--:|---|
@@ -122,14 +110,12 @@ its divergence from the `Motor` proto enum:
 | `L ARM IN/OUT` | 1 (`laio`) | matches proto =1 |
 | `R ARM UP/DN` | 2 (`raud`) | matches proto =2 |
 | `R ARM IN/OUT` | 3 (`raio`) | matches proto =3 |
-| `HEAD UP/DN` | 4 (`head`) | proto 4 = `HEAD_UP_DN` ✅ |
-| `BODY L/R` | 5 (`base`) | ⚠️ proto 5 = `HEAD_L_R` — **index spaces differ** |
-| `BODY F/B` | 6 (`body`) | ⚠️ proto 6 = `HEAD_TILT` |
+| `HEAD UP/DN` | 4 (`head`) | matches proto 4 = `HEAD_UP_DN` |
+| `BODY L/R` | 5 (`base`) | proto 5 = `HEAD_L_R`: **index spaces differ** |
+| `BODY F/B` | 6 (`body`) | proto 6 = `HEAD_TILT` |
 
-**Physical confirmation of the foot-gun:** the board has **one** head motor connector (`HEAD UP/DN`) and
-**two** body/base ones (`L/R`, `F/B`), which is exactly why `libmotionlib`'s 5/6 are base/body while the
-proto enum's 5/6 are head yaw/tilt. The hardware corroborates that these are genuinely different index
-spaces — use the one matching your API.
+The board has **one** head connector and **two** body/base ones, which is why `libmotionlib` 5/6 are
+base/body while proto 5/6 are head yaw/tilt. They are genuinely different index spaces.
 
 ## Complete chip inventory (with provenance)
 
@@ -140,7 +126,7 @@ Photos exhibit, page 6.
 
 | # | Chip / part | Function | Exact marking | Provenance |
 |--:|---|---|---|---|
-| 1 | **Rockchip RK3288** | Main SoC (ARMv7 Cortex‑A17, Android 9) | *obscured by thermal compound* | **DTB/FW** authoritative ([firmware-803-reference](../firmware/firmware-803-reference.md)); BGA **located** centre of compute board `100438` **[R1‑INT p.3]** |
+| 1 | **Rockchip RK3288** | Main SoC (ARMv7 quad Cortex‑A17; Android's `dalvik` variant is set to `cortex-a15`) | *obscured by thermal compound* | **DTB/FW** authoritative ([firmware-803-reference](../firmware/firmware-803-reference.md)); BGA **located** centre of compute board `100438` **[R1‑INT p.3]** |
 | 2 | **Samsung DDR3 SDRAM** ×2 | Main memory | `SEC …` (Samsung; full P/N not legible) | **Read (partial)** — two packages flanking the SoC **[R1‑INT p.3]** |
 | 3 | **eMMC (Samsung)** | Flash storage (`by-name` GPT) | `SEC …` (P/N not legible) | **Read (partial)** **[R1‑INT p.3]**; partitioning from [firmware-image](../firmware/firmware-image.md) |
 | 4 | **XMOS VSM02C** | Audio DSP (wake/VAD/DFU) | **`XMOS VSM02C` / `GT170802` / `PBPS13‑AM`** | **Read** QFP on `100438` **[R1‑INT p.6]**; role from [perception-pipeline](../runtime/perception-pipeline.md) |
@@ -154,11 +140,6 @@ Photos exhibit, page 6.
 | 12 | **PCA9635** | LED driver (status ring) | *not marking‑read* | **DTB/FW**; `LED` connector + ring **[R1‑INT p.6]** |
 | 13 | Projector‑interface board **"JETTA"** | LVDS/projector + temp sense | silk `JETTA`, `100747`, `Proj`, `TEMP`, `Android` | **Read (silk)** **[R1‑INT p.22]** |
 | 14 | **"Penguin Board"** | secondary board (sensor/IO) | silk `Penguin Board`, `#101505`, `EB002+003+23C` | **Read (silk)** **[R2‑INT p.5]** |
-
-> **Two silicon confirmations we owe entirely to the FCC photos:** the **XMOS DSP** (#4) and the exact
-> **STM32F071VBT6** (#6) part numbers — both previously inferred from firmware, now read off the die.
-> The RK3288 (#1) and BCM4339 (#5) remain firmware‑authoritative because thermal compound / a shield
-> hide their markings.
 
 ## Programming & debug toolchain — per chip
 
@@ -210,12 +191,8 @@ present on the boards per the FCC photos (cited).
 - Firmware is **host‑loaded at runtime** from `/vendor/etc/firmware/` over SDIO (Wi‑Fi) and UART0 (BT) —
   you don't flash the module; you change the files the RK3288 loads ([device-tree](device-tree.md)). So
   "reprogramming Wi‑Fi" = editing `/vendor` on the SoC.
-- **Exact blobs a custom build must ship (verified on `vendor.img`, v24.10.803):** the BCM4339 Wi‑Fi
-  firmware is the **`_ag`** (a/g‑band) family — `fw_bcm4339a0_ag.bin` (STA), `fw_bcm4339a0_ag_apsta.bin`
-  (STA+SoftAP), `fw_bcm4339a0_ag_p2p.bin` (Wi‑Fi Direct) — paired with **`nvram_AP6335.txt`** (the AP6335
-  module's calibration/NVRAM), and BT patchram **`bcm4339a0.hcd`**. The DTB selects them via
-  `wifi_chip_type="ap6335"`. (`/vendor/etc/firmware/` also carries the full stock Rockchip BSP blob set
-  for dozens of other BCM/RTL/SSV parts — dormant; only the `4339a0`/`AP6335` files above are loaded.)
+- The exact files a custom build must ship (`fw_bcm4339a0_ag*.bin`, `nvram_AP6335.txt`, `bcm4339a0.hcd`)
+  are listed in [hal-and-drivers](../firmware/hal-and-drivers.md#radio-bcm4339-ap6335).
 
 ### Not host‑programmable
 RK808 PMIC, RT5640 codec, PCA9635 LED driver, OV2710/GC2053 cameras — configured over I²C by the SoC at
@@ -234,35 +211,21 @@ boot; no standalone firmware to flash.
 |---|---|---|---|
 | Radio grant | 5180–5240 MHz | **unchanged** | Same Wi-Fi class/band plan across generations — a re-homing server needs no per-generation radio handling |
 | Test lab | Intertek HK | **unchanged** | Same compliance path |
-| MCU | (Lizard board not in rev1's public set) | **`STM32F071VBT6`** on `"THE LIZARD"` `#101557` | rev2 exposes the MCU part number |
-| Boards shown | mainboard `100438`, projector/`JETTA` iface, camera, DLP engine | Lizard `#101557`, `Penguin Board` `#101505` | The two filings are **complementary**: rev1 documents compute/optics, rev2 documents motion control |
+| MCU | rev1 Lizard board shown **[R1‑INT p.30]**, MCU marking not read | **`STM32F071VBT6`** on `"THE LIZARD"` `#101557` | rev2 exposes the MCU part number |
+| Boards shown | mainboard `100438`, projector/`JETTA` iface, camera, DLP engine, Lizard | Lizard `#101557`, `Penguin Board` `#101505` | Complementary: rev1 documents compute/optics, rev2 the motion-control MCU |
 | Confidentiality | photos public | short-term to 2024-05-18, **then public**; **Block Diagram, Schematics, and Operational Description withheld ("metadata only")** | Matches the [expected pattern](../external-sources.md#provenance-the-law-can-we-use-this) — photos public, schematics not |
 
 > **Touch sensors across generations.** Community teardowns report *older* Moxie **lack touch sensors**
 > ([external-sources](../external-sources.md#teardowns)). rev2's Lizard board silkscreens dedicated
-> **`BACK`** and **`TUMMY`** headers, consistent with touch being present/standardised by the V2 board.
-> We have **not** seen a rev1 Lizard board to compare directly — so treat "touch added/expanded in later
-> hardware" as **corroborated but not proven** from these filings alone.
+> **`BACK`** and **`TUMMY`** headers. The rev1 Lizard silk (p.30) lists no `BACK`/`TUMMY` labels among
+> those read, so "touch added in later hardware" is **corroborated but not proven**.
 
-## What this resolves (and what it doesn't)
+## Still open (bench work, see [exploration map](../EXPLORATION-MAP.md#open-items-need-a-bench-unit-or-an-external-artifact))
 
-**Resolved by these filings:**
-- ✅ Dual-band 5 GHz (U-NII-1) radio — corroborates the **AmPak AP6335 / BCM4339** module (AP6335 *is* an
-  AMPAK part, per the DTB `wifi_chip_type="ap6335"`); the shield P/N isn't legible, so the photo confirms
-  a discrete BCM4339 module without reading the marking.
-- ✅ **XMOS DSP** confirmed by direct chip marking (`XMOS VSM02C`).
-- ✅ **Lizard MCU = `STM32F071VBT6`**, exact part.
-- ✅ **`LOAD` (download-mode) button exists on the mainboard**; `RESET`/`POWER` alongside.
-- ✅ **`ISP & DEBUG` (SWD) + `RX`/`TX` UART surface on the Lizard board** — MCU is directly flashable.
-- ✅ Motor DOF list confirmed physically; the dual index-space caveat is real.
-- ✅ "Lizard" is the literal board name; boards use animal codenames (`Penguin Board`).
-
-**Still open (bench work — see [COVERAGE](../COVERAGE.md)):**
-- ❌ **SoC part marking unread** (thermal paste) — RK3288 stands on firmware evidence.
-- ❌ **Whether `LOAD`/USB is reachable without opening the shell** — FCC photos are of stripped boards.
-- ❌ **RK3288-side UART console pads** — not identified in these photos (the `RX`/`TX` found are the
-  **MCU's**, not the SoC's).
-- ❌ Macro-button → ADC-level → boot-mode mapping.
+- **SoC part marking** is unread (thermal paste); the RK3288 stands on firmware evidence.
+- **Whether `LOAD`/USB is reachable without opening the shell**: the photos are of stripped boards.
+- **RK3288 UART console pads** are not identified (the `RX`/`TX` found are the **MCU's**).
+- The Macro-button → ADC-level → boot-mode mapping.
 
 ## References
 
@@ -301,4 +264,4 @@ images described, not re-hosted.
 > [law section](../external-sources.md#provenance-the-law-can-we-use-this).
 
 ---
-📖 [External sources map](../external-sources.md) · [Hardware map](hardware-map.md) · [Hardware access](hardware-access.md) · [Device tree](device-tree.md) · [Coverage](../COVERAGE.md) · [RE index](../README.md)
+📖 [External sources map](../external-sources.md) · [Hardware map](hardware-map.md) · [Hardware access](hardware-access.md) · [Device tree](device-tree.md) · [Exploration map](../EXPLORATION-MAP.md) · [RE index](../README.md)

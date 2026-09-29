@@ -1,31 +1,12 @@
 # 🩺 Telehealth / remote-puppet — the "TeleBrain" protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
-> The recovered `embodied.telehealth.TeleHealth.proto` + the `STATE_TELEBRAIN` launcher state, from the
-> **v24.10.803** image. Telehealth is Moxie's **remote-puppet** mode: a remote human (a clinician /
-> therapist) *replaces Moxie's on-device brain* and drives what it says and does in real time. It's a
-> distinct operating mode with its own protocol, sitting on the MQTT transport
-> ([`cloud-protocol.md`](cloud-protocol.md)) and emitting the same behavior markup
-> ([`behavior-markup.md`](../runtime/behavior-markup.md)) the local brain would.
+Telehealth is Moxie's **remote-puppet** mode: a remote human (clinician / therapist) replaces the
+on-device brain and drives what Moxie says and does in real time. Recovered from
+`embodied.telehealth.TeleHealth.proto` + the `STATE_TELEBRAIN` launcher state in the **v24.10.803** image.
 
-## TL;DR
-
-- **"TeleBrain" = tele-brain, a remote brain.** In `STATE_TELEBRAIN` the launcher runs **perception +
-  MAINAPP but NOT the conversation BRAIN** ([`boot-and-launcher.md`](../firmware/boot-and-launcher.md)) — so the
-  camera/mic stay live (the clinician sees/hears the room) while a remote operator supplies every line.
-- The operator sends **`Output { text, markup }`** and Moxie speaks + performs it; markup is the full
-  behavior language, so the puppeteer controls face, motion, and audio, not just words.
-- Transport is MQTT: `commands/telehealth` (cloud → robot) and the `telehealth` activity-log subtopic
-  (robot → cloud). A session is `START_SESSION → PLAY_OUTPUT… → END_SESSION`.
-
-## The launcher state
-
-| State | Components up | Meaning |
-|---|---|---|
-| **`STATE_TELEBRAIN`** | perception + MAINAPP, **no BRAIN** | telehealth remote-brain session |
-
-Entered from `STATE_RUNNING` when a telehealth session starts. Dropping the local ChatScript/LLM brain
-is the whole point: the remote human *is* the brain, so there's no on-device dialog engine to conflict
-with the operator's lines.
+- In `STATE_TELEBRAIN` the launcher runs **perception + MAINAPP but NOT the BRAIN**, so camera/mic stay live while the operator supplies every line.
+- The operator sends **`Output { text, markup }`**; markup is the full [behavior language](../runtime/behavior-markup.md) (face, motion, audio).
+- Transport is MQTT: `commands/telehealth` (cloud → robot), `telehealth` activity-log subtopic (robot → cloud). Session = `START_SESSION → PLAY_OUTPUT… → END_SESSION`.
 
 ## The protocol — `embodied.telehealth.TeleHealth.proto`
 
@@ -39,7 +20,7 @@ message Output {                       // one thing for Moxie to say / perform
   optional string line_id      = 1;    // id of a pre-authored line (or ad-hoc)
   repeated string line_params  = 2;    // fill-ins for a templated line
   optional string text         = 3;    // spoken text
-  optional string markup       = 4;    // behavior markup (behavior-markup.md) — face/motion/audio
+  optional string markup       = 4;    // behavior markup — face/motion/audio
 }
 message TelehealthStatus {
   optional uint64 timestamp = 1;  optional bool telehealth_active = 2;  optional bool session_active = 3;
@@ -57,18 +38,25 @@ message TelehealthRobotCommand { optional string command = 1; optional Telehealt
 message TelehealthRobotEvent   { optional string subtopic = 1; optional TelehealthMessage message = 2; } // robot → cloud
 ```
 
-- **`Action`** is the operator's control verb: `START_SESSION` / `END_SESSION` bracket the session;
-  **`PLAY_OUTPUT`** makes Moxie deliver an `Output`; **`INTERRUPT`** cuts Moxie off mid-line (barge-in
-  from the operator side — cf. [`turn-taking.md`](../runtime/turn-taking.md)); `UPDATE_STATE` syncs status.
-- **`RobotState`** is what the robot reports back: `READY` (idle, telehealth armed), `IN_SESSION`
-  (actively puppeted), `EXITING` (tearing down).
+- **`Action`** — operator verbs. `START_SESSION`/`END_SESSION` bracket the session; `PLAY_OUTPUT` delivers an
+  `Output`; `INTERRUPT` cuts Moxie off mid-line (operator-side barge-in, cf. [turn-taking](../runtime/turn-taking.md));
+  `UPDATE_STATE` syncs status.
+- **`RobotState`** — robot reports: `READY` (idle, armed), `IN_SESSION` (being puppeted), `EXITING` (tearing down).
 
-## Session flow
+## Launcher state and session flow
+
+| State | Components up | Meaning |
+|---|---|---|
+| **`STATE_TELEBRAIN`** (8) | perception + MAINAPP, **no BRAIN** | telehealth remote-brain session ([boot-and-launcher](../firmware/boot-and-launcher.md), [power states](power-and-system-events.md#the-power-state-powerstatepb)) |
+
+Entered from `STATE_RUNNING` when a session starts; the active child is disengaged with
+`DisengageReason.TELEHEALTH` ([unpair / disengage](power-and-system-events.md#unpair-disengage-unpairuserrequest)).
+Dropping the local brain means no on-device dialog engine competes with the operator's lines.
 
 ```mermaid
 sequenceDiagram
-  participant Op as 🩺 Operator (cloud)
-  participant Moxie as 🤖 Moxie (STATE_TELEBRAIN)
+  participant Op as Operator (cloud)
+  participant Moxie as Moxie (STATE_TELEBRAIN)
   Op->>Moxie: TelehealthRobotCommand · START_SESSION
   Moxie-->>Op: RobotEvent · state=READY → IN_SESSION
   Op->>Moxie: PLAY_OUTPUT · Output{text, markup}
@@ -80,36 +68,23 @@ sequenceDiagram
 
 ## Transport (MQTT)
 
-Per [`cloud-protocol.md`](cloud-protocol.md):
+Per the [cloud topic map](cloud-protocol.md#exact-topic-map-google-iot-core-convention-kept-post-migration):
 
-- **Cloud → robot:** `/devices/{device_id}/commands/telehealth` carries the `TelehealthRobotCommand`
-  (alongside the other JSON commands like `remote_chat`, `query_result`).
-- **Robot → cloud:** the `client-service-activity-log` event with a **`telehealth`** subtopic carries the
-  `TelehealthRobotEvent` (status/state, session lifecycle).
+- **Cloud → robot:** `/devices/{device_id}/commands/telehealth` carries `TelehealthRobotCommand` (alongside `remote_chat`, `query_result`).
+- **Robot → cloud:** the `client-service-activity-log` event with subtopic **`telehealth`** carries `TelehealthRobotEvent` (state, session lifecycle).
 
-So a telehealth backend is a peer of the normal chat backend — same device topics, a different command
-verb — and `Output.markup` reuses the exact markup grammar the conversation path emits.
+A telehealth backend is a peer of the chat backend — same device topics, a different command verb — and
+`Output.markup` reuses the conversation path's markup grammar. The cloud also flags the mode in
+`RobotCloudConfig.moxie_mode` (`DEFAULT_MODE` / `TELEHEALTH`, [device config](device-config-and-telemetry.md#robotcloudconfig-the-master-config-document-cloud-robot)).
 
-## What this means for the three goals
+## For the three goals
 
-**① Custom firmware.** A distinct, brain-off operating mode. A custom build can keep or re-implement it;
-the launcher gate (`STATE_TELEBRAIN`, no local brain) is the pattern for "let something external drive
-Moxie."
-
-**② Server revival.** This is a **ready-made remote-control API** — a self-hosted server can implement
-telehealth to let a remote parent/therapist puppet Moxie live: send `START_SESSION`, then `PLAY_OUTPUT`
-with `text` + `markup`, and Moxie speaks and moves. Because the local brain is off in this mode, the
-server has full authority over every line without fighting an on-device dialog engine. A genuinely
-useful revival feature beyond autonomous chat.
-
-> **Toolkit:** [`moxie_toolkit/cloud.py`](../../../tools/robot-toolkit/moxie_toolkit/cloud.py) builds the
-> whole session — `telehealth_session(START_SESSION/END_SESSION/INTERRUPT)`,
-> `telehealth_play_output(text, markup, …)`, `telehealth_command(msg)` (the publishable
-> `TelehealthRobotCommand`), `telehealth_topic(device_id)`, and `parse_telehealth_event(payload)` for the
-> robot's replies. Wire-round-trip tested in `tools/robot-toolkit/test_telehealth.py`.
-
-**③ Pre-801 revival.** No new lever; it rides the same MQTT/endpoint path as normal chat
-([`network-trust.md`](network-trust.md)).
+- **Custom firmware:** a brain-off operating mode; the launcher gate is the pattern for "let something external drive Moxie."
+- **Server revival:** a ready-made remote-control API — `START_SESSION`, then `PLAY_OUTPUT{text, markup}` — with full authority over every line.
+  Implemented in [`moxie_toolkit/cloud.py`](../../../tools/robot-toolkit/moxie_toolkit/cloud.py) (`telehealth_session`, `telehealth_play_output`,
+  `telehealth_command`, `telehealth_topic`, `parse_telehealth_event`; tested in `tools/robot-toolkit/test_telehealth.py`) and
+  [`mqtt/moxie_sdk/telehealth.py`](../../../mqtt/moxie_sdk/telehealth.py).
+- **Pre-801:** no new lever; rides the same MQTT/endpoint path as chat ([network-trust](network-trust.md)).
 
 ---
 📖 [Reverse-engineering index](../README.md) · [Cloud protocol](cloud-protocol.md) · [Boot & launcher](../firmware/boot-and-launcher.md) · [Behavior markup](../runtime/behavior-markup.md) · [Turn-taking](../runtime/turn-taking.md)

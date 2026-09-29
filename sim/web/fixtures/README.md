@@ -1,17 +1,15 @@
-# `sim/web/fixtures/` — demo data for the static surfaces
+# 🗂️ `sim/web/fixtures/` — demo data for the static cloud console
 
-Canned JSON that lets the static site render a full experience with **no server**.
+Canned JSON that lets the static site render the parent console with no server.
 
-- **`cloud.json`** — the parent cloud console's data ([`../cloud.html`](../cloud.html)). Its shapes
-  deliberately mirror the **real Moxie contract** so the demo teaches the true structure and a live
-  server can drop in unchanged:
-  - the **JSON:API** documents the app's DataManager expects (`data`/`included`/`attributes` for
-    `users` · `children` · `robots` · `robot-setting`) — see [`../../../server/moxie_server/serializers.py`](../../../server/moxie_server/serializers.py);
-  - the **MQTT content model** — `module_id`/`content_id`, `MentorBehavior`, `MissionConfig` (Daily
-    Missions), rewards/badges — see [`content-and-conversation.md`](../../../docs/reverse-engineering/runtime/content-and-conversation.md).
+- [`cloud.json`](cloud.json) — data for [`../cloud.html`](../cloud.html), shaped like the real contract so a live
+  server can drop in unchanged: JSON:API documents for `users` / `children` / `robots` / `robot-setting`
+  (see [`serializers.py`](../../../server/moxie_server/serializers.py)) and the MQTT content model
+  (`module_id` / `content_id`, `MentorBehavior`, `MissionConfig`, rewards; see
+  [`content-and-conversation.md`](../../../docs/reverse-engineering/runtime/content-and-conversation.md)).
+  Demo data, no real child. `node sim/test_cloud.mjs` pins the shapes.
 
-  It's demo data (no real child). `node sim/test_cloud.mjs` asserts the fixture keeps these shapes and
-  that `cloud.html` consumes them.
+A live deployment serves the same shapes from `/api/users/me`, `/api/children/{id}/rewards` and the
+activity log; only the page's `fetch` target changes.
 
-> A live deployment would serve the same shapes from `/api/users/me`, `/api/children/{id}/rewards`, and
-> the activity log instead of this file — the page's `fetch` target is the only thing that changes.
+📖 [sim/web](../README.md) · [Back to top](../../../README.md)

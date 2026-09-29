@@ -66,4 +66,4 @@ Grounded in firmware **v3.6.4-Zephyr / OTA v24.10.803**.
 | Boot/lifecycle states; recovery; factory test suite | [boot-and-launcher](../reverse-engineering/firmware/boot-and-launcher.md) · [factory-provisioning](../reverse-engineering/firmware/factory-provisioning.md) |
 
 ---
-📖 [Feature catalog (parent app)](feature-catalog.md) · [Coverage matrix](../reverse-engineering/COVERAGE.md) · [Field guide](../reverse-engineering/FIELD-GUIDE.md) · [Docs index](../README.md)
+📖 [Feature catalog (parent app)](feature-catalog.md) · [Exploration map](../reverse-engineering/EXPLORATION-MAP.md) · [Field guide](../reverse-engineering/FIELD-GUIDE.md) · [Docs index](../README.md)

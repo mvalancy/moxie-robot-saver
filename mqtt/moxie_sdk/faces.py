@@ -7,7 +7,7 @@ selection into the pushed `RobotCloudConfig`; the console picks from `face_catal
 **Carrier.** `RobotCloudConfig.child_pii.face_options` — `repeated string face_options = 17`
 on `ChildDecrypted` (recovered Cloud.proto:166; proto-catalog.md:334). A list of layer
 labels, composited on the robot. It is clear metadata, not a sealed field
-(device-config-and-telemetry.md:52-54), so a server fills it in directly.
+(device-config-and-telemetry.md:44), so a server fills it in directly.
 
 **Slots.** The 14 `MoxieCustomizationType` slots (runtime/unity-face-animation.md:34-42),
 in `SLOT_SPINE` order.

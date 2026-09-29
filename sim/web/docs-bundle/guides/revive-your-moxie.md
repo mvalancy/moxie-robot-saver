@@ -122,7 +122,7 @@ TLS, so **no QR or DNS trick can relocate them** — they need new firmware.
 
 > **Still open (bench work):** whether the `LOAD` button and a USB port are reachable **without**
 > opening the shell — that would make pre-801 revival no-disassembly too. Tracked in
-> [`COVERAGE.md`](../reverse-engineering/COVERAGE.md).
+> [`EXPLORATION-MAP.md`](../reverse-engineering/EXPLORATION-MAP.md#open-items-need-a-bench-unit-or-an-external-artifact).
 
 ---
 

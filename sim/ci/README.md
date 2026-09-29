@@ -1,216 +1,66 @@
-# `sim/ci/` — GitHub Actions workflow templates (+ the live-tier helper)
+# ⚙️ `sim/ci/` — CI workflow templates
 
-These are the **source of truth** for our CI, mirrored to the installed copies under
-`.github/workflows/`. **Edit the file here, then sync in the SAME commit** — the two must stay
-byte-identical or `sim/tests/test_ci_workflows.py` reddens, which is why a workflow change must
-never be split across commits that could be dropped separately.
+The source of truth for our GitHub Actions workflows, plus the voice fetcher the live voice tier uses.
 
-> **The session token CAN push `.github/workflows/` (verified 2026-09-03, PR #79).** This note
-> used to say it lacked `workflow` scope and that the owner copied the files across by hand.
-> That stopped being true, and the stale claim cost real work: an agent isolated a workflow
-> commit so it could be dropped whole, and a later one flagged its CI edit as unpushable. Treat
-> CI tier changes as ordinary work. Verify after pushing with
-> `git diff --quiet origin/<branch>:sim/ci/<file>.yml origin/<branch>:.github/workflows/<file>.yml`.
-
-```sh
-cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml sim/ci/deployed.yml sim/ci/promotion.yml sim/ci/cleanup.yml .github/workflows/
-```
+## Files
 
 | File | Tier | Trigger | What it proves |
 |---|---|---|---|
-| **`ci.yml`** | fast (dev) | push `dev`, PR → `dev` | doc/protocol guards, SIL smoke, the hermetic unit/cloud suite (~5 min) |
-| **`ci-deep.yml`** | deep (main) + HIL | PR → `main`, **manual dispatch** | everything above, plus the packaged build, the compose stack, and the **live tiers** below |
-| **`release.yml`** | release | tag `v*` | sdist+wheel, version==tag, GitHub Release |
-| **`deployed.yml`** | monitor | **schedule** (4×/day) + manual dispatch | the LIVE deployment in a real phone-sized browser: the composer is reachable without opening the rail, and Cloudflare's injected analytics beacon loads with zero CSP violations |
-| **`promotion.yml`** | monitor | **schedule** (hourly, :37) + manual dispatch | the last `dev → main` promotion was **finished**: `dev` is not left behind `main`. Promotion PRs exist only at owner-approved major milestones. See below |
-| **`cleanup.yml`** | cleanup | PR close | deletes only that closed PR's cache namespace; branch caches remain reusable |
+| [`ci.yml`](ci.yml) | fast (dev) | push `dev`, PR → `dev` | doc/protocol guards, the hermetic pytest suite, SIL smoke + scenarios, Pages Functions tests, and the headless-Chrome browser suites |
+| [`ci-deep.yml`](ci-deep.yml) | deep (main) + HIL | PR → `main`, nightly 03:17 UTC, manual dispatch | the above, plus the SDK package build, the compose stack, a multi-arch build, the soak, and (dispatch only) the live tiers |
+| [`release.yml`](release.yml) | release | tag `v*` | sdist + wheel, version == tag, GitHub Release |
+| [`deployed.yml`](deployed.yml) | monitor | 4×/day (`23 2,8,14,20 * * *`) + dispatch | the live deployment in a phone-sized browser: composer reachable with the rail shut, Cloudflare's injected beacon loads with zero CSP violations; a dispatch-only mic job |
+| [`promotion.yml`](promotion.yml) | monitor | hourly at :37 + dispatch | the last `dev → main` promotion was finished (`dev` is not behind `main`) |
+| [`cleanup.yml`](cleanup.yml) | cleanup | PR closed | deletes that PR's cache namespace only |
+| [`fetch_piper_voices.py`](fetch_piper_voices.py) | helper | — | fetches the two Piper voices (Amy, Lessac) pinned to `rhasspy/piper-voices` `v1.0.0`, sha256 + size verified, idempotent, stdlib only |
 
-## What the fast tier's `sil` job actually runs (measured 2026-09-04)
-
-Recorded because it was assumed twice and is cheap to check:
-
-| Step | Selection | Collected |
-|---|---|---|
-| *Hermetic pytest, EARLY* | `-k "not test_sil and not test_docs" --ignore=test_live_gateway.py` | **5,077** |
-| *SIL + static-site pytest/Playwright suite* | `pytest sim/tests -q` (unfiltered) | **5,187** |
-
-So the job runs the hermetic suite **twice**, and the second run re-executes 5,077 tests
-to reach exactly **110 new ones**: the 106 `test_sil*` / `test_docs*` tests the `-k`
-deselects, plus the 4 in `test_live_gateway.py` the `--ignore` drops. Every browser-backed
-*pytest* test in the repo — the ones taking conftest's `page` / `browser` fixtures, i.e.
-`test_sil.py` and `test_sil_child_voice.py` — is inside those 106, so splitting the job on
-that line is mechanically available.
-
-**It is deliberately not split.** The duplication is real waste, but it is not free to
-remove: `sim/tests/test_ci_workflows.py::test_the_fast_tier_runs_the_whole_pytest_suite`
-requires one *unfiltered* fast-tier invocation, and it was written after the #43–#46
-post-mortem precisely to forbid a `-k`-filtered tier. What it defends is that somewhere in
-the tier every test runs under the fullest dependency set, which is what turns a future
-`importorskip` into a red rather than a skip. The two intermittent reds this measurement
-was taken for turned out to be latent races (see the `test_sil_handshake.py` and
-`test_clean_shutdown.py` docstrings) and were fixed at the source, so paying a proven
-invariant for ~2 minutes would be buying nothing.
-
-## `deployed.yml` — the only tier that looks at a real deployment
-
-Every other suite here tests a **local** server. `deployed.yml` runs
-[`sim/check_deployed.mjs`](../check_deployed.mjs) against the deployed artifact, because the
-deployed artifact genuinely differs from the local one: **Cloudflare Pages injects its Web
-Analytics beacon into every HTML response** — a `static.cloudflareinsights.com` script tag this
-repo does not write and cannot edit — and the first CSP we shipped refused it on every
-production page load. Nothing local could have seen that. See the long note in
-[`sim/web/_headers`](../web/_headers).
+## Install and run
 
 ```sh
-node sim/check_deployed.mjs                    # the canonical origin in sim/web/index.html, + /sim
-node sim/check_deployed.mjs https://host/sim   # any deployment; or MOXIE_DEPLOYED_URL=…
-node sim/check_deployed.mjs --selftest         # hermetic; the fast tier runs this on every push
-gh workflow run deployed.yml -f url=https://feat-x.<project>.pages.dev/sim
+# templates → installed copies, in the SAME commit (sim/tests/test_ci_workflows.py asserts byte-identity)
+cp sim/ci/{ci,ci-deep,release,deployed,promotion,cleanup}.yml .github/workflows/
+
+gh workflow run ci-deep.yml --ref dev                  # live gateway tier (creds only)
+gh workflow run ci-deep.yml --ref dev -f voice=true    # + live voice tier (real Piper ⇄ real Whisper)
+gh workflow run ci-deep.yml -f soak_profile=week       # soak profile: quick (default) · smoke · week (nightly)
+gh workflow run deployed.yml -f url=https://<branch>.<project>.pages.dev/sim
+gh workflow run deployed.yml -f mic=dry                     # free: button, getUserMedia, encoded WAV
+gh workflow run deployed.yml -f mic=spend -f mic_budget=5   # real: ~3 gateway calls
+gh workflow run promotion.yml -f grace_seconds=0            # check now, no post-squash grace
+
+node sim/check_deployed.mjs [URL] | --selftest      # also MOXIE_DEPLOYED_URL; the fast tier runs --selftest
+node sim/check_hosted_mic.mjs --selftest            # hermetic; the fast tier runs this
+python3 sim/tools/check_promotion_state.py          # 0 finished · 1 unfinished · 2 could not measure
+python3 sim/ci/fetch_piper_voices.py [--dest DIR] [--check] [--force]   # also MOXIE_VOICES_DIR
 ```
 
-**It is a monitor, not a merge gate, and that is a decision rather than an omission.** Gating
-each PR on its own Pages preview was investigated and rejected on measurements: this repo's
-Pages integration creates **no GitHub Deployment** (`gh api …/deployments` → `[]`), so
-`on: deployment_status` can never fire; a branch alias **404s before its first build** and
-serves the *previous* build after, so a push-time job tests the wrong artifact; a fork PR gets
-no preview at all; and no `*.pages.dev` host carries the beacon (23,425 bytes on every preview
-against 23,792 on the custom domain), so the half that matters is untestable there anyway. The
-full argument, with the numbers, is in the header of `sim/ci/deployed.yml`.
+## Gotchas
 
-What *does* gate every push is `--selftest`, in the fast tier's `browser` job: the unmutated
-tree must pass every clause, and three mutated copies of `sim/web` must each redden a
-**different** one. It is a check on the checker, so a scheduled run cannot become a green light
-for an instrument that quietly stopped working.
-
-### The microphone job in the same file — dispatch only, and off the schedule
-
-`deployed.yml` also carries [`sim/check_hosted_mic.mjs`](../check_hosted_mic.mjs), which plays a
-real voice into Chrome's **fake microphone** and lets the page do what a visitor's press does.
-It is a **separate job**, `workflow_dispatch` only, and `mic: dry` by default:
-
-```sh
-gh workflow run deployed.yml -f mic=dry                    # free: the button, getUserMedia, the WAV
-gh workflow run deployed.yml -f mic=spend -f mic_budget=5  # the real thing: ~3 gateway calls
-node sim/check_hosted_mic.mjs --selftest                   # hermetic; the fast tier runs this
-```
-
-**It is not on the schedule above, and that is the judgement.** The beacon check is free, so
-running it four times a day costs nothing and catches a regression that reached production
-between promotions. This one is not free: four runs a day is ~4,400 transcriptions, chats and
-syntheses a year out of the budget the whole public demo shares, and the failure it would catch
-— the gateway's ears stopped answering — is already caught at no cost by
-[`test_live_hosted_ears.py`](../tests/test_live_hosted_ears.py) wherever a gateway is
-configured. A monitor that eats the thing it monitors is not a monitor. `mic: dry` exists so
-the *free* half — the composer, the permission grant, `mic.js::encodeWav`, and that the
-uploaded audio really is the audio played — can be re-checked against a live deployment as
-often as anyone likes.
-
-**What `--selftest` in the fast tier claims, and what it does not.** It proves the composer is
-reachable with the rail shut, that `getUserMedia` opens a device on a real page, that
-`wavCapture` + `encodeWav` produce a 16 kHz mono RIFF/WAVE the *server's own* reader accepts,
-that the capture is audible rather than silence, that **the audio uploaded is the clip that was
-played** rather than a different one, and that nothing fires a CSP violation. It does **not**
-prove recording *fidelity*, and that exclusion is deliberate: this tier reddened once on exactly
-that (run 34013443378) because **the runner's own microphone capture saturates** — `peak 1.0000`
-in three of four cases, which flattens an amplitude envelope. The rewrite to a chunked log-RMS
-**vote** survived that on the runner; then run 101437894164 showed something worse than a red —
-the mutant that plays a **different clip PASSED at 71 %**, a false green on the one case that
-proves the audio is the right audio. Handed the fixtures directly the scorer separates them
-100 %/0 %, so it is the runner's *capture* that cannot carry the statistic, and no model
-reproduced it. **Both browser-capture statistics — identity and fidelity — are therefore
-asserted only by `--dry-run` and the paid run** and printed here. The push gate is deterministic
-instead: a **scorer proof** over the committed fixtures (the decoy must lose), a **degradation
-gauntlet** over the looped fixture, and **silence** through a real capture reddening the audible
-clause. It also runs no ASR:
-the transcript is a fixture, so nothing here says the ears work. The
-[deployed-check section](../../docs/architecture/sil-and-cicd.md#the-audio-clause-is-an-ordering-not-a-magnitude-and-that-is-a-scar)
-carries the measurements.
-
-## The live tiers in `ci-deep.yml`
-
-Everything else in CI is hermetic. Two steps are not, and both are **`workflow_dispatch`
-only** — never on a PR. That guard is deliberate twice over: GitHub withholds secrets from
-fork PRs anyway, and **a dispatch spends real gateway calls**, so it stays a thing a human
-asks for rather than something every push pays for.
-
-```sh
-gh workflow run ci-deep.yml --ref dev                  # creds-only live tier
-gh workflow run ci-deep.yml --ref dev -f voice=true    # + the live VOICE tier
-```
-
-- **Live gateway tier** (always, on dispatch) — `test_live_gateway.py`,
-  `test_live_action_tags.py` and `test_live_content_e2e.py` in one `pytest -q -ra` run,
-  against the real LiteLLM gateway via the `MOXIE_LLM_API_KEY` / `MOXIE_LLM_BASE_URL` /
-  `MOXIE_LLM_MODEL` repo secrets. About a dozen (**≈12–13**) real completions per dispatch.
-- **Live voice tier** (`-f voice=true`) — `test_live_talk_e2e.py`: real Piper speech in,
-  real Piper speech out, read back by real faster-whisper. Installs `piper-tts`,
-  `faster-whisper`, `numpy` and fetches the two voices (below); **~1 completion**.
-
-### Why both steps *fail* instead of skipping
-
-Every live test is written to **skip** cleanly without credentials — correct for the
-hermetic tier, and exactly wrong on a dispatch: a run where the secret is empty, or where
-piper/whisper/the voices never loaded, would report a green "live" job that proved nothing.
-So the creds step fails when `MOXIE_LLM_API_KEY` is empty, and the voice step fails unless
-at least **3 of its 4 tests actually passed** (only the live-brain one may legitimately skip,
-when the gateway degrades to its canned fallback). Both write a counts + skip-reason block to
-the job summary, so "what did this dispatch really run" is answerable without opening logs.
-
-## `fetch_piper_voices.py`
-
-`sim/tts/voices/*.onnx` is git-ignored (63 MB per voice), so a runner — like a fresh clone or
-a `git worktree` — has neither, and the voice tier would skip. This fetches them:
-
-- **pinned** to the `v1.0.0` tag of the official `rhasspy/piper-voices` repository, never a
-  moving branch (a changed voice would silently move the acceptance thresholds in
-  `test_live_talk_e2e.py`);
-- **sha256- and size-verified**, downloading via a `.part` file so an interrupt cannot leave a
-  truncated model that a later run treats as cached;
-- **idempotent** — an already-correct file is never re-downloaded, so a warm `actions/cache`
-  hit (keyed on that same pinned release) costs nothing, and so does running it in a checkout
-  that already has the voices;
-- **stdlib only**, so it runs before any `pip install`.
-
-```sh
-python3 sim/ci/fetch_piper_voices.py            # into sim/tts/voices/
-python3 sim/ci/fetch_piper_voices.py --check    # verify only; exit 1 if anything is missing
-```
+- **Two copies, one commit.** Edit here, `cp` to `.github/workflows/`, commit both together. The gh
+  OAuth token may lack `workflow` scope; pushing over SSH works. Verify after a push with
+  `git diff --quiet origin/<branch>:sim/ci/<f>.yml origin/<branch>:.github/workflows/<f>.yml`.
+- **The fast tier runs pytest twice on purpose**: an early `-k "not test_sil and not test_docs"` pass
+  (fails fast, before the browser install) and one unfiltered pass.
+  `test_ci_workflows.py::test_the_fast_tier_runs_the_whole_pytest_suite` requires the unfiltered
+  run, so a future `importorskip` reddens instead of skipping. Dependencies come from
+  `sim/tests/requirements-hermetic.txt` (+ playwright in `requirements.txt`), not from the YAML.
+- **Live tiers are `workflow_dispatch` only** — they spend real gateway calls and fork PRs get no
+  secrets. They use the `MOXIE_LLM_API_KEY` / `MOXIE_LLM_BASE_URL` / `MOXIE_LLM_MODEL` secrets. They
+  **fail rather than skip**: the creds step fails on an empty key, and the voice step needs 3 of its
+  4 tests to actually pass. Both write counts and skip reasons to the job summary.
+- **`deployed.yml` is a monitor, not a merge gate.** The Pages integration creates no GitHub
+  Deployment (so `deployment_status` never fires), branch aliases 404 before their first build, fork
+  PRs get no preview, and no `*.pages.dev` host carries the analytics beacon. The full argument is in
+  the file's header.
+- **The mic job is off the schedule** because each spend run costs gateway calls out of the shared
+  demo budget; `test_live_hosted_ears.py` already covers the ears wherever a gateway is configured.
+  The runner's mic capture saturates, so recording identity and fidelity are checked only by
+  `--dry-run` and the paid run; the push gate uses a scorer proof over committed fixtures instead.
+- **Why promotion is a schedule, not a fast-tier step**: the defect is a missing reconcile push, so
+  there is no push to trigger on. Squash-merging `dev → main` leaves `dev` one commit behind; the
+  check forgives 30 minutes after `main`'s tip (observed reconcile gap: 11–990 s). Its teeth live in
+  `sim/tests/test_promotion_guard.py`. The corrected order is in [`RELEASING.md`](../../RELEASING.md).
+- Piper `.onnx` voices (63 MB each) are git-ignored; CI caches them keyed on the pinned release.
 
 ---
-📖 [Releases & CI tiers](../../RELEASING.md) · [SIL & CI/CD](../../docs/architecture/sil-and-cicd.md) · [The test suites](../tests/README.md)
-
-## `promotion.yml` — the ancestry step `gh pr merge` will not do for you
-
-Squash-merging a milestone `dev → main` PR leaves `dev` **one commit behind `main`** (the squash
-is a commit `dev` has never seen). That is invisible from the merge output and nothing goes red —
-the damage surfaces later when a feature branches from stale ancestry or the next promotion conflicts.
-
-Measured 2026-09-06: **missed after five of the last seven promotions** (#174, #177, #190, #191,
-#197) by **three different actors**, while already written down in four places
-([`RELEASING.md`](../../RELEASING.md), playbook rule 29, and the status log).
-Prose was not the fix. This is, and it adds no fifth explanation —
-[`sim/tools/check_promotion_state.py`](../tools/check_promotion_state.py) points back at
-`RELEASING.md`, which carries the corrected order.
-
-```sh
-python3 sim/tools/check_promotion_state.py        # locally: 0 finished · 1 unfinished · 2 could not measure
-gh workflow run promotion.yml                     # the same, in CI, on demand
-gh workflow run promotion.yml -f grace_seconds=0  # ignore the post-squash window
-```
-
-**Why a schedule and not a step in the fast tier**, which is the cheaper wiring and was rejected:
-`ci.yml` fires on `push: [dev]`, and the defect *is* that the reconcile push never happened — so in
-exactly the state we want caught there is no push. It would fire on the next unrelated PR instead,
-reddening someone else's change for a reason unrelated to it, which is the gate-people-re-run-rather-
-than-read failure `ci.yml`'s own header records this repo paying for once (PR #125).
-
-**Why it does not cry wolf.** Between the squash and the reconcile the defect state is legitimate,
-so the condition is gated on one clock — the committer date of `main`'s tip — and forgiven for
-30 minutes. That number is measured, not chosen: across the ten promotions in this repo's history
-the reconcile followed the squash by 11s–990s (median 18s), so the grace is 1.8× the worst case
-ever seen. Worst case from squash to red is grace + cadence ≈ 90 minutes.
-
-Its teeth are asserted in the **fast tier**, not here: `sim/tests/test_promotion_guard.py` builds
-real git repositories (a branch genuinely behind its base), checks both sides of the grace edge,
-and carries negative controls that blind each measurement and require the corresponding
-verdict to flip. A red from this workflow therefore means the *repository* is in the state.
+📖 [sim](../README.md) · [SIL & CI/CD](../../docs/architecture/sil-and-cicd.md) · [Back to top](../../README.md)

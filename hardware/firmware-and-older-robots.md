@@ -38,7 +38,7 @@ RE-backed picture:
 - **Pre-801 firmware has no custom-endpoint support** (endpoint pinned to `mqtt.googleapis.com`, CA-
   validated — [`network-trust.md`](../docs/reverse-engineering/protocol/network-trust.md)), so software re-home
   isn't available; those units need the **flash path** (Tier 2/3), ideally without teardown if the
-  Macro-button→rockusb + a reachable USB port pan out (open bench item, [`COVERAGE.md`](../docs/reverse-engineering/COVERAGE.md)).
+  Macro-button→rockusb + a reachable USB port pan out (open bench item, [`EXPLORATION-MAP.md`](../docs/reverse-engineering/EXPLORATION-MAP.md#open-items-need-a-bench-unit-or-an-external-artifact)).
 
 ## In-scope research directions
 - **Macro-button → bootrom-download** mapping + USB-port reachability — the potential **no-teardown**

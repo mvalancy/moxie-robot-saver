@@ -1,18 +1,20 @@
 # 🔄 OTA & recovery — can a robot be upgraded without opening it? (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
-> **The hard question for reviving old robots.** A pre-801 Moxie (Google-IoT firmware) is stranded:
-> its cloud is dead, so it never gets told to update. Can we upgrade it to 803 (or push custom
-> software) **without mechanical disassembly**? This doc lays out the update machinery honestly —
-> what's software-only, and where opening the shell still appears unavoidable. Reconstructed from
-> `OSUpdate.apk`, `me.embodied.services.BoUpdater`, the A/B fstab, and the update_engine keys.
+A pre-801 Moxie (Google-IoT firmware) is stranded: its cloud is dead, so it is never told to update.
+This page maps the update machinery to answer whether it can be upgraded to 803, or given custom
+software, **without disassembly**.
+- OTA is stock Android **A/B `update_engine`**, staged from internal `/sdcard` and applied by `OSUpdate`.
+- Every path that installs code (OTA payload, recovery sideload) is **signature-gated** by Embodied keys.
+- **No no-open route is confirmed for pre-801.** The reliable route is open + flash
+  ([flashing runbook](flashing-runbook.md)), which is in scope.
 
-## How OTA actually works (803 firmware)
+Sources: `OSUpdate.apk`, `me.embodied.services.BoUpdater`, the A/B fstab, the `update_engine` keys.
 
-Moxie uses **stock Android A/B seamless updates** (`update_engine`), staged from **internal storage**:
+## How OTA works (803 firmware)
 
 ```mermaid
 flowchart LR
-  cloud["☁️ cloud"] -->|image + version| dl["brain downloads to<br/>/sdcard/EmbodiedData/otaImages/"]
+  cloud["cloud"] -->|image + version| dl["brain downloads to<br/>/sdcard/EmbodiedData/otaImages/"]
   dl --> info["otaInfo.txt<br/>(target + min version)"]
   info --> bu["BoUpdater service<br/>(gates, disk budget)"]
   bu --> osu["OSUpdate<br/>UpdateEngine.applyPayload()"]
@@ -24,104 +26,84 @@ flowchart LR
 
 - **Staging area:** `/sdcard/EmbodiedData/otaImages/` + `otaInfo.txt` (target version, minimum-OTA
   version), `otaLog.txt`, and a `DISABLE_OTA` sentinel file. `BoUpdater` enforces a min-version gate
-  (can refuse downgrades) and a ~200 MB data-overage budget.
+  (can refuse downgrades) and a ~200 MB data-overage budget. It runs even in the setup/config state
+  ([boot-and-launcher](boot-and-launcher.md#two-facts-that-matter-for-revival)).
 - **`/sdcard` is internal emulated storage** (`export EXTERNAL_STORAGE /sdcard`; `/mnt/shell/emulated`
-  → `/data/media`), **not** the removable microSD. So "put a file on /sdcard" means internal storage,
-  reachable by the robot's own downloader, by ADB/MTP, or by an app — *not* by popping a card.
+  → `/data/media`), **not** removable microSD. It is reachable by the robot's downloader, ADB/MTP, or an app.
 - **Applier:** `OSUpdate` (`com.embodied.osupdate`) waits for **`/sdcard/update.zip`**, unpacks
   `payload.bin` + `payload_properties.txt`, and calls `android.os.UpdateEngine.applyPayload(
-  "file:///sdcard/osupdate-tmp/payload.bin", …)`. update_engine writes the **inactive** A/B slot and
-  `bootctl` switches to it on reboot. No partitions are touched in place; a bad update rolls back.
+  "file:///sdcard/osupdate-tmp/payload.bin", …)`. `update_engine` writes the **inactive** A/B slot and
+  `bootctl` switches to it on reboot. Nothing is touched in place; a bad update rolls back.
 
 ## Recovery mode (sideload)
 
-The `boot.img` ramdisk is **recovery-capable** (recovery-as-boot): it carries `/sbin/recovery`
-(1.68 MB, the AOSP recovery) and `/sbin/adbd` run with a **root seclabel**
-(`--root_seclabel=u:r:su:s0 --device_banner=recovery`). The recovery menu includes:
+`boot.img` is **recovery-as-boot**: its ramdisk carries `/sbin/recovery` (1.68 MB, AOSP recovery) and
+`/sbin/adbd` with a **root seclabel** (`--root_seclabel=u:r:su:s0 --device_banner=recovery`). The menu
+offers **Apply update from ADB** (`adb sideload <package>.zip`), **Apply update from SD card**, and
+wipe data / factory reset.
 
-- **Apply update from ADB** → `adb sideload <package>.zip`
-- **Apply update from SD card** → reads a package from removable storage
-- Wipe data / factory reset
-
-**Entry** is via the **BCB** (bootloader control block on the `misc` partition — recovery mounts
-`/dev/block/by-name/misc`): the string `boot-recovery` there tells the bootloader to boot recovery.
-That's set by `reboot recovery` (needs a shell) or by the bootloader on a key combo — and Moxie's
-only inputs are **Power + Macro** ([`device-tree.md`](../hardware/device-tree.md)), so any combo route uses those
-two (a bench hypothesis to confirm).
+**Entry** is via the **BCB** (bootloader control block) on the `misc` partition (recovery mounts
+`/dev/block/by-name/misc`): the string `boot-recovery` there makes the bootloader boot recovery. That is
+set by `reboot recovery` (needs a shell) or by a key held at power-on. Moxie's only external inputs are
+**Power + Macro** ([device-tree](../hardware/device-tree.md#inputs-controls)), so the key route is a bench
+experiment ([hardware-access](../hardware/hardware-access.md#boot-mode-entry-reboot-reasons-keys)).
 
 **Storage recovery can read** (`/etc/recovery.fstab`): a **USB drive** (vfat, `voldmanaged=usb`) and an
-**SD card** — the SoC's `dwmmc@ff0c0000` (mshc1/sdmmc) controller is present with card-detect, so an
-**SD slot exists** (whether it's externally reachable without opening is a hardware question).
+**SD card** via the SoC's `dwmmc@ff0c0000` (mshc1/sdmmc) controller with card-detect. So an SD slot
+exists; whether it is reachable without opening is a hardware question.
 
-### The catch: recovery verifies the package signature
-Recovery checks the package's whole-file signature against the OTA cert store
-(`/system/etc/security/otacerts.zip` = Embodied's `releasekey`) — strings `Signature verification
-failed` / `failed to verify whole-file signature`. So both **ADB sideload and SD-card update require a
-genuine Embodied-signed OTA** (which we don't have), **unless** you first replace `otacerts.zip` /
-the recovery image — which needs `/system` write or a reflash (Tier-3, [`hardware-access.md`](../hardware/hardware-access.md)).
-No `/adb_keys` is baked into the recovery ramdisk, so the sideload adbd's auth relies on
-`/data/misc/adb/adb_keys` (or the minadbd sideload path) — untested on hardware.
+**The catch: recovery verifies the package signature.** It checks the whole-file signature against
+`/system/etc/security/otacerts.zip` (Embodied's `releasekey`); strings `Signature verification failed` /
+`failed to verify whole-file signature`. Both ADB sideload and SD-card update therefore need a
+**genuine Embodied-signed OTA**, unless `otacerts.zip`/recovery is replaced first (needs `/system` write
+or a reflash). No `/adb_keys` is baked into the recovery ramdisk, so sideload-adbd auth relies on
+`/data/misc/adb/adb_keys` or the minadbd sideload path (untested on hardware).
 
-**Net for revival:** recovery gives a **low-open** apply path (SD card or USB, no full teardown) — the
-closest thing to a "put a file in and reboot" fix — **but it's gated on a signed OTA**. Sourcing a
-genuine signed 803 `update.zip` would unlock it; otherwise it's Tier-3 (open + flash + resign).
+## The signing gate
 
-## The signing gate (this is what stops arbitrary custom firmware)
+`update_engine` verifies every payload against a baked-in key:
 
-`update_engine` verifies every payload against a baked-in public key:
+- `/system/etc/update_engine/update-payload-key.pub.pem`: 2048-bit RSA. Only payloads signed by the
+  matching private key apply. It is described in [`../phone/keys/`](../phone/keys/README.md); the `.pem`
+  itself is not committed in this tree.
+- `/system/etc/security/otacerts.zip` → `releasekey.x509.pem`: the recovery-sideload OTA cert.
 
-- `/system/etc/update_engine/update-payload-key.pub.pem` — 2048-bit RSA (recovered; committed under
-  `keys/` for reference). Only payloads signed by the matching **private** key apply.
-- `/system/etc/security/otacerts.zip` → `releasekey.x509.pem` — the recovery-sideload OTA cert.
+So a **genuine Embodied-signed** OTA (e.g. the real 803 `update.zip`) applies to any robot whose
+`update_engine` trusts that key, with no disassembly, if the file reaches `/sdcard` and OSUpdate is
+triggered. A **self-built** payload cannot apply until `update-payload-key.pub.pem` is replaced, which
+needs `/system` write access first. The first foothold must come from a genuine signed image or from
+flashing. After that, swap in your own key and sign your own payloads normally.
 
-**Implications:**
-- You can apply a **genuine Embodied-signed** OTA (e.g. the real 803 `update.zip`) to any robot whose
-  update_engine trusts that key — no disassembly, if you can get the file onto `/sdcard` and trigger
-  OSUpdate.
-- You **cannot** apply a self-built custom payload until you replace `update-payload-key.pub.pem`,
-  which requires already having write access to `/system` (or an unlocked bootloader). Chicken-and-egg
-  — the first foothold has to come from a genuine signed image or from flashing.
+## Tier-1 (no-disassembly) vectors
 
-## Tier-1 (no-disassembly) vectors — honest status
-
-> These are the **first-tier, no-open** options (best for a non-technical owner). When they're
-> exhausted for a given robot we move to Tier-2/3 — external USB/UART and full teardown/flashing —
-> which are **planned and fully in scope** (see [`hardware-access.md`](../hardware/hardware-access.md)).
+Tier 1 is the no-open option set for non-technical owners. Tier 2/3 (external USB/UART, full teardown)
+is in [hardware-access](../hardware/hardware-access.md).
 
 | Vector | Needs opening? | Status |
 |---|---|---|
-| **QR re-home** (`endpoint_update` → OPEN_MOXIE/EMBODIED_LOCAL) | ❌ no | ✅ Works on **803 / 801+** — the endpoints exist in firmware. Redirects the cloud; does **not** upgrade firmware or run custom code on-device. See [`qr-commands.md`](../protocol/qr-commands.md). |
-| **QR re-home on pre-801** | ❌ no | ❌ **Does not work.** Pre-801 **hardcodes** the endpoint to `mqtt.googleapis.com` (CA-validated TLS, not pinned — see [`network-trust.md`](../protocol/network-trust.md)); QR can't relocate it (see [`../debugging/live-hardware-debug.md`](../../debugging/live-hardware-debug.md)). |
-| **Serve a genuine signed OTA** to a robot we control the network of | ❌ no | ⚠️ Plausible on 801+ (point it at our server via QR, serve the real `update.zip`). Blocked on pre-801 because we can't get it to connect to us (hardcoded hostname + no trusted cert for it; see [`network-trust.md`](../protocol/network-trust.md)). **Also needs a genuine signed 803 `update.zip`, which we do not currently have** (we have raw partition images, not a signed payload). |
-| **ADB push `update.zip` + launch OSUpdate** | ❔ depends on an externally reachable USB port | ⚠️ `ro.adb.secure=1`, `ro.debuggable=0`: ADB needs an authorized key, and first-auth needs an on-screen "allow" the projector face can't show. Recovery-mode ADB sideload bypasses that auth but needs a button combo (unknown for Moxie) — **and reaching the port may itself require opening the shell.** |
-| **MTP copy `update.zip` + launch OSUpdate** | ❔ depends on a reachable USB port | ⚠️ The USB gadget offers **MTP** (`persist.sys.usb.config=mtp,adb`), which needs **no adb authorization** — a host could copy a file to `/sdcard` over MTP. But you still must *launch* `com.embodied.osupdate` (needs adb/an app/an intent), and the port may be internal. Promising *if* a port is reachable. |
-| **Rockchip maskrom + `rkdeveloptool`** | ✅ **yes (planned Tier-3)** | ✅ **Always works** — the reliable pre-801 path and the route to custom firmware. Needs teardown + USB; fully in scope. See [`hardware-access.md`](../hardware/hardware-access.md). |
+| **QR re-home** (`endpoint_update` → OPEN_MOXIE/EMBODIED_LOCAL) | no | **Works on 803 / 801+**. Redirects the cloud; does not upgrade firmware or run code on-device ([qr-commands](../protocol/qr-commands.md)) |
+| **QR re-home on pre-801** | no | **Does not work.** Pre-801 hardcodes `mqtt.googleapis.com` (CA-validated TLS, not pinned, [network-trust](../protocol/network-trust.md)); QR can't relocate it ([live-hardware-debug](../../debugging/live-hardware-debug.md)) |
+| **Serve a genuine signed OTA** from a network we control | no | Plausible on 801+ (re-home via QR, serve the real `update.zip`). Blocked on pre-801 (can't make it connect to us). **Also needs a genuine signed 803 `update.zip`, which we don't have** (we have partition images, not a payload) |
+| **ADB push `update.zip` + launch OSUpdate** | depends on a reachable USB port | `ro.adb.secure=1`, `ro.debuggable=0`: needs an authorized key, and first auth needs an on-screen "allow" the projector can't show. Recovery sideload bypasses auth but needs a key combo and a signed package |
+| **MTP copy `update.zip` + launch OSUpdate** | depends on a reachable USB port | The gadget offers **MTP** (`persist.sys.usb.config=mtp,adb`), which needs **no adb authorization**. Something must still launch `com.embodied.osupdate`, and the port may be internal |
+| **Rockchip maskrom/rockusb + `rkdeveloptool`** | yes (Tier 3) | **Always works.** The reliable pre-801 path and the route to custom firmware ([runbook](flashing-runbook.md)) |
 
 ## Where this leaves pre-801 revival
 
-**No *no-open* path found, as of this analysis — so the route is Tier-3 (open + flash), which works and is in scope** ([`hardware-access.md`](../hardware/hardware-access.md)). The blockers that rule out a purely-over-the-air fix:
-1. Pre-801 won't relocate off Google's dead cloud (hardcoded hostname; cert CA-validated, not pinned) → we can't reach it over the
-   network to hand it an OTA.
-2. Even if we could, we'd need a genuine Embodied-signed 803 `update.zip` (not just partition images).
-3. ADB/recovery delivery hinges on an externally reachable USB port and a recovery entry method we
-   haven't confirmed on the hardware.
+Blockers to a purely over-the-air fix:
+1. Pre-801 won't relocate off Google's dead cloud (hardcoded hostname), so we can't reach it to hand it an OTA.
+2. Even then, we'd need a genuine Embodied-signed 803 `update.zip`.
+3. ADB/recovery delivery depends on a reachable USB port and a confirmed recovery-entry method.
 
-### Open leads worth chasing (tracked for the loop)
-
-- **Find Moxie's recovery key-combo / an external USB port.** If recovery ADB sideload is reachable
-  without opening, and it accepts an `otacerts`-signed package, that's a clean no-open upgrade.
-- **Source a genuine signed 803 `update.zip`** (community mirrors / Embodied's final OTA). With one,
-  the 801+ "QR re-home → serve OTA" path becomes real.
-- **Pre-801 setup-mode behavior:** does a pre-801 unit that can't reach cloud fall into the Wifi App's
-  QR mode at all? If it accepts *any* QR (even just Wi-Fi), that's a wedge to study.
-- **Downgrade/attest quirks:** whether update_engine on pre-801 trusts the same payload key as 803
-  (if so, a signed 803 payload applies directly once delivered).
-
-## Building custom firmware (once you have a foothold)
-
-After a genuine upgrade + OEM-unlock (or a maskrom reflash), replace
-`update-payload-key.pub.pem` with your own and you can sign and OTA your own payloads normally. Full
-partition/boot/AVB details: [`firmware-image.md`](firmware-image.md).
+**Open leads:**
+- Find Moxie's recovery key combo / an external USB port. Recovery sideload of an `otacerts`-signed
+  package would be a clean no-open upgrade.
+- Source a genuine signed 803 `update.zip` (community mirrors / Embodied's final OTA). That makes the
+  801+ "QR re-home → serve OTA" path real.
+- Does a pre-801 unit that can't reach its cloud fall into the Wifi App's QR mode, and does it accept any QR?
+- Does pre-801 `update_engine` trust the same payload key as 803? If so, a signed 803 payload applies directly.
+- The download-mode button path (`LOAD` on the mainboard, possibly Macro): unsigned flashing with just
+  USB + a button ([fcc-teardown](../hardware/fcc-teardown.md#reset-load-power-on-board-buttons-major-bench-finding)).
 
 ---
 📖 [Reverse-engineering index](../README.md) · [Firmware image](firmware-image.md) · [QR commands](../protocol/qr-commands.md) · [Docs index](../../README.md)

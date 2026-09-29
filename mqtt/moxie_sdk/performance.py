@@ -161,7 +161,7 @@ class _Profile:
     signal: str = "no_signal"
 
 
-#: One row per `RemoteDialog.DialogAct` (22) — remote-chat-protocol.md:119-122.
+#: One row per `RemoteDialog.DialogAct` (22) — remote-chat-protocol.md:93.
 #: Every id here is checked against `vocab` by `validate()`; the table is not trusted.
 ACT_PROFILES: Dict[str, _Profile] = {
     # -- openers and closers: the two acts that earn a whole-body tree ---------
@@ -222,7 +222,7 @@ ACT_PROFILES: Dict[str, _Profile] = {
     "other": _Profile(),
 }
 
-#: ePlaybackMood -> `RemoteDialog.EmotionState` (remote-chat-protocol.md:123), a different
+#: ePlaybackMood -> `RemoteDialog.EmotionState` (remote-chat-protocol.md:94), a different
 #: enum from the face. Moods with no honest counterpart map to neutral.
 _EMOTION_BY_MOOD: Dict[int, str] = {
     vocab.MOODS["neutral"]: "neutral", vocab.MOODS["happy"]: "joy",

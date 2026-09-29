@@ -4,7 +4,7 @@ Round-trip test for the device config & telemetry builders in moxie_toolkit.clou
 (the embodied.logging data-model). Builds a RobotCloudConfig a server would push on
 /config, serializes + re-parses it, and round-trips a RobotStatus, a telemetry Packet,
 and a CloudStatus(UserState) the robot sends back. See
-docs/reverse-engineering/device-config-and-telemetry.md.
+docs/reverse-engineering/protocol/device-config-and-telemetry.md.
 
     python3 tools/robot-toolkit/test_config_telemetry.py
 """

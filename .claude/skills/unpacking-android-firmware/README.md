@@ -1,19 +1,12 @@
-# 🛠️ Unpacking Android firmware + first inventory
+# 🛠️ Skill: Unpacking Android firmware
 
-Acquire and unpack an Android device's firmware (OTA payload.bin or factory images) into readable partitions, and inventory its apps, native libs, init services, permissions, and device-tree. Use at the start of reverse-engineering an Android robot/appliance, or when you need a file off a system/vendor/oem/boot image.
+Acquire and unpack images (OTA payload, sparse, ext4, boot, AVB) and write the first inventory: apps, libs, init, permissions, device tree.
 
-Invoke it by name (`unpacking-android-firmware`) — it is a **shared agent skill**, so any agent working in this repo can load it instead of re-deriving the method.
+Invoke it by name: `unpacking-android-firmware`.
 
 | File | Purpose |
 |---|---|
-| [`SKILL.md`](SKILL.md) | The skill itself — instructions the agent follows. |
-
-## What it covers
-
-- Acquire the firmware
-- Unpack partitions (no mounting needed)
-- Inventory (write these down — they anchor everything)
-- Worked example (Moxie, v24.10.803)
+| [`SKILL.md`](SKILL.md) | The skill: YAML frontmatter (`name`, `description`) plus the steps the agent follows. |
 
 ---
-📖 [Skills](../README.md) · [Back to top](../../../README.md)
+📖 [Skills index](../README.md) · [Shared agents & skills](../../README.md) · [Back to top](../../../README.md)
