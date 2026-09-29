@@ -29,7 +29,8 @@ import pytest
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from moxie_sdk import store as store_mod                      # noqa: E402
-from moxie_sdk.store import JsonStore, MemoryStore, StoreLockTimeout   # noqa: E402
+from moxie_sdk.store import JsonStore, StoreLockTimeout                  # noqa: E402
+from moxie_sdk.memory_store import MemoryStore                          # noqa: E402
 
 DEVICE = "d_conc"
 COLLECTION = "safety_events"
