@@ -164,11 +164,19 @@ VOICE_MODEL    = os.environ.get("MOXIE_VOICE_MODEL", "") or "piper-amy"
 VOICE_FORMAT   = (os.environ.get("MOXIE_VOICE_FORMAT", "").strip().lower() or "wav")
 
 
-def _env_int(name, default):
+def _env_num(cast, name, default):
     try:
-        return int(os.environ.get(name) or default)
+        return cast(os.environ.get(name) or default)
     except ValueError:
-        return int(default)
+        return cast(default)
+
+
+def _env_int(name, default):
+    return _env_num(int, name, default)
+
+
+def _env_float(name, default):
+    return _env_num(float, name, default)
 
 
 # Sample rate of a raw-PCM reply (Piper renders 22050).
@@ -202,13 +210,6 @@ STT_API_KEY  = (os.environ.get("MOXIE_STT_API_KEY", "").strip()
                 or VOICE_API_KEY or LLM_API_KEY)
 # Seconds the 🎚️ picker trusts one `GET /v1/models` listing (refreshed off the turn path).
 VOICE_DISCOVERY_TTL_S = _env_int("MOXIE_VOICE_DISCOVERY_TTL_S", 300)
-
-def _env_float(name, default):
-    try:
-        return float(os.environ.get(name) or default)
-    except ValueError:
-        return float(default)
-
 
 # Seconds a turn's brain call may run before a filler line (REPLY_PENDING, chunk 0) is
 # spoken; the robot re-prompts after ~20 s of cloud silence. 0 = off.
@@ -266,8 +267,8 @@ CHILD_NICKNAME = os.environ.get("MOXIE_CHILD_NICKNAME", "friend")
 def _sdk_path():
     """Put this directory on `sys.path` so `moxie_sdk` imports. Called by the builders
     rather than at module import, which is why nothing above imports the SDK."""
-    import sys, os as _os
-    sys.path.insert(0, _os.path.dirname(__file__))
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
 
 
 def _build_echo():
@@ -381,12 +382,21 @@ def build_content_app():
     return ContentApp(module, chat, persona=DEFAULT_PERSONA, content_defaults=defaults)
 
 
+def _gateway_voice(model, piper):
+    """The gateway voice with the next rung (Piper, else tone) as its standby, so an
+    outage downgrades the voice instead of going silent. None when it cannot be built."""
+    from moxie_sdk.tts import FallbackSynthesizer, ToneSynthesizer, make_voice_synthesizer
+    voice = make_voice_synthesizer(VOICE_BASE_URL, VOICE_API_KEY, TTS_VOICE, model=model,
+                                   response_format=VOICE_FORMAT,
+                                   sample_rate=VOICE_SAMPLE_RATE)
+    return None if voice is None else FallbackSynthesizer(voice, piper or ToneSynthesizer())
+
+
 def _speech_for_choice(choice, piper):
     """The engine one 🎚️ speech choice names, or None when it cannot be built here.
     `piper` (or None) is reused as the gateway's standby."""
     from moxie_sdk import voice_settings
-    from moxie_sdk.tts import (FallbackSynthesizer, ToneSynthesizer,
-                               make_piper_synthesizer, make_voice_synthesizer)
+    from moxie_sdk.tts import ToneSynthesizer, make_piper_synthesizer
     engine, model = choice["engine"], choice["model"]
     if engine == "tone":
         return ToneSynthesizer()
@@ -397,15 +407,8 @@ def _speech_for_choice(choice, piper):
             return None
         cfg = PIPER_CONFIG if (PIPER_CONFIG and path == PIPER_MODEL) else None
         return make_piper_synthesizer(path, cfg or None)
-    if engine == "gateway":
-        if not VOICE_BASE_URL:
-            return None
-        voice = make_voice_synthesizer(VOICE_BASE_URL, VOICE_API_KEY, TTS_VOICE,
-                                       model=model, response_format=VOICE_FORMAT,
-                                       sample_rate=VOICE_SAMPLE_RATE)
-        if voice is None:
-            return None
-        return FallbackSynthesizer(voice, piper or ToneSynthesizer())
+    if engine == "gateway" and VOICE_BASE_URL:
+        return _gateway_voice(model, piper)
     return None
 
 
@@ -425,7 +428,7 @@ def build_synthesizer(override=None):
     (Piper, else tone), so an outage downgrades the voice instead of going silent.
     """
     from moxie_sdk import voice_settings
-    from moxie_sdk.tts import make_voice_synthesizer, make_piper_synthesizer
+    from moxie_sdk.tts import ToneSynthesizer, make_piper_synthesizer
     if TTS_ENGINE == "off":
         return None
     piper = make_piper_synthesizer(PIPER_MODEL, PIPER_CONFIG or None)
@@ -447,25 +450,31 @@ def build_synthesizer(override=None):
     if TTS_ENGINE in ("gateway", "openai") and not VOICE_BASE_URL:
         raise SystemExit("MOXIE_TTS=gateway but MOXIE_VOICE_BASE_URL is not set")
     if VOICE_BASE_URL:
-        from moxie_sdk.tts import FallbackSynthesizer, ToneSynthesizer
-        voice = make_voice_synthesizer(VOICE_BASE_URL, VOICE_API_KEY, TTS_VOICE,
-                                       model=VOICE_MODEL,
-                                       response_format=VOICE_FORMAT,
-                                       sample_rate=VOICE_SAMPLE_RATE)
-        return FallbackSynthesizer(voice, piper or ToneSynthesizer())
+        return _gateway_voice(VOICE_MODEL, piper)
     if piper:
         return piper
     if TTS_ENGINE == "tone":                 # built-in zero-dep voice (SIL/demo)
-        from moxie_sdk.tts import ToneSynthesizer
         return ToneSynthesizer()
     return None
+
+
+def _gateway_ears(model):
+    """The gateway transcriber with local whisper (its default model — `model` names a
+    gateway model) or a `NullTranscriber` as standby. None when it cannot be built."""
+    from moxie_sdk.stt import (FallbackTranscriber, NullTranscriber, WhisperTranscriber,
+                               make_openai_transcriber)
+    primary = make_openai_transcriber(STT_BASE_URL, STT_API_KEY, model=model)
+    if primary is None:
+        return None
+    standby = (WhisperTranscriber(model=LOCAL_STT_MODEL)
+               if WhisperTranscriber.available() else NullTranscriber())
+    return FallbackTranscriber(primary, standby)
 
 
 def _listening_for_choice(choice):
     """The ears one 🎚️ listening choice names, or None when they cannot be built here.
     `off` is handled by the caller (it is also None, with a different meaning)."""
-    from moxie_sdk.stt import (FallbackTranscriber, NullTranscriber, WhisperTranscriber,
-                               make_openai_transcriber)
+    from moxie_sdk.stt import WhisperTranscriber
     engine, model = choice["engine"], choice["model"]
     if engine == "whisper":
         # A picked LOCAL engine wins even with a gateway fully configured (owner rule).
@@ -473,13 +482,7 @@ def _listening_for_choice(choice):
             return None
         return WhisperTranscriber(model=model or LOCAL_STT_MODEL)
     if engine == "gateway":
-        primary = make_openai_transcriber(STT_BASE_URL, STT_API_KEY,
-                                          model=model or GATEWAY_STT_MODEL)
-        if primary is None:
-            return None
-        standby = (WhisperTranscriber(model=LOCAL_STT_MODEL)
-                   if WhisperTranscriber.available() else NullTranscriber())
-        return FallbackTranscriber(primary, standby)
+        return _gateway_ears(model or GATEWAY_STT_MODEL)
     return None
 
 
@@ -494,8 +497,7 @@ def build_transcriber(override=None):
     whose standby is local whisper or a `NullTranscriber`.
     """
     from moxie_sdk import voice_settings
-    from moxie_sdk.stt import (FallbackTranscriber, NullTranscriber, OpenAITranscriber,
-                               WhisperTranscriber, make_openai_transcriber)
+    from moxie_sdk.stt import OpenAITranscriber, WhisperTranscriber
     if STT_ENABLED == "off":
         return None
     choice = voice_settings.sanitize_choice(voice_settings.LISTENING, override)
@@ -520,15 +522,10 @@ def build_transcriber(override=None):
         raise SystemExit("MOXIE_STT=gateway needs the openai SDK "
                          "(pip install 'moxie-cloud-sdk[llm]') and an STT endpoint "
                          "(MOXIE_STT_BASE_URL / MOXIE_VOICE_BASE_URL / MOXIE_LLM_BASE_URL)")
-    if gateway_ok and (STT_ENABLED == "gateway" or (STT_ENABLED == "auto"
-                                                    and bool(STT_API_KEY))):
-        primary = make_openai_transcriber(STT_BASE_URL, STT_API_KEY,
-                                          model=STT_MODEL or GATEWAY_STT_MODEL)
-        if primary is not None:
-            # Standby runs the local default; STT_MODEL names a gateway model here.
-            standby = (WhisperTranscriber(model=LOCAL_STT_MODEL) if local_ok
-                       else NullTranscriber())
-            return FallbackTranscriber(primary, standby)
+    if gateway_ok and (STT_ENABLED == "gateway" or (STT_ENABLED == "auto" and STT_API_KEY)):
+        ears = _gateway_ears(STT_MODEL or GATEWAY_STT_MODEL)
+        if ears is not None:
+            return ears
     if local_ok:
         return WhisperTranscriber(model=STT_MODEL or LOCAL_STT_MODEL)
     return None

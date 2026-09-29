@@ -63,4 +63,4 @@ phone, and the **server** we run to replace the dead cloud.
 - Before committing: `python3 sim/tools/build_docs_bundle.py`, `node sim/test_docs.mjs`,
   `python3 scripts/check-doc-links.py`, `python3 scripts/check-doc-consistency.py`.
 
-Research method: [`reverse-engineering/METHODOLOGY.md`](reverse-engineering/METHODOLOGY.md).
+Research method: [`reverse-engineering/PLAYBOOK.md`](reverse-engineering/PLAYBOOK.md).

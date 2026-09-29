@@ -8,7 +8,7 @@ string a stranger can print and an action the robot performs.
 `eb-qr-event` vision event with the string in `input_vars['$eb_qr_value']`
 (vision.md:73-74), arriving as the `speech` of a `RemoteChatRequest` — hence the one
 caller, the runtime's `_on_vision_turn`. (The setup reader has a closed grammar and cannot
-launch anything: protocol/qr-commands.md:87-100.)
+launch anything: protocol/qr-commands.md:24-43.)
 
 **Payload** `GO<launch:MODULE[:CONTENT]>` is OpenMoxie's form (MIT, see ATTRIBUTION.md);
 the implementation, refusals and allowlist are ours. Decoding reuses

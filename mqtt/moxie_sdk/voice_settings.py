@@ -98,7 +98,7 @@ def make_choice(engine, model="") -> dict:
 def choice_id(choice) -> str:
     """The dropdown's `<option value>`: `gateway:piper-amy`, `piper:en_US-amy-medium`,
     `tone`, `off`. One string, so the console posts back exactly what it rendered."""
-    c = as_choice(choice) or {"engine": "", "model": ""}
+    c = parse_choice(choice) or {"engine": "", "model": ""}
     return f"{c['engine']}:{c['model']}" if c["model"] else c["engine"]
 
 
@@ -111,11 +111,6 @@ def parse_choice(value) -> Optional[dict]:
         engine, _, model = value.partition(":")
         return make_choice(engine, model)
     return None
-
-
-def as_choice(value) -> Optional[dict]:
-    """`parse_choice` for internal callers that already hold a choice-ish thing."""
-    return parse_choice(value)
 
 
 def sanitize_choice(kind: str, value) -> Optional[dict]:
@@ -166,14 +161,12 @@ def describe_choice(choice) -> str:
     The gateway form repeats the model id (two gateways may both serve an "Amy"); a
     whisper size stays verbatim.
     """
-    c = as_choice(choice)
+    c = parse_choice(choice)
     if not c or not c["engine"]:
         return ""
     engine, model = c["engine"], c["model"]
-    if engine == "tone":
-        return "Tone (built-in)"
-    if engine == "off":
-        return "Off (built-in)"
+    if engine in ("tone", "off"):
+        return f"{engine.capitalize()} (built-in)"
     if engine == "whisper":
         return f"{model or DEFAULT_STT_MODEL} (local whisper)"
     if engine == "piper":
@@ -189,7 +182,7 @@ def boot_line(kind: str, choice, *, chosen: bool, note: str = "") -> str:
 
     Says *what* is installed and *why*.
     """
-    c = as_choice(choice) or make_choice(BUILTIN_ENGINE.get(kind, "off"))
+    c = parse_choice(choice) or make_choice(BUILTIN_ENGINE.get(kind, "off"))
     what = c["model"] or c["engine"]
     why = "chosen" if chosen else "default"
     tail = f" — {note}" if note else ""
@@ -211,19 +204,19 @@ def speech_options(gateway_models: Sequence[str] = (),
 
     Input order is preserved inside each group, so entries never shuffle between loads.
     """
-    opts = [option("gateway", m) for m in gateway_models or ()]
-    opts += [option("piper", v) for v in piper_voices or ()]
-    opts.append(option("tone"))
-    return opts
+    return _options(gateway_models, "piper", piper_voices, "tone")
 
 
 def listening_options(gateway_models: Sequence[str] = (),
                       whisper_models: Sequence[str] = ()) -> List[dict]:
     """Gateway ears, then local whisper sizes, then `off` (text turns still work)."""
-    opts = [option("gateway", m) for m in gateway_models or ()]
-    opts += [option("whisper", m) for m in whisper_models or ()]
-    opts.append(option("off"))
-    return opts
+    return _options(gateway_models, "whisper", whisper_models, "off")
+
+
+def _options(gateway_models, local_engine, local_models, builtin) -> List[dict]:
+    return ([option("gateway", m) for m in gateway_models or ()]
+            + [option(local_engine, m) for m in local_models or ()]
+            + [option(builtin)])
 
 
 def build_available(gateway_ids: Sequence[str] = (), *,
@@ -280,7 +273,7 @@ def honours_pin(kind: str, choice, pin: str) -> bool:
     """Whether `choice` may be installed under `pin`. No pin ⇒ every choice may."""
     if not pin:
         return True
-    c = as_choice(choice)
+    c = parse_choice(choice)
     return bool(c) and c["engine"] == pin
 
 
@@ -413,7 +406,6 @@ def resolve_settings(stored, available: dict) -> dict:
 def read_settings(store) -> dict:
     """The stored record from `fleet/voice.json` (`{}` when none), sanitized so a bad file
     degrades to the defaults."""
-    raw = {}
     try:
         raw = store.read_shared(COLLECTION, {}) or {}
     except Exception:                       # a broken file must never stop a boot
@@ -455,24 +447,14 @@ def piper_voices(model_path: str = "", voices_dir: str = "") -> List[str]:
     File presence only; the caller must also check `PiperSynthesizer.available()`. Voices
     are git-ignored, so an empty list is normal on a fresh clone.
     """
-    names: List[str] = []
-    seen = set()
-
-    def _add(name):
-        if name and name not in seen:
-            seen.add(name)
-            names.append(name)
-
-    if model_path:
-        _add(voice_name(model_path))
+    names = [voice_name(model_path)] if model_path else []
     if voices_dir:
         try:
-            for entry in sorted(os.listdir(voices_dir)):
-                if entry.endswith(_ONNX):
-                    _add(entry[:-len(_ONNX)])
+            names += [e[:-len(_ONNX)] for e in sorted(os.listdir(voices_dir))
+                      if e.endswith(_ONNX)]
         except OSError:
             pass
-    return names
+    return list(dict.fromkeys(n for n in names if n))
 
 
 def piper_voice_path(name: str, model_path: str = "", voices_dir: str = "") -> str:

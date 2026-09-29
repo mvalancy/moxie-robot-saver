@@ -21,7 +21,8 @@ from moxie_sdk.content import ext as E
 from moxie_sdk.content import packs as P
 from moxie_sdk.content import render as R
 from moxie_sdk.content.volley import Volley, Session
-from moxie_sdk.store import JsonStore, MemoryStore
+from moxie_sdk.store import JsonStore
+from moxie_sdk.memory_store import MemoryStore
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 

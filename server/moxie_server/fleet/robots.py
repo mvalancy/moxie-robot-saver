@@ -134,7 +134,7 @@ def normalize_fleet(snapshot: Optional[dict]) -> dict:
 #                no acknowledgement exists in the corpus.
 #   reboot     → unsupported: no cloud→robot reboot command is recovered (see below).
 #   ota_status → real data, honest verdict: the appliance serves no `api/ota`
-#                (cloud-protocol.md:45), so it can never truthfully say "up_to_date".
+#                (cloud-protocol.md:32), so it can never truthfully say "up_to_date".
 
 #: Console actions with no recovered command: the reason a parent reads and the
 #: evidence a maintainer checks travel with the refusal.

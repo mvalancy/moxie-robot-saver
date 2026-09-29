@@ -1,9 +1,11 @@
 # 🔧 Device tree — board-level hardware wiring
 
-> The authoritative hardware map of **v3.6.4-Zephyr / OTA v24.10.803**, decompiled from the DTB inside
-> `boot.img` (Rockchip RSCE resource). Board **`rockchip,rk3288-robot`**, model *"Rockchip rk3288
-> robot board"* (`rk3288-robot-gen1p5`). Full source: [`manifests/rk3288-robot-gen1p5.dts`](../firmware/manifests/rk3288-robot-gen1p5.dts)
-> (4,202 lines). This is ground-truth for what's wired where — essential for custom firmware & bring-up.
+Board-level wiring of **v3.6.4-Zephyr / OTA v24.10.803**, decompiled from the DTB inside `boot.img`
+(Rockchip RSCE resource): board **`rockchip,rk3288-robot`**, model *"Rockchip rk3288 robot board"*
+(`rk3288-robot-gen1p5`). Full source: [`manifests/rk3288-robot-gen1p5.dts`](../firmware/manifests/rk3288-robot-gen1p5.dts)
+(4,202 lines). It is the wiring contract a custom kernel/HAL must match. The two custom-silicon
+touch-points beyond the stock RK3288 SDK are the **Lizard MCU on UART3** and the **PCA9635 LED driver on
+i2c4**. Reuse this DTB (or the SDK's `rk3288-robot` target) rather than a generic EVB.
 
 ## I²C buses & devices
 
@@ -14,9 +16,9 @@ Linux bus numbers are from the DT `aliases` (authoritative):
 | `ff650000` | **i2c0** | `pmic@1b` | **RK808** (`rockchip,rk808`) | PMIC — rails, RTC, regulators (power tree below) |
 | `ff140000` | **i2c1** | — | — | (camera bus) |
 | `ff150000` | **i2c3** | `ov2710@36`, `gc2053@37` | **OV2710** (`ovti`) + **GC2053** (`galaxycore`) | camera sensors (two options) |
-| `ff160000` | **i2c4** | `pca9635@60` | **PCA9635** (`nxp`) | 16-ch LED driver → **6× RGB** (`red/green/blue_1..6`) status LEDs |
+| `ff160000` | **i2c4** | `pca9635@60` | **PCA9635** (`nxp`) | 16-ch LED driver: `red_1..6`, `green_1..5`, `blue_1..5` status LEDs |
 | `ff170000` | **i2c5** | `hx7027@48` **+ `@0x1b`** | **Himax HX7027** + **TI DLPC3430** | HX7027 sensor; **DLPC3430 DLP projector controller @0x1b** (runtime-probed as `5-001b`, see init `dlpc3430-bl`) |
-| `ff660000` | (audio i2c) | `rt5640@1c` | **Realtek RT5640** (ALC5640) | audio codec |
+| `ff660000` | **i2c2** | `rt5640@1c` | **Realtek RT5640** (ALC5640) | audio codec |
 
 > The **DLPC3430** is on **i2c5 @0x1b** (probed at runtime — the base DTB lists only `hx7027@48` on
 > that bus; init drives `…/5-001b/{led_out,rgb_out,brightness_alt,temperature}`). The **XMOS DSP** is on
@@ -47,7 +49,7 @@ Linux bus numbers are from the DT `aliases` (authoritative):
 
 ## Audio
 
-- **RT5640** codec on i2c5 + **I²S** (`i2s@ff890000`) + **SPDIF** (`sound@ff8b0000`). The **XMOS DSP**
+- **RT5640** codec on i2c2 + **I²S** (`i2s@ff890000`) + **SPDIF** (`sound@ff8b0000`). The **XMOS DSP**
   (mic array/AEC/wake-word) sits on USB upstream of the codec ([`perception-pipeline.md`](../runtime/perception-pipeline.md)).
 
 ## Inputs & controls
@@ -69,10 +71,9 @@ Other GPIO/analog I/O of note (banks resolved from phandles):
 - **SARADC** (`ff100000`, `vref` from a regulator) also backs the macro key; remaining channels are
   available for analog sensing.
 
-> **Recovery-entry lead (goal #3):** with only Power + Macro exposed, any button-combo route into
-> maskrom/loader/recovery would use those two. This is a **hardware hypothesis to test on a bench
-> unit** (also `reboot loader`/`reboot recovery` from a root shell, and the maskrom test-point) —
-> see [`hardware-access.md`](hardware-access.md).
+With only Power + Macro exposed, any button route into loader/recovery uses those two (bench
+hypothesis; [hardware-access](hardware-access.md#boot-mode-entry-reboot-reasons-keys)). The mainboard
+also has an internal `LOAD` button ([fcc-teardown](fcc-teardown.md)).
 
 ## Power, storage, misc
 
@@ -89,14 +90,11 @@ Other GPIO/analog I/O of note (banks resolved from phandles):
 The combo module is an **AmPak AP6335** (`wireless-wlan { wifi_chip_type = "ap6335" }`) — a **Broadcom
 BCM4339** (single-stream 802.11ac + BT 4.x):
 - **Wi-Fi over SDIO** (`dwmmc`, `sdio-pwrseq` with a `wifi-enable-h` GPIO, `wifi-supply` regulator);
-  interface `wlan0`. Firmware from the vendor set: **`fw_bcm4339a0.bin`** + AP6335 `nvram`.
-- **Bluetooth over UART0** (`wireless-bluetooth`/`bluetooth-platdata`, `uart0_gpios`); BT patch
-  **`bcm4339a0.hcd`**. `ro.rk.bt_enable=true`.
+  interface `wlan0`.
+- **Bluetooth over UART0** (`wireless-bluetooth`/`bluetooth-platdata`, `uart0_gpios`). `ro.rk.bt_enable=true`.
 
-> `/vendor/etc/firmware` also ships the **generic Rockchip-SDK grab-bag** (~40 Wi-Fi/BT blobs for
-> Broadcom/Realtek/AP6xxx/SSV/Ralink parts) — only the **AP6335/BCM4339** files above are actually
-> loaded here. `/vendor/firmware/*.rkl` (RK1608 pre-ISP, OV2718/IMX327) are likewise unused SDK blobs
-> (Moxie's camera is the OV2710, [above](#display-camera)).
+The exact firmware files loaded (`fw_bcm4339a0_ag*.bin`, `nvram_AP6335.txt`, `bcm4339a0.hcd`) and the
+unused SDK blobs are listed in [hal-and-drivers](../firmware/hal-and-drivers.md#radio-bcm4339-ap6335).
 
 ## Power tree (RK808 PMIC → rails)
 
@@ -114,13 +112,6 @@ The RK808 (i2c0 @0x1b) regulators map to named rails (from DT `aliases`):
 | LDO_REG4 | `vcc_wl` (Wi-Fi) | | | |
 
 `rockchip-suspend` configures PMIC-driven sleep; `projector-en-regulator` gates projector power.
-
-## For custom firmware (goal #1)
-
-The DTS is the wiring contract: it names every regulator, clock, pinmux, and device address a custom
-kernel/HAL must match. Notably the **Lizard MCU is UART3** and the **status LEDs are a PCA9635** — the
-two custom-silicon touch-points beyond the stock RK3288 SDK. Reuse this DTB (or the RK3288 Android-9
-SDK's `rk3288-robot` target) rather than a generic EVB.
 
 ---
 📖 [Hardware map](hardware-map.md) · [Hardware access](hardware-access.md) · [Firmware reference](../firmware/firmware-803-reference.md) · [Docs index](../../README.md)

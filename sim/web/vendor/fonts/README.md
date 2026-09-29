@@ -1,7 +1,11 @@
-# Vendored fonts
+# 🔤 `sim/web/vendor/fonts/` — vendored fonts
 
-Local copies so the web apps render offline (self-sufficiency — no font CDN):
-- `inter.woff2` — **Inter** (variable, latin). SIL Open Font License 1.1, © The Inter Project Authors.
-- `jetbrains-mono.woff2` — **JetBrains Mono** (variable, latin). SIL OFL 1.1, © JetBrains.
+Local copies so the pages render offline (no font CDN).
 
-Referenced via `fonts.css` (`@font-face`). Re-fetch from Google Fonts (css2 API, modern UA) to update.
+- [`fonts.css`](fonts.css) — the `@font-face` rules the pages link.
+- `inter.woff2` — Inter (variable, latin). SIL OFL 1.1, the Inter Project Authors.
+- `jetbrains-mono.woff2` — JetBrains Mono (variable, latin). SIL OFL 1.1, JetBrains.
+
+To update: re-fetch from the Google Fonts css2 API with a modern user agent.
+
+📖 [vendor](../README.md) · [Back to top](../../../../README.md)

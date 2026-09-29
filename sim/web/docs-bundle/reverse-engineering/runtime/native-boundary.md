@@ -1,13 +1,12 @@
 # 🔗 The native boundary — how the managed brain reaches native code (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
-> Reverse-engineered from the decompiled `Assembly-CSharp.dll` (`bo-android`, the Unity brain) in the
-> **v24.10.803** image — the `[DllImport]` P/Invoke declarations and `AndroidJava*` calls. The
-> [native-library *inventory*](../firmware/firmware-803-reference.md#bo-android-native-libraries-the-brain-libarmeabi-v7a)
-> lists the 30 `.so`s and their sizes; **this doc is the wiring** — the three distinct ways the managed
-> C# brain actually reaches native code, and (the important part for a custom build) which heavy native
-> work is *out of process* and therefore replaceable without reimplementing it.
-
-## Three mechanisms
+How the managed C# brain (`bo-android`, decompiled `Assembly-CSharp.dll`, **v24.10.803**) reaches native
+code — `[DllImport]` declarations, `AndroidJava*` calls, and `nm -D`/`readelf -d` on the shipped `.so`s.
+Three mechanisms: **P/Invoke** for tightly-coupled in-process libs (MCU, LED face, TTS, settings),
+**JNI** to the Android platform (incl. starting services), and the **ZMQ bus** to the heavy out-of-process
+ML modules. The key fact: the expensive native ML sits **behind a documented bus**, so a custom brain or
+server replaces it by speaking the bus. The library list + sizes is the
+[native-library inventory](../firmware/firmware-803-reference.md#bo-android-native-libraries-the-brain-libarmeabi-v7a).
 
 ```mermaid
 flowchart TB
@@ -19,165 +18,120 @@ flowchart TB
   jni --> svc["starts the bus modules ↑"]
 ```
 
-**P/Invoke** is for tightly-coupled native the brain calls directly; **JNI** reaches the Android platform
-and starts services; the **ZMQ bus** ([robot-ipc-protocol](../protocol/robot-ipc-protocol.md)) is how the brain talks
-to the *heavy* perception/ML modules, which run as **separate processes**.
-
 ## 1. In-process native — `[DllImport]`
 
 ### `liblizzerface.so` — the MCU control C API
 
-The direct C interface to the **Lizard MCU** (motors, LEDs, sensors, power). This is the goal-① lever:
-*this* is how firmware drives the hardware. The full surface:
+The direct C interface to the **Lizard MCU** (motors, LEDs, sensors, power) — the custom-firmware
+hardware lever. Imported by the managed brain:
 
 | Function | Purpose |
 |---|---|
 | `bool robot_init()` / `robot_deinit()` | bring up / tear down the MCU link |
-| `robot_motor_set_pos(byte motor, ushort pos)` | drive one motor to a raw position (counts, cf. [hardware-map](../hardware/hardware-map.md#driving-a-motor)) |
+| `robot_motor_set_pos(byte motor, ushort pos)` | drive one motor to a raw position ([counts](../hardware/hardware-map.md#driving-a-motor)) |
 | `robot_motor_set_pos_dt(byte motor, ushort pos, byte deltaTime)` | …over a delta-time |
-| `robot_motor_set_pos_rTime(ushort realTime, ushort p0…p6)` | set **all 7 motors atomically** in one call (the per-frame motor push) |
+| `robot_motor_set_pos_rTime(ushort realTime, ushort p0…p6)` | set **all 7 motors atomically** (the per-frame motor push) |
 | `robot_configure_motor(byte motor, byte param, ushort val)` | set a motor param (PID etc., cf. `ConfigParam`) |
-| `ushort robot_get_motor_config(byte motor, byte param)` | read a motor param back |
-| `ulong robot_get_event()` | poll the MCU event word (touch / switch / IMU — decoded to [`MpuEventPB` et al.](../hardware/hardware-map.md)) |
+| `ushort robot_get_motor_config(byte motor, byte param)` | read a motor param |
+| `ulong robot_get_event()` | poll the MCU event word (touch / switch / IMU → [`MpuEventPB` et al.](../hardware/hardware-map.md)) |
 | `robot_set_power_state(byte ps)` | set the MCU power state |
 | `robot_set_motors_update(byte enabled)` | enable/disable the motor update loop |
-| `robot_reset_xmos()` | reset the XMOS audio DSP (the native side of [`RESTART_XMOS`](../protocol/power-and-system-events.md#recovery-systemrecoverrequest)) |
-| `robot_set_heart_brightness(byte brightness)` | the chest **heart LED** brightness |
+| `robot_reset_xmos()` | reset the XMOS DSP (native side of [`RESTART_XMOS`](../protocol/power-and-system-events.md#recovery-systemrecoverrequest)) |
+| `robot_set_heart_brightness(byte brightness)` | chest **heart LED** brightness |
 | `robot_echo(char c)` | echo/ping the MCU (link test) |
 
-The single `robot_motor_set_pos_rTime(realTime, p0..p6)` confirms the **7-motor** rig and that the brain
-pushes all joints in one atomic frame update. These are the same operations exposed on the bus as
-`embodied.lizzerface` protos (`MotorSetPosEventPB`, etc., [robot-ipc-protocol](../protocol/robot-ipc-protocol.md)) —
-so there are **two ways to drive the MCU**: this in-process C API (what `bo-android` uses) and the ZMQ
-messages (what a tunnelled [`MoxieBus`](../protocol/robot-ipc-protocol.md) client uses).
-
-### `librobinface.so` — the physical LED-face driver
-
-The **LED-array** face (the status "face" of LEDs, distinct from the Unity animated face) — an `LEDA_*`
-("LED Array") API:
-
-- `LEDA_init(byte led_num)` / `LEDA_connect()` — set up the array.
-- `LEDA_run_cmd(uint[] color, byte[] bri_div, uint enable_grpCtrl, byte grp_bri)` — push a frame:
-  per-LED `color`, per-LED brightness divider, group-control flag, and a group brightness.
-
-This is the native side of the LED patterns in [hardware-map](../hardware/hardware-map.md#leds-the-face)
-and the `ledctrld` daemon in [security-policy](../firmware/security-policy.md).
-
-### The rest
-
-- **`libcerevoice_eng.so`** — CereProc **CereVoice TTS**, called via **108** P/Invoke functions (the
-  licensed local synth, [content-and-conversation](content-and-conversation.md#cerevoice-tts-libcerevoice_engso-44-mb)).
-  Heavily coupled but *replaceable*: the brain can instead take rendered audio from the server
-  ([CloudTTS](../protocol/unity-mainapp-interface.md#audio-out-tts-sfx-playback-control)).
-- **`libdevset.so`** — the native **DeviceSettings** accessor: `DeviceSettings_Instance_get{Bool,Int,
-  String,Float}S(key)` — how the managed side reads the [199 settings keys](../firmware/settings-schema.md)
-  from the native settings store.
-- **`libbo-launcher.so`** — `Start(string pluginPath)` / `Stop()`: the launcher loads the Unity brain as
-  a plugin.
-
-## 2. JNI — `AndroidJava*` (managed → Java/Android)
-
-A thin bridge to the Android platform and Embodied's Java services:
-
-| Class | Use |
-|---|---|
-| `com.unity3d.player.UnityPlayer` | the Unity activity/context |
-| **`me.embodied.services.ServiceLauncher`** | **starts the native module processes** (the bus modules below) |
-| `me.embodied.firmwareupdatelib.fwUpdateLibEntry` | Lizard/XMOS **DFU** ([hardware-map](../hardware/hardware-map.md#lizard-mcu-firmware-update-bootloader-goby)) |
-| `android.os.StatFs` | disk-free stats (fed to `SystemState`) |
-| `android.content.Intent` | Android intents (e.g. Bluetooth pairing) |
-
-`ServiceLauncher` is the key one: the Unity brain doesn't link the perception/ML natives — it **launches
-them as services** and then talks to them over the bus.
-
-## 3. Out-of-process modules — the ZMQ bus
-
-The heavy natives — **`libbo-vision`** (91 MB), **`libbo-fusion`** (40 MB), **`libbo-audio`** (184 MB),
-**`libbo-brain`** (154 MB, ChatScript + ML), **`libbo-logger`** (MQTT) — do **not** link into Unity. They
-run as **separate processes** (started via `ServiceLauncher`) and exchange
-[protobuf-over-ZeroMQ](../protocol/robot-ipc-protocol.md) messages with the brain. That's why every perception/brain
-capability in this repo is described as a **bus message**, not a function call.
-
-**This is the single most important architectural fact for goals ① and ②:** the expensive, licensed,
-opaque native ML (154 MB of `libbo-brain`, the MXNet models, Deepgram glue) is **behind a documented bus
-protocol**. A custom brain or a self-hosted server **replaces those modules by speaking the bus**
-([the full protocol is documented](../README.md)) — you never reimplement or extract them. Only the
-in-process natives above (MCU, LEDs, TTS, settings) are things a *custom firmware* image must actually
-provide or call.
-
-## Native symbol tables (`nm -D` on the shipped `.so`s)
-
-Reading the exports of the actual libraries (extracted from `bo-android.apk` and the factory apps)
-confirms — and extends — the boundary above.
-
-### `liblizzerface.so` — the full MCU export set (20 functions)
-
-The library exports **more than the C# calls**. Beyond the [documented P/Invoke set](#liblizzerfaceso-the-mcu-control-c-api),
-these **7 are exported but never imported by the managed brain** — the lower-level MCU primitives the
-higher-level API is built on (and that the factory tools use directly):
+The library exports **20** functions; these **7 are exported but never imported** by the brain — lower
+level primitives the factory tools use directly:
 
 | Native-only export | Purpose |
 |---|---|
-| `robot_get_system_info` | query the MCU's system/version info |
+| `robot_get_system_info` | MCU system/version info |
 | `robot_event_reset` | flush the MCU event queue |
 | `robot_require_motor_pos` | request/poll a motor's current position |
 | `robot_set_motor_state` | enable/disable an individual motor |
 | `robot_new_command` / `robot_new_param` | raw command/param injection into the MCU protocol |
 | `robot_app_exit` | shut the MCU-side app down |
 
-So a custom firmware driving the Lizard board natively has this full surface, not just the dozen the
-stock brain uses.
+`robot_motor_set_pos_rTime` confirms the **7-motor** rig and atomic per-frame joint updates. The same
+operations exist on the bus as `embodied.lizzerface` protos (`MotorSetPosEventPB`, …,
+[robot-ipc-protocol](../protocol/robot-ipc-protocol.md)) — two ways to drive the MCU: this C API (what
+`bo-android` uses) and bus messages (what a tunnelled `MoxieBus` client uses).
 
-### `librobinface.so` — the LED face is **I²C + GPIO**
+### `librobinface.so` — the physical LED-face driver
 
-Its exports reveal the transport: alongside the `LEDA_*` API (`LEDA_init`, `LEDA_connect`,
-`LEDA_get_color`, `_LEDA_init_led_map`, `_LEDA_push_cmd`) it exports **`i2c1_init`, `i2c2_init`,
-`i2c_init`, `initGPIO`, `_daq_connect`** — the LED-array face is driven over **two I²C buses + GPIO**
-(matching the [device-tree](../hardware/device-tree.md) I²C map), not the UART the motor MCU uses. LEDs
-and motors are *different* hardware paths.
+The **LED-array** status face (distinct from the Unity animated face), an `LEDA_*` API:
 
-### `libbo-dispatch.so` — the ZMQ bus broker (8.6 MB)
+- `LEDA_init(byte led_num)` / `LEDA_connect()` — set up the array.
+- `LEDA_run_cmd(uint[] color, byte[] bri_div, uint enable_grpCtrl, byte grp_bri)` — push a frame: per-LED
+  color, per-LED brightness divider, group-control flag, group brightness.
+- Further exports: `LEDA_get_color`, `_LEDA_init_led_map`, `_LEDA_push_cmd`, and **`i2c1_init`,
+  `i2c2_init`, `i2c_init`, `initGPIO`, `_daq_connect`** — the LED face runs over **two I²C buses + GPIO**
+  ([device-tree](../hardware/device-tree.md) I²C map), not the motor MCU's UART.
 
-The native implementation of the [on-device bus](../protocol/robot-ipc-protocol.md). Demangled symbols +
-strings show it is:
+Native side of the [LED patterns](../hardware/hardware-map.md#leds-the-face) and the `ledctrld` daemon
+([security-policy](../firmware/security-policy.md)).
 
-- **statically-linked ZeroMQ** — the exports are the full `zmq_*` C API (`zmq_poller_*` for the event
-  loop, `zmq_msg_*`, `zmq_socket_monitor*`, and the **RADIO/DISH group** draft API `zmq_join`/`zmq_leave`/
-  `zmq_msg_set_group`), so the bus is real libzmq, not a reimplementation;
-- **`embodied::dispatch::Dispatcher`** (log tag `[BoDispatcher]`, module `bo-dispatch`) — a C++ dispatcher
-  that runs its loop **on its own thread** (a `void (Dispatcher::*)()` thread entry), plus
-  **`core::EventBroadcaster`**. This is the XSUB↔XPUB proxy broker every module connects to — the concrete
-  thing behind "the ZMQ dispatch bus" throughout these docs.
+### The rest
 
-A custom on-device program joins this bus the same way: connect a ZeroMQ socket to the broker's XSUB/XPUB
-endpoints and speak framed protobuf ([robot-ipc-protocol](../protocol/robot-ipc-protocol.md) / the toolkit's `MoxieBus`).
+- **`libcerevoice_eng.so`** — CereVoice TTS via **108** P/Invoke functions
+  ([content-and-conversation](content-and-conversation.md#cerevoice-tts-libcerevoice_engso-44-mb));
+  replaceable by server-rendered [CloudTTS](../protocol/unity-mainapp-interface.md#audio-out-tts-sfx-playback-control).
+- **`libdevset.so`** — native DeviceSettings accessor `DeviceSettings_Instance_get{Bool,Int,String,Float}S(key)`
+  for the [199 settings keys](../firmware/settings-schema.md).
+- **`libbo-launcher.so`** — `Start(string pluginPath)` / `Stop()`: loads the Unity brain as a plugin.
+
+## 2. JNI — `AndroidJava*` (managed → Java/Android)
+
+| Class | Use |
+|---|---|
+| `com.unity3d.player.UnityPlayer` | the Unity activity/context |
+| **`me.embodied.services.ServiceLauncher`** | **starts the native module processes** (§3) |
+| `me.embodied.firmwareupdatelib.fwUpdateLibEntry` | Lizard/XMOS **DFU** ([hardware-map](../hardware/hardware-map.md#lizard-mcu-firmware-update-bootloader-goby)) |
+| `android.os.StatFs` | disk-free stats (fed to `SystemState`) |
+| `android.content.Intent` | Android intents (e.g. Bluetooth pairing) |
+
+The brain doesn't link the perception/ML natives — it launches them as services and talks over the bus.
+
+## 3. Out-of-process modules — the ZMQ bus
+
+**`libbo-vision`** (91 MB), **`libbo-fusion`** (40 MB), **`libbo-audio`** (184 MB), **`libbo-brain`**
+(154 MB, ChatScript + ML) and **`libbo-logger`** (MQTT) run as **separate processes** (via
+`ServiceLauncher`) exchanging [protobuf-over-ZeroMQ](../protocol/robot-ipc-protocol.md). That is why every
+perception/brain capability in these docs is a bus message, not a function call — and why a custom brain
+or server replaces them by speaking the bus instead of reimplementing them. Only the in-process natives
+(§1) must be provided or called by a custom image.
+
+**The broker — `libbo-dispatch.so` (8.6 MB):**
+
+- **statically-linked ZeroMQ** — exports the full `zmq_*` C API (`zmq_poller_*`, `zmq_msg_*`,
+  `zmq_socket_monitor*`, and the **RADIO/DISH** draft API `zmq_join`/`zmq_leave`/`zmq_msg_set_group`) —
+  real libzmq, not a reimplementation;
+- **`embodied::dispatch::Dispatcher`** (log tag `[BoDispatcher]`, module `bo-dispatch`) runs its loop on
+  its own thread (a `void (Dispatcher::*)()` entry), plus **`core::EventBroadcaster`** — the XSUB↔XPUB
+  proxy every module connects to. A custom program joins by connecting to the XSUB/XPUB endpoints and
+  speaking framed protobuf (the toolkit's `MoxieBus`).
 
 ### The full module roster — what each remaining `bo-*` `.so` actually is
 
-`bo-android` ships **30 native `.so`s** (the [inventory + sizes](../firmware/firmware-803-reference.md#bo-android-native-libraries-the-brain-libarmeabi-v7a)).
-The mechanisms above covered the in-process P/Invoke libs and *named* the out-of-process bus modules
-(vision/fusion/audio/brain/logger). Running `readelf -d` + demangled symbols on the **rest** — several
-were previously only names — closes the roster (all from the **v24.10.803** `bo-android.apk`):
+`bo-android` ships **30** native `.so`s. `readelf -d` + demangled symbols on the rest:
 
 | Library | Size | Identity (namespace / build tag) | Role |
 |---|--:|---|---|
-| **`libbo-analytics.so`** | 93 MB | `embodied::vision::MainLoop` · `perception::vision` | A **camera-vision analytics engine** distinct from `libbo-vision`: OpenCV (ArUco, RANSAC, `wechat_qrcode`) + TFLite + camera2-NDK + ZBar. Emits `FacesTracked`, `ZBarQRCodeRead` / `MarkerRead`, and **`ImageToTextPB`** — a vision-language "image→text" message carrying `prompt` / `question` / `session_id` (on-device **VQA**). `NEEDED: libbsk, libtensorflowlite, libcamera2ndk, libmediandk, libzbar`. |
-| **`libbo-system-monitor.so`** | 35 MB | `embodied::logging::SystemStatusService` | The **system-status service** — tracks power (`PowerStatePB`), volume (`SystemVolumeModify`), timezone (`TimeZoneInfo`), and `SettingSchema`; `NEEDED: liblizzerface` (reads the MCU). **Consumes `QRCommand`** (below). |
-| **`libwatchdog.so`** | 71 MB | `embodied::launcher::Watchdog` · build tag `bo-launcher` | The **launcher watchdog** — supervises/restarts the module processes (the native half of `ServiceLauncher`, [§2](#2-jni-androidjava-managed-javaandroid)). Statically links the `perception::fusion` + `robotbrain` + `QRCommand` protos it relays between supervised modules. |
-| **`libbsk.so`** | 22 MB | `BSK*` (`BSKCustomImageWarp`, `BSK_PCCR`, `BSKProfileUtil`) | A low-level **image-processing kernel** (image warp, LUT, a `PCCR` routine) that `libbo-analytics` is built on (`NEEDED` by it). Pure compute — no `embodied::` API of its own. |
-| **`librfc.so`** | 0.6 MB | `RfcPredict` / `RfcTrilsPredict`, path `bo-audio/third_party/rfc` | A **random-forest classifier** third-party lib inside the **audio** pipeline (acoustic feature/event classification — `float*` in, prediction out). |
-| **`libmain.so`** · **`libnative-lib.so`** | 27 KB · 104 KB | — | The Unity/app **entry glue** — `libmain` is the loaded-plugin entry ([`libbo-launcher.Start(pluginPath)`](#the-rest)); `libnative-lib` a small JNI helper. |
+| **`libbo-analytics.so`** | 93 MB | `embodied::vision::MainLoop` · `perception::vision` | A second **camera-vision engine**: OpenCV (ArUco, RANSAC, `wechat_qrcode`) + TFLite + camera2-NDK + ZBar. Emits `FacesTracked`, `ZBarQRCodeRead` / `MarkerRead`, and **`ImageToTextPB`** (on-device VQA: `prompt` / `question` / `session_id`). `NEEDED: libbsk, libtensorflowlite, libcamera2ndk, libmediandk, libzbar`. |
+| **`libbo-system-monitor.so`** | 35 MB | `embodied::logging::SystemStatusService` | **System-status service** — power (`PowerStatePB`), volume (`SystemVolumeModify`), timezone (`TimeZoneInfo`), `SettingSchema`; `NEEDED: liblizzerface`. **Consumes `QRCommand`** (below). |
+| **`libwatchdog.so`** | 71 MB | `embodied::launcher::Watchdog` · build tag `bo-launcher` | **Launcher watchdog** — supervises/restarts module processes (native half of `ServiceLauncher`, [§2](#2-jni-androidjava-managed-javaandroid)); statically links the `perception::fusion` + `robotbrain` + `QRCommand` protos it relays. |
+| **`libbsk.so`** | 22 MB | `BSK*` (`BSKCustomImageWarp`, `BSK_PCCR`, `BSKProfileUtil`) | Image-processing kernel (warp, LUT, `PCCR`) under `libbo-analytics`; no `embodied::` API. |
+| **`librfc.so`** | 0.6 MB | `RfcPredict` / `RfcTrilsPredict`, path `bo-audio/third_party/rfc` | Random-forest classifier in the **audio** pipeline (`float*` features in, prediction out). |
+| **`libmain.so`** · **`libnative-lib.so`** | 27 KB · 104 KB | — | Entry glue — `libmain` is the loaded-plugin entry ([`libbo-launcher.Start(pluginPath)`](#the-rest)); `libnative-lib` a small JNI helper. |
 
-So the "heavy natives" are really **two** vision engines (`bo-vision` + `bo-analytics`), the audio/brain/fusion
-trio, and a supervision/telemetry layer (`watchdog` = launcher, `system-monitor`, `analytics`, `logger`) —
-all out-of-process behind the bus, all replaceable by [speaking it](../protocol/robot-ipc-protocol.md).
+So the heavy natives are two vision engines (`bo-vision` + `bo-analytics`), the audio/brain/fusion trio,
+and a supervision/telemetry layer (`watchdog`, `system-monitor`, `analytics`, `logger`) — all behind the bus.
 
 ### Resolved: who consumes `QRCommand` (the setup-QR → brain bridge)
 
-[qr-commands](../protocol/qr-commands.md) established that `bo-wifi` publishes every scanned debug command
-as `embodied.unity.QRCommand{Code, Param}` on the bus, and that the **managed** Unity brain has **zero**
-references to it — leaving the consumer open. `readelf`/`nm` on the native modules **closes that edge** —
-the consumers are native, and they are the *cloud* and *system* layers, exactly where the known codes belong:
+`bo-wifi` publishes every scanned debug command as `embodied.unity.QRCommand{Code, Param}`
+([qr-commands](../protocol/qr-commands.md)); the managed brain has zero references to it. The consumers
+are native:
 
 ```mermaid
 flowchart LR
@@ -189,27 +143,22 @@ flowchart LR
   sysmon -->|"system codes →"| sys["power / restart / settings"]
 ```
 
-- **`libbo-logger`** (`embodied::logging::cloud::RightPoint`) — `AddListener<embodied::ProtoEventArgs<embodied::unity::QRCommand>>`, including a `RightPoint::*` member handler. The **cloud/MQTT module** subscribes to `QRCommand`; this is precisely where **`endpoint_update`** lands (it re-points the robot at a new cloud — the cloud module owns that connection).
-- **`libbo-system-monitor`** (`SystemStatusService`) — also `AddListener<…QRCommand…>` (a free-function handler). The **system service** takes the *system-level* codes.
-- **`libwatchdog`** — links the proto descriptor `descriptor_table_embodied_2fwifiapp_2fQRCommands_2eproto` (`CreateMessage<QRCommand>`), i.e. it **relays/constructs** the message across the supervised modules.
+- **`libbo-logger`** (`embodied::logging::cloud::RightPoint`) — `AddListener<embodied::ProtoEventArgs<embodied::unity::QRCommand>>` with a `RightPoint::*` member handler: the cloud/MQTT module, where **`endpoint_update`** lands (re-points the robot at a new cloud).
+- **`libbo-system-monitor`** (`SystemStatusService`) — `AddListener<…QRCommand…>` (free-function handler): the system-level codes.
+- **`libwatchdog`** — links `descriptor_table_embodied_2fwifiapp_2fQRCommands_2eproto` (`CreateMessage<QRCommand>`): relays/constructs the message across supervised modules.
 
-So the "effective QR command set" is **not** open-ended: it is what these native subscribers act on —
-the **cloud/logger** (`endpoint_update` → re-home, the high-value one for revival) and the **system-monitor**.
-A custom firmware or a bus client reproduces it by publishing `QRCommand` and handling the codes in its
-own cloud/system layer — no managed-brain path exists to reimplement.
+The effective QR command set is therefore closed: what the cloud/logger and system-monitor act on. A
+custom firmware or bus client reproduces it by publishing `QRCommand` and handling the codes in its own
+cloud/system layer.
 
-## What this means for the three goals
+## Implications
 
-**① Custom firmware.** `liblizzerface.so` is the exact C API to drive the motors, LEDs, power, and read
-sensors — the hardware lever. `librobinface`/`libdevset` cover the LED face and settings. Everything
-heavier (vision/fusion/audio/brain) is out-of-process behind the bus, so a custom build swaps modules
-without touching the 154 MB brain blob. `ServiceLauncher` is how those processes come up.
-
-**② Server revival.** Confirms the boundary a server sits at: the on-device ML modules are bus peers, and
-the server is just another peer (over MQTT↔bus, [cloud-protocol](../protocol/cloud-protocol.md)). Nothing
-native needs to be reimplemented server-side.
-
-**③ Pre-801 revival.** No new lever; this is internal architecture above the network boundary.
+- **Custom firmware:** `liblizzerface.so` (full 20-function surface) drives motors, LEDs, power and
+  sensors; `librobinface`/`libdevset` cover the LED face and settings; everything heavier is swapped at
+  the bus without touching the 154 MB brain blob.
+- **Server revival:** on-device ML modules are bus peers and the server is just another peer (MQTT↔bus,
+  [cloud-protocol](../protocol/cloud-protocol.md)); nothing native is reimplemented server-side.
+  Pre-801: no new lever.
 
 ---
 📖 [Reverse-engineering index](../README.md) · [Robot IPC protocol](../protocol/robot-ipc-protocol.md) · [Hardware map](../hardware/hardware-map.md) · [Native lib inventory](../firmware/firmware-803-reference.md) · [HAL & drivers](../firmware/hal-and-drivers.md)

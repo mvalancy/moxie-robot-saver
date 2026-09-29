@@ -1,89 +1,116 @@
-# sim/tests — the Python test suite
+# `sim/tests/` — the pytest suite
 
-About 140 pytest files covering the SDK, the supervisor, the parent console, the hosted Functions'
-shared limits, the CI setup itself, and a Playwright suite that drives the static site in a real
-browser. Most are hermetic: no broker, no browser, no network, no keys.
+Two families in one directory: a large **hermetic** pytest suite (no browser, no network, no
+credentials; what CI gates on) and a small **Playwright** suite that drives the static site in
+a real Chromium. `test_live_*.py` files spend real gateway calls and skip without a key.
 
-## Run it
+## Run
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -q -r sim/tests/requirements.txt
+sim/tests/run.sh                  # builds .venv from requirements.txt on first run, then runs everything
+sim/tests/run.sh -q -k alive      # any pytest args pass through
 
-# hermetic suite (what CI runs on every push); blank the key so nothing spends money
-MOXIE_LLM_API_KEY= .venv/bin/python -m pytest sim/tests -q -k "not test_sil and not test_live"
-
-sim/tests/run.sh              # everything, including the browser suite (sets up its own venv)
-sim/tests/run.sh -q -k alive  # any pytest args pass through
+# the hermetic suite, as CI runs it (sim/ci/ci.yml, ci-deep.yml)
+python3 -m pytest sim/tests -q -k "not test_sil and not test_docs and not test_live" \
+  --ignore=sim/tests/test_live_gateway.py
 ```
 
-`run.sh` reuses a locally cached Chrome (`~/.cache/puppeteer/...`). With no Chrome available the
-browser tests skip cleanly.
+`run.sh` reuses the cached Chrome under `~/.cache/puppeteer`; with no Chrome the browser tests
+skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live suites spend money.
 
-## Requirements files
+## Support files
 
-| File | Contents |
+- [`conftest.py`](conftest.py) — serves `sim/web` via `sim/serve.py` on a free port, provides the
+  Playwright `browser`/`page` fixtures, points `MOXIE_DATA_DIR` at a temp dir, sets the dotenv fence,
+  and hides live credentials from hermetic tests (`hermetic_tier_sees_no_credentials`).
+- [`run.sh`](run.sh) — one-shot venv + pytest runner; re-installs when either requirements file changes.
+- [`requirements-hermetic.txt`](requirements-hermetic.txt) — the ONE declaration of test deps
+  (pulls in `mqtt/requirements.txt` and `server/requirements.txt`); every CI job running
+  `pytest sim/tests` installs it.
+- [`requirements.txt`](requirements.txt) — the hermetic file plus `playwright`, nothing else
+  (`test_ci_workflows.py` fails if they differ by anything more).
+- [`helpers_runtime.py`](helpers_runtime.py) — drive a turn through the real `MoxieRuntime`:
+  `FakeClient`, `LatchClient`, `make_runtime`/`drive_turn`, `assert_spec_response`, `free_port`,
+  `status_server`, `loopback` (in-process broker between `sim/virtual_moxie.py` and a runtime),
+  `load_repo_dotenv` / `LIVE_KEYS`.
+- [`helpers_stack.py`](helpers_stack.py) — boot the real broker + `mqtt/run.py` on free ports.
+- [`helpers_console.py`](helpers_console.py) / [`helpers_console_supervisor.py`](helpers_console_supervisor.py) —
+  import the parent console in-process; a fake supervisor status server for `test_console_*.py`.
+- [`helpers_content.py`](helpers_content.py), [`helpers_ext.py`](helpers_ext.py) — builders for the
+  `test_content*.py` and `test_ext*.py` suites.
+- [`helpers_audio.py`](helpers_audio.py) — PCM maths, spectral flatness (numpy and stdlib twins),
+  word overlap, `zmqSTTRequest` framing; numpy is optional here on purpose.
+- [`helpers_compose.py`](helpers_compose.py) — parity helpers for the two compose files.
+- [`helpers_qr_matrix.py`](helpers_qr_matrix.py) — decode a payload back out of a QR module matrix.
+- [`helpers_web.py`](helpers_web.py) — `script_group("bridge"|"voice")`, the pytest twin of
+  `sim/bridge_harness.mjs::scriptGroup`.
+- [`helpers_route.mjs`](helpers_route.mjs) — run one real Pages Function on one request (used by
+  `test_live_hosted_ears.py`).
+- [`helpers_shared_ceilings.mjs`](helpers_shared_ceilings.mjs) — node entry for the shared-tier
+  ceilings sections (run by `test_shared_ceilings.py`).
+- [`helpers_probe_budget_loopback.mjs`](helpers_probe_budget_loopback.mjs) — child-process
+  loopback HTTP helper for `sim/test_mode.mjs`.
+
+## Subfolders
+
+- [`data/`](data/README.md) — `ext_conformance.json`, the sandboxed-extension goldens.
+- [`goldens/`](goldens/README.md) — recorded wire/markup goldens and one real-voice WAV.
+- [`edge/`](edge/README.md) — sections of the Pages Functions node suites (`sim/test_demo_proxy.mjs` etc.); `.mjs`, never collected by pytest.
+- [`hosted_mic/`](hosted_mic/README.md) — modules behind `node sim/check_hosted_mic.mjs`.
+
+## Test groups
+
+| Prefix / files | Covers |
 |---|---|
-| `requirements-hermetic.txt` | The one declaration of what the suite needs. It pulls in `mqtt/requirements.txt` and `server/requirements.txt`. Every CI job that runs pytest installs it. |
-| `requirements.txt` | The hermetic list plus `playwright`, nothing else. Used by `run.sh` and local venvs. |
+| `test_sil.py`, `test_sil_child_voice.py` | Playwright: every page at every resolution, expression chips, motor sliders, ALIVE loop, speech path; the child's clips reaching `ctx.destination` |
+| `test_sil_*.py` (others) | Real mosquitto + supervisor: durable telemetry across a restart, SUBACK handshake both ends, performance fields on the wire, presence, brains/extensions |
+| `test_runtime_turn`, `test_streaming`, `test_segment`, `test_brain_*`, `test_brains`, `test_backoff`, `test_connect_readiness`, `test_connection_resilience`, `test_clean_shutdown` | The supervisor turn loop, streaming chunks, fillers, reconnects |
+| `test_action_*`, `test_actions_reach_the_robot`, `test_e2e_actions_to_robot`, `test_webhook_actions`, `test_launch_*` | `response_actions` from brain to robot; launch cards and sheet |
+| `test_content*`, `test_render_*`, `test_automarkup`, `test_performance`, `test_faces` | Content packs, template sandbox and parity, markup floor, behavior planner |
+| `test_ext*.py` | Sandboxed extensions: escapes X1–X12, conformance T1–T18, `act`/`subscribe` |
+| `test_memory*`, `test_telemetry*`, `test_store*`, `test_transcript_memory_policy`, `test_soak_accounting` | Durable store, roll-up repair, erase and logging policy |
+| `test_schedule*` | Day planner, parent requests, the "why" view, SIL end to end |
+| `test_telehealth*`, `test_presence*`, `test_fleet*`, `test_cloud_config`, `test_device_permits`, `test_roster`, `test_why_no_config` | Config push, fleet defaults, pairing gate, telehealth |
+| `test_console_*`, `test_parent_api`, `test_brain_console` | Parent console ⇄ supervisor contract (need `fastapi` + `httpx`) |
+| `test_tts`, `test_stt*`, `test_voice_*`, `test_sim_tts_playback`, `test_speech_guard` | Voice engines, gateway STT, the tone-vs-speech guard |
+| `test_config_*`, `test_assemble`, `test_dotenv_cannot_perturb_the_suite`, `test_env_hygiene_live_suites`, `test_no_deployment_defaults` | Config precedence and the dotenv fence |
+| `test_compose`, `test_broker_acl`, `test_package_contents`, `test_render_container_deps` | Compose parity, broker ACL, what the wheel ships |
+| `test_ci_*`, `test_clock_dependence`, `test_mutation_tables`, `test_readiness_guards_are_checked`, `test_harness_readiness`, `test_node_global_stubs`, `test_page_teeth_slow_mode`, `test_promotion_guard` | Guards on CI itself: workflows mirror `sim/ci/`, every `sim/test_*.mjs` is run by a tier, reviewed wall-clock reads |
+| `test_csp_hashes`, `test_no_offsite_images`, `test_shared_ceilings`, `test_sim_client_parity`, `test_safety`, `test_sdk` | Static-site CSP, images, shared rate-limit tier, SDK and safety floor |
+| `test_live_*.py`, `test_smoke_live_brain` | Real gateway completions, TTS, STT, hosted ears, voice round trip; skip without credentials |
 
-Never hand-list packages in a workflow or an agent brief; `test_ci_workflows.py` enforces this.
+Every file's docstring states what it proves and, where relevant, its mutation-check companion
+in [`../tools/`](../tools/README.md).
 
-## Which tier runs what
+## Gotchas
 
-| Tier | What runs |
-|---|---|
-| Fast CI (`dev`) | The whole hermetic suite, then `test_sil.py` and the other browser tests in a separate job. |
-| Deep CI (`main`) | The hermetic suite again, plus SIL smoke, scenarios, broker outage, compose stack and soak. |
-| Deep CI, manual dispatch | The `test_live_*` suites against a real gateway (spends real calls). |
-| Local only | Anything you run with a key present — keep `not test_live` unless you mean it. |
+- **Dotenv fence.** `conftest.py` sets `MOXIE_SKIP_DOTENV=1` before collection so `mqtt/.env`
+  cannot change what the suite sees. Override with `MOXIE_SKIP_DOTENV=0` (as the deployment sees
+  it) or `MOXIE_DOTENV=<file>` (a fixture). `helpers_runtime.load_repo_dotenv` (live tier) loads
+  only `LIVE_KEYS` and also looks in the main checkout, so live tests run from a worktree.
+  `test_dotenv_cannot_perturb_the_suite.py` guards both.
+- **Force creds-free locally:** `MOXIE_LLM_API_KEY= pytest sim/tests`.
+- **Live tier in CI** is dispatch-only: `gh workflow run ci-deep.yml --ref dev` (add
+  `-f voice=true` for `test_live_talk_e2e.py`, which fetches voices with
+  [`../ci/fetch_piper_voices.py`](../ci/fetch_piper_voices.py)). It fails, not skips, on an empty
+  `MOXIE_LLM_API_KEY` / `MOXIE_VOICE_BASE_URL`. See [`../ci/README.md`](../ci/README.md).
+- **Local voice tests:** `pip install -r sim/tests/requirements.txt piper-tts faster-whisper`, then
+  `python -m pytest sim/tests/test_live_talk_e2e.py -q -s`; set `MOXIE_VOICES_DIR` if the
+  `.onnx` voices are outside this checkout. `piper-tts`/`faster-whisper` are the only
+  `DELIBERATELY_OPTIONAL` deps.
+- **Hosted ears:** `test_live_hosted_ears.py` tier B needs `MOXIE_DEMO_ORIGIN` (no host is
+  hard-coded); `MOXIE_EARS_WAV=<file>` reuses earlier audio.
+- **Goodbye action-tag campaign:** use [`../tools/run_live_action_tags.sh`](../tools/run_live_action_tags.sh)
+  (counts-only summary; `--moxie-campaign-state-file` is its pytest option).
+- **Undeclared binaries are refused:** tests may spawn only `mosquitto`, `docker`, `node`, `git`,
+  `bash` (`test_speech_guard.py::DECLARED_BINARIES`). No `ffmpeg`.
+- **Assert on what the page recorded, not a live animation:** use `moxieAudio.lastMouthPeak()` and
+  `lastPlaybackStats()` rather than sampling the mouth or queue mid-utterance.
+- **Fake brains need no SDK:** `LLMApp` and `OpenAIVoiceSynthesizer` take a `client=` seam; keep
+  `importorskip("openai")` for `test_live_*.py`.
+- **Never hard-code ports** (1883/8930): use `helpers_runtime.free_port()`.
+- A new `sim/test_*.mjs` needs a step in `sim/ci/ci.yml` (`test_ci_test_coverage.py`); a new
+  `sim/tests/test_*.py` is collected automatically.
 
-Details: [`../ci/README.md`](../ci/README.md).
-
-## Map of the suites
-
-| Area | Files |
-|---|---|
-| **Turn pipeline** | `test_runtime_turn`, `test_streaming`, `test_segment`, `test_brain_latency`, `test_backoff`, `test_safety`, `test_why_no_config` |
-| **Brains** | `test_brains` (registry), `test_brain_runtime` (live swap), `test_brain_console`, `test_config_brain_endpoint`, `test_sdk`, `test_webhook_actions` |
-| **Actions and markup** | `test_action_tags`, `test_action_tag_campaign`, `test_actions_reach_the_robot`, `test_e2e_actions_to_robot`, `test_automarkup`, `test_performance` |
-| **Content** | `test_content`, `test_content_app`, `test_content_wiring`, `test_content_packs`, `test_content_packs_runtime`, `test_content_pack_sandbox`, `test_content_authoring`, `test_render_sandbox`, `test_render_sandbox_parity`, `test_render_fallback`, `test_render_container_deps` |
-| **Sandboxed extensions** | `test_ext` (T1–T18), `test_ext_escapes` (X1–X12), `test_ext_act`, `test_ext_subscribe`; conformance data in [`data/`](data/README.md) |
-| **Memory and schedules** | `test_memory`, `test_memory_runtime`, `test_memory_view`, `test_schedule`, `test_schedule_planner`, `test_schedule_view`, `test_launch_cards`, `test_launch_cards_runtime`, `test_launch_sheet` |
-| **Speech** | `test_stt`, `test_stt_gateway`, `test_tts`, `test_voice_settings`, `test_voice_runtime`, `test_speech_guard`, `test_sim_tts_playback` |
-| **Config, telemetry, privacy** | `test_cloud_config`, `test_fleet_config`, `test_telemetry`, `test_telemetry_runtime`, `test_telemetry_rollup_repair`, `test_telemetry_erase_policy`, `test_transcript_memory_policy`, `test_conn_telemetry`, `test_faces`, `test_presence`, `test_presence_runtime` |
-| **Store and robots** | `test_store`, `test_store_concurrency`, `test_roster`, `test_device_permits`, `test_broker_acl`, `test_telehealth`, `test_telehealth_runtime`, `test_telehealth_view` |
-| **Supervisor lifecycle** | `test_connection_resilience`, `test_connect_readiness`, `test_clean_shutdown`, `test_harness_readiness`, `test_readiness_guards_are_checked`, `test_soak_accounting` |
-| **Parent console and REST** | `test_parent_api`, `test_fleet`, `test_console_roundtrip`, `test_console_content`, `test_console_devices`, `test_console_memory`, `test_console_telehealth`, `test_console_voice` |
-| **Stack and packaging** | `test_assemble`, `test_compose`, `test_package_contents`, `test_config_dotenv`, `test_config_dotenv_comments`, `test_dotenv_cannot_perturb_the_suite` |
-| **Hosted site** | `test_csp_hashes`, `test_shared_ceilings`, `test_no_deployment_defaults`, `test_no_offsite_images`, `test_sim_client_parity` |
-| **Browser and SIL** (need a broker or Chrome) | `test_sil` (every page, resolution and control), `test_sil_*`, `test_launch_cards_sil`, `test_presence_sil`, `test_schedule_sil_e2e`, `test_smoke_live_brain` |
-| **Live** (need a key; spend real calls) | `test_live_gateway`, `test_live_gateway_stt`, `test_live_gateway_tts`, `test_live_gateway_turn_e2e`, `test_live_action_tags`, `test_live_content_e2e`, `test_live_talk_e2e`, `test_live_hosted_ears`, `test_live_telehealth_voice`, `test_live_voice_picker`, `test_env_hygiene_live_suites` |
-| **Guards on the test setup itself** | `test_ci_workflows`, `test_ci_test_coverage` (every test file is run by some tier), `test_ci_browser_suites_actually_run`, `test_clock_dependence`, `test_mutation_tables`, `test_node_global_stubs`, `test_page_teeth_slow_mode`, `test_promotion_guard` |
-
-Shared helpers: `helpers_runtime.py` (a fake MQTT client and `drive_turn`; use it instead of writing
-your own), `helpers_content.py`, `helpers_ext.py`, `helpers_console*.py`, `helpers_compose.py`,
-`helpers_stack.py`, `helpers_audio.py`, `helpers_web.py`, `helpers_qr_matrix.py`.
-
-Subfolders:
-
-- [`edge/`](edge/README.md) — sections of the Pages Functions node suites (`sim/test_demo_proxy.mjs`
-  and friends). They are `.mjs`, so pytest never collects them.
-- [`hosted_mic/`](hosted_mic/README.md) — the scorer and browser probe behind
-  `sim/check_hosted_mic.mjs`.
-- [`goldens/`](goldens/README.md) — recorded expected outputs.
-- [`data/`](data/README.md) — test data.
-
-## Rules that keep the suite green
-
-- **Browser tests assert what the page recorded, never a live sample.** The page keeps records such
-  as `moxieAudio.lastMouthPeak()` and `lastPlaybackStats()`; tests wait for the utterance to finish,
-  then assert the record. Sampling a moving value flakes on a loaded runner.
-- **A test that uses a fake brain must not need the real SDK.** `LLMApp` and the voice synthesizer
-  take a `client=` argument; `pytest.importorskip("openai")` is only for live tests.
-- **Your `.env` cannot change the suite.** `conftest.py` sets `MOXIE_SKIP_DOTENV=1` before
-  collection, so a local `mqtt/.env` cannot make "nothing configured" tests pass for the wrong
-  reason. The live suites still find credentials through `helpers_runtime.load_repo_dotenv`, which
-  loads only the keys they need (`LIVE_KEYS`), and a fixture hides those from hermetic tests.
-  `test_dotenv_cannot_perturb_the_suite.py` guards both halves. To run against a deployment's
-  settings on purpose: `MOXIE_SKIP_DOTENV=0 pytest sim/tests`, or `MOXIE_DOTENV=<file>` for a
-  fixture.
+---
+📖 [sim](../README.md) · [Back to top](../../README.md)

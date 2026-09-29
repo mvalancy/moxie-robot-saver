@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """🎭 Regenerate the behavior planner's 22 dialog-act goldens.
 
-One line per `RemoteDialog.DialogAct` (remote-chat-protocol.md:119-122), staged through
+One line per `RemoteDialog.DialogAct` (remote-chat-protocol.md:93), staged through
 `plan` -> `validate` and written out as **JSON `Performance` objects** plus the markup
 they render to. JSON rather than markup is the point: a diff in review shows that an
 apology stopped being Sad, not that a 240-character mark grew a field.

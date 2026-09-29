@@ -3,7 +3,7 @@
 
 Builds an Attention message (TARGET_FOCUS on a specific fused person, with candidate
 InterestPoints), frames + re-parses it via the bus registry, and round-trips the
-TargetedUser acquire edge. See docs/reverse-engineering/gaze-and-attention.md
+TargetedUser acquire edge. See docs/reverse-engineering/runtime/gaze-and-attention.md
 (The published attention state).
 
     python3 tools/robot-toolkit/test_attention.py
@@ -13,6 +13,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report  # noqa: E402
 
 try:
     from embodied.robotbrain import TargetUser_pb2 as A  # noqa: E402
@@ -20,11 +21,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  attention toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
 
 registry = {bus.full_name(c): c for c in bus.attention_classes()}
 ok(len(registry) == 3, f"expected 3 attention classes, got {len(registry)}")
@@ -54,10 +50,5 @@ tu = A.TargetedUser(targeted_user_id=42, targeted_user_face_id=7)
 rtu = A.TargetedUser(); rtu.ParseFromString(tu.SerializeToString())
 ok(rtu.targeted_user_id == 42 and rtu.targeted_user_face_id == 7, "TargetedUser round-trip failed")
 
-if fails:
-    print("❌ attention toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ attention toolkit test OK — Attention (TARGET_FOCUS/SEARCHING, targeted fused-person + candidate "
-      "InterestPoints) + TargetedUser acquire edge round-trip through embodied.robotbrain.TargetUser")
+report("attention", "Attention (TARGET_FOCUS/SEARCHING, targeted fused-person + candidate "
+       "InterestPoints) + TargetedUser acquire edge round-trip through embodied.robotbrain.TargetUser")

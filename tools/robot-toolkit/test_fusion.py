@@ -5,7 +5,7 @@ Builds a FusedPeoplePB roster with one recognized, engaged, speaking person (fac
 with head pose + eye landmarks, a DOA-placed utterance with a translation), applies
 the same [FullName][bytes] framing the on-device ZMQ bus uses, and re-parses it via
 the fused_people_classes() registry — the exact path a revival server uses to consume
-who-is-in-the-room events. See docs/reverse-engineering/perception-fusion.md.
+who-is-in-the-room events. See docs/reverse-engineering/protocol/perception-fusion.md.
 
     python3 tools/robot-toolkit/test_fusion.py
 """
@@ -14,6 +14,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report  # noqa: E402
 
 try:
     from embodied.perception.fusion import FusedPeople_pb2 as F  # noqa: E402
@@ -21,11 +22,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  fusion toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
 
 # helper: the bus frames a message as [descriptor full_name][serialized bytes]
 def frame(msg):
@@ -76,10 +72,5 @@ ok(ret.source == F.STT and ret.person.name == "Alex",
 for name in ("FusedPersonAddedPB", "FusedPersonEngagedPB", "FusedPersonSaidPB"):
     ok(f"embodied.perception.fusion.{name}" in registry, f"{name} missing from fused_people_classes()")
 
-if fails:
-    print("❌ fusion toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ fusion toolkit test OK — FusedPeoplePB roster (identity/engagement/world-pos/face/DOA/"
-      "translation) + StartedSpeaking(source=STT) round-trip through the bus framing + fused_people_classes()")
+report("fusion", "FusedPeoplePB roster (identity/engagement/world-pos/face/DOA/"
+       "translation) + StartedSpeaking(source=STT) round-trip through the bus framing + fused_people_classes()")

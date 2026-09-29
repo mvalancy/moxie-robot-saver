@@ -3,7 +3,7 @@ Behavior-markup builder — emit <mark name="cmd:..."> tags Moxie's brain unders
 
 Inline these into TTS text so the robot moves/emotes while speaking. The data:{} object is JSON with
 '+' standing in for '"' (the mark lives inside an XML attribute). See
-docs/reverse-engineering/behavior-markup.md for the full verb + field catalog.
+docs/reverse-engineering/runtime/behavior-markup.md for the full verb + field catalog.
 """
 import json
 
@@ -92,7 +92,7 @@ def raw(verb, **data):
     """Escape hatch for any of the 24 verbs: raw('emotion', state=...)."""
     return _mark(verb, data or None)
 
-# All known verbs (docs/reverse-engineering/behavior-markup.md)
+# All known verbs (docs/reverse-engineering/runtime/behavior-markup.md)
 VERBS = ["animation","attachment","attachment-animator","attachment-particles","behaviour-tree",
          "blink-control","composite","dynamic-face-texture","emotion","hud","icons-v2","idlestate",
          "notification","playaudio","playback-mood","playback-restore","playback-save","reward-star",

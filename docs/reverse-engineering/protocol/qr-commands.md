@@ -1,80 +1,25 @@
 # 🎫 QR command grammar — what the robot actually scans
 
-> **What this is.** The **complete QR command space** of the robot, read from the `v24.10.803` binaries —
-> all three pathways: (1) the `bo-wifi` **setup grammar** (`WifiApp.dll` → `QRData.ParseFromString` + the
-> `embodied.wifiapp` protos), (2) the **native `QRCommand` dispatch** those forward into
-> (`RightPoint::on_QRCommand` in `libbo-logger`), and (3) the **runtime content-QR** path the brain scans
-> in play (`EnableQRCode` / `QRPB`). Complements the *phone-side* [`qr-format.md`](../phone/qr-format.md)
-> (pairing QR as the parent app emits it).
->
-> ⚠️ **Supersedes guesswork.** The acoustic brute-force log in
-> [`../debugging/qr-command-findings.md`](../../debugging/qr-command-findings.md) was speculating at the
-> grammar from the outside. This document is the grammar, read directly from the binary — prefer it.
+The **complete, closed QR command space** of the robot, read from the `v24.10.803` binaries. The setup
+app `bo-wifi` parses three forms — `PA` pairing, `VN` VPN, and JSON `{wifi?, pair?, debug?}` — and acts
+on **exactly four** debug commands itself; every `debug` command is also forwarded to the bus as a
+`QRCommand`, where the native cloud module `RightPoint` handles **exactly three** codes (`report`,
+`endpoint_update`, `om`). `om` is the real re-home payload. The grammar is provably bounded — there is
+nothing further to discover. Separately, the running brain has a content-QR scanner for play.
+Phone-side encoding of the pairing QR: [`qr-format.md`](../phone/qr-format.md).
 
 ## The dispatcher
 
-`bo-wifi` scans a code, then `QRData.ParseFromString(string)` branches on a **2-char prefix**, else
-falls back to JSON:
+`bo-wifi` (`WifiApp.dll` → `QRData.ParseFromString(string)` + the `embodied.wifiapp` protos) branches on a
+**2-char prefix**, else falls back to JSON:
 
 | Form | Prefix | Payload | Meaning |
 |---|---|---|---|
 | **Pairing** | `PA` | `PA` + Base64(`StartPairingQR` protobuf) | Wi-Fi + pairing secret + endpoint (the normal setup QR) |
-| **VPN config** | `VN` | `VN` + Base64(`QRVPNConfig` protobuf) | Install/activate/revert a VPN profile on the robot |
-| **JSON** | *(none)* | raw JSON `{wifi?, pair?, debug?}` | Wi-Fi creds, legacy pairing, and/or a **debug/factory command** |
+| **VPN config** | `VN` | `VN` + Base64(`QRVPNConfig` protobuf) | install/activate/revert a VPN profile |
+| **JSON** | *(none)* | raw JSON `{wifi?, pair?, debug?}` | Wi-Fi creds, legacy pairing, and/or a debug/factory command |
 
-Anything parsed as a `debug` block is turned into a `QRCommand{code, param}` protobuf and
-**published on the ZMQ bus to `bo-android`** via `QRDebug()` — so the robot brain, not just the setup
-app, acts on it. Four codes are additionally special-cased by the Wifi App's own UI state machine;
-everything else just shows the "QR diagnostic" screen and forwards the command.
-
-## The setup app's runtime status — `WifiAppStatus` / `WifiAppBricked`
-
-Besides handling QRs, `bo-wifi` publishes its own **liveness/state on the ZMQ bus** — the WifiApp status
-protos (`embodied.unity.WifiAppStatus` et al., in the `wifiapp` file group) — so `bo-android`, or an
-observer via the [toolkit bus](robot-ipc-protocol.md), can tell what the setup app is doing. This is the
-signal that says a stranded robot is *ready to scan a QR* (the `STATE_CONFIG` surface,
-[boot-and-launcher](../firmware/boot-and-launcher.md#states-launcherstate)).
-
-**`WifiAppStatus { uint32 code }`** — the status code, from the `WifiAppStatusCodes` enum:
-
-| Code | Name | Meaning |
-|--:|---|---|
-| 1 | `WifiAndUserGood` | Wi-Fi **and** a paired user are valid — nothing to set up |
-| 100 | `WifiAppReady` | the setup app is up and **ready to scan a pairing/Wi-Fi/debug QR** |
-| 101 | `WantsToDisplaySomething` | it needs the screen (e.g. to show a prompt/diagnostic) |
-| 1977 | `Alive` | heartbeat — the app is running |
-| 1978 | `Unquiet` | heartbeat variant (active/needs attention) |
-
-- **`WifiAppSilentBoot`** / **`WifiAppShutdown`** — the app booting without UI / shutting down, matching
-  the `STATE_SILENT_REBOOT` path in [power-and-system-events](power-and-system-events.md).
-- **`WifiAppBricked { uint32 error_code }`** — the setup app **failed to come up**. `error_code` is the
-  **`EBErrorCode`** enum (`Assembly-CSharp`, `v24.10.803`) — the full set, useful for diagnosing a
-  stranded robot ([goal ③](../COVERAGE.md)):
-
-  | # | `EBErrorCode` | Meaning |
-  |--:|---|---|
-  | 0 | `UNKNOWN` | unclassified |
-  | 5000 | `UNHANDLED_EXCEPTION` | a C# exception crashed the app |
-  | 5001 | `STREAMING_ASSETBUNDLES` | failed loading a **streamed** asset bundle |
-  | 5002 | `LOCAL_ASSETBUNDLES` | failed loading a **local** (on-disk) asset bundle |
-  | 5003 | `REMOTE_ASSETBUNDLES` | failed loading a **downloaded** asset bundle |
-  | 5004 | `ASSETBUNDLE_GENERAL` | other asset-bundle load failure |
-  | 5005 | `ASSERTION` | a code assertion tripped |
-  | 5006 | `ZMQ` | the on-device [ZMQ bus](robot-ipc-protocol.md) failed to come up |
-  | 5007 | `ASSETBUNDLE_INVALID` | an asset bundle was corrupt/incompatible |
-
-  **Diagnostic read:** codes **5001–5004 / 5007 mean an asset-bundle load failure** (the app's content
-  is missing/corrupt — a re-flash or content re-sync territory), `5000`/`5005` are a code crash, and
-  `5006` is the bus. So a bricked setup surface is *most often an asset problem*, not hardware. This is
-  distinct from *hardware* faults, which come from the Lizard MCU as `LizardErrorEvent`
-  (`BATTERY_OVER_TEMP`, `BATTERY_LOST`, `MOTOR_FAIL_BOOT`, `BODYTOUCH_ERR`, see
-  [hardware-map](../hardware/hardware-map.md)).
-
-**Revival relevance (goal ③).** `WifiAppReady` (code 100) is the concrete "the robot is now in
-QR-scanning mode" signal — a [re-homing QR](#toolkit-generate-validate-these-codes) is worth presenting
-once it's seen. `WifiAppBricked` says the *setup app* (not the hardware) is the failure, which bounds
-whether a no-open QR revival can work at all: a bricked setup app can't scan, so that unit needs the
-physical [recovery path](../firmware/ota-and-recovery.md) rather than a QR.
+A `debug` block becomes a `QRCommand{code, param}` protobuf **published on the ZMQ bus** via `QRDebug()`.
 
 ## JSON debug/factory commands
 
@@ -92,27 +37,17 @@ Codes handled directly in `bo-wifi` (`WifiMain`):
 | `bluetooth_pair` | Fire an Android intent to **Bluetooth-pair** the device in `param`. |
 | *(any other code)* | Show `State.QRDiagnostic` and forward `QRCommand{code,param}` to `bo-android`. |
 
-**The scan grammar is closed — this is the whole set.** `QRData.ParseFromString` is a single
-function with exactly three branches: `PA` (pairing), `VN` (VPN), else JSON `{wifi?, pair?, debug?}`.
-The `debug.command` string is matched against **exactly four** literals above; every other value hits a
-literal `else → SetAppState(State.QRDiagnostic)`. There is **no fifth app-side handler** anywhere in
-`bo-wifi`, so "undocumented factory QR codes the setup app acts on" is a provably-bounded set: it is
-these four plus the pairing/VPN/Wi-Fi forms — nothing else.
+**The scan grammar is closed — this is the whole set.** `QRData.ParseFromString` has exactly three
+branches (`PA`, `VN`, else JSON). `debug.command` is matched against **exactly four** literals; everything
+else hits a literal `else → SetAppState(State.QRDiagnostic)`. There is no fifth app-side handler anywhere in
+`bo-wifi`, so the setup app's command set is provably these four plus the pairing/VPN/Wi-Fi forms.
 
-Every debug command is *also* published to the ZMQ bus as `QRCommand{Code, Param}` (via `QRDebug()`),
-recognized or not. **The managed brain does not consume it** — `Assembly-CSharp` (the 7 MB `bo-android`
-decompile) has **zero** references to `QRCommand`/`endpoint_update`/`QRDebug`. That open edge is now
-**resolved by native RE** (`readelf`/`nm` on the modules, [native-boundary](../runtime/native-boundary.md#resolved-who-consumes-qrcommand-the-setup-qr-brain-bridge)):
-the consumers are **`libbo-logger`** (`embodied::logging::cloud::RightPoint` — the cloud/MQTT module, where
-**`endpoint_update`** lands: it re-homes the robot to a new cloud) and **`libbo-system-monitor`**
-(`SystemStatusService` — system-level codes), with **`libwatchdog`** (the launcher) relaying the proto. So
-the effective set is bounded to what those two native subscribers handle — not open-ended app behavior.
-
-> ⚠️ **`endpoint_update` is not a debug command.** It is emitted *internally* by the Wifi App
-> (`RequestEndpoint`) when a **pairing QR's** `Endpoint` field differs from the current cloud — it
-> carries an `IOTEndpoint` enum, not a string `param`. You move a robot between clouds with the
-> **endpoint field of the `PA` pairing QR**, not by scanning a `{"debug":{"command":"endpoint_update"}}`
-> code (that string has no handler).
+Every debug command — recognized or not — is also published as `QRCommand`. **The managed brain does not
+consume it**: `Assembly-CSharp` (the 7 MB `bo-android` decompile) has **zero** references to
+`QRCommand`/`endpoint_update`/`QRDebug`. The consumers are native ([native-boundary](../runtime/native-boundary.md#resolved-who-consumes-qrcommand-the-setup-qr-brain-bridge)):
+**`libbo-logger`** (`embodied::logging::cloud::RightPoint`, the cloud/MQTT module) and
+**`libbo-system-monitor`** (`SystemStatusService`, system-level codes), with **`libwatchdog`** (the
+launcher) relaying the proto.
 
 ### `QRCommand` protobuf (`embodied.unity`)
 
@@ -126,63 +61,53 @@ message QRCommand {
   string software_version = 100;
   string module_name      = 101;
 }
+message QRMultiDecoder { embodied.unity.QRCommand debug = 1; bytes encoded_proto = 2; }
 ```
 
 `QRResponse{response_code, response}` and `QRDiagnosticData{robot_uuid, rsa_pub, cloud_connected,
-user_state, cloud_project}` come back the other way — the diagnostic screen displays them.
+user_state, cloud_project}` come back the other way (shown on the diagnostic screen). `QRMultiDecoder`
+lets one QR carry either a debug command or an **arbitrary encoded protobuf** (`encoded_proto`) — a
+general-purpose protobuf-injection container.
 
 ## The effective command set — native dispatch (`RightPoint::on_QRCommand`)
 
-The [WifiApp forwards every debug command](#json-debugfactory-commands) to the bus as `QRCommand{code,
-param}`; the **managed brain ignores it** and the [native cloud module consumes it](../runtime/native-boundary.md#resolved-who-consumes-qrcommand-the-setup-qr-brain-bridge).
-**Ghidra** (PyGhidra) decompilation of `libbo-logger.so` reads `on_QRCommand`'s body directly — so the
-"effective command set" is no longer guesswork or inference: it dispatches `QRCommand.code` by **exact
-string match** to **exactly three** commands (default → *"Unknown QR Diagnostic Command"*):
+Ghidra (PyGhidra) decompilation of `on_QRCommand` in `libbo-logger.so` (which carries DWARF; see
+[methodology](../PLAYBOOK.md#using-ghidra-via-pyghidra)) shows an **exact string match** on
+`QRCommand.code` against **exactly three** commands:
 
 | `QRCommand.code` | Handler in `embodied::logging::cloud::RightPoint` | Effect (from the decompiled body) |
 |---|---|---|
-| **`report`** | `on_DiagnosticDataRequest` | Build a `QRDiagnosticData{robot_uuid, rsa_pub, cloud_connected, cloud_project}` (device UUID from `core::UUID::GetDevice()`, RSA pubkey via `Client::LoadFile`), serialize it (`MessageToJsonString`, wrapped as `{"encoded_proto":"…"}`), and **post it** on a worker thread (`RPTokenURL::post_diagnostics`). This is the diagnostic trigger the [easter-egg study](#supersedes-the-pre-decompilation-easter-egg-study) hunted for — its name is **`report`**, not the guessed "diag". |
-| **`endpoint_update`** | `on_EndpointUpdate(json_t*, string)` | Look the `endpoint` profile up in an **`EndpointMap`** (`ForName`); if valid, build `GoogleIOTOpts`/`ConnectionOpts`, **write `cloud.json`**, and *"Exit… to restart logger"* so the new endpoint takes effect. Invalid name → logs *"Received endpoint_update to invalid endpoint"*. Also reachable from a pairing QR's `endpoint` field. |
-| **`om`** | `on_EndpointUpdate` (OpenMoxie path) | Base64-decode `param` → [`ServiceConfiguration2`](#the-om-relocation-the-real-re-home-payload); write `cloud.json` as `{"endpoint":"openmoxie"}` and *"Updating to OPEN_MOXIE and exiting to restart"*. Bad base64 → *"Invalid open_moxie configuration QR - base64 decode failed."* |
-| *(anything else)* | — | logged *"Received unsupported QR Diagnostic Command"* / *"Unknown QR Diagnostic Command"* — **no other code is handled.** |
+| **`report`** | `on_DiagnosticDataRequest` | Build `QRDiagnosticData{robot_uuid, rsa_pub, cloud_connected, cloud_project}` (UUID from `core::UUID::GetDevice()`, RSA pubkey via `Client::LoadFile`), serialize (`MessageToJsonString`, wrapped as `{"encoded_proto":"…"}`), and **post it** on a worker thread (`RPTokenURL::post_diagnostics`). The diagnostic trigger is named `report`, not "diag". |
+| **`endpoint_update`** | `on_EndpointUpdate(json_t*, string)` | Look the `endpoint` profile up in an **`EndpointMap`** (`ForName`); if valid, build `GoogleIOTOpts`/`ConnectionOpts`, **write `cloud.json`**, and *"Exit… to restart logger"*. Invalid name → *"Received endpoint_update to invalid endpoint"*. |
+| **`om`** | `on_EndpointUpdate` (OpenMoxie path) | Base64-decode `param` → `ServiceConfiguration2`; write `cloud.json` as `{"endpoint":"openmoxie"}` and *"Updating to OPEN_MOXIE and exiting to restart"*. Bad base64 → *"Invalid open_moxie configuration QR - base64 decode failed."* |
+| *(anything else)* | — | *"Received unsupported QR Diagnostic Command"* / *"Unknown QR Diagnostic Command"*. |
 
-`RightPoint` is the robot's **cloud connection manager**; the persisted config is **`cloud.json`**, and
-applying `endpoint_update`/`om` **restarts the logger process** to reconnect. Because the handlers take a
-`json_t*`, the same actions are reachable over MQTT too — QR is just one transport in. (`ClearResetUserFlag`
-and `GetServiceConfig`/`InitServiceConfig` are supporting members, not QR codes.)
+Applying `endpoint_update`/`om` **restarts the logger process** to reconnect ([`cloud.json`](cloud-protocol.md#cloudjson-the-persisted-active-config)).
+Because the handlers take a `json_t*`, the same actions are reachable over MQTT too — QR is one transport.
+`ClearResetUserFlag` and `GetServiceConfig`/`InitServiceConfig` are supporting members, not QR codes.
 
-> **Confidence: decompiled.** All three code strings (`report`, `endpoint_update`, `om`), the default
-> "Unknown QR Diagnostic Command" branch, and the `cloud.json`/restart behavior are read from
-> `on_QRCommand`'s decompiled body (Ghidra/PyGhidra on the `v24.10.803` `libbo-logger.so`, which carries
-> DWARF) — see [methodology](../METHODOLOGY.md#using-ghidra-via-pyghidra). The command set is **closed**: three
-> codes, nothing else.
+**Where `endpoint_update` comes from.** The Wifi App emits it *internally* (`RehomeNeeded()` →
+`RequestEndpoint()`) when a **pairing QR's** `endpoint` field differs from the current cloud, carrying an
+`IOTEndpoint` enum in `QRCommand.endpoint`. `bo-wifi` has no handler of its own for the string
+`endpoint_update`; a JSON `debug` QR with that code is forwarded like any unrecognized code. This repo's
+encoders emit that form (profile name in `param`); whether `EndpointMap::ForName` accepts those names is
+unverified on hardware. The robust way to move a robot between clouds is the pairing QR's `endpoint`
+field or `om`.
 
 ### The `om` relocation — the real re-home payload
 
-OpenMoxie's dashboard "Migration QR" emits exactly (`moxie_server.py:get_endpoint_qr_data`):
+OpenMoxie's dashboard "Migration QR" (`moxie_server.py:get_endpoint_qr_data`) emits:
 
 ```json
 { "debug": { "command": "om", "param": "<base64(ServiceConfiguration2)>" } }
 ```
 
-The WifiApp forwards it as `QRCommand{code:"om", param:…}`; `RightPoint::on_QRCommand` decodes the param
-as **`embodied.logging.ServiceConfiguration2`** and re-homes:
-
-```proto
-message ServiceConfiguration2 {          // embodied/logging/Cloud2.proto
-  string gcp_project = 1;   string webservice_root = 2;   string webservice_pin = 3;
-  bool   disable_sync = 4;  bool   disable_log_upload = 5; string endpoint = 6;
-  uint64 timestamp = 7;     string mqtt_host = 8;
-  ConnectionType connection_type = 9;    // GOOGLE_IOT=0 · EMBODIED_IOT=1 · EMBODIED_LOCAL=2
-  IOTEndpoint endpoint_id = 10;  uint32 override_port = 11;  bool disable_verify = 12;
-}
-```
-
-- **`mqtt_host` / `endpoint` / `override_port`** point the robot at *your* broker.
-- **`disable_verify` (field 12)** is the field that makes "unverified MQTTS" work — it relaxes cloud cert
-  verification, which is why an OpenMoxie/self-signed host is accepted. This is the concrete mechanism
-  behind the [network-trust](network-trust.md) re-home, and it is **gated to firmware ≥ 24.10.801**
-  (`OPEN_MOXIE`/relocation handler absent below 801 — the pre-801 wall).
+`ServiceConfiguration2` (`embodied/logging/Cloud2.proto`) is field-for-field the
+[`ServiceConfiguration`](cloud-protocol.md#service-configuration-how-the-robot-is-repointed) message (fields 1–12).
+`mqtt_host` / `endpoint` / `override_port` point the robot at your broker; **`disable_verify` (field 12)**
+relaxes cloud cert verification, which is why an OpenMoxie/self-signed host is accepted
+([network-trust](network-trust.md#the-disable_verify-escape-hatch)). The `OPEN_MOXIE`/relocation handler is
+**absent below firmware 24.10.801** — the pre-801 wall.
 
 ## Pairing QR — `PA` + `StartPairingQR`
 
@@ -200,14 +125,11 @@ message StartPairingQR {
 }
 ```
 
-The robot infers/honors the target cloud from `endpoint` (see enum below) and only "re-homes" if it
-differs from the current endpoint (`RehomeNeeded()` / `RequestEndpoint()` → `QRCommand code=endpoint_update`).
-For the phone-side encoder that produces this, see [`qr-format.md`](../phone/qr-format.md) and
-[`../../tools/pairing/moxie_qr.py`](../../../tools/pairing/moxie_qr.py).
+The robot re-homes only if `endpoint` ([values](cloud-protocol.md#the-built-in-endpoint-hosts-baked-into-libbo-logger))
+differs from the current one. Phone-side encoder: [`qr-format.md`](../phone/qr-format.md),
+[`tools/pairing/moxie_qr.py`](../../../tools/pairing/moxie_qr.py).
 
 ## VPN QR — `VN` + `QRVPNConfig`
-
-A QR can push a whole VPN profile onto the robot:
 
 ```proto
 message QRVPNConfig {
@@ -222,54 +144,28 @@ message QRVPNConfig {
 }
 ```
 
-Read → logged as `Read VPN Config Code: Command: <n>` → published to the brain over ZMQ. This is a
-plausible lever for routing a stock robot's cloud traffic through infrastructure you control.
-
-## `IOTEndpoint` — the cloud selector (`embodied.logging`)
-
-Real enum value names (from the recovered descriptor):
-
-```
-IOT_DEFAULT=0  GOOGLE_DEVELOP=1  GOOGLE_STAGING=2  GOOGLE_PRODUCTION=3
-EMBODIED_DEVELOP=4  EMBODIED_STAGING=5  EMBODIED_PRODUCTION=6  EMBODIED_HIPAA=7
-EMBODIED_LOCAL=8  EMBODIED_CHINA=9  EMBODIED_HK=10  OPEN_MOXIE=11
-```
-
-Two values matter for revival, and **both are baked into the shipped 803 firmware**:
-
-- **`OPEN_MOXIE=11`** — a first-class endpoint for the community server. Confirmed by
-  `[OriginalName("OPEN_MOXIE")]` in *both* `WifiApp.Protos.dll` and `Embodied.Protos.dll`. The
-  firmware natively knows how to home to an OpenMoxie-style server.
-- **`EMBODIED_LOCAL=8`** — a local-server endpoint.
-
-Combined with `endpoint_update` via a `debug` QR, this is the path to point a stock robot at a server
-you control (this repo's [`server/`](../../../server/) + [`mqtt/`](../../../mqtt/), or OpenMoxie). Note this
-only **redirects** the robot's cloud — running *custom software on the robot itself* is a separate
-effort (see [`firmware-image.md`](../firmware/firmware-image.md)).
+Logged as `Read VPN Config Code: Command: <n>` and published to the brain over ZMQ — a plausible lever
+for routing a stock robot's traffic through infrastructure you control.
 
 ## Wi-Fi provisioning support (what networks work)
 
-The QR Wi-Fi path (`bo-wifi` `AndroidWiFi.Connect(ssid, psk, isHidden)`) builds a **legacy Android-9
-`android.net.wifi.WifiConfiguration`** and `addNetwork`/`enableNetwork`. Supported:
+The QR Wi-Fi path (`bo-wifi` `AndroidWiFi.Connect(ssid, psk, isHidden)`) builds a legacy Android-9
+`android.net.wifi.WifiConfiguration` and calls `addNetwork`/`enableNetwork`:
 
 | Network type | Supported? |
 |---|---|
-| **Open** (no password) | ✅ (empty `psk` → `KeyMgmt.NONE`) |
-| **WPA / WPA2-Personal (PSK)** | ✅ (`preSharedKey` → `WPA_PSK`) |
-| **Hidden SSID** | ✅ (`hiddenSSID`; `StartPairingQR.is_hidden`) |
-| Band hint (any / 5 GHz / 2.4 GHz) | ✅ via `band_select` |
-| **WPA3-only (SAE)** | ❌ no SAE key-mgmt (legacy API + BCM4339) |
-| **WPA2-Enterprise / 802.1X / EAP** | ❌ no enterprise config (username/cert networks) |
-| **Captive portal** (hotel/campus splash) | ❌ needs a browser |
+| **Open** (no password) | yes (empty `psk` → `KeyMgmt.NONE`) |
+| **WPA / WPA2-Personal (PSK)** | yes (`preSharedKey` → `WPA_PSK`) |
+| **Hidden SSID** | yes (`hiddenSSID`; `StartPairingQR.is_hidden`) |
+| Band hint (any / 5 GHz / 2.4 GHz) | yes, via `band_select` |
+| **WPA3-only (SAE)** | no — no SAE key-mgmt (legacy API + BCM4339) |
+| **WPA2-Enterprise / 802.1X / EAP** | no enterprise config |
+| **Captive portal** | no — needs a browser |
 
-**Revival note (goal #3):** a standard home **WPA2-PSK** router (or open, or hidden) works with the
-QR — the "single-mom" case is covered. **WPA3-only** routers (force one to WPA2/WPA3-mixed), **enterprise/
-campus** networks, and **captive portals** are not supported — use a phone hotspot or a normal
-WPA2 network instead.
+A home WPA2-PSK (or open, or hidden) router works; switch WPA3-only routers to WPA2/WPA3-mixed, and use a
+phone hotspot instead of enterprise/campus or captive-portal networks.
 
-### Post-pairing Wi-Fi push (`WifiNetworkUpdate`)
-After setup, a **server/parent can add or change Wi-Fi over MQTT** (no QR needed) with
-`embodied.wifiapp.WifiNetworkUpdate`:
+**Post-pairing Wi-Fi push** — a server can add/change Wi-Fi over MQTT with `embodied.wifiapp.WifiNetworkUpdate`:
 
 ```proto
 message WifiNetworkUpdate {
@@ -278,59 +174,74 @@ message WifiNetworkUpdate {
 }
 ```
 
-`wifi_info` reuses the pairing message's Wi-Fi fields, so the **same support matrix applies** (Open /
-WPA2-PSK / hidden — no WPA3/enterprise). `add_only=true` keeps existing saved networks (add a second
-network, e.g. moving house); `false` switches. Handy for a revival server to manage a robot's Wi-Fi
-remotely once it's paired.
-
-> Cross-check: `bo-wifi`'s `UI_Connect()` hard-codes the **factory** network `"Embodied Guest"` /
-> `"Embodied<3robots!"` — which matches the `EmbodiedPSK` recovered from `libsecrets`
-> ([`factory-provisioning.md`](../firmware/factory-provisioning.md)), independently confirming that secret.
+Same support matrix. `bo-wifi`'s `UI_Connect()` hard-codes the **factory** network `"Embodied Guest"` /
+`"Embodied<3robots!"`, matching the `EmbodiedPSK` recovered from `libsecrets`
+([factory-provisioning](../firmware/factory-provisioning.md)).
 
 ## Manufacturing QR codes
 
-The factory line's own apps (`me.embodied.productiontesting.*`) **generate** QR codes with
-`androidmads`' `QRGEncoder` (`qr/QR.java`) and drive them from an enum, `qr/Codes.java`. The shipped
-entry is:
+The factory apps (`me.embodied.productiontesting.*`) generate QRs with `androidmads`' `QRGEncoder`
+(`qr/QR.java`) from an enum in `qr/Codes.java`; the shipped entry is
 
 ```java
 DisplaySerialNumber("Display Device Serial Number", "{\"debug\":{\"command\":\"serial_number_display\"}}")
 ```
 
-i.e. **manufacturing QR codes ride the exact same `{"debug":{"command":…}}` JSON channel** documented
-above — the factory just pre-bakes specific codes. So any generator that emits this JSON produces a
-"factory-format" QR the robot treats identically. The serial/part grammar the factory scanners *read*
-(barcodes, not command QRs) is in [`factory-provisioning.md`](../firmware/factory-provisioning.md).
+— the same `{"debug":{"command":…}}` channel, so any generator emitting this JSON produces a
+factory-format QR. The serial/part barcode grammar the factory scanners *read* is in
+[factory-provisioning](../firmware/factory-provisioning.md).
 
-## Runtime content QR — the *second* scanner (`bo-android`, in play)
+## The setup app's runtime status — `WifiAppStatus` / `WifiAppBricked`
 
-The setup grammar above is `bo-wifi`. Once paired, the **runtime brain** (`bo-android`) has its own QR
-path, used for content/play (showing Moxie a QR card), not configuration:
+`bo-wifi` publishes its own state on the ZMQ bus (`embodied.unity.WifiAppStatus` et al., `wifiapp` file
+group), so `bo-android` or a [bus observer](robot-ipc-protocol.md) can tell whether a stranded robot is
+ready to scan (the `STATE_CONFIG` surface, [boot-and-launcher](../firmware/boot-and-launcher.md#states-launcherstate)).
 
-- **`embodied.robotbrain.EnableQRCode{ bool run }`** — the brain turns camera QR-reading **on/off** for a
-  moment of content (it is not always scanning).
-- **`embodied.perception.vision.QRPB{ string qrcode }`** — when enabled, the [vision analytics module
-  `libbo-analytics`](../runtime/native-boundary.md#the-full-module-roster-what-each-remaining-bo-so-actually-is)
-  reads a code (OpenCV `wechat_qrcode` + ZBar) and publishes the decoded string as `QRPB`.
+**`WifiAppStatus { uint32 code }`** (`WifiAppStatusCodes`):
 
-So a QR the child shows Moxie during play is delivered to the brain as a plain string for content logic —
-a different pathway from the `bo-wifi` config scanner, and one a revival server can drive by toggling
-`EnableQRCode` and reacting to `QRPB` ([perception-pipeline](../runtime/perception-pipeline.md#vision-embodiedperceptionvision),
-[content-and-conversation](../runtime/content-and-conversation.md)).
+| Code | Name | Meaning |
+|--:|---|---|
+| 1 | `WifiAndUserGood` | Wi-Fi **and** a paired user are valid — nothing to set up |
+| 100 | `WifiAppReady` | up and **ready to scan a pairing/Wi-Fi/debug QR** — the moment to show a re-home QR |
+| 101 | `WantsToDisplaySomething` | needs the screen (prompt/diagnostic) |
+| 1977 | `Alive` | heartbeat |
+| 1978 | `Unquiet` | heartbeat variant (active/needs attention) |
 
-## Supersedes the pre-decompilation "easter-egg" study
+`WifiAppSilentBoot` / `WifiAppShutdown` mark booting without UI / shutting down (the `STATE_SILENT_REBOOT`
+path, [power-and-system-events](power-and-system-events.md)). **`WifiAppBricked { uint32 error_code }`** —
+the setup app failed to come up; `error_code` is `EBErrorCode` (`Assembly-CSharp`):
 
-An earlier survey (`work/maps/14-qr-easter-eggs.md`, and the acoustic
-[`qr-command-findings.md`](../../debugging/qr-command-findings.md)) was written **before** the robot binaries
-were decompiled; its premise was *"the dispatch is a native if/switch we can't see, so only `om` is
-confirmed and everything else is speculative."* That premise no longer holds — the WifiApp grammar, the
-`QRCommand` proto, and the native `RightPoint::on_QRCommand` handlers above are all now read from the
-`v24.10.803` binaries. This document is the current, code-grounded map; treat the easter-egg study as a
-historical artifact.
+| # | `EBErrorCode` | Meaning |
+|--:|---|---|
+| 0 | `UNKNOWN` | unclassified |
+| 5000 | `UNHANDLED_EXCEPTION` | a C# exception crashed the app |
+| 5001 | `STREAMING_ASSETBUNDLES` | failed loading a **streamed** asset bundle |
+| 5002 | `LOCAL_ASSETBUNDLES` | failed loading a **local** asset bundle |
+| 5003 | `REMOTE_ASSETBUNDLES` | failed loading a **downloaded** asset bundle |
+| 5004 | `ASSETBUNDLE_GENERAL` | other asset-bundle load failure |
+| 5005 | `ASSERTION` | a code assertion tripped |
+| 5006 | `ZMQ` | the [ZMQ bus](robot-ipc-protocol.md) failed to come up |
+| 5007 | `ASSETBUNDLE_INVALID` | corrupt/incompatible asset bundle |
+
+5001–5004/5007 are asset problems (re-flash / content re-sync), 5000/5005 a code crash, 5006 the bus.
+Hardware faults come instead from the Lizard MCU as `LizardErrorEvent` (`BATTERY_OVER_TEMP`,
+`BATTERY_LOST`, `MOTOR_FAIL_BOOT`, `BODYTOUCH_ERR`; [hardware-map](../hardware/hardware-map.md)). A bricked
+setup app cannot scan, so that unit needs the physical [recovery path](../firmware/ota-and-recovery.md), not a QR.
+
+## Runtime content QR — the second scanner (`bo-android`, in play)
+
+Once paired, the brain has a separate QR path for content, not configuration:
+
+- **`embodied.robotbrain.EnableQRCode{ bool run }`** — turns camera QR-reading on/off for a moment of content.
+- **`embodied.perception.vision.QRPB{ string qrcode }`** — the [vision module `libbo-analytics`](../runtime/native-boundary.md#the-full-module-roster-what-each-remaining-bo-so-actually-is)
+  decodes (OpenCV `wechat_qrcode` + ZBar) and publishes the string.
+
+A server can drive it by toggling `EnableQRCode` and reacting to `QRPB`
+([perception-pipeline](../runtime/perception-pipeline.md#vision-embodiedperceptionvision), [content-and-conversation](../runtime/content-and-conversation.md)).
 
 ## Toolkit — generate & validate these codes
 
-A runnable encoder/validator lives at [`../../tools/robot-toolkit/`](../../../tools/robot-toolkit/):
+[`tools/robot-toolkit/`](../../../tools/robot-toolkit/) (`moxie_toolkit/qr_codec.py`):
 
 ```sh
 python -m moxie_toolkit.cli endpoint OPEN_MOXIE --png redirect.png   # re-home QR as a PNG
@@ -338,38 +249,17 @@ python -m moxie_toolkit.cli debug reset_network                      # factory d
 python -m moxie_toolkit.cli validate                                 # 27 checks, incl. byte-parity
 ```
 
-Every generator is validated by schema round-trip **and** by producing byte-identical `PA` payloads
-to the independently reverse-engineered phone-side encoder ([`../../tools/pairing/moxie_qr.py`](../../../tools/pairing/moxie_qr.py)) — strong evidence the recovered grammar is exactly right.
+Generators are validated by schema round-trip and by byte-identical `PA` payloads against the
+independently reverse-engineered phone-side encoder ([`tools/pairing/moxie_qr.py`](../../../tools/pairing/moxie_qr.py)).
 
-### …and in the browser, with nothing installed
+In the browser, [`sim/web/qr.js`](../../../sim/web/qr.js) encodes the JSON forms (`endpoint_update`, `wifi`,
+`debug` — no protobuf) client-side for the simulator's **Revive a robot** panel. It deliberately matches
+Python `json.dumps` spacing (`{"a": 1}`) rather than `JSON.stringify` (`{"a":1}`); the robot doesn't care,
+but `node sim/test_qr.mjs` asserts all seven payload shapes are byte-identical to `moxie_toolkit.qr_codec`.
+Protobuf-bearing codes (`PA`, `QRMultiDecoder.encoded_proto`) stay in the Python toolkit.
 
-The three commands that actually revive a robot — **`endpoint_update`**, **`wifi`**, and the plain
-**`debug`** commands — are **pure JSON with no protobuf anywhere** (see the grammar above). That is a
-bigger deal than it looks: it means the whole encoder is ~40 lines of JavaScript, so a **static web
-page can generate real revival codes client-side**.
-
-[`sim/web/qr.js`](../../../sim/web/qr.js) does exactly that, driving the **Revive a robot** panel in the
-simulator's rail. Someone with a dead Moxie, a phone, and no computer can load the page and re-home
-the robot — no Python, no install, no shell.
-
-One subtlety worth writing down: Python's `json.dumps` emits `{"a": 1, "b": 2}` (space after `:` and
-`,`) while JavaScript's `JSON.stringify` emits `{"a":1,"b":2}`. The robot's parser doesn't care —
-it's JSON either way — but a *byte-parity test between the two encoders* does, so `qr.js` matches
-Python's spacing deliberately. `node sim/test_qr.mjs` asserts all seven payload shapes are
-byte-identical to `moxie_toolkit.qr_codec`; if either encoder drifts, CI fails rather than shipping a
-code the robot silently won't scan.
-
-The protobuf-bearing codes (`PA` pairing payloads, `QRMultiDecoder.encoded_proto`) stay in the Python
-toolkit — those need a real protobuf runtime, and they aren't on the revival path.
-
-## Also carried: `QRMultiDecoder`
-
-```proto
-message QRMultiDecoder { embodied.unity.QRCommand debug = 1; bytes encoded_proto = 2; }
-```
-
-A container letting one QR carry either a debug command or an **arbitrary encoded protobuf**
-(`encoded_proto`) — i.e. the QR channel is a general-purpose way to inject a protobuf into the robot.
+The earlier acoustic brute-force log ([`qr-command-findings.md`](../../debugging/qr-command-findings.md)) is
+superseded by this decompiled grammar and kept only as a historical record.
 
 ---
 📖 [Reverse-engineering index](../README.md) · [Phone-side QR format](../phone/qr-format.md) · [Docs index](../../README.md) · [Back to top](../../../README.md)

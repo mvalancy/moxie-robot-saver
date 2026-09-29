@@ -22,8 +22,10 @@ import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from moxie_sdk.store import (JsonStore, MemoryStore, item_id,  # noqa: E402
-                             item_text, json_safe, normalize_items, prune_stale)
+from moxie_sdk.store import JsonStore  # noqa: E402
+from moxie_sdk.memory_store import MemoryStore  # noqa: E402
+from moxie_sdk.memory_items import (item_id, item_text, json_safe,  # noqa: E402
+                                    normalize_items, prune_stale)
 from moxie_sdk.content import ContentApp, Session, load_module, render_prompt  # noqa: E402
 from moxie_sdk.content.memory import (FactList, build_transcript,  # noqa: E402
                                       filter_summary, parse_summary, provenance,

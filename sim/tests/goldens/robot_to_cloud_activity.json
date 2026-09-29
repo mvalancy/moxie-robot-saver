@@ -4,7 +4,7 @@
     "",
     "`/devices/{id}/events/client-service-activity-log` is the robot's own upstream",
     "channel, multiplexed by `subtopic` (docs/architecture/mqtt-and-conversation.md 3.3,",
-    "cited to docs/reverse-engineering/cloud-protocol.md:172). This file is the exact",
+    "cited to docs/reverse-engineering/protocol/cloud-protocol.md:138). This file is the exact",
     "envelope `sim/virtual_moxie.py` puts on that topic for each of its three kinds, and",
     "it is asserted from BOTH ends:",
     "",

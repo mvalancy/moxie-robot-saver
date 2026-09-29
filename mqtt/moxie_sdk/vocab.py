@@ -70,7 +70,7 @@ MAX_INTENSITY = 2       # behavior-markup.md:107 — `int intensity=0 (maxIntens
 MOOD_ALIASES: Dict[str, int] = {
     # our own older LLM prompt menu (mqtt/moxie_sdk/apps/llm_app.py, pre-floor)
     "positive": 1, "negative": 2, "oops": 4,
-    # RemoteDialog.EmotionState (7) — remote-chat-protocol.md:123
+    # RemoteDialog.EmotionState (7) — remote-chat-protocol.md:94
     "joy": 1, "sadness": 2, "anger": 3, "fear": 6, "surprise": 5, "love": 1,
     # ordinary words
     "excited": 1, "glad": 1, "proud": 1, "sorry": 2, "upset": 2, "mad": 3,
@@ -106,30 +106,30 @@ GESTURE_ALIASES.update({g: g for g in GESTURES})
 # Behavior trees — `Bht_*`
 # --------------------------------------------------------------------------- #
 #: The 11 expression trees; `ePlaybackMood` *is* the face, and each value plays the
-#: matching `Bht_Eyeseme_<name>` (behavior-markup.md:110-113, behavior-tree-engine.md:109).
+#: matching `Bht_Eyeseme_<name>` (behavior-markup.md:110-113, behavior-tree-engine.md:159).
 EYESEME_TREES: Tuple[str, ...] = tuple(
     "Bht_Eyeseme_" + n for n in (
         "Afraid", "Angry", "Concerned", "Confused", "Curious", "Embarrassed",
         "Happy", "Neutral", "Sad", "Shy", "Surprised"))
 
-#: The named trees from behavior-tree-engine.md:103-115 ("the 45"), group by group. Only
+#: The named trees from behavior-tree-engine.md:152-165 ("the 45"), group by group. Only
 #: ids we can name are listed (the `Vg_` cell is a family, not one id).
 NAMED_TREES: Tuple[str, ...] = EYESEME_TREES + tuple("Bht_" + n for n in (
-    # Idle / attention — :110
+    # Idle / attention — :160
     "Idle_Curious", "Idle_Listening", "Idle_Near_Focused", "Idle_Near_UnFocused",
     "Idle_Far_Unfocused", "Idle_SeekingState", "Idle_DisengagedState", "Idle_Earmuffs",
-    # Gestures / talking — :111
+    # Gestures / talking — :161
     "Gesture_Greet", "Talking_Poses", "Talking_With_Gestures", "Vocal_Gestures",
     "Head", "Spin_360", "ooo_long", "Sign_off",
-    # Physical reactions — :112
+    # Physical reactions — :162
     "Robot_Pickup", "Robot_Putdown",
-    # Sleep / sensory — :113
+    # Sleep / sensory — :163
     "Sleep_Anim", "Sleep_Anim_Zero", "Sleeping_Anim", "SensoryIdle_Anim",
     "SensoryIdleStoryTime_Anim",
-    # System / lifecycle — :114
+    # System / lifecycle — :164
     "System_Resume", "System_Suspend", "System_Suspend_Zero", "System_WifiRecover",
     "Active_Thinking", "Demo_Wake_Up",
-    # Test / misc — :115
+    # Test / misc — :165
     "Motor_Test", "TestState", "Anim",
 ))
 
@@ -144,8 +144,8 @@ APP_TREES: Tuple[str, ...] = (
 TREES: Tuple[str, ...] = tuple(dict.fromkeys(NAMED_TREES + APP_TREES))
 TREE_SET = frozenset(TREES)
 
-#: **There is no gaze verb** — gaze lives on the robot (gaze-and-attention.md:13-15,
-#: :48-53). The only cloud handle is choosing a **look-bearing tree**, so "gaze" is this
+#: **There is no gaze verb** — gaze lives on the robot (gaze-and-attention.md:4-7,
+#: :29-38). The only cloud handle is choosing a **look-bearing tree**, so "gaze" is this
 #: closed set, not a direction.
 GAZE_TREES: Tuple[str, ...] = (
     "Bht_Search", "Bht_Idle_Curious", "Bht_Idle_Listening", "Bht_Idle_Near_Focused",
@@ -224,19 +224,19 @@ VERBS: Tuple[str, ...] = (
 )
 VERB_SET = frozenset(VERBS)
 
-#: `RemoteDialog.DialogAct` (22) — remote-chat-protocol.md:119-122.
+#: `RemoteDialog.DialogAct` (22) — remote-chat-protocol.md:93.
 DIALOG_ACTS: Tuple[str, ...] = (
     "abandon", "apology", "apology_response", "appreciation", "backchannelling",
     "closing", "complaint", "opinion", "statement_non_opinion", "factual_question",
     "opinion_question", "hold", "opening", "yes_no_question", "pos_answer",
     "neg_answer", "other_answers", "command", "comment", "thanking", "other", "timeout",
 )
-#: `RemoteDialog.EmotionState` (7) — remote-chat-protocol.md:123. Distinct from
+#: `RemoteDialog.EmotionState` (7) — remote-chat-protocol.md:94. Distinct from
 #: `ePlaybackMood`: this is the *perception* enum on the chat wire.
 EMOTION_STATES: Tuple[str, ...] = (
     "sadness", "joy", "love", "anger", "fear", "surprise", "neutral",
 )
-#: `RemoteSignals.Signal` (9) — behavior-markup.md:183-189, remote-chat-protocol.md:124-126.
+#: `RemoteSignals.Signal` (9) — behavior-markup.md:183-189, remote-chat-protocol.md:95.
 SIGNALS: Tuple[str, ...] = (
     "no_signal", "closing", "apology", "interrupted_speech", "complaint_clarification",
     "confirmation_agreement", "interest", "non_interest", "rejection_disagreement",

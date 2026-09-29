@@ -1,7 +1,7 @@
 """
 Conversation memory — turning a finished chat into a few durable facts.
 
-`volley.persist_data` is the storage (`store.MemoryStore`); this module is the
+`volley.persist_data` is the storage (`memory_store.MemoryStore`); this module is the
 *summarizer* behind `session.summarize()` (content-module-contract.md): the prompt, a
 tolerant parse, and the filters on what may be remembered. We ask for structured JSON so
 a parent can see, erase and cap items one by one::
@@ -23,7 +23,7 @@ import re
 import time
 from typing import Optional
 
-from ..store import item_text
+from ..memory_items import item_text
 
 # The keys we keep out of a summary, in the order a parent reads them.
 LIST_KEYS = ("facts", "preferences", "open_threads")

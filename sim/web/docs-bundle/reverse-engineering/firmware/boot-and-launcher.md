@@ -1,17 +1,15 @@
 # 🚦 Boot & lifecycle — the Launcher state machine
 
-> Analyzed build: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9) — see [`firmware-803-reference.md`](firmware-803-reference.md).
-
-> **What this is.** How the robot boots into its experience and switches modes — the `me.embodied
-> .services.Launcher` state machine that starts/stops the `bo-*` components. This is the app-level
-> lifecycle *above* the Android boot in [`firmware-image.md`](firmware-image.md): what a custom
-> firmware must replicate (goal #1), and what a stranded robot actually does (goal #3). From
-> `bo-android`'s Java service layer (`Launcher`, `ServiceLauncher`).
+How the robot boots into its experience and switches modes, on **v3.6.4-Zephyr / OTA v24.10.803**
+([firmware reference](firmware-803-reference.md)). The `me.embodied.services.Launcher` state machine in
+`bo-android`'s Java service layer (`Launcher`, `ServiceLauncher`) starts and stops 12 `bo-*` components.
+- **Offline means QR-reading:** a robot that can't reach the internet sits in `STATE_CONFIG` scanning QR codes.
+- **The updater runs even in setup**, so OTA can proceed on an unpaired robot.
+- Below the Launcher, the Android `init` layer is stock except for **two** Embodied daemons.
 
 ## Components (`BOComponent`)
 
-The Launcher supervises 12 components (mostly the native `libbo-*` + the Unity apps), starting/stopping
-them per state:
+12 components (mostly the native `libbo-*` + the Unity apps), started/stopped per state:
 
 | Component | What |
 |---|---|
@@ -27,10 +25,13 @@ them per state:
 
 Each component reports its lifecycle on the bus as **`ComponentState{name, state, timestamp}`**
 (`embodied.launcher`), where **`State`** is `UNKNOWN=0`, `Running=1`, `NotRunning=2`, `Fault=3`. The
-Launcher watches these to detect a crashed component (`Fault`/`NotRunning`) and restart it — so a
-custom app layer should emit the same `ComponentState` for its own processes to plug into the
-supervision (or run its own supervisor). `DebugConfigureRequest{target, target_state}`
-(`embodied.system`) toggles a named target's debug state at runtime.
+Launcher restarts a component that reports `Fault`/`NotRunning`. `DebugConfigureRequest{target,
+target_state}` (`embodied.system`) toggles a named target's debug state at runtime.
+
+**For custom firmware:** bring up `BO_DISPATCH` (the bus) first, then your perception/brain/face
+equivalents, honor the config↔running transition on pairing/network, and emit `ComponentState` for your
+processes (or run your own supervisor). Components are clean process starts/stops, so you can swap one
+(e.g. `BO_BRAIN`) and keep the rest.
 
 ## States (`LauncherState`)
 
@@ -69,7 +70,7 @@ stateDiagram-v2
    (`waitOnNetwork(20000)`), the Launcher logs *"Could not detect internet after resume. Returning to
    QR reading state"* and `RequestState(STATE_CONFIG)`. **A stranded robot sits in `STATE_CONFIG`
    scanning QR codes** — which is exactly why the re-home QR works on 801+ (and why the pre-801 block
-   is purely the endpoint pinning, not the robot refusing to scan).
+   is the hardcoded endpoint, not the robot refusing to scan).
 2. **The updater runs in config.** `BO_UPDATER` is active in `STATE_CONFIG` and `STATE_SILENT_REBOOT`,
    so OTA can proceed while unpaired/offline-then-reconnected — the basis for "point at a server, get
    updated."
@@ -85,23 +86,23 @@ cloud backup or the local `/sdcard/EmbodiedStaticData/PERSISTENT_DATA` (e.g. `ri
 `Launcher.OnFactoryTestRequest(i)` launches a factory app by index via an Android intent — the
 privileged manufacturing tools ([`factory-provisioning.md`](factory-provisioning.md)):
 
-| i | FactoryTest | Component |
-|--:|---|---|
-| — | `BURN_IN` | `me.embodied.productiontesting.burnintest/.ActivityBurnInTest` |
-| — | `TUMMY_BACK` (QC) | `…productiontesting.qc/.ActivityQC` |
-| — | `DEMO_MODE` | (retail demo loop) |
-| — | `LIFE_TEST` | `…lifetest/.ActivityLifeTest` |
-| — | `INTERNAL_ASSEMBLY` | `…internalassytest/.ActivityInternalAssyTest` |
-| — | `FINAL_TEST` | `…finaltest/.ActivityFinalTest` |
+| FactoryTest | Component |
+|---|---|
+| `BURN_IN` | `me.embodied.productiontesting.burnintest/.ActivityBurnInTest` |
+| `TUMMY_BACK` (QC) | `…productiontesting.qc/.ActivityQC` |
+| `DEMO_MODE` | (retail demo loop) |
+| `LIFE_TEST` | `…lifetest/.ActivityLifeTest` |
+| `INTERNAL_ASSEMBLY` | `…internalassytest/.ActivityInternalAssyTest` |
+| `FINAL_TEST` | `…finaltest/.ActivityFinalTest` |
 
-The request arrives over the bus (a factory/service message), not a user QR — but it shows the hook a
-custom build could use to launch privileged bring-up tools.
+The request arrives over the bus (a factory/service message), not a user QR. A custom build can use the
+same hook to launch privileged bring-up tools.
 
 ## Init service graph (native daemons)
 
 Below the app-layer Launcher sits the Android `init` service set. Across all `.rc` files (ramdisk +
-`/system/etc/init` + `/vendor/etc/init[/hw]`) this build defines **98 unique services** — the complete list (name · class · binary · user · flags ·
-source `.rc`) is in [`manifests/init-services.tsv`](manifests/init-services.tsv):
+`/system/etc/init` + `/vendor/etc/init[/hw]`) this build defines **98 unique services**. The complete
+list (name · class · binary · user · flags · source `.rc`) is [`manifests/init-services.tsv`](manifests/init-services.tsv).
 
 | `class` | count | fires |
 |---|--:|---|
@@ -119,14 +120,10 @@ native init daemons:
 | `ledctrld` | `/system/bin/ledctrld` (core, oneshot) | PCA963x status LEDs; own SELinux domain `u:r:ledctrld:s0` |
 | `projectorfanpid` | `/system/bin/projectorfanpid` (core, oneshot) | DLP projector PID fan; domain `u:r:projectorfanpid:s0` |
 
-Both are `core`/`oneshot` and each gets a **dedicated SELinux domain** — Embodied's only two additions
-to the SELinux policy at the init layer. A comment in `venhw_init.rockchip.rc` notes
-**`projectorfanpid` can be enabled/disabled via `/sdcard/scripts.config`** — a plaintext config knob on
-the (MTP-reachable) `/sdcard`, i.e. the projector-fan behaviour is tunable without reflashing.
-
-Everything else that makes Moxie *Moxie* runs in the **app layer** (the `bo-*` components the Launcher
-starts — see above), **not** as init services. For custom firmware this is the clean seam: you can
-replace the experience without touching the init/daemon layer.
+Each gets a **dedicated SELinux domain** ([security-policy](security-policy.md)). A comment in `venhw_init.rockchip.rc` notes
+**`projectorfanpid` can be enabled/disabled via `/sdcard/scripts.config`**, a plaintext knob on the
+MTP-reachable `/sdcard`. Everything else that makes Moxie *Moxie* runs in the **app layer** (the `bo-*`
+components above), so the experience can be replaced without touching the init/daemon layer.
 
 Notable stock services in the mix:
 - **OTA/recovery:** `update_engine`, `update_verifier`(`_nonencrypted`), `uncrypt`, `recovery`,
@@ -139,15 +136,7 @@ Notable stock services in the mix:
   the stock Android VPN daemons that sit behind the **VPN-config QR** (`VN`+`QRVPNConfig`, see
   [`qr-commands.md`](../protocol/qr-commands.md#vpn-qr-vn-qrvpnconfig)); a real OS-level path to tunnel a robot's
   traffic through infra you control.
-- Kernel modules are loaded via `init.insmod.sh` (`insmod`/`modprobe` in `/vendor/bin`).
-
-## For custom firmware
-
-A replacement app layer must reproduce this supervision: bring up `BO_DISPATCH` (the bus) first, then
-your equivalents of perception/brain/face, and honor the config↔running transition on
-pairing/network. The component boundaries are clean process starts/stops, so you can replace one
-component (e.g. swap `BO_BRAIN`) while keeping the rest — the minimal-invasive custom-personality path
-in [`firmware-image.md`](firmware-image.md).
+- `init.insmod.sh` (`insmod`/`modprobe` in `/vendor/bin`) is present, but no `.ko` modules ship: drivers are built in ([hal-and-drivers](hal-and-drivers.md#3-kernel-drivers)).
 
 ---
 📖 [Reverse-engineering index](../README.md) · [Firmware image](firmware-image.md) · [OTA & recovery](ota-and-recovery.md) · [Docs index](../../README.md)

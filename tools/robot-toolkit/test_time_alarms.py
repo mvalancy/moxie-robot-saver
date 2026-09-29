@@ -5,7 +5,7 @@ Builds a UserAlarmRequest (the on-device wake that implements RobotCloudConfig's
 WakeSchedule) and a TimeZoneInfo (the Olson timezone that turns bedtime wall-clock
 strings into local instants), frames + re-parses them, and checks the ReservedTimers
 namespacing + a triggered event. See
-docs/reverse-engineering/power-and-system-events.md (Time, timezone & alarms).
+docs/reverse-engineering/protocol/power-and-system-events.md (Time, timezone & alarms).
 
     python3 tools/robot-toolkit/test_time_alarms.py
 """
@@ -14,6 +14,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report  # noqa: E402
 
 try:
     from embodied.system import TimeEvents_pb2 as T  # noqa: E402
@@ -21,11 +22,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  time/alarm toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
 
 def roundtrip(msg):
     cls = type(msg)
@@ -60,10 +56,5 @@ ok(roundtrip(trig).timer_id == T.UserAlarmRequest.TIMER_ID_USER_WAKE, "UserAlarm
 ok(bus.full_name(a) == "embodied.sys.UserAlarmRequest", f"unexpected full name {bus.full_name(a)}")
 ok(bus.full_name(tz) == "embodied.sys.TimeZoneInfo", f"unexpected full name {bus.full_name(tz)}")
 
-if fails:
-    print("❌ time/alarm toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ time/alarm toolkit test OK — UserAlarmRequest (USER_WAKE/PARENT_APP/CUSTOM, repeats) + "
-      "TimeZoneInfo (Olson id) + UserAlarmTriggered round-trip through embodied.sys.TimeEvents")
+report("time/alarm", "UserAlarmRequest (USER_WAKE/PARENT_APP/CUSTOM, repeats) + "
+       "TimeZoneInfo (Olson id) + UserAlarmTriggered round-trip through embodied.sys.TimeEvents")

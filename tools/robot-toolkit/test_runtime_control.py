@@ -3,7 +3,7 @@
 (embodied.robotbrain System/Reset/ChatScriptState). Builds each control command a
 server/app sends to a running brain — volume (absolute + relative delta), accessibility
 pacing, force-listen, barge-in gate, soft/hard reset — frames + re-parses them, and
-checks descriptor names. See docs/reverse-engineering/runtime-control.md.
+checks descriptor names. See docs/reverse-engineering/protocol/runtime-control.md.
 
     python3 tools/robot-toolkit/test_runtime_control.py
 """
@@ -12,6 +12,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report, rt  # noqa: E402
 
 try:
     from embodied.robotbrain import System_pb2 as S  # noqa: E402
@@ -21,14 +22,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  runtime-control toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
-
-def rt(msg):
-    out = type(msg)(); out.ParseFromString(msg.SerializeToString()); return out
 
 # volume: absolute set + relative down-nudge (signed)
 vabs = rt(bus.volume_modify(6))
@@ -60,10 +53,5 @@ ok(rt(ready).user == "u1", "ChatScriptReady round-trip failed")
 exc = C.ChatScriptException(message="boom", restore_default=True)
 ok(rt(exc).restore_default is True and rt(exc).message == "boom", "ChatScriptException round-trip failed")
 
-if fails:
-    print("❌ runtime-control toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ runtime-control toolkit test OK — volume (abs + signed delta), slow_input, chatbot_listening, "
-      "allow_cutoff, soft/hard reset + ChatScript lifecycle round-trip through embodied.robotbrain")
+report("runtime-control", "volume (abs + signed delta), slow_input, chatbot_listening, "
+       "allow_cutoff, soft/hard reset + ChatScript lifecycle round-trip through embodied.robotbrain")

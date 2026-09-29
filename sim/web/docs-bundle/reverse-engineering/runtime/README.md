@@ -1,20 +1,23 @@
 # 🧠 Runtime — the on-device brain, behavior & face engine
 
-The **on-device brain** — how Moxie decides, behaves, perceives, and renders its face (the decompiled Unity runtime).
+How Moxie decides, behaves, perceives and renders its face, recovered from the decompiled Unity brain
+(`bo-android`, OTA `v24.10.803`). Read top-down: inputs → decision → arbitration → outputs; content and
+perception are the server-facing edges.
 
-- [`behavior-input-events.md`](behavior-input-events.md) — the **input contract**: the 163 `InputEvent` types (sensors, vision, audio, speech, chat, system) that drive the behavior tree via the Farmer→`InputEngine` bus, and the 24 that are proto-serializable (the ZMQ external contract).
-- [`behavior-tree-engine.md`](behavior-tree-engine.md) — the **decision layer**: the brain runs on **ParadoxNotion NodeCanvas** (BT · Dialogue · FSM · FlowScript) with a Blackboard; the node taxonomy, embodied's ~70 `Robot*` nodes, the logic/animation tree split, and the 45 named `Bht_*` trees (incl. the `Eyeseme` facial expressions).
-- [`behavior-nodes.md`](behavior-nodes.md) — **Moxie's behavior-programming vocabulary**: the complete catalog of the **65 `RobotBT_*` NodeCanvas nodes** authored trees are built from (mood/gaze/animation/audio/sensory setters, the 12 turn-taking conditions, the accessibility gates, tree-flow control, markup/event hooks) — the instruction set a custom brain must implement to run stock content, and the API a content author scripts Moxie in.
-- [`robot-actions.md`](robot-actions.md) — the **top-level behavior arbiter** (personality): the `RobotActionManager` scores every `RobotAction` each frame and runs the winner — the ladder **Startup > handling (pickup/putdown/unstable 900/800/700) > affection (belly-rub/hug 400/300) > content activity (200) > idle (100)**; the `RobotActionMicroExpBase<Event,State>` reflex pattern; and how content activities (Drawing/GeneralConv/ImaginativePlay) run as on-device shells over server-side logic.
-- [`task-scheduler.md`](task-scheduler.md) — the **runtime glue** between decision and motion: the `EBGameTask`/`EBGTManager` **priority + resource-arbitration scheduler** that lets a dozen concurrent behaviors (idle breathing, gaze, blink, lip-sync, a scripted wave, a touch flinch) share Moxie's outputs without conflict — the 44-flag `RobotResourceFlags` output inventory + the `RobotTaskPriority` preemption ladder.
-- [`native-boundary.md`](native-boundary.md) — **how the managed brain reaches native code**: the three interop mechanisms — P/Invoke (`liblizzerface` MCU motor/LED/power C API, `librobinface` LED face, `libcerevoice_eng` TTS ×108, `libdevset`, `libbo-launcher`), JNI (`ServiceLauncher` starts the module processes, DFU), and the ZMQ bus for the heavy out-of-process `libbo-*` perception/ML modules — so a custom brain **replaces those modules by speaking the bus**, never reimplementing the 154 MB `libbo-brain`.
-- [`behavior-markup.md`](behavior-markup.md) — the inline `<mark name="cmd:…">` command language (24 verbs) a server uses to make Moxie **move, emote, and play audio while speaking**.
-- [`content-and-conversation.md`](content-and-conversation.md) — the dialog engines (ChatScript + LLM), the **content-module format**, and the `volley`/`session` hooks a server fills in.
-- [`content-delivery.md`](content-delivery.md) — how content is **packaged & delivered**: dynamic Unity AssetBundles from 3 sources (baked/local/**remote**), the file manifest (hash+version), the load lifecycle, and the 24 per-type processors (behavior trees, audio, icons, bangles, customizations).
-- [`perception-pipeline.md`](perception-pipeline.md) — the **audio** (wake-word → XMOS → Deepgram STT → CloudTTS) and **vision** (faces/people/QR) pipelines a server sits in the middle of.
-- [`gaze-and-attention.md`](gaze-and-attention.md) — **how Moxie decides where to look**: weighted 3D interest points → attention target → face/spot selection → facing calc → IK look-at with angle-scaled **saccades** (12.5 ms floor, 10° re-target hysteresis) — plus the **published `Attention` state** (`TARGET_FOCUS`/`NO_TARGET_FOCUS`/`SEARCHING` + the targeted fused-person id) other modules and a server can subscribe to.
-- [`turn-taking.md`](turn-taking.md) — the **conversation state machine**: `TurnTakingState`'s five axes (TurnOwner · Mentor/Moxie state · Engagement · Assist), barge-in via `ChatbotAllowCutoffEvent`/`AllowInterruption`, DOA speaker scoring, and the `WaitingForResponse` re-prompt timer.
-- [`unity-face-animation.md`](unity-face-animation.md) — **how the animated face actually renders**, from the decompiled Unity code: the `rig3` blendshape mesh, the **`EBAnimGrinder`** build-time controller generator, the layered/masked Animator + `EBCompositeAnimPlayer` (Playables), the **`StateVariables` blackboard** (`RobotState_*`) the behavior tree writes, the **Eyeseme** mood layer (11 `ePlaybackMood`s) + post-process blink, the **viseme** mouth layer (41 ARPABET phonemes, two TTS sources), IK look-at, the `SensoryMode` idle selector, and the accessibility gates.
+| Doc | What it covers |
+|---|---|
+| [`behavior-input-events.md`](behavior-input-events.md) | The 163 `InputEvent` types (Farmer → `InputEngine` bus) and the 24 proto-serializable ones that cross the ZMQ bus |
+| [`behavior-tree-engine.md`](behavior-tree-engine.md) | NodeCanvas (BT · Dialogue · FSM · FlowScript), the catalog of 65 `RobotBT_*` nodes, the 45 `Bht_*` trees, the logic/animation split |
+| [`robot-actions.md`](robot-actions.md) | Top-level arbiter: `RobotActionManager` score ladder (Startup > handling > affection > activity > idle), reflexes, activity shells |
+| [`task-scheduler.md`](task-scheduler.md) | `EBGameTask`/`EBGTManager` priority + resource arbitration; the 44 `RobotResourceFlags` outputs and the `RobotTaskPriority` ladder |
+| [`unity-face-animation.md`](unity-face-animation.md) | Face render: avatar slots, `rig3` blendshapes, `EBAnimGrinder`, `StateVariables` blackboard, Eyeseme/blink, 41 visemes, `SensoryMode`, accessibility gates |
+| [`gaze-and-attention.md`](gaze-and-attention.md) | Interest points → `AttentionTarget` → IK look-at with saccades; the published `robotbrain.Attention` state |
+| [`turn-taking.md`](turn-taking.md) | `TurnTakingState` five axes, barge-in, DOA speaker scoring, response-wait timer |
+| [`behavior-markup.md`](behavior-markup.md) | The `<mark name="cmd:…">` language (24 verbs), SSML dialect, mood/gesture/spurt vocabularies |
+| [`content-and-conversation.md`](content-and-conversation.md) | ChatScript + LLM engines, content-module format, volley/session API, schedules, recommender, SEL taxonomy, telehealth |
+| [`content-delivery.md`](content-delivery.md) | Dynamic AssetBundles: 3 sources (incl. remote), hash+version manifest, load lifecycle, 24 processors |
+| [`perception-pipeline.md`](perception-pipeline.md) | Audio (XMOS → wake/VAD → STT → TTS) and vision (faces, pose, QR, camera activities); XMOS DSP firmware + DFU |
+| [`native-boundary.md`](native-boundary.md) | P/Invoke (`liblizzerface` MCU API, `librobinface`, CereVoice, `libdevset`), JNI, and the out-of-process `libbo-*` bus modules |
 
 ---
-📖 [Reverse-engineering index](../README.md) · [Coverage](../COVERAGE.md) · [Exploration map](../EXPLORATION-MAP.md)
+📖 [Reverse-engineering index](../README.md) · [Exploration map](../EXPLORATION-MAP.md)

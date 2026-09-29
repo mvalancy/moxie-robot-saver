@@ -80,7 +80,7 @@ async function saveVoice(){
       s.textContent='✅ Saved — the next thing Moxie says uses it.';
       renderVoiceCard(r);
     } else s.textContent='⚠️ '+(r.reason||r.error||'could not save');
-  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not save'); }
+  }catch(e){ s.textContent=oops(e,'could not save'); }
 }
 async function testVoice(){
   const s=$('#voice-status'); if(!s) return;
@@ -91,7 +91,7 @@ async function testVoice(){
     s.textContent=r.ok
       ? `✅ Played on ${String(voiceDevice||liveDevice).slice(0,16)}…: "${r.spoke||''}"`
       : '⚠️ '+(r.reason||r.error||'could not play');
-  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not play'); }
+  }catch(e){ s.textContent=oops(e,'could not play'); }
 }
 {
   const sp=$('#voice-speech'), ls=$('#voice-listening');
@@ -175,7 +175,7 @@ async function saveBrain(brain){
         : '✅ Saved — the next thing your child says goes to this brain.';
       renderBrainCard(r);
     } else s.textContent='⚠️ '+(r.reason||r.error||'could not save');
-  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not save'); }
+  }catch(e){ s.textContent=oops(e,'could not save'); }
 }
 // The blurb and the "needs" line follow the DROPDOWN rather than the saved value, so a
 // parent reads what a brain IS before committing to it. Only the note is redrawn on a

@@ -3,7 +3,7 @@
 moxie_toolkit.bus (embodied.unity). Builds a RobotCamera (drive the face self-view),
 a CloudTTSResponse a server returns (PCM + a viseme TTSMark), a UserPairingRequest,
 and checks the lifecycle + audio-notif subscribe sets. See
-docs/reverse-engineering/unity-mainapp-interface.md.
+docs/reverse-engineering/protocol/unity-mainapp-interface.md.
 
     python3 tools/robot-toolkit/test_mainapp.py
 """
@@ -12,6 +12,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report, rt  # noqa: E402
 
 try:
     from embodied.unity import CloudTTS_pb2 as C  # noqa: E402
@@ -21,14 +22,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  mainapp toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
-
-def rt(msg):
-    out = type(msg)(); out.ParseFromString(msg.SerializeToString()); return out
 
 # --- virtual camera ---
 cam = bus.robot_camera((0, 0.1, -1), (0, 0, 0), fov=45.0)
@@ -64,10 +57,5 @@ ok("embodied.unity.MainAppStatus" in life and "embodied.unity.SoftwareVersion" i
 an = {bus.full_name(c) for c in bus.audio_notif_classes()}
 ok(len(an) == 6 and "embodied.unity.AudioNotifPauseEventPB" in an, f"audio-notif set incomplete: {an}")
 
-if fails:
-    print("❌ mainapp toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ mainapp toolkit test OK — RobotCamera + CloudTTSResponse(PCM+TTSMark) + UserPairingRequest + "
-      "lifecycle/audio-notif subscribe sets round-trip through embodied.unity (the MAINAPP interface)")
+report("mainapp", "RobotCamera + CloudTTSResponse(PCM+TTSMark) + UserPairingRequest + "
+       "lifecycle/audio-notif subscribe sets round-trip through embodied.unity (the MAINAPP interface)")

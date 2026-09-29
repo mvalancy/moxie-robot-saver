@@ -91,7 +91,7 @@ profile. Appearance rides down inside `child_pii`, in `ChildDecrypted.face_optio
 field **17** ([`Cloud.proto`](../reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto):166;
 the sealed twin `ChildEncrypted.face_options = 16` is Cloud.proto:144). It is clear metadata, not one of
 the encrypted fields ([`device-config-and-telemetry.md`](../reverse-engineering/protocol/device-config-and-telemetry.md):52-54,
-[`crypto-and-keys.md`](../reverse-engineering/phone/crypto-and-keys.md):506-508), so a server fills it
+[`crypto-and-keys.md`](../reverse-engineering/phone/crypto-and-keys.md):358-362), so a server fills it
 directly.
 
 **The 14 layers** (`MoxieCustomizationType`,

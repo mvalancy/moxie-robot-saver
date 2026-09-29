@@ -3,7 +3,7 @@ from __future__ import annotations
 import json, os
 
 from moxie_sdk.types import ActionType
-from moxie_sdk.store import MemoryStore
+from moxie_sdk.memory_store import MemoryStore
 from moxie_sdk.cloud_config import LoggingPolicy
 from .constants import MEMORY_POLICY
 
@@ -113,7 +113,7 @@ class MemoryMixin:
 
     # ---- long-term memory (persist_data + what a parent may read/erase) ----
     # Durable facts a content module keeps between conversations (content-module-contract.md
-    # `volley.persist_data` / `session.summarize()`, `moxie_sdk/store.py::MemoryStore`).
+    # `volley.persist_data` / `session.summarize()`, `moxie_sdk/memory_store.py::MemoryStore`).
     # The app owns the store; the runtime owns the parent's privacy switch and the moment a
     # conversation ends. `/memory` lets a parent read, erase or correct it (audit BEYOND #4).
 

@@ -2,7 +2,7 @@
 """Round-trip test for the IMU handling-event helpers in moxie_toolkit.bus
 (embodied.unity MpuPickup). Builds a shaken event (with direction), a pickup-status
 (pitch), and the IMU-noise gate, frames + re-parses them via the bus registry, and
-checks the MpuShakeDirection enum. See docs/reverse-engineering/hardware-map.md
+checks the MpuShakeDirection enum. See docs/reverse-engineering/hardware/hardware-map.md
 (Semantic handling events).
 
     python3 tools/robot-toolkit/test_mpu_handling.py
@@ -12,6 +12,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report  # noqa: E402
 
 try:
     from embodied.unity import MpuPickup_pb2 as M  # noqa: E402
@@ -20,11 +21,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  mpu-handling toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
 
 registry = {bus.full_name(c): c for c in bus.mpu_handling_classes()}
 ok(len(registry) == 6, f"expected 6 handling classes, got {len(registry)}")
@@ -56,10 +52,5 @@ for cls, name in ((M.MpuPickedUpEventPB, "MpuPickedUpEventPB"),
                   (M.MpuPutDownEventPB, "MpuPutDownEventPB")):
     ok(bus.full_name(cls) == f"embodied.unity.{name}", f"{name} full name wrong")
 
-if fails:
-    print("❌ mpu-handling toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ mpu-handling toolkit test OK — shaken(direction=LeftRight) + pickup-status(pitch) + IMU-noise "
-      "gate + pickup/tilt/put-down round-trip through embodied.unity.MpuPickup")
+report("mpu-handling", "shaken(direction=LeftRight) + pickup-status(pitch) + IMU-noise "
+       "gate + pickup/tilt/put-down round-trip through embodied.unity.MpuPickup")
