@@ -11,7 +11,7 @@ effect list becomes a `RemoteChatAction` spelled the way the recovered contract 
       → {"action": "execute", "function_id": …}  wire.encode_action
       → the robot does it                        sim/virtual_moxie.py
 
-Design: `sandboxed-extensions.md` §4.5/§5.3; wire shape: `qr-launch-cards.md` §P0-a/§P0-b.
+Design: `sandboxed-extensions.md` §4.5/§5.1; wire shape: `qr-launch-cards.md` §P0-a/§P0-b.
 """
 import pytest
 

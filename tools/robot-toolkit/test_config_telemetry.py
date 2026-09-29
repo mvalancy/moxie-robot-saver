@@ -13,6 +13,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report  # noqa: E402
 
 try:
     from embodied.logging import Cloud_pb2 as C  # noqa: E402
@@ -21,11 +22,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  config/telemetry toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
 
 # ---- RobotCloudConfig: the /config document a server pushes down ----
 cfg = cloud.build_robot_cloud_config(
@@ -76,10 +72,5 @@ cs = CS.CloudStatus(connected=True, user_state=CS.CloudStatus.PAIRED_VALID)
 pcs = cloud.parse_cloud_status(cs.SerializeToString())
 ok(pcs.connected and pcs.user_state == CS.CloudStatus.PAIRED_VALID, "CloudStatus round-trip failed")
 
-if fails:
-    print("❌ config/telemetry toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ config/telemetry toolkit test OK — RobotCloudConfig (bedtime/alarms/mode) + RobotStatus + "
-      "Packet telemetry + CloudStatus(UserState) all round-trip through embodied.logging")
+report("config/telemetry", "RobotCloudConfig (bedtime/alarms/mode) + RobotStatus + "
+       "Packet telemetry + CloudStatus(UserState) all round-trip through embodied.logging")

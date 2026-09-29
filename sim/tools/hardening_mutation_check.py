@@ -30,6 +30,7 @@ import subprocess
 
 WT = pathlib.Path(__file__).resolve().parents[2]
 STORE = WT / "mqtt/moxie_sdk/store.py"
+MEMSTORE = WT / "mqtt/moxie_sdk/memory_store.py"
 RT_CONNECTION = WT / "mqtt/supervisor/moxie_runtime/connection.py"
 RT_CONSTANTS = WT / "mqtt/supervisor/moxie_runtime/constants.py"
 RT_FLEET = WT / "mqtt/supervisor/moxie_runtime/fleet.py"
@@ -112,7 +113,7 @@ MUTATIONS = [
     ("T5  spin instead of backing off", STORE,
      "            self._sleep(delay)", "            pass",
      STORE_TESTS, "t5b"),
-    ("T5c a refused MemoryStore write raises into the turn instead of answering", STORE,
+    ("T5c a refused MemoryStore write raises into the turn instead of answering", MEMSTORE,
      '    @refuses_on_lock("merge", None)', "    ",
      STORE_TESTS, "t5c"),
     ("T6  drop the turn-budget assertion on MOXIE_STORE_LOCK_TIMEOUT_S", CFG,

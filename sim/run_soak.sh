@@ -6,8 +6,8 @@
 #   bash sim/run_soak.sh --profile week        # 60 min, production-hardening.md §5.2
 #   bash sim/run_soak.sh --only-contention --writers 8 --appends 250
 #
-# Build document: docs/architecture/backlog/production-hardening.md §5. The eleven
-# acceptance bars (§5.3, A1–A11) are computed and printed by sim/tools/soak.py — pass or
+# Build document: docs/architecture/backlog/production-hardening.md §5. The twelve
+# acceptance bars (§5.3, A1–A12) are computed and printed by sim/tools/soak.py — pass or
 # fail, never inferred — together with §5.4, which says what none of them can prove.
 #
 # READ §5.4 BEFORE QUOTING ANY NUMBER THIS PRINTS. It proves *our* half: a socket that

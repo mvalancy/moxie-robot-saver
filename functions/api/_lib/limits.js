@@ -42,7 +42,7 @@ import { sharedStore, sharedWindowVerdict, sharedBudgetVerdict } from "./sharedt
 export { UNITS } from "./counters.js";
 export { ipKey, clientIp, checkOrigin } from "./clientip.js";
 export { maxJsonBodyBytes, readJsonBody, readAudioBody } from "./body.js";
-export { CACHE_TIMEOUT, CACHE_ERROR, withDeadline, __keyShapes } from "./sharedtier.js";
+export { __keyShapes } from "./sharedtier.js";
 
 /** Reset every counter. Tests only. Waiters are EXPIRED, not dropped: a dropped waiter is
  *  a pending timer and a test that hangs instead of failing. Clearing the ledgers makes

@@ -475,7 +475,7 @@ for (const [label, w, h, cam, want] of [
 ]) {
   const page = await open(w, h);
   if (cam) await page.evaluate((c) => window.__setCam(...c), cam);
-  // Per-sweep head-y RANGE, used only in the failure text (backlog/head-sweep-wait.md).
+  // Per-sweep head-y RANGE, used only in the failure text (backlog/test-timing-under-load.md §2).
   const probe = await page.evaluate(async () => {
     const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
     const rows = [];

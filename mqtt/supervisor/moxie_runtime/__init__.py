@@ -40,6 +40,22 @@ from .schedule import ScheduleMixin
 from .telehealth import TelehealthMixin
 
 
+_OFF = ("0", "off", "false", "no")
+
+
+def _seconds(arg, env: str, default: float) -> float:
+    """A duration: the ctor argument, else `env`, else `default` (also on a bad value)."""
+    try:
+        return float(arg if arg is not None else os.environ.get(env) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_on(env: str) -> bool:
+    """A switch that is on unless set to a falsy spelling."""
+    return (os.environ.get(env) or "1").strip().lower() not in _OFF
+
+
 class MoxieRuntime(LifecycleMixin, StatusServerMixin, ConnectionMixin, FleetMixin, BrainMixin,
                    MemoryMixin, SafetyMixin, TelemetryMixin, PresenceMixin, TurnsMixin,
                    VoiceMixin, ContentMixin, ScheduleMixin, TelehealthMixin):
@@ -83,13 +99,9 @@ class MoxieRuntime(LifecycleMixin, StatusServerMixin, ConnectionMixin, FleetMixi
         self._memory_dir = os.environ.get("MOXIE_MEMORY_DIR", "").strip()
         self._max_memory = int(os.environ.get("MOXIE_MEMORY_TURNS", "40"))
         self._load_memory()
-        # Brain latency budget before a filler: ctor arg, MOXIE_BRAIN_BUDGET_S, default.
-        try:
-            self.brain_budget_s = float(
-                brain_budget_s if brain_budget_s is not None
-                else os.environ.get("MOXIE_BRAIN_BUDGET_S") or DEFAULT_BRAIN_BUDGET_S)
-        except (TypeError, ValueError):
-            self.brain_budget_s = DEFAULT_BRAIN_BUDGET_S
+        # Brain latency budget before a filler.
+        self.brain_budget_s = _seconds(brain_budget_s, "MOXIE_BRAIN_BUDGET_S",
+                                       DEFAULT_BRAIN_BUDGET_S)
         # Stream answers sentence by sentence when the app can: ctor arg, MOXIE_STREAMING, on.
         if streaming is None:
             streaming = (os.environ.get("MOXIE_STREAMING") or "1").strip().lower()
@@ -127,8 +139,7 @@ class MoxieRuntime(LifecycleMixin, StatusServerMixin, ConnectionMixin, FleetMixi
         self._content_lock = threading.Lock()
         # Child safety (ai-seam §2) on both sides of a turn. Ctor arg wins; MOXIE_SAFETY=0
         # turns the stage off.
-        if safety is None and (os.environ.get("MOXIE_SAFETY") or "1").strip().lower() \
-                not in ("0", "off", "false", "no"):
+        if safety is None and _env_on("MOXIE_SAFETY"):
             try:
                 safety = safety_seam.default_classifier()
             except Exception as e:                # a broken rules file must be LOUD
@@ -147,14 +158,9 @@ class MoxieRuntime(LifecycleMixin, StatusServerMixin, ConnectionMixin, FleetMixi
         #: What the app layer subscribed to, `{device: {event: module}}`. Keyed to the
         #: module because subscriptions end when the module exits (RemoteModuleAPI).
         self._pack_subscribed: dict[str, dict] = {}
-        try:
-            self.greet_after_s = float(
-                greet_after_s if greet_after_s is not None
-                else os.environ.get("MOXIE_GREET_AFTER_S") or DEFAULT_GREET_AFTER_S)
-        except (TypeError, ValueError):
-            self.greet_after_s = DEFAULT_GREET_AFTER_S
-        self.vision = (os.environ.get("MOXIE_VISION") or "1").strip().lower() \
-            not in ("0", "off", "false", "no")
+        self.greet_after_s = _seconds(greet_after_s, "MOXIE_GREET_AFTER_S",
+                                      DEFAULT_GREET_AFTER_S)
+        self.vision = _env_on("MOXIE_VISION")
         # Telehealth puppet state per robot; runtime-level so it outlives a Wi-Fi drop.
         self._telehealth: dict = {}
         # Long-term memory: the app owns the store, the runtime owns the privacy switch.

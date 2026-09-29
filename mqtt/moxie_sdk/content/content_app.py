@@ -27,7 +27,7 @@ from typing import Callable, Optional
 from ..app import MoxieApp
 from ..actions import parse_action_tags
 from ..automarkup import annotate, enabled as _automarkup_enabled
-from ..store import MemoryStore
+from ..memory_store import MemoryStore
 from ..types import Turn, Reply, RobotContext
 from .module import ContentModule
 from .volley import Volley, Session

@@ -31,6 +31,10 @@ def _flag(q: dict, key: str) -> bool:
     return _first(q, key, "0") not in ("", "0", "false")
 
 
+_CONTENT_POSTS = ("/content/review", "/content/import", "/content/undo", "/content/item",
+                  "/content/render")
+
+
 def _code(out: dict, otherwise: int = 400) -> int:
     """200 on ok; 404 for an unknown device; else `otherwise`."""
     if out.get("ok"):
@@ -60,28 +64,54 @@ class _Handler(BaseHTTPRequestHandler):
     def _query(self) -> dict:
         return parse_qs(urlparse(self.path).query)
 
+    def _body(self, *, strict: bool = False):
+        """The JSON request body (`{}` when empty). Raises on malformed JSON and, when
+        `strict`, on anything but an object."""
+        body = json.loads(self._raw() or b"{}") or {}
+        if strict and not isinstance(body, dict):
+            raise ValueError("expected a JSON object")
+        return body
+
+    def _refuse(self, e: Exception, *, reason: bool = True):
+        out = {"ok": False, "error": str(e)}
+        if reason:
+            out["reason"] = str(e)
+        return self._json_out(out, 400)
+
+    def _robot_config(self, device_id: str) -> dict:
+        rt = self.rt
+        return {"ok": True, "scope": "robot", "device_id": device_id,
+                "config_overrides": rt._config_overrides.get(device_id, {}),
+                "config_effective": rt.effective_config(device_id)}
+
     # ---- GET ----
     def do_GET(self):
         rt = self.rt
         u = urlparse(self.path)
         q = parse_qs(u.query)
         device_id = _first(q, "device_id")
-        if u.path == "/status":
-            return self._json_out(rt.status_snapshot())
-        if u.path == "/conn":
-            return self._json_out(rt.conn_view(limit=_int_param(q, "limit", 40)))
-        if u.path == "/telemetry":
-            out = rt.telemetry_view(device_id, limit=_int_param(q, "limit", 20),
-                                    days=_int_param(q, "days", 7))
+        views = {                          # always 200
+            "/status": lambda: rt.status_snapshot(),
+            "/conn": lambda: rt.conn_view(limit=_int_param(q, "limit", 40)),
+            "/permits": lambda: rt.permits_view(),
+            "/voice": lambda: rt.voice_view(refresh=_flag(q, "refresh")),
+            "/brain": lambda: rt.brain_view(),
+            "/content": lambda: rt.content_view(),
+        }
+        robot_views = {                    # 404 unless `ok` (an unknown device)
+            "/telemetry": lambda: rt.telemetry_view(device_id,
+                                                    limit=_int_param(q, "limit", 20),
+                                                    days=_int_param(q, "days", 7)),
+            "/safety": lambda: rt.safety_view(device_id, limit=_int_param(q, "limit", 20)),
+            "/schedule": lambda: rt.schedule_view(device_id, refresh=_flag(q, "refresh")),
+            "/memory": lambda: rt.memory_view(device_id),
+            "/telehealth": lambda: rt.telehealth_view(device_id),
+        }
+        if u.path in views:
+            return self._json_out(views[u.path]())
+        if u.path in robot_views:
+            out = robot_views[u.path]()
             return self._json_out(out, 200 if out.get("ok") else 404)
-        if u.path == "/safety":
-            out = rt.safety_view(device_id, limit=_int_param(q, "limit", 20))
-            return self._json_out(out, 200 if out.get("ok") else 404)
-        if u.path == "/schedule":
-            out = rt.schedule_view(device_id, refresh=_flag(q, "refresh"))
-            return self._json_out(out, 200 if out.get("ok") else 404)
-        if u.path == "/permits":
-            return self._json_out(rt.permits_view())
         if u.path == "/config":
             if _first(q, "scope", "robot") == "fleet":
                 return self._json_out({"ok": True, "scope": "fleet",
@@ -89,23 +119,8 @@ class _Handler(BaseHTTPRequestHandler):
             if device_id not in rt.robots:
                 return self._json_out(
                     {"ok": False, "error": f"unknown device_id {device_id!r}"}, 404)
-            return self._json_out({
-                "ok": True, "scope": "robot", "device_id": device_id,
-                "fleet_config": rt.fleet_config(),
-                "config_overrides": rt._config_overrides.get(device_id, {}),
-                "config_effective": rt.effective_config(device_id)})
-        if u.path == "/memory":
-            out = rt.memory_view(device_id)
-            return self._json_out(out, 200 if out.get("ok") else 404)
-        if u.path == "/telehealth":
-            out = rt.telehealth_view(device_id)
-            return self._json_out(out, 200 if out.get("ok") else 404)
-        if u.path == "/voice":
-            return self._json_out(rt.voice_view(refresh=_flag(q, "refresh")))
-        if u.path == "/brain":
-            return self._json_out(rt.brain_view())
-        if u.path == "/content":
-            return self._json_out(rt.content_view())
+            return self._json_out({**self._robot_config(device_id),
+                                   "fleet_config": rt.fleet_config()})
         if u.path == "/content/export":
             # `?items=kind:key,…&name=…&id=…` -> the pack JSON itself; no items = all.
             keys = [k for part in (q.get("items") or [])
@@ -115,7 +130,7 @@ class _Handler(BaseHTTPRequestHandler):
                     keys, name=_first(q, "name"), pack_id=_first(q, "id"),
                     details=_first(q, "details"), author=_first(q, "author"))
             except Exception as e:
-                return self._json_out({"ok": False, "error": str(e), "reason": str(e)}, 400)
+                return self._refuse(e)
             return self._json_out(pack)
         self._not_found()
 
@@ -141,100 +156,91 @@ class _Handler(BaseHTTPRequestHandler):
     # ---- POST ----
     def do_POST(self):
         """Parent-console writes; each route documents itself on the runtime method."""
-        rt = self.rt
-        path = urlparse(self.path).path
-        if path == "/memory":
-            # `{"erase": ns|"all"}` (DELETE for clients that cannot send one) or `{"edit": …}`.
-            return self._memory_write(urlparse(self.path).query)
-        if path in ("/content/review", "/content/import", "/content/undo",
-                    "/content/item", "/content/render"):
-            return self._content(path)
-        if path == "/preview":
-            # `{"text", "speak", "icons", "sfx"}`: rehearse one line (expressiveness.md §2.4).
-            q = self._query()
-            raw = self._raw()
-            try:
-                body = json.loads(raw or b"{}") or {}
-            except Exception as e:
-                return self._json_out({"ok": False, "error": str(e)}, 400)
-            device_id = _first(q, "device_id") or str(body.get("device_id") or "")
-            out = rt.preview(device_id, body.get("text"),
-                             speak=bool(body.get("speak")),
-                             icons=bool(body.get("icons")),
-                             sfx=bool(body.get("sfx")))
-            return self._json_out(out, _code(out))
-        if path == "/wakeup":
-            out = rt.wake_robot(_first(self._query(), "device_id"))
-            return self._json_out(out, _code(out, 409))
-        if path == "/brain":
-            # `?device_id=…` or `?scope=fleet` with `{"brain": name|null}` (`brain_update`).
-            q = self._query()
-            raw = self._raw()
-            try:
-                body = json.loads(raw or b"{}") or {}
-            except Exception as e:
-                return self._json_out({"ok": False, "error": str(e)}, 400)
-            out = rt.brain_update(body, device_id=_first(q, "device_id"),
-                                  scope=_first(q, "scope", "robot"))
-            return self._json_out(out, _code(out))
-        if path not in ("/config", "/safety", "/permits", "/telehealth",
-                        "/voice", "/voice/test"):
-            return self._not_found()
-        if path in ("/voice", "/voice/test"):
-            return self._voice(path, urlparse(self.path).query)
-        if path == "/telehealth":
-            return self._telehealth(urlparse(self.path).query)
-        if path == "/permits":
-            # `{device_id, permitted, label}` or `{allow_unverified_bots}`.
-            raw = self._raw()
-            try:
-                body = json.loads(raw or b"{}") or {}
-                if "allow_unverified_bots" in body:
-                    out = rt.set_allow_unverified_bots(bool(body["allow_unverified_bots"]))
-                elif body.get("device_id"):
-                    out = rt.set_permit(body["device_id"],
-                                        permitted=bool(body.get("permitted", True)),
-                                        label=body.get("label") or "")
-                else:
-                    raise ValueError("expected {device_id, permitted, label} "
-                                     "or {allow_unverified_bots}")
-                code = 200
-            except Exception as e:
-                out, code = {"ok": False, "error": str(e)}, 400
-            return self._json_out(out, code)
-        q = self._query()
-        device_id = _first(q, "device_id")
-        raw = self._raw()
-        if path == "/safety":
-            # `{"event_id": "sfe-…"}` (or `{}` / "all"): mark reviewed.
-            try:
-                body = json.loads(raw or b"{}") or {}
-                out = rt.acknowledge_safety(device_id, body.get("event_id"))
-                code = 200 if out.get("ok") else 404
-            except Exception as e:
-                out, code = {"ok": False, "error": str(e)}, 400
-            return self._json_out(out, code)
-        # /config: whitelisted overrides for one robot, or `?scope=fleet` for the
-        # appliance-wide defaults (a per-robot override still wins); both re-push.
+        u = urlparse(self.path)
+        if u.path in _CONTENT_POSTS:
+            return self._content(u.path)
+        if u.path in ("/voice", "/voice/test"):
+            return self._voice(u.path, u.query)
+        route = {"/memory": self._memory_write, "/telehealth": self._telehealth,
+                 "/preview": self._preview, "/wakeup": self._wakeup, "/brain": self._brain,
+                 "/permits": self._permits, "/safety": self._safety,
+                 "/config": self._config}.get(u.path)
+        return route(u.query) if route else self._not_found()
+
+    def _preview(self, query):
+        """`{"text", "speak", "icons", "sfx"}`: rehearse one line (expressiveness.md §2.4)."""
         try:
-            from moxie_sdk.cloud_config import sanitize_config_overrides
-            overrides = sanitize_config_overrides(json.loads(raw or b"{}"))
+            body = self._body()
+        except Exception as e:
+            return self._refuse(e, reason=False)
+        device_id = _first(parse_qs(query), "device_id") or str(body.get("device_id") or "")
+        out = self.rt.preview(device_id, body.get("text"), speak=bool(body.get("speak")),
+                              icons=bool(body.get("icons")), sfx=bool(body.get("sfx")))
+        return self._json_out(out, _code(out))
+
+    def _wakeup(self, query):
+        out = self.rt.wake_robot(_first(parse_qs(query), "device_id"))
+        return self._json_out(out, _code(out, 409))
+
+    def _brain(self, query):
+        """`?device_id=…` or `?scope=fleet` with `{"brain": name|null}` (`brain_update`)."""
+        q = parse_qs(query)
+        try:
+            body = self._body()
+        except Exception as e:
+            return self._refuse(e, reason=False)
+        out = self.rt.brain_update(body, device_id=_first(q, "device_id"),
+                                   scope=_first(q, "scope", "robot"))
+        return self._json_out(out, _code(out))
+
+    def _permits(self, _query):
+        """`{device_id, permitted, label}` or `{allow_unverified_bots}`."""
+        rt = self.rt
+        try:
+            body = self._body()
+            if "allow_unverified_bots" in body:
+                out = rt.set_allow_unverified_bots(bool(body["allow_unverified_bots"]))
+            elif body.get("device_id"):
+                out = rt.set_permit(body["device_id"],
+                                    permitted=bool(body.get("permitted", True)),
+                                    label=body.get("label") or "")
+            else:
+                raise ValueError("expected {device_id, permitted, label} "
+                                 "or {allow_unverified_bots}")
+        except Exception as e:
+            return self._refuse(e, reason=False)
+        return self._json_out(out)
+
+    def _safety(self, query):
+        """`{"event_id": "sfe-…"}` (or `{}` / "all"): mark reviewed."""
+        try:
+            out = self.rt.acknowledge_safety(_first(parse_qs(query), "device_id"),
+                                             self._body().get("event_id"))
+        except Exception as e:
+            return self._refuse(e, reason=False)
+        return self._json_out(out, 200 if out.get("ok") else 404)
+
+    def _config(self, query):
+        """Whitelisted overrides for one robot, or `?scope=fleet` for the appliance-wide
+        defaults (a per-robot override still wins); both re-push."""
+        from moxie_sdk.cloud_config import sanitize_config_overrides
+        rt = self.rt
+        q = parse_qs(query)
+        device_id = _first(q, "device_id")
+        try:
+            overrides = sanitize_config_overrides(json.loads(self._raw() or b"{}"))
             if _first(q, "scope", "robot") == "fleet":
                 fleet = rt.update_fleet_config(**overrides)
-                out, code = {"ok": True, "scope": "fleet", "applied": overrides,
-                             "fleet_config": fleet, "robots": list(rt.robots)}, 200
+                out = {"ok": True, "scope": "fleet", "applied": overrides,
+                       "fleet_config": fleet, "robots": list(rt.robots)}
             else:
                 if not device_id or device_id not in rt.robots:
                     raise ValueError(f"unknown device_id {device_id!r}")
                 rt.update_config(device_id, **overrides)
-                out, code = {
-                    "ok": True, "scope": "robot", "device_id": device_id,
-                    "applied": overrides,
-                    "config_overrides": rt._config_overrides.get(device_id, {}),
-                    "config_effective": rt.effective_config(device_id)}, 200
+                out = {**self._robot_config(device_id), "applied": overrides}
         except Exception as e:
-            out, code = {"ok": False, "error": str(e)}, 400
-        return self._json_out(out, code)
+            return self._refuse(e, reason=False)
+        return self._json_out(out)
 
     # ---- POST/DELETE helpers ----
     def _memory_write(self, query):
@@ -246,12 +252,9 @@ class _Handler(BaseHTTPRequestHandler):
         item = _first(q, "item")
         body = {}
         if not namespace or not item:
-            raw = self._raw()
             try:
-                body = json.loads(raw or b"{}") or {}
+                body = self._body(strict=True)
             except Exception:
-                body = {}
-            if not isinstance(body, dict):
                 body = {}
         edit = body.get("edit") if isinstance(body.get("edit"), dict) else None
         if edit is None:
@@ -265,7 +268,7 @@ class _Handler(BaseHTTPRequestHandler):
                 out = self.rt.erase_memory(device_id, namespace or None, item or None)
             code = 200 if out.get("ok") else 404
         except Exception as e:
-            out, code = {"ok": False, "error": str(e)}, 400
+            return self._refuse(e, reason=False)
         return self._json_out(out, code)
 
     def _telehealth(self, query):
@@ -274,11 +277,8 @@ class _Handler(BaseHTTPRequestHandler):
         reason and nothing is spoken (backlog/telehealth.md §2.3)."""
         rt = self.rt
         device_id = _first(parse_qs(query), "device_id")
-        raw = self._raw()
         try:
-            body = json.loads(raw or b"{}") or {}
-            if not isinstance(body, dict):
-                raise ValueError("expected a JSON object")
+            body = self._body(strict=True)
             action = str(body.get("action") or "").strip().lower()
             if action in ("enable", "disable"):
                 out = rt.telehealth_enable(device_id, action == "enable")
@@ -298,20 +298,16 @@ class _Handler(BaseHTTPRequestHandler):
             else:
                 raise ValueError("expected action: enable, disable, start, end, state, "
                                  "speak or interrupt")
-            code = _code(out)
         except Exception as e:
-            out, code = {"ok": False, "error": str(e), "reason": str(e)}, 400
-        return self._json_out(out, code)
+            return self._refuse(e)
+        return self._json_out(out, _code(out))
 
     def _voice(self, path: str, query: str):
         """`POST /voice` `{"speech": …, "listening": …}` (an option id, `{engine, model}`,
         or null for the default) persists and swaps live; a pick not currently offered is
         a 400. `POST /voice/test?device_id=…` `{"text"}` speaks through the installed engine."""
-        raw = self._raw()
         try:
-            body = json.loads(raw or b"{}") or {}
-            if not isinstance(body, dict):
-                raise ValueError("expected a JSON object")
+            body = self._body(strict=True)
             if path == "/voice/test":
                 device_id = (parse_qs(query).get("device_id")
                              or [body.get("device_id") or ""])[0]
@@ -321,7 +317,7 @@ class _Handler(BaseHTTPRequestHandler):
                 out = self.rt.voice_update(body)
                 code = 200 if out.get("ok") else 400
         except Exception as e:
-            out, code = {"ok": False, "error": str(e), "reason": str(e)}, 400
+            return self._refuse(e)
         return self._json_out(out, code)
 
     def _content(self, path: str):
@@ -362,7 +358,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json_out(out, 200)
             return self._json_out(out, 409 if out.get("conflict") else 400)
         except Exception as e:
-            return self._json_out({"ok": False, "error": str(e), "reason": str(e)}, 400)
+            return self._refuse(e)
 
 
 class StatusServerMixin:

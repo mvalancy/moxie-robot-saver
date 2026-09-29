@@ -14,6 +14,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report  # noqa: E402
 
 try:
     from embodied.robotbrain import RemoteChat_pb2 as RC  # noqa: E402
@@ -21,11 +22,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  remote-chat toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
 
 # --- brain -> robot: a scored reply that also launches a module ---
 markup = '<mark name="cmd:playback-mood,data:{+mood+:1,+intensity+:1}"/>'
@@ -64,10 +60,5 @@ ok(preq.original_language == "es" and preq.original_speech == "quiero jugar",
 ok(RC.RemoteDialog.yes_no_question and RC.RemoteDialog.thanking, "DialogAct enum incomplete")
 ok(RC.RemoteDialog.joy and RC.RemoteDialog.neutral, "EmotionState enum incomplete")
 
-if fails:
-    print("❌ remote-chat toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ remote-chat toolkit test OK — RemoteChatResponse (text+markup+mood+dialog_act, launch/execute "
-      "actions, ResultCodes) + RemoteChatRequest (translated speech) round-trip through embodied.robotbrain")
+report("remote-chat", "RemoteChatResponse (text+markup+mood+dialog_act, launch/execute "
+       "actions, ResultCodes) + RemoteChatRequest (translated speech) round-trip through embodied.robotbrain")
