@@ -5,7 +5,7 @@
 > avatar OR a real re-homed robot**, over the exact protocol reverse-engineered from firmware
 > **v3.6.4-Zephyr / OTA v24.10.803**. You talk to it (mic), it thinks (LLM agent + personality), speaks
 > (Piper), and moves/emotes (behavior markup + liveness). Built end-to-end, driven by the
-> [layered session loops](sil-and-cicd.md#the-layered-session-timers).
+> [layered session loops](agent-workflow.md#recurring-session-loops).
 
 This supersedes the narrow "SIL web-UI" scope: the SIL is now the **display/test surface** for a real
 ecosystem, not the deliverable itself.
