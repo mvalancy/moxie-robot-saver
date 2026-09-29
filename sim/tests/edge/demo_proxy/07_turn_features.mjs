@@ -67,12 +67,20 @@ import {
     ["an envelope with no say", '{"mood":"happy","gesture":"celebrate"}', '{"mood":"happy","gesture":"celebrate"}'],
     ["a JSON array", "[1,2,3]", "[1,2,3]"],
     ["a truncated brace", "{not json at all", "{not json at all"],
+    ["an envelope split in two", '{"say": "Snuggly rainy days!"} {"mood": "happy", "gesture": "celebrate"}', "Snuggly rainy days!"],
+    ["two objects then prose", '{"say":"Hi."} {"mood":"happy"} and more', '{"say":"Hi."} {"mood":"happy"} and more'],
   ]) {
     const t = await turnWith(content);
     eq(t.status, 200, `${label} still answers 200`);
     eq(t.text, wantText, `…${label} speaks the right line`);
     ok(t.mark.mood !== undefined && t.mark.gesture !== undefined,
        `…${label} still carries a mood and a gesture from the floor`);
+  }
+
+  // A split envelope keeps the model's own mood and gesture, not just its line.
+  {
+    const t = await turnWith('{"say": "Rainy days are cosy."} {"mood": "happy", "gesture": "celebrate"}');
+    eq(t.mark.gesture, "Gesture_Celebrate", "a split envelope's gesture reaches the robot");
   }
 
   // ---- 3. a bad mood or gesture NAME is dropped, not passed through ---------- //

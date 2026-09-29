@@ -15,6 +15,43 @@ export function completionText(json) {
 }
 
 /**
+ * One JSON object, or several written back to back (`{"say":…} {"mood":…}` — models split the
+ * envelope like this), merged left to right. Anything else — an array, trailing prose, a
+ * broken brace — is null.
+ */
+function parseObjects(body) {
+  try {
+    const one = JSON.parse(body);
+    return one && typeof one === "object" && !Array.isArray(one) ? one : null;
+  } catch { /* maybe several objects */ }
+  const merged = {};
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+    } else if (c === '"') {
+      if (depth === 0) return null;
+      inStr = true;
+    } else if (c === "{") {
+      if (depth++ === 0) start = i;
+    } else if (c === "}") {
+      if (--depth < 0) return null;
+      if (depth === 0) {
+        let part;
+        try { part = JSON.parse(body.slice(start, i + 1)); } catch { return null; }
+        Object.assign(merged, part);
+      }
+    } else if (depth === 0 && !/[\s,]/.test(c)) {
+      return null;
+    }
+  }
+  return depth === 0 && start >= 0 ? merged : null;
+}
+
+/**
  * Read the expressive envelope `{say, mood, gesture, diagram}` out of a reply, or decide
  * there isn't one.
  *
@@ -34,9 +71,8 @@ export function parseExpressive(raw) {
   if (fenced) body = fenced[1].trim();
   if (body.charAt(0) !== "{") return plain;
 
-  let obj;
-  try { obj = JSON.parse(body); } catch { return plain; }
-  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return plain;
+  const obj = parseObjects(body);
+  if (!obj) return plain;
 
   // Not flattened: `say` may carry a fenced diagram that `splitDiagram` removes first.
   const say = typeof obj.say === "string" ? obj.say.trim() : "";
