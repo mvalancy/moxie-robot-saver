@@ -2,7 +2,7 @@
  *
  * NOT a test (sim/tests/test_ci_test_coverage.py enumerates only `test_*.mjs`). The
  * node-only bridge suites (test_bridge, test_action_payload, test_automarkup_render,
- * test_performance_render, test_preview_render, test_presence_bridge) share these
+ * test_performance_render, test_preview_render) share these
  * window/document/mqtt shims instead of each carrying its own copy.
  *
  * `(0, eval)` runs the bridge parts in global scope, so every call resets the globals and

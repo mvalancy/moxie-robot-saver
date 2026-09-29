@@ -31,14 +31,6 @@ TIER_FILES = sorted(glob.glob(os.path.join(CI_DIR, "*.yml")))
 
 #: Files no tier runs, with why. **This list may only shrink.**
 KNOWN_UNRUN = {
-    "sim/test_ambient.mjs":
-        "2026-09-02: never wired into a tier (found while specing live-Sim P0-a; "
-        "56 ambient self-talk lines + face validity — passes locally, run by nobody). "
-        "Wiring it needs sim/ci/ci.yml, which the integration pass that found it was "
-        "not allowed to edit.",
-    "sim/test_presence_bridge.mjs":
-        "2026-09-02: same fire — the browser SIM's vision-event bridge (6 events, the "
-        "greeting record, badge + toggle). Passes locally, run by nobody.",
     "sim/run_acl_proof.sh":
         "2026-09-02 (found by this guard): the broker ACL proof from PR #44 — 18 checks "
         "against a real eclipse-mosquitto:2.0.20, the only thing that holds the pattern "

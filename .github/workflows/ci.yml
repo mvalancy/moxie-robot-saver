@@ -99,8 +99,10 @@ jobs:
           node sim/test_fallback_coverage.mjs
       - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
         run: bash sim/run_smoke.sh
-      - name: Bridge markup→avatar unit test
+      - name: Bridge markup→avatar unit test (incl. presence events)
         run: node sim/test_bridge.mjs
+      - name: Ambient self-talk corpus (faces, gestures, pre-cached clips, filler parity)
+        run: node sim/test_ambient.mjs
       - name: 🎬 Action-payload parity (an `execute` is named identically by BOTH SIM clients)
         # DoD criterion 4's last open clause on this channel. PR #119 put `function_id` /
         # `function_args` / `action_args` on the wire and `bridge.js::applyAction` read
