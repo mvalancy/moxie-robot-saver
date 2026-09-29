@@ -107,7 +107,7 @@ given `channel`), `channel` (the `Channel` above), `FadeOutTime` float, `ClearQu
 **`playback-mood`**: `PlaybackMoodRequest { ePlaybackMood mood; int intensity=0 (maxIntensity=2); }`;
 `Submit()` calls `SpeechPlaybackBehavior.PlaybackMood.SetMood(mood, intensity)`. The **`ePlaybackMood`
 enum is authoritative** — recovered by name **and** value from `Assembly-CSharp` (the .NET assembly keeps
-its metadata; an earlier note that the names weren't recoverable was wrong). The same `ePlaybackMood`
+its metadata). The same `ePlaybackMood`
 type is the robot's **`RobotState_EyesemeState`** blackboard variable, so **mood *is* the face
 expression**: each value plays the matching **`Bht_Eyeseme_<name>` behavior tree** (see
 [`behavior-tree-engine.md`](behavior-tree-engine.md#the-45-named-behavior-trees-bht_)).
@@ -127,10 +127,10 @@ expression**: each value plays the matching **`Bht_Eyeseme_<name>` behavior tree
 | **10** | `Embarrassed` | 37 | — | `embarrassed` |
 
 ¹ `VisemeIndices[mood]` — the base frame index into the face viseme set (blocks of 4). Only moods
-`0,1,2,4,5` appear in the shipped content sampled, but **all 11 are valid** to emit. Note the earlier
-*inferred* reading mislabeled mood `4` as "embarrassed" — it is actually **`Shy`** (`Embarrassed` is
-`10`), which is exactly the kind of error the authoritative enum resolves. The **[SIL face](../../architecture/sil-and-cicd.md)
-now renders all 11 `Bht_Eyeseme_*` expressions 1:1** (`sim/web/bridge/` `MOOD_TO_FACE`).
+`0,1,2,4,5` appear in the shipped content sampled, but **all 11 are valid** to emit. Caution: an
+*inferred* reading once mislabeled mood `4` as "embarrassed" — it is **`Shy`** (`Embarrassed` is
+`10`). The **[SIL face](../../architecture/sil-and-cicd.md)
+renders all 11 `Bht_Eyeseme_*` expressions 1:1** (`MOOD_TO_FACE` in `sim/web/bridge/body.js`).
 
 **`idlestate`**: `idleState` int (e.g. 7).
 
@@ -225,19 +225,18 @@ Bht_VG · Bht_Gesture_Celebrate · Bht_Wing_Flap · Bht_Bangle_on_off · Bht_Sle
 
 Content packs reference **more** by name (e.g. `Bht_Demo_Wake_Up`, `Bht_Search`, `Bht_Spin_360`,
 `Bht_Gesture_Greet` seen in shipped modules) — those resolve inside the character asset bundle, so the
-full tree set is bundle-defined, not fixed in the binary. **Honest limit:** the Unity asset bundles
-(`sharedassets1.assets`) don't expose these names as plain strings to `grep`, so the lists above are the
-**app-hardcoded subset**, not the exhaustive animation catalog.
+full tree set is bundle-defined. The Unity bundles (`sharedassets1.assets`) don't expose these names as
+plain strings, so the lists above are the **app-hardcoded subset**, not the exhaustive catalog (the 45
+named trees are in [behavior-tree-engine](behavior-tree-engine.md#the-45-named-behavior-trees-bht_)).
 
 ### Perception side — detected human emotion (`Face.proto`)
-The vision pipeline also *reads* emotion off a person's face: `Face` carries `emotion` (uint64) +
-`emotion_proba` (float) — i.e. Moxie classifies the child's expression, distinct from its own
-`EmotionState` output. See [`perception-pipeline.md`](perception-pipeline.md).
+`Face` carries `emotion` (uint64) + `emotion_proba` (float): Moxie classifies the *child's* expression,
+distinct from its own `EmotionState` output ([perception-pipeline](perception-pipeline.md)).
 
 ## Toolkit — build marks programmatically
 
 [`tools/robot-toolkit/moxie_toolkit/markup.py`](../../../tools/robot-toolkit/moxie_toolkit/markup.py)
-emits valid marks (handling the `+`-quoting) so a server can weave them into TTS text:
+emits valid marks (handling the `+`-quoting):
 
 ```python
 from moxie_toolkit import markup as mk
@@ -245,8 +244,10 @@ text = ("Hi there!" + mk.behaviour_tree(behaviour="Bht_Gesture_Greet", category=
         + mk.playback_mood(mood=0) + " Let's play." + mk.playaudio("sfx_twinkly_upbeat_stinger_1", channel=2))
 ```
 
-The brain consumes this over the `embodied.unity` CloudTTS / MarkUpToolMessages path (see
-[`cloud-protocol.md`](../protocol/cloud-protocol.md) and [`robot-ipc-protocol.md`](../protocol/robot-ipc-protocol.md)).
+The brain consumes this over the `embodied.unity` CloudTTS / MarkUpToolMessages path
+([cloud-protocol](../protocol/cloud-protocol.md), [robot-ipc-protocol](../protocol/robot-ipc-protocol.md));
+the SDK's vocabulary module (`mqtt/moxie_sdk/vocab.py`) cites this page line by line, so keep line
+numbers stable when editing above this section.
 
 ---
-📖 [Reverse-engineering index](../README.md) · [Cloud protocol](../protocol/cloud-protocol.md) · [IPC protocol](../protocol/robot-ipc-protocol.md) · [Docs index](../../README.md)
+📖 [Reverse-engineering index](../README.md) · [Cloud protocol](../protocol/cloud-protocol.md) · [IPC protocol](../protocol/robot-ipc-protocol.md) · [Behavior-tree engine](behavior-tree-engine.md) · [Docs index](../../README.md)
