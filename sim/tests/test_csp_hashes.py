@@ -1,103 +1,65 @@
 """The `script-src` hashes in `sim/web/_headers` must match the pages on disk.
 
-The failure is a BLANK page, not a degraded one: `_headers` is only ever sent by
-Cloudflare Pages, so an edited inline `<script>` whose SHA-256 is not listed is refused on
-the live domain — silently, because local suites serve the bytes they just built. This is
-the browser-free half (runs in ~1 ms); `sim/test_csp.mjs` block 6 asserts it again from
-the headers a browser received.
-
-Run:  MOXIE_LLM_API_KEY= .venv/bin/python -m pytest sim/tests/test_csp_hashes.py -q
+The failure is a BLANK page on the live domain only: `_headers` is sent by Cloudflare
+Pages alone, so an edited inline `<script>` whose SHA-256 is not listed is refused there
+while local suites serve fresh bytes. Browser-free half; `sim/test_csp.mjs` re-checks it
+from the headers a browser received.
 """
 import os
-import subprocess
+import shutil
 import sys
 
-import pytest
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
-TOOL = os.path.join(REPO, "sim", "tools", "build_csp_hashes.py")
-
-sys.path.insert(0, os.path.join(REPO, "sim", "tools"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
 import build_csp_hashes as gen  # noqa: E402
 
 
 def test_script_src_matches_the_pages_on_disk():
-    """The committed header is what a fresh generation would produce."""
     hashes, blocks, problems = gen.scan()
     assert not problems, "\n".join(problems)
     _text, _csp, current = gen.read_policy()
     assert current == gen.script_src(hashes, current), (
-        "sim/web/_headers script-src is STALE — an inline block changed and the header did "
-        "not. Shipping this BLANKS THE PAGE.\n"
-        "  have: %s\n  want: %s\n  blocks: %s\n"
-        "  fix:  python3 sim/tools/build_csp_hashes.py" % (
-            current, gen.script_src(hashes, current),
-            ", ".join("%s:%d" % (b[0], b[1]) for b in blocks)))
-
-
-def test_the_check_mode_agrees_and_is_what_ci_runs():
-    """The tool's own `--check` is green — this is the exact command CI runs."""
-    r = subprocess.run([sys.executable, TOOL, "--check"], capture_output=True, text=True, cwd=REPO)
-    assert r.returncode == 0, r.stdout + r.stderr
+        "sim/web/_headers script-src is STALE — this BLANKS THE PAGE. "
+        "Run: python3 sim/tools/build_csp_hashes.py")
+    assert gen.main(["--check"]) == 0, "the exact check CI runs"
 
 
 def test_script_src_has_no_inline_escape_hatch():
-    """`'unsafe-inline'` was the honest gap until 2026-09-04. It must not come back.
-
-    `'unsafe-hashes'` is asserted too: it is the obvious thing a future pass reaches for the
-    moment someone adds an `onclick=` attribute, and it re-opens the same door one handler
-    at a time.
-    """
+    """`'unsafe-inline'` was the honest gap until 2026-09-04; `'unsafe-hashes'` is what a
+    future `onclick=` would reach for."""
     _text, csp, current = gen.read_policy()
     for bad in ("'unsafe-inline'", "'unsafe-hashes'", "'unsafe-eval'", "'strict-dynamic'"):
-        assert bad not in current, "script-src must not carry %s (got %r)" % (bad, current)
-    assert "'unsafe-hashes'" not in csp, "the CSP must not carry 'unsafe-hashes' anywhere"
+        assert bad not in current
+    assert "'unsafe-hashes'" not in csp
 
 
-def test_no_page_carries_an_inline_event_handler_attribute():
-    """No hash this policy grants can cover one, and they fail SILENTLY: `<button
-    onclick="f()">` needs `'unsafe-hashes'`, and without it the handler just never fires.
-    (`el.onclick = function(){}` in a .js file is a function object, not an inline script.)
-    """
-    _hashes, _blocks, problems = gen.scan()
-    assert not problems, "\n".join(problems)
-
-
-def test_the_inline_surface_is_one_block_and_says_why():
-    """Thirteen of the original fourteen blocks are FILES now. Keep it that way.
-
-    A file cannot drift out of sync with a header, so every block that becomes a file
-    removes a way to blank the page. The one survivor is `sim.html`'s importmap, which
-    cannot be external in any browser: `<script type="importmap" src>` was dropped from the
-    spec. If this ever grows, the fix is another file, not another hash.
-    """
+def test_the_inline_surface_is_the_one_importmap():
+    """Thirteen of fourteen blocks became files (a file cannot drift from a header). The
+    importmap cannot be external in any browser; anything new should be a file too."""
     _hashes, blocks, _problems = gen.scan()
-    assert len(blocks) == 1, "expected one inline block, got: %s" % (
-        ", ".join("%s:%d" % (b[0], b[1]) for b in blocks))
-    name, _line, attrs, _h = blocks[0]
-    assert name == "sim.html" and 'type="importmap"' in attrs, (name, attrs)
+    assert [(b[0], 'type="importmap"' in b[2]) for b in blocks] == [("sim.html", True)], blocks
 
 
-@pytest.mark.parametrize("mutation", [
-    ('"three": "./vendor/three/three.module.min.js"', '"three":  "./vendor/three/three.module.min.js"'),
-])
-def test_a_drifted_block_is_caught(tmp_path, monkeypatch, mutation):
-    """NEGATIVE CONTROL: a one-character edit to the hashed block must redden this.
+def test_a_drifted_block_or_an_inline_handler_is_caught(tmp_path, monkeypatch):
+    """Negative control on a COPY of the site (never the real page)."""
+    web = tmp_path / "web"
+    shutil.copytree(gen.WEB, web, ignore=shutil.ignore_patterns("vendor", "docs-bundle"))
+    page = web / "sim.html"
+    old = '"three": "./vendor/three/three.module.min.js"'
+    assert page.read_text().count(old) == 1
+    page.write_text(page.read_text().replace(old, old.replace(":", ":  ", 1))
+                    + '\n<button onclick="go()">x</button>\n<a href="javascript:go()">y</a>\n')
+    monkeypatch.setattr(gen, "WEB", str(web))
+    hashes, _blocks, problems = gen.scan()
+    _text, _csp, current = gen.read_policy()
+    assert current != gen.script_src(hashes, current)
+    assert len(problems) == 2 and "event-handler" in problems[0] and "javascript:" in problems[1]
+    assert gen.main(["--check"]) == 1
 
-    Without this, every assertion above is equally consistent with "the guard works" and
-    "the guard cannot see anything".
-    """
-    page = os.path.join(gen.WEB, "sim.html")
-    original = open(page, encoding="utf-8").read()
-    old, new = mutation
-    assert original.count(old) == 1, "the mutation no longer applies — update this control"
-    try:
-        open(page, "w", encoding="utf-8").write(original.replace(old, new, 1))
-        hashes, _blocks, _problems = gen.scan()
-        _text, _csp, current = gen.read_policy()
-        assert current != gen.script_src(hashes, current), "a drifted inline block was NOT caught"
-        r = subprocess.run([sys.executable, TOOL, "--check"], capture_output=True, text=True, cwd=REPO)
-        assert r.returncode == 1 and "STALE" in r.stdout
-    finally:
-        open(page, "w", encoding="utf-8").write(original)
+
+def test_the_generator_owns_the_hashes_and_nothing_else():
+    """Host allowances are policy argued in `_headers`: carried through in order."""
+    got = gen.script_src(["'sha256-B'"], "script-src 'self' 'sha256-A' 'unsafe-inline' "
+                                         "https://static.cloudflareinsights.com")
+    assert got == "script-src 'self' 'sha256-B' https://static.cloudflareinsights.com"
+    assert gen.script_src(["'sha256-B'"], "script-src https://x.example") == \
+        "script-src 'self' 'sha256-B' https://x.example"
