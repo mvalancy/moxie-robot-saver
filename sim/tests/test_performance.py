@@ -924,7 +924,7 @@ def test_preview_renders_at_least_ten_lines_on_the_sim_contract():
     """(d)'s Python half: the ten rehearsal lines the SIM harness plays all publish a
     valid, distinguishable performance. The browser half is
     `sim/test_performance_render.mjs`, which drives the same lines through the real
-    `bridge/` and writes the contact sheet."""
+    `bridge/`."""
     rt, device_id = _preview_runtime()
     lines = [c["line"] for c in _goldens()["cases"]][:12]
     faces = set()

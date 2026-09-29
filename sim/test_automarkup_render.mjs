@@ -1,74 +1,42 @@
-/* The markup floor, seen from the only renderer we can assert against.
- *
- * Drives the EIGHT byte-exact goldens from sim/tests/goldens/annotate.json (pinned by
- * sim/tests/test_automarkup.py) through the REAL sim/web/bridge/ and asserts the avatar
- * does something different for each — a face per mood, motors for arm gestures, badges for
- * icons. An id the floor emits but the SIM does not animate fails here.
- *
- * No browser, no network. Run: node sim/test_automarkup_render.mjs
+/* The markup floor, seen from the only renderer we can assert against: the EIGHT byte-exact
+ * goldens of sim/tests/goldens/annotate.json (pinned by sim/tests/test_automarkup.py) through
+ * the REAL sim/web/bridge/. Each must reach its face and move the body; an id the floor emits
+ * but the SIM does not animate fails here. No browser. Run: node sim/test_automarkup_render.mjs
  */
-import { loadBridge, readGolden } from "./bridge_harness.mjs";
+import { loadBridge, readGolden, checks } from "./bridge_harness.mjs";
 
-const goldens = readGolden("annotate.json");
 const { calls, reset, client } = loadBridge();
-
+const { ok, report } = checks();
 const play = (markup, text) => {
   reset();
   client._emit("message", "/devices/d_test/commands/remote_chat",
     Buffer.from(JSON.stringify({ command: "remote_chat", output: { text, markup } })));
 };
 
-// What each golden must make the avatar do. The faces come from bridge/'s MOOD_TO_FACE,
-// which maps the authoritative ePlaybackMood 1:1 onto the 11 Bht_Eyeseme_* expressions.
-const EXPECT = {
-  G1: { face: "happy",     motors: true,  why: "'!' -> Happy, and Gesture_Self moves an arm" },
-  G2: { face: "curious",   motors: true,  why: "an open question -> Curious + Gesture_Question" },
-  G3: { face: "thinking",  motors: true,  why: "Bht_Active_Thinking drives the thinking pose" },
-  G4: { face: "happy",     motors: true,  why: "praise -> Happy, Gesture_Higher + Gesture_Celebrate" },
-  G5: { face: "surprised", motors: true,  why: "'Oh!' -> Surprised (mood 5, 14x in shipped content)" },
-  G6: { face: "sad",       motors: true,  why: "'I am sorry' -> Sad (mood 2, 8x in shipped content)" },
-  G7: { face: "shy",       motors: true,  why: "'Oops.' -> Shy (mood 4) — and no arm gesture but the rest pose" },
-  G8: { face: "happy",     motors: true,  icons: "Birthday", why: "a calendar cue shows a screen badge" },
-};
+// The face each golden must reach (bridge/ MOOD_TO_FACE maps ePlaybackMood onto Bht_Eyeseme_*).
+const FACE = { G1: "happy", G2: "curious", G3: "thinking", G4: "happy",
+               G5: "surprised", G6: "sad", G7: "shy", G8: "happy" };
+const ICON = { G8: "Birthday" };   // a calendar cue shows a screen badge
 
-const fails = [];
-const ok = (cond, msg) => { if (!cond) fails.push(msg); };
+const cases = readGolden("annotate.json").cases;
 const facesSeen = new Set();
-let asserted = 0;
-
-for (const c of goldens.cases) {
-  const want = EXPECT[c.id];
-  if (!want) { fails.push(`golden ${c.id} has no expectation in this test`); continue; }
+ok(JSON.stringify(cases.map((c) => c.id).sort()) === JSON.stringify(Object.keys(FACE).sort()),
+   `every golden has exactly one expectation here (goldens: ${cases.map((c) => c.id)})`);
+for (const c of cases) {
   play(c.markup, c.text);
-  ok(calls.setSpeech.some((t) => t === c.text),
-     `${c.id}: the spoken line reached the avatar; got ${JSON.stringify(calls.setSpeech)}`);
-  ok(calls.setFace.includes(want.face),
-     `${c.id}: expected face '${want.face}' (${want.why}); got ${JSON.stringify(calls.setFace)}`);
-  ok(!want.motors || calls.setMotor.length > 0,
-     `${c.id}: expected the body to move (${want.why}); no setMotor calls`);
-  if (want.icons) {
-    ok(JSON.stringify(calls.showIcons).includes(want.icons),
-       `${c.id}: expected icon '${want.icons}'; got ${JSON.stringify(calls.showIcons)}`);
-  }
+  ok(calls.setSpeech.includes(c.text), `${c.id}: the spoken line reached the avatar`);
+  ok(calls.setFace.includes(FACE[c.id]), `${c.id}: face '${FACE[c.id]}'; got ${JSON.stringify(calls.setFace)}`);
+  ok(calls.setMotor.length > 0, `${c.id}: the body must move; no setMotor calls`);
+  if (ICON[c.id]) ok(JSON.stringify(calls.showIcons).includes(ICON[c.id]),
+                     `${c.id}: icon '${ICON[c.id]}'; got ${JSON.stringify(calls.showIcons)}`);
   calls.setFace.forEach((f) => facesSeen.add(f));
-  asserted += 1;
 }
+ok(facesSeen.size >= 6, `the goldens must look different; only saw ${[...facesSeen]}`);
 
-// The whole point of the floor is that the eight lines do NOT look the same.
-ok(facesSeen.size >= 6,
-   `the goldens must reach visibly different faces; only saw ${JSON.stringify([...facesSeen])}`);
-
-// A line the floor never touched (the pre-floor passthrough) must still be inert: plain
-// text drives the speech bubble and nothing else. That is the MOXIE_AUTOMARKUP=0 shape.
+// The pre-floor passthrough (MOXIE_AUTOMARKUP=0) stays inert, or every check above is moot.
 play("Just words, no markup.", "Just words, no markup.");
 ok(calls.setFace.length === 0 && calls.setMotor.length === 0,
    `plain text must not animate anything; got ${JSON.stringify(calls)}`);
 
-if (fails.length) {
-  console.log("❌ automarkup render test FAILED:");
-  for (const f of fails) console.log("   -", f);
-  process.exit(1);
-}
-console.log(`✅ automarkup render OK — ${asserted} goldens drove the real bridge; `
-  + `${facesSeen.size} distinct faces (${[...facesSeen].sort().join(", ")}), `
-  + `arms moved on every one, icons-v2 rendered a badge`);
+report(`✅ automarkup render OK — ${cases.length} goldens drove the real bridge; ` +
+       `${facesSeen.size} distinct faces, the body moved on every one`);
