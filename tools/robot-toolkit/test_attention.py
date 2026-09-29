@@ -3,7 +3,7 @@
 
 Builds an Attention message (TARGET_FOCUS on a specific fused person, with candidate
 InterestPoints), frames + re-parses it via the bus registry, and round-trips the
-TargetedUser acquire edge. See docs/reverse-engineering/gaze-and-attention.md
+TargetedUser acquire edge. See docs/reverse-engineering/runtime/gaze-and-attention.md
 (The published attention state).
 
     python3 tools/robot-toolkit/test_attention.py

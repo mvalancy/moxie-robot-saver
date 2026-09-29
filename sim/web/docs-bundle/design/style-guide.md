@@ -1,4 +1,4 @@
-# 🎨 Design language — Moxie web apps
+# Design language — Moxie web apps
 
 > **North star:** [`valpatel.com`](https://valpatel.com) — a dark, engineered **robot-telemetry / control-room**
 > aesthetic. Every web app in this repo (the [SIL](../../sim/web/), the [server UI](../../server/)) uses

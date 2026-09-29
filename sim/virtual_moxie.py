@@ -280,7 +280,7 @@ class VirtualMoxie:
 
     def _note_subscription(self, sub):
         """`RemoteChatAction.EventSubscription{clear, active[]}` — the brain asking this
-        robot to push it perception events (remote-chat-protocol.md:103-106)."""
+        robot to push it perception events (remote-chat-protocol.md:81-84)."""
         if not isinstance(sub, dict):
             return
         if sub.get("clear"):

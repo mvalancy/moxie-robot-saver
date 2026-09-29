@@ -95,4 +95,4 @@ Precedence, highest first (`config.build_synthesizer` / `build_transcriber`):
 - The pick is fleet-wide; there is no per-child voice.
 
 ---
-📖 [Backlog index](README.md) · [AI seam](../ai-seam.md) · [TTS guide](../../guides/litellm-tts-setup.md) · [STT guide](../../guides/litellm-stt-setup.md)
+📖 [Backlog index](README.md) · [AI seam](../ai-seam.md) · [TTS guide](../../guides/gateway-voice-and-ears.md) · [STT guide](../../guides/gateway-voice-and-ears.md)

@@ -18,7 +18,7 @@ the default (BEYOND #1).
 **Clean-room.** Every id and grammar comes from our own reverse-engineering pages —
 [`behavior-markup.md`](../../reverse-engineering/runtime/behavior-markup.md),
 [`behavior-tree-engine.md`](../../reverse-engineering/runtime/behavior-tree-engine.md),
-[`behavior-nodes.md`](../../reverse-engineering/runtime/behavior-nodes.md),
+[node catalog](../../reverse-engineering/runtime/behavior-tree-engine.md#the-node-catalog-the-65-robotbt_-nodes),
 [`remote-chat-protocol.md`](../../reverse-engineering/protocol/remote-chat-protocol.md). OpenMoxie (MIT) is
 read as prior art and cited by path (§1.4); no code or data table was copied.
 

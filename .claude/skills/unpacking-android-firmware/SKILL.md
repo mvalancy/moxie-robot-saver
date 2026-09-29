@@ -46,5 +46,5 @@ debugfs -R "rdump /system/priv-app /out" system.img   # bulk-extract a dir
 Images at `work/firmware-re/{system.img,oem.img,parts/vendor.img,parts/boot.img}`; extracted tree under
 `work/firmware-re/extract/`. RK3288/Android 9. The brain is `bo-android.apk` (Unity), setup is `bo-wifi.apk`,
 plus `me.embodied.productiontesting.*` factory apps. Boot animation + face assets live on `oem.img`.
-Results written to `docs/reverse-engineering/firmware/{firmware-803-reference,firmware-inventory,firmware-image,firmware-manifest}.md`
+Results written to `docs/reverse-engineering/firmware/{firmware-803-reference,firmware-inventory,firmware-image}.md`
 and the manifest TSVs under `firmware/manifests/`.

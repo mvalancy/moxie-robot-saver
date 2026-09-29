@@ -1,18 +1,21 @@
-# `server/` — server app: parent-app half (Phase 1)
+# server — the parent-app backend
 
-> One of the **two halves of the server app** (③ in [`../STRUCTURE.md`](../STRUCTURE.md)): this folder
-> is the **parent-app-facing** backend (what the phone hits). The **robot-facing** half — MQTT broker,
-> supervisor, Moxie SDK — lives in [`../mqtt/`](../mqtt/).
+A clean-room, account-free reimplementation of the backend the Moxie phone app used
+(`client-service-api.embodied.com`), plus a phone web app, in one FastAPI process. It also hosts the
+parent console, which reads the robot side ([`../mqtt/`](../mqtt/README.md)) through the
+supervisor's status API.
 
-A clean-room, account-free reimplementation of the Moxie parent-app backend
-(`client-service-api.embodied.com`) **plus** the mobile web client, in one FastAPI process.
+## Run it
 
-## Run
 ```bash
 pip install -r requirements.txt
-python run.py                 # HOST/PORT env vars override (default 0.0.0.0:8080)
+python run.py                 # HOST and PORT override the default 0.0.0.0:8080
 ```
-Open `http://<ip>:8080` from a phone on the same LAN/Tailscale.
+
+Open `http://<this-computer's-ip>:8080` on a phone on the same network (or over Tailscale). To run
+it together with the robot side, use the repo-root `docker compose up`
+([guide](../docs/guides/one-command-stack.md)). Tests: `sim/tests/test_parent_api.py`,
+`test_fleet.py` and the `test_console_*.py` files.
 
 ## Layout
 | Path | Role |
@@ -42,7 +45,9 @@ Open `http://<ip>:8080` from a phone on the same LAN/Tailscale.
   ([guide](../docs/guides/permitting-a-robot.md)).
 
 ## Notes
-- The DB (`moxie.db`) is gitignored. Delete it to reset all state.
-- OAuth client credentials are not checked, so a *repointed* original APK also works — but the
-  primary client is the bundled web app. There is no password: anyone on the LAN can log in as
-  any email (by design for a single-household appliance; keep it off the open internet).
+
+- State lives in SQLite at `moxie.db` (git-ignored; `MOXIE_DB` moves it). Delete it to reset.
+- There is no password: anyone on the network can log in as any email. That is intended for a
+  single household; do not expose this server to the internet.
+- OAuth client credentials are not checked, so a repointed original app would also work, but the
+  bundled web app is the supported client.

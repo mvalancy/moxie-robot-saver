@@ -4,7 +4,7 @@
 →Goal→Level chain with weighted edges) and a ModuleTagData tagging a module with SEL
 goals, serializes + re-parses them — the tagging contract a revival server ships so the
 recommender can rank its content. See
-docs/reverse-engineering/content-and-conversation.md (The SEL taxonomy structure).
+docs/reverse-engineering/runtime/content-and-conversation.md (The SEL taxonomy structure).
 
     python3 tools/robot-toolkit/test_sel_taxonomy.py
 """

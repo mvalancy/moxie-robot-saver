@@ -1,10 +1,34 @@
 # 📖 Protocol message catalog — every message & enum
 
-> Auto-generated from the **120 recovered `.proto` files** (firmware **v3.6.4-Zephyr / OTA v24.10.803**).
-> The browsable index of the on-robot + cloud protocol. Regenerate with `python3 tools/robot-toolkit/gen_catalog.py`.
-> Field/enum numbers are wire-compatible with the firmware.
+Every message, enum and field in the 120 recovered `.proto` files (firmware **v3.6.4-Zephyr / OTA v24.10.803**),
+grouped by package, then by file. Field and enum numbers are wire-compatible with the firmware.
+Nested types are listed under their parent as `Parent.Child`.
+
+> Generated — do not hand-edit. Regenerate with `python3 tools/robot-toolkit/gen_catalog.py`
+> (needs `protoc` + `protobuf`). The `.proto` sources live in [`recovered-proto/`](recovered-proto/);
+> the narrative docs in this folder explain what each package is for.
 
 **382 messages · 84 enums · 2074 fields · 120 files.**
+
+| Package | Files | Messages | Enums |
+|---|---:|---:|---:|
+| [`embodied.Robot`](#embodiedrobot) | 1 | 1 | 0 |
+| [`embodied.TTSMarkupTool`](#embodiedttsmarkuptool) | 1 | 5 | 0 |
+| [`embodied.launcher`](#embodiedlauncher) | 1 | 2 | 1 |
+| [`embodied.lizzerface`](#embodiedlizzerface) | 3 | 22 | 13 |
+| [`embodied.logging`](#embodiedlogging) | 11 | 58 | 15 |
+| [`embodied.perception.audio`](#embodiedperceptionaudio) | 11 | 25 | 4 |
+| [`embodied.perception.fusion`](#embodiedperceptionfusion) | 1 | 16 | 1 |
+| [`embodied.perception.vision`](#embodiedperceptionvision) | 16 | 30 | 3 |
+| [`embodied.playspace`](#embodiedplayspace) | 1 | 20 | 9 |
+| [`embodied.power`](#embodiedpower) | 1 | 5 | 3 |
+| [`embodied.robotbrain`](#embodiedrobotbrain) | 35 | 108 | 25 |
+| [`embodied.robotbrain.serialized`](#embodiedrobotbrainserialized) | 4 | 12 | 1 |
+| [`embodied.robotbrain.tags`](#embodiedrobotbraintags) | 1 | 4 | 0 |
+| [`embodied.sys`](#embodiedsys) | 2 | 12 | 2 |
+| [`embodied.telehealth`](#embodiedtelehealth) | 1 | 5 | 2 |
+| [`embodied.testing`](#embodiedtesting) | 2 | 4 | 0 |
+| [`embodied.unity`](#embodiedunity) | 28 | 53 | 5 |
 
 
 ## `embodied.Robot`

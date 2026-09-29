@@ -337,7 +337,7 @@ class RuleClassifier(Classifier):
         """Pick a kid-appropriate redirect for a blocked verdict, never repeating `last`.
 
         The chosen line's `id` becomes `InputSafety.phrase_id` — literally "a matched
-        safety-phrase id" (remote-chat-protocol.md:113-115).
+        safety-phrase id" (remote-chat-protocol.md:88-89).
         """
         lines = self.phrase_sets.get(verdict.phrase_set) or self.phrase_sets.get("generic") or []
         if not lines:                          # a rules file with no phrases at all

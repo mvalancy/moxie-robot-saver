@@ -5,7 +5,7 @@ Builds a UserAlarmRequest (the on-device wake that implements RobotCloudConfig's
 WakeSchedule) and a TimeZoneInfo (the Olson timezone that turns bedtime wall-clock
 strings into local instants), frames + re-parses them, and checks the ReservedTimers
 namespacing + a triggered event. See
-docs/reverse-engineering/power-and-system-events.md (Time, timezone & alarms).
+docs/reverse-engineering/protocol/power-and-system-events.md (Time, timezone & alarms).
 
     python3 tools/robot-toolkit/test_time_alarms.py
 """

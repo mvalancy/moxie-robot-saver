@@ -34,3 +34,6 @@ ops, then runs each `Java_..._get*` export and prints `secret,value`.
 
 > **Values are not committed.** They decrypt live-ish factory credentials (for now-defunct infra);
 > run the tool locally to get them. All six getters now recover clean values. Run locally to see them.
+
+---
+📖 [robot-toolkit](../README.md) · [Back to top](../../../README.md)

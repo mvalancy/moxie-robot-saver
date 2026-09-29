@@ -98,7 +98,7 @@ const env = {
   DEMO_TTS_MODEL: local.MOXIE_VOICE_MODEL || "piper-amy",
   DEMO_TTS_FORMAT: "wav",
   // `MOXIE_STT_BASE_URL` defaults to the voice base and then to the LLM base — one
-  // gateway, one key (docs/guides/litellm-stt-setup.md). `stt-whisper` is the gateway's
+  // gateway, one key (docs/guides/gateway-voice-and-ears.md). `stt-whisper` is the gateway's
   // own default model, recorded there as live since 2026-09-02.
   DEMO_STT_MODEL: local.MOXIE_STT_MODEL || "stt-whisper",
 };

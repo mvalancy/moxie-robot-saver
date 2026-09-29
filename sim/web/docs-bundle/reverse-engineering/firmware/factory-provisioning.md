@@ -1,10 +1,11 @@
 # 🏭 Factory provisioning — production apps, serials & secrets
 
-> **What this is.** How Moxie was **provisioned on the assembly line**: the factory test apps baked
-> into the firmware, the serial-number/barcode grammar they scan, the manufacturing part hierarchy,
-> and where the "secret factory codes" (DB/FTP/Wi-Fi credentials) live and how to recover them.
-> Reconstructed from the decompiled factory APKs shipped in `/system/priv-app`
-> (`me.embodied.productiontesting.*`, `FabTestSoftware`) — observed facts, no Embodied source.
+How Moxie was **provisioned on the assembly line** (v24.10.803): the factory test apps baked into every
+robot, the serial/barcode grammar they scan, the part hierarchy and factory-DB schema, the end-of-line
+test sequences, and where the factory credentials live. Reconstructed from the decompiled factory APKs
+in `/system/priv-app` (`me.embodied.productiontesting.*`, `FabTestSoftware`).
+- The factory apps are a ready-made, signed bring-up toolkit for motors/LEDs/camera/audio.
+- The factory secrets are a **repeating-XOR** with the hex SHA-256 of the package name (cracked).
 
 ## The factory apps (shipped on every robot)
 
@@ -14,16 +15,13 @@
 | **Final test** | `me.embodied.productiontesting.finaltest` | end-of-line functional test |
 | Life test | `me.embodied.productiontesting.lifetest` | reliability / cycle testing |
 | Fab test | `FabTestSoftware` | board-level fab test |
+| Burn-in | `me.embodied.productiontesting.burnintest` | burn-in |
 | Service utilities | `bo_motor_test`, `bo_xmosupdate`, `xmosdfu`, `qcapp` | motor exercise, XMOS DFU, QC |
 
 They share a common core (`me.embodied.productiontesting`): a **ZXing/ZBar barcode scanner**, a task
 scheduler (`tasks/{Task,BasicTask,CompositeTask,Scheduler}`), motor/camera/audio test rigs
 (`motor/*`, `video/Camera`, `perception/audio/USB`), and a **MySQL factory-DB** client
 (`assy/DatabaseHelper`, `com.mysql.*`, `com.j256.ormlite`).
-
-They run as **privileged system apps**, so on a stock robot they are a ready-made, signed lever for
-motor/LED/camera/audio bring-up — useful for validating custom hardware bring-up before replacing the
-app layer.
 
 ## Serial-number / barcode grammar (`SerialNumber.java`)
 
@@ -45,10 +43,8 @@ fixed per prefix (verified in the `isValidFormat` overrides):
 | **contains letters** | **18** | the alphanumeric assembly serial |
 | **`FR` FinishedRobot** | 13 | digits-only **and a valid EAN-13 checksum** (`Validator.EAN13`) — the finished robot's serial is a real **EAN-13 barcode** |
 
-- The generic rule is literally `isDigitsOnly ? length==13 : length==18`, with the named-format lookup
-  additionally enforcing `serialLength` when set.
-- **Customer** builds skip all of this — any exactly-13-char serial is accepted.
-- Mis-scans are rejected with `CORE_INVALID_SERIAL` ("Try to rescan barcode"); the finished-robot serial
+The generic rule is literally `isDigitsOnly ? length==13 : length==18`, with the named-format lookup
+also enforcing `serialLength` when set. Mis-scans are rejected with `CORE_INVALID_SERIAL` ("Try to rescan barcode"); the finished-robot serial
   is persisted to `PERSISTENT_DATA_PATH/SerialNumber.txt`.
 
 ### The scanner + the factory→robot command QR
@@ -56,11 +52,9 @@ fixed per prefix (verified in the `isValidFormat` overrides):
 The stations scan with **ZXing** via `com.journeyapps.barcodescanner.DecoratedBarcodeView`
 (`qr/Scanner.java`, `decodeSingle`), validating GS1/EAN product codes (`ExpandedProductParsedResult`,
 `qr/Validator.EAN13`). The apps also **generate** a QR to *show the robot* (`qr/QR.java` → `QRGEncoder`),
-driven by `qr/Codes.java` — whose **only shipped entry** is
-`{"debug":{"command":"serial_number_display"}}`. So a "manufacturing QR command" is just a
-[debug-command QR](../protocol/qr-commands.md#json-debugfactory-commands) on the same channel `bo-wifi`
-scans — there is **no hidden factory command catalog**, only this one generated code plus the barcode
-*reading* above.
+driven by `qr/Codes.java`, whose **only shipped entry** is `{"debug":{"command":"serial_number_display"}}`.
+A "manufacturing QR command" is just a [debug-command QR](../protocol/qr-commands.md#json-debugfactory-commands)
+on the channel `bo-wifi` scans. There is **no hidden factory command catalog**.
 
 ## Manufacturing part hierarchy (`assy/Part.java`)
 
@@ -95,10 +89,9 @@ exact tables the line writes over the `jdbc:mysql://…` connection above:
 | | `serial` | `VARCHAR` not‑null | finished‑robot serial |
 | | `timestamp` | `DATETIME` not‑null | when it was packed out |
 
-So the whole build is captured as a **tree of `parts` rows** (each part↔serial↔pass, linked to its
-parent) culminating in a `FinishedRobot` row, plus a `packout` row when it ships. Nothing here is needed
-to revive a robot — it's the manufacturing side — but it completes the factory data model and confirms
-the serial/part grammar above is exactly what the DB stores.
+The whole build is a **tree of `parts` rows** (part↔serial↔pass, linked to its parent) ending in a
+`FinishedRobot` row, plus a `packout` row when it ships. Not needed for revival, but it confirms the
+serial/part grammar above is exactly what the DB stores.
 
 ## Factory test catalog (`finaltest` — end of line)
 
@@ -129,15 +122,12 @@ The factory native lib exposes reusable hardware pokes — a ready-made bring-up
 `GetTouchSensor` · `ArucoAligner` · `AudioTest` · `DUTAlignment` · `DoMotorsTest` · `Fan` ·
 `ProjCamTest` · `RingTest` · `TurnFront` / `TurnBack` (base rotation).
 
-The station uses a **closed test enclosure** (open/close-door prompts), **ArUco fiducials** for
-camera↔projector alignment, and reads the LED ring / projected image back through the camera —
-i.e. the robot self-validates its own face optics. For custom firmware / hardware bring-up, these are
-the exact routines that prove each subsystem.
+The station uses a **closed test enclosure** (open/close-door prompts) and **ArUco fiducials**, and
+reads the LED ring and projected image back through the camera: the robot self-validates its own optics.
 
 ### `internalassytest` — sub-assembly bring-up (`InternalAssyTest.DoTest()`)
 
-A **distinct**, shorter sequence run at an earlier station (before final assembly), verified from the
-decompiled `me.embodied.productiontesting.internalassytest` (firmware **v24.10.803**). Ordered steps:
+A distinct, shorter sequence run at an earlier station, before final assembly:
 
 | # | Step | What it proves |
 |---|---|---|
@@ -151,17 +141,15 @@ decompiled `me.embodied.productiontesting.internalassytest` (firmware **v24.10.8
 | 8 | `Spin` | base yaw rotation (re-checks ArUco alignment after spinning) |
 | 9 | `ReRun(TestMotor, ×3)` | the motor set, **repeated 3×** |
 
-So the assembly station is optics/touch/fan/motor focused; the **`finaltest` end-of-line run above adds**
-the Wi-Fi/RSSI, camera-cover, audio speaker and arm connect/disconnect checks.
+The assembly station focuses on optics/touch/fan/motors; `finaltest` adds the Wi-Fi/RSSI, camera-cover,
+audio speaker and arm connect/disconnect checks.
 
 ### `lifetest` — a **550-hour reliability soak** (`ActivityLifeTest.DoTest()`)
 
-Not a pass/fail station test at all — it's a **burn-in**: `TimePeriod(550L, TimeUnit.HOURS)` (~23 days).
-It **requires the charger** (`Lizard.waitForDC(30000)`, else `ErrorCode.ROBOT_NO_CHARGER` — *"Charger must
-be connected"*) and then runs a `Scheduler` that **cycles the test primitives** for the whole duration
-("LifeTest start.\nCradle…" → "LifeTest end.\n… to grave."). This is the routine that would cycle a
-bench unit's motors/optics/audio for reliability data — useful context for how much duty these actuators
-were validated for.
+A burn-in, not a pass/fail station: `TimePeriod(550L, TimeUnit.HOURS)` (~23 days). It **requires the
+charger** (`Lizard.waitForDC(30000)`, else `ErrorCode.ROBOT_NO_CHARGER`, *"Charger must be connected"*)
+and runs a `Scheduler` that **cycles the test primitives** for the whole duration ("LifeTest start.\nCradle…"
+→ "LifeTest end.\n… to grave."). It indicates the duty the actuators were validated for.
 
 ## The secrets (`Secrets` / `libsecrets.so`)
 
@@ -180,17 +168,15 @@ native String getFTPUsername(String pkg);        native String getFTPPassword(St
   the line (the "secret factory Wi-Fi").
 - **`getFTPUsername/Password`** → the FTP drop for logs / firmware artifacts.
 
-`SecretsHelper.get("DBPassword")` reflects `Secrets.getDBPassword("me.embodied.productiontesting")` —
-so the secrets are **derived from the caller's package name** inside the native lib (an obfuscation,
-not real key separation).
+`SecretsHelper.get("DBPassword")` reflects `Secrets.getDBPassword("me.embodied.productiontesting")`: the
+secrets are derived from the caller's package name (obfuscation, not real key separation).
 
 ### The obfuscation is repeating-XOR (cracked)
 
-Emulating `libsecrets.so` under Unicorn (see
-[`../../tools/robot-toolkit/secrets/`](../../../tools/robot-toolkit/secrets/)) reveals the "encryption"
-is trivial once you run the real code. Each getter holds an obfuscated blob and calls
-`getOriginalKey(blob, len, packageName, JNIEnv*)`, whose Thumb disassembly is a plain repeating-key
-XOR:
+`libsecrets.so` (ARMv7, ~18 KB) builds each string at runtime, so `strings` won't reveal them. Each
+getter (`Java_me_embodied_productiontesting_Secrets_get*`, offsets `0x10bd`–`0x1215`) holds an
+obfuscated blob and calls `getOriginalKey(blob, len, packageName, JNIEnv*)`, whose Thumb disassembly is
+a plain repeating-key XOR:
 
 ```
 keybuf = ASCII( hex( sha256(packageName) ) ) # 64 hex chars, packageName = "me.embodied.productiontesting"
@@ -198,27 +184,13 @@ out[i] = blob[i] XOR keybuf[i % 64]          # ldrb / mod 64 / eor / strb
 return NewStringUTF(out)
 ```
 
-**So every factory secret = its embedded blob XOR the hex-SHA256 of the package name** — a fixed
-64-char keystream. All six getters recover clean values (a SQL `SA` login, the factory Wi-Fi PSK
-`Embodied<3robots!`, a 62-char staff PSK, an FTP `test-station` account, etc.). The extractor emulates
-each getter to capture its assembled blob, then derives the key with Python (the lib's own SHA256
-miscomputes under Unicorn). **Values are recovered locally, not committed.**
-
-### Recovering the secret values
-
-`libsecrets.so` (ARMv7, ~18 KB) builds each string at runtime by XOR-ing an embedded blob with the package name (see above) — `strings` alone won't reveal them. Two
-practical routes:
-
-1. **Emulate the getter.** Load `lib/armeabi-v7a/libsecrets.so` under `qemu-arm` (or on any
-   ARM/Android with the right JNI stub) and **call each `Java_..._get*` export** with the package
-   name `me.embodied.productiontesting`; capture the returned string. This is the cleanest — the lib
-   deobfuscates itself for you.
-2. **Static ARM reversal.** Load into Ghidra/radare2 (ARM Thumb), follow each
-   `Java_me_embodied_productiontesting_Secrets_get*` (offsets `0x10bd`–`0x1215`) through the decode
-   routine to recover the constant table.
-
-> The native lib is extracted to `work/firmware-re/extract/secrets/lib/armeabi-v7a/libsecrets.so`.
-> Values are intentionally **not committed** to this repo; recover them locally with the method above.
+So every factory secret is its embedded blob XOR a fixed 64-char keystream. All six getters recover
+clean values: a SQL `SA` login, the factory Wi-Fi PSK `Embodied<3robots!`, a 62-char staff PSK, an FTP
+`test-station` account, etc. The extractor in
+[`tools/robot-toolkit/secrets/`](../../../tools/robot-toolkit/secrets/README.md) emulates each getter under
+Unicorn to capture its blob, then derives the key in Python (the lib's own SHA256 miscomputes under
+Unicorn). Static reversal in Ghidra/radare2 (ARM Thumb) of the same exports also works. Apart from the
+PSK quoted above, the **values are recovered locally and not committed**.
 
 ## Why this matters for revival / custom
 

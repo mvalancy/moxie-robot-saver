@@ -31,7 +31,7 @@
 #   (c) every third-party module the suite imports ANYWHERE — including inside a helper
 #       *function*, which is exactly how numpy stayed invisible for two days — is declared
 #       here or is on a named, reasoned exception list;
-#   (d) the venv recipe in `docs/architecture/orchestration-plan.md` points at this file
+#   (d) the venv recipe in `docs/architecture/agent-workflow.md` points at this file
 #       rather than hand-listing packages, so a brief cannot re-create the drift.
 #
 # WHAT IS DELIBERATELY NOT HERE:

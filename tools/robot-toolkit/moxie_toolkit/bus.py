@@ -12,7 +12,7 @@ drive the face/motors/LEDs/audio by publishing embodied.* protobufs, and observe
 subscribing. This is the lever for running custom software INTO a Moxie without replacing the
 whole firmware. Requires `pip install pyzmq protobuf`.
 
-Source of truth: docs/reverse-engineering/robot-ipc-protocol.md
+Source of truth: docs/reverse-engineering/protocol/robot-ipc-protocol.md
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/moxie_toolkit")
@@ -88,7 +88,7 @@ def fused_people_classes():
         fn, msg = bus.recv()
     Returns the roster snapshot (FusedPeoplePB) + the person-level event messages
     (added/removed/moved, started/stopped speaking, saying/said, smiled, engaged/
-    disengaged). See docs/reverse-engineering/perception-fusion.md."""
+    disengaged). See docs/reverse-engineering/protocol/perception-fusion.md."""
     from embodied.perception.fusion import FusedPeople_pb2 as F
     return [
         F.FusedPeoplePB,
@@ -100,7 +100,7 @@ def fused_people_classes():
 
 
 # ---- attention / targeting decision (embodied.robotbrain / TargetUser) ----
-# See docs/reverse-engineering/gaze-and-attention.md (The published attention state)
+# See docs/reverse-engineering/runtime/gaze-and-attention.md (The published attention state)
 def attention_classes():
     """The published attention decision — who Moxie is attending to and in what state.
     Subscribe to receive parsed events: Attention (state + targeted_user + candidate
@@ -110,7 +110,7 @@ def attention_classes():
     return [A.Attention, A.TargetedUser, A.NoTargetedUser]
 
 # ---- time, timezone & wake alarms (embodied.sys / TimeEvents) ----
-# See docs/reverse-engineering/power-and-system-events.md (Time, timezone & alarms)
+# See docs/reverse-engineering/protocol/power-and-system-events.md (Time, timezone & alarms)
 def user_alarm(alarm_expires, *, timer_id=None, alarm_repeats=0):
     """Build a UserAlarmRequest to arm a wake/timer. timer_id defaults to
     TIMER_ID_USER_WAKE (the child's wake alarm); use TIMER_ID_PARENT_APP or a
@@ -127,7 +127,7 @@ def time_zone_info(olson_id, midnight_in_timezone=""):
 
 
 # ---- MAINAPP (Unity front-end) interface (embodied.unity) ----
-# See docs/reverse-engineering/unity-mainapp-interface.md
+# See docs/reverse-engineering/protocol/unity-mainapp-interface.md
 def mainapp_lifecycle_classes():
     """The Unity MAINAPP lifecycle messages: MainAppStatus (code), MainAppShutdown,
     SilentBootComplete, SoftwareVersion (UnityVersion + CommitHash)."""
@@ -174,7 +174,7 @@ def user_pairing_request(action, *, user_token="", public_key="", secret_key=b""
                                 secret_key=secret_key, is_staging=is_staging)
 
 # ---- semantic handling events (embodied.unity / MpuPickup) ----
-# See docs/reverse-engineering/hardware-map.md (Semantic handling events)
+# See docs/reverse-engineering/hardware/hardware-map.md (Semantic handling events)
 def mpu_handling_classes():
     """The IMU handling events the brain publishes: picked-up, shaken (with
     MpuShakeDirection), pickup-status (pitch), tilt, put-down, and the MpuIsNoisy
@@ -184,7 +184,7 @@ def mpu_handling_classes():
             M.MpuTiltEventPB, M.MpuPutDownEventPB, M.MpuIsNoisyEventPB]
 
 # ---- setup app (bo-wifi) status on the bus (embodied.unity, wifiapp file group) ----
-# See docs/reverse-engineering/qr-commands.md (The setup app's runtime status)
+# See docs/reverse-engineering/protocol/qr-commands.md (The setup app's runtime status)
 WIFI_APP_STATUS_CODES = {1:"WifiAndUserGood", 100:"WifiAppReady",
                          101:"WantsToDisplaySomething", 1977:"Alive", 1978:"Unquiet"}
 def wifi_app_status_classes():
@@ -199,7 +199,7 @@ def wifi_app_status_classes():
     return [S.WifiAppStatus, B.WifiAppBricked, SB.WifiAppSilentBoot, SD.WifiAppShutdown]
 
 # ---- imperative runtime control of a running brain (embodied.robotbrain) ----
-# See docs/reverse-engineering/runtime-control.md
+# See docs/reverse-engineering/protocol/runtime-control.md
 def volume_modify(volume, relative=False):
     """SystemVolumeModify — set the volume live. relative=True adds a signed delta."""
     from embodied.robotbrain import System_pb2 as S

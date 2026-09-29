@@ -1,9 +1,10 @@
-# Moxie revival — community landscape (2026-08)
+# The Moxie revival community
 
-Snapshot of existing work so we build the *gap*, not a duplicate.
+Other revival work, surveyed in August 2026, so this project fills gaps instead of duplicating. For a
+feature-by-feature comparison with OpenMoxie, see the [OpenMoxie audit](architecture/openmoxie-feature-audit.md).
 
-## TL;DR for THIS project
-- **Nobody has recreated the parent app.** OpenMoxie (the canonical project) replaces the
+## Summary
+- **Nobody else has recreated the parent app.** OpenMoxie (the canonical project) replaces the
   **robot's** cloud (MQTT/IoT) and does all configuration through its **own Django web UI**.
   It has **no parent-app backend and no parent app**. That is exactly the gap we target.
 - The robot's *functionality* (talking, activities, LLM chat) is delivered over **MQTT**, which
@@ -79,8 +80,10 @@ No firmware-image repos, no APK-mod repos, **no parent-app repo**, no independen
 - Facebook group `groups/873320370652494`; YouTube walkthroughs. **No Discord found.**
 - Press: PIRG, Techdirt, Slashdot, AppleInsider, Fight-to-Repair (all Dec 2024 open-sourcing coverage).
 
-## Where OUR repo fits (the gap)
-1. A clean-room **spec of the parent-app REST API** (`client-service-api.embodied.com`) — does not exist anywhere.
-2. Clean-room **pairing-QR tooling** independent of the dead app (done: `tools/pairing/`).
-3. A **local, cross-platform web server** that recreates the *parent-app* features (account-free),
-   optionally bridging to OpenMoxie's MQTT layer for robot data (insights/activity logs).
+## Where this project fits
+
+1. A clean-room spec and server for the parent-app REST API (`client-service-api.embodied.com`), which
+   exists nowhere else.
+2. Clean-room pairing-QR tooling, verified on a real robot (`tools/pairing/`).
+3. Its own robot cloud (broker, supervisor, SDK) that adopts OpenMoxie's best behaviors behind
+   documented contracts, runs any OpenAI-compatible brain, and ships a browser simulator.

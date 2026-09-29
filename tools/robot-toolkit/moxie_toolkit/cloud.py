@@ -8,7 +8,7 @@ Google IoT-Core topic convention (kept post-migration); {device_id} = robot UUID
                    /devices/{id}/commands/zmq         (binary: "{proto_full_name}:" + serialized)
 
 The zmq command injects any embodied.* protobuf straight onto the robot's on-device ZMQ bus
-(same messages as MoxieBus in bus.py). See docs/reverse-engineering/cloud-protocol.md.
+(same messages as MoxieBus in bus.py). See docs/reverse-engineering/protocol/cloud-protocol.md.
 """
 import json
 # NOTE: QRCommand et al. live in the module `embodied.wifiapp.QRCommands_pb2` (file path),
@@ -83,7 +83,7 @@ def telehealth_play_output(text, markup="", *, session_id="", line_id="", line_p
     """Build a telehealth PLAY_OUTPUT `TelehealthMessage` — make Moxie speak `text` and perform the
     `<mark cmd:...>` `markup` live (remote-puppet). Wrap it with `telehealth_command()` and publish to
     `telehealth_topic(device_id)`.
-    See docs/reverse-engineering/telehealth.md (the TeleBrain remote-puppet protocol)."""
+    See docs/reverse-engineering/protocol/telehealth.md (the TeleBrain remote-puppet protocol)."""
     from embodied.telehealth import TeleHealth_pb2 as TH
     out = TH.Output(text=text, markup=markup, line_id=line_id)
     if line_params:
@@ -92,7 +92,7 @@ def telehealth_play_output(text, markup="", *, session_id="", line_id="", line_p
 
 def telehealth_session(action, *, session_id=""):
     """START_SESSION / END_SESSION / INTERRUPT / UPDATE_STATE `TelehealthMessage` (pass the TeleHealth
-    Action enum, e.g. `TeleHealth_pb2.START_SESSION`). See docs/reverse-engineering/telehealth.md."""
+    Action enum, e.g. `TeleHealth_pb2.START_SESSION`). See docs/reverse-engineering/protocol/telehealth.md."""
     from embodied.telehealth import TeleHealth_pb2 as TH
     return TH.TelehealthMessage(action=action, session_id=session_id)
 
@@ -103,7 +103,7 @@ def telehealth_topic(device_id):
 def telehealth_command(message, command=""):
     """Wrap a `TelehealthMessage` in the publishable `TelehealthRobotCommand` (cloud -> robot).
     Serialize with `.SerializeToString()` and publish to `telehealth_topic(device_id)`.
-    See docs/reverse-engineering/telehealth.md."""
+    See docs/reverse-engineering/protocol/telehealth.md."""
     from embodied.telehealth import TeleHealth_pb2 as TH
     return TH.TelehealthRobotCommand(command=command, message=message)
 
@@ -121,7 +121,7 @@ def service_configuration(*, mqtt_host=None, webservice_root=None, override_port
     """Build an embodied.logging.ServiceConfiguration to repoint a robot at your backend.
     Push over MQTT config. e.g. service_configuration(mqtt_host='my.example.com', override_port=8883,
     connection_type=EMBODIED_LOCAL, disable_verify=True). Only set what you need.
-    See docs/reverse-engineering/cloud-protocol.md (Service configuration)."""
+    See docs/reverse-engineering/protocol/cloud-protocol.md (Service configuration)."""
     from embodied.logging import Cloud_pb2 as C
     cfg = C.ServiceConfiguration()
     if mqtt_host is not None: cfg.mqtt_host = mqtt_host
@@ -137,7 +137,7 @@ def service_configuration(*, mqtt_host=None, webservice_root=None, override_port
 
 
 # ---- device config & telemetry (embodied.logging data-model) ----
-# See docs/reverse-engineering/device-config-and-telemetry.md
+# See docs/reverse-engineering/protocol/device-config-and-telemetry.md
 
 def build_robot_cloud_config(**fields):
     """Build an embodied.logging.RobotCloudConfig — the master config the cloud pushes on
@@ -178,7 +178,7 @@ def parse_cloud_status(payload):
 
 
 # ---- RemoteChat: the robot <-> brain conversation RPC (embodied.robotbrain) ----
-# See docs/reverse-engineering/remote-chat-protocol.md
+# See docs/reverse-engineering/protocol/remote-chat-protocol.md
 
 def remote_chat_reply(text, *, markup="", mood="", mood_intensity=None, result=None,
                       dialog_act="", emotion="", sequence=None, event_id=""):
@@ -224,7 +224,7 @@ def parse_remote_chat_response(payload):
 
 
 # ---- on-device serialized brain state (embodied.robotbrain.serialized) ----
-# See docs/reverse-engineering/offline-and-brain-state.md
+# See docs/reverse-engineering/protocol/offline-and-brain-state.md
 
 def parse_fallback_info(payload):
     """Parse a FallbackInfo tree — the on-device offline fallback content the robot
@@ -246,7 +246,7 @@ def parse_user_recommendation_data(payload):
 
 
 # ---- SEL content taxonomy (embodied.robotbrain.tags / ModuleTag) ----
-# See docs/reverse-engineering/content-and-conversation.md (The SEL taxonomy structure)
+# See docs/reverse-engineering/runtime/content-and-conversation.md (The SEL taxonomy structure)
 
 def parse_sel_tag_info(payload):
     """Parse a SELTagInfo — the four-level SEL curriculum taxonomy

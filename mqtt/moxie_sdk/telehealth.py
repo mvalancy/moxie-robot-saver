@@ -9,9 +9,9 @@ robot's enum does not have.
 **Mode.** `RobotCloudConfig.moxie_mode = 21` (`enum MoxieMode {DEFAULT_MODE=0;
 TELEHEALTH=1}`, proto-catalog.md:212, :369). The launcher's `STATE_TELEBRAIN` runs
 perception + MAINAPP with no on-device brain — the remote human is the brain
-(firmware/boot-and-launcher.md:48, :61; protocol/telehealth.md:26-28).
+(firmware/boot-and-launcher.md:48, :61; protocol/telehealth.md:50-54).
 
-**Protocol**, from the recovered `embodied.telehealth.TeleHealth.proto` (telehealth.md:30-58)::
+**Protocol**, from the recovered `embodied.telehealth.TeleHealth.proto` (telehealth.md:11-39)::
 
     enum Action     { UNKNOWN_ACTION=0; START_SESSION=1; PLAY_OUTPUT=2;
                       END_SESSION=3;    UPDATE_STATE=4; INTERRUPT=5; }
@@ -24,7 +24,7 @@ perception + MAINAPP with no on-device brain — the remote human is the brain
 
 **Transport.** Cloud → robot as JSON on `/devices/{id}/commands/telehealth`; robot →
 cloud on `events/client-service-activity-log` with `subtopic: "telehealth"`
-(telehealth.md:81-91). `sim/tests/test_telehealth.py` checks every emitted key against
+(telehealth.md:69-78). `sim/tests/test_telehealth.py` checks every emitted key against
 the compiled `TeleHealth_pb2` in tools/robot-toolkit.
 
 **Assumptions.** B1: writing `moxie_mode: TELEHEALTH` into `/config` enters
@@ -42,7 +42,7 @@ from typing import Optional
 from . import vocab
 
 # --------------------------------------------------------------------------- #
-# The enums, by NAME, in field-number order (telehealth.md:35-36)
+# The enums, by NAME, in field-number order (telehealth.md:16-17)
 # --------------------------------------------------------------------------- #
 #: `TeleHealth.Action` — the operator's control verbs.
 ACTIONS = ("UNKNOWN_ACTION", "START_SESSION", "PLAY_OUTPUT",
@@ -58,7 +58,7 @@ OUTPUT_ACTION = "PLAY_OUTPUT"
 COMMAND_NAME = "telehealth"
 
 #: The `client-service-activity-log` subtopic the robot reports its state on
-#: (mqtt-and-conversation.md §3.3, telehealth.md:88-91).
+#: (mqtt-and-conversation.md §3.3, telehealth.md:74-77).
 EVENT_SUBTOPIC = "telehealth"
 
 #: The MQTT command name (cloud → robot), i.e. `/devices/{id}/commands/telehealth`.

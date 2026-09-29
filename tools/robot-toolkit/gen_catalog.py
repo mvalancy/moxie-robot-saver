@@ -27,17 +27,26 @@ def main():
         for f in m.field: st["f"]+=1; body.append(f"{ind}  - `{LAB.get(f.label,'')}{ftype(f)} {f.name} = {f.number}`")
         for e in m.enum_type: renum(e,ind+"  ",full+".")
         for nm in m.nested_type: rmsg(nm,ind+"  ",full+".")
+    index=[]  # (pkg, files, messages, enums) for the package table at the top
     for pkg in sorted(by):
+        m0,e0=st["m"],st["e"]
         body.append(f"\n## `{pkg}`\n")
         for f in by[pkg]:
             body.append(f"\n### `{f.name}`\n")
             for e in f.enum_type: renum(e)
             for m in f.message_type: rmsg(m)
+        index.append((pkg,len(by[pkg]),st["m"]-m0,st["e"]-e0))
+    slug=lambda t:"".join(c for c in t.lower() if c.isalnum() or c in "_- ").replace(" ","-")
     head=[f"# 📖 Protocol message catalog — every message & enum\n",
-      f"> Auto-generated from the **120 recovered `.proto` files** (firmware **{FW}**).",
-      "> The browsable index of the on-robot + cloud protocol. Regenerate with `python3 tools/robot-toolkit/gen_catalog.py`.",
-      "> Field/enum numbers are wire-compatible with the firmware.\n",
-      f"**{st['m']} messages · {st['e']} enums · {st['f']} fields · {len(files)} files.**\n"]
+      f"Every message, enum and field in the {len(files)} recovered `.proto` files (firmware **{FW}**),",
+      "grouped by package, then by file. Field and enum numbers are wire-compatible with the firmware.",
+      "Nested types are listed under their parent as `Parent.Child`.\n",
+      "> Generated — do not hand-edit. Regenerate with `python3 tools/robot-toolkit/gen_catalog.py`",
+      "> (needs `protoc` + `protobuf`). The `.proto` sources live in [`recovered-proto/`](recovered-proto/);",
+      "> the narrative docs in this folder explain what each package is for.\n",
+      f"**{st['m']} messages · {st['e']} enums · {st['f']} fields · {len(files)} files.**\n",
+      "| Package | Files | Messages | Enums |","|---|---:|---:|---:|",
+      *[f"| [`{p}`](#{slug(p)}) | {nf} | {nm} | {ne} |" for p,nf,nm,ne in index],""]
     foot=["\n\n---\n📖 [Reverse-engineering index](../README.md) · [recovered-proto/](recovered-proto/) · [protoref tool](../../../tools/robot-toolkit/moxie_toolkit/protoref.py)"]
     open(out,"w").write("\n".join(head+body+foot))
     print(f"wrote {out}: {st['m']} messages, {st['e']} enums, {st['f']} fields")

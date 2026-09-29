@@ -1,28 +1,14 @@
 # 🧩 Vendor HALs, kernel drivers & co-processor firmware — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)
 
-> Measured from the **v24.10.803** `vendor.img` + `system.img` (RK3288, Android 9). This is the layer
-> *below* the apps and *above* the silicon: the Android **HAL** set the platform exposes, how the
-> kernel drivers are delivered, and the **binary firmware blobs** for the co-processors and radio.
-> It answers a custom-firmware question directly: **what must a custom kernel/vendor image provide for
-> the robot's hardware to come up?** Pairs with [`hardware-map.md`](../hardware/hardware-map.md) (the silicon),
-> [`perception-pipeline.md`](../runtime/perception-pipeline.md) (what the XMOS DSP does),
-> [`security-policy.md`](security-policy.md) (why there's no custom HAL) and
-> [`fcc-teardown.md`](../hardware/fcc-teardown.md) (the radio module).
-
-## TL;DR
-
-- **Every Android HAL is stock AOSP or Rockchip — there is NO embodied-authored HAL.** The custom
-  hardware (RGB LEDs, projector fan, XMOS mic/speaker) is driven from **userspace**: the `ledctrld`
-  and `projectorfanpid` daemons + direct `/dev` access from the **platform-signed** brain (see
-  [`security-policy.md`](security-policy.md)). This reinforces the central finding: **the Moxie
-  experience is an app-layer payload on an otherwise stock RK3288 Android-9 BSP.** A custom build keeps
-  the whole HAL/kernel layer and swaps the apps.
-- **The RK3288 kernel builds its drivers in-tree** — there are **no loadable `.ko` modules** anywhere
-  in the image. A custom kernel must compile the same drivers in; `firmware_class.path=/vendor/etc/firmware`
-  (kernel cmdline) points the drivers at the blob directory below.
-- **The XMOS voice DSP firmware ships in the image** — two selectable images (`xmosdfu.bin` and a
-  **VAD** variant `xmosdfu-vad.bin`), DFU-flashed at boot by the XMOS updater. Concrete, re-flashable
-  artifacts for anyone rebuilding the audio front-end.
+The layer between the apps and the silicon in **v24.10.803** (`vendor.img` + `system.img`): the
+Android **HAL** set, how kernel drivers are delivered, and the **firmware blobs** for the co-processors
+and radio. It answers what a custom kernel/vendor image must provide for the hardware to come up.
+- **Every HAL is stock AOSP or Rockchip; there is no Embodied HAL.** Custom hardware (RGB LEDs,
+  projector fan, XMOS mic/speaker) is driven from **userspace**: the `ledctrld`/`projectorfanpid`
+  daemons plus direct `/dev` access from the privileged brain ([security-policy](security-policy.md)).
+  A custom build keeps the whole HAL/kernel layer and swaps the apps.
+- **No loadable `.ko` modules:** the RK3288 kernel builds its drivers in-tree.
+- **The XMOS voice-DSP firmware ships in the image** (`xmosdfu.bin` + a VAD variant), re-flashable by DFU.
 
 ## 1. HAL interfaces declared (VINTF `manifest.xml`)
 
@@ -108,24 +94,29 @@ images ship, with plain-text version files the updater compares against the runn
 
 ### Radio (BCM4339 / AP6335)
 
-The actual module is the **AP6335 (Broadcom BCM4339)** combo — its BT patch ships as
-**`bcm4339a0.hcd` (57,291 bytes)**. The directory *also* carries generic Rockchip-SDK firmware for
-**dozens of other** Wi-Fi/BT modules (`fw_bcm43…`, `fw_RK903…`, `RT2870*`, `ssv6051`, Realtek
-`8723`/`8188`… + matching `nvram_*.txt` / `*.hcd`) — none of which this board uses. See
-[`fcc-teardown.md`](../hardware/fcc-teardown.md) for the exact radio blobs and the FCC-confirmed module.
+The module is the **AmPak AP6335 (Broadcom BCM4339)** combo, selected in the DTB by
+`wifi_chip_type="ap6335"` ([device-tree](../hardware/device-tree.md#connectivity-wi-fi-bluetooth)). The
+Wi-Fi firmware is host-loaded over SDIO and BT over UART0; nothing is flashed into the module. The exact
+files a custom build must ship:
 
-## 5. What this means for the three goals
+| File | Use |
+|---|---|
+| `fw_bcm4339a0_ag.bin` | Wi-Fi STA (the `_ag`, a/g-band family) |
+| `fw_bcm4339a0_ag_apsta.bin` | STA + SoftAP |
+| `fw_bcm4339a0_ag_p2p.bin` | Wi-Fi Direct |
+| `nvram_AP6335.txt` | AP6335 module calibration/NVRAM |
+| `bcm4339a0.hcd` (57,291 bytes) | BT patchram |
 
-**① Custom firmware.** Keep the entire HAL/kernel layer as-is — it's stock Rockchip, no embodied
-customization to reverse. You need: the RK3288 in-tree kernel drivers, the `/vendor/lib/hw` +
-`/vendor/bin/hw` HALs, and these firmware blobs (XMOS DSP + BCM4339). The **XMOS images are here**, so
-the audio co-processor can be re-flashed independently of the Android side. Your work is entirely in
-the app layer + (optionally) the two userspace daemons.
+The directory also carries the generic Rockchip-SDK grab-bag (~40 blobs for other Wi-Fi/BT parts:
+`fw_bcm43…`, `fw_RK903…`, `RT2870*`, `ssv6051`, Realtek `8723`/`8188`… + `nvram_*.txt`/`*.hcd`), and
+`/vendor/firmware/*.rkl` (RK1608 pre-ISP, OV2718/IMX327). None of these are used on this board.
 
-**② Server revival.** Not relevant to the cloud contract — noted only to bound it out.
+## 5. What this means
 
-**③ Pre-801 revival.** No new lever; the flashing surface is covered in
-[`hardware-access.md`](../hardware/hardware-access.md) / [`ota-and-recovery.md`](ota-and-recovery.md).
+For custom firmware, keep the HAL/kernel layer as-is: the RK3288 in-tree drivers, the `/vendor/lib/hw` +
+`/vendor/bin/hw` HALs, and the blobs above. The XMOS images let the audio co-processor be re-flashed
+independently of Android. The work is in the app layer and, optionally, the two daemons. Nothing here
+affects server revival or the no-open question ([ota-and-recovery](ota-and-recovery.md)).
 
 ---
 📖 [Reverse-engineering index](../README.md) · [Field guide](../FIELD-GUIDE.md) · [Hardware map](../hardware/hardware-map.md) · [Perception pipeline](../runtime/perception-pipeline.md) · [Firmware reference](firmware-803-reference.md)

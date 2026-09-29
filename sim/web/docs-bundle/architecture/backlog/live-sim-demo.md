@@ -762,6 +762,6 @@ These numbers are stable, and code cites them.
 ---
 
 📖 [Docs index](../../README.md) · [Architecture index](../README.md) · [Backlog briefs](README.md) ·
-[Orchestration plan](../orchestration-plan.md) · [Deploy on Cloudflare](../../guides/deploy-cloudflare.md) ·
+[Orchestration plan](../agent-workflow.md) · [Deploy on Cloudflare](../../guides/deploy-cloudflare.md) ·
 [MQTT and the conversation](../mqtt-and-conversation.md) · [The AI seam](../ai-seam.md) ·
 [The static experience](../static-experience.md)
