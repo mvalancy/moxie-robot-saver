@@ -19,7 +19,9 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   `python3 -m moxie_sdk.broker_acl <permits.json>` prints it.
   ([`security-broker-auth.md`](../../docs/architecture/backlog/security-broker-auth.md) §2.3)
 - [`memory_items.py`](memory_items.py) — the long-term memory item model (limits, ids,
-  provenance, decay) that `store.MemoryStore` persists; re-exported by `store.py`.
+  provenance, decay) that `memory_store.MemoryStore` persists.
+- [`memory_store.py`](memory_store.py) — `MemoryStore`: namespaced, bounded, policy-gated
+  long-term memory (`persist_data`) over one `store.py` record per robot.
 - [`store.py`](store.py) — the durable per-robot store (JSON under `MOXIE_DATA_DIR`, default
   [`../data/`](../data/)) that remembers reported `mentor_behaviors` across restarts.
 - [`faces.py`](faces.py) — 🎨 **Moxie's look**: the appearance catalog and how a selection

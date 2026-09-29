@@ -130,14 +130,6 @@ async function editMemory(deviceId, namespace, item, text){
   try{
     await api(url,{method:'POST',auth:false,body:{text}});
     if(s) s.textContent='✏️ Corrected — Moxie remembers it as you wrote it (📌 pinned).';
-  }catch(e){ if(s) s.textContent='⚠️ '+memError(e); }
+  }catch(e){ if(s) s.textContent=oops(e,'that correction was refused'); }
   refreshMemory(deviceId);
-}
-
-// The console answers a refused edit with its own memory shape, so the reason is inside
-// the JSON `api()` hands back as an error string — show that, not the raw payload.
-function memError(e){
-  let msg=(e&&e.message)||'that correction was refused';
-  try{ const j=JSON.parse(msg); if(j&&j.error) msg=j.error; }catch(_){}
-  return msg;
 }
