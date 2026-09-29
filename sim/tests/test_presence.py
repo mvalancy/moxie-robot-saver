@@ -10,10 +10,6 @@ Honest scope: no physical robot has ever sent us one of these events. These test
 *model* of the recovered catalog (docs/architecture/vision.md §1.1-1.2), not observed
 robot behavior.
 """
-import os
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
 from moxie_sdk import presence as P                          # noqa: E402
 
 FOUND, LOST = P.FOUND_FACE, P.LOST_TARGET
@@ -65,8 +61,7 @@ def test_the_close_enough_face_search_args_are_the_recovered_ones():
 # --------------------------------------------------------------------------- #
 def test_the_first_face_is_an_arrival_with_no_away_time():
     st, sigs = P.update_presence(P.new_state(), FOUND, {}, 100.0)
-    assert _names(sigs[-1] if isinstance(sigs, list) and sigs and isinstance(sigs[0], list)
-                  else sigs) == ["arrived"]
+    assert _names(sigs) == ["arrived"]
     assert sigs[0]["away_s"] is None, "a first sighting has nothing to come back from"
     assert st["face_present"] is True
     assert st["faces_seen"] == 1 and st["present_since"] == 100.0
@@ -209,8 +204,10 @@ def test_a_partial_or_legacy_record_is_healed_not_rejected():
 
 
 def test_a_clock_that_steps_backwards_cannot_invent_a_duration():
-    st, sigs = _drive([(500.0, FOUND), (400.0, LOST)])
-    assert sigs[1][0]["gap_s"] == 0.0 or sigs[1][0].get("present_s") == 0.0
+    """A negative interval clamps to zero, which reads as a flicker in either direction."""
+    st, sigs = _drive([(500.0, FOUND), (400.0, LOST), (300.0, FOUND)])
+    assert [(x["name"], x["gap_s"]) for step in sigs[1:] for x in step] == \
+        [("flicker", 0.0), ("flicker", 0.0)]
 
 
 def test_update_presence_never_mutates_the_state_it_was_given():
