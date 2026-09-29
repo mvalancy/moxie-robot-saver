@@ -11,7 +11,7 @@
  *
  *   node sim/test_liveliness.mjs
  */
-import { requireBrowser, serveWeb, makeChecks, finish, pageEyes, launchBrowser }
+import { requireBrowser, serveWeb, makeChecks, finish, notable, launchBrowser, openSim }
   from "./browser_harness.mjs";
 
 const LABEL = "liveliness + chat layout";
@@ -61,38 +61,45 @@ function bubbleAnchorErr(e) {
   if (e.mode === "side") return Math.abs((e.side === "r" ? e.bubble.left : e.bubble.right) - e.anchorX);
   return Math.abs(e.bubble.cx - (e.above ? e.head.x : e.chest.x));
 }
-const EYES = pageEyes(eq);
-const eyes = EYES.check;
+const eyes = (label, page) => {
+  const v = seen.get(page), left = notable(v.errs, v.aborted);
+  eq(left.length, 0, `${label}: the page raised console errors nobody asked for — ${left.length}, ` +
+     `first: ${left.slice(0, 3).join(" | ")}`);
+};
+const seen = new WeakMap();
 
+/** A settled sim.html (openSim: no gateway, sidecars refused and counted) whose test seams
+ *  exist and whose first layout has FINISHED before any block measures a rectangle. */
 async function open(width, height, isMobile) {
-  const page = await browser.newPage();
-  await page.setViewport({ width, height, isMobile: !!isMobile, hasTouch: !!isMobile,
-                           deviceScaleFactor: 1 });
-  const seen = EYES.watch(page);
-  await page.setRequestInterception(true);
-  page.on("request", (r) => {
-    if (r.isInterceptResolutionHandled()) return;
-    const u = r.url();
-    if (/:808[12]\//.test(u)) { seen.aborted.n++; return r.abort("connectionrefused"); }
-    /* No gateway is reachable and none should be. `/api/health` answers 404 (as the static
-     * server would) so its console error is COUNTED at the request, not forgiven by a pattern. */
-    if (/\/api\/health\b/.test(u)) {
-      seen.aborted.refused++;
-      return r.respond({ status: 404, contentType: "text/plain", body: "not found" });
-    }
-    if (/\/api\/(chat|speech|transcribe)\b/.test(u)) { seen.aborted.n++; return r.abort(); }
-    return r.continue();
+  const v = await openSim(browser, site.url + "/sim.html", { viewport: { width, height,
+    isMobile: !!isMobile, hasTouch: !!isMobile, deviceScaleFactor: 1 } });
+  seen.set(v.page, v);
+  await v.page.waitForFunction("window.__ambient && window.moxie && window.__bubbleAnchor", { timeout: 20000 });
+  await layoutSettled(v.page);
+  return v.page;
+}
+
+/** The presence badge, as RENDERED (computed display + box), not the `hidden` attribute:
+ *  an inline `display:flex` once beat the UA's `[hidden]` rule, so "PRESENCE UNKNOWN" showed
+ *  on every local serve. */
+async function presenceBadge(label, page) {
+  const shown = () => page.evaluate(() => {
+    const b = document.getElementById("presence-badge"), r = b.getBoundingClientRect();
+    return { display: getComputedStyle(b).display, area: r.width * r.height,
+             state: b.getAttribute("data-presence"), label: document.getElementById("presence-state").textContent };
   });
-  await page.goto(site.url + "/sim.html", { waitUntil: "domcontentloaded" });
-  // The seam has to exist before anything below means anything.
-  await page.waitForFunction("window.__ambient && window.moxie && window.__bubbleAnchor", { timeout: 20000 });
-  // …and the first layout must be FINISHED before any block measures a rectangle.
-  await layoutSettled(page);
-  return page;
+  const before = await shown();
+  ok(before.state === "unknown" && before.display === "none" && before.area === 0,
+     `${label}: no face event yet — presence unknown and the badge NOT rendered (${JSON.stringify(before)})`);
+  await page.evaluate(() => window.moxieBridge.faceEvent("found"));
+  const after = await shown();
+  ok(after.label === "HERE" && after.display === "flex" && after.area > 0,
+     `${label}: a face event names what she saw and reveals the badge (${JSON.stringify(after)})`);
 }
 
 /* ======================================================================== *
- * 1 + 2. THE CONVERSATION HOLD, AND THE SELF-TALK IN THE LOG
+ * ONE 1280x900 PAGE: 1+2 the conversation hold and the self-talk in the log, 3b the
+ * aliveness cues, 5 her diagrams, 6 the presence badge.
  * ======================================================================== */
 {
   const page = await open(1280, 900);
@@ -191,64 +198,8 @@ async function open(width, height, isMobile) {
   eq(selfHold, false,
      "her own quip does NOT count as a conversation — otherwise one mutter would mute her for ever");
 
-  eyes("the conversation hold", page);
-  await page.close();
-}
 
-/* ======================================================================== *
- * 3. THE CHAT DOCK FILLS THE SPACE AVAILABLE TO IT
- * ======================================================================== */
-async function dockGeometry(page) {
-  return page.evaluate(() => {
-    const d = document.getElementById("chat-dock").getBoundingClientRect();
-    const p = document.getElementById("panel").getBoundingClientRect();
-    const hud = document.getElementById("hud");
-    return { dockW: Math.round(d.width), dockLeft: Math.round(d.left), dockRight: Math.round(d.right),
-             panelLeft: Math.round(p.left), panelW: Math.round(p.width),
-             vw: window.innerWidth, closed: hud.classList.contains("rail-closed") };
-  });
-}
-{
-  const page = await open(1600, 900);
-  const openRail = await dockGeometry(page);
-  ok(openRail.dockW > 900,
-     `desktop, panel OPEN: the dock is no longer a 760 px column — got ${openRail.dockW}px of ${openRail.vw}`);
-  ok(Math.abs(openRail.dockRight - openRail.panelLeft) <= 14,
-     `…it runs right up to the engineering panel (dock right ${openRail.dockRight} vs panel left ${openRail.panelLeft})`);
-
-  // …and closing the panel really does hand it the rest of the window.
-  await page.click("#rail-toggle");
-  // The re-frame is two animation frames away: wait for the widths to stop moving.
-  await layoutSettled(page);
-  const closedRail = await dockGeometry(page);
-  eq(closedRail.closed, true, "desktop: the engineering panel can now be CLOSED at all");
-  ok(closedRail.dockW > openRail.dockW + 200,
-     `…and the dock takes the freed width (${openRail.dockW} -> ${closedRail.dockW}px)`);
-  ok(closedRail.vw - closedRail.dockW < 140,
-     `…which is very nearly the whole window (${closedRail.dockW} of ${closedRail.vw})`);
-  ok(closedRail.panelW > 0 && closedRail.panelW < 220,
-     `…while the panel stays on screen as a handle you can re-open (${closedRail.panelW}px)`);
-  eyes("the desktop dock", page);
-  await page.close();
-}
-{
-  const page = await open(393, 851, true);
-  const phone = await dockGeometry(page);
-  ok(phone.vw - phone.dockW < 40,
-     `phone: the dock spans the viewport (${phone.dockW} of ${phone.vw})`);
-  ok(phone.dockLeft < 20, `…starting at the left edge (${phone.dockLeft})`);
-  eyes("the phone dock", page);
-  await page.close();
-}
-
-/* ======================================================================== *
- * 3b. SHE REACTS, AND SHE THINKS VISIBLY — the loading-bar layer
- * ======================================================================== *
- * The rules that keep it from being annoying are what is asserted: it is subtle, never
- * repeats back to back, does NOT fire on a fast turn, and yields.
- */
-{
-  const page = await open(1280, 900);
+  /* ---- 3b. SHE REACTS, AND SHE THINKS VISIBLY ---- */
   const faces = await page.evaluate(() => {
     // Record every face and gesture the aliveness layer asks for, without a robot.
     window.__seen = { faces: [], gestures: [] };
@@ -310,9 +261,95 @@ async function dockGeometry(page) {
   for (let i = 1; i < picks.length; i++) if (picks[i] === picks[i - 1]) backToBack++;
   eq(backToBack, 0, `no cue is ever shown twice in a row (${picks.join(",")})`);
   ok(new Set(picks).size > 1, "…and it really does vary rather than being one fixed cue");
+
+  /* ---- 5. SHE DRAWS ---- */
+
+  // ---- the bundle is NOT loaded until she draws --------------------------- //
+  const before = await page.evaluate(() => ({
+    api: typeof window.moxieDiagram,
+    mermaid: typeof window.mermaid,
+    scripts: [...document.querySelectorAll("script[src]")].filter((s) => /mermaid/.test(s.src)).length,
+  }));
+  eq(before.api, "object", "the renderer is present on the page…");
+  eq(before.mermaid, "undefined", "…but 3.3 MB of mermaid is NOT loaded before she needs it");
+  eq(before.scripts, 0, "…and no mermaid script tag exists yet");
+
+  // ---- a real diagram renders into the log -------------------------------- //
+  const drew = await page.evaluate(() =>
+    window.moxieDiagram.render("graph TD;\n  Child-->Moxie;\n  Moxie-->Gateway;")
+      .then((ok) => ({
+        ok,
+        rows: document.querySelectorAll("#transcript .diagram").length,
+        svg: document.querySelectorAll("#transcript .diagram svg").length,
+        isTurn: document.querySelectorAll("#transcript .diagram.turn").length,
+        label: (document.querySelector("#transcript .diagram") || {}).getAttribute
+          ? document.querySelector("#transcript .diagram").getAttribute("aria-label") : "",
+        stats: window.moxieDiagram.stats,
+      })));
+  eq(drew.ok, true, "a valid diagram renders");
+  eq(drew.rows, 1, "…as one row in the comms log");
+  eq(drew.svg, 1, "…containing real SVG");
+  eq(drew.isTurn, 0,
+     "…and NOT as a `.turn`: addTranscript appends streamed reply chunks into the last " +
+     "`.turn.moxie`, which would weld half a sentence into the picture");
+  eq(drew.label, "A diagram Moxie drew", "…with an accessible label, since SVG is not text");
+  eq(drew.stats.rendered, 1, "…recorded as one render");
+
+  // ---- broken syntax draws NOTHING ---------------------------------------- //
+  const broke = await page.evaluate(() =>
+    window.moxieDiagram.render("this is not mermaid at all {{{")
+      .then((ok) => ({ ok, rows: document.querySelectorAll("#transcript .diagram").length,
+                       stats: window.moxieDiagram.stats })));
+  eq(broke.ok, false, "syntax mermaid rejects resolves FALSE…");
+  eq(broke.rows, 1, "…and adds no row: a broken picture is worse than none");
+  eq(broke.stats.invalid, 1, "…recorded as invalid rather than inferred");
+  eq(broke.stats.rendered, 1, "…and the earlier render still stands");
+
+  // ---- an empty source is a no-op, not an error --------------------------- //
+  eq(await page.evaluate(() => window.moxieDiagram.render("")), false,
+     "an empty diagram draws nothing and does not throw");
+
+  await presenceBadge("desktop", page);
+  eyes("the 1280x900 page", page);
   await page.close();
 }
 
+/* ======================================================================== *
+ * 3. THE CHAT DOCK FILLS THE SPACE AVAILABLE TO IT
+ * ======================================================================== */
+async function dockGeometry(page) {
+  return page.evaluate(() => {
+    const d = document.getElementById("chat-dock").getBoundingClientRect();
+    const p = document.getElementById("panel").getBoundingClientRect();
+    const hud = document.getElementById("hud");
+    return { dockW: Math.round(d.width), dockLeft: Math.round(d.left), dockRight: Math.round(d.right),
+             panelLeft: Math.round(p.left), panelW: Math.round(p.width),
+             vw: window.innerWidth, closed: hud.classList.contains("rail-closed") };
+  });
+}
+{
+  const page = await open(1600, 900);
+  const openRail = await dockGeometry(page);
+  ok(openRail.dockW > 900,
+     `desktop, panel OPEN: the dock is no longer a 760 px column — got ${openRail.dockW}px of ${openRail.vw}`);
+  ok(Math.abs(openRail.dockRight - openRail.panelLeft) <= 14,
+     `…it runs right up to the engineering panel (dock right ${openRail.dockRight} vs panel left ${openRail.panelLeft})`);
+
+  // …and closing the panel really does hand it the rest of the window.
+  await page.click("#rail-toggle");
+  // The re-frame is two animation frames away: wait for the widths to stop moving.
+  await layoutSettled(page);
+  const closedRail = await dockGeometry(page);
+  eq(closedRail.closed, true, "desktop: the engineering panel can now be CLOSED at all");
+  ok(closedRail.dockW > openRail.dockW + 200,
+     `…and the dock takes the freed width (${openRail.dockW} -> ${closedRail.dockW}px)`);
+  ok(closedRail.vw - closedRail.dockW < 140,
+     `…which is very nearly the whole window (${closedRail.dockW} of ${closedRail.vw})`);
+  ok(closedRail.panelW > 0 && closedRail.panelW < 220,
+     `…while the panel stays on screen as a handle you can re-open (${closedRail.panelW}px)`);
+  eyes("the desktop dock", page);
+  await page.close();
+}
 /* ======================================================================== *
  * 4. THE SPEECH BUBBLE HANGS OVER HER HEAD
  * ======================================================================== */
@@ -500,14 +537,14 @@ async function dockGeometry(page) {
  * time drifts up to 15.6 px; the frame stash stays near 0.06, and these tolerances redden
  * if the readout ever mixes two instants again.
  */
-for (const [label, w, h, cam, want] of [
+{ const page = await open(1280, 900);
+for (const [label, cam, want] of [
   // BESIDE her head: a closer camera, no headroom, a wide stage either side of her
-  ["beside, near 1280x900", 1280, 900, [0, 2.0, 3.0, 0, 1.6, 0], "side"],
+  ["beside, near 1280x900", [0, 2.0, 3.0, 0, 1.6, 0], "side"],
   // AT HER CHEST on a leader: a close-up (the visitor scroll-zoomed in) fills the stage
-  ["chest, close-up 1280x900", 1280, 900, [0, 1.9, 2.2, 0, 1.2, 0], "chest"],
+  ["chest, close-up 1280x900", [0, 1.9, 2.2, 0, 1.2, 0], "chest"],
 ]) {
-  const page = await open(w, h);
-  if (cam) await page.evaluate((c) => window.__setCam(...c), cam);
+  await page.evaluate((c) => window.__setCam(...c), cam);
   // Per-sweep head-y RANGE, used only in the failure text (backlog/test-timing-under-load.md §2).
   const probe = await page.evaluate(async () => {
     const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
@@ -582,8 +619,8 @@ for (const [label, w, h, cam, want] of [
      `${label}: …and the box stays on the anchor it was placed from (worst ${worstAnchor.toFixed(2)}px)`);
   eq(m.filter((r) => r.covers).length, 0,
      `${label}: …and NOT ONE of those frames put the bubble over her face`);
-  await page.close();
 }
+await page.close(); }
 
 /* ======================================================================== *
  * 4b. THE FACE IS SAFE AT EVERY VIEWPORT — including the ones that broke
@@ -624,91 +661,13 @@ for (const [label, w, h] of [
   // 393 px screen; a third of the viewport is the floor worth defending.
   ok(r.stageH > r.vh * 0.33,
      `${label}: the 3-D stage gets real height (${r.stageH} of ${r.vh})`);
-  await page.close();
-}
-
-/* ======================================================================== *
- * 5. SHE DRAWS — lazily, strictly, and never at the cost of her words
- * ======================================================================== *
- * Browser half (server half: `sim/test_demo_proxy.mjs` §15m): a diagram renders, bad syntax
- * draws nothing, and the 3.3 MB mermaid bundle is not on the critical path.
- */
-{
-  const page = await open(1280, 900);
-
-  // ---- the bundle is NOT loaded until she draws --------------------------- //
-  const before = await page.evaluate(() => ({
-    api: typeof window.moxieDiagram,
-    mermaid: typeof window.mermaid,
-    scripts: [...document.querySelectorAll("script[src]")].filter((s) => /mermaid/.test(s.src)).length,
-  }));
-  eq(before.api, "object", "the renderer is present on the page…");
-  eq(before.mermaid, "undefined", "…but 3.3 MB of mermaid is NOT loaded before she needs it");
-  eq(before.scripts, 0, "…and no mermaid script tag exists yet");
-
-  // ---- a real diagram renders into the log -------------------------------- //
-  const drew = await page.evaluate(() =>
-    window.moxieDiagram.render("graph TD;\n  Child-->Moxie;\n  Moxie-->Gateway;")
-      .then((ok) => ({
-        ok,
-        rows: document.querySelectorAll("#transcript .diagram").length,
-        svg: document.querySelectorAll("#transcript .diagram svg").length,
-        isTurn: document.querySelectorAll("#transcript .diagram.turn").length,
-        label: (document.querySelector("#transcript .diagram") || {}).getAttribute
-          ? document.querySelector("#transcript .diagram").getAttribute("aria-label") : "",
-        stats: window.moxieDiagram.stats,
-      })));
-  eq(drew.ok, true, "a valid diagram renders");
-  eq(drew.rows, 1, "…as one row in the comms log");
-  eq(drew.svg, 1, "…containing real SVG");
-  eq(drew.isTurn, 0,
-     "…and NOT as a `.turn`: addTranscript appends streamed reply chunks into the last " +
-     "`.turn.moxie`, which would weld half a sentence into the picture");
-  eq(drew.label, "A diagram Moxie drew", "…with an accessible label, since SVG is not text");
-  eq(drew.stats.rendered, 1, "…recorded as one render");
-
-  // ---- broken syntax draws NOTHING ---------------------------------------- //
-  const broke = await page.evaluate(() =>
-    window.moxieDiagram.render("this is not mermaid at all {{{")
-      .then((ok) => ({ ok, rows: document.querySelectorAll("#transcript .diagram").length,
-                       stats: window.moxieDiagram.stats })));
-  eq(broke.ok, false, "syntax mermaid rejects resolves FALSE…");
-  eq(broke.rows, 1, "…and adds no row: a broken picture is worse than none");
-  eq(broke.stats.invalid, 1, "…recorded as invalid rather than inferred");
-  eq(broke.stats.rendered, 1, "…and the earlier render still stands");
-
-  // ---- an empty source is a no-op, not an error --------------------------- //
-  eq(await page.evaluate(() => window.moxieDiagram.render("")), false,
-     "an empty diagram draws nothing and does not throw");
-
-  await page.close();
-}
-
-/* ======================================================================== *
- * 6. THE PRESENCE BADGE STAYS HIDDEN UNTIL HER EYES REPORT SOMETHING
- * ======================================================================== *
- * It carried `hidden` from the start, but an inline `display:flex` beat the UA's
- * `[hidden]` rule, so "PRESENCE UNKNOWN" showed on every local serve. Asserted on the
- * RENDERED box (computed display + size), which is what the visitor sees, not the attribute.
- */
-for (const [label, w, h, mobile] of [["desktop", 1280, 900, false], ["phone", 390, 844, true]]) {
-  const page = await open(w, h, mobile);
-  const shown = () => page.evaluate(() => {
-    const b = document.getElementById("presence-badge");
-    const r = b.getBoundingClientRect();
-    return { display: getComputedStyle(b).display, area: r.width * r.height,
-             state: b.getAttribute("data-presence"),
-             label: document.getElementById("presence-state").textContent };
-  });
-  const before = await shown();
-  eq(before.state, "unknown", `${label}: no face event yet, so presence is unknown…`);
-  ok(before.display === "none" && before.area === 0,
-     `${label}: …and the badge is NOT rendered (got display=${before.display}, area=${before.area})`);
-  await page.evaluate(() => window.moxieBridge.faceEvent("found"));
-  const after = await shown();
-  eq(after.label, "HERE", `${label}: a face event names what she saw`);
-  ok(after.display === "flex" && after.area > 0,
-     `${label}: …and reveals the badge (got display=${after.display}, area=${after.area})`);
+  if (label.startsWith("portrait")) {
+    const phone = await dockGeometry(page);
+    ok(phone.vw - phone.dockW < 40 && phone.dockLeft < 20,
+       `phone: the dock spans the viewport from the left edge (${phone.dockW} of ${phone.vw}, left ${phone.dockLeft})`);
+    await presenceBadge("phone", page);
+  }
+  eyes(label, page);
   await page.close();
 }
 
