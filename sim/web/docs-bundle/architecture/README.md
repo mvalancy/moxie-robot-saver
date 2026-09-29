@@ -109,28 +109,28 @@ A backend + Sim are built from these directly; each cites the study but reads on
   the collision window is `683 < vh < 909`, which excludes the phone the original filing was written
   from — and for the second, still-open `env.js` defect the same driven state exposes.
   Filed 2026-09-06 and deliberately left unstarted:
-  [`backlog/smoke-load-sensitivity.md`](backlog/smoke-load-sensitivity.md) (**the stack exercise cannot
+  [`backlog/test-timing-under-load.md` §1](backlog/test-timing-under-load.md) (**the stack exercise cannot
   tell "broken" from "busy"** — `run_smoke.sh` reddens under load, measured by an interleaved A/B that
   failed on *both* sides including pristine `dev`. The eleventh instance of the family, sitting under the
   INTEGRATION tier's own primary instrument, and the brief requires separating a fixed wait from a real
   capacity limit — the second would be a product finding).
-  [`backlog/head-sweep-wait.md`](backlog/head-sweep-wait.md) — **a rewrite that lost to the code it
+  [`backlog/test-timing-under-load.md` §2](backlog/test-timing-under-load.md) — **a rewrite that lost to the code it
   replaced**, reverted on its own committed terms rather than tuned until green; the split verdict it
   introduced is the part worth keeping —
-  [`backlog/action-tag-drift.md`](backlog/action-tag-drift.md) — **the runtime never ends a module
+  [`backlog/live-brain-open-issues.md` §1](backlog/live-brain-open-issues.md) — **the runtime never ends a module
   because the model stopped writing `<exit>`**, 0/3 on real replies, with the line written for exactly
   this failure still in place and still last. One untested candidate cause, and the wrong first guess
   recorded beside it —
-  [`backlog/one-brain-no-failover.md`](backlog/one-brain-no-failover.md) — **one
+  [`backlog/live-brain-open-issues.md` §3](backlog/live-brain-open-issues.md) — **one
   `DEMO_GATEWAY_BASE_URL`, no second provider**, measured against a 33-minute upstream outage that
   took the public demo's brain down while `/api/health` still read `live`. The scripted fallback held.
   Three options costed, cheapest first, and the cheapest is *do nothing* —
-  [`backlog/grounding-gate-unrun.md`](backlog/grounding-gate-unrun.md) — **the retrieval fix shipped
+  [`backlog/live-brain-open-issues.md` §2](backlog/live-brain-open-issues.md) — **the retrieval fix shipped
   with a narrower proof than the one it was written against**: the right paragraph is provably
   selected, but the end-to-end gate that would show her answer stops glossing has never executed,
   because the gateway was 503 for hours. The brief exists so that gap is not read as closed —
   and it,
-  and [`backlog/head-travel-threshold.md`](backlog/head-travel-threshold.md) (**the twelfth
+  and [`backlog/test-timing-under-load.md` §2](backlog/test-timing-under-load.md) (**the twelfth
   instance, and the first this project introduced while fixing the family** — block 4a's `spread > 40`
   px floor waits a fixed four frames per sweep, so a loaded runner reads a short arc as a broken drive.
   Red on pristine `dev` in 2 of 3 interleaved pairs. A fix was written and **reverted**: polling the

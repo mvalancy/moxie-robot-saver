@@ -232,7 +232,7 @@ def test_what_our_own_server_sends_now_names_the_function_it_wants_run():
 
 
 def test_the_briefs_own_worked_example_is_the_shape_that_goes_out():
-    """qr-launch-cards.md §P0-a / §5 T9's exact JSON, key for key:
+    """qr-launch-cards.md §P0-a / §4 T9's exact JSON, key for key:
     `{"output_type": "GLOBAL", "action": "execute", "function_id": "eb_enable_qr",
     "function_args": ["true"]}` — a list of args is `function_args` (field 8)."""
     from moxie_sdk.types import Action, ActionType

@@ -1,5 +1,5 @@
 """
-Broker ACL tests — security-broker-auth.md §2 (P0), rows T1-T3 and T8's ACL half.
+Broker ACL tests — security-broker-auth.md §2 (P0); listed in its §5 table.
 
 Pure: no broker, no Docker, no network. Two halves.
 
