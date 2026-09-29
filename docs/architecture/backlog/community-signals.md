@@ -424,7 +424,7 @@ knows exists.
 
 ## 5. What this changes on the audit's ranking
 
-Nothing is re-ranked here — [§4.4](../openmoxie-feature-audit.md#44-the-open-backlog-re-ranked-2026-09-05)
+Nothing is re-ranked here — [§4.4](../openmoxie-feature-audit.md#44-the-open-backlog)
 remains the one place to look for *"what should I build next."* What this scan hands it:
 
 | Finding | Where it lands |
