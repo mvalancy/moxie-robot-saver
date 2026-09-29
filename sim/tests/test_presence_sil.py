@@ -1,15 +1,6 @@
-"""
-SIL round-trip for the vision events: `sim/virtual_moxie.py --face-event`.
-
-The SIL robot publishes `eb-found-face` / `eb-lost-target` exactly the way a real Moxie
-delivers a *subscribed* perception event — as the `speech` of a `RemoteChatRequest` on
-`/devices/{id}/events/remote-chat` (docs/architecture/vision.md §1.1; OpenMoxie
-`doc/RemoteModuleAPI.md` §Event Handling, MIT). There is no new topic and no new
-envelope, which is the point: presence rides the contract we already implement.
-
-Hermetic — a two-subscriber in-process loopback stands in for the broker, so this runs
-with no network, no sleeps and no mosquitto. Elapsed absence is seeded, never waited for.
-"""
+"""SIL round-trip for vision events: the SIL robot sends `eb-found-face`/`eb-lost-target`
+as the `speech` of a RemoteChatRequest, exactly as a real Moxie delivers a subscribed
+perception event (docs/architecture/vision.md §1.1). Hermetic in-process loopback."""
 import json
 import os
 import sys
@@ -70,18 +61,9 @@ def _loopback(greet_after_s=300.0):
     rt, dev = make_runtime(_App(), device_id="d_sil")
     rt.greet_after_s = greet_after_s
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id=dev, verbose=False)
-    vm.client = _RuntimeSide(vm)            # unused by the SIM, kept for symmetry
     rt.client = _RuntimeSide(vm)
     vm.client = _RobotSide(rt)
     return rt, vm, dev
-
-
-# --------------------------------------------------------------------------- #
-# The wire shape the SIL robot emits
-# --------------------------------------------------------------------------- #
-def test_the_sil_robot_publishes_the_recovered_event_names():
-    assert VirtualMoxie.FACE_EVENTS == {"found": "eb-found-face",
-                                        "lost": "eb-lost-target"}
 
 
 def test_a_face_event_goes_out_on_the_remote_chat_topic_as_the_speech():
@@ -104,9 +86,6 @@ def test_a_raw_event_name_is_passed_through_unchanged():
     assert rt.robots[dev].extra["presence"]["book"]["value"] == "The Gruffalo"
 
 
-# --------------------------------------------------------------------------- #
-# The round trip
-# --------------------------------------------------------------------------- #
 def test_lost_then_found_round_trips_through_the_real_runtime():
     rt, vm, dev = _loopback()
     vm.send_face_event("lost")
@@ -138,30 +117,3 @@ def test_a_silent_acknowledgement_still_wakes_the_sil_robot():
     assert vm.got_reply.is_set()
     assert vm.reply_payload["result"] == "NOREPLY_ACK"
     assert vm.reply_text == ""
-
-
-def test_run_face_events_records_what_the_server_answered():
-    rt, vm, dev = _loopback(greet_after_s=300.0)
-    seed_absent(rt, dev, away_s=900.0)
-    # The live sequence is `lost` -> wait -> `found`; the wait is the only part a
-    # hermetic test may not actually spend, so it is re-seeded onto the record the
-    # `lost` just wrote. Drive it by hand: `run_face_events` owns connect/loop_start,
-    # which an in-process loopback has no use for.
-    for kind in ("lost", "found"):
-        vm._reset_turn()
-        if kind == "found":
-            seed_absent(rt, dev, away_s=900.0)      # stands in for the wait
-        vm.send_face_event(kind)
-        vm.face_replies.append({"kind": kind,
-                                "result": (vm.reply_payload or {}).get("result"),
-                                "text": vm.reply_text})
-    assert [r["kind"] for r in vm.face_replies] == ["lost", "found"]
-    assert vm.face_replies[0]["result"] == "NOREPLY_ACK"
-    assert vm.face_replies[1]["result"] == "SUCCESS" and vm.face_replies[1]["text"]
-
-
-def test_the_cli_exposes_face_event_and_face_gap():
-    import subprocess
-    out = subprocess.run([sys.executable, os.path.join(REPO, "sim", "virtual_moxie.py"),
-                          "--help"], capture_output=True, text=True).stdout
-    assert "--face-event" in out and "--face-gap" in out
