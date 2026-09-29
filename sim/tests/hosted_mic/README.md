@@ -20,3 +20,6 @@ fast tier's `--selftest` gates on `scorerProof` and the gauntlet instead.
 
 Shared page plumbing (`PHONE`, `SPENDING`, `measureBoxes`, `instrumentWebAudio`,
 `liveFixture`, …) lives in [`sim/browser_harness.mjs`](../../browser_harness.mjs).
+
+---
+📖 [Tests](../README.md) · [Back to top](../../../README.md)

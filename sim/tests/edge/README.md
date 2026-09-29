@@ -1,4 +1,4 @@
-# 🧪 Edge suite modules
+# 🧪 `sim/tests/edge/` — Pages Functions suite sections
 
 Section modules for the node suites that exercise the Cloudflare Pages Functions in
 [`functions/`](../../../functions/README.md). They are **not** run on their own: each entry
