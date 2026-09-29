@@ -19,7 +19,7 @@ each tagged with one of two origins:
   * `openmoxie-manifest` — 60 `MX_<nnn>_<Group>_<Detail>` asset ids from OpenMoxie (MIT,
     commit `c8c2d380`; see ATTRIBUTION.md). Ids only; slot mapping and labels are ours,
     and anything unmappable goes to the JSON's `unmapped` list. Upstream notes some of
-    these crashed Unity (also mqtt-and-conversation.md:824), so each carries
+    these crashed Unity (also mqtt-and-conversation.md:780), so each carries
     `caution: true`. The id space is open (behavior-markup.md:161-163): an owner can
     pass their own robot's labels verbatim via `custom` (shape-checked only).
 Stickers, Extras and Misc stay empty — no source lists an id and we invent none.
