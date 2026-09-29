@@ -163,7 +163,7 @@ def test_both_clients_record_an_applied_action_under_the_same_keys_in_the_same_o
 
 def test_the_sil_robot_decodes_the_execute_payload_exactly_as_the_golden_says():
     """The reference client, run — `sim/test_action_payload.mjs` holds the browser to the
-    same `execute_expected` (with a negative control)."""
+    same `execute_expected`, entry by entry."""
     vm = _vm()
     for response in ACTIONS_GOLDEN["execute_script"]:
         vm._on_chat_reply({k: v for k, v in response.items() if k != "_why"})

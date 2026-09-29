@@ -20,7 +20,7 @@ share state through `window.__moxieBridge`, which `core.js` creates fresh on eve
   motor handlers, `route()`, `connect()`, record/replay, and `window.moxieBridge`.
 
 Covered by the `/bridge/*` `no-cache` rule in [`../_headers`](../_headers). Tests:
-`sim/test_bridge.mjs`, `test_action_payload.mjs`, `test_presence_bridge.mjs`,
+`sim/test_bridge.mjs` (incl. presence), `test_action_payload.mjs`,
 `test_*_render.mjs`, `sim/tests/test_sim_client_parity.py`.
 
 📖 [sim/web](../README.md) · [Back to top](../../../README.md)

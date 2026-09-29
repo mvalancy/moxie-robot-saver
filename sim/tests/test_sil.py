@@ -1,6 +1,6 @@
 """Static site + browser SIM in real Chromium: every page at every resolution loads clean,
 and the SIM's controls and server voice work end to end. Pure bridge/voice logic is covered
-without a browser by test_audio.mjs and test_presence_bridge.mjs; the docs explorer and the
+without a browser by test_audio.mjs and test_bridge.mjs (presence); the docs explorer and the
 SIM's per-viewport reachability by test_docs_explorer.mjs and test_responsive.mjs."""
 import pytest
 
@@ -225,7 +225,7 @@ def test_cloud_tts_plays_and_animates_the_mouth(page, server):
 
 # --------------------------------------------------------------------------- #
 # SIL: PRESENCE — the badge and toggle wired in the real page (the bridge's event/greeting
-# logic is test_presence_bridge.mjs, which no CI tier runs yet, so the greeting and the
+# logic is test_bridge.mjs's presence section; the greeting and the
 # comms-log exclusion stay pinned here).
 # --------------------------------------------------------------------------- #
 

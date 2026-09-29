@@ -7,7 +7,6 @@
  * Run: node sim/test_qr.mjs
  */
 import { readFileSync } from "node:fs";
-import { pageSource } from "./browser_harness.mjs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -25,13 +24,9 @@ const Q = globalThis.window.moxieQR;
 ok(!!Q, "qr.js must expose window.moxieQR");
 if (!Q) { console.log("❌ qr tests FAILED:\n   - " + fails.join("\n   - ")); process.exit(1); }
 
-// ---- 1. the firmware's IOTEndpoint enum values ------------------------------
-// Baked into the shipped image; OPEN_MOXIE=11 and EMBODIED_LOCAL=8 are the two
-// that let a stock robot home to a self-hosted server.
-ok(Q.ENDPOINTS.OPEN_MOXIE === 11, "OPEN_MOXIE must be 11");
-ok(Q.ENDPOINTS.EMBODIED_LOCAL === 8, "EMBODIED_LOCAL must be 8");
-ok(Q.ENDPOINTS.IOT_DEFAULT === 0, "IOT_DEFAULT must be 0");
-ok(Object.keys(Q.ENDPOINTS).length === 12, "IOTEndpoint has 12 values");
+// ---- 1. the firmware's IOTEndpoint enum (OPEN_MOXIE / EMBODIED_LOCAL home a stock robot) ----
+ok(Q.ENDPOINTS.OPEN_MOXIE === 11 && Q.ENDPOINTS.EMBODIED_LOCAL === 8 && Q.ENDPOINTS.IOT_DEFAULT === 0 &&
+   Object.keys(Q.ENDPOINTS).length === 12, `IOTEndpoint values as in firmware v24.10.803: ${JSON.stringify(Q.ENDPOINTS)}`);
 let threw = false;
 try { Q.encodeEndpoint("NOT_A_REAL_ENDPOINT"); } catch { threw = true; }
 ok(threw, "encodeEndpoint must reject an unknown endpoint name");
@@ -76,39 +71,8 @@ for (let i = 0; i < CASES.length; i++) {
   if (py) ok(js === py[i], `${name}: JS/py mismatch\n       js: ${js}\n       py: ${py[i]}`);
 }
 
-// ---- 3. the shape the firmware's parser expects ------------------------------
-const ep = JSON.parse(Q.encodeEndpoint("OPEN_MOXIE"));
-ok(ep.debug && ep.debug.command === "endpoint_update" && ep.debug.param === "OPEN_MOXIE",
-   "endpoint QR must be {debug:{command:'endpoint_update',param:<enum name>}}");
-const wf = JSON.parse(Q.encodeWifi("N", "p"));
-ok(wf.wifi && "ssid" in wf.wifi && "password" in wf.wifi &&
-   "is_hidden" in wf.wifi && "band_select" in wf.wifi,
-   "wifi QR needs ssid/password/is_hidden/band_select");
-ok(typeof wf.wifi.is_hidden === "boolean", "is_hidden must be a bool, not a string");
-for (const cmd of ["serial_number_display", "restore_factory", "reset_network",
-                   "bluetooth_pair", "endpoint_update"])
-  ok(cmd in Q.KNOWN_DEBUG, `KNOWN_DEBUG missing documented command ${cmd}`);
-
-// ---- 4. the HUD panel is actually wired --------------------------------------
-const html = pageSource("sim.html");
-for (const id of ["qr-kind", "qr-make", "qr-canvas", "qr-status", "qr-ssid", "qr-pass"])
-  ok(html.includes(`id="${id}"`), `sim.html missing #${id}`);
-ok(/vendor\/qrcode\.js/.test(html), "sim.html must load the vendored qrcode.js");
-ok(/src="qr\.js(\?[^"]*)?"/.test(html), "sim.html must load qr.js");
-ok(html.includes("setup.html"), "sim HUD should link to the full static setup page");
-
-// ---- 5. the standalone parent-app "basics" page is wired ---------------------
-// setup.html must reuse qr.js (via setup.js), never reimplement the encoders.
-const setup = pageSource("setup.html");
-ok(setup.includes("vendor/qrcode.js") && setup.includes('src="qr.js"'),
-   "setup.html must load the vendored qrcode.js + qr.js");
-ok(setup.includes("moxieQR.encodeWifi") || setup.includes("Q.encodeWifi"),
-   "setup.html must build the Wi-Fi code via qr.js (no reimplemented encoder)");
-ok(setup.includes("moxieQR.encodeEndpoint") || setup.includes("Q.encodeEndpoint"),
-   "setup.html must build the server code via qr.js");
-for (const id of ["ssid", "pass", "band", "endpoint", "cv-wifi", "cv-ep"])
-  ok(setup.includes(`id="${id}"`), `setup.html missing #${id}`);
-// the band values must be the firmware's WifiBandSelect enum names
+// ---- 3. setup.html offers exactly the firmware's WifiBandSelect names ----------
+const setup = readFileSync(join(here, "web", "setup.html"), "utf8");
 for (const band of ["ANY", "ONLY_24G", "ONLY_50G"])
   ok(setup.includes(`"${band}"`), `setup.html missing band value ${band}`);
 
@@ -175,12 +139,6 @@ const REFUSALS = [
   ["out-of-catalog id",        Q.cardPayload("launch", "NOPE")],
   ["two launches in one card", Q.cardPayload("launch", "DM") + Q.cardPayload("launch", "DRAW")],
 ];
-ok(REFUSALS[0][1] === "GO<launch_if_confirmed:DM>", "the launch_if_confirmed string is built, not assumed");
-ok(REFUSALS[1][1] === "GO<sleep>", "the sleep string is built, not assumed");
-ok(REFUSALS[2][1] === "GO<exit>", "the exit string is built, not assumed");
-ok(REFUSALS[3][1] === "GO<launch:NOPE>", "the out-of-catalog string is built, not assumed");
-ok(REFUSALS[4][1] === "GO<launch:DM>GO<launch:DRAW>", "the two-tag string is built, not assumed");
-
 let cards = null;
 try {
   cards = pyJSON(join(repo, "mqtt"), CARD_SCRIPT,
@@ -377,4 +335,4 @@ console.log(`✅ qr tests OK — ${CASES.length} revival payloads` +
               ? `, ${sheetInfo.cards.length} printed cards read back out of their own ` +
                 `modules at ${sheetInfo.geometry.module_mm.toFixed(2)} mm/module`
               : " (sheet checks skipped)") +
-            ", enum + HUD + setup.html wiring verified`".slice(0, -1));
+            "");

@@ -20,10 +20,6 @@ TIER_FILES = sorted(glob.glob(os.path.join(SIM, "ci", "*.yml")))
 
 #: Files no tier runs, with a date and why. **May only shrink.**
 KNOWN_UNRUN = {
-    "sim/test_ambient.mjs": "2026-09-02: 56 ambient self-talk lines + face validity; "
-                            "never wired into a tier.",
-    "sim/test_presence_bridge.mjs": "2026-09-02: the browser SIM's vision-event bridge; "
-                                    "never wired into a tier.",
     "sim/run_acl_proof.sh": "2026-09-02: the broker ACL proof (18 checks against real "
                             "mosquitto); needs docker, belongs in the deep tier.",
 }

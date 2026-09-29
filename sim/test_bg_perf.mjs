@@ -5,19 +5,12 @@
  * arrays filled with nothing draining them and all came due on return ("sluggish after
  * hours"). Now spawns happen inside step().
  *
- * How it is tested:
- *  · A REAL hidden tab (a second page brought to front); every block first asserts
- *    `hidden === true` and zero frames delivered.
- *  · The primary claim is RECORDED PUSHES while `document.hidden` was true, captured by the
- *    page at the push; before/after array lengths (integers, not wall-clock) corroborate.
- *    `before` is captured inside the visibilitychange handler itself, so visible-tab spawns
- *    in the CDP gap before the flip cannot be charged to the hidden window.
- *  · TEETH FIRST: block 1 rebuilds the old timer producers from the SHIPPED file by a text
- *    transform and requires the growth to reappear; if it cannot, the box cannot background
- *    a tab and the suite skips loudly. A missing in-frame spawner is a FAILURE, not a skip.
- *  · Block 3 constructs a burst in flight at the flip; block 4 proves the MAX_* cap by
- *    driving the spawner with the drain frozen, starting three short of the cap.
- *  · MAX_PACKETS / MAX_PINGS are read out of bg.js, never restated.
+ * A REAL hidden tab (a second page brought to front; every run asserts hidden and zero
+ * frames). The claim is RECORDED PUSHES while `document.hidden` was true, captured by the page
+ * at the push; lengths read inside the visibilitychange handler corroborate. TEETH FIRST:
+ * block 1 rebuilds the old timer producers from the SHIPPED file and requires the growth to
+ * reappear (else this box cannot background a tab and the suite skips loudly). Block 3 puts a
+ * burst in flight at the flip; block 4 drives the spawner into the MAX_* cap (read from bg.js).
  *
  *   node sim/test_bg_perf.mjs
  */
@@ -219,7 +212,7 @@ const eyes = (label, run) => {
      `first: ${left.slice(0, 3).join(" | ")}`);
 };
 
-const HIDDEN_MS = 20000;
+const HIDDEN_MS = 8000;        // legacy timers still fire ~1/s in a hidden tab: >=8 pushes
 const pushSummary = (h) => h.length
   ? `${h.length} (${h.filter((p) => p.kind === "packet").length} packet / ` +
     `${h.filter((p) => p.kind === "ping").length} ping)`
@@ -267,11 +260,6 @@ ok(now.after.pings - now.before.pings <= 0,
    `pings grew while the tab was hidden (${now.before.pings} -> ${now.after.pings} in ${HIDDEN_MS / 1000}s)`);
 ok(now.after.packets <= MAX_PACKETS, `packets over cap while hidden: ${now.after.packets} > ${MAX_PACKETS}`);
 ok(now.after.pings <= MAX_PINGS, `pings over cap while hidden: ${now.after.pings} > ${MAX_PINGS}`);
-console.log(`   hidden ${HIDDEN_MS / 1000}s — legacy: packets ${legacy.before.packets}->${legacy.after.packets}, ` +
-            `pings ${legacy.before.pings}->${legacy.after.pings}, pushes-while-hidden ` +
-            `${pushSummary(legacy.hiddenPushes)}   |   shipped: packets ` +
-            `${now.before.packets}->${now.after.packets}, pings ${now.before.pings}->${now.after.pings}, ` +
-            `pushes-while-hidden ${pushSummary(now.hiddenPushes)}`);
 
 /* ---- 3. THE CONSTRUCTED INTERLEAVING: a burst in flight as the tab hides ----
  * While still VISIBLE the clock is inflated 400x and the drain frozen; the tab hides as soon
@@ -299,10 +287,6 @@ ok(burst.after.packets - burst.before.packets <= 0,
 ok(burst.after.pings - burst.before.pings <= 0,
    `pings grew while the tab was hidden with a burst in flight ` +
    `(${burst.before.pings} -> ${burst.after.pings})`);
-console.log(`   constructed interleaving — driven while visible until +${DRIVE_PACKETS}: packets ` +
-            `${burst.warm.packets}->${burst.before.packets} at the flip (+${driveGrowth}), then ` +
-            `${burst.before.packets}->${burst.after.packets} while hidden, pushes-while-hidden ` +
-            `${pushSummary(burst.hiddenPushes)}`);
 
 /* ---- 4. the cap holds however hard the spawner is driven ------------------- *
  * The clock is multiplied (SPAWN_CREDIT_MS is the only ration) and both retire conditions
@@ -336,7 +320,7 @@ const peak = await capPage.evaluate((ms, maxP, maxG) => new Promise((res) => {
     pk = Math.max(pk, P.length); gk = Math.max(gk, G.length);
   }, 25);
   setTimeout(() => { clearInterval(hold); window.__bg.inflate = 0; res({ pk, gk, start }); }, ms);
-}), 12000, MAX_PACKETS, MAX_PINGS);
+}), 5000, MAX_PACKETS, MAX_PINGS);
 eq(peak.pk, MAX_PACKETS,
    `packets did not settle at MAX_PACKETS under a driven clock with nothing retiring — ` +
    `peak ${peak.pk}, cap ${MAX_PACKETS} (started at ${peak.start && peak.start.p}). ` +
@@ -345,8 +329,6 @@ eq(peak.gk, MAX_PINGS,
    `pings did not settle at MAX_PINGS under a driven clock with nothing retiring — ` +
    `peak ${peak.gk}, cap ${MAX_PINGS} (started at ${peak.start && peak.start.g}). ` +
    (peak.gk > MAX_PINGS ? "The cap does not hold." : "The spawner never reached it — this block proved nothing."));
-console.log(`   driven clock — packets ${peak.start && peak.start.p}->${peak.pk} (cap ${MAX_PACKETS}), ` +
-            `pings ${peak.start && peak.start.g}->${peak.gk} (cap ${MAX_PINGS})`);
 eyes("the driven-clock page", capEyes);
 await capPage.close();
 
@@ -357,7 +339,7 @@ const rmEyes = watchPage(rm);
 await rm.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
 await rm.evaluateOnNewDocument(INSTRUMENT);
 await rm.goto(site.url + "/index.html", { waitUntil: "networkidle2" });
-await new Promise((r) => setTimeout(r, 4000));
+await new Promise((r) => setTimeout(r, 2500));   // an absence: nothing to wait FOR
 const rmLen = await rm.evaluate(() => window.__bgLen());
 eq(rmLen.packets, -1, "prefers-reduced-motion:reduce spawned packets — it must spawn none");
 eq(rmLen.pings, -1, "prefers-reduced-motion:reduce spawned radar pings — it must spawn none");

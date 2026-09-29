@@ -34,7 +34,8 @@ import {
   deep(baked, [], "no shipped page or script carries a Turnstile sitekey or a data-sitekey attribute");
 
   // TRAP B, as a class: a script missing from the no-cache list can run yesterday's minter
-  // against today's route after a redeploy (test_csp.mjs checks the same in a browser).
+  // against today's route after a redeploy (the one copy of this list; test_csp.mjs checks
+  // the per-directory rules).
   const listed = new Set();
   for (const m of web("_headers").matchAll(/^\/([A-Za-z0-9._-]+\.js)\n\s+Cache-Control:\s*no-cache$/gm)) listed.add(m[1]);
   ok(listed.size > 15, `the no-cache list was actually parsed (${listed.size} scripts)`);

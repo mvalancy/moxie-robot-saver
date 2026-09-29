@@ -2,8 +2,8 @@
 
 The failure is a BLANK page on the live domain only: `_headers` is sent by Cloudflare
 Pages alone, so an edited inline `<script>` whose SHA-256 is not listed is refused there
-while local suites serve fresh bytes. Browser-free half; `sim/test_csp.mjs` re-checks it
-from the headers a browser received.
+while local suites serve fresh bytes. Browser-free half; in `sim/test_csp.mjs` sim.html must boot under
+the headers a browser received, which it cannot with a stale hash.
 """
 import os
 import shutil

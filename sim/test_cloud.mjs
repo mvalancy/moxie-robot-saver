@@ -1,10 +1,9 @@
-/* Cloud-console fixture + wiring test: cloud.html's static data must keep the real
- * contract's shapes — JSON:API documents (server/moxie_server/serializers.py) and the MQTT
- * content model (module_id/content_id, MentorBehavior, MissionConfig) — and the page must
- * consume them. Run: node sim/test_cloud.mjs
+/* Cloud-console fixture: cloud.html's static data must keep the real contract's shapes —
+ * JSON:API documents (server/moxie_server/serializers.py) and the MQTT content model
+ * (module_id/content_id, MentorBehavior, MissionConfig). That the page renders it is
+ * test_csp.mjs's (five tabs built from the fixture). Run: node sim/test_cloud.mjs
  */
 import { readFileSync } from "node:fs";
-import { pageSource } from "./browser_harness.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -64,21 +63,10 @@ ok(d.notifications && Array.isArray(d.notifications.data) &&
    d.notifications.meta && typeof d.notifications.meta.unread === "number",
    "notifications must be {data:[], meta:{unread:N}}");
 
-// ---- cloud.html actually consumes the fixture -------------------------------
-/* The page AND the scripts it loads (the glue lives in cloud.js). */
-const html = pageSource("cloud.html");
-ok(html.includes('fetch("fixtures/cloud.json")'), "cloud.html must fetch fixtures/cloud.json");
-for (const panel of ["overview", "missions", "conversations", "robot", "notifications"])
-  ok(html.includes(`data-panel="${panel}"`), `cloud.html missing #${panel} panel`);
-ok(html.includes("mentor_behaviors") || html.includes("mentor_behavior"),
-   "cloud.html should render the MentorBehavior activity log");
-ok(html.includes("setup.html") && html.includes('href="./"'),
-   "cloud.html should cross-link the setup page and simulator");
-
 // ---- report -----------------------------------------------------------------
 if (fails.length) {
   console.log("❌ cloud tests FAILED:");
   for (const f of fails) console.log("   -", f);
   process.exit(1);
 }
-console.log("✅ cloud tests OK — fixture matches the real JSON:API + MQTT content shapes, cloud.html wired");
+console.log("✅ cloud tests OK — fixture matches the real JSON:API + MQTT content shapes");

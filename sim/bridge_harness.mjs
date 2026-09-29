@@ -2,7 +2,7 @@
  *
  * NOT a test (sim/tests/test_ci_test_coverage.py enumerates only `test_*.mjs`). The
  * node-only bridge suites (test_bridge, test_action_payload, test_automarkup_render,
- * test_performance_render, test_preview_render, test_presence_bridge) share these
+ * test_performance_render, test_preview_render) share these
  * window/document/mqtt shims instead of each carrying its own copy.
  *
  * `(0, eval)` runs the bridge parts in global scope, so every call resets the globals and
@@ -104,13 +104,13 @@ export function loadBridge({ src = BRIDGE_SRC, audio, moxie = {}, connect = true
 
 /** A recording window.moxieAudio: plays nothing, remembers what was asked of it. */
 export function audioSpy() {
-  const voice = { speak: [], speakClipOnly: [], sfx: [], stop: 0 };
+  const voice = { speak: [], speakClipOnly: [], sfx: [], stop: 0, cloudTTS: [] };
   const audio = {
     speak: (t) => voice.speak.push(t),
     speakClipOnly: (t, who) => voice.speakClipOnly.push([t, who]),
     stop: () => { voice.stop++; },
     sfx: (n) => voice.sfx.push(n),
-    playCloudTTS: () => {},
+    playCloudTTS: (p) => { voice.cloudTTS.push(p); return Promise.resolve({ played: true }); },
   };
   return { voice, audio };
 }
