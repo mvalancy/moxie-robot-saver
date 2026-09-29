@@ -1,4 +1,4 @@
-# 🎨 Moxie's look — letting your child style the face
+# Moxie's look — letting your child style the face
 
 > For parents. No code, no protocol. The engineering detail is in
 > [`config-and-telemetry-contract.md` → Appearance](../architecture/config-and-telemetry-contract.md#-appearance-the-childs-chosen-face).
