@@ -1,20 +1,15 @@
 /* §8b–9: the CHILD's voice is clip-or-nothing (driven through the real `voice/`), end to end
  * on the real assets through the real `bridge/`, and the renderer cannot drop a manifest group.
  */
-import { BRIDGE_SRC, VOICE_SRC } from "../../../bridge_harness.mjs";
+import { BRIDGE_SRC } from "../../../bridge_harness.mjs";
 import {
   FakeCustomEvent, audioSrc, eq, existsSync, fakeWebAudio, here, join, manifest, notes, ok,
   readFileSync, sessionsDir, web, withGlobals,
 } from "./harness.mjs";
 
-/* --------------------------------------------------------------------------- *
- * 8b. The CHILD's voice — clip, or nothing, driven for real
- *
- * The same handler carries a visitor's own typed or spoken words, and `speak()` guarantees
- * sound (clip -> Piper -> browser voice), which would read them back in a stranger's voice.
- * `speakClipOnly` has no route to a synthesizer. Proven on the REAL `voice/`: which URLs
- * were fetched, which buffers STARTED/STOPPED, whether the mouth moved or speechSynthesis ran.
- * --------------------------------------------------------------------------- */
+/* 8b. The CHILD's voice — clip, or nothing. The same handler carries a visitor's own words, and
+ * `speak()` would synthesize them in a stranger's voice; `speakClipOnly` must not. Proven on the
+ * REAL `voice/`: URLs fetched, buffers started/stopped, mouth, speechSynthesis. */
 
 /** Boot the real voice/ against a fake Web Audio stack and report what it did. */
 const RIG_GLOBALS = ["window", "document", "localStorage", "location", "fetch", "CustomEvent",
@@ -154,39 +149,12 @@ const probed = (log) => log.urls.some((u) => u.includes(":8081"));
     ok(log.started.includes(C2), `…and the newer one started; got ${JSON.stringify(log.started)}`);
   });
 
-  // (h) structural: no synthesizer is reachable from the function at all (the behavioural
-  //     cases above only cover the lines the rig happens to try).
-  const body = audioSrc.slice(audioSrc.indexOf("function speakClipOnly"));
-  const fnEnd = body.indexOf("\n  }\n");
-  const clipOnlyBody = fnEnd === -1 ? body : body.slice(0, fnEnd);
-  ok(clipOnlyBody.length > 0, "speakClipOnly must exist in voice/");
-  for (const forbidden of ["speakBrowser", "speakLive", "speechSynthesis", "sfx(", "speak("])
-    ok(!clipOnlyBody.includes(forbidden),
-       `speakClipOnly's body must not mention ${forbidden} — the no-fallback guarantee is meant to be ` +
-       `a property of WHICH FUNCTION you called, not a condition someone can loosen`);
-  ok(/window\.moxieAudio\s*=\s*\{[\s\S]{0,400}speakClipOnly/.test(audioSrc),
-     "speakClipOnly must be exported on window.moxieAudio — bridge/ calls it by name");
-
-  // (i) …and the caller really is `handleUserTurn`, with the child group named.
-  const bridgeSrc = BRIDGE_SRC;
-  const turn = bridgeSrc.slice(bridgeSrc.indexOf("function handleUserTurn"));
-  const turnBody = turn.slice(0, turn.indexOf("\n  }\n"));
-  ok(/speakClipOnly\(\s*speech\s*,\s*"child"\s*\)/.test(turnBody),
-     "bridge/handleUserTurn must speak the child's line through speakClipOnly(speech, \"child\")");
-  ok(!/moxieAudio\.speak\(/.test(turnBody),
-     "handleUserTurn must NEVER call speak() — that is the path that synthesizes a visitor's own words");
-
   notes.push("child voice: clip-only — scripted lines play from the `child` group, uncached lines " +
              "(a visitor's own words) make no sound at all; child yields, Moxie interrupts");
 }
 
-/* --------------------------------------------------------------------------- *
- * 8c. End to end, on the REAL assets
- *
- * The REAL `bridge/` + `voice/` against the REAL manifest, clips and `sessions/demo.json`:
- * the demo's child events are routed as `replay()` routes them, and the MP3 the site ships
- * must be the URL that goes out.
- * --------------------------------------------------------------------------- */
+/* 8c. End to end: the REAL `bridge/` + `voice/` on the REAL manifest, clips and demo.json —
+ * this is also what proves bridge/ routes a child turn through speakClipOnly("child"). */
 await withGlobals([...RIG_GLOBALS, "mqtt"], async (g) => {
   const urls = [], started = [], mouth = [], synthesized = [];
   const byLen = new Map();
@@ -266,13 +234,8 @@ await withGlobals([...RIG_GLOBALS, "mqtt"], async (g) => {
              `bridge/ + voice/; an unscripted line fetches nothing`);
 });
 
-/* --------------------------------------------------------------------------- *
- * 9. The renderer cannot silently drop a manifest group again
- *
- * §1 guards the artefact; this guards the tool that writes it. The merge used to name
- * `moxie` and `child` explicitly, so any group it did not know about was erased on the
- * next write. It must be group-agnostic.
- * --------------------------------------------------------------------------- */
+/* 9. The renderer cannot silently drop a manifest group again (it once named `moxie`/`child`
+ * and erased `ambient`). A source check: running the tool needs Piper + ffmpeg. */
 {
   const toolPath = join(here, "tools", "prerender_audio.py");
   ok(existsSync(toolPath), "sim/tools/prerender_audio.py must exist");

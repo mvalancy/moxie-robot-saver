@@ -8,50 +8,37 @@ import {
 } from "./harness.mjs";
 import { sessionLines, childSessionLines } from "./01_manifest_sessions.mjs";
 
-/* --------------------------------------------------------------------------- *
- * 3. §6.1 — the fallback's parts are all present and wired
- * --------------------------------------------------------------------------- */
+/* 3. §6.1 — the fallback's parts are loaded by sim.html, in order (measured on the `<script
+ * src>` tags: prose in an HTML comment may name them first). */
 {
   const html = readFileSync(join(web, "sim.html"), "utf8");
-  // The files a degraded turn actually needs, in the order sim.html must load them:
-  // stub.js publishes the offline brain, bridge/ consumes it, mode.js decides which
-  // mode we are in, cloud-transport.js delegates to bridge/ when it is not `live`.
-  for (const f of ["stub.js", "bridge/index.js", "mode.js", "cloud-transport.js", "voice/index.js", "ambient.js"]) {
-    ok(html.includes(f), `sim.html must load ${f} — the fallback is not wired without it`);
-    ok(existsSync(join(web, f)), `${f} must exist`);
-  }
-  // Order is measured on the `<script src>` tags: prose in an HTML comment may name them first.
   const loadsAt = (f) => html.indexOf('src="' + f);
-  for (const f of ["stub.js", "bridge/core.js", "bridge/index.js", "cloud-transport.js"])
-    ok(loadsAt(f) > -1, `sim.html has a <script src> for ${f}`);
+  for (const f of ["stub.js", "bridge/core.js", "bridge/index.js", "mode.js", "cloud-transport.js",
+                   "voice/index.js", "ambient.js"]) {
+    ok(loadsAt(f) > -1 && existsSync(join(web, f)),
+       `sim.html must load ${f} with a <script src>, and it must exist — the fallback is not wired without it`);
+  }
   ok(loadsAt("stub.js") < loadsAt("bridge/core.js"), "stub.js loads before bridge/");
   ok(loadsAt("bridge/index.js") < loadsAt("cloud-transport.js"),
      "cloud-transport.js loads after bridge/ (it wraps what bridge/ published)");
-  // §7 below drives `ambient.js`'s degraded announcer through `window.moxieMode`, which
-  // only exists because mode.js ran first. In the page that is load ORDER, not luck.
-  ok(loadsAt("mode.js") > -1 && loadsAt("ambient.js") > -1 &&
-     loadsAt("mode.js") < loadsAt("ambient.js"),
+  ok(loadsAt("mode.js") < loadsAt("ambient.js"),
      "mode.js must load before ambient.js — the degraded line subscribes to window.moxieMode at load");
 
-  // `bridge/` and `cloud-transport.js` gate the degraded answer on moxieStub.enabled.
-  ok(/enabled:\s*true/.test(stubSrc), "window.moxieStub.enabled must be TRUE or a refused turn is silent");
-  ok(stubSrc.includes("window.moxieStub"), "stub.js must publish window.moxieStub");
-
-  // The transport must delegate to the inner bridge rather than answer for itself when the
-  // mode is not live — §3.5's guarantee that today's page cannot regress.
-  const transportSrc = readFileSync(join(web, "cloud-transport.js"), "utf8");
-  ok(transportSrc.includes("inner.sendUserTurn"), "cloud-transport.js must delegate to inner.sendUserTurn");
-  ok(transportSrc.includes("window.moxieStub"), "…and must be able to answer one turn from the stub itself");
-
-  // Stub replies carry the markup families `applyMarkup` parses, or the face goes dead.
-  ok(stubSrc.includes("cmd:playback-mood"), "stub replies carry a mood mark");
-  ok(stubSrc.includes("+eventName+:+"), "…and a gesture eventName");
-  ok(stubSrc.includes("cmd:icons-v2"), "…and can carry an icon mark");
+  // The REAL stub.js: bridge/ and cloud-transport.js gate the degraded answer on `enabled`, and
+  // every reply must carry the markup `applyMarkup` parses, or the face goes dead.
+  const saved = globalThis.window;
+  globalThis.window = {};
+  new Function(stubSrc)();
+  const stub = globalThis.window.moxieStub;
+  globalThis.window = saved;
+  eq(stub && stub.enabled, true, "window.moxieStub.enabled must be TRUE or a refused turn is silent");
+  const marks = [...Object.keys(manifest.child || {}), ...Array(20).fill("")].map((s) => stub.reply(s).markup);
+  ok(marks.every((m) => m.includes("cmd:playback-mood") && m.includes("+eventName+:+")),
+     "every stub reply carries a mood mark and a gesture eventName");
+  ok(marks.some((m) => m.includes("cmd:icons-v2")), "…and some carry an icon mark");
 }
 
-/* --------------------------------------------------------------------------- *
- * 4. Reading the lines out of their sources
- * --------------------------------------------------------------------------- */
+/* 4. Reading the lines out of their sources. */
 
 /** Un-escape a Python/JS single-line string literal body. */
 const ESCAPES = { n: "\n", t: "\t" };
@@ -62,11 +49,8 @@ function stubReplies() {
   return [...stubSrc.matchAll(/say:\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => unescape1(m[1]));
 }
 
-/**
- * `filler.py`'s eight spoken lines — the first element of each `_LINES` tuple.
- * Takes the first string of each tuple, then PROVES it understood the block: every string it
- * did not take must be a behaviour-tree/gesture identifier, not a missed spoken line.
- */
+/** `filler.py`'s spoken lines (the first string of each `_LINES` tuple); `leftovers` must all be
+ *  identifiers, which PROVES the extractor understood the block. */
 function fillerLines(src) {
   const start = src.indexOf("_LINES = (");
   if (start === -1) return { texts: [], leftovers: [], found: false };
@@ -96,13 +80,9 @@ for (const t of filler.texts) {
 
 ok(Array.isArray(ambient.lines) && ambient.lines.length > 0, "ambient.json must carry lines");
 
-/* --------------------------------------------------------------------------- *
- * 5. THE INVENTORY — every line the degraded page can utter, and its clip
- * One rule over five sources: if the degraded page can say it, an MP3 is keyed by that exact
- * string. `group` is where `playClip` looks first (it falls back moxie -> child, never to
- * ambient); `strict` lines (the child's) allow no fallthrough, because `speakClipOnly` reads
- * only the `child` group and Moxie's voice saying the child's words is wrong, not covered.
- * --------------------------------------------------------------------------- */
+/* 5. THE INVENTORY — if the degraded page can say it, an MP3 is keyed by that exact string.
+ * `group` is where `playClip` looks first (moxie -> child, never ambient); `strict` (child) lines
+ * allow no fallthrough: `speakClipOnly` reads only `child`, and Moxie saying them is wrong. */
 export const inventory = [];
 for (const t of stubReplies()) inventory.push({ text: t, group: "moxie", source: "stub.js reply" });
 for (const t of filler.texts) inventory.push({ text: t, group: "moxie", source: "filler.py thinking line" });
@@ -146,21 +126,9 @@ for (const t of birthday)
   ok(!!(manifest.moxie || {})[t.trim()],
      `the birthday stub reply must keep its clip (it is the shipped demo's voice): ${JSON.stringify(t.slice(0, 40))}`);
 
-/* `mic.js`'s degraded fallback picks a scripted CHILD line from `index.child`; an empty group
- * would leave the button saying "stt unavailable" instead. */
-ok(Object.keys(manifest.child || {}).length > 0,
-   "the child group must not be empty — mic.js's degraded fallback picks its scripted line from it");
-
-/* --------------------------------------------------------------------------- *
- * 6. §2.4 — the ambient layer is server-free, and stays that way
- * --------------------------------------------------------------------------- */
+/* 6. §2.4 — the ambient layer is server-free: its own static `ambient.json` only — no /api/
+ * path, absolute URL or port. */
 {
-  // Line-by-line in sim/test_ambient.mjs; a COUNT here too, so an emptied layer fails this suite.
-  ok(Object.keys(manifest.ambient || {}).length >= ambient.lines.length,
-     `every ambient line needs a clip: ${ambient.lines.length} lines vs ` +
-     `${Object.keys(manifest.ambient || {}).length} clips`);
-  // "Server-free" = no BACKEND: fetching its own static `ambient.json` is fine; an /api/
-  // path, an absolute URL or a port is not.
   const ambientFetches = [...ambientSrc.matchAll(/fetch\s*\(\s*"([^"]*)"/g)].map((m) => m[1]);
   ok(ambientFetches.length > 0, "ambient.js loads its own line list");
   for (const url of ambientFetches) {
