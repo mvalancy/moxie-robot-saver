@@ -446,7 +446,7 @@
    "path": "architecture/backlog/expressiveness.md",
    "title": "Expressiveness — the markup floor and the behavior planner",
    "section": "architecture",
-   "bytes": 23882,
+   "bytes": 23863,
    "mermaid": 0,
    "headings": [
     "0. The seam",
