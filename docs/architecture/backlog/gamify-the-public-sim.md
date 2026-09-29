@@ -714,7 +714,7 @@ Named plainly, in the house style, because a research brief that hides its holes
 ## 9. Where this lands on the audit
 
 **Nothing is re-ranked by this page**, and that is deliberate — it is a research brief, not a decision.
-[§4.4](../openmoxie-feature-audit.md#44-the-open-backlog-re-ranked-2026-09-05) remains the one place to
+[§4.4](../openmoxie-feature-audit.md#44-the-open-backlog) remains the one place to
 look for *"what should I build next."* What this scan hands the rest of the tree:
 
 | Finding | Where it lands |
