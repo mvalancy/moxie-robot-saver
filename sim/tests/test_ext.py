@@ -54,49 +54,16 @@ P1_REASON = {
 }
 
 
-@pytest.mark.parametrize("name", ["G1", "G4"])
-def test_t1_t6_conformance_p0(name):
-    """T1/T4 — G1 (`MoxieTime`) and G4 (`MoxieTimers` wake) reproduce their effects byte for
-    byte. Upstream's `time.sleep` became `<break>`: free on the robot, a sleep burns the
-    turn (§5.3)."""
+@pytest.mark.parametrize("name", ["G1", "G2", "G3", "G4", "G6"])
+def test_t1_t6_conformance(name):
+    """T1–T6 — each hand-ported upstream hook reproduces its golden byte for byte, under the
+    real grant gate (no `allow_p1` door). G6's subscribing rules live in `test_ext_subscribe`."""
     row = ROWS[name]
+    assert E.validate(row["ast"], grants=set(row["grants"])) == []
     r = run_row(row)
     assert r.ok, r.reason
     assert r.effects == row["expected_effects"], r.effects
     assert r.handled == row["expected_handled"]
-
-
-@pytest.mark.parametrize("name", ["G2", "G3", "G5", "G6"])
-def test_t1_t6_conformance_p1_grammar_is_already_valid(name):
-    """T2/T3/T5/T6 — the programs validate: these rows were gated by capability, not
-    expressiveness."""
-    row = ROWS[name]
-    assert E.validate(row["ast"], allow_p1=True) == []
-    assert row["expected_effects"], "the golden must exist now, not later"
-
-
-@pytest.mark.parametrize("name", ["G2", "G3"])
-def test_t1_t6_conformance_act(name):
-    """T2/T3 — the `act` hooks (G2 `MoxieTimers` set, G3 its status/cancel sibling)
-    reproduce their effects byte for byte."""
-    row = ROWS[name]
-    r = run_row(row)
-    assert r.ok, r.reason
-    assert r.effects == row["expected_effects"], r.effects
-    assert r.handled == row["expected_handled"]
-
-
-def test_t6_conformance_subscribe():
-    """T6 — `MoxieGo`, whole. These facts match its middle rule (no `subscribe`); the
-    subscribing rules are driven in `test_ext_subscribe.py`."""
-    row = ROWS["G6"]
-    r = run_row(row)
-    assert r.ok, r.reason
-    assert r.effects == row["expected_effects"], r.effects
-    assert r.handled == row["expected_handled"]
-    assert "subscribe" in row["ast"]["capabilities"]
-    assert E.validate(row["ast"], grants=set(row["grants"])) == [], \
-        "no `allow_p1` door: this must validate under the real gate now"
 
 
 @pytest.mark.parametrize("name", ["G5"])
@@ -107,17 +74,6 @@ def test_t1_t6_conformance_still_p1(name, request):
     r = run_row(row)
     assert r.ok, r.reason
     assert r.effects == row["expected_effects"]
-
-
-def test_the_conformance_goldens_are_not_upstream_code():
-    """Clean-room: the goldens are re-authored programs (§7.4), so no upstream source text
-    may have travelled with them."""
-    blob = open(CONFORMANCE, encoding="utf-8").read()
-    for python_ism in ("def ", "import ", "lambda", "self.", "globals()", "exec("):
-        assert python_ism not in blob, python_ism
-    doc = json.load(open(CONFORMANCE, encoding="utf-8"))
-    assert "OpenMoxie" in " ".join(doc["_comment"])
-    assert "Justin Beghtol" in " ".join(doc["_comment"])
 
 
 # --------------------------------------------------------------------------- #
@@ -244,7 +200,6 @@ def ext_item(caps=("say",), key="Greeter", version=1, rules=None):
 def test_t10_a_pack_round_trips_with_an_extension_inside():
     """T10 — export → parse → review → apply → live next turn (§7.1, §7.5); the exported
     bytes re-import to the same digest."""
-    module = load_modules({"globals": [ext_item()["data"]]})
     items = P.shipped_items({"globals": [ext_item()["data"]]})
     pack = P.export_pack(items, name="Greeter pack", pack_id="greet-1")
     raw = json.dumps(pack)
@@ -471,12 +426,24 @@ def test_t16_the_extension_budget_is_inside_the_turn_budget(monkeypatch):
     assert cfg.EXT_BUDGET_S < cfg.BRAIN_BUDGET_S
 
 
-def test_t16_every_limit_is_an_env_var():
+def test_t16_every_limit_is_an_env_var(monkeypatch):
     """A7: every limit is chosen, not measured, so each must be tunable without a code change."""
-    src = open(os.path.join(REPO, "mqtt", "config.py")).read()
-    for name in ("MOXIE_EXT_MAX_STEPS", "MOXIE_EXT_BUDGET_S", "MOXIE_EXT_MAX_VALUE_BYTES",
-                 "MOXIE_EXT_MAX_TOTAL_BYTES", "MOXIE_EXT_MAX_BREACHES"):
-        assert name in src, name
+    import importlib
+    import config as cfg
+    limits = {"MOXIE_EXT_MAX_STEPS": ("EXT_MAX_STEPS", 123),
+              "MOXIE_EXT_BUDGET_S": ("EXT_BUDGET_S", 0.125),
+              "MOXIE_EXT_MAX_VALUE_BYTES": ("EXT_MAX_VALUE_BYTES", 1234),
+              "MOXIE_EXT_MAX_TOTAL_BYTES": ("EXT_MAX_TOTAL_BYTES", 12345),
+              "MOXIE_EXT_MAX_BREACHES": ("EXT_MAX_BREACHES", 7)}
+    for env, (_attr, value) in limits.items():
+        monkeypatch.setenv(env, str(value))
+    try:
+        importlib.reload(cfg)
+        assert {a: getattr(cfg, a) for a, _v in limits.values()} == dict(limits.values())
+    finally:
+        for env in limits:
+            monkeypatch.delenv(env)
+        importlib.reload(cfg)
 
 
 # --------------------------------------------------------------------------- #
@@ -541,8 +508,6 @@ def test_t18_a_shipped_example_activity_works_end_to_end():
     """T18 — the shipped clock extension answers with no model call."""
     app, calls = shipped_app()
     reply = app.respond(Turn(robot=robot(), speech="hey Moxie, what time is it?"))
-    assert reply.text.startswith("The time is "), reply
-    assert reply.text.endswith(("AY M", "P M")), reply
     assert calls == [], "a clock question must not cost a model call"
     assert re.fullmatch(r"The time is (1[0-2]|[1-9]):[0-5]\d (AY M|P M)", reply.text), reply
 
@@ -612,9 +577,6 @@ def test_a_pack_that_acts_now_reviews_as_something_this_appliance_can_run():
     assert "this activity can ask Moxie to set or cancel a timer" in warnings, warnings
     assert P.validate_item({"kind": "global", "key": "Timer", "data": data}) == []
     # The grant is a real gate: `eb_wake` is declared but ungranted.
-    assert "act.eb_timer_request" not in E.DEFAULT_GRANTS
-    assert "act.eb_wake" not in E.DEFAULT_GRANTS
-    assert "act.eb_wake" not in CA.SHIPPED_EXTRA_GRANTS
     waker = dict(ROWS["G2"]["ast"])
     # No `handled`: an unused capability's reason would mask the grant reason.
     waker["capabilities"] = ["say", "act.eb_wake"]

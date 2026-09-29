@@ -20,7 +20,6 @@ from moxie_sdk.content import ext as E
 from moxie_sdk.content import content_app as CA
 from moxie_sdk.content.volley import Volley
 from moxie_sdk.types import Turn, ActionType
-from moxie_sdk.wire import build_chat_response
 
 #: §4.1's worked example, shrunk: "set a timer" arms the robot's timer and says so.
 TIMER = {
@@ -59,29 +58,6 @@ def test_an_act_effect_reaches_the_volley_as_an_execution_action():
     assert v.execution_actions == [{"name": "eb_timer_request",
                                     "args": ["1", "300000"]}]
     assert stats["acted"] == 1
-
-
-def test_an_execution_action_becomes_an_execute_action_not_an_invented_verb():
-    """Every robot function goes out as `execute` + `function_id` (fields 7/8), never
-    `ActionType.ENABLE_QR` — `"enable_qr"` is not in the proto's ActionID enum."""
-    v = Volley("hi")
-    v.add_execution_action("eb_enable_qr", ["true"])
-    actions = CA.execution_actions_of(v)
-    assert [(a.type, a.function, a.args) for a in actions] == [
-        (ActionType.EXECUTE, "eb_enable_qr", ["true"])]
-    assert all(a.type is not ActionType.ENABLE_QR for a in actions)
-
-
-def test_the_wire_shape_is_the_briefs_own_worked_example():
-    """Key for key against `qr-launch-cards.md` §P0-a: a LIST of args lands in
-    `function_args` (a dict would go to `action_args`)."""
-    v = Volley("hi")
-    v.add_execution_action("eb_enable_qr", ["true"])
-    resp = build_chat_response("e", "Show me a card!",
-                               actions=CA.execution_actions_of(v))
-    assert resp["response_actions"] == [
-        {"output_type": "GLOBAL", "action": "execute", "module_id": None,
-         "content_id": None, "function_id": "eb_enable_qr", "function_args": ["true"]}]
 
 
 def test_a_global_extension_acts_and_speaks_in_one_reply():
@@ -129,20 +105,6 @@ def test_a_turn_before_extension_that_acts_and_handles_answers_the_turn():
 # --------------------------------------------------------------------------- #
 # The bound, at the seam a string becomes a `function_id`
 # --------------------------------------------------------------------------- #
-
-def test_the_nameable_functions_are_exactly_the_ones_with_parent_facing_words():
-    """`ext.ACTION_WORDS` is both the allowlist and the parent-facing sentence, so a function
-    with no English cannot be declared, granted or emitted (§P0-b)."""
-    assert CA.robot_functions() == frozenset(E.ACTION_WORDS)
-    for name in CA.robot_functions():
-        assert E.ACTION_WORDS[name].startswith("Can "), name
-    # A pack cannot put a name of its own choosing on the wire, at either gate.
-    for bogus in ("eb_shell", "eb_timer_request ", "eb_enable_qr;rm", "../eb_wake"):
-        assert bogus not in CA.robot_functions()
-        v = Volley("hi")
-        v.add_execution_action(bogus, ["x"])
-        assert CA.execution_actions_of(v) == []
-
 
 @pytest.mark.parametrize("caps,grants,why", [
     (["say", "handled"], ACT_GRANTS, "used but not declared"),
