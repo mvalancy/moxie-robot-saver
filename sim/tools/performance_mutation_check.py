@@ -1,38 +1,17 @@
-#!/usr/bin/env python3
-"""🎭 Delete one behavior-planner guard at a time and require a test to go red.
+"""Break each behavior-planner guard (validate's positive list, degrade-to-floor, anti-twitch
+caps, per-chunk mood, idempotence, budget breaker, scored-output precedence);
+`test_performance.py` + `test_automarkup.py` must go red. Runner: `mutation_runner.py`.
 
-The house rule is that a feature's tests are proven in BOTH directions: green with the
-guard, red without it. A test that only ever runs against correct code cannot tell you
-whether it is asserting a property or merely restating it — `sim/tools/ext_mutation_check.py`
-and `sim/tools/brain_mutation_check.py` are the same tool for the sandboxed-extension
-grammar and the brain registry, and both found real holes in their own suites.
-
-Each entry breaks exactly one guard — the positive list's refusal in `validate`, the
-degrade-to-the-floor fallback, the anti-twitch caps, the per-chunk mood rule, the
-idempotence guard, the budget breaker, the scored-output precedence — runs
-`test_performance.py` (plus the floor's own suite where the mutation could hide there),
-and restores the file. A mutation that leaves the suite GREEN is a hole in the tests.
-
-    python3 sim/tools/performance_mutation_check.py     # from the repo root
-
-Uses the repo's own virtualenv if it has one, else the interpreter running this script.
+    python3 sim/tools/performance_mutation_check.py [ROW ...]
 """
-import os
-import pathlib
-import subprocess
-import sys
-
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-PY = ROOT / ".venv/bin/python"
-if not PY.exists():
-    PY = pathlib.Path(sys.executable)
-TESTS = ["sim/tests/test_performance.py", "sim/tests/test_automarkup.py"]
+from mutation_runner import WT, node_verdict, pytest, run_table  # noqa: F401
 
 P = "mqtt/moxie_sdk/performance.py"
 M = "mqtt/supervisor/markup.py"
 R_FLEET = "mqtt/supervisor/moxie_runtime/fleet.py"
 R_TURNS = "mqtt/supervisor/moxie_runtime/turns.py"
 W = "mqtt/moxie_sdk/wire.py"
+TESTS = ["sim/tests/test_performance.py", "sim/tests/test_automarkup.py"]
 
 MUTATIONS = [
     # ---- the positive list: a brain may suggest, it may never authorize -------------
@@ -180,39 +159,5 @@ MUTATIONS = [
 ]
 
 
-def run() -> bool:
-    proc = subprocess.run([str(PY), "-m", "pytest", *TESTS, "-q", "-x", "--no-header"],
-                          cwd=ROOT, capture_output=True, text=True,
-                          env=dict(os.environ, MOXIE_LLM_API_KEY="",
-                                   MOXIE_LLM_BASE_URL="", MOXIE_VOICE_BASE_URL="",
-                                   MOXIE_STT_BASE_URL=""))
-    return proc.returncode == 0
-
-
-def main():
-    if not run():
-        print("❌ the suite is already red before any mutation — fix that first")
-        return 1
-    caught = 0
-    for label, rel, old, new in MUTATIONS:
-        path = ROOT / rel
-        src = path.read_text()
-        if src.count(old) != 1:
-            print(f"⚠️  {label}: anchor not found (or ambiguous) in {rel} — mutation stale")
-            continue
-        path.write_text(src.replace(old, new))
-        try:
-            green = run()
-        finally:
-            path.write_text(src)
-        if green:
-            print(f"❌ {label}: suite stayed GREEN — the tests do not cover this")
-        else:
-            caught += 1
-            print(f"✅ {label}")
-    print(f"\n{caught}/{len(MUTATIONS)} mutations caught")
-    return 0 if caught == len(MUTATIONS) else 1
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(run_table(MUTATIONS, lambda r: pytest(TESTS, None, "-x"), baseline=[pytest(TESTS)]))

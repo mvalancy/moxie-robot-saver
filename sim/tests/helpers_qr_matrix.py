@@ -1,34 +1,11 @@
-"""
-🔍 Read a payload back **out of a QR module matrix** — the half of a printed card no
-encoder test can see.
+"""Read a payload back OUT of a QR module matrix — the half of a printed card no encoder
+test can see (a caption check proves the caption, not the black squares).
 
-Why this exists. Every other assertion about the sheet checks a string we already had:
-`launch_sheet` asks `launch_cards.encode` for `GO<launch:DRAW>` and we check that
-`GO<launch:DRAW>` appears under the code. That proves the *caption*, not the *code*. The
-question a parent actually has is whether the black squares carry the card, and answering
-it means walking the modules the way a scanner does.
-
-So this is a **decoder, not a second encoder**. It takes the finished matrix — from
-`segno` on the Python side, or from the browser's `vendor/qrcode.js` handed across by
-`sim/test_qr.mjs` — reads the format information, un-applies the mask, walks the standard
-zig-zag, de-interleaves the blocks and parses the byte-mode segment back to a string. That
-string then goes to the **real `launch_cards.decode`**, which is the only authority on
-what a card may do. What is left unproven after that is optics and nothing else.
-
-What it deliberately does NOT do
---------------------------------
-**No Reed-Solomon.** A matrix straight out of an encoder has no errors, so error
-correction would only hide a bug: if the data codewords are wrong, this must say so
-rather than quietly repair them. That also keeps the file short enough to audit.
-
-It handles error level **Q**, versions **1-6**, **byte mode**, which is exactly what
-`moxie_sdk.launch_sheet` emits (`ERROR_LEVEL`, `ENCODE_MODE`, and a `deck_version` that
-is 3 for every id in today's catalog). Anything else raises by name — an unsupported
-symbol is a red test, never a silent skip.
-
-Reference: ISO/IEC 18004 (mask patterns §7.8.2, format information §7.9, symbol character
-placement §7.7.3, block interleaving §7.6). The tables below are the standard's, not
-anyone's code.
+A decoder, not a second encoder: format info, un-mask, zig-zag walk, de-interleave, parse
+the byte segment, then hand the string to the REAL `launch_cards.decode`. Deliberately no
+Reed-Solomon (an encoder's matrix has no errors; correction would only hide a bug). Level
+Q, versions 1-6, byte mode — what `moxie_sdk.launch_sheet` emits; anything else raises by
+name. Reference: ISO/IEC 18004 §7.6-7.9, Annex E.
 """
 from __future__ import annotations
 

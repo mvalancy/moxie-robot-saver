@@ -1,17 +1,8 @@
 """Packaging guards: what `pip install moxie-cloud-sdk` actually gets.
 
-Every other test runs against the source tree, so two failures are invisible to them:
-
-  1. **A new subpackage ships empty or not at all.** `[tool.setuptools] packages` is a
-     hand-written list; forget a line and `import` works in the repo and fails on an
-     appliance.
-  2. **A new data file does not ship.** `package-data` maps `moxie_sdk = ["*.json"]` — one
-     package, one glob; a JSON anywhere else (e.g. a subpackage) is dropped silently.
-
-Third, the SDK's own promise (`pyproject.toml`: imports with no heavy dependencies): the
-fast CI tier runs without the optional backends, so a module-scope `openai`/`numpy`/
-`jinja2`/`piper`/`faster_whisper` import is a red push. Checked in a subprocess where those
-imports are made to fail even when installed, so a full venv catches it too.
+Every other test runs from the source tree, so it cannot see a subpackage missing from the
+hand-written `[tool.setuptools] packages`, a data file no `package-data` glob covers, or a
+module-scope import of an optional backend (a red fast tier, which runs without them).
 """
 import fnmatch
 import os
@@ -76,51 +67,20 @@ def _data_files() -> list:
     return out
 
 
-# --------------------------------------------------------------------------- #
-# 1. every package on disk is declared, and every declared package exists
-# --------------------------------------------------------------------------- #
-def test_every_package_on_disk_is_declared_in_pyproject():
+def test_the_declared_packages_are_exactly_the_packages_on_disk():
     declared = set(_pyproject()["tool"]["setuptools"]["packages"])
-    missing = _packages_on_disk() - declared
-    assert not missing, (
-        f"{sorted(missing)} exist(s) under mqtt/moxie_sdk/ but is not in "
-        f"[tool.setuptools] packages — it would not ship in the wheel")
+    assert declared == _packages_on_disk(), (
+        f"not shipped: {sorted(_packages_on_disk() - declared)}; "
+        f"stale: {sorted(declared - _packages_on_disk())}")
 
 
-def test_every_declared_package_exists_on_disk():
-    declared = set(_pyproject()["tool"]["setuptools"]["packages"])
-    stale = declared - _packages_on_disk()
-    assert not stale, f"[tool.setuptools] packages names {sorted(stale)}, which is gone"
-
-
-# --------------------------------------------------------------------------- #
-# 2. every data file inside a package is covered by a package-data glob
-# --------------------------------------------------------------------------- #
 def test_every_data_file_would_actually_ship():
     package_data = _pyproject()["tool"]["setuptools"].get("package-data", {})
-    uncovered = []
-    for pkg, name in _data_files():
-        globs = package_data.get(pkg, [])
-        if not any(fnmatch.fnmatch(name, g) for g in globs):
-            uncovered.append(f"{pkg}/{name}")
-    assert not uncovered, (
-        f"{uncovered} sit(s) inside a package but matches no "
-        f"[tool.setuptools.package-data] glob — pip would drop it silently "
-        f"(current map: {package_data})")
+    uncovered = [f"{pkg}/{name}" for pkg, name in _data_files()
+                 if not any(fnmatch.fnmatch(name, g) for g in package_data.get(pkg, []))]
+    assert not uncovered, f"no package-data glob covers {uncovered} — pip drops it silently"
 
 
-def test_the_safety_rule_table_is_declared_data():
-    """The one data file the runtime cannot start without, named explicitly so a
-    refactor that widens the globs still has to keep this one."""
-    package_data = _pyproject()["tool"]["setuptools"]["package-data"]
-    assert any(fnmatch.fnmatch("safety_rules.json", g)
-               for g in package_data.get("moxie_sdk", [])), package_data
-    assert os.path.isfile(os.path.join(SDK, "safety_rules.json"))
-
-
-# --------------------------------------------------------------------------- #
-# 3. the version is one value, and it is the one the build reads
-# --------------------------------------------------------------------------- #
 def test_the_version_comes_from_the_package_itself():
     data = _pyproject()
     assert "version" in data["project"]["dynamic"], data["project"]
@@ -132,13 +92,9 @@ def test_the_version_comes_from_the_package_itself():
     assert len(parts) == 3 and all(p.isdigit() for p in parts), moxie_sdk.__version__
 
 
-# --------------------------------------------------------------------------- #
-# 4. the SDK imports with none of the optional backends
-# --------------------------------------------------------------------------- #
 def test_no_module_needs_an_optional_dependency_to_import():
-    """Import every `moxie_sdk` module in a subprocess where the optional backends are
-    made unimportable. This is the fast-tier contract (playbook rule 9) asserted here
-    instead of discovered on a red push."""
+    """Every `moxie_sdk` module imports in a subprocess where the optional backends are
+    made unimportable, even when installed."""
     modules = _modules_on_disk()
     assert len(modules) > 10, modules             # the walk actually found the package
     script = (

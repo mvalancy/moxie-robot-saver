@@ -1,27 +1,9 @@
 """The shared per-IP HOUR/DAY windows and the unit budget's DAY ceiling, run by pytest.
 
-A wrapper: every assertion lives in `sim/tests/helpers_shared_ceilings.mjs`, because the
-code under test (`functions/api/_lib/limits.js`) is JavaScript and a Cache API tier is only
-honestly tested by driving the real module with a real injected store. This file makes
-`pytest sim/tests` run that suite (a new Python file cannot go silently unrun, unlike a
-`sim/test_*.mjs` that a CI tier must name) and reports one failure per SECTION:
-
-  A  the fallback — with no store, `admit()` is the function it was before the tier
-  B  the per-IP HOUR really binds across isolates
-  C  the per-IP DAY really binds across isolates
-  D  the unit budget's DAY, by charge-on-completion (no refund write to lose)
-  E  a refunded request publishes NOTHING to the shared day
-  F  the wide window fails OPEN — every failure mode by name
-  G  the day budget fails OPEN — every failure mode by name, including a `put` that lands
-     and then hangs
-  H  the keys: no address, no route in the budget key, and the mark that separates a wide
-     entry from a narrow one
-  I  what it costs, as a count of round trips
-  J  an uncapped ceiling costs nothing at all
-  K  which direction each refusal errs in, including the inherited overcount it does NOT fix
-
-No credentials, network or browser: the suite injects a fake store and never calls
-`fetch`; its gateway key `sk-testonly-…` exists only inside that file.
+The assertions live in `helpers_shared_ceilings.mjs` (the code under test is
+`functions/api/_lib/limits.js`, driven with an injected fake store — no network or
+credentials). This wrapper makes `pytest sim/tests` run it and reports one failure per
+section, with a floor on each section's check count so a proof cannot shrink silently.
 """
 from __future__ import annotations
 
@@ -37,14 +19,8 @@ SUITE = os.path.join(REPO, "sim", "tests", "helpers_shared_ceilings.mjs")
 
 NODE = "node"
 
-#: Every section the node suite must report, with a floor on its check count. Listed here
-#: rather than discovered, and asserted from BOTH sides below: a section that vanishes is a
-#: failure, and a section the suite grew that nobody listed is a failure too. A green
-#: number that quietly got smaller is exactly how a proof rots.
-#:
-#: F, G, H and J are pinned to their EXACT counts deliberately: specific assertions there
-#: are the only thing that reddens for `unit_budget_mutation_check.py` rows W5, W6, W8, D2
-#: and D11, and deleting one would unhook a row's proof while it kept saying "caught".
+#: Section -> (check-count floor, what it proves), asserted both ways. F/G/H/J floors are
+#: EXACT: their assertions are what `unit_budget_mutation_check.py` W5/W6/W8/D2/D11 redden.
 SECTIONS = {
     "A": (10, "the fallback: with no store, admit() is the function it was before the tier"),
     "B": (10, "the per-IP HOUR binds across isolates"),
@@ -62,19 +38,9 @@ SECTIONS = {
 
 @pytest.fixture(scope="module")
 def result() -> dict:
-    """Run the node suite ONCE and hand every test the same recorded outcome.
-
-    A missing `node` is a hard failure rather than a skip. This repo's recorded trap is a
-    missing dependency making the tests that need it skip themselves away — a skip that
-    reads as a pass — and `node` is declared in `test_speech_guard.py`'s
-    `DECLARED_BINARIES` precisely because the fast CI tier already runs ~20 node suites.
-    """
-    assert shutil.which(NODE), (
-        "node is not on PATH. It is a declared dependency of this suite "
-        "(sim/tests/test_speech_guard.py::DECLARED_BINARIES) and the fast CI tier already "
-        "runs ~20 `node sim/test_*.mjs` steps, so this is a broken environment, not a "
-        "reason to skip the only proof that the shared hour/day ceilings bind."
-    )
+    """Run the node suite ONCE. A missing `node` FAILS (a declared binary; a skip here
+    would read as a pass)."""
+    assert shutil.which(NODE), "node is not on PATH (see test_speech_guard.DECLARED_BINARIES)"
     proc = subprocess.run(
         [NODE, SUITE, "--json"],
         cwd=REPO,
@@ -95,7 +61,6 @@ def result() -> dict:
 
 
 def test_the_suite_ran_and_has_teeth(result):
-    """A wrapper whose subject printed zero checks passes vacuously. Pin both ends."""
     assert result["checks"] >= 140, f"only {result['checks']} checks ran"
     assert set(result["sections"]) == set(SECTIONS), (
         "the node suite's sections and this file's list have diverged: "
@@ -105,7 +70,6 @@ def test_the_suite_ran_and_has_teeth(result):
 
 @pytest.mark.parametrize("name", sorted(SECTIONS))
 def test_section(result, name):
-    """One pytest failure per section, naming the assertions that reddened."""
     floor, what = SECTIONS[name]
     got = result["sections"].get(name)
     assert got is not None, f"section {name} ({what}) did not run at all"
@@ -118,5 +82,5 @@ def test_section(result, name):
 
 
 def test_no_section_failed(result):
-    """The whole-suite view, so a failure outside any listed section is still caught."""
+    """A failure outside any listed section is still caught."""
     assert not result["failures"], "\n  " + "\n  ".join(result["failures"])

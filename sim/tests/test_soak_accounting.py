@@ -1,17 +1,9 @@
 """The soak's own accounting — what "the broker was up" means, and what A2's budget buys.
 
-The deep-tier soak gate once failed on about half its runs with `A1 = 100%` missing by
-1 or 2 turns, on docs-only diffs. Not flakiness — two accounting bugs of the shape
-*a value inferred instead of observed*:
-
-  1. **A1 sampled an interval at its endpoints**: `sup.connected` read before and after
-     the reply wait, so a broker restart wholly inside the wait was invisible and its
-     legitimate loss was charged to a bar that is 100 % by definition.
-  2. **A2's budget was spent by crossings, not losses**: §5.3 defines A2 as turns *lost*
-     to a drop, but it was fed every turn that touched a fault, answered or not.
-
-Together they made the two bars trade failures run to run, which reads like noise.
-Every test here fails on the pre-fix tree.
+The deep-tier soak gate failed ~half its runs on docs-only diffs, from two values inferred
+instead of observed: A1 sampled `sup.connected` only at a turn's endpoints (a restart
+wholly inside the wait was invisible and charged to a 100 % bar), and A2's budget was spent
+by turns that CROSSED a fault rather than turns LOST to one. Every test fails pre-fix.
 """
 import sys
 import threading
@@ -23,10 +15,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import soak  # noqa: E402
 
-
-# --------------------------------------------------------------------------- #
-# 1. The window record itself
-# --------------------------------------------------------------------------- #
 
 def test_a_fault_wholly_inside_a_turn_is_seen():
     """THE DEFECT: both endpoint samples say "up", because the fault opened after the
@@ -71,10 +59,6 @@ def test_windows_are_recorded_from_more_than_one_thread():
         t.join()
     assert o.count() == 8
 
-
-# --------------------------------------------------------------------------- #
-# 2. How a turn is filed
-# --------------------------------------------------------------------------- #
 
 class FakeClient:
     def publish(self, *a, **k):
@@ -162,10 +146,6 @@ def test_the_endpoint_samples_still_catch_an_unscheduled_outage():
     assert (d.turns_down, d.turns_down_lost) == (1, 1)
 
 
-# --------------------------------------------------------------------------- #
-# 3. What the bars then read
-# --------------------------------------------------------------------------- #
-
 def _result(**turns):
     """A whole-run result with every bar but A1/A2 graded "not exercised" rather than
     passing — a fixture that made ten bars green would hide a failure."""
@@ -192,29 +172,18 @@ def _bar(bars, name):
     return next(b for b in bars if b[0] == name)
 
 
-def test_a2_is_green_when_many_turns_crossed_and_none_were_lost():
-    """The exact run this gate kept failing: turns crossed a window and were all answered.
-    Budget is 2 robots x (4 + 2) = 12; 40 crossings is far past it and must not matter."""
-    bars = soak.grade(_result(up_ok=900, during_outage=40, lost_during_outage=0))
-    assert _bar(bars, "A2")[3] is True
-
-
-def test_a2_still_fails_when_turns_are_actually_lost():
-    """…and the budget is real: 13 losses against a budget of 12 is red."""
-    bars = soak.grade(_result(up_ok=900, during_outage=40, lost_during_outage=13))
-    assert _bar(bars, "A2")[3] is False
-
-
-def test_a2_reports_both_numbers_so_the_line_can_be_read():
-    """Both numbers, or the line hides the distinction this file is about."""
-    measured = _bar(soak.grade(_result(up_ok=900, during_outage=40,
-                                       lost_during_outage=3)), "A2")[2]
-    assert "3 lost of 40" in measured
+def test_a2_spends_its_budget_on_losses_not_crossings():
+    """Budget = 2 robots x (4 + 2 restarts) = 12. Forty turns crossing a window and all
+    answered is green (the run this gate kept failing); 13 LOST is red; the line says both."""
+    assert _bar(soak.grade(_result(up_ok=900, during_outage=40)), "A2")[3] is True
+    assert _bar(soak.grade(_result(up_ok=900, during_outage=40, lost_during_outage=13)),
+                "A2")[3] is False
+    assert "3 lost of 40" in _bar(soak.grade(_result(up_ok=900, during_outage=40,
+                                                      lost_during_outage=3)), "A2")[2]
 
 
 def test_a2_still_fails_when_a_loss_was_never_recorded():
-    """§5.3's real bar, untouched: *an unrecorded loss is a failure even if the count is
-    0*. Five restarts, four disconnect rows → red however few turns were lost."""
+    """§5.3: five restarts but four disconnect rows is red however few turns were lost."""
     r = _result(up_ok=900, during_outage=0, lost_during_outage=0)
     r["broker_restarts"] = 5
     assert _bar(soak.grade(r), "A2")[3] is False

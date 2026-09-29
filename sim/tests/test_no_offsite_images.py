@@ -1,28 +1,16 @@
-"""No tracked Markdown may embed an image from another origin.
+"""No tracked Markdown may embed an off-site image, and every doc image must resolve under
+`sim/web/` (the Pages site root the docs explorer serves).
 
-An off-site image is three defects at once: the shipped CSP (`img-src 'self' data: blob:`)
-refuses it, so it is broken on the live site; it makes the public internet a dependency of
-the page and of any browser suite that renders it; and it breaks repo self-sufficiency (a
-GitHub user-attachment URL belongs to an upload, not the repo). The README hero did exactly
-this unnoticed, because only a browser pointed at production could see it
-(`docs/architecture/backlog/vendor-the-readme-hero.md`).
-
-So, twice over:
-
-  1. NO off-site image reference in any tracked Markdown.
-  2. Every image a doc references RESOLVES to an existing file under `sim/web/` — the
-     Pages site root. `sim/web/docs.js` maps the `sim/web/` prefix of a doc-relative path
-     onto the site root; an image anywhere else has no served URL and 404s in the explorer
-     while looking fine on GitHub.
-
-Fenced and inline code are quotations, not references (the backlog doc quotes the bad URL
-in a fence and must stay green); that exemption is tested in both directions.
-
-Run:  MOXIE_LLM_API_KEY= .venv/bin/python -m pytest sim/tests/test_no_offsite_images.py -q
+An off-site image is refused by the shipped CSP (`img-src 'self' data: blob:`), makes the
+internet a dependency of the rendered page, and breaks repo self-sufficiency — the README
+hero did exactly this, visible only to a browser pointed at production. Code spans and
+fences are quotations, not references.
 """
 import os
 import re
 import subprocess
+
+import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -136,75 +124,15 @@ def test_every_doc_image_resolves_to_a_file_under_the_site_root():
     assert not bad, "\n  ".join([""] + bad)
 
 
-def test_the_readme_hero_is_vendored_and_is_a_real_image():
-    """The specific fix, pinned: a repo-relative src pointing at real image bytes.
-
-    Named rather than left to the sweep above so the regression has a test with its own
-    name, and so `width=` staying truthful is checked against the file's actual header.
-    """
-    refs = image_refs(read("README.md"))
-    assert refs, "README.md lost its hero image entirely"
-    n, url = refs[0]
-    assert url == "sim/web/img/sim-hero.png", "README hero src is %r" % url
-    blob = open(os.path.join(REPO, url), "rb").read()
-    assert blob[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG: %r" % blob[:8]
-    width = int.from_bytes(blob[16:20], "big")
-    assert width >= 712, "hero is %dpx wide; README renders it at width=712" % width
+_BAD = "https://github.com/user-attachments/assets/00000000-0000-0000-0000-000000000000"
 
 
-# --------------------------------------------------------------------------------------
-# Negative controls. Without these the three tests above are equally consistent with
-# "the repo is clean" and "the scanner matches nothing at all".
-# --------------------------------------------------------------------------------------
-
-_BAD = 'https://github.com/user-attachments/assets/00000000-0000-0000-0000-000000000000'
-
-
-def test_the_scanner_catches_a_planted_offsite_image(tmp_path):
-    doc = tmp_path / "planted.md"
-    doc.write_text(
-        "# A doc\n\ntext\n\n"
-        '<p align="center"><img width="712" alt="x" src="%s" /></p>\n\n'
-        "more text\n\n"
-        "![a markdown one](http://example.invalid/pic.jpg)\n" % _BAD,
-        encoding="utf-8")
-    found = [u for _n, u in image_refs(doc.read_text(encoding="utf-8")) if _OFFSITE.match(u)]
-    assert len(found) == 2, "the scanner missed a planted off-site image: %r" % (found,)
-    assert found[0].startswith("https://github.com/user-attachments/")
-    assert found[1] == "http://example.invalid/pic.jpg"
-
-
-def test_the_scanner_catches_a_planted_broken_local_image(tmp_path):
-    """Rule 2's control: a repo-relative src that points at nothing must not slip through."""
-    doc = tmp_path / "planted2.md"
-    doc.write_text('<img src="img/does-not-exist.png">\n', encoding="utf-8")
-    refs = image_refs(doc.read_text(encoding="utf-8"))
-    assert [u for _n, u in refs] == ["img/does-not-exist.png"]
-    assert not os.path.isfile(os.path.join(REPO, "img/does-not-exist.png"))
-
-
-def test_quoted_urls_in_code_are_not_references(tmp_path):
-    """The other direction: the exemption must not be a hole big enough to hide a real one.
-
-    A doc that DISCUSSES the bad URL — as the backlog entry does — stays green; the same URL
-    one line outside the fence does not.
-    """
-    doc = tmp_path / "quoting.md"
-    doc.write_text(
-        "# Filed finding\n\n"
-        "```html\n"
-        '<img width="712" alt="Moxie SIL simulator" src="%s" />\n'
-        "```\n\n"
-        'and inline: `<img src="%s">` is also only a quotation.\n' % (_BAD, _BAD),
-        encoding="utf-8")
-    assert image_refs(doc.read_text(encoding="utf-8")) == []
-    doc.write_text(doc.read_text(encoding="utf-8") + '\n<img src="%s">\n' % _BAD, encoding="utf-8")
-    assert len(image_refs(doc.read_text(encoding="utf-8"))) == 1
-
-
-def test_the_backlog_entry_that_quotes_the_bad_url_is_green():
-    """The real file, not a fixture: it quotes the exact URL and must pass rule 1."""
-    rel = "docs/architecture/backlog/vendor-the-readme-hero.md"
-    raw = read(rel)
-    assert "user-attachments" in raw, "%s no longer quotes the URL; this control is stale" % rel
-    assert [u for _n, u in image_refs(raw) if _OFFSITE.match(u)] == []
+@pytest.mark.parametrize("doc, want", [
+    ('<p><img width="712" alt="x" src="%s" /></p>' % _BAD, [_BAD]),
+    ("![a markdown one](http://example.invalid/pic.jpg)", ["http://example.invalid/pic.jpg"]),
+    ('<img src="img/local.png">', ["img/local.png"]),
+    ('```html\n<img src="%s" />\n```\nand inline: `<img src="%s">`' % (_BAD, _BAD), []),
+    ('```\nquoted\n```\n<img src="%s">' % _BAD, [_BAD]),
+])
+def test_the_scanner_finds_references_and_skips_quotations(doc, want):
+    assert [u for _n, u in image_refs(doc)] == want

@@ -1,60 +1,22 @@
 #!/usr/bin/env python3
 """First-audio latency A/B across `MOXIE_EXPRESSIVE` — the real experiment, not a bench.
 
-`backlog/expressiveness.md` §2.7 P1 criterion (f) reports the planner's cost as a
-**bench measurement of the seam**: p95 0.25 ms / 0.56 ms against the floor's 0.15 / 0.29,
-measured by calling `perform()` in a loop. The author qualified it in the acceptance row
-itself — *"a bench measurement of the seam, not a re-run of the first-audio experiment"* —
-and that qualification is the reason this file exists. The number a child feels is the one
-PR #15 measured on the wire: **first words at 1.52 s, whole answer at 4.38 s**, timed from
-the robot's own `events/remote-chat` publish to the `commands/remote_chat` that carries the
-first sentence.
+expressiveness.md §2.7 P1 (f) reports the planner's cost as a bench of the seam; the number
+a child feels is PR #15's on-the-wire one (first words 1.52 s, whole answer 4.38 s). This
+re-runs THAT with the planner in the loop: a real broker, `mqtt/run.py` as its own process
+(one boot per arm), a protocol-faithful robot, and per turn from the robot's side:
+`t_words` (first non-empty `commands/remote_chat`), `t_audio` (first `commands/tts` with
+audio), `t_done` (the closing chunk), `chunks`.
 
-So this re-runs *that* experiment with the planner in the loop. It boots the real stack
-(`helpers_stack.Stack`: a real broker, `mqtt/run.py` as its own process), connects a
-protocol-faithful robot, and for each turn records — from the robot's side, which is the
-only side a child's latency is defined on:
+`--brain stub` streams a FIXED answer at a fixed token rate — free, high N, resolves the
+seam; `--brain live` uses the configured gateway (one completion per turn) and can only
+bound the cost against the gateway's variance. `MOXIE_TTS=tone` throughout, so `t_audio`
+measures our pipeline, not a voice provider's queue.
 
-    t_words   first `commands/remote_chat` carrying non-empty output.text
-    t_audio   first `commands/tts` carrying audio                     ← "first audio"
-    t_done    the closing chunk (`is_completed`), i.e. the whole answer
-    chunks    how many `remote_chat` publishes the turn produced
+    sim/tools/first_audio_ab.py --brain stub --turns 12 --mode planner   # and --mode floor
+    sim/tools/first_audio_ab.py --brain live --turns 2 --mode planner    # spends
 
-Two arms, identical in every other variable: `MOXIE_EXPRESSIVE=planner` and
-`MOXIE_EXPRESSIVE=floor`. One supervisor boot per arm — the mode is read per call by
-`markup.perform`, but an appliance is configured once, so an arm is a process.
-
-**Two brains, and both are needed.**
-
-`--brain live` points `MOXIE_APP=llm` at the configured gateway: the honest end-to-end
-number, and the only one comparable to 1.52 s. It also costs one chat completion per turn
-and its variance is the gateway's, not ours — on a shared endpoint the turn-to-turn spread
-is hundreds of milliseconds, which is three orders of magnitude above anything the seam
-can contribute. A two-turn A/B against that noise can only ever bound the planner's cost;
-it cannot resolve it.
-
-`--brain stub` stands a local OpenAI-compatible endpoint that streams a **fixed** answer
-with a **fixed** inter-token delay. Same runtime, same broker, same publish path, same
-`_stage` call on every chunk — with the one variable that was drowning the measurement
-held still. That is where an N large enough to see 0.5 ms actually lives, and it is free.
-
-The verdict wants both: the stub arm says what the seam costs, the live arm says whether
-that cost is visible in the thing the child experiences.
-
-`MOXIE_TTS=tone` throughout: the built-in synthesizer is local, zero-dependency and
-identical in both arms, so `t_audio` measures *our* pipeline rather than a voice
-provider's queue. A gateway voice would add one `/audio/speech` round trip per chunk to
-both arms equally — and to the budget, per chunk.
-
-    # free, high N, resolves the seam
-    sim/tools/first_audio_ab.py --brain stub --turns 12 --mode planner
-    sim/tools/first_audio_ab.py --brain stub --turns 12 --mode floor
-
-    # one chat completion per turn — the real experiment
-    sim/tools/first_audio_ab.py --brain live --turns 2 --mode planner
-
-Prints a JSON summary on the last line so a harness can read it; everything above it is
-for a human.
+Prints a JSON summary on the last line for a harness.
 """
 from __future__ import annotations
 
