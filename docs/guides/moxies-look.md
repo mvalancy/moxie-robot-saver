@@ -1,7 +1,7 @@
 # 🎨 Moxie's look — letting your child style the face
 
 > For parents. No code, no protocol. The engineering detail is in
-> [`config-and-telemetry-contract.md` → Appearance](../architecture/config-and-telemetry-contract.md#-appearance-the-childs-chosen-face).
+> [`config-and-telemetry-contract.md` → Appearance](../architecture/config-and-telemetry-contract.md#appearance-the-childs-chosen-face).
 
 Moxie's face is not a picture. It is **layers** — a base head colour, eyes, brows, a mouth,
 and optional extras like hair or glasses — stacked and drawn fresh every frame. Which
@@ -116,4 +116,4 @@ tells us different.
 If you have a working Moxie and try this, we would genuinely like to know what happened.
 
 ---
-📖 [Guides index](README.md) · [Permitting a robot](permitting-a-robot.md) · [The config contract (engineering detail)](../architecture/config-and-telemetry-contract.md#-appearance-the-childs-chosen-face) · [Back to top](../../README.md)
+📖 [Guides index](README.md) · [Permitting a robot](permitting-a-robot.md) · [The config contract (engineering detail)](../architecture/config-and-telemetry-contract.md#appearance-the-childs-chosen-face) · [Back to top](../../README.md)
