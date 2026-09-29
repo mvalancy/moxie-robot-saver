@@ -49,6 +49,18 @@ async function layoutSettled(page, sels = ["#chat-dock", "#panel"], timeout = 30
 /* EYES: a 404'd or throwing page script fails a block instead of timing out silently.
  * The optional sidecar probes (127.0.0.1 is LOCAL to env.js) are refused and COUNTED, so
  * every machine sees the same page whatever listens on :8081/:8082. */
+/* The bubble's three placements (moxie/bubble.js), judged from ONE frame stash `e`:
+ * `above` / `chest` are centred on an anchor and must not straddle the face line `head.y`;
+ * `side` is placed by the edge NEAREST her and must stay outside her head's silhouette. */
+function bubbleCovers(e) {
+  if (e.mode === "side")
+    return e.side === "r" ? e.bubble.left < e.face.x + e.face.r : e.bubble.right > e.face.x - e.face.r;
+  return e.bubble.top <= e.head.y && e.bubble.bottom >= e.head.y;
+}
+function bubbleAnchorErr(e) {
+  if (e.mode === "side") return Math.abs((e.side === "r" ? e.bubble.left : e.bubble.right) - e.anchorX);
+  return Math.abs(e.bubble.cx - (e.above ? e.head.x : e.chest.x));
+}
 const EYES = pageEyes(eq);
 const eyes = EYES.check;
 
@@ -323,21 +335,29 @@ async function dockGeometry(page) {
   eq(a.stamped, true, "…and the page recorded the frame it placed the bubble from");
   eq(a.frozen, false, "…a CURRENT frame, not a stash frozen behind a hidden bubble");
 
-  // At her chest it anchors on the CHEST, a few px off the head off-axis; 8 px covers it.
-  ok(Math.abs(e.bubble.cx - e.head.x) <= 8,
-     `…horizontally centred on her head (bubble ${e.bubble.cx.toFixed(1)} vs head ${e.head.x.toFixed(1)})`);
-  const anchorX = e.above ? e.head.x : e.chest.x;
-  ok(Math.abs(e.bubble.cx - anchorX) <= 0.5,
-     `…and centred on the anchor it placed from (bubble ${e.bubble.cx.toFixed(1)} vs anchor ${anchorX.toFixed(1)})`);
+  /* 1280x900 with the rail open has no headroom but a wide stage: BESIDE her head, which
+   * is the whole point of the side placement (the chest leader drew a line through her
+   * mouth here). */
+  eq(e.mode, "side", `a wide stage with no headroom puts the bubble BESIDE her head (${e.mode})`);
+  if (e.mode === "side") {
+    const tailY = e.bubble.top + 22;
+    ok(Math.abs(tailY - e.face.y) <= 1,
+       `…with its tail at her eyes (tail ${tailY.toFixed(1)} vs face ${e.face.y.toFixed(1)})`);
+    ok(e.face.r > 30, `…measured against her real on-screen head width (r ${e.face.r.toFixed(1)}px)`);
+  } else {
+    // At her chest it anchors on the CHEST, a few px off the head off-axis; 8 px covers it.
+    ok(Math.abs(e.bubble.cx - e.head.x) <= 8,
+       `…horizontally centred on her head (bubble ${e.bubble.cx.toFixed(1)} vs head ${e.head.x.toFixed(1)})`);
+  }
+  ok(bubbleAnchorErr(e) <= 0.5,
+     `…and placed on the anchor it computed (${e.mode}, off by ${bubbleAnchorErr(e).toFixed(2)}px)`);
   // CSS honoured the arithmetic: `--bx`/`--by` are `.toFixed(1)`, so 0.1 px is the budget.
-  ok(Math.abs(e.bubble.top - e.box.top) <= 0.1 &&
-     Math.abs(e.bubble.cx - (e.box.left + e.box.width / 2)) <= 0.1,
+  ok(Math.abs(e.bubble.top - e.box.top) <= 0.1,
      `…and CSS put the box where the anchor computed it (top ${e.bubble.top.toFixed(2)} vs ${e.box.top.toFixed(2)})`);
-  /* THE INVARIANT: it never covers her face — above her head where there is room, at her
-   * chest on a leader where there is not. */
-  const overlapsHead = e.bubble.top <= e.head.y && e.bubble.bottom >= e.head.y;
-  eq(overlapsHead, false,
-     `the bubble never covers her face (head ${e.head.y.toFixed(1)}, bubble ${e.bubble.top.toFixed(1)}..${e.bubble.bottom.toFixed(1)})`);
+  /* THE INVARIANT: it never covers her face — above her head where there is room, beside
+   * it on a wide stage, at her chest on a leader where there is neither. */
+  eq(bubbleCovers(e), false,
+     `the bubble never covers her face (${e.mode}; head ${e.head.y.toFixed(1)}, bubble ${e.bubble.top.toFixed(1)}..${e.bubble.bottom.toFixed(1)} x ${e.bubble.left.toFixed(0)}..${e.bubble.right.toFixed(0)})`);
   if (e.leader > 0) {
     ok(e.bubble.top > e.head.y,
        `…at her chest, below the head (bubble top ${e.bubble.top.toFixed(1)} vs head ${e.head.y.toFixed(1)})`);
@@ -355,7 +375,7 @@ async function dockGeometry(page) {
        `…and the DRAWN leader rises from the box top to her head (top ${drawn.top}, height ${drawn.h})`);
     ok(drawn.bl === "0px" && drawn.bt === "0px",
        `…as a plain line, not the corner tick stretched (border-left ${drawn.bl}, border-top ${drawn.bt})`);
-  } else {
+  } else if (e.mode === "above") {
     ok(e.bubble.bottom < e.head.y,
        `…above the head (bubble bottom ${e.bubble.bottom.toFixed(1)} vs head ${e.head.y.toFixed(1)})`);
     ok(e.head.y - e.bubble.bottom < 90,
@@ -390,10 +410,13 @@ async function dockGeometry(page) {
   ok(b.seq > a.seq, `the anchor was re-placed after the camera moved (frame ${a.seq} -> ${b.seq})`);
   ok(Math.abs(be.head.x - e.head.x) > 40,
      `orbiting the camera really moves her head on screen (${e.head.x.toFixed(0)} -> ${be.head.x.toFixed(0)})`);
-  ok(Math.abs(be.bubble.cx - be.head.x) <= 8,
-     `…and the bubble went with it (bubble ${be.bubble.cx.toFixed(1)} vs head ${be.head.x.toFixed(1)})`);
-  ok(Math.abs(be.bubble.cx - e.bubble.cx) > 40,
-     `…which the old viewport-pinned bubble could not have done (${e.bubble.cx.toFixed(0)} -> ${be.bubble.cx.toFixed(0)})`);
+  ok(bubbleAnchorErr(be) <= 0.5 && !bubbleCovers(be),
+     `…and the bubble went with it (${be.mode}, anchor off by ${bubbleAnchorErr(be).toFixed(2)}px)`);
+  /* The rendered BOX moved (either edge: a side bubble that swapped sides can end with its
+   * near edge exactly where it started, while the box itself jumped a whole width). */
+  const boxMoved = Math.max(Math.abs(be.bubble.left - e.bubble.left), Math.abs(be.bubble.right - e.bubble.right));
+  ok(boxMoved > 40,
+     `…which the old viewport-pinned bubble could not have done (moved ${boxMoved.toFixed(0)}px; ${e.mode}/${e.side} -> ${be.mode}/${be.side})`);
 
   /* ---- AND THE READOUT IS HONEST ABOUT BEING STALE ------------------------ *
    * Hidden, the anchor stops updating, so the readout must SAY it is frozen. */
@@ -446,8 +469,13 @@ async function dockGeometry(page) {
         rows.push({
           leader: e.leader,
           gapErr: Math.abs(e.leader - (e.bubble.top - e.head.y)),
-          anchorErr: Math.abs(e.bubble.cx - (e.above ? e.head.x : e.chest.x)),
-          covers: e.bubble.top <= e.head.y && e.bubble.bottom >= e.head.y,
+          anchorErr: e.mode === "side"
+            ? Math.abs((e.side === "r" ? e.bubble.left : e.bubble.right) - e.anchorX)
+            : Math.abs(e.bubble.cx - (e.above ? e.head.x : e.chest.x)),
+          covers: e.mode === "side"
+            ? (e.side === "r" ? e.bubble.left < e.face.x + e.face.r : e.bubble.right > e.face.x - e.face.r)
+            : e.bubble.top <= e.head.y && e.bubble.bottom >= e.head.y,
+          mode: e.mode,
           headMoved: e.head.y,
         });
       }
@@ -476,9 +504,11 @@ async function dockGeometry(page) {
        `${stalled}/16 moved her <6px, so ${
          stalled > 8 ? "this runner never gave her the frames to move in" : "the drive itself did not swing her"}`})`);
   const leadered = m.filter((r) => r.leader > 0);
-  ok(leadered.length >= 20, `…on a leader for most of it (${leadered.length} frames)`);
+  const beside = m.filter((r) => r.mode === "side");
+  ok(leadered.length + beside.length >= 20,
+     `…beside her head or on a leader for most of it (${beside.length} beside, ${leadered.length} leadered)`);
 
-  const worstGap = Math.max(...leadered.map((r) => r.gapErr));
+  const worstGap = leadered.length ? Math.max(...leadered.map((r) => r.gapErr)) : 0;
   ok(worstGap <= 0.2,
      `THE LEADER SPANS THE GAP IN EVERY FRAME, however fast she moves (worst ${worstGap.toFixed(2)}px)`);
   const worstAnchor = Math.max(...m.map((r) => r.anchorErr));
@@ -514,7 +544,7 @@ for (const [label, w, h] of [
   eq(a.frozen, false, `${label}: …and its anchor readout is a current frame, not a frozen one`);
   /* THE SAFETY-CRITICAL ONE, judged on the head THIS placement projected (one instant). */
   const ex = a.exact;
-  const covers = ex.bubble.top <= ex.head.y && ex.bubble.bottom >= ex.head.y;
+  const covers = bubbleCovers(ex);
   eq(covers, false,
      `${label}: THE BUBBLE DOES NOT COVER HER FACE (head ${ex.head.y.toFixed(1)}, bubble ${ex.bubble.top.toFixed(1)}..${ex.bubble.bottom.toFixed(1)})`);
   ok(a.bubble.top >= 0 && a.bubble.bottom <= h,

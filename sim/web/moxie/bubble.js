@@ -2,10 +2,13 @@
 // onto her head every frame — not a THREE.Sprite (pixels would drop it from the a11y
 // tree) and not CSS3D (second render pass, and it would rotate the text with the camera).
 //
-// Placement: ABOVE her head when the whole box fits under the top of the stage, otherwise
-// hung at her CHEST on a leader line back to her head. MIN_HEAD_GAP is applied after every
-// clamp, so no camera, zoom or viewport can put the box over her face. Behind the camera
-// `project()` returns mirrored coordinates, so the bubble fades ('off-stage') instead.
+// Placement, first that fits: ABOVE her head; BESIDE it (right, else left — a wide stage
+// with no headroom, i.e. most desktops), tail pointing at her eyes; else hung at her
+// CHEST on a leader line back to her head. The side box is positioned by the edge NEAREST
+// her, so as the typewriter widens it the box grows away from her face, never into it.
+// MIN_HEAD_GAP is applied after every clamp, so no camera, zoom or viewport can put the
+// chest box over her face. Behind the camera `project()` returns mirrored coordinates, so
+// the bubble fades ('off-stage') instead.
 import * as THREE from 'three';
 import { speech } from './face.js';
 
@@ -15,6 +18,10 @@ const CHEST_DROP = 0.62;         // below head centre — the top of the chest b
 const MIN_HEAD_GAP = 26;         // px: the bubble's top never comes closer to her head
 const BUBBLE_METRICS_MS = 250;   // layout reads are cached (no forced layout per frame)
 const M = 8;                     // stage margin, px
+const HEAD_HALF_W = 0.66;        // head mesh half-width (moxie.js HEAD_R.x), local units
+const SIDE_GAP = 18;             // px between the side of her head and the side box
+const SIDE_MIN_W = 190;          // px: narrower than this and a side box is a word column
+const SIDE_TAIL_Y = 22;          // px from the box top to the tail's centre (css/hud.css)
 
 const bubbleEl = document.getElementById('bubble');
 const bubbleText = document.getElementById('bubble-text');
@@ -22,8 +29,9 @@ const reduceMotion = window.matchMedia &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let bubbleTimer = null, typeTimer = null;
-let stage = null;
+let stage = null, lastSide = 'r';
 const headP = new THREE.Vector3(), chestP = new THREE.Vector3(), topP = new THREE.Vector3();
+const faceP = new THREE.Vector3(), edgeP = new THREE.Vector3(), rightV = new THREE.Vector3();
 const metrics = { at: -1e9, sx: 0, sy: 0, sw: 0, sh: 0, bw: 0, bh: 0 };
 // The frame stash: every number one placement used, from ONE instant, in viewport px.
 // Re-projecting the head at read time would compare a box placed at frame N with a head
@@ -71,16 +79,17 @@ export function updateBubbleAnchor(head, camera) {
   if (stage === null) stage = document.getElementById('stage') || false;
   if (!bubbleEl || !stage || bubbleEl.classList.contains('hidden')) return;
 
-  head.getWorldPosition(headP);
-  chestP.copy(headP);
-  topP.copy(headP);
-  headP.y -= HEAD_ANCHOR_DROP;
-  chestP.y -= CHEST_DROP;
-  topP.y += HEAD_TOP_RISE;
+  head.getWorldPosition(faceP);
+  headP.copy(faceP); headP.y -= HEAD_ANCHOR_DROP;
+  chestP.copy(faceP); chestP.y -= CHEST_DROP;
+  topP.copy(faceP); topP.y += HEAD_TOP_RISE;
+  // her screen-space half-width: the head centre pushed along the camera's own right axis
+  rightV.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+  const halfW = HEAD_HALF_W * head.getWorldScale(edgeP).x;
+  edgeP.copy(faceP).addScaledVector(rightV, halfW);
 
-  const hv = headP.clone().project(camera);
-  const cv = chestP.clone().project(camera);
-  const tv = topP.clone().project(camera);
+  const hv = headP.project(camera), cv = chestP.project(camera), tv = topP.project(camera);
+  const fv = faceP.project(camera), ev = edgeP.project(camera);
   if (hv.z > 1 || cv.z > 1 || tv.z > 1) { bubbleEl.classList.add('off-stage'); return; }
   bubbleEl.classList.remove('off-stage');
 
@@ -100,41 +109,63 @@ export function updateBubbleAnchor(head, camera) {
   const headVX = toX(hv), headVY = toY(hv);
   const chestVX = toX(cv), chestVY = toY(cv);
   const crownVX = toX(tv), crownVY = toY(tv);
+  const faceVX = toX(fv), faceVY = toY(fv), faceR = Math.abs(toX(ev) - faceVX);
   const headX = headVX - st.sx, headY = headVY - st.sy;
   const chestX = chestVX - st.sx, chestY = chestVY - st.sy;
   const crownY = crownVY - st.sy;
+  const faceX = faceVX - st.sx, faceY = faceVY - st.sy;
 
-  const above = (crownY - bh - M) >= M;
-  bubbleEl.classList.toggle('leadered', !above);
-
-  const anchorX = above ? headX : chestX;
-  const x = Math.min(Math.max(anchorX, bw / 2 + M), Math.max(bw / 2 + M, st.sw - bw / 2 - M));
-
-  let y, leader;
-  if (above) {
-    y = Math.min(Math.max(crownY - bh, M), Math.max(M, st.sh - bh - M));
-    leader = 0;
-    bubbleEl.style.setProperty('--leader', '0px');
-  } else {
-    // keep the box on screen first, then apply the face rule LAST so it always wins
-    y = Math.min(Math.max(chestY, M), Math.max(M, st.sh - bh - M));
-    y = Math.max(y, headY + MIN_HEAD_GAP);
-    leader = Math.max(0, y - headY);
-    bubbleEl.style.setProperty('--leader', leader.toFixed(1) + 'px');
+  // Which placement. Side prefers the side it used last, so a sway cannot flip it.
+  let mode = 'chest';
+  if ((crownY - bh - M) >= M) mode = 'above';
+  else {
+    const room = { r: st.sw - (faceX + faceR + SIDE_GAP) - M, l: faceX - faceR - SIDE_GAP - M };
+    const other = lastSide === 'r' ? 'l' : 'r';
+    const side = room[lastSide] >= SIDE_MIN_W ? lastSide : room[other] >= SIDE_MIN_W ? other : null;
+    if (side && faceY > 0 && faceY < st.sh) { mode = 'side'; lastSide = side; }
   }
+  bubbleEl.classList.toggle('leadered', mode === 'chest');
+  bubbleEl.classList.toggle('side', mode === 'side');
+  bubbleEl.classList.toggle('side-l', mode === 'side' && lastSide === 'l');
 
+  let x, y, leader = 0, left;
+  if (mode === 'side') {
+    // x is the edge nearest her; --bmax keeps the far edge on the stage
+    const r = lastSide === 'r';
+    x = r ? faceX + faceR + SIDE_GAP : faceX - faceR - SIDE_GAP;
+    y = Math.min(Math.max(faceY - SIDE_TAIL_Y, M), Math.max(M, st.sh - bh - M));
+    const room = r ? st.sw - x - M : x - M;
+    bubbleEl.style.setProperty('--bmax', Math.floor(room) + 'px');
+    left = r ? x : x - bw;
+  } else {
+    const anchorX = mode === 'above' ? headX : chestX;
+    x = Math.min(Math.max(anchorX, bw / 2 + M), Math.max(bw / 2 + M, st.sw - bw / 2 - M));
+    if (mode === 'above') {
+      y = Math.min(Math.max(crownY - bh, M), Math.max(M, st.sh - bh - M));
+    } else {
+      // keep the box on screen first, then apply the face rule LAST so it always wins
+      y = Math.min(Math.max(chestY, M), Math.max(M, st.sh - bh - M));
+      y = Math.max(y, headY + MIN_HEAD_GAP);
+      leader = Math.max(0, y - headY);
+    }
+    left = x - bw / 2;
+  }
+  bubbleEl.style.setProperty('--leader', leader.toFixed(1) + 'px');
   bubbleEl.style.setProperty('--bx', x.toFixed(1) + 'px');
   bubbleEl.style.setProperty('--by', y.toFixed(1) + 'px');
   bubbleEl.classList.add('anchored');
 
   // `leader` unrounded on purpose: `--leader` is quantised to 0.1 px
   frame = {
-    at: now, seq: ++frameSeq, above,
+    at: now, seq: ++frameSeq, above: mode === 'above', mode,
+    side: mode === 'side' ? lastSide : null,
     head: { x: headVX, y: headVY },
     crown: { x: crownVX, y: crownVY },
     chest: { x: chestVX, y: chestVY },
+    face: { x: faceVX, y: faceVY, r: faceR },
+    anchorX: st.sx + x,
     leader,
-    box: { left: st.sx + x - bw / 2, top: st.sy + y, width: bw, height: bh },
+    box: { left: st.sx + left, top: st.sy + y, width: bw, height: bh },
   };
 }
 
@@ -162,7 +193,8 @@ window.__bubbleAnchor = function () {
               left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top) },
     // unrounded, for assertions whose honest residual is a tenth of a pixel
     exact: f ? {
-      leader: f.leader, above: f.above,
+      leader: f.leader, above: f.above, mode: f.mode, side: f.side, anchorX: f.anchorX,
+      face: f.face,
       head: { x: f.head.x, y: f.head.y },
       crown: { x: f.crown.x, y: f.crown.y },
       chest: { x: f.chest.x, y: f.chest.y },

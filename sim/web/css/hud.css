@@ -394,6 +394,30 @@ body[data-bus="wait"] #link-label { color: var(--cyan); }
   background: linear-gradient(to bottom, var(--glow-30), rgba(14, 14, 20, 0.88));
   pointer-events: none;
 }
+/* BESIDE HER HEAD (no headroom, but a wide stage): `--bx` is the edge NEAREST her, so the
+   typewriter widens the box away from her face; `--bmax` is the room to the stage edge.
+   The tail sits SIDE_TAIL_Y (22 px) below the top, which bubble.js aims at her eyes. */
+#bubble.anchored.side {
+  transform: none;
+  max-width: min(340px, var(--bmax, 340px));
+}
+#bubble.anchored.side.side-l { transform: translateX(-100%); }
+#bubble.anchored.side::after {
+  left: -7px;
+  top: 16px;
+  bottom: auto;
+  transform: rotate(45deg);
+  border: 0;
+  border-left: 1px solid var(--glow-30);
+  border-bottom: 1px solid var(--glow-30);
+}
+#bubble.anchored.side.side-l::after {
+  left: auto;
+  right: -7px;
+  border: 0;
+  border-right: 1px solid var(--glow-30);
+  border-top: 1px solid var(--glow-30);
+}
 /* Behind the camera: `project()` returns mirrored coordinates, so the bubble is faded out
    rather than drawn somewhere untrue. Not `display:none` — that would drop it from the
    accessibility tree mid-sentence, and its text is still the current utterance. */

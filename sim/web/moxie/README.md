@@ -8,7 +8,7 @@ ES modules imported by [`../moxie.js`](../moxie.js) (the entry point `sim.html` 
 - **`textures.js`** — canvas textures and the shared `roundedRectPath` / `heartPath` helpers.
 - **`face.js`** — expressions, the per-frame canvas face, icon badges, blink and easing.
 - **`liveness.js`** — additive idle micro-motion and gaze drift (never written back to motor state).
-- **`bubble.js`** — the speech bubble: typewriter, head/chest anchoring, `window.__bubbleAnchor`.
+- **`bubble.js`** — the speech bubble: typewriter, above/beside/chest anchoring, `window.__bubbleAnchor`.
 - **`stage.js`** — keeps her framed in the viewport the chat dock and rail leave free.
 - **`panel.js`** — the by-hand control panel.
 
