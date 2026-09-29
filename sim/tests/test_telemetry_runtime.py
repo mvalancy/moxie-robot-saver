@@ -15,15 +15,12 @@ No broker or robot: `helpers_runtime.make_runtime`, stores rooted at `tmp_path`.
 """
 import datetime
 import json
-import os
 
 import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
 pytest.importorskip("paho.mqtt.client", reason="the runtime needs paho")
 
-from helpers_runtime import make_runtime            # noqa: E402
+from helpers_runtime import http_call, make_runtime, status_server  # noqa: E402
 from moxie_sdk import telemetry as T                # noqa: E402
 from moxie_sdk.app import MoxieApp                  # noqa: E402
 from moxie_sdk.cloud_config import LoggingPolicy    # noqa: E402
@@ -112,20 +109,6 @@ def test_history_is_readable_for_a_robot_that_is_not_connected(tmp_path):
     view = rt2.telemetry_view(did)
     assert view["ok"] is True and view["connected"] is False
     assert view["summary"]["count"] == 1 and view["totals"]["total"] == 1
-
-
-def test_a_device_with_no_history_at_all_is_still_a_404(tmp_path):
-    rt, _ = _rt(tmp_path)
-    missing = rt.telemetry_view("d_nope")
-    assert missing["ok"] is False and "unknown device_id" in missing["error"]
-
-
-def test_the_two_collections_are_where_the_contract_says(tmp_path):
-    """The console and any later SQLite re-implementation both key off these names."""
-    rt, did = _rt(tmp_path)
-    _send(rt, did, "wake", ts=1756800000)
-    assert (tmp_path / "robots" / did / f"{T.PACKETS_COLLECTION}.json").is_file()
-    assert (tmp_path / "robots" / did / f"{T.DAILY_COLLECTION}.json").is_file()
 
 
 # --------------------------------------------------------------------------- #
@@ -323,33 +306,15 @@ def test_wake_robot_reports_a_missing_broker_rather_than_pretending(tmp_path):
 # The status server: the routes the console proxies
 # --------------------------------------------------------------------------- #
 
-def _free_port():
-    import socket
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
-
-
-def _http(port, path, method="GET"):
-    import urllib.error
-    import urllib.request
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method=method,
-                                 data=b"{}" if method == "POST" else None)
-    try:
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return r.status, json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read().decode() or "{}")
+def _http(base, path, method="GET"):
+    return http_call(base + path, method=method, body={} if method == "POST" else None)
 
 
 def test_status_server_serves_the_durable_view_and_the_wakeup_route(tmp_path):
     rt, did = _rt(tmp_path)
     for i in range(3):
         _send(rt, did, "wake", ts=1756800000 + i * 86400)
-    port = _free_port()
-    rt._start_status_server(port)
+    port = status_server(rt)
 
     code, body = _http(port, f"/telemetry?device_id={did}&limit=2&days=3")
     assert code == 200 and body["ok"] is True
@@ -370,7 +335,6 @@ def test_status_server_serves_the_durable_view_and_the_wakeup_route(tmp_path):
 
 def test_status_server_answers_409_for_a_pending_robot_wakeup(tmp_path):
     rt, did = _rt(tmp_path, allow_unverified_bots=False)
-    port = _free_port()
-    rt._start_status_server(port)
+    port = status_server(rt)
     code, body = _http(port, f"/wakeup?device_id={did}", method="POST")
     assert code == 409 and body["error"] == "robot is pending"

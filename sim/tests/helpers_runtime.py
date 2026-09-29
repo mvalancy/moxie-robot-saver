@@ -435,6 +435,16 @@ def http_json(url: str, *, method: str = "GET", body=None, timeout: float = 5.0)
         return json.loads(r.read().decode() or "{}")
 
 
+def http_call(url: str, *, method: str = "GET", body=None, timeout: float = 5.0):
+    """`http_json` for tests that assert refusals: `(status, decoded body)`, 4xx/5xx
+    included rather than raised."""
+    import urllib.error
+    try:
+        return 200, http_json(url, method=method, body=body, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode() or "{}")
+
+
 class _Msg:
     """paho's message object, as much of it as `_on_message` reads."""
 

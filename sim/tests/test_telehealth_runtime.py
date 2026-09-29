@@ -17,13 +17,11 @@ gate, safety classifier and markup floor. Pinned:
 Assumptions are flagged in `mqtt/moxie_sdk/telehealth.py`; not run on a physical robot.
 """
 import json
-import urllib.error
-import urllib.request
 
 import pytest
 
-from helpers_runtime import (CountingSynth, FakeClient, make_runtime,  # noqa: E402
-                             status_server)
+from helpers_runtime import (CountingSynth, FakeClient, http_call,  # noqa: E402
+                             make_runtime, status_server)
 from moxie_sdk import safety as safety_seam                           # noqa: E402
 from moxie_sdk import telehealth as th                                # noqa: E402
 from moxie_sdk import vocab                                           # noqa: E402
@@ -492,15 +490,9 @@ def served(rt):
 
 
 def _call(base, device_id, payload=None):
-    url = f"{base}/telehealth?device_id={device_id}"
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(url, data=data, method="POST" if data else "GET",
-                                 headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return json.loads(r.read().decode()), r.status
-    except urllib.error.HTTPError as e:
-        return json.loads(e.read().decode() or "{}"), e.code
+    code, body = http_call(f"{base}/telehealth?device_id={device_id}",
+                           method="POST" if payload is not None else "GET", body=payload)
+    return body, code
 
 
 def test_get_telehealth_serves_the_view(served):

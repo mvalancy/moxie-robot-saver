@@ -14,13 +14,12 @@ Hermetic: builders arrive through `set_brain_engines()`; HTTP goes through the r
 """
 import json
 import threading
-import urllib.error
 
 import pytest
 
 from helpers_runtime import fresh_pool  # noqa: E402
-from helpers_runtime import (drive_turn, http_json, make_runtime,     # noqa: E402
-                             status_server)
+from helpers_runtime import (drive_turn, http_call, http_json,        # noqa: E402
+                             make_runtime, status_server)
 from moxie_sdk import brains                                          # noqa: E402
 from moxie_sdk.app import MoxieApp                                    # noqa: E402
 from moxie_sdk.store import JsonStore                                 # noqa: E402
@@ -30,13 +29,10 @@ CONFIG_TOPIC = "/devices/{device_id}/config"
 
 
 def refused(url, body):
-    """A POST the status server rejects → `(status code, decoded body)`.
-
-    `http_json` raises `HTTPError` on 4xx by design; the refusal's BODY is the part that
-    matters here, because it is the sentence the console shows a parent."""
-    with pytest.raises(urllib.error.HTTPError) as exc:
-        http_json(url, method="POST", body=body)
-    return exc.value.code, json.loads(exc.value.read().decode() or "{}")
+    """A POST the status server rejects → `(status code, decoded body)`."""
+    code, out = http_call(url, method="POST", body=body)
+    assert code >= 400, out
+    return code, out
 
 
 class _Brain(MoxieApp):

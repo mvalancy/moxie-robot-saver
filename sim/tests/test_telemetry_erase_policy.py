@@ -21,7 +21,7 @@ import pytest  # noqa: E402
 
 pytest.importorskip("paho.mqtt.client", reason="the runtime needs paho")
 
-from helpers_runtime import http_json, make_runtime, status_server  # noqa: E402
+from helpers_runtime import http_call, make_runtime, status_server  # noqa: E402
 from moxie_sdk import telemetry as T                # noqa: E402
 from moxie_sdk.app import MoxieApp                  # noqa: E402
 from moxie_sdk.cloud_config import LoggingPolicy    # noqa: E402
@@ -87,13 +87,7 @@ def _set_policy(rt, device_id, policy):
 
 
 def _http(base, path, method="GET"):
-    """`(status, body)` — refusals included, since their code is what is asserted."""
-    import urllib.error
-    try:
-        return 200, http_json(base + path, method=method,
-                              body={} if method == "POST" else None)
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read().decode() or "{}")
+    return http_call(base + path, method=method, body={} if method == "POST" else None)
 
 
 # =========================================================================== #
