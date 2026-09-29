@@ -225,8 +225,22 @@ def test_cloud_tts_plays_and_animates_the_mouth(page, server):
 
 # --------------------------------------------------------------------------- #
 # SIL: PRESENCE — the badge and toggle wired in the real page (the bridge's event/greeting
-# logic is test_presence_bridge.mjs).
+# logic is test_presence_bridge.mjs, which no CI tier runs yet, so the greeting and the
+# comms-log exclusion stay pinned here).
 # --------------------------------------------------------------------------- #
+
+# Answer a face event the way the supervisor does, through the REAL bridge route.
+_ANSWER_FACE_EVENT = """
+({eventId, text}) => {
+  window.moxieBridge.route("/devices/d_sim/commands/remote_chat", JSON.stringify({
+    command: "remote_chat", result: "SUCCESS", backend: "router", event_id: eventId,
+    output: {text: text,
+             markup: '<mark name="cmd:playback-mood,data:{+mood+:1,+intensity+:1}"/>' + text},
+  }));
+  return window.moxieBridge.presenceStats();
+}
+"""
+
 
 def _badge(page):
     return page.evaluate(
@@ -255,4 +269,43 @@ def test_presence_badge_starts_unknown_and_follows_the_walk_in_toggle(page, serv
     stats = page.evaluate("() => window.moxieBridge.presenceStats()")
     assert stats["arrivals"] == 1 and stats["departures"] == 1, stats
     assert stats["events"] == ["eb-found-face", "eb-lost-target"], stats
+    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
+
+
+def test_a_child_walking_back_in_gets_a_greeting_the_page_records(page, server):
+    """The delight, end to end in the browser: away → back → the server answers THAT
+    event_id with a spoken line, and the page files it as a greeting rather than as an
+    ordinary reply to something the child said."""
+    _sim_ready(page, server)
+    page.evaluate("() => window.moxieBridge.faceEvent('lost')")
+    event_id = page.evaluate("() => window.moxieBridge.faceEvent('found')")
+    assert event_id.startswith("sim-face-"), event_id
+
+    hello = "Hey Sam, there you are! I missed you."
+    stats = page.evaluate(_ANSWER_FACE_EVENT, {"eventId": event_id, "text": hello})
+    assert stats["greetings"] == [hello], stats
+    assert stats["present"] is True and stats["arrivals"] == 1, stats
+    assert _badge(page)["state"] == "here"
+
+    # ...and a silent acknowledgement to a later event is NOT a greeting
+    quiet_id = page.evaluate("() => window.moxieBridge.faceEvent('lost')")
+    page.evaluate(
+        """(eventId) => window.moxieBridge.route("/devices/d_sim/commands/remote_chat",
+             JSON.stringify({command: "remote_chat", result: "NOREPLY_ACK",
+                             event_id: eventId, output: {text: "", markup: ""}}))""",
+        quiet_id)
+    assert page.evaluate("() => window.moxieBridge.presenceStats().greetings") == [hello]
+    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
+
+
+def test_a_vision_event_never_appears_in_the_comms_log(page, server):
+    """`eb-found-face` arrives in the `speech` slot, but it is Moxie's eye, not the
+    child's voice — a transcript row for it would be a lie about who spoke."""
+    _sim_ready(page, server)
+    page.evaluate("() => window.moxieBridge.faceEvent('found')")
+    page.evaluate("() => window.moxieBridge.faceEvent('lost')")
+    page.wait_for_function("() => window.moxieBridge.presenceStats().events.length === 2")
+    rows = page.evaluate(
+        """() => [...document.querySelectorAll('#transcript .turn')].map(r => r.textContent)""")
+    assert not any("eb-" in r for r in rows), rows
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
