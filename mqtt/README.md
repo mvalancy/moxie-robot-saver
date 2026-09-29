@@ -1,61 +1,53 @@
-# 📡 `mqtt/` — the robot cloud + Moxie SDK
+# mqtt — the robot cloud and the Moxie SDK
 
-The **robot-facing half of the server app** (③ in [`../STRUCTURE.md`](../STRUCTURE.md); the parent-app-facing half is [`../server/`](../server/)). The half the **robot** connects to: an MQTT broker, a supervisor that speaks Moxie's
-protocol, and the **Moxie SDK** — the clean interface any AI uses to drive Moxie as an avatar.
+The half of the backend the **robot** connects to: an MQTT broker, a supervisor that speaks
+Moxie's protocol, and the Moxie SDK, the interface any AI uses to drive Moxie. The half the
+**phone** talks to is [`../server/`](../server/README.md).
 
-See the vision: [`../docs/architecture/moxie-as-a-platform.md`](../docs/architecture/moxie-as-a-platform.md) ·
-protocol detail: [`../docs/architecture/mqtt-and-conversation.md`](../docs/architecture/mqtt-and-conversation.md).
-The implementation contracts this half fills: the [AI seam](../docs/architecture/ai-seam.md) (LLM/STT/TTS)
-and the [config & telemetry contract](../docs/architecture/config-and-telemetry-contract.md) (`/config` + `/state`).
+Contracts this folder implements: [MQTT and conversation](../docs/architecture/mqtt-and-conversation.md),
+the [AI seam](../docs/architecture/ai-seam.md) (LLM, speech-to-text, text-to-speech) and
+[config and telemetry](../docs/architecture/config-and-telemetry-contract.md). The bigger picture:
+[Moxie as a platform](../docs/architecture/moxie-as-a-platform.md).
 
 ```mermaid
 flowchart LR
-    moxie(["🤖 Moxie"]) -->|"MQTT/TLS :8883"| broker["📡 mosquitto<br/>self-signed CA"]
-    broker --> rt["⚙️ supervisor/<br/>connect · config · STT"]
-    rt -->|"Turn"| app["🧩 MoxieApp<br/>(moxie_sdk)"]
+    moxie(["Moxie"]) -->|"MQTT/TLS :8883"| broker["mosquitto"]
+    broker --> rt["supervisor<br/>connect, config, speech"]
+    rt -->|"Turn"| app["MoxieApp (moxie_sdk)"]
     app -->|"Reply"| rt
-    app -.-> llm["🧠 LLM (LiteLLM/local)"]
-    app -.-> ext["🎮 external app (webhook)"]
-    classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
-    class broker,rt,app done;
+    app -.-> llm["LLM endpoint"]
+    app -.-> ext["external app (webhook)"]
 ```
 
 ## Layout
+
 | Path | What |
-|------|------|
-| `moxie_sdk/` | the SDK: `MoxieApp`, `Turn`/`Reply`/`Action`, and built-in apps (`LLMApp`, `WebhookApp`, `EchoApp`) |
-| `supervisor/moxie_runtime/` | MQTT runtime (a package of per-concern mixins — [layout](supervisor/README.md)) — connect detection, config push, conversation routing, and the **device permit list** (closed by default: an unpermitted robot is *pending* and is served a minimal child-free config — [guide](../docs/guides/permitting-a-robot.md)) |
-| `broker/` | mosquitto config + `gen-certs.sh` (self-signed CA per appliance; keys are gitignored) |
-| `config.py` / `run.py` | configuration (env-overridable) + entrypoint |
-| `docker-compose.yml` / `Dockerfile` | run broker + supervisor together (the whole stack incl. the console: [`../docker-compose.yml`](../docker-compose.yml)) |
-| `docker-entrypoint.sh` / `status_proxy.py` | container entrypoint + an opt-in forwarder so the console (another container) can reach the runtime's loopback-only `/status` |
+|---|---|
+| [`moxie_sdk/`](moxie_sdk/README.md) | The SDK: `MoxieApp`, `Turn`/`Reply`/`Action`, the built-in brains, speech (`stt.py`, `tts.py`), markup, safety, memory, schedules, content packs, telemetry, the store. |
+| [`supervisor/`](supervisor/README.md) | The MQTT runtime: connect detection, config push, conversation routing, the device permit list, and a loopback status HTTP API on `:8930`. |
+| [`broker/`](broker/README.md) | Mosquitto config, ACLs, and `gen-certs.sh` (a self-signed CA per appliance; keys are git-ignored). |
+| [`content_modules/`](content_modules/README.md) | Shipped content modules (JSON). |
+| [`data/`](data/README.md) | Where per-robot state is written at runtime. |
+| `config.py`, `run.py` | Settings (all from environment; see `.env.example`) and the entry point. |
+| `docker-compose.yml`, `Dockerfile`, `docker-entrypoint.sh`, `status_proxy.py` | Broker plus supervisor in containers. `status_proxy.py` lets the console container reach the status API. |
 
 ## Run it
 
-**1. Generate broker certs** (once, for your broker's LAN IP):
-```bash
-./broker/gen-certs.sh 192.168.1.9
-```
+The easiest route is the repo-root stack, which adds the parent console and uses one `.env`:
+`docker compose up` ([guide](../docs/guides/one-command-stack.md)). To run just this half:
 
-**2. Start the broker + supervisor:**
 ```bash
-cp .env.example .env      # set MOXIE_LLM_BASE_URL / _API_KEY / _MODEL and MOXIE_BROKER_HOST
+./broker/gen-certs.sh 192.168.1.9    # once: certs for the broker's LAN address
+cp .env.example .env                 # set MOXIE_LLM_BASE_URL / _API_KEY / _MODEL and MOXIE_BROKER_HOST
 docker compose up -d
 ```
-> Want the parent console too, and one `.env` for everything? Run the repo-root stack
-> instead: `docker compose up` — [`docs/guides/one-command-stack.md`](../docs/guides/one-command-stack.md).
-Or run them directly:
-```bash
-docker run -d --name moxie-mqtt --network host \
-  -v $PWD/broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro \
-  -v $PWD/broker/keys:/mosquitto/config/keys:ro eclipse-mosquitto:2
-pip install -r requirements.txt
-python run.py
-```
 
-**3. Point Moxie at it** — show the robot the **endpoint QR** (the parent-app web UI's *Server
-Pairing* tab, or `tools/pairing/moxie_endpoint_qr.py <broker-ip>`). Moxie relocates to your broker,
-gets its config, and is ready.
+Or without Docker, with a broker already running: `pip install -r requirements.txt && python run.py`.
+
+Then show the robot the **endpoint QR** (the parent web app's *Server Pairing* tab, or
+`tools/pairing/moxie_endpoint_qr.py <broker-ip>`). A robot on firmware 24.10.801/803 moves to
+your broker and receives its config. Robots are refused until permitted
+([permitting a robot](../docs/guides/permitting-a-robot.md)).
 
 ## Pick the brain (`MOXIE_APP`)
 - `llm` (default) — a companion powered by any OpenAI-compatible endpoint. Local-first.
@@ -66,7 +58,7 @@ gets its config, and is ready.
 - `echo` — echoes speech, for testing. Needs no brain endpoint at all.
 - `any` — *decide per child.* See below.
 
-The four names are a **closed positive list** ([`moxie_sdk/brains.py`](moxie_sdk/brains.py)); anything
+These names are a **closed list** ([`moxie_sdk/brains.py`](moxie_sdk/brains.py)); anything
 else exits at startup naming them, rather than quietly starting the `llm` app.
 
 ### One appliance, a different brain per child
@@ -86,10 +78,8 @@ per-child pick cannot overrule it; set `MOXIE_APP=any` to hand the choice to the
 gaps: [`brain-picker.md`](../docs/architecture/backlog/brain-picker.md).
 
 ## Status
-✅ Broker, supervisor, config push, LLM/content conversation (with memory), server voice (TTS),
-ears (STT via `MOXIE_STT`), automarkup, safety gate, telemetry, schedule and content packs all run
-end-to-end against the simulated robot (`../sim/run_smoke.sh`, `../sim/run_scenarios.sh`).
-Physical-robot proof is still pending. See [`../ROADMAP.md`](../ROADMAP.md).
 
----
-📖 [Back to top](../README.md) · [Moxie as a platform →](../docs/architecture/moxie-as-a-platform.md)
+Broker, supervisor, config push, LLM and content conversations with memory, voice, ears,
+markup, safety, telemetry, schedules and content packs all run end to end against the simulated
+robot (`../sim/run_smoke.sh`, `../sim/run_scenarios.sh`) and in CI. No physical robot has
+connected yet. See the [roadmap](../ROADMAP.md).

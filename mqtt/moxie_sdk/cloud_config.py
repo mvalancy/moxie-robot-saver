@@ -392,16 +392,12 @@ def sanitize_config_overrides(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("config overrides must be an object")
     out = {}
-    if "audio_volume" in raw:
-        v = float(raw["audio_volume"])
-        if v > 1:                                   # accept a 0–100 percent slider
-            v = v / 100.0
-        out["audio_volume"] = max(0.0, min(1.0, v))
-    if "screen_brightness" in raw:
-        v = float(raw["screen_brightness"])
-        if v > 1:
-            v = v / 100.0
-        out["screen_brightness"] = max(0.0, min(1.0, v))
+    for key in ("audio_volume", "screen_brightness"):
+        if key in raw:
+            v = float(raw[key])
+            if v > 1:                               # accept a 0–100 percent slider
+                v = v / 100.0
+            out[key] = max(0.0, min(1.0, v))
     if raw.get("timezone_id"):
         out["timezone_id"] = str(raw["timezone_id"])
     if "logging_policy" in raw:
@@ -418,8 +414,7 @@ def sanitize_config_overrides(raw: dict) -> dict:
         out["audio_wake_set"] = v
     for key in ("weekday_bedtime", "weekend_bedtime"):
         if key in raw:
-            bt = _bedtime(raw[key])
-            out[key] = bt if bt is not None else None
+            out[key] = _bedtime(raw[key])
     if "alarms" in raw:                                  # WakeSchedule (field 24)
         out["alarms"] = normalize_wake_schedule(raw["alarms"])
     if "schedule_preferences" in raw:                    # SchedulePreferences (field 28)
@@ -428,8 +423,7 @@ def sanitize_config_overrides(raw: dict) -> dict:
     if "face" in raw:                                    # ChildDecrypted.face_options (17)
         # A dict, so layers deep-merge per slot; `face: null` clears the whole selection.
         from moxie_sdk.faces import validate_face
-        face = validate_face(raw["face"])
-        out["face"] = face or None
+        out["face"] = validate_face(raw["face"]) or None
     if brains.CONFIG_KEY in raw:                         # which brain answers this child
         # A scalar (a per-robot pick replaces the house rule; `null` clears the layer).
         # Validated against the positive list here; the env pin is enforced by the runtime.

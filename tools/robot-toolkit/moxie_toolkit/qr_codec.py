@@ -11,7 +11,7 @@ The `debug` block becomes a `QRCommand{code,param}` published to the brain over 
 by the Wifi App itself: serial_number_display, restore_factory, reset_network, bluetooth_pair.
 Any other code (e.g. endpoint_update) is forwarded to bo-android.
 
-Source of truth: docs/reverse-engineering/qr-commands.md
+Source of truth: docs/reverse-engineering/protocol/qr-commands.md
 """
 import base64, json, sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

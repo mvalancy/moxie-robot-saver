@@ -331,7 +331,7 @@
     });
   }
 
-  /** The rate the gateway's ears want (docs/guides/litellm-stt-setup.md). */
+  /** The rate the gateway's ears want (docs/guides/gateway-voice-and-ears.md). */
   var TARGET_RATE = 16000;
 
   /** Float32 mono at `fromRate` → 16-bit RIFF/WAVE at `TARGET_RATE` by nearest-neighbour

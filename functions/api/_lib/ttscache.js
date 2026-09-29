@@ -24,7 +24,7 @@
  *   * THE STORED BODY IS A WAV, so the entry is self-describing and a hit decodes through
  *     the same `pcmFromAudio` as a miss.
  */
-import { CACHE_ERROR, CACHE_TIMEOUT, withDeadline } from "./limits.js";
+import { CACHE_ERROR, CACHE_TIMEOUT, withDeadline } from "./sharedtier.js";
 import { TTS_CACHE_INFO, keyedTag } from "./hmac.js";
 import { pcmFromAudio, writeWav } from "./wav.js";
 

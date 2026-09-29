@@ -65,7 +65,7 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
       an output-side block has no contract field (it goes to the parent review queue).
     * **Actions** via `encode_action`.
     * **Event subscription.** `subscribe_events` fills
-      `RemoteChatAction.EventSubscription{clear, active[]}` (remote-chat-protocol.md:103-106)
+      `RemoteChatAction.EventSubscription{clear, active[]}` (remote-chat-protocol.md:81-84)
       on `response_actions[0]` (a bare `{output_type}` entry if there is no action), mirrored
       onto the legacy singular `response_action` (mqtt-and-conversation.md §4.1). Without
       it the robot discards its own vision events.

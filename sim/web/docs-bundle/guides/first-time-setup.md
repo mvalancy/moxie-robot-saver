@@ -1,12 +1,11 @@
-# Guide: first-time setup (Phase 1)
+# First-time setup
 
-Set up a Moxie from scratch using the local parent-app server. This covers the **Wi-Fi pairing** step.
-
-> 👉 For the **full path** — pairing, re-homing to your own server, and getting Moxie **talking**
-> (LLM brain + Piper voice + mic) — see **[`revive-your-moxie.md`](revive-your-moxie.md)**.
+Pair a Moxie and put it on your Wi-Fi using the local parent-app server. This is one step of
+[Revive your Moxie](revive-your-moxie.md), which covers the rest.
 
 ## 1. Start the server
-On any machine on your network (Linux/macOS/Windows):
+If you run the [one-command stack](one-command-stack.md), the console is already on port 8080. To run
+only the parent-app server, on any machine on your network:
 ```bash
 pip install -r server/requirements.txt
 python server/run.py            # listens on 0.0.0.0:8080
@@ -39,6 +38,6 @@ The web app's **"Simulate robot scan"** button completes the whole pairing flow 
 you can verify the server end to end.
 
 ## What happens next
-A firmware-801/803 Moxie will then wait for a **second, different-looking QR** — the endpoint code
-that tells it to use your server for conversations. That's Phase 2 (`mqtt/`). Until then, Moxie is on
-your Wi-Fi and paired in the app, but won't talk yet.
+A firmware-801/803 Moxie then waits for a **second QR**, the endpoint code that points it at your
+broker. Show it the code from the console's **Server Pairing** tab; see
+[Revive your Moxie, Path B](revive-your-moxie.md#path-b-re-home-an-801-or-803-robot-with-a-qr).

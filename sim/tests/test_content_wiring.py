@@ -62,7 +62,7 @@ def test_is_offline_error_classification():
 
 # --- The always-listening commands ---
 # A global answers BEFORE the brain, so over-matching is silent; both directions are
-# asserted (content-and-conversation.md:136-138). `Hello` is deliberately free chat's.
+# asserted (content-and-conversation.md:123-125). `Hello` is deliberately free chat's.
 def _counting_app():
     calls = []
 

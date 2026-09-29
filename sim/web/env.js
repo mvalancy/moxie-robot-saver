@@ -57,6 +57,8 @@
       badgeEl.textContent = (snap && snap.badge) || "HOSTED DEMO";
       badgeEl.title = (snap && snap.state === "live" && snap.liveTurns) ? LIVE_TITLE : HOSTED_TITLE;
     }
+    // Online reads mint; every fallback keeps the caution amber (style.css).
+    badgeEl.classList.toggle("online", !isLocal && badgeEl.textContent === "MOXIE ONLINE");
     if (document.body)
       document.body.setAttribute("data-mode", (snap && snap.state) || "boot");
     if (!pillEl) return;
@@ -199,7 +201,7 @@
     // Mic / STT
     var micSt = $("mic-status");
     if (stt) {
-      if (micSt) { micSt.textContent = "click to start / stop recording"; micSt.classList.remove("warn"); }
+      if (micSt) { micSt.textContent = "Tap Listen, say something, then tap it again to send."; micSt.classList.remove("warn"); }
       needsBackend($("mic-btn"), isLocal
         ? "Records and transcribes through the local STT server."
         : "Records and transcribes on this page — speech-to-text runs on the site's own origin.", false);

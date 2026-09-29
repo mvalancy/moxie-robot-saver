@@ -1,10 +1,10 @@
-# 🤖 Robot capability catalog
+# Robot capability catalog
 
 Everything **the Moxie robot itself** can do, as a single capability index (the parent-app features
 are in [`feature-catalog.md`](feature-catalog.md)). Each row links to the deep reverse-engineering doc.
 Grounded in firmware **v3.6.4-Zephyr / OTA v24.10.803**.
 
-## 💬 Conversation
+## Conversation
 | Capability | Where |
 |---|---|
 | On-device **ChatScript** (offline/global commands) | [content-and-conversation](../reverse-engineering/runtime/content-and-conversation.md) |
@@ -13,7 +13,7 @@ Grounded in firmware **v3.6.4-Zephyr / OTA v24.10.803**.
 | Context assembly (global/environment/conversation) + **holiday/event awareness** | [content-and-conversation](../reverse-engineering/runtime/content-and-conversation.md#context-assembly-topical-awareness) |
 | NLU intents, fallbacks, idle-state | [content-and-conversation](../reverse-engineering/runtime/content-and-conversation.md) |
 
-## 🗣️ Speech I/O
+## Speech I/O
 | Capability | Where |
 |---|---|
 | **STT**: cloud Deepgram + **offline Kaldi** (nnet3+RNNLM) | [perception-pipeline](../reverse-engineering/runtime/perception-pipeline.md) |
@@ -22,14 +22,14 @@ Grounded in firmware **v3.6.4-Zephyr / OTA v24.10.803**.
 | ASR **phrase-hint biasing**, translation | [perception-pipeline](../reverse-engineering/runtime/perception-pipeline.md) |
 | Speaker ID, DOA, barge-in/interruption | [perception-pipeline](../reverse-engineering/runtime/perception-pipeline.md) |
 
-## 👁️ Vision
+## Vision
 | Capability | Where |
 |---|---|
 | Faces (detect/recognize/track), people, poses, gaze | [perception-pipeline](../reverse-engineering/runtime/perception-pipeline.md) |
 | **User recognition/enrollment** (learn family by face) | [content-and-conversation](../reverse-engineering/runtime/content-and-conversation.md#session-sleep-lifecycle) |
 | Camera activities: **book**, **draw/card**, **image→text (VQA)**, QR | [perception-pipeline](../reverse-engineering/runtime/perception-pipeline.md#camera-driven-activities-content-activates-these) |
 
-## 🦾 Movement & embodiment
+## Movement & embodiment
 | Capability | Where |
 |---|---|
 | Motors (arms/head/squish/base/torso) + per-motor PID | [hardware-map](../reverse-engineering/hardware/hardware-map.md) |
@@ -39,7 +39,7 @@ Grounded in firmware **v3.6.4-Zephyr / OTA v24.10.803**.
 | Status LEDs (moods) + DLP-projected face | [hardware-map](../reverse-engineering/hardware/hardware-map.md) · [device-tree](../reverse-engineering/hardware/device-tree.md) |
 | Touch (back/tummy/hands), switches, flap, light sensors | [hardware-map](../reverse-engineering/hardware/hardware-map.md) |
 
-## 🎮 Activities, content & progression
+## Activities, content & progression
 | Capability | Where |
 |---|---|
 | Content modules (conversations, regex globals, schedules) | [content-and-conversation](../reverse-engineering/runtime/content-and-conversation.md) |
@@ -48,14 +48,14 @@ Grounded in firmware **v3.6.4-Zephyr / OTA v24.10.803**.
 | **STAR goals** (SEL curriculum) + **StarBits** rewards | [content-and-conversation](../reverse-engineering/runtime/content-and-conversation.md) |
 | Mentor-behavior history (what the child did) | [content-and-conversation](../reverse-engineering/runtime/content-and-conversation.md) |
 
-## 👨‍👩‍👧 Session & wellbeing
+## Session & wellbeing
 | Capability | Where |
 |---|---|
 | Sessions incl. **group (multi-child)**, turn-taking, **age-adaptation** | [content-and-conversation](../reverse-engineering/runtime/content-and-conversation.md#session-sleep-lifecycle) |
 | **Bedtime/sleep schedule** (weekday/weekend windows), earmuffs | [content-and-conversation](../reverse-engineering/runtime/content-and-conversation.md#session-sleep-lifecycle) |
 | Parental content gating (denied words/videos, tag allow/deny) | [settings-schema](../reverse-engineering/firmware/settings-schema.md) |
 
-## 🔧 Setup, connectivity & system
+## Setup, connectivity & system
 | Capability | Where |
 |---|---|
 | QR pairing / Wi-Fi / VPN / **endpoint re-home** + debug/factory codes | [qr-commands](../reverse-engineering/protocol/qr-commands.md) |
@@ -66,4 +66,4 @@ Grounded in firmware **v3.6.4-Zephyr / OTA v24.10.803**.
 | Boot/lifecycle states; recovery; factory test suite | [boot-and-launcher](../reverse-engineering/firmware/boot-and-launcher.md) · [factory-provisioning](../reverse-engineering/firmware/factory-provisioning.md) |
 
 ---
-📖 [Feature catalog (parent app)](feature-catalog.md) · [Coverage matrix](../reverse-engineering/COVERAGE.md) · [Field guide](../reverse-engineering/FIELD-GUIDE.md) · [Docs index](../README.md)
+📖 [Feature catalog (parent app)](feature-catalog.md) · [Exploration map](../reverse-engineering/EXPLORATION-MAP.md) · [Field guide](../reverse-engineering/FIELD-GUIDE.md) · [Docs index](../README.md)

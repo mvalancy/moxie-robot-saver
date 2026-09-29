@@ -392,7 +392,7 @@ rewards customization gated by `Robot.isRewardsEnabled()`.
 
 ## 15. HIDDEN / DEVELOPER features
 
-### 15.1 `envchange` — hidden build-environment switcher ⭐
+### 15.1 `envchange` — hidden build-environment switcher
 `login/LoginFragment` (L192): type **`envchange`** into the email field (then trigger
 `onChangeUrlClick`) → `showSelectEnvironmentDialog()` bottom sheet with 5 options →
 `Config.setBuildMode(DEVELOP|STAGING|PRODUCTION|CHINA|HONG_KONG)` (pref `build_mode`, default
@@ -401,7 +401,7 @@ PRODUCTION). This retargets the entire REST base URL at runtime:
   CHINA `…-cn-api`, HONG_KONG `…-hk-api` (`.embodied.com`). The current mode name is shown as the
   Account version-text tooltip (long-press) and as `environmentText` on Login.
 
-### 15.2 "Use demo data for Insights and Rewards" toggle ⭐
+### 15.2 "Use demo data for Insights and Rewards" toggle
 Account screen switch `demo_data_switch` (`FragmentAccountBindingImpl`), **only visible/effective when
 `!Config.isProductionMode()`** — `Config.isDemoDataForInsightsEnabled()` hard-returns false in
 PRODUCTION regardless of pref `is_demo_data_enabled`. Effects when on:
@@ -411,7 +411,7 @@ PRODUCTION regardless of pref `is_demo_data_enabled`. Effects when on:
   missionCount 8, badgeCount 18, activityTime "2h18m"; `AnalyticsDetailsViewModel.setDummyData`,
   `SubDetailsViewModel.setDummyData`).
 
-### 15.3 Hidden debug long-press ⭐
+### 15.3 Hidden debug long-press
 `main/moxie/MoxieFragment.setupHiddenButtonForDebugging` (L1581): **long-press the battery-percentage
 view** on the Moxie home card. Returns immediately in production; otherwise performs a click on the
 add/edit-profile button (dev shortcut into child editing).

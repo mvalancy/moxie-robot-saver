@@ -161,7 +161,7 @@ class _Profile:
     signal: str = "no_signal"
 
 
-#: One row per `RemoteDialog.DialogAct` (22) — remote-chat-protocol.md:119-122.
+#: One row per `RemoteDialog.DialogAct` (22) — remote-chat-protocol.md:93.
 #: Every id here is checked against `vocab` by `validate()`; the table is not trusted.
 ACT_PROFILES: Dict[str, _Profile] = {
     # -- openers and closers: the two acts that earn a whole-body tree ---------
@@ -222,7 +222,7 @@ ACT_PROFILES: Dict[str, _Profile] = {
     "other": _Profile(),
 }
 
-#: ePlaybackMood -> `RemoteDialog.EmotionState` (remote-chat-protocol.md:123), a different
+#: ePlaybackMood -> `RemoteDialog.EmotionState` (remote-chat-protocol.md:94), a different
 #: enum from the face. Moods with no honest counterpart map to neutral.
 _EMOTION_BY_MOOD: Dict[int, str] = {
     vocab.MOODS["neutral"]: "neutral", vocab.MOODS["happy"]: "joy",
@@ -305,10 +305,8 @@ def classify(text: str, *, ctx: Optional[dict] = None) -> str:
     if ctx.get("timed_out"):
         return "timeout"
     line = (text or "").strip()
-    if not line:
-        return "timeout" if ctx.get("timed_out") else "other"
     if not _HAS_LETTER.search(line):
-        return "other"                       # "..." / "!!!" — nothing to classify
+        return "other"                       # "", "..." / "!!!" — nothing to classify
 
     flat = re.sub(r"\s+", " ", line)
     for act, pattern in _ACT_WHOLE:
@@ -335,16 +333,7 @@ def classify(text: str, *, ctx: Optional[dict] = None) -> str:
 # --------------------------------------------------------------------------- #
 def _runs(sentence: str) -> List[List[str]]:
     """One sentence -> its clause runs, as word lists. `[]` for a sentence with no words."""
-    out: List[List[str]] = []
-    for clause in _CLAUSE_SPLIT.split(sentence):
-        words = clause.split()
-        if words:
-            out.append(words)
-    if not out:
-        words = sentence.split()
-        if words:
-            out.append(words)
-    return out
+    return [c.split() for c in _CLAUSE_SPLIT.split(sentence) if c.split()]
 
 
 def _talk_positions(words: Sequence[str], anchor: int, turn_key: str,
@@ -396,60 +385,18 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
 
     act = classify(text, ctx=ctx)
     profile = ACT_PROFILES.get(act, ACT_PROFILES["other"])
+    mood, strength = _line_mood(text, profile, ctx)
+    hint_gesture = vocab.GESTURE_ALIASES.get(str(ctx.get("gesture") or "").strip().lower())
+    if hint_gesture == "Gesture_None":
+        hint_gesture = None
 
-    # ---- the line's mood: a hint wins, then the WORDS, then the act --------- #
-    # Words beat the act: the floor's mood cues are recovered evidence
-    # (behavior-markup.md:117-127); the act profile only fills lines that score Neutral.
-    rule_mood, rule_strength = _score_mood(text)
-    mood = rule_mood if rule_mood else (profile.mood if profile.mood is not None else 0)
-    strength = profile.intensity if profile.intensity is not None else rule_strength
-    hint_mood = ctx.get("mood")
-    if hint_mood is not None and hint_mood != "":
-        if isinstance(hint_mood, bool):
-            resolved = None                  # a bool is an int in Python; refuse it
-        elif isinstance(hint_mood, int):
-            resolved = hint_mood if hint_mood in vocab.MOOD_IDS else None
-        else:
-            resolved = vocab.MOOD_ALIASES.get(str(hint_mood).strip().lower())
-        if resolved is not None:
-            mood = resolved
-        # An unrecognized hint falls through to the rules.
-    if ctx.get("intensity") is not None:
-        try:
-            strength = max(0, min(vocab.MAX_INTENSITY, int(ctx["intensity"])))
-        except (TypeError, ValueError):
-            pass
-    strength = max(0, min(vocab.MAX_INTENSITY, int(strength)))
-
-    hint_gesture = None
-    if ctx.get("gesture"):
-        hint_gesture = vocab.GESTURE_ALIASES.get(str(ctx["gesture"]).strip().lower())
-        if hint_gesture == "Gesture_None":
-            hint_gesture = None
-
-    # ---- the line's whole-body tree, and the gaze it displaces -------------- #
+    # The line's whole-body tree displaces its gaze; an explicit look overrides both.
     tree = profile.tree
     gaze = None if tree else (profile.gaze or None)
     look = ctx.get("look")
     if look and str(look) in vocab.GAZE_TREES:
-        gaze, tree = (str(look), None)       # an explicit look overrides both
-
-    # ---- icons / sfx: gated off, exactly as in the floor -------------------- #
-    # Either an explicit id (`Reply.icon`/`Reply.sfx`) or the boolean gate that lets cue
-    # rules pick one; off by default (see `vocab.ICON_VALUES` / `vocab.SFX_IDS` for why).
-    icon = None
-    if isinstance(ctx.get("icon"), str) and ctx["icon"] in vocab.ICON_SET:
-        icon = ctx["icon"]
-    elif ctx.get("icons"):
-        for pattern, value in _ICON_CUES:
-            if pattern.search(text):
-                icon = value
-                break
-    sfx = None
-    if isinstance(ctx.get("sfx"), str) and ctx["sfx"] in vocab.SFX_SET:
-        sfx = ctx["sfx"]
-    elif ctx.get("sfx") and act == "appreciation" and mood == vocab.MOODS["happy"]:
-        sfx = vocab.SFX_STINGER
+        gaze, tree = str(look), None
+    icon, sfx = _icon_and_sfx(text, ctx, act, mood)
 
     # ---- lay out the beats -------------------------------------------------- #
     beats: List[Beat] = []
@@ -527,15 +474,16 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
                         g = "Gesture_Talk"
                         per_sentence += 1
                         emitted_gestures += 1
+                opens_line = is_first and si == 0 and ci == 0
                 beats.append(Beat(
                     text=" ".join(words[cut:stop]),
                     mood=clause_mood if is_first else None,
                     mood_intensity=strength if is_first and clause_mood is not None else 0,
                     gesture=g,
-                    tree=tree if (is_first and si == 0 and ci == 0) else None,
-                    gaze=gaze if (is_first and si == 0 and ci == 0) else None,
-                    icon=icon if (is_first and si == 0 and ci == 0) else None,
-                    sfx=sfx if (is_first and si == 0 and ci == 0) else None,
+                    tree=tree if opens_line else None,
+                    gaze=gaze if opens_line else None,
+                    icon=icon if opens_line else None,
+                    sfx=sfx if opens_line else None,
                     usel=genre if (ci == last_clause and is_last) else None,
                     break_after=brk if is_last else None,
                 ))
@@ -561,6 +509,50 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
     )
 
 
+def _clamp_intensity(value) -> int:
+    return max(0, min(vocab.MAX_INTENSITY, int(value)))
+
+
+def _line_mood(text: str, profile: _Profile, ctx: dict) -> Tuple[int, int]:
+    """The line's (mood, intensity): a valid hint wins, then the WORDS, then the act.
+
+    Words beat the act because the floor's mood cues are recovered evidence
+    (behavior-markup.md:117-127); the act profile only fills lines that score Neutral.
+    An unrecognized hint falls through to the rules.
+    """
+    rule_mood, rule_strength = _score_mood(text)
+    mood = rule_mood or (profile.mood if profile.mood is not None else 0)
+    strength = profile.intensity if profile.intensity is not None else rule_strength
+    hint = ctx.get("mood")
+    if isinstance(hint, bool):
+        pass                                 # a bool is an int in Python; refuse it
+    elif isinstance(hint, int):
+        mood = hint if hint in vocab.MOOD_IDS else mood
+    elif hint:
+        mood = vocab.MOOD_ALIASES.get(str(hint).strip().lower(), mood)
+    if ctx.get("intensity") is not None:
+        try:
+            strength = int(ctx["intensity"])
+        except (TypeError, ValueError):
+            pass
+    return mood, _clamp_intensity(strength)
+
+
+def _icon_and_sfx(text: str, ctx: dict, act: str, mood: int):
+    """An explicit catalog id (`Reply.icon`/`Reply.sfx`), or — only when the boolean gate
+    is on — one the cue rules pick. Off by default (`vocab.ICON_VALUES`/`SFX_IDS` say why)."""
+    icon = sfx = None
+    if isinstance(ctx.get("icon"), str) and ctx["icon"] in vocab.ICON_SET:
+        icon = ctx["icon"]
+    elif ctx.get("icons"):
+        icon = next((value for pattern, value in _ICON_CUES if pattern.search(text)), None)
+    if isinstance(ctx.get("sfx"), str) and ctx["sfx"] in vocab.SFX_SET:
+        sfx = ctx["sfx"]
+    elif ctx.get("sfx") and act == "appreciation" and mood == vocab.MOODS["happy"]:
+        sfx = vocab.SFX_STINGER
+    return icon, sfx
+
+
 def _clause_mood(clause: str, line_mood: int, current: int) -> Optional[int]:
     """A clause's own mood, or None to hold the line's face (§2.1, bounded by
     `MAX_MOOD_MARKS`): changes only when the clause's own words score a different mood."""
@@ -583,6 +575,14 @@ def _check(value, catalog, slot: str, bad: List[str]):
     return None
 
 
+def _valid_mood(mood, bad: List[str]) -> Optional[int]:
+    # `bool` is an `int`: `True` would render as mood 1 but serialize as `true`.
+    if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):
+        _drop(bad, f"mood={mood}")
+        return None
+    return mood
+
+
 def validate(p: Optional[Performance], *, strict: bool = False) -> Optional[Performance]:
     """Every id in `p` checked against the frozen catalog in `vocab.py` — the single gate
     for rule- and model-chosen ids alike.
@@ -596,11 +596,7 @@ def validate(p: Optional[Performance], *, strict: bool = False) -> Optional[Perf
     bad: List[str] = list(p.dropped)
     beats: List[Beat] = []
     for b in p.beats:
-        mood = b.mood
-        # `bool` is an `int`: `True` would render as mood 1 but serialize as `true`.
-        if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):
-            _drop(bad, f"mood={mood}")
-            mood = None
+        mood = _valid_mood(b.mood, bad)
         try:
             strength = int(b.mood_intensity)
         except (TypeError, ValueError):
@@ -608,7 +604,7 @@ def validate(p: Optional[Performance], *, strict: bool = False) -> Optional[Perf
             strength = 0
         if not 0 <= strength <= vocab.MAX_INTENSITY:
             _drop(bad, f"intensity={strength}")
-            strength = max(0, min(vocab.MAX_INTENSITY, strength))
+            strength = _clamp_intensity(strength)
         brk = b.break_after
         if brk is not None:
             try:
@@ -632,17 +628,14 @@ def validate(p: Optional[Performance], *, strict: bool = False) -> Optional[Perf
             usel=_check(b.usel, vocab.USEL_GENRE_SET, "usel", bad),
             break_after=brk,
         ))
-    mood = p.mood
-    if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):
-        _drop(bad, f"mood={mood}")
-        mood = None
+    mood = _valid_mood(p.mood, bad)
     out = Performance(
         beats=tuple(beats),
         dialog_act=_check(p.dialog_act, vocab.DIALOG_ACTS, "dialog_act", bad),
         emotion=_check(p.emotion, vocab.EMOTION_STATES, "emotion", bad),
         signal=_check(p.signal, vocab.SIGNALS, "signal", bad),
         mood=mood,
-        mood_intensity=max(0, min(vocab.MAX_INTENSITY, int(p.mood_intensity or 0))),
+        mood_intensity=_clamp_intensity(p.mood_intensity or 0),
         dropped=tuple(bad),
     )
     if strict and bad:
@@ -704,11 +697,8 @@ def to_json(p: Optional[Performance]) -> Optional[dict]:
     """A `Performance` as plain JSON (goldens, preview). Empty slots are omitted."""
     if p is None:
         return None
-    beats = []
-    for b in p.beats:
-        row = {k: v for k, v in asdict(b).items()
-               if v is not None and not (k == "mood_intensity" and not v)}
-        beats.append(row)
+    beats = [{k: v for k, v in asdict(b).items()
+              if v is not None and not (k == "mood_intensity" and not v)} for b in p.beats]
     out: Dict[str, Any] = {"beats": beats}
     for key in ("dialog_act", "emotion", "signal", "mood"):
         value = getattr(p, key)
@@ -721,7 +711,7 @@ def to_json(p: Optional[Performance]) -> Optional[dict]:
     return out
 
 
-_BEAT_FIELDS = tuple(f for f in Beat.__dataclass_fields__)          # noqa: SLF001
+_BEAT_FIELDS = tuple(Beat.__dataclass_fields__)
 
 
 def from_json(data: Optional[dict]) -> Optional[Performance]:

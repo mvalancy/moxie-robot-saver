@@ -43,8 +43,8 @@ MUTATIONS = [
      '        dialog_act=_check(p.dialog_act, vocab.DIALOG_ACTS, "dialog_act", bad),',
      "        dialog_act=p.dialog_act,"),
     ("M3  an unknown beat mood survives validation", P,
-     "        if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):",
-     "        if False:"),
+     "    if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):",
+     "    if False:"),
     ("M4  a dropped id is no longer counted", P,
      "def _drop(bad: List[str], what: str) -> None:\n    global _DROPPED\n    _DROPPED += 1",
      "def _drop(bad: List[str], what: str) -> None:\n    global _DROPPED\n    _DROPPED += 0"),
@@ -140,8 +140,8 @@ MUTATIONS = [
      "        if strength and 0 < int(strength) <= vocab_seam.MAX_INTENSITY:",
      "        if strength:"),
     ("M35 validate lets a bool through as a mood", P,
-     "        if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):",
-     "        if (mood is not None and mood not in vocab.MOOD_IDS):"),
+     "    if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):",
+     "    if (mood is not None and mood not in vocab.MOOD_IDS):"),
     # Anchor repaired 2026-09-05: the non-streamed publish grew a `subscribe=` argument
     # (a content pack's event subscription), so `scored=scored` is no longer the last one
     # and the old anchor stopped matching. Repaired rather than deleted — a stale row

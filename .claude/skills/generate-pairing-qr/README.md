@@ -1,8 +1,12 @@
-# 🛠️ Skill: generate-pairing-qr
+# 🛠️ Skill: Generate a pairing QR
 
-Generate a Moxie Wi-Fi pairing QR code (the "PA"+protobuf code you hold up to the robot's camera). Use when someone wants to pair a Moxie to Wi-Fi, either from the command line or the local server.
+Make a Wi-Fi pairing QR (`"PA"`+protobuf) from the CLI or the local server, then re-home the robot with the endpoint QR.
 
-The skill itself lives in [`SKILL.md`](SKILL.md) (name + description frontmatter, then the steps).
+Invoke it by name: `generate-pairing-qr`.
+
+| File | Purpose |
+|---|---|
+| [`SKILL.md`](SKILL.md) | The skill: YAML frontmatter (`name`, `description`) plus the steps the agent follows. |
 
 ---
-📖 [Skills index](../README.md) · [Back to top](../../../README.md)
+📖 [Skills index](../README.md) · [Shared agents & skills](../../README.md) · [Back to top](../../../README.md)

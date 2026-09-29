@@ -74,7 +74,7 @@ def voice_for_model(model: str) -> str:
     """The `voice` field to send for a model name — `piper-amy` → `amy`, else `alloy`.
 
     LiteLLM requires `voice` (500 without it) but the model selects the Piper voice
-    (docs/guides/litellm-tts-setup.md), so it only has to be present and sane.
+    (docs/guides/gateway-voice-and-ears.md), so it only has to be present and sane.
     """
     tail = (model or "").rsplit("-", 1)[-1].strip()
     return tail if tail.isalpha() else "alloy"

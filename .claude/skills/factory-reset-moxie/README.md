@@ -1,8 +1,12 @@
-# 🛠️ Skill: factory-reset-moxie
+# 🛠️ Skill: Factory-reset a Moxie
 
-Unpair or factory-reset a paired Moxie robot. Use when a Moxie is stuck paired to the old Embodied cloud or a different account and needs to be reset before fresh setup.
+Unpair or factory-reset a robot: the app's server-relayed REST calls, what our server does today, and the `restore_factory` debug QR.
 
-The skill itself lives in [`SKILL.md`](SKILL.md) (name + description frontmatter, then the steps).
+Invoke it by name: `factory-reset-moxie`.
+
+| File | Purpose |
+|---|---|
+| [`SKILL.md`](SKILL.md) | The skill: YAML frontmatter (`name`, `description`) plus the steps the agent follows. |
 
 ---
-📖 [Skills index](../README.md) · [Back to top](../../../README.md)
+📖 [Skills index](../README.md) · [Shared agents & skills](../../README.md) · [Back to top](../../../README.md)

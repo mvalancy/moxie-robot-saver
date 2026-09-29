@@ -1,8 +1,8 @@
-# 🎛️ Feature catalog
+# Features of the original app
 
-An exhaustive inventory of what the Moxie parent app does — every user-facing **and** hidden/
-developer feature — so we can rebuild all of it, not just the happy path. Derived from the decompiled
-app; the [reverse-engineering maps](../reverse-engineering/) are the source of truth.
+What the original Moxie parent app did, including hidden and developer features, so the rebuild can
+cover all of it. These are clean-room descriptions; the [reverse-engineering study](../reverse-engineering/README.md)
+is the source of truth.
 
 ## Documents
 - [`feature-catalog.md`](feature-catalog.md) — **the complete catalog** (15 areas + a hidden/developer
@@ -11,7 +11,7 @@ app; the [reverse-engineering maps](../reverse-engineering/) are the source of t
 - [`robot-lifecycle.md`](robot-lifecycle.md) — pairing, unpair, **factory reset**, restore/backup,
   reboot, OTA, the full robot state model.
 
-## 🕵️ Hidden / developer features (highlights)
+## Hidden and developer features
 Surprising things buried in the app — useful for testing and for understanding intent:
 - **`envchange`** — type it into the login email field to open a hidden switcher that retargets the
   *entire* REST backend (Production / Staging / Develop / China / Hong Kong) at runtime.
@@ -25,4 +25,4 @@ Each catalog entry records: what it does, where it lives (class/fragment), the A
 settings/parameters, and whether it's hidden/experimental.
 
 ---
-📖 [Docs index](../README.md) · [Back to top](../../README.md)
+[Docs index](../README.md)

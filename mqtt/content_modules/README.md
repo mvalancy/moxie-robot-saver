@@ -81,7 +81,7 @@ upgrade rather than a silent replace. The engine itself never reads it.
 The files here are the **shipped defaults**. What actually runs is *defaults ⊕ the imported
 overlay*, keyed `kind:key` (conversation = `module_id/content_id`, global and schedule =
 `name`) and stored in `$MOXIE_DATA_DIR/fleet/content_items.json`. A parent installs a
-[content pack](../../docs/architecture/content-module-contract.md#content-packs-moving-content-between-machines-p0-built-2026-09-02)
+[content pack](../../docs/architecture/content-module-contract.md#content-packs-moving-content-between-machines)
 over the top from the console's 📦 card; because these records carry a version, our own
 release upgrading `starter.json` obeys exactly the rule a stranger's pack does — and an item
 the parent edited here comes back as a conflict rather than being taken back. Editing a file
@@ -91,3 +91,6 @@ overlay wins for the keys it names.
 Add an activity by dropping another `.json` here and pointing `MOXIE_CONTENT_MODULE` at it
 (or a directory to merge — a future loader slice), or by exporting one from the 📦 card and
 sending somebody the file.
+
+---
+📖 [mqtt/ overview](../README.md) · [Back to top](../../README.md)

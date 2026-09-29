@@ -202,7 +202,7 @@ The RK3288 SoC and every peripheral, from the device tree (`rk3288-robot`, see [
 ```mermaid
 flowchart TB
     subgraph soc["Rockchip RK3288 SoC (ARMv7 · Mali-T764 · Android 9)"]
-        cpu["4× Cortex-A12"]
+        cpu["4× Cortex-A17<br/>(DTB: arm,cortex-a12)"]
         emmc["eMMC (dwmmc)"]
         vop["VOP display ctrl"]
     end
@@ -325,4 +325,4 @@ Deep docs: [`boot-and-launcher.md`](firmware/boot-and-launcher.md) · [`firmware
 
 ---
 
-📖 [Reverse-engineering index](README.md) · [Field guide](FIELD-GUIDE.md) · [Firmware reference](firmware/firmware-803-reference.md) · [Docs index](../README.md)
+📖 [Reverse-engineering index](README.md) · [Field guide](FIELD-GUIDE.md) · [Exploration map](EXPLORATION-MAP.md) · [Firmware reference](firmware/firmware-803-reference.md) · [Docs index](../README.md)

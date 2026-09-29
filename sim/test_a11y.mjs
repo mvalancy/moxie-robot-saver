@@ -377,6 +377,33 @@ async function unnamedControls(page) {
   await page.close();
 }
 
+/* ==========================================================================
+ * 5. REDUCED MOTION — the chrome holds still, and the control proves it would not
+ * ======================================================================= */
+{
+  // Infinite CSS animations actually RUNNING (the ALIVE lamp pulses on every load).
+  const looping = (page) => page.evaluate(() => document.getAnimations()
+    .filter((a) => a.playState === "running" && a.effect &&
+                   a.effect.getComputedTiming().iterations === Infinity)
+    .map((a) => (a.effect.target && (a.effect.target.id || a.effect.target.className)) + ":" + a.animationName));
+  const plain = await open();
+  const base = await looping(plain.page);
+  ok(base.length > 0, `CONTROL: without the preference something really does loop (${JSON.stringify(base)})`);
+  await plain.page.close();
+
+  const view = await open({ reducedMotion: true });
+  const still = await looping(view.page);
+  eq(JSON.stringify(still), "[]", `prefers-reduced-motion: no endlessly looping animation (${JSON.stringify(still)})`);
+  const shown = await view.page.evaluate(() => {
+    window.moxie.setSpeech("Hello there, friend.");
+    return new Promise((r) => requestAnimationFrame(() =>
+      r(document.getElementById("bubble-text").textContent)));
+  });
+  eq(shown, "Hello there, friend.", "…and her words appear whole, with no typewriter");
+  eyes("reduced motion", view);
+  await view.page.close();
+}
+
 await browser.close();
 srv.close();
 finish(LABEL, { fails, count });

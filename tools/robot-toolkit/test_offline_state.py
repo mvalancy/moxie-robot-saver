@@ -3,7 +3,7 @@
 (embodied.robotbrain.serialized). Builds a FallbackInfo tree (the offline content a
 server pushes via upgrade_fallbacks), a CSData resume checkpoint, and a
 UserRecommendationData history, serializes + re-parses them, and checks the
-FallbackOptions strategy enum. See docs/reverse-engineering/offline-and-brain-state.md.
+FallbackOptions strategy enum. See docs/reverse-engineering/protocol/offline-and-brain-state.md.
 
     python3 tools/robot-toolkit/test_offline_state.py
 """
@@ -12,6 +12,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report  # noqa: E402
 
 try:
     from embodied.robotbrain.serialized import FallbackInfo_pb2 as F  # noqa: E402
@@ -21,11 +22,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  offline-state toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
 
 # --- FallbackInfo: a module with a node fallback (LOCAL_ONLY) + a default ---
 fb = F.FallbackInfo()
@@ -66,10 +62,5 @@ ok(rurd.random_tag_state.random_seed == 42, "random_tag_state seed lost")
 ok(F.FallbackInfo.DESCRIPTOR.full_name == "embodied.robotbrain.serialized.FallbackInfo",
    "unexpected FallbackInfo full name")
 
-if fails:
-    print("❌ offline-state toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ offline-state toolkit test OK — FallbackInfo tree (LOCAL_ONLY/FALLBACKS_NO_REMOTE) + CSData "
-      "resume checkpoint + UserRecommendationData history round-trip through embodied.robotbrain.serialized")
+report("offline-state", "FallbackInfo tree (LOCAL_ONLY/FALLBACKS_NO_REMOTE) + CSData "
+       "resume checkpoint + UserRecommendationData history round-trip through embodied.robotbrain.serialized")

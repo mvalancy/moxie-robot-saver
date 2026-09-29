@@ -41,7 +41,7 @@ A missing directory is not an error: reads return empty, the first write creates
 
 JSON files are a **stepping stone**, not a database — see the
 [feature audit](../../docs/architecture/openmoxie-feature-audit.md) ADOPT #8 and the
-"Known gaps" section of [`implementation-plan.md`](../../docs/architecture/implementation-plan.md).
+[`ROADMAP.md`](../../ROADMAP.md).
 
 ---
 📖 [mqtt/ overview](../README.md) · [SDK](../moxie_sdk/README.md)

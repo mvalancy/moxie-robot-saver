@@ -1,11 +1,10 @@
 # 🔌 Hardware access & flashing — the physical surface
 
-> **Scope: the whole machine.** This project deliberately covers Moxie **end to end** — including
-> opening the shell, USB flashing, UART/TTL serial, JTAG, and re-signing firmware. The
-> [no-disassembly options](../firmware/ota-and-recovery.md) are just the *first tier* we exhaust for owners who
-> can't (or shouldn't) open the robot; everything below is the **planned, in-scope** path for custom
-> firmware and for reviving robots the over-the-air route can't reach. Build: **v3.6.4-Zephyr / OTA
-> v24.10.803**, board **`rk3288-robot-gen1p5`** (`board=evb_rk3288`).
+The physical ways into a Moxie (**v3.6.4-Zephyr / OTA v24.10.803**, board **`rk3288-robot-gen1p5`**,
+U-Boot `board=evb_rk3288`): the RK3288 download/boot modes, how to enter them, the partition names to
+flash, the serial console, ADB/USB and JTAG. Opening the robot is in scope; the
+[no-disassembly options](../firmware/ota-and-recovery.md) are only the first tier. The step-by-step
+procedure is the [flashing runbook](../firmware/flashing-runbook.md).
 
 ## Access tiers
 
@@ -30,19 +29,19 @@ bootcmd = boot_android ${devtype} ${devnum};
           fastboot usb 0;
 ```
 
-So on an **AVB verification failure the bootloader itself drops into `rockusb` (Rockchip USB download
-mode), then `fastboot`** — both reachable over the USB data lines without special keys. The RK3288
-also has:
+On an **AVB verification failure the bootloader itself drops into `rockusb` (Rockchip USB download
+mode), then `fastboot`**, both reachable over USB without special keys.
 
 | Mode | How to enter | Tool |
 |---|---|---|
-| **Maskrom** | hold the SoC's `BOOT`/recovery test-point low while powering (or corrupt the loader) | `rkdeveloptool db <loader>` then `wl`/`ul` |
+| **Maskrom** | hold the mainboard `LOAD` button ([fcc-teardown](fcc-teardown.md#reset-load-power-on-board-buttons-major-bench-finding)) or the SoC `BOOT`/recovery test point while powering (or corrupt the loader) | `rkdeveloptool db <loader>` then `wl`/`ul` |
 | **Loader / rockusb** | U-Boot download mode (auto-entered on AVB fail, or `reboot loader`) | `rkdeveloptool`, `upgrade_tool`, Rockchip DriverAssistant |
 | **Fastboot** | U-Boot fallback (see bootcmd) or `reboot bootloader` | `fastboot` (note RK fastboot is limited) |
 | **Recovery** | A/B recovery-as-boot; `reboot recovery` or BCB in `misc` | `adb sideload` |
 
-`bootloader-locked=%s` / `bootloader-min-versions=%s` strings confirm a lock-state variable; combined
-with `ro.oem_unlock_supported=1`, the bootloader can be unlocked (see [`firmware-image.md`](../firmware/firmware-image.md)).
+`bootloader-locked=%s` / `bootloader-min-versions=%s` strings confirm a lock-state variable. With
+`ro.oem_unlock_supported=1` an unlock exists, but it is AVB-ATX attestation-gated
+([firmware-image](../firmware/firmware-image.md#the-verified-boot-chain-and-how-to-break-it-for-custom-code)).
 
 ## Boot-mode entry (reboot reasons & keys)
 
@@ -70,8 +69,8 @@ U-Boot reads **`adc-keys`** (via SARADC) and the **PMIC power key** (`rk8xx_pwrk
 The **download and recovery keys are ADC levels on the SARADC** — the *same input class as the
 **Macro** button* ([`device-tree.md`](device-tree.md); the kernel node reads `saradc` ch1,
 `macro-key { rockchip,adc_value = <1> }`). Detection is **long-press** (U-Boot logs
-`'%s' key long pressed...`), so the entry is a **held** button at power-on, not a tap. This strongly
-implies **holding the Macro button while powering on enters recovery or bootrom-download mode**.
+`'%s' key long pressed...`), so entry is a **held** button at power-on. This strongly implies
+**holding Macro while powering on enters recovery or bootrom-download mode**.
 
 The **exact microvolt threshold that distinguishes download vs recovery is not in the extracted DTBs**
 — the U-Boot control DTB is a stripped `Evb-RK3288` ([`manifests/uboot-control.dts`](../firmware/manifests/uboot-control.dts))
@@ -79,19 +78,15 @@ with no `adc-keys` node, so those thresholds are compiled into Rockchip U-Boot. 
 level → *which* mode is a **bench experiment** (watch the [serial console](#serial-console-uart-ttl)
 while holding Macro at power-on). The power key is the RK808 PMIC key (also long-press capable).
 
-> **Why this matters for goal #3 (low/no-open revival):** the **download-key → rockusb** path is
-> **unsigned** — `rkdeveloptool` can then flash *anything*, including a `--disable-verification`
-> `vbmeta`, bypassing the signed-OTA gate that blocks [recovery sideload](../firmware/ota-and-recovery.md). So if
-> the Macro button enters download mode **and a USB data port is reachable**, you can revive/reflash a
-> unit (even pre-801) with just **USB + a button** — no teardown. Confirming (a) the button→mode
-> mapping and (b) an accessible USB port is the key bench experiment.
+> **Why this matters for low/no-open revival:** the download-key → rockusb path is **unsigned**, so
+> `rkdeveloptool` can flash anything, including a disabled `vbmeta`, bypassing the signed-OTA gate on
+> [recovery sideload](../firmware/ota-and-recovery.md). If Macro enters download mode **and** a USB data
+> port is reachable, a unit (even pre-801) can be reflashed with just USB + a button.
 
-## Flashing a partition (the reliable path)
+## Partition table (flash targets)
 
-### Partition table (flash targets)
-
-`rkdeveloptool`/`upgrade_tool` address partitions **by name** (from the eMMC GPT), so you don't need
-offsets to flash — you need the names. The complete `by-name` set for this build:
+`rkdeveloptool`/`upgrade_tool` address partitions **by name** (from the eMMC GPT). The complete
+`by-name` set for this build:
 
 | Partition | A/B? | What |
 |---|---|---|
@@ -113,19 +108,8 @@ offsets to flash — you need the names. The complete `by-name` set for this bui
 The **A/B (`slotselect`) partitions** carry `_a`/`_b` suffixes; flash the **inactive** slot (or both).
 `trust`, `uboot`, `misc`, `frp`, `userdata` are single-slot. **Exact offsets/sizes are in the eMMC
 GPT** (not in any partition image) — read them on a bench with `rkdeveloptool ppt` (print partition
-table) or `gpt`. Verify a read-back against the [SHA-256s](../firmware/firmware-803-reference.md).
-
-
-
-1. Enter **maskrom** or **loader** mode over USB.
-2. `rkdeveloptool db rk3288_loader.bin` (download the DDR init + loader).
-3. `rkdeveloptool wl <offset> <partition.img>` (or `upgrade_tool uf update.img`). Partition names map
-   to the GPT `by-name` entries in [`firmware-image.md`](../firmware/firmware-image.md).
-4. To run **modified** `system`/`vendor`: flash a `--disable-verification` `vbmeta` (or re-sign the
-   AVB hashtrees with your own key), then flash your images. A/B: flash the inactive slot or both.
-
-> ⚠️ `/data` is `forceencrypt` f2fs — replacing `system`/keystore state may force a data wipe on first
-> boot. Back up `/data` first if you care about paired state.
+table) or `gpt`. Verify a read-back against the [SHA-256s](../firmware/firmware-803-reference.md#partition-images).
+Procedure: [flashing runbook](../firmware/flashing-runbook.md).
 
 ## Serial console (UART / TTL)
 
@@ -137,9 +121,8 @@ typically **1500000 baud**, 8N1; some builds use 115200 — try both) to get:
 - Android kernel `dmesg` and the `init`/`FIQ` console.
 - A shell for debugging (subject to `ro.secure`/SELinux; recovery/maskrom bypass this).
 
-Locating the pads: the DTB is `rk3288-robot-gen1p5.dtb` — dump it (`dtc`) to find the `uart` node and
-its pinmux, then map to test points on the mainboard. (Teardown photos / test-point map: TODO as we
-open a unit.)
+Locating the pads: the console is `serial2` (`ff690000`) in the [device tree](device-tree.md#uarts); map its
+pinmux to mainboard test points. The SoC UART pads are not visible in the FCC photos (bench item).
 
 ## ADB / USB (when booted normally)
 
@@ -152,17 +135,18 @@ open a unit.)
 ## JTAG / SWD & chip-off (deep tier)
 
 The RK3288 exposes JTAG (muxed on SD/other pins; enabled via eFuse/loader in some configs). For a
-fully bricked unit or key extraction, JTAG/SWD or eMMC chip-off + external programmer are the last
-resort. Documenting pinouts requires a unit on the bench (TODO).
+fully bricked unit or key extraction, JTAG/SWD or eMMC chip-off + an external programmer are the last
+resort; pinouts need a bench unit. The Lizard MCU's SWD header is documented in
+[fcc-teardown](fcc-teardown.md#stm32f071vbt6-the-lizard-motor-mcu).
 
 ## In-scope checklist (as we open a unit)
 
-- [ ] Photograph the mainboard; identify SoC, eMMC, MCU, DLPC3430, XMOS, PMIC.
+- [ ] Photograph the mainboard; identify SoC, eMMC, MCU, DLPC3430, XMOS, PMIC (partly done from FCC photos, [fcc-teardown](fcc-teardown.md)).
 - [ ] Find + label the **debug UART** pads; capture a full boot log at both baud rates.
 - [ ] Confirm maskrom entry (test point) and dump the loader.
 - [ ] `rkdeveloptool` read-back of each partition (compare SHA-256 to [`firmware-803-reference.md`](../firmware/firmware-803-reference.md)).
 - [ ] Flash a `--disable-verification` vbmeta + a debuggable `system`; get root ADB.
-- [ ] Map the Lizard MCU UART + its firmware-update header (see [`hardware-map.md`](hardware-map.md)).
+- [ ] Probe the Lizard MCU `ISP & DEBUG` header and UART ([fcc-teardown](fcc-teardown.md), [hardware-map](hardware-map.md)).
 
 ---
 📖 [Reverse-engineering index](../README.md) · [Firmware image (build & sign)](../firmware/firmware-image.md) · [OTA & recovery](../firmware/ota-and-recovery.md) · [Hardware map](hardware-map.md) · [Docs index](../../README.md)

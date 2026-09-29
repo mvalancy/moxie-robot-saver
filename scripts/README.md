@@ -1,7 +1,7 @@
 # 🛠️ scripts
 
 Repo-maintenance helpers — the mechanical doc guards. Run from the repo root before committing docs
-(see the [docs-tree SOP](../docs/README.md#-how-this-documentation-tree-is-maintained-sop)).
+(see the [docs-tree SOP](../docs/README.md#maintaining-these-docs)).
 
 - `check-doc-links.py` — verify every internal markdown link **and `#anchor` fragment** resolves, so
   the docs stay navigable. `python3 scripts/check-doc-links.py`

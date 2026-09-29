@@ -5,7 +5,7 @@ from typing import Optional
 from ._coerce import _dict, _error, _int, _num, _seq, _strs, card_view
 
 # --- 🎭 Be Moxie (puppet / telehealth) ---------------------------------------------------
-#: `TeleHealth.RobotState`, recovered (docs/reverse-engineering/protocol/telehealth.md:36).
+#: `TeleHealth.RobotState`, recovered (docs/reverse-engineering/protocol/telehealth.md:17).
 TELEHEALTH_STATES = ("UNKNOWN_STATE", "READY", "IN_SESSION", "EXITING")
 
 

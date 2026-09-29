@@ -1,9 +1,10 @@
 // Keep Moxie framed inside the part of the viewport nothing covers. Only the camera's VIEW
 // OFFSET moves; the canvas stays full-screen at every width (test_responsive.mjs).
 //
-// Two boxes can eat the viewport: `#chat-dock` (always present — a bottom row, or a right
-// column on a short landscape screen) and `#panel` while open (a right column >=900 px, a
-// bottom drawer below). Each contributes a bound and one frameInRect call uses both.
+// Three boxes can eat the viewport: the header (topbar + notice; #stage's top edge),
+// `#chat-dock` (always present — a bottom row, or a right column on a short landscape
+// screen) and `#panel` while open (a right column >=900 px, a bottom drawer below). Each
+// contributes a bound and one frameInRect call uses them all.
 // Re-run on resize and drawer toggle only — never on dock growth, which would move the
 // camera under someone who is reading.
 import { invalidateBubbleMetrics } from './bubble.js';
@@ -46,7 +47,17 @@ export function installStageFraming(camera, renderer) {
         else if (isBottomDrawer) bottom = Math.min(bottom, r.top);
       }
     }
-    frameInRect(camera, right, bottom, right / 2, bottom / 2 + bottom * HEADROOM);
+    // …and the topbar + notice above: frame her in the band BELOW them, or her crown sits
+    // under the header on a short laptop screen (1280x720 clipped it). Ignored if taking
+    // it would leave a sliver.
+    let top = 0;
+    const stageEl = document.getElementById('stage');
+    if (stageEl) {
+      const t = stageEl.getBoundingClientRect().top;
+      if (t > 0 && bottom - t > H * 0.3) top = t;
+    }
+    const band = bottom - top;
+    frameInRect(camera, right, band, right / 2, top + band / 2 + band * HEADROOM);
     camera.updateProjectionMatrix();
     renderer.setSize(W, H);
     invalidateBubbleMetrics();            // the stage box just moved

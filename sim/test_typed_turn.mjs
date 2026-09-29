@@ -217,6 +217,7 @@ const snapshot = () => ({
   sttBaseDisabled: !!(document.getElementById("stt-base") || {}).disabled,
   micDisabled: !!(document.getElementById("mic-btn") || {}).disabled,
   chatText: (document.getElementById("transcript") || {}).textContent || "",
+  whos: [...document.querySelectorAll("#transcript .turn .who")].map((w) => w.textContent),
   status: (document.getElementById("chat-status") || {}).textContent || "",
   audio: window.__audio,
 });
@@ -305,6 +306,9 @@ try {
        "a degraded page spends NO live turn on a typed line");
     ok(after.chatText.includes("are you there"),
        "…the visitor's own line is still echoed to the transcript");
+    /* The visitor is often a grown-up trying the demo: the log names them the way every
+     * chat does, not by the protocol's word for the robot's user. */
+    eq(after.whos[0], "You", `…under "You", not "Child" (labels ${JSON.stringify(after.whos)})`);
     ok(after.chatText.replace("are you there", "").trim().length > 0,
        `…and Moxie still answers, from stub.js (transcript ${JSON.stringify(after.chatText.slice(-120))})`);
     eq(reqs.filter((u) => /:8081\//.test(u)).length, 0, "…with no sidecar request either");

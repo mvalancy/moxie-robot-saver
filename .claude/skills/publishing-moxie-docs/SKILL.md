@@ -21,16 +21,16 @@ The bundle is reproducible (content-hash stamp), so a rebuild on an unchanged do
 `git status` after rebuilding tells you whether you actually changed anything.
 
 ## The standing rules the guards enforce
-- **One message, root to leaf.** A finding that changes the story is pushed upward in the same pass — the leaf, its subfolder README, the section index, and (if it changes the headline) `docs/README.md` + root `README.md`. Two levels must never disagree. Full SOP: `docs/README.md` → "How this documentation tree is maintained".
+- **One message, root to leaf.** A finding that changes the story is pushed upward in the same pass — the leaf, its subfolder README, the section index, and (if it changes the headline) `docs/README.md` + root `README.md`. Two levels must never disagree. Full SOP: `docs/README.md` → "How this documentation tree is maintained (SOP)".
 - **Every folder is navigable.** Each `docs/` subfolder with ≥2 pages has a `README.md` indexing it and linking up; parents link down. New pages join the curated order, not an A–Z tail.
 - **Retire, don't strand.** When a finding supersedes an old belief, update or banner the old page in the same commit — `check-doc-consistency.py` has a stale-claim denylist.
 - **Anchors:** the slugify is `lowercase → strip to [a-z0-9_- ] → spaces→hyphen → collapse dashes`; an emoji, em-dash, or `(…)` in a heading drops out (`## Goal ② — X` → `#goal-x`). Trust `check-doc-links.py` over hand-guessing an anchor.
 
 ## Gotchas
 - Commit messages with backticks or parens get shell-mangled — write the message to a file and `git commit -F <file>`.
-- Non-`.md` files (`.tsv`/`.dts` manifests) are bundled as `kind:"text"` and rendered as code; the order/orphan guard is scoped to `.md`. Raw `.proto` files are deliberately not in the tree yet (120 would clutter; they need a collapsible nested sub-tree — the sub-head routing for `manifests/`/`recovered-proto/`/`keys/` is the groundwork).
+- Non-`.md` files (`.tsv`/`.dts` manifests) are bundled as `kind:"text"` and rendered as code; the order/orphan guard is scoped to `.md`. Raw `.proto` files are not bundled.
 - **No CDN.** Every web dep is vendored under `sim/web/vendor/`. Off-host refs are only canonical URLs + Google Fonts.
-- **Headless verify** uses puppeteer + local chrome (`~/.cache/puppeteer`) with `--use-gl=swiftshader --enable-unsafe-swiftshader`; assert zero console errors.
+- **Headless verify** uses puppeteer + local Chrome via `sim/browser_harness.mjs` (`launchBrowser`: `--use-gl=swiftshader --enable-unsafe-swiftshader`); assert zero console errors.
 
 ## Completeness bar
-Apply the clean-room sufficiency test (see the `reversing-moxie-firmware` skill): could someone rebuild this piece from the doc alone? Capture the data; don't point at the binary. Track it in `COVERAGE.md`.
+Apply the clean-room sufficiency test (see `continuing-moxie-re` and `docs/reverse-engineering/PLAYBOOK.md`): could someone rebuild this piece from the doc alone? Capture the data; don't point at the binary. Track it in `docs/reverse-engineering/EXPLORATION-MAP.md`.

@@ -215,6 +215,7 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
 }
 .env-badge.local  { color: var(--mint);  border: 1px solid rgba(5, 255, 161, 0.4); }
 .env-badge.hosted { color: var(--amber); border: 1px solid rgba(252, 238, 10, 0.4); }
+.env-badge.hosted.online { color: var(--mint); border-color: rgba(5, 255, 161, 0.4); }
 
 /* The mode pill (mode.js + env.js, live-sim-demo.md §7): the one place the page says the
    live brain is busy/out of budget/unreachable. aria-live; `display` only on `.on`, so the
@@ -369,6 +370,19 @@ body[data-env="hosted"][data-mode="live"] #env-banner {
   outline: 2px solid var(--cyan, #00f0ff);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Reduced motion: the page's own chrome holds still — the ALIVE / link / rec lamps stop
+ * pulsing (they settle on their lit frame) and hovers, drawers and fades snap. The robot
+ * herself is the subject of the page and keeps moving; bg.js and the bubble's typewriter
+ * already honour the setting on their own. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* ---- THE THREE OPENERS (#chat-openers) ------------------------------------

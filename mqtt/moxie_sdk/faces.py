@@ -7,7 +7,7 @@ selection into the pushed `RobotCloudConfig`; the console picks from `face_catal
 **Carrier.** `RobotCloudConfig.child_pii.face_options` — `repeated string face_options = 17`
 on `ChildDecrypted` (recovered Cloud.proto:166; proto-catalog.md:334). A list of layer
 labels, composited on the robot. It is clear metadata, not a sealed field
-(device-config-and-telemetry.md:52-54), so a server fills it in directly.
+(device-config-and-telemetry.md:44), so a server fills it in directly.
 
 **Slots.** The 14 `MoxieCustomizationType` slots (runtime/unity-face-animation.md:34-42),
 in `SLOT_SPINE` order.
@@ -19,7 +19,7 @@ each tagged with one of two origins:
   * `openmoxie-manifest` — 60 `MX_<nnn>_<Group>_<Detail>` asset ids from OpenMoxie (MIT,
     commit `c8c2d380`; see ATTRIBUTION.md). Ids only; slot mapping and labels are ours,
     and anything unmappable goes to the JSON's `unmapped` list. Upstream notes some of
-    these crashed Unity (also mqtt-and-conversation.md:824), so each carries
+    these crashed Unity (also mqtt-and-conversation.md:780), so each carries
     `caution: true`. The id space is open (behavior-markup.md:161-163): an owner can
     pass their own robot's labels verbatim via `custom` (shape-checked only).
 Stickers, Extras and Misc stay empty — no source lists an id and we invent none.

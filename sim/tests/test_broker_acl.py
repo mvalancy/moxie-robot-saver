@@ -1,5 +1,5 @@
 """
-Broker ACL tests — security-broker-auth.md §2 (P0), rows T1-T3 and T8's ACL half.
+Broker ACL tests — security-broker-auth.md §2 (P0); listed in its §5 table.
 
 Pure: no broker, no Docker, no network. Two halves.
 
@@ -221,7 +221,7 @@ def test_a_user_block_is_only_ever_reachable_behind_a_password_file():
 
 
 def test_the_robot_listener_never_carries_a_password_file():
-    """A real Moxie's MQTT password is an RS256 JWT (cloud-protocol.md E3/E4) and its
+    """A real Moxie's MQTT password is an RS256 JWT (cloud-protocol.md, "Robot authentication") and its
     username is unknown (assumption A2). A `password_file` on 8883 refuses it — this is
     the assertion that stops a future 'tidy-up' from bricking a fleet."""
     for name in CONFS:

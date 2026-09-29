@@ -1,8 +1,12 @@
-# 🛠️ Skill: find-moxie-on-lan
+# 🛠️ Skill: Find Moxie on the LAN
 
-Find a Moxie robot's IP address on the local network after it has joined Wi-Fi. Use when you need to confirm Moxie connected or locate it for the next setup step.
+Locate a Moxie's IP after it joins Wi-Fi (AMPAK vendor, TTL 64, no open ports).
 
-The skill itself lives in [`SKILL.md`](SKILL.md) (name + description frontmatter, then the steps).
+Invoke it by name: `find-moxie-on-lan`.
+
+| File | Purpose |
+|---|---|
+| [`SKILL.md`](SKILL.md) | The skill: YAML frontmatter (`name`, `description`) plus the steps the agent follows. |
 
 ---
-📖 [Skills index](../README.md) · [Back to top](../../../README.md)
+📖 [Skills index](../README.md) · [Shared agents & skills](../../README.md) · [Back to top](../../../README.md)

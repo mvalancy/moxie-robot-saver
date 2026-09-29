@@ -149,6 +149,7 @@ async function load(url, opts = {}) {
       env: document.body.getAttribute("data-env"),
       mode: document.body.getAttribute("data-mode"),
       badge: (q(".env-badge") || {}).textContent || "",
+      badgeColor: q(".env-badge") ? getComputedStyle(q(".env-badge")).color : "",
       pill: pill ? pill.textContent : null,
       pillShown: !!(pill && !pill.hidden),
       banner: (q("#env-banner .eb-text") || {}).textContent || "",
@@ -239,6 +240,9 @@ try {
   const live = await load(HOSTED, { health: { status: 200, body: HEALTH_LIVE }, transport: true });
   ok(live.state === "live", `a configured route must read as live (got ${live.state})`);
   ok(live.badge === "MOXIE ONLINE", `live badge (got "${live.badge}")`);
+  // Most visitors are on a phone: the mic line names the button and says "tap", not "click".
+  ok(/Listen/.test(live.micStatus) && !/click/i.test(live.micStatus),
+     `live mic line tells a phone visitor what to do (got "${live.micStatus}")`);
   ok(live.mode === "live", `body[data-mode] should say live (got ${live.mode})`);
   ok(live.pillShown === false, "live and idle: nothing to apologise for");
   ok(live.micMarked === false, "live ears must REMOVE #mic-btn's needs-backend mark");
@@ -258,6 +262,11 @@ try {
   ok(noTr.state === "live", `the mode is still live (got ${noTr.state})`);
   ok(noTr.badge === "HOSTED DEMO · SCRIPTED",
      `a live mode with no transport must read SCRIPTED (got "${noTr.badge}")`);
+  /* The badge's COLOUR is part of its honesty: online in the same caution amber as every
+   * fallback made "the brain is here" and "you are talking to a script" look alike. */
+  ok(live.badgeColor !== deg.badgeColor && live.badgeColor !== noTr.badgeColor,
+     `…and it does not share the fallback badges' colour (online ${live.badgeColor}, ` +
+     `degraded ${deg.badgeColor}, scripted ${noTr.badgeColor})`);
   ok(noTr.pillShown === true && /no live transport/.test(noTr.pill || ""),
      `...and say why (got "${noTr.pill}")`);
   ok(noTr.errs.length === 0, `no-transport console errors: ${noTr.errs.slice(0, 3).join(" | ")}`);

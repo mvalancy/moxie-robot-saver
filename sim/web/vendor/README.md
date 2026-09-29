@@ -1,15 +1,18 @@
-# sim/web/vendor — bundled third-party libraries
+# 📦 `sim/web/vendor/` — pinned third-party libraries
 
-Vendored locally so the simulator runs with **no network / no CDN** (self-sufficiency
-doctrine — the sim must work if every external link dies). Pinned versions:
+Vendored so the site runs with no network or CDN. All are served under the `/vendor/*` rule in [`../_headers`](../_headers).
 
-- `three/three.module.js` + `three/addons/{controls/OrbitControls,utils/BufferGeometryUtils}.js`
-  — **three.js r160** (`three@0.160.0`). MIT License, © three.js authors.
-- `mqtt.min.js` — **MQTT.js v5.10.1**. MIT License, © the MQTT.js contributors.
+| file | library | license | used by |
+|---|---|---|---|
+| [`three/`](three/README.md) | three.js r160 (`three@0.160.0`): the release's minified `three.module.min.js` + two addons | MIT | the 3D model, wireframe backgrounds |
+| `mqtt.min.js` | MQTT.js v5.10.1 | MIT | `bridge/` |
+| `qrcode.js` | qrcode-generator v1.4.4 (Kazuhiko Arase) | MIT | `qr.js` |
+| `marked.min.js` | marked v12.0.0 | MIT | docs explorer (Markdown to HTML) |
+| `mermaid.min.js` | mermaid v10.9.1 | MIT | docs explorer + `diagram.js` |
+| `highlight.min.js` | highlight.js v11.9.0 common build + protobuf | BSD-3-Clause | docs explorer code blocks |
+| [`fonts/`](fonts/README.md) | Inter, JetBrains Mono | SIL OFL 1.1 | every page |
 
-To update: re-fetch the same paths from `https://unpkg.com/three@<ver>/` and
-`https://unpkg.com/mqtt@<ver>/dist/mqtt.min.js`, then bump the versions here.
-- `qrcode.js` — **qrcode-generator** v1.4.4 (Kazuhiko Arase). MIT License. Used by `qr.js` to render revival QR codes in-browser.
-- `marked.min.js` — **marked** v12.0.0 (MIT). Markdown → HTML for the docs explorer (`docs.html`).
-- `mermaid.min.js` — **mermaid** v10.9.1 (MIT). Renders ```mermaid diagrams in the docs explorer.
-- `highlight.min.js` — **highlight.js** v11.9.0 common build + the protobuf language (BSD-3-Clause). Syntax highlighting for code blocks in the docs explorer.
+To update: re-fetch the same paths from `https://unpkg.com/<pkg>@<ver>/` (MQTT.js: `dist/mqtt.min.js`)
+and bump the version here.
+
+📖 [sim/web](../README.md) · [Back to top](../../../README.md)

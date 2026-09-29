@@ -1,6 +1,6 @@
 ---
 name: running-layered-session-loops
-description: Structure and run a long-horizon project as layered autonomous agent loops (recurring, scoped, independent) that make steady safe progress for days without supervision. Use when setting up or operating unattended recurring work — a build/test/audit/deep-work cadence coordinated through a shared plan file. This is how the Moxie deconstruction sustained 322 commits.
+description: Structure and run a long-horizon project as layered autonomous agent loops (recurring, scoped, independent) that make steady safe progress for days without supervision. Use when setting up or operating unattended recurring work — a build/test/audit/deep-work cadence coordinated through a shared plan file.
 ---
 
 # Running layered autonomous session loops
@@ -29,7 +29,7 @@ The exact tiers depend on the project — the principle is **separation of conce
 7. **Discover mutable IDs; never hardcode them.** Promotion PRs exist only for owner-approved major milestones and get a new number each time. Use `bash scripts/standing-pr.sh` (normally `none` between milestones) before querying checks. Same rule for run IDs, tags, SHAs: read them from `gh`/`git`, don't bake a literal into loop state.
 
 ## The shared state (the coordination substrate)
-A single **plan file** (here `work/firmware-re/progress/PLAN.md`) is how loops hand off across days:
+A single **plan file** (for Moxie RE: `work/firmware-re/progress/PLAN.md`, kept outside the repo) is how loops hand off across days:
 - **Status / Next / Blockers** — the live picture, kept current. Convert relative dates to **absolute** (a
   loop firing next week must read "2026-08-30", not "yesterday").
 - A **"Recent"** append-log — one tight entry per iteration (what shipped, verified, pushed). This is the
@@ -48,10 +48,10 @@ Complement it with **durable memory/doctrine files** for cross-session knowledge
 ```
 
 ## Why it worked (the payoff)
-Days of unattended, layered loops produced a 322-commit clean-room reverse-engineering + a working
-revival stack — because each fire was small, verified, honest, and coordinated through durable state, so
+Days of unattended, layered loops produced a clean-room reverse-engineering and a working revival
+stack — because each fire was small, verified, honest, and coordinated through durable state, so
 progress accumulated without a human in the loop and without silent rot. The deep-work loop found the
 threads; the build tier shipped the deliverable; the test tier held quality; the audit tier kept the whole
-thing coherent. Set the scopes and cadences well, enforce the six rules with mechanical guards, and let it run.
+thing coherent. Set the scopes and cadences well, enforce the seven rules with mechanical guards, and let it run.
 
 See also: `continuing-moxie-re` (the deep-work loop's content) and `publishing-moxie-docs` (the guards a fire runs).

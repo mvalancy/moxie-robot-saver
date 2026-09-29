@@ -1,81 +1,41 @@
-# 🌐 The Moxie experience as one static site
+# The static site
 
-> **What the user asked for.** A **combined parent app + simulator + example cloud UI** for the Moxie
-> experience, hosted on **Cloudflare Pages** as a static site — "just the basics hosted online, not full
-> LLM gateway connectivity" — that **grows into the real end-to-end system** over time. This doc is the
-> map: the three surfaces, what each one is, what runs statically vs. needs a server, and the roadmap
-> from "shop window" to "real product." Robot behaviour is grounded in firmware **v24.10.803**.
+`sim/web/` is one static site that works on any CDN (it is deployed on Cloudflare Pages). It gives
+anyone a taste of Moxie with no install, and it gives an owner with only a phone the QR codes to revive
+a robot.
 
-## The three surfaces
+## The pages
 
-```mermaid
-flowchart LR
-  hub["🏠 Landing hub<br/>one front door"]
-  hub --> setup["📷 Parent app (basics)<br/>setup.html — revive a robot"]
-  hub --> sim["🖥️ Simulator<br/>sim.html — 3D Moxie"]
-  hub --> cloud["📊 Example cloud UI<br/>the operator/console view"]
-  classDef d fill:#0e0e14,stroke:#00f0ff,color:#e8edf5;
-  classDef todo fill:#0e0e14,stroke:#5a6577,color:#8892a4,stroke-dasharray:4 3;
-  class hub,setup,sim,cloud d;
-```
+| Page | What it is |
+|---|---|
+| [`index.html`](../../sim/web/index.html) | The landing hub that links everything below. |
+| [`sim.html`](../../sim/web/sim.html) | The 3D Moxie, driven by the real protocol. With no backend it uses a scripted brain and pre-rendered voice; on a deployment with a gateway it uses a real brain, voice and ears. |
+| [`setup.html`](../../sim/web/setup.html) | The phone flow for re-homing a real robot: a Wi-Fi QR and a server QR, both built in the browser by [`qr.js`](../../sim/web/qr.js). |
+| [`cloud.html`](../../sim/web/cloud.html) | A read-only example parent console (child, missions, conversation log, robot status) from [`fixtures/cloud.json`](../../sim/web/fixtures/cloud.json), whose shapes mirror the real REST and MQTT models. |
+| [`docs.html`](../../sim/web/docs.html) | The docs explorer: every doc in `docs/` with diagrams, search and deep links, from a bundle built by [`build_docs_bundle.py`](../../sim/tools/build_docs_bundle.py). |
 
-| Surface | What it is | Static today? | Where |
-|---|---|---|---|
-| **Parent app** (basics) | The phone flow that re-homes a real robot: Wi-Fi QR + server QR. | ✅ **done** — `setup.html` builds both codes client-side via [`qr.js`](../../sim/web/qr.js) (plain-JSON QR types, no protobuf, no server). | [`sim/web/setup.html`](../../sim/web/setup.html) |
-| **Simulator** | The 3D Moxie — face, arms, liveness — driven by the real protocol, with a stub brain + pre-rendered audio so it talks with no server. | ✅ **done** | [`sim/web/`](../../sim/web/) |
-| **Example cloud UI** | The parent console: child profile, Daily Missions & rewards, conversation + activity log, robot status, notifications — read-only. | ✅ **done** — [`cloud.html`](../../sim/web/cloud.html) from [`fixtures/cloud.json`](../../sim/web/fixtures/cloud.json), shapes mirror the real REST API + MQTT content model. | [`sim/web/cloud.html`](../../sim/web/cloud.html) |
-| **Landing hub** | One front door tying the three together. | ✅ **done** — [`index.html`](../../sim/web/index.html) | [`sim/web/index.html`](../../sim/web/index.html) |
-| **Docs explorer** | Browses every Markdown doc in the repo with Mermaid diagrams rendered — no server. | ✅ **done** — [`docs.html`](../../sim/web/docs.html) + `docs-bundle/` (built by [`build_docs_bundle.py`](../../sim/tools/build_docs_bundle.py)) | [`sim/web/docs.html`](../../sim/web/docs.html) |
+All pages share one vendored `vendor/` tree (three.js, MQTT.js, marked, mermaid, highlight.js, fonts),
+so nothing loads from third-party hosts.
 
-## What's static vs. what needs a server
+## What needs a server
 
-The dividing line is simple and worth stating plainly:
+- **Static:** anything that makes a QR code, animates the avatar, or replays a scripted conversation.
+  The revival QR codes are plain JSON ([QR commands](../reverse-engineering/protocol/qr-commands.md)).
+- **Same-origin Functions** ([`functions/`](../../functions/README.md)): the live brain, voice and ears
+  on a hosted deployment, behind rate limits and a scripted fallback.
+- **Your own backend:** anything that talks to a real robot (it needs an MQTT broker over TLS, which a
+  CDN cannot be) or stores a real account and child profile (the [`server/`](../../server/) app).
 
-- **Anything that produces a QR, animates the avatar, or replays a canned session is static.** The
-  revival QRs are plain JSON ([`qr-commands.md`](../reverse-engineering/protocol/qr-commands.md)); the avatar is
-  WebGL; the demo conversation is scripted and pre-rendered ([`deploy-cloudflare.md`](../guides/deploy-cloudflare.md)).
-- **Anything that talks to a *live robot*, does real STT/LLM/TTS, or stores a real account needs a
-  server.** A real robot speaks **MQTT over TLS** — a CDN can't be its broker. Full pairing (the `PA`
-  protobuf payload + recovery phrase + child account) is the server-bound [`server/`](../../server/)
-  FastAPI app, not part of the static basics.
+Each static surface has a live counterpart, and the client uses it when it is reachable:
 
-So the static site is a **complete, honest demo of the experience** plus the **one genuinely useful
-real-world tool** — the revival QR a parent holds up to a robot. Everything past that plugs in when you
-self-host the backend.
+| Static | Live |
+|---|---|
+| `setup.html` (QR codes only) | Full pairing, recovery phrase and child account in [`server/`](../../server/) |
+| Scripted brain | The [`mqtt/`](../../mqtt/) supervisor with your LLM, or the hosted gateway |
+| Pre-rendered voice | Piper, Whisper or a gateway ([guide](../guides/gateway-voice-and-ears.md)) |
+| Example console | The real parent console on your backend |
 
-## The "basics online" scope (this milestone)
-
-What the user means by *the basics*, concretely:
-
-1. **A parent with a dead Moxie and only a phone can revive it** — `setup.html`, no install. ✅
-2. **Anyone can see the 3D Moxie talk** — the simulator with stubs. ✅
-3. **A read-only example of the cloud/console view** — so the shape of the real product is visible. ✅
-4. **One landing page** that presents all three. ✅
-
-Explicitly *out of scope* for this milestone (deferred to the end-to-end phase): LLM gateway
-connectivity, live MQTT to a real robot, real accounts/auth, real content authoring.
-
-## Growing into the end-to-end system
-
-The static site is the **near end** of one continuum, not a throwaway. Each surface has a live twin that
-plugs in behind the same UI:
-
-| Static surface | …becomes | Live backend |
-|---|---|---|
-| `setup.html` (QR only) | full pairing + recovery phrase + child account | [`server/`](../../server/) FastAPI parent-app server |
-| Simulator stub brain | a real conversing brain | [`mqtt/`](../../mqtt/) supervisor + `LLMApp` (self-hosted Ollama, or a gateway) |
-| Pre-rendered audio | live voice | [`sim/tts`](../../sim/tts/) Piper · [`sim/stt`](../../sim/stt/) faster-whisper |
-| Canned cloud UI | live console | the same server's REST API + broker status |
-
-The precedence is already **automatic** in the client (a live endpoint is used if reachable, else the
-stub) — so "plug in the backend" is a configuration change, not a rewrite.
-
-## Deploy
-
-Deploy root is **`sim/web/`** — it holds the vendored deps (three.js, fonts, `qrcode.js`, `qr.js`) that
-every surface shares, so the parent app, simulator and (soon) cloud UI live as sibling pages reusing one
-`vendor/` tree. Mechanics — headers, audio pre-caching, per-environment config — are in
-[`deploy-cloudflare.md`](../guides/deploy-cloudflare.md).
+Deploying: [Cloudflare guide](../guides/deploy-cloudflare.md).
 
 ---
-📖 [Deploy to Cloudflare](../guides/deploy-cloudflare.md) · [Revive your Moxie](../guides/revive-your-moxie.md) · [Ecosystem plan](moxie-ecosystem.md) · [Simulator](../../sim/README.md) · [Docs index](../README.md)
+[Architecture index](README.md) · [Revive your Moxie](../guides/revive-your-moxie.md) · [Architecture overview](overview.md)

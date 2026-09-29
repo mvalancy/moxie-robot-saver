@@ -4,7 +4,7 @@ The per-turn `volley` / `session` API a content module's code sees
 
 A `Volley` is one exchange (inbound context; `set_output`, `add_execution_action`,
 subscriptions out); a `Session` is the whole conversation. Memory: `volley.persist_data`
-is durable per-namespace storage (`store.MemoryStore`), `volley.local_data` is per-exchange
+is durable per-namespace storage (`memory_store.MemoryStore`), `volley.local_data` is per-exchange
 scratch, and `session.summarize(...)` is in `memory.py`.
 """
 from __future__ import annotations

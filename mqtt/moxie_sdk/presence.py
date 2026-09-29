@@ -20,7 +20,7 @@ They carry found/lost only — no box, position, distance or identity (vision.md
 so what can be built is *presence*: is someone there, since when, how long were they
 gone. A subscribed event arrives as the `speech` of an ordinary `RemoteChatRequest`
 (OpenMoxie `doc/RemoteModuleAPI.md` §Event Handling), after the brain subscribes via
-`RemoteChatAction.EventSubscription` (remote-chat-protocol.md:103-106).
+`RemoteChatAction.EventSubscription` (remote-chat-protocol.md:81-84).
 
 No physical robot has sent us one: the payload keys are cited, the flicker timing is a
 guess — hence the hysteresis knobs below.

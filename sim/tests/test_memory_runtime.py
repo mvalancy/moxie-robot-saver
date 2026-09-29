@@ -24,7 +24,9 @@ import moxie_runtime  # noqa: E402
 from moxie_sdk.app import MoxieApp  # noqa: E402
 from moxie_sdk.cloud_config import LoggingPolicy  # noqa: E402
 from moxie_sdk.content import ContentApp, load_module  # noqa: E402
-from moxie_sdk.store import JsonStore, MemoryStore, item_text  # noqa: E402
+from moxie_sdk.store import JsonStore  # noqa: E402
+from moxie_sdk.memory_store import MemoryStore  # noqa: E402
+from moxie_sdk.memory_items import item_text  # noqa: E402
 from moxie_sdk.types import Reply  # noqa: E402
 
 MODULE = {

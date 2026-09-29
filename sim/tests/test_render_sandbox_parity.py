@@ -363,7 +363,8 @@ def test_the_shipped_module_renders_through_the_real_runtime(tmp_path):
     what would fail if the sandbox emptied the prompt."""
     from helpers_runtime import assert_spec_response, drive_once
     from moxie_sdk.content import ContentApp, load_modules
-    from moxie_sdk.store import JsonStore, MemoryStore
+    from moxie_sdk.store import JsonStore
+    from moxie_sdk.memory_store import MemoryStore
 
     with open(os.path.join(MODULE_DIR, "memory_chat.json")) as fh:
         module = load_modules(json.load(fh))

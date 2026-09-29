@@ -37,7 +37,7 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: microphone=(self), camera=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-D2XnioWKWXcIE2epN670TChceWuJD92o/6GT7rIBAsw=' https://static.cloudflareinsights.com https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' https://challenges.cloudflare.com; img-src 'self' data: blob:; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-6RkvnLhc+Dxs3DRMSy+Rs0us73msKNskVUvxIBn7gdw=' https://static.cloudflareinsights.com https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' https://challenges.cloudflare.com; img-src 'self' data: blob:; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'
 
 # HTML — always revalidate so a redeploy's new asset references show up immediately.
 /

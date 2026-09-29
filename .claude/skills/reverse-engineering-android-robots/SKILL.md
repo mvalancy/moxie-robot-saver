@@ -56,5 +56,5 @@ Frame everything toward three concrete revival goals — they keep the work hone
 - Recovered protocol + toolkit: `tools/robot-toolkit/` (see `using-the-moxie-toolkit`).
 - A working self-hosted server + MQTT broker + AI seam: `server/`, `mqtt/`, `ai/`.
 - A browser simulator (SIL) that speaks the real protocol: `sim/`.
-- The full clean-room docs: `docs/reverse-engineering/` (start at its `README.md` + `METHODOLOGY.md`).
+- The full clean-room docs: `docs/reverse-engineering/` (start at its `README.md` + `PLAYBOOK.md`).
 For a different robot, the *code* won't transfer but the **method, tool recipes, and doc discipline do**.

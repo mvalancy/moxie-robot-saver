@@ -28,7 +28,7 @@
       "_comment": [
         "Earmuffs is the most Moxie-specific of the ten: a documented global AND an",
         "EngagementState the face renders (runtime/turn-taking.md:20) and an animation",
-        "(runtime/unity-face-animation.md:187-191) -- the robot visibly covers its ears.",
+        "(runtime/unity-face-animation.md:166-170) -- the robot visibly covers its ears.",
         "WHAT THIS DOES AND DOES NOT DO, stated because the gap matters: it says the line.",
         "It does NOT stop the microphone or drive the Earmuffs engagement state, because",
         "this sim has no such wiring. Authoring a global that CLAIMS to stop listening",
@@ -63,7 +63,7 @@
       "entity_groups": "",
       "_comment": [
         "One of the ten always-listening commands the real robot recognised, recovered at",
-        "docs/reverse-engineering/runtime/content-and-conversation.md:136-138 (Sleep,",
+        "docs/reverse-engineering/runtime/content-and-conversation.md:123-125 (Sleep,",
         "WakeUp, Hello, ListenToMe, Earmuffs, HoldOn, RepeatThat, SpeakLouder,",
         "SpeakSofter, SomethingElse).",
         "A GLOBAL, not a prompt, because it must work DURING any activity -- that is the",

@@ -1,19 +1,12 @@
-# 🛠️ Docs bundle + guards — publish and verify
+# 🛠️ Skill: Publishing the Moxie docs
 
-Rebuilds the static docs-explorer bundle and runs every doc and site guard, keeping the Moxie doc tree consistent top to bottom. Use after editing anything under docs/ or the explorer (sim/web/docs.html), before committing.
+Rebuild the docs-explorer bundle and run every doc guard (links/anchors, consistency, mermaid, headless) before committing.
 
-Invoke it by name (`publishing-moxie-docs`) — it is a **shared agent skill**, so any agent working in this repo can load it instead of re-deriving the method.
+Invoke it by name: `publishing-moxie-docs`.
 
 | File | Purpose |
 |---|---|
-| [`SKILL.md`](SKILL.md) | The skill itself — instructions the agent follows. |
-
-## What it covers
-
-- Rebuild + verify (in order — all must pass before committing)
-- The standing rules the guards enforce
-- Gotchas
-- Completeness bar
+| [`SKILL.md`](SKILL.md) | The skill: YAML frontmatter (`name`, `description`) plus the steps the agent follows. |
 
 ---
-📖 [Skills](../README.md) · [Back to top](../../../README.md)
+📖 [Skills index](../README.md) · [Shared agents & skills](../../README.md) · [Back to top](../../../README.md)

@@ -1,21 +1,11 @@
 # ⚙️ The task scheduler — how concurrent behaviors share Moxie's outputs (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
-> Reverse-engineered from the decompiled `Assembly-CSharp.dll` (`bo-android`) in the **v24.10.803** image —
-> the `EBGameTask` / `EBGTManager` runtime, the `RobotResourceFlags` output model, and the
-> `RobotTaskPriority` ladder. This is the **runtime glue** between the decision layer
-> ([behavior-tree-engine](behavior-tree-engine.md), which *decides* what to do) and the render/motion
-> layer ([unity-face-animation](unity-face-animation.md), which *executes* it). It answers the question
-> those two docs leave open: **when a dozen behaviors run at once — idle breathing, autonomous gaze,
-> blinking, lip-sync, a scripted wave, a flinch from being touched — how do they all drive Moxie's shared
-> face/body/audio without fighting?** The answer is a priority + resource-arbitration scheduler.
-
-## The problem
-
-Moxie has one face, one head, two arms, and a few audio channels, but **many behaviors want them at
-once**. The behavior tree ([NodeCanvas `Bht_*`](behavior-tree-engine.md)) is full of concurrent nodes;
-each wants to move something. Without arbitration they'd stomp each other every frame. The `EBGameTask`
-system is the solution: every output-driving action is a **task** that declares a **priority** and the
-**resources** (output layers) it needs, and a manager runs only the non-conflicting winners.
+The runtime glue between the [behavior tree](behavior-tree-engine.md) (decides) and the
+[face/body engine](unity-face-animation.md) (executes), from the decompiled `Assembly-CSharp.dll`
+(**v24.10.803**). Every output-driving action is an **`EBGameTask`** declaring a **priority**
+(`RobotTaskPriority`) and the **resources** it needs (`RobotResourceFlags`, 44 outputs); the
+**`EBGTManager`** activates tasks in priority order and pauses any whose resources overlap a
+higher task's. That is how idle breathing, gaze, blink, lip-sync and a scripted wave all run at once.
 
 ```mermaid
 flowchart TB
@@ -28,7 +18,7 @@ flowchart TB
 
 ## The task — `EBGameTask`
 
-An **`EBGameTask`** (`IEBCouroutineScheduler`) is one output-driving action. Concrete kinds:
+An `EBGameTask` (`IEBCouroutineScheduler`) is one output-driving action:
 
 | Task | Drives |
 |---|---|
@@ -38,47 +28,34 @@ An **`EBGameTask`** (`IEBCouroutineScheduler`) is one output-driving action. Con
 | `EBGameTaskPlayAudio` | an audio channel |
 | `EBGameTaskTransform` | a direct bone/transform (head/torso/eye) |
 
-Each task carries a **`RobotTaskResources`** (a `RobotResourceFlags` bitmask it claims via
-`SetResourceFlags`) and a **`RobotTaskPriority`**. Tasks are **pooled by type** (`TaskPool`, reused with a
-2-frame delay) to avoid per-action GC — Moxie spawns and retires these constantly.
+Each carries a **`RobotTaskResources`** (a `RobotResourceFlags` bitmask claimed via `SetResourceFlags`)
+and a **`RobotTaskPriority`**. Tasks are **pooled by type** (`TaskPool`, reused after a 2-frame delay) to
+avoid per-action GC.
 
 ## The manager — `EBGTManager`
 
-The `EBGTManager` owns the tasks and arbitrates them each tick:
+- **`TaskQueue`** (all live tasks) and **`TickingTasks`** (the active subset).
+- **`PendingActions`** — add/remove are deferred (`EBGTAction_AddTask` / `…RemoveTask`) behind an
+  `ActionLockCounter`, so tasks can create/kill tasks mid-iteration; mutations apply after the tick.
+- **`CurrentClaimedResources`** — running union of resources held by tasks activated so far this tick
+  (scratch sets tested with `IsOverlapping`).
+- Lifecycle: **`Started → Activated → (Paused ↔ Resumed) → Ended`** (`bAborted` flag), exposed as
+  `OnTaskStarted/Activated/Paused/Resumed/Ended`.
 
-- **`TaskQueue`** (all live tasks) and **`TickingTasks`** (the currently-active subset).
-- **`PendingActions`** — add/remove are **deferred** (`EBGTAction_AddTask` / `…RemoveTask`) behind an
-  `ActionLockCounter`, so a task can safely create/kill tasks *while the manager is iterating* — the
-  mutation is applied after the tick, not mid-loop.
-- **`CurrentClaimedResources`** — the running union of resources held by the tasks activated so far this
-  tick (scratch sets `IsOverlapping`-tested).
-- Lifecycle events every task passes through: **`Started → Activated → (Paused ↔ Resumed) → Ended`**
-  (`bAborted` flag) — exposed as `OnTaskStarted/Activated/Paused/Resumed/Ended`.
+**Arbitration (`UpdateTaskActivations`)** — each tick, walk tasks highest priority first: if the task's
+flags don't overlap `CurrentClaimedResources`, **activate** it and add its flags; otherwise **pause** it.
+When the higher task ends or releases, the paused one **resumes** where it left off. Arbitration is
+therefore priority-preemptive **per resource**.
 
-### The arbitration (`UpdateTaskActivations`)
+Tie-breaks for same-priority / same-kind collisions:
 
-Each tick the manager walks tasks **in priority order (highest first)** and, for each:
-
-1. If the task's `RobotResourceFlags` **do not overlap** `CurrentClaimedResources` → **activate** it (it
-   ticks and drives its output) and add its flags to the claimed set.
-2. If they **do overlap** (a higher-priority task already holds one of those layers) → **pause** it.
-
-When a higher task **ends or releases** its resources, the paused lower task is **resumed** where it left
-off. So arbitration is **priority-preemptive per-resource**: a scripted animation can take the head and
-torso while autonomous gaze keeps the eyes, and idle breathing keeps whatever's left — each behavior wins
-exactly the outputs no higher-priority behavior wants.
-
-Two tie-break policies handle same-priority / same-kind collisions:
-
-- **`EBGameTaskPriorityOverlapPolicy`** — `InsertTaskInFront` (new task preempts the existing equal) vs
-  `InsertTaskAtEnd` (queues behind it).
-- **`EBGameTaskCreationPolicy`** — `ReplaceExisting` / `ReUseExisting` / `AddNew` (whether a new request
-  supersedes, reuses, or stacks on an existing task of the same kind).
+- **`EBGameTaskPriorityOverlapPolicy`** — `InsertTaskInFront` (new preempts the existing equal) vs
+  `InsertTaskAtEnd` (queues behind).
+- **`EBGameTaskCreationPolicy`** — `ReplaceExisting` / `ReUseExisting` / `AddNew`.
 
 ## The outputs — `RobotResourceFlags`
 
-The resources tasks compete for is a **`[Flags] ulong` of 44 outputs** — the definitive inventory of
-everything a behavior can drive, and the units of arbitration:
+A **`[Flags] ulong` of 44 outputs** — the definitive inventory of everything a behavior can drive:
 
 | Group | Flags |
 |---|---|
@@ -92,17 +69,15 @@ everything a behavior can drive, and the units of arbitration:
 | **Gaze** | `GazeTarget`, `GazeFacing`, `FaceTrack` |
 | **Audio** | `VoiceAudio`, `BkgAudio`, `SoundFXAudio`, `SoundFXAudio2`, `SoundStingerAudio`, `SoundVocalGesture` |
 
-Note the granularity: eyes are split into `Pupils`/`Lids`/`Blink182` so **blinking (a low-priority
-`Blink182Layer` task) coexists with a gaze look-at (`GazeTarget`/`GazeFacing`) and an emotion
-(`EmotionAnimLayer`)** — three tasks, three non-overlapping claims, all active at once. That's why Moxie
-can blink while looking at you while smiling. (`Blink182Layer` — a developer easter-egg name for the blink
-layer.) The layer names map straight onto the [face-animation Animator layers](unity-face-animation.md);
-the `*Transform` flags are direct bone control (bypassing the animator) onto the
-[hardware motors](../hardware/hardware-map.md).
+Eyes are split into `Pupils`/`Lids`/`Blink182` so a blink (`Blink182Layer`, a developer easter-egg name),
+a gaze look-at (`GazeTarget`/`GazeFacing`) and an emotion (`EmotionAnimLayer`) hold non-overlapping claims
+and run together. Layer names map onto the [face-animation Animator layers](unity-face-animation.md);
+`*Transform` flags are direct bone control (bypassing the animator) onto the
+[motors](../hardware/hardware-map.md).
 
 ## The priority ladder — `RobotTaskPriority`
 
-Which behavior wins a contested resource is decided by this enum (low → high; higher preempts lower):
+Low → high (higher preempts lower):
 
 ```
 RobotCloudConfigBehavior · Normal · GlobalBkgSound · AnimationAudioEvent
@@ -118,43 +93,31 @@ CompositeAnimPlayback · ChatAudioPlayBehavior
 ReplayHeadTracking · HeadTrackDebug · TestBehavior
 ```
 
-This ladder is the definitive "what overrides what": **idle** ambient motion sits near the bottom (any
-real behavior preempts it); **touch/pickup reactions** override idle but yield to attention; **autonomous
-gaze** is mid; and a **scripted content performance** (`MainRobotState`, `CompositeAnimPlayback`) sits near
-the top so an activity's authored animation takes the outputs it needs over autonomous behavior — while
-non-overlapping layers (blink, lip-sync, emotion) keep running underneath.
+Idle sits near the bottom; touch/pickup reactions beat idle but yield to attention; autonomous gaze is
+mid; scripted content (`MainRobotState`, `CompositeAnimPlayback`) sits near the top, while non-overlapping
+layers (blink, lip-sync, emotion) keep running underneath. (This task ladder is distinct from the
+action-level [score ladder](robot-actions.md#the-score-ladder-robotactionscores).)
 
-## Worked example — Moxie greets a child
-
-While speaking a scripted "hello" and waving:
+**Example — scripted "hello" + wave:**
 
 | Task | Priority | Claims | Outcome |
 |---|---|---|---|
-| Scripted wave + line (`MainRobotStateCompositeAnim`) | high | `PerformAnimLayer`, `RightArmGestures`, `HeadGestures`, `VoiceAudio` | **active** |
-| Lip-sync | (viseme) | `VisemeAnimLayer` | **active** (no overlap) |
-| Blink | `BlinkBehaviour` | `Blink182Layer` | **active** (no overlap) |
-| Autonomous gaze | `GazeBehavior` | `GazeTarget`, `GazeFacing` | **active** (no overlap) |
-| Idle breathing | `IdleState` | `BreatheAnimLayer` | **active** (no overlap) |
-| Idle fidget wanting the right arm | `IdleState` | `RightAnimLayer` (overlaps the wave's arm) | **paused** → resumes when the wave ends |
+| Scripted wave + line | `MainRobotStateCompositeAnim` | `PerformAnimLayer`, `RightArmGestures`, `HeadGestures`, `VoiceAudio` | active |
+| Lip-sync | (viseme) | `VisemeAnimLayer` | active |
+| Blink | `BlinkBehaviour` | `Blink182Layer` | active |
+| Autonomous gaze | `GazeBehavior` | `GazeTarget`, `GazeFacing` | active |
+| Idle breathing | `IdleState` | `BreatheAnimLayer` | active |
+| Idle fidget (right arm) | `IdleState` | `RightAnimLayer` (overlaps the wave) | **paused** → resumes when the wave ends |
 
-Six concurrent tasks, one paused — exactly the layered, alive-looking result, with no output driven by two
-tasks at once.
+## Implications
 
-## What this means for the three goals
-
-**① Custom firmware — the headline.** This scheduler is *not optional* — it's what keeps a behavior-rich
-robot from tearing itself apart. A custom brain must reproduce: tasks that declare a **priority** +
-**resource set**, a manager that activates by priority and pauses on resource overlap, and the
-`RobotResourceFlags` decomposition (so blink/gaze/emotion/lip-sync coexist). The `RobotResourceFlags` enum
-is also the **definitive output inventory** for a custom face/body — every layer and transform you must
-provide. The `RobotTaskPriority` ladder is the tuning that makes idle yield to reactions yield to scripted
-content.
-
-**② Server revival.** On-device — a server never runs this. But it explains *why* the markup/mood/gaze a
-server sends ([the seam](../protocol/unity-mainapp-interface.md)) compose gracefully with autonomous behavior instead
-of conflicting: they enter as tasks at defined priorities.
-
-**③ Pre-801 revival.** No new lever; internal to the app.
+- **Custom brain:** not optional — reproduce priority + resource-set tasks, activate-by-priority /
+  pause-on-overlap, and the `RobotResourceFlags` decomposition (it is also the output inventory a custom
+  face/body must provide). `RobotTaskPriority` is the tuning that makes idle yield to reactions yield to
+  scripted content.
+- **Server revival:** on-device only; it explains why server-sent markup/mood/gaze
+  ([the seam](../protocol/unity-mainapp-interface.md)) composes with autonomous behavior — it enters as
+  tasks at defined priorities. Pre-801: no new lever.
 
 ---
-📖 [Reverse-engineering index](../README.md) · [Behavior-tree engine](behavior-tree-engine.md) · [Face-animation engine](unity-face-animation.md) · [Gaze & attention](gaze-and-attention.md) · [Hardware map](../hardware/hardware-map.md) · [Behavior markup](behavior-markup.md)
+📖 [Reverse-engineering index](../README.md) · [Behavior-tree engine](behavior-tree-engine.md) · [Robot actions](robot-actions.md) · [Face-animation engine](unity-face-animation.md) · [Gaze & attention](gaze-and-attention.md) · [Hardware map](../hardware/hardware-map.md)

@@ -123,7 +123,7 @@ def test_sanitize_rejects_bad_values():
 
 # --------------------------------------------------------------------------- #
 # alarms (WakeSchedule, field 24) + schedule_preferences (SchedulePreferences, 28)
-# Cloud.proto:113-127 · proto-catalog.md:286-296.
+# Cloud.proto:113-127 · proto-catalog.md (`WakeSchedule`, `SchedulePreferences`).
 # --------------------------------------------------------------------------- #
 
 def test_builder_emits_alarms_in_the_recovered_wakeschedule_shape():

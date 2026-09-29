@@ -1,566 +1,321 @@
-# 🎭 Expressiveness — the markup floor (ADOPT #3) and the behavior planner (BEYOND #1)
+# Expressiveness — the markup floor and the behavior planner
 
-> ## ✅ BOTH halves SHIPPED — §1 the markup floor 2026-09-02, §2's P1 the behavior planner 2026-09-03.
->
-> *This page carried **no status marker at its top** until 2026-09-06 and §0 below still described the
-> seam as **"Eight lines, a passthrough"** — corrected in place in that table. Its own §1 (:66) and §2
-> (:343) headings have carried `🟢 SHIPPED` since they merged; the top of the file and §0 had not caught
-> up, which is the half a build agent reads.* Re-verified against the code:
-> [`mqtt/supervisor/markup.py`](../../../mqtt/supervisor/markup.py) is now **191 lines** and holds
-> **three generations behind one signature**, chosen by `MOXIE_EXPRESSIVE` — `planner` (default) →
-> `moxie_sdk.performance.render(validate(plan(…)))`, `floor` → `moxie_sdk.automarkup.annotate`, `off` →
-> v1's passthrough (`markup.py`:3-10). The floor is
-> [`automarkup.py`](../../../mqtt/moxie_sdk/automarkup.py) (**489 lines**); the planner is
-> [`performance.py`](../../../mqtt/moxie_sdk/performance.py) (**839 lines**), whose header states the
-> degrade-to-floor rule this brief specified. Guards:
-> [`sim/tests/test_performance.py`](../../../sim/tests/test_performance.py) and
-> [`sim/tests/test_sil_performance_e2e.py`](../../../sim/tests/test_sil_performance_e2e.py).
->
-> **What genuinely remains: §2's P2 only** — the ≥500 **live**-line unknown-id bar (P1 measured 0 unknown
-> ids over a 300-line corpus, which is not the same bar), and everything §2 files under P2. P2 is not
-> scheduled here.
+**Status:** shipped (floor + planner P1) — [`mqtt/supervisor/markup.py`](../../../mqtt/supervisor/markup.py),
+[`mqtt/moxie_sdk/automarkup.py`](../../../mqtt/moxie_sdk/automarkup.py),
+[`mqtt/moxie_sdk/performance.py`](../../../mqtt/moxie_sdk/performance.py), tested by
+[`sim/tests/test_automarkup.py`](../../../sim/tests/test_automarkup.py),
+[`sim/tests/test_performance.py`](../../../sim/tests/test_performance.py) and
+[`sim/tests/test_sil_performance_e2e.py`](../../../sim/tests/test_sil_performance_e2e.py). P2 (learned /
+model-assisted planning) is a proposal (§2.7).
 
-> **Backlog brief v1 · 2026-09-02.** Two build documents in one file, because they are **one seam at two
-> depths**: §1 is a slice a build agent can execute as-is (a deterministic markup floor), §2 is the
-> contract-level spec for the 10× version that replaces it *behind the same seam*. Ranked as ADOPT #3 and
-> BEYOND #1 in the [OpenMoxie feature audit](../openmoxie-feature-audit.md) §4.1/§4.2.
->
-> **Clean-room.** Every vocabulary, id and grammar below is taken from **our own** reverse-engineering
-> pages (chiefly [`behavior-markup.md`](../../reverse-engineering/runtime/behavior-markup.md),
-> [`behavior-tree-engine.md`](../../reverse-engineering/runtime/behavior-tree-engine.md),
-> [`behavior-nodes.md`](../../reverse-engineering/runtime/behavior-nodes.md),
-> [`remote-chat-protocol.md`](../../reverse-engineering/protocol/remote-chat-protocol.md)) — never from the
-> vendor app. **OpenMoxie** (MIT, © Justin Beghtol) is read as prior art and cited by path: we describe what
-> its engine *does* and port the **behaviors**, we do not copy its code.
+Moxie's voice is synthesized **on the robot**, from markup. The cloud has no TTS to improve
+([`mqtt-and-conversation.md`](../mqtt-and-conversation.md) §5.3), so "better speech" means "better markup",
+and markup is the only lever the cloud has over how alive the robot feels. This page covers the two
+generators that sit behind one seam: a deterministic **markup floor** (ADOPT #3 in the
+[OpenMoxie feature audit](../openmoxie-feature-audit.md)) and the **behavior planner** that replaced it as
+the default (BEYOND #1).
 
-## Why this is the next slice
-
-Moxie's voice is synthesized **on the robot**, from markup. There is no TTS to improve
-([`mqtt-and-conversation.md`](../mqtt-and-conversation.md) §5.3) — so *"better speech" is literally
-"better markup"*, and markup is the only lever a cloud has over how alive the robot feels. The audit's
-honest ledger puts it second on the list of places OpenMoxie is genuinely ahead of us: *"2,157 lines of
-markup engine vs our passthrough plus one mood and one gesture."*
+**Clean-room.** Every id and grammar comes from our own reverse-engineering pages —
+[`behavior-markup.md`](../../reverse-engineering/runtime/behavior-markup.md),
+[`behavior-tree-engine.md`](../../reverse-engineering/runtime/behavior-tree-engine.md),
+[node catalog](../../reverse-engineering/runtime/behavior-tree-engine.md#the-node-catalog-the-65-robotbt_-nodes),
+[`remote-chat-protocol.md`](../../reverse-engineering/protocol/remote-chat-protocol.md). OpenMoxie (MIT) is
+read as prior art and cited by path (§1.4); no code or data table was copied.
 
 ---
 
-## 0. The seam as it stands today
+## 0. The seam
 
-```mermaid
-flowchart LR
-  app["MoxieApp<br/>(llm / content / echo / webhook)"] -->|"Reply.markup (set)"| pub
-  app -->|"Reply.markup = None"| mk["supervisor/markup.py<br/>make_markup(text)<br/><b>passthrough</b>"]
-  mk --> pub["_publish_chat →<br/>commands/remote_chat"]
-  pub --> robot(["🤖 robot: on-device synth + BT engine"])
-  pub --> sim["🖥️ SIM: bridge.js applyMarkup()"]
-  classDef s fill:#0e0e14,stroke:#00f0ff,color:#e8edf5;
-  class app,mk,pub,robot,sim s;
-```
+One function turns a spoken line without its own markup into a performance. `MOXIE_EXPRESSIVE` picks the
+generation behind it (`markup.py` docstring):
 
-| Where | File | What it does today |
+| `MOXIE_EXPRESSIVE` | What answers | Scored fields on the wire |
 |---|---|---|
-| The seam | [`mqtt/supervisor/markup.py`](../../../mqtt/supervisor/markup.py) | `make_markup(text) -> text`. ~~**Eight lines, a passthrough.**~~ **Stale as of 2026-09-06 — corrected in place.** That was true when this brief was filed; the expressive engine did plug in here, twice. The file is now **191 lines** and dispatches three generations on `MOXIE_EXPRESSIVE` (`markup.py`:3-10): `planner` → `performance.render(validate(plan(…)))`, `floor` → `automarkup.annotate`, `off` → the original passthrough. **§0 describes the seam as it stood on 2026-09-02, not today**; read it as the starting point the two shipped sections moved from. |
-| Called from | [`mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) | two sites: the single-reply path (`markup = reply.markup if reply.markup is not None else make_markup(reply.text)`) and, since PR #17, the **per-chunk** streaming path in `_publish_stream_chunk`. So the seam runs **once per spoken chunk**, on the hot path between the first token and the first audio. |
-| The one app that bypasses it | [`mqtt/moxie_sdk/apps/llm_app.py`](../../../mqtt/moxie_sdk/apps/llm_app.py) | `build_markup(text, mood, gesture)` emits exactly **two marks**: one `cmd:playback-mood` and one `cmd:behaviour-tree` carrying a `Gesture_*`, both chosen by the *model* from a 5-mood / 10-gesture menu. |
-| Mid-stream | same file, `stream_style(text)` | while a reply is still streaming the model's `"mood"`/`"gesture"` have not arrived yet, so an in-flight chunk gets a punctuation-only guess (`?` → question, `!` → positive) and the **closing** chunk uses what the model actually chose. |
-| Also emits marks | [`mqtt/moxie_sdk/filler.py`](../../../mqtt/moxie_sdk/filler.py) | the "let me think" lines ship hand-written mood + thinking-tree markup — the only place in the tree where markup is *authored* rather than generated. |
-| Renders it | [`sim/web/bridge/`](../../../sim/web/bridge/) | `applyMarkup()` parses `cmd:playback-mood` → one of 11 faces, `Gesture_*` → arm poses, `Bht_*` → whole-body animations, `cmd:icons-v2` → screen badges. **Our only renderer we can assert against.** |
-| Strips it | [`mqtt/moxie_sdk/tts.py`](../../../mqtt/moxie_sdk/tts.py) | `strip_markup()` drops `<mark/>`, all tags and emoji before the SIM's external TTS speaks the words. |
+| `planner` (default) | `performance.render(validate(plan(…)))` | yes |
+| `floor` | `automarkup.annotate` | yes (the planner still scores; only rendering rolls back) |
+| `off` | passthrough — Moxie reads the line like a speaker | no |
 
-**What `build_markup` costs: nothing.** It is pure local string work — no model call, no I/O
-([`mqtt-and-conversation.md`](../mqtt-and-conversation.md) §4.5, *"Markup costs no extra model call"*).
-That is the budget the floor must also live inside: the seam is called per chunk, per turn, and any
-latency it adds is latency a child waits through.
+An unrecognized value means `planner` (a typo in a rollback lever must not take the voice away).
+`MOXIE_AUTOMARKUP=0` is the legacy alias for `off`.
 
-### The two gaps this file closes
+| Piece | File | Role |
+|---|---|---|
+| The seam | [`mqtt/supervisor/markup.py`](../../../mqtt/supervisor/markup.py) | `perform()` returns a `Staged` (markup + scored fields + the `Performance`); budget breaker |
+| Caller | [`mqtt/supervisor/moxie_runtime/turns.py`](../../../mqtt/supervisor/moxie_runtime/turns.py) `_stage` | the single place a published line becomes a scored turn — single replies and every streamed chunk |
+| Floor | [`mqtt/moxie_sdk/automarkup.py`](../../../mqtt/moxie_sdk/automarkup.py) | pure `annotate()` |
+| Planner | [`mqtt/moxie_sdk/performance.py`](../../../mqtt/moxie_sdk/performance.py) | `Beat`/`Performance`, `plan`/`validate`/`render` |
+| Catalog | [`mqtt/moxie_sdk/vocab.py`](../../../mqtt/moxie_sdk/vocab.py) | frozen id sets, each citing the RE page + line it came from; the one place a mark is minted |
+| LLM app | [`mqtt/moxie_sdk/apps/llm_app.py`](../../../mqtt/moxie_sdk/apps/llm_app.py) | `build_markup()` routes the model's mood/gesture choice into `annotate` as *hints* |
+| Hand-authored | [`mqtt/moxie_sdk/filler.py`](../../../mqtt/moxie_sdk/filler.py) | "let me think" lines; authored, but minted through `vocab` |
+| Renderer | [`sim/web/bridge/`](../../../sim/web/bridge/) | the browser SIM's `applyMarkup()` — the only renderer we can assert against |
+| Stripper | [`mqtt/moxie_sdk/tts.py`](../../../mqtt/moxie_sdk/tts.py) | `strip_markup()` before an external TTS speaks the words |
 
-1. **Every app except `LLMApp` speaks flat.** The content app, the echo app and the webhook app all leave
-   `Reply.markup = None`, so they go through the passthrough and the robot reads them like a speaker.
-2. **The scored output fields are never filled.** `Reply` carries `mood` and `dialog_act`
-   ([`moxie_sdk/types.py`](../../../mqtt/moxie_sdk/types.py)), `build_chat_response` puts them on
-   `RemoteChatOutput`, and the runtime passes them — but **no app ever sets them**, and `ReplyChunk` does
-   not have the fields at all, so a *streamed* answer cannot carry them even in principle. The wire that
-   [`ai-seam.md`](../ai-seam.md) §② specifies is plumbed and empty.
+The seam runs once per spoken chunk on the hot path, so both generators are pure, stdlib-only and
+deterministic.
 
 ---
 
-## 1. ADOPT #3 — the markup floor · 🟢 **SHIPPED 2026-09-02**
+## 1. The markup floor
 
-> **Built.** [`mqtt/moxie_sdk/automarkup.py`](../../../mqtt/moxie_sdk/automarkup.py) (the pure
-> `annotate`) + [`mqtt/moxie_sdk/vocab.py`](../../../mqtt/moxie_sdk/vocab.py) (the frozen,
-> doc-cited catalogs and the one place a mark is minted), behind the unchanged
-> [`mqtt/supervisor/markup.py`](../../../mqtt/supervisor/markup.py) seam. Wired at both runtime
-> call sites, in [`llm_app.py`](../../../mqtt/moxie_sdk/apps/llm_app.py) (`stream_style`
-> deleted; the model's choice is now a *hint* into the same floor) and on the content app's
-> authored-markup path. Pinned by
-> [`sim/tests/test_automarkup.py`](../../../sim/tests/test_automarkup.py) (277 hermetic cases,
-> 8 byte-exact goldens in [`sim/tests/goldens/annotate.json`](../../../sim/tests/goldens/annotate.json))
-> and rendered by [`sim/test_automarkup_render.mjs`](../../../sim/test_automarkup_render.mjs)
-> through the real browser bridge. Written up as built in
-> [`mqtt-and-conversation.md` §4.6](../mqtt-and-conversation.md#46-the-markup-floor-built-v1-2026-09-02).
->
-> **Four deliberate departures from the spec below, each for a stated reason.**
-> 1. The module is `automarkup.py`, not `annotate.py` — the function is `annotate`.
-> 2. **§1.6 G4** keeps the space between the two sentences that the shorthand elides: invariant
->    S2 (the spoken words never change) outranks the shorthand, and without it `strip_markup`
->    would fuse `amazing!You`. **§1.6 G8** places `Gesture_Point` *before* the line rather than
->    after, consistent with G1 and G6, which both pin a leading gesture mark; there is no rule
->    that distinguishes them. Both are recorded in the goldens fixture.
-> 3. **§1.5 S3 is implemented as the strict form**: the mood mark is emitted on
->    `chunk_index == 0` and on no later chunk, ever — not "again if the scored mood changed".
->    A pure function with the signature this brief fixes cannot know the previously-emitted
->    mood, and §1.7 T5 demands *exactly one* mood mark per answer. The cost is real and is
->    recorded in Known gaps: on a streamed turn the model's own mood shapes the closing chunk's
->    gesture and never reaches the wire. Carrying it needs `ReplyChunk` to grow scored fields —
->    §2.3 C2/C4, the planner's change.
-> 4. **`filler.py` is unchanged and byte-identical**, as §1.2 requires. Its markup is
->    hand-authored and `test_brain_latency.py` pins the spoken line as one contiguous run,
->    which a floor pass would thread a `<break>` through. It does now mint its marks through
->    `vocab`, so it is validated by the same catalog — as are the safety redirects.
->
-> Two more rules were added that the brief did not name, both anti-twitch: a talking gesture is
-> never placed inside the last two words of a sentence (which makes the effective floor an
-> 8-word sentence, and is what keeps G2 gesture-free by rule rather than by luck), and a
-> sentence that plays a whole-body tree gets no arm gesture stacked on it (which is what makes
-> G3 come out right).
+### 1.1 What it does
 
-### 1.1 Goal
+`annotate(text, *, mood_hint, gesture_hint, turn_key, chunk_index, icons=False, sfx=False)` turns one line
+into markup drawn only from recovered vocabularies — cheap enough for every streamed chunk, deterministic
+enough for byte-exact goldens. It is the planner's fallback and the `floor` rollback.
 
-A **pure, deterministic** function that turns one spoken line into behavior markup drawn only from the
-vocabularies we have actually recovered — good enough that a child watching the SIM sees a robot that
-*performs* its line, cheap enough to run per streamed chunk, and boring enough that a golden test can pin
-it byte-for-byte.
+### 1.2 Call sites
 
-> **Decision: reimplement the behaviors, do not vendor the engine.** The audit's ADOPT #3 line says
-> *"vendor `automarkup`"*. Building the floor ourselves is the better call, for four reasons: (a) their
-> engine pulls a third-party dependency (`unidecode`) and a **170 KB** ML data table
-> (`automarkup/ml/data/_mlprocesseddata.txt`) into an appliance we want small and auditable; (b) it is
-> non-deterministic by design (`random.randint` gesture spacing, an 80 % gesture probability), which
-> forecloses golden tests and per-chunk stability; (c) its gesture ids are **its own** (`AUTO_GESTURE_ME`,
-> `Gesture_We`, `Gesture_Small`, `Gesture_Discard`) and several are *not* in our recovered catalog, so
-> vendoring would ship ids we cannot justify from our own evidence; (d) our floor must sit behind the same
-> seam the planner (§2) will replace, with the same signature. Vendoring stays available as a fallback if
-> the floor under-delivers — it is MIT and we would ship its notice.
+- `llm_app.build_markup(text, mood, gesture, …)` calls `annotate` with the model's choice as a hint. A hint
+  wins over the rules; an **unknown** hint is dropped, never forwarded. With `MOXIE_AUTOMARKUP=0` it falls
+  back to one mood mark plus at most one gesture.
+- `turn_key` + `chunk_index` give per-chunk stability (§1.5 S3).
+- `filler.py`'s markup is hand-authored and left byte-identical: `test_brain_latency.py` pins its spoken line
+  as one contiguous run, which a floor pass would break with a `<break>`.
 
-### 1.2 The seam it plugs into
+### 1.3 Vocabularies we may emit
 
-Keep the existing entry point. `supervisor/markup.py` becomes a thin adapter over an SDK-level pure
-module, so apps, tests and the SIM harness all share one implementation:
-
-```python
-# mqtt/moxie_sdk/annotate.py   (new — pure, stdlib only, no runtime imports)
-def annotate(text: str, *, mood_hint: str | None = None,
-             gesture_hint: str | None = None,
-             turn_key: str = "", chunk_index: int = 0,
-             icons: bool = False, sfx: bool = False) -> str: ...
-```
-
-- `mood_hint` / `gesture_hint` — what the *model* chose, when the app knows (LLMApp's expressive JSON).
-  A hint wins over the rules; an **unknown** hint is dropped, never passed through.
-- `turn_key` + `chunk_index` — chunk bookkeeping for stability (§1.5, rule S3). `turn_key` is the
-  `event_id`; the caller passes it, `annotate` stays pure by taking the previously-emitted mood as part of
-  the key rather than reading shared state — see the signature note in §1.5.
-- `icons` / `sfx` — **off by default**; see the honest limits in §1.10.
-
-Call sites change minimally:
-
-| Site | Change |
-|---|---|
-| `supervisor/markup.py::make_markup(text, **kw)` | `return annotate(text, **kw)` — signature stays compatible so nothing else breaks. |
-| `moxie_runtime.py` (2 sites) | pass `turn_key=event_id, chunk_index=n` so a streamed answer is stable across chunks. |
-| `llm_app.py::build_markup` | becomes `annotate(text, mood_hint=mood, gesture_hint=gesture)` — the model's choice becomes a *hint into the same renderer* instead of a second, divergent generator. `stream_style()` collapses into the rules and is deleted. |
-| `filler.py` | unchanged (hand-authored markup is already correct, and pinning it protects a shipped behavior). |
-
-### 1.3 The vocabularies we may emit
-
-**Closed sets, from our own pages.** Nothing outside this table may ever reach the wire.
+Closed sets; nothing outside [`vocab.py`](../../../mqtt/moxie_sdk/vocab.py) reaches the wire.
 
 | Slot | Values | Source |
 |---|---|---|
-| **Mark grammar** | `<mark name="cmd:VERB,data:{…}"/>` where the `data` object is JSON with `+` standing in for `"` | [`behavior-markup.md`](../../reverse-engineering/runtime/behavior-markup.md) §Shape, lines 16–27 |
-| **Verbs** | 24 recovered; the floor uses exactly **three**: `playback-mood`, `behaviour-tree`, and (gated) `icons-v2` / `playaudio` | same, §"The command verbs (24)", lines 50–76 |
-| **Mood** | `ePlaybackMood` **0–10**: `0 Neutral · 1 Happy · 2 Sad · 3 Angry · 4 Shy · 5 Surprised · 6 Afraid · 7 Concerned · 8 Confused · 9 Curious · 10 Embarrassed`, recovered by name **and value** from `Assembly-CSharp`; `intensity` 0–2 (`maxIntensity=2`) | same, §"Data schemas", lines 107–133 |
-| **Gestures** | `Gesture_None · Gesture_Talk · Gesture_Think · Gesture_Think_Subtle · Gesture_Question · Gesture_Point · Gesture_Point_Right · Gesture_Self · Gesture_Higher · Gesture_Lower · Gesture_Large · Gesture_Celebrate` (12, hardcoded in the app) | same, §"Gestures — `Gesture_*`", lines 191–198 |
-| **Behavior trees** | the 45 named `Bht_*` — 11 `Bht_Eyeseme_*` (one per mood), the idle/attention family, `Bht_Gesture_Greet`, `Bht_Talking_Poses`, `Bht_Talking_With_Gestures`, `Bht_Active_Thinking`, `Bht_Spin_360`, `Bht_Sign_off`, `Bht_Sleep_Anim`, … | [`behavior-tree-engine.md`](../../reverse-engineering/runtime/behavior-tree-engine.md) §"The 45 named behavior trees", lines 103–115 |
-| **Vocal gestures (spurts)** | **52** ids in six families — laughs (`laugh`, `giggle`, …), thinking (`hmm thinking`, `umm`, `err`), breaths (`sigh happy`, `gasp`, `yawn`), affirmations (`oh positive`, `yay`), displeasure (`ugh`, `doh`), bodily (`tut`, `sniff`) — via `<spurt spurt_id="…"/>` or `cmd:vocal-gesture` | [`behavior-markup.md`](../../reverse-engineering/runtime/behavior-markup.md) §"Vocal gestures / spurts", lines 200–216 |
-| **Voice (SSML)** | `<usel variant genre>` with `genre ∈ {none, question, motivational, intimate, excited}` and `variant` 0–8; `<break time>`; `<prosody pitch rate volume>`; `<emphasis level="strong">`; `<phoneme ph>`; `<say-as interpret-as>` (10 values) | same, §"Speech markup (SSML / CereVoice)", lines 35–43 |
-| **Screen icons** | `cmd:icons-v2` — `command` (0 = show, 2 = clear), `index`, `transition`, `volume`, **four** `icon0..icon3 {iconType, value, background}` slots, `highlight`. Confirmed `value`s: **`School`, `Birthday`, `Medical`, `Learning_About_Family_03_Heart_Family`** | same, §"Data schemas", lines 139–159 |
-| **SFX** | `cmd:playaudio` — `SoundToPlay`, `LoopSound`, `channel` (**`FX`=0 · `BackGround`=1 · `Stinger`=2 · `VocalGesture`=3**), `Volume`, `FadeInTime`/`FadeOutTime`; `cmd:stopaudio` with `scope` (`All`=0 / `Channel`=1). Confirmed asset ids: **only two** — `sfx_twinkly_upbeat_stinger_1`, `moxie_mu_cast_zarcona_theme_loop_v2` | same, lines 97–105 |
-| **Gaze** | **there is no gaze verb.** Gaze is on-device (weighted interest points → `AttentionTarget` → IK look-at). A cloud reaches it only *indirectly*, by choosing a look-bearing tree (`Bht_Search`, `Bht_Idle_Curious`, `Bht_Idle_Listening`, `Bht_Idle_Near_Focused`) | [`gaze-and-attention.md`](../../reverse-engineering/runtime/gaze-and-attention.md); node side in [`behavior-nodes.md`](../../reverse-engineering/runtime/behavior-nodes.md) §"Gaze → where Moxie looks" |
-| **Dialog acts** | `RemoteDialog.DialogAct` (22): `abandon, apology, apology_response, appreciation, backchannelling, closing, complaint, opinion, statement_non_opinion, factual_question, opinion_question, hold, opening, yes_no_question, pos_answer, neg_answer, other_answers, command, comment, thanking, other, timeout` | [`remote-chat-protocol.md`](../../reverse-engineering/protocol/remote-chat-protocol.md) §Taxonomies, lines 119–122 |
-| **Signals** | `RemoteSignals.Signal` (9): `no_signal, closing, apology, interrupted_speech, complaint_clarification, confirmation_agreement, interest, non_interest, rejection_disagreement` | [`behavior-markup.md`](../../reverse-engineering/runtime/behavior-markup.md) lines 183–189 |
+| Mark grammar | `<mark name="cmd:VERB,data:{…}"/>`, JSON with `+` for `"` | `behavior-markup.md` §Shape |
+| Verbs | `vocab.VERBS` (25); the floor uses `playback-mood`, `behaviour-tree`, and (gated) `icons-v2` / `playaudio` | `behavior-markup.md` §command verbs |
+| Mood | `ePlaybackMood` 0–10: Neutral, Happy, Sad, Angry, Shy, Surprised, Afraid, Concerned, Confused, Curious, Embarrassed; intensity 0–2 | `behavior-markup.md` §Data schemas |
+| Gestures | 12 `Gesture_*` (None, Talk, Think, Think_Subtle, Question, Point, Point_Right, Self, Higher, Lower, Large, Celebrate) | `behavior-markup.md` §Gestures |
+| Trees | `vocab.TREES` (50): the named `Bht_*` from the engine page plus the app-hardcoded set | `behavior-tree-engine.md` §named trees |
+| Spurts | 52 vocal gestures | `behavior-markup.md` §Vocal gestures |
+| Voice | `<usel variant genre>` (5 genres, variant pinned to `0`), `<break>`, `<prosody>`, `<emphasis>`, `<say-as>` (10 values) | `behavior-markup.md` §Speech markup |
+| Icons | `icons-v2`, 4 confirmed values: `School`, `Birthday`, `Medical`, `Learning_About_Family_03_Heart_Family` | `behavior-markup.md` §Data schemas |
+| SFX | `playaudio`, 2 confirmed ids: `sfx_twinkly_upbeat_stinger_1`, `moxie_mu_cast_zarcona_theme_loop_v2` | `behavior-markup.md` |
+| Gaze | **no verb exists**; reachable only through 4 look-bearing trees (`vocab.GAZE_TREES`) | [`gaze-and-attention.md`](../../reverse-engineering/runtime/gaze-and-attention.md) |
+| Dialog acts / emotions / signals | 22 `RemoteDialog.DialogAct`, 7 `EmotionState`, 9 `RemoteSignals.Signal` | `remote-chat-protocol.md` §Taxonomies |
 
-> **Independent corroboration.** OpenMoxie's `automarkup/markup_types/markup_mood.py` carries the *same*
-> mood ids 0–10 in the same order as our `ePlaybackMood` — recovered by us from `Assembly-CSharp`, shipped
-> by them from Embodied's own engine. Two independent sources agreeing is the strongest evidence we have
-> for any enum in this project.
+OpenMoxie's `automarkup/markup_types/markup_mood.py` carries the same mood ids 0–10 in the same order —
+independent corroboration of the enum.
 
-### 1.4 What OpenMoxie's engine does — and which behaviors to port
+### 1.4 OpenMoxie prior art — which behaviors we ported
 
-`site/hive/automarkup/` (2,157 LOC across 21 files; entry `automarkup.process(text, rules,
-mood_and_intensity)`, invoked from `site/hive/mqtt/moxie_remote_chat.py::RemoteChat.make_markup` on every
-AI line that lacks markup). Read, described, **not copied**:
+OpenMoxie's `site/hive/automarkup/` (~2,150 LOC; entry `automarkup.process`, called from
+`site/hive/mqtt/moxie_remote_chat.py::RemoteChat.make_markup`). Described, not copied.
 
-| Their file | Behavior | Port? |
+| Their file | Behavior | Ported? |
 |---|---|---|
-| `markup_types/markup_mood.py` | maps ~30 emotion labels (`joy`, `gratitude`, `annoyance`, `curiosity`, …) onto the 11 mood ids, each with a small **intensity step ladder** (`0 / 0.333 / 0.666`) | **Yes** — mood per clause + a bounded intensity, as ints 0–2 (our recovered `maxIntensity`) |
-| `markup_types/markup_behavior.py` | gesture selection: change gesture **every sentence**; also every `GESTURE_CHANGE_WORDS_MIN..MAX` = **3–7** words; word classes drive the choice — self words (`i, me, us, my, mine, myself`), you words, question words (`please, who, what, where, how, curious, wondering, question`), spatial/high words (`up, above, higher, wow, great, amazing, awesome, yay, fun`); **end every line with a "none" gesture**; apply at 80 % probability so it is not mechanical | **Yes, the rules** — but deterministic (§1.5 D1) and remapped onto *our* 12 ids. Their `AUTO_GESTURE_ME`, `AUTO_GESTURE_YOU`, `Gesture_We`, `Gesture_Small`, `Gesture_Discard` are **not in our catalog** and must not be emitted |
-| `markup_types/markup_pauses.py` | a `<break>` after a sentence-final period — **never on the last word**, "so as not to add delays in volleys/turn-taking"; acronyms (`G.R.L.`) skipped | **Yes, verbatim as a rule.** The trailing-break exclusion is load-bearing: a break after the final word delays the robot's turn hand-back |
-| `markup_types/markup_voice.py` | `<usel genre>` per phrase — `question` on `?`, `excited`/`motivational` on `!`; `variant` clamped (`CLAMP_MAX_USEL_VARIANT = 3`); a synth-rate `<prosody>` for long text | **Yes** — genre only; we pin `variant="0"` (a variant is a recorded take, and we have no evidence about which take suits which line) |
-| `markup.py::check_span_conflicts` + `remove_worst_offending_span` | detects badly-nested tag spans (`<a><b></a></b>`) and prunes the worst offender until the document is well-formed | **The invariant, not the algorithm.** Our floor emits marks only at token boundaries and wraps at most one span level, so conflicts are impossible by construction — and a test asserts the output parses |
-| `markup_core/markup_xmlassembly.py` | final XML assembly | Ours is a single renderer function (§2.2) — one place marks are minted, so validation is total |
-| `ml/mlrules.py` + `ml/data/_mlprocesseddata.txt` (170 KB) | a learned rule table over words/phrases → tags, plus `text_replacement.json` | **No** at P0. This is the part that makes their engine feel hand-tuned, and the part we cannot audit. It is the P2 conversation (§2.7) |
-| — | rate limiting *in general*: one gesture per 3–7 words, one gesture change per sentence, a probability gate | **Yes, and stricter.** Twitchiness is the failure mode a child notices |
+| `markup_types/markup_mood.py` | ~30 emotion labels → 11 mood ids with an intensity ladder | yes — mood per line, intensity as int 0–2 |
+| `markup_types/markup_behavior.py` | gesture change every sentence and every 3–7 words; word classes (self / you / question / high words); end on a "none" gesture; 80 % probability | the rules, made deterministic and remapped onto our 12 ids. Their `AUTO_GESTURE_ME/YOU`, `Gesture_We`, `Gesture_Small`, `Gesture_Discard` are not in our catalog and are never emitted |
+| `markup_types/markup_pauses.py` | `<break>` after a sentence — never after the last word (it would delay turn hand-back) | yes, as a rule |
+| `markup_types/markup_voice.py` | `<usel genre>`: `question` on `?`, `excited` on `!` | genre only; variant pinned to `0` |
+| `markup.py::check_span_conflicts` | prune badly nested spans | the invariant only — our output is well-formed by construction, and a test parses it |
+| `ml/mlrules.py` + a 170 KB data table | learned word → tag rules | **no** — unauditable; the P2 question (§2.7) |
 
-### 1.5 Design — a pure function
+**Why reimplement rather than vendor:** their engine pulls `unidecode` and a 170 KB table; it is random by
+design (no goldens, no chunk stability); it emits ids we cannot justify from our own evidence; and our
+generator must share a signature with the planner.
 
-**D1 · Deterministic, no `random`, no clock, no network, no model call.** Where their engine rolls dice, we
-take a stable digest: `blake2b(f"{turn_key}\x00{sentence_index}\x00{sentence_text}")`. Never Python's
-`hash()` — it is salted per process and would break reproducibility across workers.
+### 1.5 Design rules
 
-**D2 · Pipeline (per line).**
+**D1 · Deterministic.** No `random`, clock, network or model call. Where OpenMoxie rolls dice we take a
+`blake2b(turn_key, sentence_index, sentence_text)` digest (never Python's salted `hash()`).
 
-1. **Segment** into sentences with the existing pure segmenter
-   ([`moxie_sdk/segment.py`](../../../mqtt/moxie_sdk/segment.py)) so the floor and the streamer agree on
-   where a sentence ends; sub-split each sentence on `,` `;` `—` into clauses.
-2. **Mood** — score the line: an explicit `mood_hint` wins; else the first matching cue class
-   (apology/sorrow → `2 Sad`; surprise/`Oh!` → `5 Surprised`; mistake/`Oops` → `4 Shy`; thinking/uncertainty
-   → `9 Curious`; puzzlement → `8 Confused`; praise/celebration/`!` → `1 Happy`); else `0 Neutral`.
-   Intensity = `min(2, exclamation_count + emphatic_word_count)`.
-3. **Voice** — wrap a `?` sentence in `<usel variant="0" genre="question">` and a `!` sentence in
-   `<usel variant="0" genre="excited">`. Leave neutral sentences unwrapped (`genre="none"` is noise).
-4. **Gestures** — one gesture at the first *carrying* word of a clause (word-class table, §1.4), then a
-   `Gesture_Talk` every **5** words (fixed, not 3–7 random), and always a terminal `Gesture_None`.
-5. **Trees** — a whole-body `Bht_*` only for a small closed set of line types: thinking →
-   `Bht_Active_Thinking`, greeting → `Bht_Gesture_Greet`, sign-off → `Bht_Sign_off`. At most one per line.
-6. **Pauses** — `<break time="0.35s"/>` at an internal sentence boundary and after a leading interjection
-   comma ("Oh, " / "Hmm, "). **Never after the final word.**
-7. **Icons / SFX** — gated off (§1.10).
-8. **Validate** — every `mood`, `eventName`, `behaviour`, `spurt_id`, icon `value` and `SoundToPlay` is
-   checked against the frozen catalog in a new `moxie_sdk/vocab.py`. An unknown id is **dropped**, and the
-   drop is counted on a module-level counter a test can assert is zero.
+**D2 · Pipeline per line.** Segment with [`segment.py`](../../../mqtt/moxie_sdk/segment.py) (so the floor
+and the streamer agree on sentence ends) and sub-split clauses on `, ; : —`; score the mood (hint, else the
+first matching cue: sorry → Sad, "Oh!" → Surprised, "Oops" → Shy, thinking → Curious, puzzlement → Confused,
+praise/`!` → Happy, else Neutral; intensity = `min(2, exclamations + emphatic words)`); wrap `?`/`!`
+sentences in `<usel variant="0">`; place gestures; pick at most one whole-body tree (thinking →
+`Bht_Active_Thinking`, greeting → `Bht_Gesture_Greet`, sign-off → `Bht_Sign_off`); add
+`<break time="0.35s"/>` at internal boundaries and after a leading interjection; validate every id.
 
-**D3 · Rate limits (the anti-twitch rules).** At most: one mood mark per line *and only when the mood
-changes*; one `<usel>` span per sentence; one gesture per 5 words; **3** gesture marks per sentence; **6**
-per line; one tree per line; one `<break>` per internal boundary; total marks ≤ `1 + ceil(words / 5)`.
-A line under 6 words gets *no* talking gesture at all — only the terminal `Gesture_None`.
+**D3 · Anti-twitch limits** (`automarkup.py` constants): a talking gesture every `TALK_EVERY = 5` words,
+never within the last `TALK_TAIL = 2` words of a sentence; sentences under `TALK_MIN_WORDS = 6` get no talking
+gesture; at most `MAX_GESTURES_PER_SENTENCE = 3` and `MAX_GESTURES_PER_LINE = 6`; a sentence that plays a
+whole-body tree gets no arm gesture on top; one tree per line; always a terminal `Gesture_None`; never a
+`<break>` after the final word.
 
-**S1 · Idempotence.** If the input already contains a `<mark` or `<usel`, return it unchanged. The runtime
-only calls the seam when `reply.markup is None`, but the content app may hand back authored markup and the
-guard is free.
+**S1 · Idempotence.** Input that already carries `<mark` or `<usel` is returned unchanged.
 
-**S2 · The words are never changed.** `strip_markup(annotate(t)) == strip_markup(t)` for every input. The
-floor may add marks and spans; it may not add, drop, reorder or substitute a single spoken word. This is
-the invariant that makes the floor safe to turn on globally — whatever it does, the child hears exactly the
-line the brain wrote.
+**S2 · The words never change.** `strip_markup(annotate(t)) == strip_markup(t)` for every input. This is
+what makes the floor safe to enable globally.
 
-**S3 · Per-chunk stability.** A streamed answer arrives as several `ReplyChunk`s
-([`mqtt-and-conversation.md`](../mqtt-and-conversation.md) §4.5). The mood is emitted **once, on
-`chunk_index == 0`**, and again on a later chunk only if the scored mood actually changed; every chunk ends
-with its own `Gesture_None` (the body must return to rest between spoken segments, since the robot may
-pause between chunks); gesture spacing restarts per chunk. Net effect: a four-sentence answer no longer
-flips its face on every sentence.
+**S3 · Per-chunk stability.** The mood mark is emitted on `chunk_index == 0` and on **no later chunk** (the
+strict form — a pure function cannot know the previously emitted mood). Every chunk ends with its own
+`Gesture_None`, since the robot may pause between chunks; gesture spacing restarts per chunk.
 
-**S4 · Budget.** Pure stdlib, no new dependency, p95 **< 1 ms** for a 300-character line. It runs on the
-hot path that PR #17 bought down to a measured 1.52 s first-audio.
+**S4 · Budget.** Stdlib only, no I/O on the hot path; cost is tested relative to one pass over the line.
 
-### 1.6 Golden examples
+### 1.6 Goldens
 
-Shorthand used below (each token expands to exactly one construct; the first example is shown expanded):
+[`sim/tests/goldens/annotate.json`](../../../sim/tests/goldens/annotate.json) pins eight lines byte-exact
+(regenerate only when the rules change on purpose). Shorthand: `[mood N i]` = a `playback-mood` mark,
+`[gest X]` = a `behaviour-tree` mark with `eventName` X, `[tree B]` = the same with `behaviour` B,
+`[usel g]…[/]` = a `<usel>` span, `[break t]` = `<break>`.
 
-```
-[mood N i]   -> <mark name="cmd:playback-mood,data:{+mood+:N,+intensity+:i}"/>
-[gest X]     -> <mark name="cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,
-                 +blocking+:false,+action+:0,+eventName+:+X+,+category+:+BehaviourTree+,
-                 +behaviour+:++,+Track+:++}"/>
-[tree B]     -> the same mark with +eventName+:+Gesture_None+ and +behaviour+:+B+
-[usel g]…[/] -> <usel variant="0" genre="g">…</usel>
-[break t]    -> <break time="t"/>
-[icons A]    -> <mark name="cmd:icons-v2,data:{+command+:0,+index+:0,+transition+:0.25,+volume+:1.0,
-                 +icon0+:{+iconType+:1,+value+:+A+,+background+:+Null+},…,+highlight+:0}"/>
-[icons off]  -> the same with +command+:2 and all four slots +iconType+:0,+value+:+Null+
-```
-
-**G1 — expanded in full**, `annotate("Hi! I am Moxie.")`:
-
-```xml
-<mark name="cmd:playback-mood,data:{+mood+:1,+intensity+:1}"/><usel variant="0" genre="excited">Hi!</usel><break time="0.35s"/><mark name="cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Self+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}"/> I am Moxie.<mark name="cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}"/>
-```
-
-| # | Input line | Expected markup (shorthand) | Why — every id cited |
+| # | Input | Markup | Why |
 |--:|---|---|---|
-| **G1** | `Hi! I am Moxie.` | `[mood 1 1][usel excited]Hi![/][break 0.35s][gest Gesture_Self] I am Moxie.[gest Gesture_None]` | `!` → Happy (mood 1) + `excited` genre; `I` is a self word → `Gesture_Self`; internal boundary → break; terminal `Gesture_None` |
-| **G2** | `What do you want to play today?` | `[mood 9 1][usel question]What do you want to play today?[/][gest Gesture_Question][gest Gesture_None]` | `?` → `question` genre; an open question is Curious (mood 9); `what` is a question word → `Gesture_Question`. **No break** — it is the final word |
-| **G3** | `Hmm, let me think about that.` | `[mood 9 1]Hmm,[break 0.35s] let me think about that.[tree Bht_Active_Thinking][gest Gesture_None]` | leading interjection comma → break; thinking cue → Curious + `Bht_Active_Thinking` (an app-hardcoded tree, and one the SIM renders) |
-| **G4** | `That is amazing! You did it!` | `[mood 1 2][usel excited]That is amazing![/][gest Gesture_Higher][break 0.35s][usel excited]You did it![/][gest Gesture_Celebrate][gest Gesture_None]` | two `!` → intensity 2 (clamped at `maxIntensity`); `amazing` is a high word → `Gesture_Higher`; praise → `Gesture_Celebrate` |
-| **G5** | `Oh! I did not know that.` | `[mood 5 1][usel excited]Oh![/][break 0.35s][gest Gesture_Self] I did not know that.[gest Gesture_None]` | mood **5 Surprised** is the value shipped content uses for exactly this — `"Oh!"`, 14 occurrences (`behavior-markup.md` line 122) |
-| **G6** | `I am sorry that happened.` | `[mood 2 1][gest Gesture_Self]I am sorry that happened.[gest Gesture_None]` | mood **2 Sad** is what shipped content uses for `"I'm sorry…"`, 8 occurrences (line 119); no `!`/`?` → no `usel` |
-| **G7** | `Oops.` | `[mood 4 1]Oops.[gest Gesture_None]` | mood **4 Shy** is shipped content's value for `"Oops."`, 2 occurrences (line 121) — and note the earlier *inferred* reading mislabeled 4 as "embarrassed". A one-word line is under the 6-word floor, so it gets **no** talking gesture: the anti-twitch rule in action |
-| **G8** | `Your birthday is on Friday.` *(with `icons=True`)* | `[icons Birthday][mood 1 1]Your birthday is on Friday.[gest Gesture_Point][gest Gesture_None][icons off]` | `Birthday` is one of the four confirmed icon `value`s; a turn shows `command:0` before the line and clears with `command:2` after; `your` → point at the child (`Gesture_Point` — our catalog has no "you" gesture, so we do **not** borrow OpenMoxie's `AUTO_GESTURE_YOU`) |
+| G1 | `Hi! I am Moxie.` | `[mood 1 1][usel excited]Hi![/][break 0.35s][gest Gesture_Self] I am Moxie.[gest Gesture_None]` | `!` → Happy; "I" → self |
+| G2 | `What do you want to play today?` | `[mood 9 1][usel question]…?[/][gest Gesture_Question][gest Gesture_None]` | open question → Curious; no break after the final word |
+| G3 | `Hmm, let me think about that.` | `[mood 9 1]Hmm,[break 0.35s] let me think about that.[tree Bht_Active_Thinking][gest Gesture_None]` | interjection break; thinking tree, so no arm gesture |
+| G4 | `That is amazing! You did it!` | two `excited` spans, `Gesture_Higher`, `Gesture_Celebrate`, `[mood 1 2]` | two `!` → intensity 2; the inter-sentence space is kept (S2) |
+| G5 | `Oh! I did not know that.` | `[mood 5 1]…` | Surprised is shipped content's value for "Oh!" (14×) |
+| G6 | `I am sorry that happened.` | `[mood 2 1][gest Gesture_Self]…[gest Gesture_None]` | Sad is shipped content's value for "I'm sorry" |
+| G7 | `Oops.` | `[mood 4 1]Oops.[gest Gesture_None]` | Shy for "Oops."; under 6 words → no talking gesture |
+| G8 | `Your birthday is on Friday.` (`icons=True`) | `[icons Birthday][mood 1 1][gest Gesture_Point]…[gest Gesture_None][icons off]` | a confirmed icon value, shown then cleared; "your" → point (no "you" gesture exists) |
+
+G4's kept space and G8's leading (not trailing) `Gesture_Point` are the two deliberate departures from the
+original hand-written spec; both are recorded in the fixture's `_readme`.
 
 ### 1.7 Tests
 
-New `sim/tests/test_annotate.py` (hermetic, no creds, runs in the fast CI tier):
+[`sim/tests/test_automarkup.py`](../../../sim/tests/test_automarkup.py) (hermetic): goldens byte-exact; no
+unknown id over a corpus (goldens, every content module, every filler line, generated lines) with the
+dropped-id counter at 0; words never change; idempotence; well-formed XML and JSON payloads; rate limits on
+a long paragraph; one mood mark per streamed answer; identical bytes across `PYTHONHASHSEED`s; stdlib-only
+imports; no file or socket on the hot path; every emitted id is one the SIM renders or is on an explicit
+`ROBOT_ONLY` list. [`sim/test_automarkup_render.mjs`](../../../sim/test_automarkup_render.mjs) plays the
+goldens through the real `bridge.js`. [`sim/tests/test_streaming.py`](../../../sim/tests/test_streaming.py)
+checks S3 on a real streamed answer.
 
-| # | Test | Assertion |
-|--:|---|---|
-| T1 | **Goldens** | the 8 lines above render byte-exact; stored as a `sim/tests/goldens/annotate.json` fixture so a diff is readable in review |
-| T2 | **Never an unknown asset id** | over a corpus (the 8 goldens + every line in `mqtt/content_modules/*.json` + every `filler.py` line + a 200-line generated sample), *every* `mood`, `eventName`, `behaviour`, `spurt_id`, icon `value` and `SoundToPlay` in the output is a member of the frozen catalog in `moxie_sdk/vocab.py`, and the module's dropped-id counter is **0** |
-| T3 | **Words never change** | `strip_markup(annotate(t)) == strip_markup(t)` across the whole corpus |
-| T4 | **Idempotence** | `annotate(annotate(t)) == annotate(t)`; text that already carries `<mark`/`<usel` is returned unchanged |
-| T5 | **Per-chunk stability** | for a 4-sentence answer split by `SentenceSegmenter`, the concatenated chunk markups contain **exactly one** `cmd:playback-mood` mark, and each chunk ends with `Gesture_None` |
-| T6 | **Purity / reproducibility** | the same input renders identically in three subprocesses launched with different `PYTHONHASHSEED`; a `sys.modules` guard asserts `annotate` imports nothing outside the stdlib |
-| T7 | **Grammar** | every `data:{…}` payload, with `+` mapped back to `"`, parses as JSON; the whole output parses as XML once wrapped in a root element (no unbalanced `<usel>`) |
-| T8 | **Rate limits** | on a 120-word paragraph: ≤ `1 + ceil(words/5)` marks, ≤ 6 gestures, ≤ 1 tree, ≤ 1 mood, no `<break>` after the final word |
-| T9 | **The SIM can render it** | every id the corpus emits appears in `sim/web/bridge/`'s `MOOD_TO_FACE` / `gesture()` / `behaviourTree()` switches, or is listed in an explicit `ROBOT_ONLY` allowlist with a reason |
-| T10 | **Budget** | 1,000 annotations of a 300-char line complete under 1 s (p95 < 1 ms), so a regression that adds I/O fails loudly |
+### 1.8 Limits
 
-### 1.8 Acceptance criteria
-
-1. `make_markup` returns **real markup** for every app that does not supply its own — the echo, content and
-   webhook apps stop speaking flat; proven by a runtime test per app.
-2. `LLMApp.build_markup` routes through `annotate`; there is exactly **one** markup generator in the tree
-   (`stream_style` deleted, `filler.py`'s authored markup unchanged and pinned by a test).
-3. T1–T10 green; **0** unknown ids over the corpus; **0** words changed.
-4. A streamed 4-chunk answer emits one mood mark and one `Gesture_None` per chunk, and never a second
-   different mood mid-answer (T5).
-5. Deterministic across processes and hash seeds (T6).
-6. p95 < 1 ms/line; no new dependency; `annotate` imports stdlib only (T10, T6).
-7. The eight goldens play visibly differently in the browser SIM — a Playwright check that the avatar's
-   face changes on G5/G6/G7 and the arms move on G4; a short screen capture attached to the PR.
-8. The `sim/run_compose_smoke.sh` stack smoke still passes end to end.
-9. This file's §1 status line flipped to shipped, and the audit's §4.1 ADOPT #3 status column updated in
-   the same PR.
-
-### 1.9 Files to touch · effort
-
-**Effort: M (~2 days)** — the rules are small; the corpus, the goldens and the SIM check are the work.
-
-| File | Change |
-|---|---|
-| `mqtt/moxie_sdk/automarkup.py` | **new** — the pure floor (built; named `automarkup.py`, function `annotate`) |
-| `mqtt/moxie_sdk/vocab.py` | **new** — the frozen catalogs (moods, 12 gestures, 45 trees, 52 spurts, 4 icons, 2 SFX ids, 5 usel genres, 22 dialog acts, 9 signals), each entry carrying the doc + line it came from |
-| `mqtt/supervisor/markup.py` | adapter over `annotate` (keep `make_markup`) |
-| `mqtt/supervisor/moxie_runtime.py` | pass `turn_key`/`chunk_index` at the two call sites |
-| `mqtt/moxie_sdk/apps/llm_app.py` | `build_markup` → `annotate` with hints; delete `stream_style` |
-| `sim/tests/test_automarkup.py`, `sim/tests/goldens/annotate.json` | **new** (built) |
-| `sim/test_automarkup_render.mjs` | the SIM render check (built — the goldens through the real `bridge.js`, no browser needed) |
-| `docs/architecture/backlog/expressiveness.md`, `docs/architecture/openmoxie-feature-audit.md` | status |
-
-### 1.10 Risks and honest limits
-
-| Risk | Handling |
-|---|---|
-| **Twitchiness** — the failure mode a child actually notices | D3's hard caps, the 6-word floor, one mood per line; and a human watches the eight goldens on the SIM before merge (acceptance #7) |
-| **No hardware in the loop** | No physical Moxie has ever played our markup. Everything about robot rendering is *inferred* from the recovered generators — the same standing caveat the streaming and filler slices recorded. The SIM is the only renderer we can assert against |
-| **The asset namespace is bundle-defined** | `behavior-markup.md` lines 161–163 is explicit: the generators accept **any** id the loaded bundle defines, and our lists are the app-hardcoded subset. So the validator catches *our* typos; it cannot prove a given robot's bundle has an id. Whether a robot ignores an unknown mark or faults is **unknown** — which is why the floor sticks to app-hardcoded ids only |
-| **SFX is effectively unusable today** | We have exactly **two** confirmed `SoundToPlay` ids. OpenMoxie ships `doc/AssetBundleMasterManifest.csv` — 188 KB listing every asset in the robot's bundle repository (labels, bundle names, types). Reading that **data** (MIT, not code) into our own catalog page is the cheapest way to widen this, and is the prerequisite for turning `sfx=True` on. Until then: gated off |
-| **Spurts may double a written word** | "Hmm," in the text plus a `hmm thinking` spurt could read as "hmm… hmm". Unverifiable without hardware, and the SIM's external TTS strips the tag entirely so the SIM cannot answer it either (the one TTS divergence in [`sim-as-a-client.md`](../sim-as-a-client.md)). Gated off at P0; a hardware capture is the gate to turn it on |
-| **Icons are calendar-shaped** | The four confirmed values are event cues; emitting them from generic chat would be guessing. Gated off; the natural first user is a schedule/reminder line, not free conversation |
-| **Licence** | We describe OpenMoxie's behaviors and cite its paths; we copy nothing. If we ever vendor `automarkup` verbatim, its MIT notice ships with it |
+- **No hardware in the loop.** No physical Moxie has played our markup; robot behavior is inferred.
+- **The asset namespace is bundle-defined.** The robot accepts any id its bundle defines; our lists are the
+  app-hardcoded subset. The validator catches our typos, not a robot's missing asset — so we emit only
+  app-hardcoded ids.
+- **SFX gated off:** only two confirmed sound ids (one is a music bed). OpenMoxie's
+  `doc/AssetBundleMasterManifest.csv` (data, MIT) is the cheapest way to widen this.
+- **Spurts gated off:** "Hmm," in text plus a `hmm thinking` spurt might double up; unverifiable without
+  hardware, and the SIM strips spurts before its external TTS.
+- **Icons gated off:** the four confirmed values are calendar cues; the natural first user is a
+  reminder line, not free chat.
 
 ---
 
-## 2. BEYOND #1 — the behavior planner · **P1 🟢 SHIPPED 2026-09-03** (P2 open)
+## 2. The behavior planner
 
-> The floor maps **words** to tags. The planner scores **the line's job** and stages a performance — then
-> proves every asset it references exists before it ships, and lets an author watch it on the SIM before a
-> child does.
+The floor maps **words** to tags. The planner scores the line's **job** — its `RemoteDialog.DialogAct` — and
+stages a performance from it, validates every id, and lets an author rehearse it on the SIM. Its four
+promises, each tested in [`test_performance.py`](../../../sim/tests/test_performance.py): it emits a
+structure, not strings; a brain may suggest ids but never authorize them; it always degrades to the floor;
+it adds no model call and no measurable latency.
 
-> **Built (P1).** [`mqtt/moxie_sdk/performance.py`](../../../mqtt/moxie_sdk/performance.py) — the frozen
-> `Beat`/`Performance` structure, a rule classifier over all 22 `RemoteDialog.DialogAct`s, the
-> act→performance profile table, a total `validate()` against the frozen catalog, and the one
-> `render()` that mints a mark — behind the unchanged
-> [`supervisor/markup.py`](../../../mqtt/supervisor/markup.py) seam, which now answers with
-> `perform()` (markup **and** score). Contract changes C1–C7 all landed; the preview hook is
-> `MoxieRuntime.preview` → `POST /preview` → `POST /local/robots/{id}/preview`. Pinned by
-> [`sim/tests/test_performance.py`](../../../sim/tests/test_performance.py) (124 hermetic cases,
-> 22 dialog-act goldens in [`sim/tests/goldens/performance.json`](../../../sim/tests/goldens/performance.json)
-> as **JSON `Performance` objects** plus the markup they render to) and by
-> [`sim/test_performance_render.mjs`](../../../sim/test_performance_render.mjs), which plays all 22
-> through the real `bridge.js` and writes the contact sheet. `MOXIE_EXPRESSIVE=planner|floor|off`.
->
-> **Four things the build decided that this spec left open, each for a stated reason.**
-> 1. **A `Beat` is a *run of words*, not only a clause.** Clauses are sub-split again at the
->    talking-gesture stride, so every mark falls at a beat boundary and `render()` never reaches
->    inside a beat's text. That is what makes rendering total — and it is why the terminal
->    `Gesture_None` and the `icons-v2` clear are *derived by* `render()` rather than carried as
->    beats: they are a rendering convention, not a decision.
-> 2. **The words outrank the act for mood.** §2.1 reads as though the act picks the face, but the
->    floor's mood cues are not guesses — each is what shipped content actually used for that phrase
->    (`"Oops." → 4 Shy`, 2×; `"Oh!" → 5 Surprised`, 14×). An act profile that overrode them would
->    trade recovered evidence for a rule of ours, so the profile fills the **silence**: it supplies a
->    face for every line whose words score plain Neutral, which is most of them.
-> 3. **`Performance` carries a line-level `mood`/`mood_intensity`** beside the per-beat ones. §2.2's
->    sketch has neither, but C1/C3 need a single value for `RemoteChatOutput.mood`, and beat moods
->    drive face *changes*. Mood marks are capped at **2 per line** (initial + one transition, §2.5's
->    "one mood transition at most") and a chunk past the first plans **no** mood at all.
-> 4. **Two wishes in §2.1 have no id behind them and were written down instead of invented.**
->    "An apology lowers the gaze": nothing in the 24 recovered verbs or the 4 look-bearing trees
->    lowers a gaze, so an apology gets `Bht_Idle_Listening`, the least-searching tree we have.
->    "Backchannelling gets a subtle nod": there is no nod id either, so backchannelling is rendered
->    as the assertable half — **no arm gesture at all** plus the attentive tree.
->
-> **Proven in both directions.** [`sim/tools/performance_mutation_check.py`](../../../sim/tools/performance_mutation_check.py)
-> breaks one guard at a time and requires a test to go red: **39/39 caught**. The first run
-> caught 24/34, and two of the misses were holes in the *code*, not the tests — an app's own
-> scored fields were overlaid onto `RemoteChatOutput` **without** passing the catalog (so a brain
-> could have authorized `dialog_act: "smalltalk"` simply by setting the field), and an
-> uncatalogued `emotion`/`signal` hint blanked the field instead of falling through to the rules.
-> Both are fixed and both now have a mutation.
->
-> **C6 holds where an app authors nothing, and not on the model path (found 2026-09-03,
-> integration).** `markup` is derived, never authored — *for `echo`, for the content
-> extensions and for the preview hook, which set no markup and therefore get
-> `render(validate(plan(…)))`*. `LLMApp` does set it: `build_markup` → `automarkup.annotate`
-> on every reply and every streamed chunk, and `_stage` honours an app's authored markup
-> verbatim by design (the idempotence rule). So on the brain a real deployment runs,
-> `MOXIE_EXPRESSIVE=planner` changes the **five scored fields and not the performance** —
-> the act profile, the gaze tree and the per-clause staging never reach the wire there, and
-> the body a child sees is still the floor's. Proven on a real broker by
-> [`sim/tests/test_sil_performance_e2e.py`](../../../sim/tests/test_sil_performance_e2e.py):
-> every chunk of a streamed model answer is byte-identical to `annotate(text,
-> turn_key=f"{device_id}|{speech}", chunk_index=n)`. It is **pinned rather than fixed** —
-> closing it means deciding whether an expressive `LLMApp` should stop authoring markup
-> when the planner is on, which is a design call on the turn loop and not an integration
-> one, and `test_the_model_path_performs_the_floors_markup` turns that change into a red
-> test instead of a silent one. A corollary worth keeping: because only `LLMApp` implements
-> `respond_stream`, **no published path currently carries planner markup on a streamed
-> chunk at all**, so the planner's own `chunk_index` rule is unreachable from the wire.
->
-> **Still open, honestly.** Icons and SFX stay gated off (the four confirmed icons are calendar cues;
-> one of the two confirmed sounds is a music bed) and spurts are never populated — the `Beat` slots
-> exist and validate, and nothing turns them on. `auto_tags[]`, `sentiment` and `perplexity` remain
-> empty on the wire. The act classifier is a rule engine and says so: it cannot read context or
-> sarcasm and calls an unfamiliar declarative `statement_non_opinion`. **P2 is unchanged and open.**
+### 2.1 What the child sees
 
-### 2.1 What "10×" means, from the child's side
+A rule classifier assigns one of the 22 acts; an act profile (`performance.ACT_PROFILES`) stages the body.
+Examples: a `factual_question` holds its gaze; `appreciation` celebrates; an `apology` gets
+`Bht_Idle_Listening` (the least-searching tree — **no id lowers a gaze**); `backchannelling` ("mm-hm") gets
+**no arm gesture** plus the attentive tree (**no nod id exists**). `timeout` is a turn state, reachable only
+via `ctx={"timed_out": True}`.
 
-| | Today | The floor (§1) | The planner |
-|---|---|---|---|
-| Face | one mood the model picked for the whole answer | a mood per line, stable across a streamed answer | a mood per **clause**, chosen from the line's dialog act and the child's own scored emotion |
-| Body | one arm gesture, or none | a gesture on the carrying words, capped so it is not twitchy | gesture **and** a look: an apology lowers the gaze, a question holds it, a story looks away and back |
-| Screen | nothing | nothing | an icon when the line is *about* something the screen can show |
-| Sound | nothing | nothing | a stinger on a win, a breath before a hard thing |
-| Failure | a mark the robot cannot play just… does something, or nothing | validated ids | validated **and rehearsed** — an author saw this exact performance on the SIM |
+**The words outrank the act for mood.** The floor's mood cues are what shipped content actually used
+("Oops." → Shy, "Oh!" → Surprised), so the act profile only fills the silence: it supplies a face for lines
+whose words score Neutral.
 
-Concretely: a `factual_question` gets a head tilt and a held gaze; an `apology` gets Shy plus a lowered
-gaze; `appreciation` gets Celebrate; `backchannelling` ("mm-hm", "I see") gets a subtle nod and **no arm
-gesture at all**. A child reads intent off the body before the words land — that is the difference between
-a speaker that talks and a robot that is listening to them.
+### 2.2 The `Performance` object
 
-### 2.2 The `Performance` object — one structured thing, one renderer
+`plan()` returns a frozen `Performance`: a tuple of `Beat`s plus line-level `mood`, `mood_intensity`,
+`dialog_act`, `emotion`, `signal`, and `dropped` (ids `validate()` refused). A `Beat` is one run of words
+performed in one state — sentences sub-split at clause punctuation and at the talking-gesture stride — with
+slots `mood`, `mood_intensity`, `gesture`, `tree`, `gaze`, `icon`, `sfx`, `spurt`, `usel`, `break_after`.
 
-The planner does **not** emit strings. It emits a validated structure, and exactly one function renders it
-to markup — so validation is total and goldens are readable JSON rather than tag soup.
+- `render()` is the **only** function that mints a mark, and every mark falls on a beat boundary. The
+  terminal `Gesture_None` and the `icons-v2` clear are derived by `render()`, not stored as beats.
+- `Beat.gaze` is a closed enum over `vocab.GAZE_TREES`, not a direction. Widening it needs a markup verb
+  we have not found or a robot-side IPC path (`LookAtMeRequest`, see
+  [`perception-pipeline.md`](../../reverse-engineering/runtime/perception-pipeline.md)).
+- Budget guards: `MAX_PLAN_CHARS = 2000` (longer lines are declined to the floor), `MAX_BEATS = 96`,
+  `MAX_MOOD_MARKS = 2` (§2.5).
 
-```python
-@dataclass(frozen=True)
-class Beat:                       # one clause of the line
-    text: str
-    mood: int | None              # ePlaybackMood 0-10
-    mood_intensity: int = 0       # 0-2
-    gesture: str | None = None    # Gesture_*  (our 12)
-    tree: str | None = None       # Bht_*      (our 45)
-    gaze: str | None = None       # a look-bearing tree; see the honest note below
-    icon: str | None = None       # icons-v2 value (4 confirmed)
-    sfx: str | None = None        # SoundToPlay id + channel
-    spurt: str | None = None      # one of the 52
-    usel: str | None = None       # none|question|motivational|intimate|excited
-    break_after: float | None = None
+### 2.3 Contract changes
 
-@dataclass(frozen=True)
-class Performance:
-    beats: list[Beat]
-    dialog_act: str | None        # one of the 22
-    emotion: str | None           # EmotionState (7)
-    signal: str | None            # RemoteSignals.Signal (9)
+[`ai-seam.md`](../ai-seam.md) §② already specified the destination: `RemoteChatOutput` carries `markup`,
+`mood`, `mood_intensity`, `dialog_act`, `emotion`, `signals`. The wire needed nothing new; our side did:
 
-def plan(text, *, ctx) -> Performance: ...     # scores
-def validate(p) -> Performance: ...            # drops/raises on any unknown id
-def render(p) -> str: ...                      # the ONLY place a mark is minted
-```
+| # | Change | Where |
+|--:|---|---|
+| C1 | `Reply` has `mood_intensity`, `emotion`, `signal`, `gesture`, `gaze`, `icon`, `sfx`, `performance` beside `mood`/`dialog_act` | [`moxie_sdk/types.py`](../../../mqtt/moxie_sdk/types.py) |
+| C2 | `ReplyChunk` has `mood`, `dialog_act`, `mood_intensity`, `emotion`, `signal`, `performance`, so a streamed answer can carry scored output | same |
+| C3 | `build_chat_response` emits all five scored fields | [`moxie_sdk/wire.py`](../../../mqtt/moxie_sdk/wire.py) |
+| C4 | streamed chunks pass their scored fields through | `moxie_runtime/turns.py` |
+| C5 | every published line is scored: `_stage` feeds the app's own fields to the planner as hints and fills what the app left `None`. An app's scored fields still pass `validate()` — they cannot authorize an uncatalogued id | `moxie_runtime/turns.py` |
+| C6 | `markup` is derived, never authored: `render(validate(plan(text)))` | the seam |
+| C7 | the preview hook (§2.4) | supervisor + console |
 
-> **Honest note on `gaze`.** There is **no gaze verb** in the 24 recovered markup commands. Gaze lives
-> on-device: weighted interest points → `AttentionTarget` → IK look-at with saccades
-> ([`gaze-and-attention.md`](../../reverse-engineering/runtime/gaze-and-attention.md)), driven from trees by
-> `RobotBT_GazeControlTarget` / `RobotBT_GazeControlManualTarget` / `RobotBT_GazeDisabler`
-> ([`behavior-nodes.md`](../../reverse-engineering/runtime/behavior-nodes.md)). The only cloud-side handle
-> is **choosing a look-bearing behavior tree** (`Bht_Search`, `Bht_Idle_Curious`, `Bht_Idle_Listening`,
-> `Bht_Idle_Near_Focused`). The `gaze` slot is therefore a **closed 4-value enum over trees**, not a
-> direction — and the spec says so rather than inventing a verb. Widening it needs either a new markup verb
-> we have not found or an IPC path (`LookAtMeRequest{user, bot}`,
-> [`perception-pipeline.md`](../../reverse-engineering/runtime/perception-pipeline.md)), which is robot-side,
-> not cloud-side. **Open question, recorded, not papered over.**
-
-### 2.3 Contract changes — exactly what is added
-
-[`ai-seam.md`](../ai-seam.md) §② already specifies the destination fields: `RemoteChatOutput` carries
-`markup`, `mood`, `mood_intensity`, and optionally `dialog_act`, `emotion`, `sentiment` (+ scores),
-`signals`, `auto_tags[]`. **The wire needs nothing new.** What changes is our side of it:
-
-| # | Change | Where | Why |
-|--:|---|---|---|
-| C1 | `Reply` gains `mood_intensity`, `gesture`, `gaze`, `icon`, `sfx`, `signal`, and `performance: Performance \| None` | `moxie_sdk/types.py` | `Reply` has `mood` and `dialog_act` today and nothing else scored |
-| C2 | **`ReplyChunk` gains `mood`, `dialog_act`, `mood_intensity`, `signal`, `performance`** | same | `ReplyChunk` has **none** of them, so a *streamed* answer cannot carry scored output even in principle — the gap PR #17 opened |
-| C3 | `build_chat_response` accepts and emits `mood_intensity`, `emotion`, `signals` alongside the existing `mood`/`dialog_act` | `moxie_sdk/wire.py` | it already emits two of the five; the rest are one `if` each |
-| C4 | `_publish_stream_chunk` passes the chunk's scored fields through | `supervisor/moxie_runtime.py` | today it passes text + markup + actions only, so scored output is silently dropped on the streaming path |
-| C5 | **Someone actually sets them.** `LLMApp` fills `mood`/`dialog_act` from the planner (or from its own expressive JSON) on every reply and chunk | `moxie_sdk/apps/llm_app.py` | today **no app sets `Reply.mood` or `Reply.dialog_act`** — the plumbing exists end to end and is never fed |
-| C6 | `markup` is derived, never authored: `Reply.markup = render(validate(plan(text)))` | the seam | one renderer ⇒ one validator ⇒ the "no unknown id" guarantee holds for every path |
-| C7 | The preview hook (§2.4) | `supervisor/` + console | rehearsal |
-
-`ai-seam.md` §② itself needs **one added line** (the `Performance` → scored-output mapping) and no field
-changes — the point of building to the contract is that a 10× feature turns out to be a fill-in, not a
-redesign.
+**Known gap — C6 does not hold on the model path.** `_stage` speaks an app's authored markup verbatim (S1),
+and `LLMApp` authors the floor's `annotate` markup on every reply and chunk. So on the brain a real
+deployment runs, `MOXIE_EXPRESSIVE=planner` changes the scored fields but not the performance. C6 holds for
+apps that author no markup (echo, content extensions, the preview hook). This is pinned, not fixed:
+`test_the_model_path_performs_the_floors_markup` in
+[`test_sil_performance_e2e.py`](../../../sim/tests/test_sil_performance_e2e.py) goes red the day it
+changes. Closing it means deciding whether an expressive `LLMApp` should stop authoring markup when the
+planner is on. Corollary: because only `LLMApp` streams, no published streamed chunk carries planner markup
+today.
 
 ### 2.4 The SIM as the preview client
 
-`sim-as-a-client.md`'s guarantee is that the SIM is *not a special case* — it is another client of the same
-contracts. The preview hook must honor that: **there is no SIM-specific API.**
+There is no SIM-specific API. The console's 🎬 Rehearsal card ([`server/static/js/perform.js`](../../../server/static/js/perform.js))
+posts `{text, speak, icons, sfx}` to `POST /local/robots/{device_id}/preview`
+([`server/moxie_server/routes/console.py`](../../../server/moxie_server/routes/console.py)), which proxies to
+the supervisor's `POST /preview` ([`status_http.py`](../../../mqtt/supervisor/moxie_runtime/status_http.py))
+→ `MoxieRuntime.preview` ([`fleet.py`](../../../mqtt/supervisor/moxie_runtime/fleet.py)).
 
-- The console (or a CLI) posts a line to `POST /local/preview {device_id, text}`.
-- The supervisor plans it, validates it, and publishes an ordinary
-  `/devices/<preview-device>/commands/remote_chat` with `result=SUCCESS` and the rendered markup — the
-  identical message a real turn produces. No turn is recorded, no history is written, no brain is called.
-- Any client subscribed as that device renders it: the browser SIM, `virtual_moxie.py`, or a real robot
-  paired as a rehearsal device.
-- The console shows the `Performance` JSON beside the SIM canvas: mood, act, gesture, gaze, icon, SFX per
-  beat, with any dropped id flagged in red.
-
-This is what makes the planner *authorable*: a content author can iterate on a line and watch the
-performance, which is the audit's stated 10× ("so authors *see* the performance before a child does").
+- The line is planned, validated and published as an ordinary `commands/remote_chat` — whatever is
+  subscribed as that device performs it (browser SIM, `virtual_moxie.py`, a paired robot).
+- No brain call, no history, no memory, no turn record. The output-side safety check still runs.
+- `speak` defaults to false, so a preview spends no voice call unless asked.
+- The response is the staged `Performance` plus `dropped`; the console draws it per beat with refused ids
+  flagged.
 
 ### 2.5 How it is tested
 
 | Layer | Test |
 |---|---|
-| **Planner (hermetic)** | goldens as **JSON `Performance` objects** — readable diffs, and independent of rendering. Table-driven over one line per dialog act (22 cases) |
-| **Validator** | property test: for randomly mutated `Performance`s, `validate` never lets a non-catalog id through, and drops rather than raises on the hot path |
-| **Renderer** | reuses §1's T1/T3/T7/T8 unchanged — the floor's invariants are the planner's invariants |
-| **Streaming** | a 4-chunk answer carries scored fields on every chunk (C2/C4) and one mood transition at most |
-| **SIM preview harness** | Playwright: publish the 22 act goldens through the preview hook; assert the avatar reaches the expected face for each and that motors moved for the gesture-bearing ones; capture a contact sheet as a CI artifact |
-| **Live A/B** | same 20 prompts, same persona, `MOXIE_EXPRESSIVE=floor` vs `planner`, recorded through the real gateway. Mechanical scores: marks/minute, distinct moods used, unknown ids (must be 0), first-audio latency (must not regress past the measured 1.52 s). Human score: a 1–5 "does it feel alive" on blind-ordered clips |
+| Planner goldens | [`sim/tests/goldens/performance.json`](../../../sim/tests/goldens/performance.json): one line per dialog act (22), as a JSON `Performance` **and** the markup it renders to. Written by [`sim/tools/build_performance_goldens.py`](../../../sim/tools/build_performance_goldens.py); tests read the committed file |
+| Validator | property test with mutated performances: no non-catalog id gets through; drops (and counts) on the hot path, raises only in strict mode |
+| Renderer | the floor's invariants (words unchanged, well-formed, rate limits) apply unchanged |
+| Streaming | scored fields on every chunk; at most **one mood transition per line** (`MAX_MOOD_MARKS = 2`); a chunk after the first plans no mood |
+| Degradation | fault injection at `plan`, `validate`, `render`, plus the budget breaker — each lands on the floor |
+| SIM | [`sim/test_performance_render.mjs`](../../../sim/test_performance_render.mjs) plays all 22 goldens through the real `bridge.js` (no browser) and writes `sim/artifacts/performance-contact-sheet.html` |
+| End to end | [`test_sil_performance_e2e.py`](../../../sim/tests/test_sil_performance_e2e.py) on a real broker: scored fields on single and streamed turns, the preview path, the C6 pin; `sim/run_smoke.sh --expect-scored` in the stack smoke |
+| Mutation | [`sim/tools/performance_mutation_check.py`](../../../sim/tools/performance_mutation_check.py): 39 mutations, each must turn a test red (run by hand) |
 
 ### 2.6 Degradation — always down to the floor
 
-One function, three outcomes: `plan()` returns a `Performance`, returns `None`, or blows its budget. In the
-last two the seam calls `annotate()` and the wire shape is **identical** — the child never notices which
-one answered. `MOXIE_EXPRESSIVE=floor|planner|off` pins the choice (`off` = today's passthrough, kept so a
-regression has a one-variable rollback). A fault-injection test asserts every planner exception path lands
-on the floor and still emits valid markup. **A planner must never add a model call to the hot path**: it
-scores from the completion the brain already made, or from a local classifier with a hard millisecond
-budget; when the budget blows, the floor answers.
+`plan()` returns a `Performance`, returns `None`, raises, or blows its budget. In every case but the first
+the seam answers with `annotate()` and an identical wire shape. `PLAN_BUDGET_MS = 8.0` per line; after
+`PLAN_BUDGET_STRIKES = 3` over-budget lines in a row the seam latches to the floor for the process. A planner
+must never add a model call to the hot path.
 
 ### 2.7 Phases
 
-| Phase | Scope | Acceptance |
-|---|---|---|
-| **P0 · the floor** | §1 in full — `annotate` + `vocab` behind `make_markup` | §1.8, all nine criteria |
-| **P1 · the planner** 🟢 **SHIPPED 2026-09-03** | `Performance` + `plan`/`validate`/`render`; C1–C7; the preview hook; scored output on both the single and the streamed path. **Deterministic, still no model call** — it scores from the model's own mood/act when present and from rules otherwise | (a) ✅ 22 dialog-act goldens green, as JSON *and* as markup; (b) ✅ **0** unknown ids over a 300-line corpus (goldens + every content module + every filler + 260 generated lines) — the ≥500 **live** lines are P2's bar and were not run here; (c) ✅ scored fields on 100 % of published turns, streamed included, asserted through the real runtime; (d) ✅ all **22** acts render on the SIM through the real `bridge.js` (8 distinct faces, 21 moving the body) with `sim/artifacts/performance-contact-sheet.html` uploaded by the fast tier; (e) ✅ fault injection at `plan`/`validate`/`render` + a budget breaker, each proven to land on the floor; (f) ✅ measured p95 **0.25 ms** on a 140-char line and **0.56 ms** on a 248-char one, against the floor's 0.15 / 0.29 — inside the floor's own 1 ms budget. That was a bench measurement of the seam, and its author said so; **the first-audio experiment itself was re-run on 2026-09-03** ([`sim/tools/first_audio_ab.py`](../../../sim/tools/first_audio_ab.py)), timing a robot's own `events/remote-chat` → first `commands/remote_chat` with words → first `commands/tts` with audio, through a real broker and `mqtt/run.py` as its own process, one supervisor boot per arm. **Controlled arm** (a local brain streaming a fixed answer at a fixed pace, 20 turns each, so the gateway's variance is held still): first words **356.5 ms** planner vs **357.9 ms** floor, first audio **409.2 ms** vs **411.3 ms** — the planner is **1.4 / 2.1 ms FASTER**, which is to say the difference is inside a single arm's own 2–4 ms spread and the seam is not resolvable on the wire. **Live arm** (the real gateway, 6 completions): first words 1.02–2.39 s across both arms, straddling the 1.52 s of PR #15, with ~800 ms of spread *within* one arm — so the live A/B can only bound the planner's cost, never resolve it, and the controlled arm is what carries the verdict. **No first-audio regression.** Remaining honesty: `t_audio` is the built-in tone synthesizer (local, and identical in both arms) rather than a gateway voice, so it measures our pipeline and not a voice provider's queue; (g) ✅ `ai-seam.md` §② carries the mapping |
-| **P2 · learned / model-assisted** | the brain returns the performance itself (the expressive JSON envelope grows `dialog_act`, `gesture`, `gaze`, `icon`, `sfx`), or a small **local** classifier scores the line. Same validator, same renderer, same budget. This is where OpenMoxie's ML rule table would be answered properly — with something we can audit and a child's data that never leaves the house | (a) beats P1 on the blind human score in the live A/B; (b) 0 unknown ids over ≥500 live lines; (c) first-audio latency unchanged; (d) the classifier runs locally with a hard budget and the floor still answers when it blows; (e) every model-chosen id passes the same `validate` — a brain may *suggest*, it may never *authorize* |
+**P0 · the floor** and **P1 · the planner** are shipped (§1, §2.1–§2.6). P1's acceptance, as met:
 
-**Not in scope, and why.** Barge-in and STT partials (audit §3.2) touch the same turn but are a different
-seam. Visemes / `TTSMark[]` (BEYOND #8) are the *TTS* side of expressiveness — `marks` is plumbed through
-`moxie_sdk/tts.py` and never populated — and belong with the voice slice, not here.
+- (a) 22 dialog-act goldens, as JSON and as markup.
+- (b) 0 unknown ids over a ~300-line corpus (goldens, content modules, filler, generated lines).
+- (c) scored fields on every published turn, streamed included, asserted through the real runtime.
+- (d) all 22 acts render on the SIM through the real `bridge.js` and perform differently
+  (`test_performance_render.mjs`).
+- (e) fault injection at each stage, each landing on the floor.
+- (f) **no first-audio regression.** A bench of the seam put the planner at p95 ≈ 0.25–0.56 ms against
+  the floor's 0.15–0.29 ms. The wire experiment ([`sim/tools/first_audio_ab.py`](../../../sim/tools/first_audio_ab.py),
+  real broker, one supervisor boot per arm) found planner and floor within ~2 ms of each other on a
+  controlled stub brain — inside a single arm's own spread. Live-gateway runs vary by ~800 ms within one arm,
+  so they can only bound the cost. Audio there is the local tone synth, not a gateway voice.
+- (g) `ai-seam.md` §② carries the `Performance` → scored-output mapping.
+
+**P2 · learned / model-assisted (proposal, not scheduled).**
+
+- *Problem:* the act classifier is a rule engine over cue phrases and sentence shape. It cannot read
+  context or sarcasm, and it calls an unfamiliar declarative `statement_non_opinion`. Icons, SFX and spurts
+  are never populated; `auto_tags[]`, `sentiment` and `perplexity` stay empty on the wire.
+- *Approach:* either the brain returns the performance itself (the expressive JSON grows `dialog_act`,
+  `gesture`, `gaze`, `icon`, `sfx`), or a small **local** classifier scores the line. Same validator, same
+  renderer, same budget; the floor still answers when the budget blows.
+- *Acceptance:* beats P1 on a blind human "feels alive" score in a live A/B; 0 unknown ids over ≥ 500
+  **live** lines (P1's 0 was over a generated corpus, a different bar); first-audio unchanged; every
+  model-chosen id passes the same `validate()`.
+- *Open questions:* how to close the C6 gap (§2.3) on the model path; whether a hardware capture can settle
+  spurt doubling and unknown-id behavior before SFX/spurts are enabled.
+
+**Out of scope.** Barge-in and STT partials (a different seam). Visemes / `TTSMark[]` are the TTS side of
+expressiveness — see [`visemes.md`](visemes.md).
 
 ---
 📖 [Docs index](../../README.md) · [Backlog briefs](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [AI seam](../ai-seam.md) · [Behavior markup (RE)](../../reverse-engineering/runtime/behavior-markup.md)

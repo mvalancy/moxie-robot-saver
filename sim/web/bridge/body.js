@@ -52,7 +52,7 @@
   B.gesture = gesture;
 
   // Behaviour trees (Bht_*) — whole-body animations; the authoritative set is
-  // docs/reverse-engineering/behavior-tree-engine.md.
+  // docs/reverse-engineering/runtime/behavior-tree-engine.md.
   function behaviourTree(name) {
     const m = window.moxie; if (!m) return;
     switch (name) {

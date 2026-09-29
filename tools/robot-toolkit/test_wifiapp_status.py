@@ -4,7 +4,7 @@
 Builds a WifiAppStatus (the WifiAppReady=100 "ready to scan a QR" signal) and a
 WifiAppBricked (setup-app failure), frames + re-parses them via the bus registry, and
 checks the WIFI_APP_STATUS_CODES map. See
-docs/reverse-engineering/qr-commands.md (The setup app's runtime status).
+docs/reverse-engineering/protocol/qr-commands.md (The setup app's runtime status).
 
     python3 tools/robot-toolkit/test_wifiapp_status.py
 """
@@ -13,6 +13,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report  # noqa: E402
 
 try:
     from embodied.wifiapp import WifiAppStatus_pb2 as S  # noqa: E402
@@ -21,11 +22,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  wifiapp-status toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
 
 registry = {bus.full_name(c): c for c in bus.wifi_app_status_classes()}
 ok(len(registry) == 4, f"expected 4 wifiapp status classes, got {len(registry)}")
@@ -48,10 +44,5 @@ br = B.WifiAppBricked(error_code=2)
 rbr = B.WifiAppBricked(); rbr.ParseFromString(br.SerializeToString())
 ok(rbr.error_code == 2, "WifiAppBricked error_code lost")
 
-if fails:
-    print("❌ wifiapp-status toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ wifiapp-status toolkit test OK — WifiAppStatus(WifiAppReady=100) + WifiAppBricked(error_code) "
-      "round-trip + WIFI_APP_STATUS_CODES map through the bo-wifi setup-app status protos")
+report("wifiapp-status", "WifiAppStatus(WifiAppReady=100) + WifiAppBricked(error_code) "
+       "round-trip + WIFI_APP_STATUS_CODES map through the bo-wifi setup-app status protos")

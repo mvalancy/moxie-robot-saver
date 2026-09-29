@@ -41,7 +41,7 @@ mqttClient._emit("message", "/devices/d_test/commands/motor",
   Buffer.from(JSON.stringify({ motors: { "0": 30000, "4": 24000 } })));  // SIL motor channel
 
 // ---- 🎭 telehealth: the operator's line must drive the avatar exactly like a brain
-// reply, because `Output.markup` IS the same behavior language (telehealth.md:16-17).
+// reply, because `Output.markup` IS the same behavior language (telehealth.md:8).
 // Same markup as the "Hmm?" reply above, delivered on the puppet channel instead.
 const puppetMarkup =
   '<mark name="cmd:playback-mood,data:{+mood+:2,+intensity+:2}"/>' +

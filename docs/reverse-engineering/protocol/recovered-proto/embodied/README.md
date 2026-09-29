@@ -1,20 +1,13 @@
 # 📁 `embodied`
 
-Supporting files for `embodied`.
+The recovered `embodied.*` schemas, one subfolder per area. The folder-to-package map and what
+each area covers is in the [parent README](../README.md#layout); every message is listed in the
+[protocol catalog](../../proto-catalog.md).
 
-## Subfolders
-
-- [`launcher/`](launcher/) — see its own README.
-- [`lizzerface/`](lizzerface/) — see its own README.
-- [`logging/`](logging/) — see its own README.
-- [`perception/`](perception/) — see its own README.
-- [`playspace/`](playspace/) — see its own README.
-- [`robotbrain/`](robotbrain/) — see its own README.
-- [`system/`](system/) — see its own README.
-- [`telehealth/`](telehealth/) — see its own README.
-- [`testing/`](testing/) — see its own README.
-- [`unity/`](unity/) — see its own README.
-- [`wifiapp/`](wifiapp/) — see its own README.
+- [`launcher/`](launcher/) · [`lizzerface/`](lizzerface/) · [`logging/`](logging/) ·
+  [`perception/`](perception/) · [`playspace/`](playspace/) · [`robotbrain/`](robotbrain/) ·
+  [`system/`](system/) · [`telehealth/`](telehealth/) · [`testing/`](testing/) ·
+  [`unity/`](unity/) · [`wifiapp/`](wifiapp/)
 
 ---
 📖 [Docs index](../../../../../docs/README.md) · [Back to top](../../../../../README.md)

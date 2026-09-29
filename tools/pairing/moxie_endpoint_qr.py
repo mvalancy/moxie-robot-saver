@@ -20,13 +20,7 @@ Known-good vector (host 192.168.1.50):
 from __future__ import annotations
 import base64, json
 
-
-def _varint(n: int) -> bytes:
-    out = bytearray()
-    while n & ~0x7F:
-        out.append((n & 0x7F) | 0x80); n >>= 7
-    out.append(n & 0x7F)
-    return bytes(out)
+from moxie_qr import _read_varint, _varint
 
 
 def _tag(field: int, wire: int) -> bytes:
@@ -67,20 +61,14 @@ def decode_endpoint_qr(qr: str) -> dict:
     raw = base64.b64decode(outer["debug"]["param"])
     fields, i = {}, 0
     while i < len(raw):
-        tag = raw[i]; i += 1
+        tag, i = _read_varint(raw, i)
         field, wire = tag >> 3, tag & 7
         if wire == 2:
-            n = raw[i]; i += 1
-            val = raw[i:i + n]; i += n
-            fields[field] = val.decode("utf-8", "replace")
+            n, i = _read_varint(raw, i)
+            fields[field] = raw[i:i + n].decode("utf-8", "replace")
+            i += n
         elif wire == 0:
-            shift = res = 0
-            while True:
-                b = raw[i]; i += 1
-                res |= (b & 0x7F) << shift
-                if not (b & 0x80): break
-                shift += 7
-            fields[field] = res
+            fields[field], i = _read_varint(raw, i)
     return {"gcp_project": fields.get(1), "mqtt_host": fields.get(8),
             "override_port": fields.get(11), "disable_verify": bool(fields.get(12, 0)),
             "command": outer["debug"]["command"]}

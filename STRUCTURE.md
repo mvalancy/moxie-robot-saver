@@ -1,74 +1,35 @@
-# 🗂️ Repository structure
+# Repository structure
 
-We map and rebuild Moxie across **three domains** — the **robot**, the **parent app** (phone), and the
-**server app** (the backend that replaces the dead cloud) — plus shared protocol and tooling. Every
-top-level folder below belongs to one of them, and the layout is meant to **grow in that shape**.
+The project covers three things: the **robot** (firmware and hardware), the original **parent app**
+on the phone, and the **server** we run in place of the dead cloud. Every top-level folder belongs to
+one of them.
 
-```mermaid
-flowchart TB
-    subgraph R["① ROBOT — the machine"]
-        rdoc["docs/reverse-engineering/*<br/>(robot side)"]
-        rtool["tools/robot-toolkit/"]
-        hw["hardware/"]
-    end
-    subgraph P["② PARENT APP — the phone"]
-        pdoc["docs/reverse-engineering/*<br/>(phone side) · docs/features/"]
-        ptool["tools/pairing/"]
-    end
-    subgraph S["③ SERVER APP — the backend we run"]
-        srv["server/  (parent-app REST + web UI)"]
-        mq["mqtt/  (robot-facing: broker · supervisor · SDK)"]
-    end
-    proto["SHARED: recovered-proto · proto-catalog · behavior-markup · QR grammar"]
-    R -.speaks.-> proto
-    P -.speaks.-> proto
-    S -.speaks.-> proto
-    classDef d fill:#e3eaf2,stroke:#607d8b,color:#263238;
-    class rdoc,rtool,hw,pdoc,ptool,srv,mq,proto d;
-```
-
-## Top-level map
-
-| Path | Domain | What it is |
+| Path | Part | What it is |
 |---|---|---|
-| [`docker-compose.yml`](docker-compose.yml) + [`.env.example`](.env.example) | ③ server app | The **one-command stack**: `docker compose up` = broker + supervisor + parent console, configured by one root `.env`. Guide: [`docs/guides/one-command-stack.md`](docs/guides/one-command-stack.md). |
-| [`docs/`](docs/) | all | The documentation. `docs/reverse-engineering/` is the clean-room study (split phone-side vs robot-side); [`docs/architecture/`](docs/architecture/README.md) distills it into the **build-spec contracts** a clean-room backend is built from. See [`docs/README.md`](docs/README.md) for the 3-domain index. |
-| [`tools/robot-toolkit/`](tools/robot-toolkit/) | ① robot / shared | QR codec, ZMQ bus client, cloud helpers, protoref, secrets extractor, 120 proto bindings. |
-| [`tools/pairing/`](tools/pairing/) | ② parent app | The phone-side pairing-QR encoder (`moxie_qr.py`). |
-| [`tools/qr-rig/`](tools/qr-rig/) | ① robot | Camera QR validation rig. |
-| [`hardware/`](hardware/) | ① robot | Hardware notes / teardown material (grows as we open a unit). |
-| [`server/`](server/) | ③ server app | **Parent-app half** of the backend: clean-room `client-service` REST API + mobile web UI (FastAPI). |
-| [`mqtt/`](mqtt/) | ③ server app | **Robot-facing half** of the backend: MQTT broker, the supervisor (speaks the robot protocol), and the Moxie SDK. |
-| [`sim/`](sim/) | ③ server app / demo | The **software-in-the-loop simulator** + the static site (`sim/web/`): a browser 3D Moxie driven by the exact protocol, the setup/cloud/hub pages, and the docs explorer. |
-| [`functions/`](functions/README.md) | ③ server app / demo | Cloudflare **Pages Functions** for the hosted static site — the only place server logic can live on it. Same-origin `/api/*`; every secret is a runtime environment binding, never a committed value. |
-| [`ai/`](ai/) | shared | AI/agent notes (the LLM/STT/TTS seam the server app plugs into). |
-| [`scripts/`](scripts/) | shared | Repo-maintenance helpers (doc-link + consistency + mermaid checkers). |
-| [`.claude/`](.claude/) | shared | Shared Claude **agents + skills** — revival + protocol experts, plus the reverse-engineering methodology suite — so the hard-won knowledge travels with the repo. |
+| [`server/`](server/) | Server | Parent-app side of the backend: the REST API the phone app used, plus the phone web app and parent console (FastAPI). |
+| [`mqtt/`](mqtt/) | Server | Robot side of the backend: broker config, the supervisor that speaks Moxie's protocol, and the Moxie SDK (brain, voice, content). |
+| [`docker-compose.yml`](docker-compose.yml), [`.env.example`](.env.example) | Server | The one-command stack: broker, supervisor and console from one `.env` ([guide](docs/guides/one-command-stack.md)). [`docker-compose.images.yml`](docker-compose.images.yml) is the same stack from prebuilt images. |
+| [`sim/`](sim/) | Server / demo | The browser simulator and virtual robot, the static site in `sim/web/`, the test suites in `sim/tests/`, and the CI workflow templates in `sim/ci/`. |
+| [`functions/`](functions/README.md) | Server / demo | Cloudflare Pages Functions behind the hosted site (`/api/*`). Secrets are runtime bindings, never committed. |
+| [`tools/`](tools/) | Robot and phone | Pairing and endpoint QR tools, the robot toolkit (ZMQ bus client, protobuf bindings), and a QR camera rig. |
+| [`hardware/`](hardware/) | Robot | The physical robot: OS, firmware versions, finding it on the network. |
+| [`ai/`](ai/) | Server | Notes on the AI adapters (the code lives in `mqtt/moxie_sdk/`). |
+| [`docs/`](docs/README.md) | All | Guides, architecture contracts, and the reverse-engineering study. |
+| [`scripts/`](scripts/) | Repo | Maintenance checks (doc links, doc consistency, mermaid) and PR helpers. |
+| [`.claude/`](.claude/) | Repo | Shared Claude agents and skills, so the project's know-how travels with the repo. |
+| [`.github/workflows/`](.github/workflows/) | Repo | Installed CI workflows; the editable templates are in `sim/ci/` ([RELEASING.md](RELEASING.md)). |
 
-## The "server app" domain — how it grows
+## Why the backend is two folders
 
-Today the backend the robot + phone talk to is **two folders**, split by *who connects*:
-
-- **[`server/`](server/)** — what the **parent app** expects (`client-service-api.embodied.com`): account,
-  pairing, REST, the web UI. Named `server/` because it *is* the server the phone hits.
-- **[`mqtt/`](mqtt/)** — what the **robot** connects to: the MQTT broker + supervisor + SDK
-  ([`cloud-protocol.md`](docs/reverse-engineering/protocol/cloud-protocol.md)).
-
-These are the two faces of **one server app**. The obvious growth path is to keep them as clear,
-independently-runnable components under the server-app domain, and — as they mature — unify their
-config/deploy (one compose stack, shared device/account store) so "run the server app" is a single
-step. If we ever want a single top-level name, `server/` is where the parent-app face lives and
-`mqtt/` the robot face; a future `serverapp/` (or renaming `server/ → server/parent-app` +
-`server/robot-cloud`) is on the table once the interfaces settle. Until then each folder's README
-states its scope so nothing is ambiguous.
+The backend is split by who connects to it. The **phone** talks REST to `server/`; the **robot**
+talks MQTT to `mqtt/`. They share one compose stack and one `.env`, and each runs on its own.
 
 ## Conventions
 
-- **Every folder has a `README.md`** so it's browsable in the GitHub UI (generated proto trees carry a
-  single root README rather than one per package).
-- **Robot-side docs are version-stamped** to the analyzed firmware
-  **v3.6.4-Zephyr / OTA v24.10.803** ([`firmware-803-reference.md`](docs/reverse-engineering/firmware/firmware-803-reference.md)).
+- Every folder has a `README.md` (generated protobuf trees have one at their root).
+- Robot-side reverse-engineering docs are stamped with the analyzed firmware, v3.6.4-Zephyr /
+  OTA v24.10.803.
 - Run [`scripts/check-doc-links.py`](scripts/check-doc-links.py) before committing docs.
 
 ---
-📖 [Docs index](docs/README.md) · [Field guide](docs/reverse-engineering/FIELD-GUIDE.md) · [Architecture diagrams](docs/reverse-engineering/architecture-diagrams.md)
+[Docs index](docs/README.md) · [Field guide](docs/reverse-engineering/FIELD-GUIDE.md)
