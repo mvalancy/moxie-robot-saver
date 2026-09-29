@@ -14,6 +14,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "moxie_toolkit"))
+from _harness import ok, report  # noqa: E402
 
 try:
     from embodied.telehealth import TeleHealth_pb2 as TH  # noqa: E402
@@ -21,11 +22,6 @@ try:
 except Exception as e:  # protobuf / bindings unavailable
     print(f"ℹ️  telehealth toolkit test skipped — {e}")
     sys.exit(0)
-
-fails = []
-def ok(cond, msg):
-    if not cond:
-        fails.append(msg)
 
 DEV = "d_test-device"
 
@@ -66,10 +62,5 @@ parsed = cloud.parse_telehealth_event(ev.SerializeToString())
 ok(parsed.subtopic == "telehealth" and parsed.message.state == TH.IN_SESSION,
    "TelehealthRobotEvent round-trip failed")
 
-if fails:
-    print("❌ telehealth toolkit test FAILED:")
-    for f in fails:
-        print("   -", f)
-    sys.exit(1)
-print("✅ telehealth toolkit test OK — START/PLAY_OUTPUT(text+markup)/INTERRUPT/END + command & event "
-      "round-trip through TelehealthRobotCommand/Event")
+report("telehealth", "START/PLAY_OUTPUT(text+markup)/INTERRUPT/END + command & event "
+       "round-trip through TelehealthRobotCommand/Event")
