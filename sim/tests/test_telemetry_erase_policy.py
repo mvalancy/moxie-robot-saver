@@ -1,17 +1,7 @@
-"""
-The ACTIVITY RECORD on disk, through the parent's privacy switch (the transcript half is
-`test_transcript_memory_policy.py`):
-
-  1. Telemetry needs an erasure path: `NO_DATA` means "no packet, no count, no day row; a
-     restart finds an empty store" (config-and-telemetry-contract.md §③), including data
-     written before the switch moved.
-  2. `ingest_mentor_behavior` (a per-child log of finished/quit/refused activities) is
-     gated by `LoggingPolicy` like everything else written about a child.
-
-Every assertion reads the store back off DISK — a 200 or a `False` return is not evidence.
-Each "nothing written" test has a `NO_MEDIA`/`FULL` twin proving the path does write.
-
-Hermetic: fake MQTT transport, no brain, tmp store, no sleeps.
+"""The activity record on disk through the parent's privacy switch: `NO_DATA` means no packet,
+no count, no day row and no behaviour log — including data written before the switch moved —
+and a parent can always erase (config-and-telemetry-contract.md §③). Every assertion reads
+the store back off DISK; each "nothing written" test has a twin proving the path does write.
 """
 from __future__ import annotations
 

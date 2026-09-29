@@ -1,14 +1,6 @@
-"""A copied `.env.example` must produce working values, not comment text.
-
-`mqtt/.env.example` documents values with inline comments and the documented first step is
-to copy it. Before this, `_load_env` took everything after `=`, so
-
-    MOXIE_VOICE_BASE_URL=         # e.g. https://your-gateway/v1 (empty -> Piper/tone)
-
-set the voice base URL to the string `"# e.g. https://…"` — **truthy garbage** that
-`build_synthesizer` would then treat as a gateway URL — and `MOXIE_APP` became
-`"llm            # llm | content | echo"`. The documented setup path produced a broken
-appliance, silently. Found by the class guard shipped alongside the gateway-default fix.
+"""A copied `.env.example` must produce working values, not comment text: `_load_env` used to
+take everything after `=`, so `MOXIE_VOICE_BASE_URL=   # e.g. https://…` became truthy garbage a
+builder treated as a gateway URL. The documented setup path produced a broken appliance.
 """
 import os
 import sys

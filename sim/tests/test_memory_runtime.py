@@ -1,15 +1,7 @@
-"""
-Memory through the REAL runtime — the end-of-conversation hook and the parent's read/erase.
-
-`test_memory.py` covers the store and summarizer. Here, what only the runtime does:
-
-  * notice a conversation ended (`<exit>`, a module switch, the robot going offline) and
-    call `MoxieApp.on_session_end`, where long-term memory is written;
-  * serve it to a parent: `GET /memory` (by namespace, with provenance) and `DELETE` /
-    `POST /memory` (erase one namespace or all) on the localhost status server — memory a
-    parent cannot read or erase is unacceptable on a child's device (audit §4.2 BEYOND #4).
-
-Hermetic: fake transport, fake brain, tmp storage, no sleeps, no `openai`.
+"""Memory through the REAL runtime (`test_memory.py` covers the store and summarizer): the
+end-of-conversation hook (`<exit>`, module switch, disconnect → `on_session_end`) and the
+parent's read/erase/edit over the status server — memory a parent cannot read or erase is
+unacceptable on a child's device (audit §4.2 BEYOND #4). Hermetic: fakes, tmp storage.
 """
 import json
 import urllib.error

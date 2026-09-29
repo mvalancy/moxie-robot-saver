@@ -1,19 +1,7 @@
-"""
-🎭 Telehealth — the wire an operator drives the body with (audit ADOPT #7).
-
-`mqtt/moxie_sdk/telehealth.py` is pure: builders for `TelehealthRobotCommand`, a parser for
-state reports, and the closed vocabulary. Tested:
-
-  * JSON keys are the recovered proto's — `test_every_key_we_emit_is_a_recovered_field_name`
-    reads `TeleHealth.proto` as the oracle (and `TeleHealth_pb2` when protobuf is present);
-  * builder refusals — unknown action, empty `PLAY_OUTPUT`, and never `line_id` /
-    `line_params` (assumption B5);
-  * parser honesty — the four `RobotState` names, unknown states kept verbatim and
-    flagged, malformed payloads giving an empty view rather than raising on the MQTT loop;
-  * vocabulary — 11 moods, intensity 0-2 (not a float), constants aligned with
-    `cloud_config.MoxieMode`.
-
-Not exercised on a physical robot; see `backlog/telehealth.md` §6.
+"""Telehealth wire (`moxie_sdk/telehealth.py`, pure): builders for `TelehealthRobotCommand`
+checked against the recovered `TeleHealth.proto` as the oracle, the state-report parser (unknown
+states kept and flagged, malformed payloads → empty view), and the closed mood/intensity
+vocabulary. Not exercised on a physical robot; see `backlog/telehealth.md` §6.
 """
 import os
 import re

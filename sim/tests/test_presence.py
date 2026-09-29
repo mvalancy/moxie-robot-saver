@@ -1,14 +1,7 @@
-"""
-The presence helper — `mqtt/moxie_sdk/presence.py`.
-
-Pure state machine, so every test here passes an explicit `now` and never sleeps. What
-is pinned: the recovered payload keys (`$eb_qr_value` & friends), the arrived/left/flicker
-signals, both hysteresis rules, the bounds, and the "an event we do not model can never
-corrupt presence" guarantee.
-
-Honest scope: no physical robot has ever sent us one of these events. These tests pin our
-*model* of the recovered catalog (docs/architecture/vision.md §1.1-1.2), not observed
-robot behavior.
+"""The presence state machine (`moxie_sdk/presence.py`), with an explicit `now` everywhere: the
+recovered payload keys, arrived/left/flicker with both hysteresis rules, the bounds, and
+"an event we do not model can never corrupt presence". Pins our MODEL of the recovered
+catalog (vision.md §1.1-1.2); no physical robot has sent one of these events.
 """
 from moxie_sdk import presence as P                          # noqa: E402
 

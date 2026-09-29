@@ -1,17 +1,7 @@
-"""
-Durable telemetry through the REAL `MoxieRuntime` — write, restart, read it back.
-
-`test_telemetry.py` owns the pure half. Here, what only the runtime proves:
-
-  * a Packet ingested by one supervisor is still there for the next one;
-  * the `LoggingPolicy` gate follows the parent's per-robot config, all three values, on
-    the path that touches disk;
-  * in-memory read paths (`status_snapshot`'s `telemetry_count`, the planner's buffer)
-    see the history, not just this process;
-  * `wake_robot` publishes the recovered `wakeup` command on the recovered topic, and
-    reports failure honestly.
-
-No broker or robot: `helpers_runtime.make_runtime`, stores rooted at `tmp_path`.
+"""Durable telemetry through the REAL runtime (`test_telemetry.py` owns the pure half): a Packet
+survives a supervisor restart, the `LoggingPolicy` gate follows the parent's config on the
+path that touches disk, the caps hold on the real store, and `wake_robot` publishes the
+recovered `wakeup` command honestly. Stores rooted at `tmp_path`.
 """
 import datetime
 import json

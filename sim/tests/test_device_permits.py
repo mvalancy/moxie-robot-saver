@@ -1,20 +1,9 @@
-"""
-The device allowlist / pairing gate (openmoxie-feature-audit.md §3.1).
+"""The device allowlist / pairing gate (openmoxie-feature-audit.md §3.1).
 
-The broker accepts anonymous connections (the robot's JWT is never verified — mqtt §3b), so
-without a gate anything announcing itself on `/devices/{id}/state` would get
-`pairing_status:"paired"` and the child's `child_pii`. The appliance is closed by default:
-
-  * `build_unpaired_cloud_config()` — the minimal document, never with `child_pii`;
-  * the push seam — unpermitted ⇒ minimal, permitted ⇒ full config, unchanged;
-  * the three ways the gate opens (constructor · `MOXIE_ALLOW_UNVERIFIED_BOTS` · durable
-    fleet flag) and their precedence;
-  * service refusal on the wire: a pending robot's turn never reaches the brain, its
-    schedule pull gets the empty envelope, its telemetry/audio/reports are dropped;
-  * permit → immediate full push; revoke → next push minimal;
-  * durability across a restart, and the console snapshot fields.
-
-No broker or network: `helpers_runtime.FakeClient` and a per-test `tmp_path` store.
+The broker takes anonymous connections, so without a gate anything announcing itself on
+`/devices/{id}/state` would get `pairing_status:"paired"` and the child's `child_pii`. Closed by
+default: a pending robot gets the minimal config and no service; permit/revoke take effect
+live and survive a restart. Hermetic: `FakeClient` and a per-test store.
 """
 import json
 import os

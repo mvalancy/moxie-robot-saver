@@ -1,16 +1,7 @@
-"""
-🧠 Any brain, hot-swappable, per child — the live half (`test_brains.py` is the pure
-registry). What a parent's click does to a RUNNING supervisor:
-
-  * two robots on one appliance answered by two brains in one process;
-  * a swap lands on the NEXT turn; a turn in flight finishes with its own brain;
-  * an explicit `MOXIE_APP` beats a stored per-child pick and refuses a stale page's,
-    naming the variable;
-  * an unbuildable brain keeps the appliance talking and says so once;
-  * `brain` rides the config layers and never reaches the robot's document.
-
-Hermetic: builders arrive through `set_brain_engines()`; HTTP goes through the real
-`_start_status_server`.
+"""Any brain, hot-swappable, per child — the live half (`test_brains.py` is the pure registry):
+two robots on two brains in one process, a swap landing on the NEXT turn, `MOXIE_APP` pinning,
+an unbuildable brain never costing the appliance its voice, and `brain` never reaching the
+robot's config. Hermetic: builders via `set_brain_engines()`, HTTP via the real status server.
 """
 import json
 import threading

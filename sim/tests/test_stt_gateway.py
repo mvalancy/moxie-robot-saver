@@ -1,14 +1,7 @@
-"""
-Gateway EARS — hermetic tests for `moxie_sdk/stt.py`'s cloud transcriber and the
-`MOXIE_STT` switch between it and local whisper.
-
-`test_stt.py` covers VAD and the wire encoder. Here: in-memory WAV wrapping (the mic is
-headerless 16 kHz PCM; the endpoint wants a file), the request shape, retry/backoff, the
-latching fallback, and config precedence — notably `MOXIE_STT=whisper` keeps the ears
-local even with a gateway URL configured.
-
-No `openai` needed: the transcriber takes a `client=` fake and config tests stub
-`make_openai_transcriber`. The real endpoint is `test_live_gateway_stt.py`.
+"""Gateway ears (`moxie_sdk/stt.py`'s cloud transcriber) and the `MOXIE_STT` switch: WAV wrapping
+of the headerless mic PCM, the request shape, retry/backoff, the latching local fallback, and
+config precedence (`MOXIE_STT=whisper` keeps the ears local even with a gateway configured).
+No `openai` needed; the real endpoint is `test_live_gateway_stt.py`.
 """
 from helpers_runtime import reload_config                      # noqa: E402
 import io

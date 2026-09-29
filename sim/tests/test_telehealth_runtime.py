@@ -1,20 +1,7 @@
-"""
-🎭 Telehealth through the REAL runtime — the six verbs, the three gates, the transcript.
-
-A real `MoxieRuntime` over `helpers_runtime.FakeClient`: the actual permit check, mode
-gate, safety classifier and markup floor. Pinned:
-
-  * speak round-trip — one `commands/telehealth` PLAY_OUTPUT + one `commands/tts`, markup
-    valid against the catalog, the operator's mood on the wire;
-  * mode gate — speaking at a robot still running its own brain publishes nothing;
-  * permit gate — a pending robot cannot be puppeted by any verb;
-  * safety — the operator's line is classified as `MOXIE`; a BLOCK is returned with its
-    reason and nothing is spoken (never silently rewritten); a FLAG is spoken + journaled;
-  * no brain mid-session (B3) — a `remote-chat` produces no `commands/remote_chat`;
-  * state ingest — verbatim, and "never reported" until then;
-  * the status HTTP verbs the console proxies.
-
-Assumptions are flagged in `mqtt/moxie_sdk/telehealth.py`; not run on a physical robot.
+"""Telehealth through the REAL runtime (`FakeClient` transport): the six verbs, the three gates
+(permit, mode, safety — a BLOCK goes back to the operator, never silently rewritten), no brain
+mid-session, the transcript ring and its privacy gate, and the status HTTP verbs the console
+proxies. Not run on a physical robot; assumptions are flagged in `moxie_sdk/telehealth.py`.
 """
 import json
 
