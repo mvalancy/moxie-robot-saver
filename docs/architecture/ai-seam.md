@@ -458,8 +458,8 @@ see §2 "Input safety"; a kid-facing backend should not ship without something i
 | ③ TTS out | `ai/` + `mqtt/` | gateway voice (live, `piper-amy`) → Piper (offline) → tone, with the displaced rung as a standby → `CloudTTSResponse` PCM; the sim uses `sim/tts/` |
 
 Keys/endpoints live only in a git-ignored `.env`; the repo ships placeholders. The
-[ecosystem build plan](moxie-ecosystem.md) shows how these three sit inside the one-command stack; the
+[architecture overview](overview.md) shows how these three sit inside the one-command stack; the
 [MQTT/conversation spec](mqtt-and-conversation.md) carries the transport (topics, framing, session).
 
 ---
-📖 [Docs index](../README.md) · [Architecture: MQTT & conversation →](mqtt-and-conversation.md) · [Ecosystem build plan](moxie-ecosystem.md)
+📖 [Docs index](../README.md) · [Architecture: MQTT & conversation →](mqtt-and-conversation.md) · [Architecture overview](overview.md)

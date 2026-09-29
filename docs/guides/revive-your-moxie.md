@@ -105,4 +105,4 @@ TLS, so **no QR or DNS trick can relocate them** — they need new firmware.
   [file-sync protocol](../reverse-engineering/protocol/cloud-protocol.md#file-sync-how-a-server-delivers-content-voice-chatscript).
 
 ---
-📖 [Field guide](../reverse-engineering/FIELD-GUIDE.md) · [Ecosystem plan](../architecture/moxie-ecosystem.md) · [Simulator](../../sim/README.md) · [Docs index](../README.md)
+📖 [Field guide](../reverse-engineering/FIELD-GUIDE.md) · [Architecture overview](../architecture/overview.md) · [Simulator](../../sim/README.md) · [Docs index](../README.md)

@@ -190,4 +190,4 @@ Where it lives: [`../../sim/`](../../sim/) (the SIL client + web UI) talking to 
 (the backend). Same backend, two interchangeable clients.
 
 ---
-📖 [Docs index](../README.md) · [SIL design & build plan](sil-and-cicd.md) · [AI seam](ai-seam.md) · [Ecosystem build plan](moxie-ecosystem.md)
+📖 [Docs index](../README.md) · [SIL design & build plan](sil-and-cicd.md) · [AI seam](ai-seam.md) · [Architecture overview](overview.md)

@@ -27,7 +27,6 @@ its own.
 ## Platform, research and the hosted site
 
 - [`moxie-as-a-platform.md`](moxie-as-a-platform.md) — the SDK: how any AI or game drives Moxie.
-- [`moxie-ecosystem.md`](moxie-ecosystem.md) — the self-hostable stack: brain, voice, ears, liveness.
 - [`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) — OpenMoxie compared feature by feature:
   what we have, what to adopt, where to go beyond.
 - [`static-experience.md`](static-experience.md) — the static site on Cloudflare Pages: simulator,

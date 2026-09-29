@@ -78,4 +78,4 @@ every surface shares, so the parent app, simulator and (soon) cloud UI live as s
 [`deploy-cloudflare.md`](../guides/deploy-cloudflare.md).
 
 ---
-📖 [Deploy to Cloudflare](../guides/deploy-cloudflare.md) · [Revive your Moxie](../guides/revive-your-moxie.md) · [Ecosystem plan](moxie-ecosystem.md) · [Simulator](../../sim/README.md) · [Docs index](../README.md)
+📖 [Deploy to Cloudflare](../guides/deploy-cloudflare.md) · [Revive your Moxie](../guides/revive-your-moxie.md) · [Architecture overview](overview.md) · [Simulator](../../sim/README.md) · [Docs index](../README.md)
