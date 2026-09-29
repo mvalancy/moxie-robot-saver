@@ -175,14 +175,9 @@ REVIEWED: dict = {
         ("datetime.now",),
         "RELATIVE by necessity — `rt._in_bedtime` reads the real clock itself, so pinning "
         "the test's clock would test a different function. A now±30 min window contains "
-        "now at all 1440 minutes (asserted exhaustively by `test_the_synthetic_windows_the_"
-        "two_tests_above_build_hold_at_every_minute`), and both bedtime keys are written so "
+        "now at all 1440 minutes (asserted exhaustively by `test_the_synthetic_"
+        "bedtime_windows_hold_at_every_minute`), and both bedtime keys are written so "
         "a Fri→Sat midnight between the two reads cannot pick the other one."),
-    "sim/tests/test_presence_runtime.py::test_outside_the_bedtime_window_the_hello_is_allowed": (
-        ("datetime.now",),
-        "RELATIVE by necessity — the mirror of the row above; a now+2h…+4h window excludes "
-        "now at all 1440 minutes, asserted by the same exhaustive test. No `pytest.skip`: "
-        "a skip that cannot fire is an escape hatch for a regression."),
 
     # ---- the day plan ----------------------------------------------------------------
     "sim/tests/test_schedule_sil_e2e.py::_bedtime_body": (
