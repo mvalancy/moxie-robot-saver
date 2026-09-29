@@ -2,7 +2,7 @@
  * never chasing a redirect.
  */
 import {
-  FULL, call, clip, envmod, eq, fresh, ok, sent, setPlan, upstreamCalls, wavlib,
+  FULL, call, clip, envmod, eq, fresh, ok, route, sent, setPlan, upstreamCalls, wavlib,
 } from "./harness.mjs";
 
 /* A-DUR. STT is billed by DURATION: 500 KB is 15 s at 16 kHz 16-bit but 62 s at 8 kHz 8-bit.
@@ -81,6 +81,8 @@ import {
   eq(sent.length, 1, "one upstream call");
   eq(sent[0].opt.redirect, "manual",
      "/api/transcribe sets redirect:'manual' — the multipart body and the key are never re-sent");
+  eq(route.reasonForUpstreamStatus(302), "upstream_down",
+     "the status table has no 3xx row — which is why the route answers one before consulting it");
 
   for (const status of [301, 302, 303, 307, 308]) {
     fresh();
