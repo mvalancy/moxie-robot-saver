@@ -29,6 +29,8 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_gateway_chat_returns_text():
+    """The bare gateway call: when the assembled stack below fails, this says whether the
+    gateway itself answers. (Content-module and runtime-only variants were subsumed by it.)"""
     try:
         from moxie_sdk.chat import make_openai_chat
     except Exception as e:  # openai package not installed in this env
@@ -37,62 +39,6 @@ def test_gateway_chat_returns_text():
     out = chat([{"role": "system", "content": "Reply with exactly: PONG"},
                 {"role": "user", "content": "ping"}])
     assert isinstance(out, str) and out.strip(), "empty reply from gateway"
-
-
-def test_content_module_turn_against_gateway():
-    """A shipped content module producing a real reply via the live gateway."""
-    try:
-        from moxie_sdk.chat import make_openai_chat
-        from moxie_sdk.content import load_modules, ContentApp
-    except Exception as e:
-        pytest.skip(f"SDK/openai unavailable: {e}")
-    import json
-    from moxie_sdk.types import Turn, RobotContext, ChildProfile
-    with open(os.path.join(REPO, "mqtt", "content_modules", "starter.json")) as fh:
-        module = load_modules(json.load(fh))
-    app = ContentApp(module, make_openai_chat(BASE, KEY, MODEL, max_tokens=48))
-    robot = RobotContext(device_id="d_live", child=ChildProfile(nickname="Sam"),
-                         module_id="FREE_CHAT", content_id="default")
-    reply = app.respond(Turn(robot=robot, speech="What's your favorite color?"))
-    assert reply.text.strip(), "content module produced no reply from the gateway"
-
-
-def test_live_turn_through_the_runtime():
-    """The closest thing to talk-end-to-end (minus audio): a spoken-text turn through
-    the REAL MoxieRuntime driven by a live ContentApp on the gateway → a spec response."""
-    try:
-        from moxie_sdk.chat import make_openai_chat
-        from moxie_sdk.content import load_modules, ContentApp
-    except Exception as e:
-        pytest.skip(f"SDK/openai unavailable: {e}")
-    import json
-    sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-    import moxie_runtime
-    from moxie_sdk.types import RobotContext, ChildProfile
-
-    class _FakeClient:
-        def __init__(self):
-            self.published = []
-
-        def publish(self, topic, payload):
-            self.published.append((topic, json.loads(payload)))
-
-    with open(os.path.join(REPO, "mqtt", "content_modules", "starter.json")) as fh:
-        module = load_modules(json.load(fh))
-    app = ContentApp(module, make_openai_chat(BASE, KEY, MODEL, max_tokens=48))
-    rt = moxie_runtime.MoxieRuntime(app=app, child=ChildProfile(nickname="Sam"))
-    rt.client = _FakeClient()
-    did = "d_live_rt"
-    rt.robots[did] = RobotContext(device_id=did, child=rt.child,
-                                  module_id="FREE_CHAT", content_id="default")
-    rt._on_remote_chat(did, rt.robots[did], json.dumps(
-        {"command": "prompt", "event_id": "e1", "speech": "What's your favorite animal?"}))
-    rt._pool.shutdown(wait=True)
-    msgs = [p for (t, p) in rt.client.published
-            if t == f"/devices/{did}/commands/remote_chat"]
-    assert msgs, "no remote_chat published"
-    assert msgs[-1]["result"] == "SUCCESS"
-    assert msgs[-1]["output"]["text"].strip(), "empty reply from the live gateway turn"
 
 
 #: What this file sets to assemble a production-shaped appliance, and so must put back:
@@ -120,11 +66,10 @@ def _assembly_env():
         # `config`'s module constants would still hold ours until somebody reloaded it
         # again. Reload it here, against the restored environment, so the process is left
         # consistent for a suite that reads `config` without reloading it first.
-        import sys as _sys
-        if "config" in _sys.modules:
-            import importlib as _il
+        if "config" in sys.modules:
+            import importlib
             try:
-                _il.reload(_sys.modules["config"])
+                importlib.reload(sys.modules["config"])
             except Exception:          # a reload that cannot happen is not this test's
                 pass                   # failure, and must not mask the body's result
 
