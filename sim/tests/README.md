@@ -217,7 +217,7 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   is the one declaration, every job that runs `pytest sim/tests` installs it, no job may
   re-declare a package it owns, every third-party module the suite imports **anywhere** —
   including inside a helper *function*, which is how numpy hid — must be in it, and the
-  agent-brief recipe in `docs/architecture/orchestration-plan.md` must point at it rather
+  agent-brief recipe in `docs/architecture/agent-workflow.md` must point at it rather
   than hand-list. Nine mutants, 9/9 caught.
 - **`test_speech_guard.py`** — the tone/speech predicate, guarded, and the rule that keeps a
   numpy-free suite numpy-free. `ToneSynthesizer` emits 22050 Hz mono PCM16 exactly like a

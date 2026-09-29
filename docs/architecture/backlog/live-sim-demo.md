@@ -18,7 +18,7 @@ speech-to-text per hour reachable from one address. Every refusal inside the adm
 tokenless requests empty the shared hourly budget and take the demo scripted for everyone while spending
 nothing itself — a free drain in place of a paid one. The rest of P1
 (exact counters, a nonce CSP, the recovery line §6.3 mentions) and all of P2 are not shipped. This is the file
-[`../orchestration-plan.md`](../orchestration-plan.md):34 points at (`backlog/live-sim-demo.md`) and that
+[`../agent-workflow.md`](../agent-workflow.md):34 points at (`backlog/live-sim-demo.md`) and that
 did not exist until now.
 **Owner outcome:** *full cloud service* — outcome 1's public face.
 **Depends on:** nothing in flight. It touches no file the telehealth, voice-picker or content-pack
@@ -1706,7 +1706,7 @@ same trick `sim/test_bridge.mjs`:31‑51 already uses for `bridge.js`.
 
 Everything above runs on a bare runner. The existing hermetic gate stays the merge bar:
 `python3 -m pytest sim/tests -q -k "not test_sil and not test_docs" --ignore=sim/tests/test_live_gateway.py`
-(`orchestration-plan.md`:58), plus the doc guards and `node sim/test_docs.mjs`.
+(`agent-workflow.md`:58), plus the doc guards and `node sim/test_docs.mjs`.
 
 ### 8.2 What only a real deploy can settle
 
@@ -1917,7 +1917,7 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 | 20 | `emotion` is not part of the chat contract | **proven** | It is read at `bridge.js`:224 but never emitted by `wire.py`:56‑62. The mood mark carries the face instead. |
 | 21 | Clip regeneration is reproducible from a clean clone | **proven** — this **corrects** the survey | `sim/ci/fetch_piper_voices.py`:1‑23 (pinned to the `v1.0.0` tag, sha256-verified, idempotent). `ffmpeg` is still assumed. |
 | 22 | `deploy-cloudflare.md`:19's claim that the child's voice is audible is **false** | **proven** | `bridge.js`:434‑446 — `handleUserTurn` never speaks. Fix in P1. |
-| 23 | The Cloudflare **account id is already public** in every commit's check-run URL | **proven** (survey) | Not a credential, but worth knowing given `orchestration-plan.md`:32's "no account id is hard-coded" — nothing in this spec adds it to a file. |
+| 23 | The Cloudflare **account id is already public** in every commit's check-run URL | **proven** (survey) | Not a credential, but worth knowing given `agent-workflow.md`:32's "no account id is hard-coded" — nothing in this spec adds it to a file. |
 | 24 | Origin/Referer checks stop only browser hotlinking | **proven by reasoning, stated in the code** | Headers are trivially forged by `curl`. The controls that matter are the caps, the budget and assumption 14. |
 | 25 | The best-effort counter is not a true global ceiling | **proven — and the *reason* given here was itself wrong until 2026-09-03** | Original wording: *"Cache API is per-colo; an isolate map is per-isolate."* **The Cache API leg was VERIFIED ABSENT from the shipped code on 2026-09-03** — `functions/api/_lib/limits.js` keeps one module-scope `Map` per counter (`state.windows`, `state.budget`, `state.inflight`) and consults no cache, no KV and no Durable Object; §4.6 and `functions/api/health.js`'s comment had both described a tier that was never built. The conclusion survives, the multiplier does not: it is **isolates, not colos**, so the effective ceiling is N × the configured number for an N chosen by the platform, and the configured caps are a per-isolate throttle rather than a global budget. Corrected in §4.6 and in the code comment on the same day. The Cache API tier was deliberately **not** added at the time, on the ground that assumption 13 was still open — **a reason retired on 2026-09-05**, when a preview probe established that the Cache API needs no binding, persists across requests and across isolates, and is exact under exactly the sequential traffic a counter exists to police (§4.6.1). The conclusion of this row is untouched: the shipped counter is still one `Map` and still not a global ceiling. |
 | 28 | **A short bounded wait is a better answer to "ten people collided" than a bigger concurrency ceiling** | **proven by reasoning and by test; the *premise* remains unverified** | The reasoning: `DEMO_MAX_CONCURRENT_CHAT` is matched to the upstream key's `max_parallel_requests`, which protects a neighbouring service on the same self-hosted gateway, so raising it moves the refusal upstream instead of removing it — while 4 slots at ~1.2 s a turn already serve ~3 turns/second, far above what ten *conversational* visitors ask for. So the ceiling stays and a bounded FIFO sits behind it (§4.1, `_lib/limits.js`). **What is proven** is the mechanism, in `sim/test_demo_proxy.mjs` block 13: FIFO order under contention, no overtaking by a late arrival, the depth cap refusing immediately, the wait expiring into the existing `at_capacity` envelope, a slot released from a thrown path handed to the longest-waiting request, and the charge refunded on both failure paths. **What is NOT proven, and is the load-bearing premise:** the ~1.2 s turn time and the upstream key's actual parallel limit are both taken from earlier measurements and from the deployment's intent, not re-measured here — and if a turn is materially slower than 1.2 s, `DEMO_QUEUE_MAX_DEPTH = 8` promises more than 2 500 ms can deliver and the tail of the queue times out having waited for nothing (it is refunded, but it still waited). Both numbers are variables; re-measure the turn time under real load and re-derive the depth from it. |
@@ -1928,7 +1928,7 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 ---
 
 📖 [Docs index](../../README.md) · [Architecture index](../README.md) · [Backlog briefs](README.md) ·
-[Orchestration plan](../orchestration-plan.md) · [Deploy on Cloudflare](../../guides/deploy-cloudflare.md) ·
+[Orchestration plan](../agent-workflow.md) · [Deploy on Cloudflare](../../guides/deploy-cloudflare.md) ·
 [MQTT and the conversation](../mqtt-and-conversation.md) · [The AI seam](../ai-seam.md) ·
 [The static experience](../static-experience.md)
 
@@ -1950,7 +1950,7 @@ tests in `sim/tests/helpers_shared_ceilings.mjs` are not merely the *primary* ev
 **only** evidence available before it ships, which is why their two-isolate construction and their
 `DEMO_CACHE_COUNTER=0` controls carry more weight here than a passing suite normally would.
 
-This does not weaken [rule 21](../orchestration-plan.md) ("open a PR and curl its preview" — it
+This does not weaken [rule 21](../agent-workflow.md) ("open a PR and curl its preview" — it
 settled the mobile-composer and Referrer-Policy questions the same day). It bounds it: a preview
 answers questions about **anything reachable before the gateway check**, and answers nothing about
 what lies after it.

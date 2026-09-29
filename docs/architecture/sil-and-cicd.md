@@ -459,7 +459,7 @@ and that the scorer still discriminates on committed bytes.
 A green browser suite proves its assertions are **present**. It does not prove they are
 **load-bearing**. On 2026-09-06 five of them turned out not to be, and every one was found by
 luck — a red on an unrelated diff, or somebody noticing while measuring something else (rule 30
-in [`orchestration-plan.md`](orchestration-plan.md), and that date's status log). Nobody had
+in [`agent-workflow.md`](agent-workflow.md), and that date's status log). Nobody had
 ever swept for them. [`sim/tools/page_teeth_check.py`](../../sim/tools/README.md) makes the
 search deliberate: it serves each suite a **deliberately broken site** and records which of its
 checks stay green.

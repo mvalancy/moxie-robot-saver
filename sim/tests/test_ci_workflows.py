@@ -568,18 +568,17 @@ def test_the_local_runner_reinstalls_when_requirements_change():
 
 
 def test_the_agent_brief_protocol_points_at_the_declared_test_list():
-    """Agent briefs are copied from the orchestration plan's protocol; a hand-listed venv
-    recipe there started every agent with a red suite. The status log may quote history."""
-    plan = open(os.path.join(REPO, "docs", "architecture", "orchestration-plan.md")).read()
-    protocol = plan.split("## Status log", 1)[0]
+    """Agent briefs are copied from the agent-workflow doc's protocol; a hand-listed venv
+    recipe there started every agent with a red suite."""
+    protocol = open(os.path.join(REPO, "docs", "architecture", "agent-workflow.md")).read()
     assert "sim/tests/requirements.txt" in protocol, (
-        "the orchestration plan's agent protocol does not name sim/tests/requirements.txt; "
+        "the agent-workflow protocol does not name sim/tests/requirements.txt; "
         "a brief written from it will hand-list packages and omit one")
     offenders = [line.strip() for line in protocol.splitlines()
                  if "pip install" in line and "pytest" in line
                  and "sim/tests/requirements" not in line]
     assert not offenders, (
-        "the plan's protocol hand-lists test dependencies instead of pointing at the one "
+        "the agent-workflow protocol hand-lists test dependencies instead of pointing at the one "
         f"declaration: {offenders}")
 
 
