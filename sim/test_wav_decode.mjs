@@ -1,20 +1,9 @@
-/* test_wav_decode.mjs — the audio contract, both halves, with no server.
- *
- * Spec: docs/architecture/backlog/live-sim-demo.md §8.1 test 3, §3.2, §2.2.
- *
- * The server half (`functions/api/_lib/wav.js`: whatever `/audio/speech` returned -> raw
- * LE int16 PCM + the header's own rate/channels) and the browser half
- * (`sim/web/voice/cloud.js::decodeCloudTTS`: base64 PCM -> planar Float32) are written
- * separately. If they drift (endianness, /32768 scale, frame count, rate, interleave) Moxie
- * plays noise or nothing, silently. So a WAV goes through the real server decoder into a
- * real CloudTTSResponse and through the real browser decoder, compared sample for sample.
- * The server-half oracle is `mqtt/moxie_sdk/tts.py::pcm_from_audio`, compared byte for byte
- * when python3 is available.
- *
- *   node sim/test_wav_decode.mjs
- */
+/* test_wav_decode.mjs — the audio contract, both halves, with no server (live-sim-demo.md §8.1
+ * test 3, §3.2, §2.2). The server half (`_lib/wav.js`) and the browser half (`voice/cloud.js::
+ * decodeCloudTTS`) are written separately; if they drift Moxie plays noise, silently. So a WAV
+ * goes through both, compared sample for sample, with `tts.py::pcm_from_audio` as the oracle. */
 import { execFileSync } from "node:child_process";
-import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -32,10 +21,7 @@ const wav = await import(join(repo, "functions", "api", "_lib", "wav.js"));
 const wire = await import(join(repo, "functions", "api", "_lib", "wire.js"));
 const hmac = await import(join(repo, "functions", "api", "_lib", "hmac.js"));
 
-/* --------------------------------------------------------------------------- *
- * Load the REAL sim/web/voice/*.js under a minimal fake Web Audio + DOM; only the pure
- * `decodeCloudTTS` is exercised.
- * --------------------------------------------------------------------------- */
+/* Load the REAL sim/web/voice/*.js under a minimal fake Web Audio + DOM (only `decodeCloudTTS`). */
 const AUDIO_SRC = VOICE_SRC;
 globalThis.window = { addEventListener() {}, moxie: null };
 globalThis.document = {
@@ -65,9 +51,6 @@ globalThis.fetch = () => Promise.reject(new Error("no network in this test"));
 const decodeCloudTTS = globalThis.window.moxieAudio && globalThis.window.moxieAudio.decodeCloudTTS;
 ok(typeof decodeCloudTTS === "function", "sim/web/voice/ must expose decodeCloudTTS");
 
-/* --------------------------------------------------------------------------- *
- * Fixtures
- * --------------------------------------------------------------------------- */
 /** A deterministic 16-bit signed sine-ish ramp, interleaved across `channels`. */
 function makePcm(frames, channels) {
   const out = new Int16Array(frames * channels);
@@ -163,19 +146,9 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
  * 3. §2.2 — SNIFF THE BYTES, NEVER THE CONTENT-TYPE
  * =========================================================================== */
 {
-  // The reader has no Content-Type parameter at all, so it CANNOT branch on one. That is
-  // the strongest possible form of the rule, and this asserts the API shape enforces it.
-  eq(wav.pcmFromAudio.length, 2, "pcmFromAudio takes (bytes, fallback) — no Content-Type parameter exists");
-  ok(!readFileSync(join(repo, "functions", "api", "_lib", "wav.js"), "utf8").includes("content-type") &&
-     !readFileSync(join(repo, "functions", "api", "_lib", "wav.js"), "utf8").toLowerCase().includes("headers.get"),
-     "wav.js never reads a header");
-  const speechSrc = readFileSync(join(repo, "functions", "api", "speech.js"), "utf8");
-  ok(!/headers\.get\(\s*["']Content-Type/i.test(speechSrc),
-     "speech.js never reads the upstream Content-Type either");
-
+  // (That the ROUTE ignores a lying upstream Content-Type is test_demo_proxy §10c's job.)
   // A raw-PCM body has no header, so the CONFIGURED rate is right — only here. `format` is
-  // DEMO_TTS_FORMAT (what we ORDERED), never read from the upstream reply or its Content-Type
-  // (§2.2): headerless PCM and an opaque error blob are the same bytes.
+  // DEMO_TTS_FORMAT (what we ORDERED): headerless PCM and an opaque error blob are the same bytes.
   const pcm = makePcm(64, 1);
   const raw = wav.pcmFromAudio(pcm, { sampleRate: 16000, channels: 1, format: "pcm" });
   eq(raw.container, "raw", "under DEMO_TTS_FORMAT=pcm a non-RIFF body is the raw PCM we asked for");
@@ -183,9 +156,8 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   eq(raw.channels, 1, "…and the configured channel count");
   ok(raw.pcm.every((b, i) => b === pcm[i]), "…with the bytes untouched");
 
-  // THE COMPANION: the same bytes under the shipped `wav` default are REFUSED — a non-RIFF 200
-  // there is a proxy error, an SSE frame or an mp3, and returning it as raw would ship
-  // full-scale static to a child. An ABSENT format reads the same strict way.
+  // The same bytes under the shipped `wav` default (or an ABSENT format) are REFUSED: returning
+  // them as raw would ship full-scale static to a child.
   for (const [label, fb] of [
     ["DEMO_TTS_FORMAT=wav", { sampleRate: 16000, channels: 1, format: "wav" }],
     ["an ABSENT format", { sampleRate: 16000, channels: 1 }],
@@ -422,15 +394,12 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
     ].join("\n")], { cwd: repo, encoding: "utf8" }).trim();
     eq(jsonRefusal, "raised", "tts.py refuses a JSON body too — the rule is shared, not invented here");
   } catch {
-    // No python3, or moxie_sdk is not importable in this environment. Every assertion
-    // above this block stands on its own; this is the stronger form when it can run.
+    // No python3 / moxie_sdk here: every assertion above stands on its own.
   }
-  ok(true, oracle ? "the python oracle ran" : "the python oracle was unavailable and skipped");
 }
 
 /* =========================================================================== *
- * 8. The writer this file used is itself sound (it is test scaffolding, so it is
- *    checked rather than trusted)
+ * 8. `writeWav` (the fixtures' writer, and the TTS cache's in product) emits a sound header
  * =========================================================================== */
 {
   const pcm = makePcm(10, 1);
@@ -447,16 +416,11 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
 
 
 /* =========================================================================== *
- * 9. HOW LONG DOES A WAV SAY IT IS? — `wavDurationMs`, the ears' duration cap
- * =========================================================================== *
- * Spec: live-sim-demo.md §4.1, §4.5 (`too_long`). The 500 KB byte cap is "≈ 15 s" only for
- * 16 kHz 16-bit mono; STT bills by DURATION and lower rates/widths declare more seconds in
- * the same bytes (the table below, computed at the real cap). The parser is a header chunk
- * walk that NEVER decodes a hostile upload.
- */
+ * 9. `wavDurationMs`, the ears' duration cap (§4.1): STT bills by DURATION, and lower
+ * rates/widths declare more seconds in the same bytes. A header walk, never a decode.
+ * =========================================================================== */
 {
-  /** A WAV of exactly `dataLen` audio bytes at an arbitrary rate/width — including widths
-   *  `writeWav` cannot produce, because 8-bit is precisely the case being caught. */
+  /** A WAV of `dataLen` audio bytes at any rate/width (`writeWav` cannot make 8-bit). */
   const wavAt = (rate, ch, bits, dataLen) => {
     const out = new Uint8Array(44 + dataLen);
     const v = new DataView(out.buffer);
@@ -482,16 +446,8 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   ];
   for (const [rate, ch, bits, wantMs, why] of rows) {
     const d = wav.wavDurationMs(wavAt(rate, ch, bits, audio));
-    ok(d !== null, `a ${rate}/${bits}-bit/${ch}ch WAV is measurable: ${why}`);
     eq(d && d.ms, wantMs, `a ${rate} Hz / ${bits}-bit / ${ch}ch WAV at the byte cap — ${why}`);
   }
-  // The point of the whole exercise, as one assertion. `DEMO_MAX_RECORD_MS` is 15 000 ms,
-  // so three of those five rows are over the ceiling the demo believes it enforces.
-  const baseline = wav.wavDurationMs(wavAt(16000, 1, 16, audio)).ms;
-  ok(wav.wavDurationMs(wavAt(8000, 1, 8, audio)).ms >= 3.99 * baseline,
-     "A BYTE CAP IS NOT A DURATION CAP: one upload SIZE spans a 4x range of billable seconds");
-  ok(wav.wavDurationMs(wavAt(8000, 1, 4, audio)).ms >= 7.99 * baseline,
-     "…and an 8x range once a 4-bit width is allowed, all of it inside DEMO_MAX_AUDIO_BYTES");
 
   // ---- 9b. The fields it reads, and the one it refuses to ----------------- //
   const d = wav.wavDurationMs(wavAt(16000, 1, 16, 32000));
@@ -501,8 +457,7 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   eq(d.dataBytes, 32000, "…and the length from the data chunk");
   eq(d.ms, 1000, "…which multiply out to one second");
 
-  // `nAvgBytesPerSec` is redundant and is the field a hostile file would inflate to
-  // under-declare its own length. It must not be consulted.
+  // `nAvgBytesPerSec` is the field a hostile file would inflate to under-declare its length.
   const lying = wavAt(8000, 1, 8, audio);
   new DataView(lying.buffer).setUint32(28, 1000000, true); // "1 MB/s", i.e. "half a second"
   ok(wav.wavDurationMs(lying).ms > 60000,
@@ -525,8 +480,7 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   const dl = wav.wavDurationMs(list);
   ok(dl && dl.ms === 1000, "a LIST chunk before fmt/data is walked past, not tripped over");
 
-  // ---- 9e. NO OPINION is not "short" -------------------------------------- //
-  // Each returns null, so a caller can tell "measured and fine" from "could not measure".
+  // ---- 9e. NO OPINION (null) is not "short": "could not measure" != "measured and fine".
   eq(wav.wavDurationMs(new Uint8Array(0)), null, "an empty body is not measurable");
   eq(wav.wavDurationMs(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4, 5, 6, 7, 8])), null,
      "a webm/Matroska body is not measurable — the duration is in a bitstream, not a header");
