@@ -124,7 +124,7 @@ Every reverse-engineering session runs the same cycle:
 3. **Reverse-engineer** with the lightest sufficient tier; escalate to Ghidra for hard native questions.
 4. **Write** detailed, `v24.10.803`-stamped findings into the right subfolder (phone / protocol / runtime
    / firmware / hardware) with a back-link.
-5. **Push it upward** — the [top-down consistency pass](../README.md#-how-this-documentation-tree-is-maintained-sop):
+5. **Push it upward** — the [top-down consistency pass](../README.md#maintaining-these-docs):
    the subfolder README, this folder's [README](README.md), the exploration map, and — if the story
    changes — `docs/README.md` and the root `README.md`.
 6. **Rebuild + verify** — `python3 sim/tools/build_docs_bundle.py`, `node sim/test_docs.mjs`,

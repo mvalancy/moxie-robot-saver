@@ -16,7 +16,7 @@
  * when the answer lands).
  *
  * Not asserted: silence while a turn is in flight before any audio exists — she is genuinely
- * silent there (gap recorded in docs/architecture/implementation-plan.md).
+ * silent there (gap recorded in ROADMAP.md).
  * No gateway or network: `/api/*` is answered at the browser.
  *
  *   node sim/test_ambient_guard.mjs

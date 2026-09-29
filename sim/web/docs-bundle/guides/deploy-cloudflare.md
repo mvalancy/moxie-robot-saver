@@ -1,204 +1,117 @@
-# ☁️ Deploying the Moxie Sim to Cloudflare Pages
+# Deploy the simulator to Cloudflare Pages
 
-> **What this is.** How to publish the [Moxie simulator](../../sim/web/) on Cloudflare Pages —
-> **twice over**: as a static demo that needs no configuration at all, and as a *live* demo where a
-> visitor talks to a real brain in Moxie's real voice. Robot behaviour is grounded in firmware
-> **v3.6.4-Zephyr / OTA v24.10.803**.
-
-## The one thing to understand first
-
-There are **two deployments in this repo, and the difference is configuration, not code**.
+Publish the [Moxie simulator](../../sim/web/) on Cloudflare Pages, either as a static demo that needs no
+configuration or as a live demo where visitors talk to a real brain in Moxie's voice. The difference
+is configuration, not code.
 
 | | Static demo | Live demo |
 |---|---|---|
-| Configuration | **none** | three values (§3) |
-| Brain | the scripted stub ([`stub.js`](../../sim/web/stub.js)) | your gateway |
-| Voice | 30 pre-rendered clips ([`audio/index.json`](../../sim/web/audio/index.json)) | your gateway, clips as fallback |
+| Configuration | none | three values (below) |
+| Brain | a scripted stub ([`stub.js`](../../sim/web/stub.js)) | your OpenAI-compatible gateway |
+| Voice | pre-rendered clips ([`audio/index.json`](../../sim/web/audio/index.json)) | your gateway, clips as fallback |
 | Ears | a scripted child line | your gateway |
-| Cost | zero | metered, and capped (§4) |
+| Cost | none | metered and capped |
 
-**With nothing set, you get the static demo** — and that is the safe default, not a failure state.
-Every preview deployment is in it permanently, because the secrets live on Production only. The page
-says which one it is in, out loud, and so does `/api/health` (§6).
+With nothing configured you get the static demo. That is the safe default, and every preview
+deployment stays in it because secrets are set on Production only. The page shows which mode it is in.
 
-## 1. Deploy it
+## 1. Deploy
 
-`sim/web/` is a pre-built static bundle: no build step, all dependencies vendored (three.js, MQTT.js,
-marked, mermaid, highlight.js, qrcode, Inter + JetBrains Mono), and the docs bundle is committed.
+`sim/web/` is a ready-built static site: no build step, every dependency vendored, and the docs bundle
+committed. It is about 19 MB across ~335 files; the largest file (`vendor/mermaid.min.js`, 3.2 MB) is
+well under Pages' 25 MB per-file limit. Server logic lives in [`functions/`](../../functions/README.md).
 
-**Measured 2026-09-03, not estimated:** **16 MB across 256 files**, the largest being
-`vendor/mermaid.min.js` at **3.2 MB** — comfortably under Cloudflare's 25 MB per-file limit. (Two
-earlier figures in this guide, "1.9 MB" and "8 MB, ~100 files", were both stale; the docs bundle and
-18 new voice clips have landed since.)
-
-### Point Cloudflare Pages at the repo
-
-[`wrangler.toml`](../../wrangler.toml):11-12 already declares it:
-
-```toml
-name = "moxie"
-pages_build_output_dir = "sim/web"
-```
-
-In the dashboard: **Build command = empty**, **Framework preset = None**, **Output directory =
-`sim/web`**. The Cloudflare GitHub App owns the deploy — **no workflow in this repo deploys the
-site**, which is why you will not find one in `.github/workflows/`.
-
-### CLI alternative
+[`wrangler.toml`](../../wrangler.toml) already sets `pages_build_output_dir = "sim/web"`. In the Pages
+dashboard, connect the repo with **Build command** empty, **Framework preset** None and **Output
+directory** `sim/web`. The Cloudflare GitHub app deploys every push; no workflow in this repo does. From
+the command line instead:
 
 ```sh
-npx wrangler pages deploy sim/web --project-name moxie
+npx wrangler pages deploy sim/web --project-name <your-project>
 ```
 
-## 2. What the static demo actually does
+## 2. What works with no configuration
 
-Every row below was re-derived from the code on 2026-09-03. **Two rows in the previous version of
-this guide were wrong**; they are marked.
+Everything client-side: the 3D Moxie and its liveness, **Play demo**, hand controls, a stub
+conversation with real behavior markup, Moxie's pre-rendered voice and ambient self-talk, the revival
+QR codes, the setup page, and the docs explorer. The mic button falls back to a scripted child line.
 
-| Feature | Static? | Why |
-|---|---|:--|
-| 3D Moxie, rig, liveness, expressions, HUD | ✅ | pure client-side WebGL |
-| **Play demo** (canned replay) | ✅ | replays `sessions/demo.json`, no server |
-| Hand controls (motors, face, LED, light) | ✅ | direct `window.moxie` calls |
-| **Conversation** | ✅ | the stub brain emits real behaviour markup ([`stub.js`](../../sim/web/stub.js)) |
-| **Moxie's voice** | ✅ | 30 pre-rendered clips, including all 9 stub replies, the 8 "thinking" lines and the degraded line |
-| **Ambient self-talk** | ✅ | 56 clips + 457 lines, client-side by design |
-| **Child's voice (audible)** | ❌ **was claimed, is false** | `audio.js`:160 `speak(text, who)` accepts a `who`, and the manifest holds 2 child clips — but **no caller ever passes `"child"`** (`bridge.js`:300,306; `ambient.js`:106 pass nothing or `"ambient"`). The clips are unreachable. |
-| Mic button | ✅ degrades | falls back to a scripted child line. **The old "no STT model" reason is stale** — there is a transcription route now (§3), it is simply not configured in a static deploy |
-| **Revival QR** | ✅ | payloads are plain JSON, built client-side |
-| **Setup page**, **Docs explorer** | ✅ | client-side; reads the committed docs bundle |
+## 3. Make it live
 
-## 3. Make it live: the minimum configuration
-
-Three values, and the code is the authority — [`functions/api/_lib/env.js`](../../functions/api/_lib/env.js):84-86
-lists exactly these as required:
+Set these on **Production only**, so previews stay keyless. They are defined in
+[`functions/api/_lib/env.js`](../../functions/api/_lib/env.js) (`REQUIRED_FOR_LIVE`):
 
 | Variable | Kind | Notes |
 |---|---|---|
-| `DEMO_GATEWAY_BASE_URL` | var | any OpenAI-compatible base, e.g. `https://your-gateway.example/v1`. **No default** |
-| `DEMO_GATEWAY_API_KEY` | **secret** | read only as `context.env.DEMO_GATEWAY_API_KEY`, inside the Function |
-| `DEMO_CHAT_MODEL` | var | e.g. `gpt-4o-mini`. **No default** — a wrong id costs a failed *paid* request |
+| `DEMO_GATEWAY_BASE_URL` | variable | Any OpenAI-compatible base URL, e.g. `https://your-gateway.example/v1`. No default. |
+| `DEMO_GATEWAY_API_KEY` | **secret** | Read only inside the Function; never sent to the browser. |
+| `DEMO_CHAT_MODEL` | variable | The chat model id. No default. |
 
-**Unset means degraded, never "guess a gateway."** That is deliberate: `env.js`:252-254 default all
-three to `""`, so an unconfigured deployment is inert rather than pointed at somebody else's server.
+Unset means degraded, never "guess a gateway". Optional:
 
-Then, optionally:
+| Variable | Gives you |
+|---|---|
+| `DEMO_TTS_MODEL` | Moxie's voice from the gateway (otherwise clips only). |
+| `DEMO_STT_MODEL` | Ears (otherwise the scripted mic fallback). |
+| `DEMO_GATEWAY_ACCESS_CLIENT_ID` + `_SECRET` | For a gateway behind Cloudflare Access. Both or neither. |
+| `DEMO_TURNSTILE_SITEKEY` + `DEMO_TURNSTILE_SECRET` | A Cloudflare Turnstile bot check. Both or neither; neither turns it off. |
+| `DEMO_ENABLED` | Kill switch: `0` forces degraded mode without removing the secret. |
 
-| Variable | Kind | Gives you |
-|---|---|---|
-| `DEMO_TTS_MODEL` | var | Moxie's voice from the gateway. Unset ⇒ `voice: false`, clips only |
-| `DEMO_STT_MODEL` | var | ears. Unset ⇒ `ears: false` and the mic keeps its scripted fallback |
-| `DEMO_GATEWAY_ACCESS_CLIENT_ID` + `..._SECRET` | var + **secret** | only if your gateway sits behind a **Cloudflare Access**-protected tunnel. Set **both or neither**; one alone is refused as misconfiguration rather than sent half-credentialled |
-| `DEMO_ENABLED` | var | the kill switch. `0` forces degraded **without deleting the secret** — the fastest incident response there is |
+**Use a separate, budget-limited key for the public demo.** A hard budget and rate limit at the gateway
+holds even if this code is wrong; nothing in the Function can promise that.
 
-### Set them on Production only
+## 4. Caps
 
-This is what keeps every preview deployment keyless, and therefore safe: a branch preview inherits no
-secret, answers `gateway_not_configured`, and serves the static demo.
+A public demo that proxies a paid gateway needs limits. Each is a `DEMO_*` variable; defaults are in
+`env.js`.
 
-### Before you paste a key
-
-- **Use a separate, budget-scoped key for the public demo** — not the one your local stack and live
-  tests use. If your gateway can mint a virtual key with a hard budget and rate limits, do that: it
-  binds even if our code is wrong, which no amount of application-level care can promise.
-- The browser never receives the key **or the gateway's address**. `health.js`:29-31 records that
-  those and every model id are *structurally absent* from the response — never copied in, rather than
-  filtered out afterwards.
-
-## 4. The caps, and why they exist
-
-A public demo that proxies a paid gateway is an open invoice unless it is bounded. All of these are
-`DEMO_*` variables with the defaults below, from `env.js`:29-56:
-
-| Control | Default | |
+| Control | Default | Purpose |
 |---|--:|---|
-| `DEMO_MAX_TOKENS` | 160 | the ceiling on the expensive half of a completion |
-| `DEMO_MAX_INPUT_CHARS` | 500 | a child's utterance; longer is **rejected**, not truncated |
-| `DEMO_MAX_TTS_CHARS` | 300 | ~3 sentences of speech |
-| `DEMO_MAX_RECORD_MS` | 15000 | the honest ceiling on a recording — the byte cap alone is not one for compressed audio |
-| `DEMO_MAX_AUDIO_BYTES` / `_MIN_` | 500000 / 2000 | below the floor, **no upstream call at all** |
-| `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | per visitor IP |
-| `DEMO_SPEECH_PER_MIN` / `_HOUR` | 10 / 80 | |
-| `DEMO_STT_PER_MIN` / `_HOUR` | 10 / 60 | |
-| `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | concurrency, not token count, is what makes a demo feel dead under load. **Do not raise these to serve more people** — the chat ceiling is matched to the upstream key's parallel-request limit, which protects whatever else shares your gateway; raising it moves the refusal upstream as a 429. Use the queue below instead. |
-| `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | 2500 / 8 | at the ceiling a request **waits** in a per-isolate FIFO instead of being refused, so ~10 visitors colliding get a slightly slower turn rather than a scripted line. Past the depth, or when the wait expires, it is the same `at_capacity` + `Retry-After: 15` as before. **Set either to `0` to switch the queue off** and get the old instant refusal back. |
-| `DEMO_CACHE_COUNTER` / `_TIMEOUT_MS` | on / 250 | a **second** per-IP minute window kept in the Cache API, so the `_PER_MIN` numbers above are counted once per **colo** instead of once per **isolate** (measured: one client reached >= 7 isolates in 1 colo). It costs one `match` + one `put` per served turn, needs no binding, and **fails open** — a cache miss, error, timeout or stale entry always admits. **It is still not a hard global ceiling:** a burst loses ~2/3 of its writes and a second colo has its own count. **Set `DEMO_CACHE_COUNTER=0`** to switch it off. |
-| `DEMO_TTS_CACHE` / `_TTL_S` / `_TIMEOUT_MS` | on / 86400 / 1000 | **the cheapest saving here.** Synthesising speech is the most expensive thing this deployment does — 131 348 B and 1 091 ms for one 30-character line, measured — and the audio for a given voice and a given string never changes, so it is kept in the Cache API and served back. A **hit costs zero upstream calls**; a **miss** costs one extra `match`, a few tens of milliseconds against ~1 100 ms. The key covers the gateway, model, voice, format, sample rate and the exact text, so a configuration change can never serve a line in the wrong voice. It sits **after** every cap above, stores nothing but a successful synthesis, and **fails open** — a miss, a stale entry, a hung or throwing cache, or no Cache API at all all fall through to one ordinary synthesis. **It is per-colo, a cold colo pays full price, and the hit rate is not measured.** **Set `DEMO_TTS_CACHE=0`** to switch it off; it is a separate switch from `DEMO_CACHE_COUNTER` on purpose. |
-| `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | 600 / 4000 | denominated in **request units** (chat 3, speech 2, transcribe 2), because no price sheet exists in this repo to convert to money honestly |
-| `DEMO_CHAT_TIMEOUT_MS` | 20000 | deliberately **below** the measured worst case: a fast honest degrade beats a slow success |
-| `DEMO_TICKET_TTL_S` | 60 | a speech ticket's life — long enough for a slow client, short enough that a leaked one is worthless |
+| `DEMO_MAX_TOKENS` | 160 | Completion length ceiling |
+| `DEMO_MAX_INPUT_CHARS` | 500 | Longer input is rejected, not truncated |
+| `DEMO_MAX_TTS_CHARS` | 300 | About three sentences of speech |
+| `DEMO_MAX_RECORD_MS` | 15000 | Recording length ceiling |
+| `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500000 / 2000 | Below the floor, no upstream call |
+| `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | Per visitor IP |
+| `DEMO_SPEECH_PER_MIN` / `_HOUR` | 10 / 80 | Per visitor IP |
+| `DEMO_STT_PER_MIN` / `_HOUR` | 10 / 60 | Per visitor IP |
+| `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | Matched to the upstream key's parallel limit; raise the queue, not these |
+| `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | 2500 / 8 | At the ceiling a request waits briefly instead of being refused; `0` disables |
+| `DEMO_CACHE_COUNTER` | on | Counts the per-minute limits per colo (Cache API) instead of per isolate; fails open |
+| `DEMO_TTS_CACHE` / `_TTL_S` | on / 86400 | Caches synthesized speech per colo; a hit costs no upstream call |
+| `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | 600 / 4000 | Request units (chat 3, speech 2, transcribe 2) |
+| `DEMO_CHAT_TIMEOUT_MS` | 20000 | A fast degrade beats a slow success |
+| `DEMO_TICKET_TTL_S` | 60 | Lifetime of a speech ticket |
 
-**Honest about the ceiling:** these counters are **best-effort**. The per-IP minute window is shared
-across the isolates of one colo (the Cache API row above); every other counter — the hour and day
-windows, the concurrency ceiling, the queue and the unit budget — lives in one isolate's memory. So
-under real concurrency the true limits are still the per-request caps, the ticket's structural
-property, and a budget-scoped key at your gateway. **An exact counter needs a single writer** — a
-Durable Object — and is not built.
+These counters are **best effort**: most live in one isolate's memory and the per-minute window is per
+colo. They are not a global spending ceiling; that needs a budget at the gateway (or a Durable Object,
+which is not built).
 
-## 5. What a real deploy settled — and what is still open
+## 5. Platform behavior worth knowing
 
-**Settled 2026-09-03 on a branch preview, which any pull request publishes automatically.** These
-were the document's open questions; two of the three are now answered, and you can re-check them
-yourself on any PR's preview URL with the `curl` in §4.
+- Pages routes `functions/` from the repo root even though the output directory is `sim/web`.
+- `functions/api/_lib/` is not exposed. A missing route answers **200 with the site's HTML**, not 404,
+  so check the content type.
+- `sim/web/_headers` does **not** apply to `/api/*` responses. API security headers are set in code
+  ([`envelope.js`](../../functions/api/_lib/envelope.js)).
+- Every branch push publishes a public preview, which is the easiest place to test a change.
 
-> **Does Pages route `functions/` from the repo root when the build output directory is `sim/web`?**
-> **Yes.** `GET /api/health` on a branch preview returned HTTP 200 `application/json` with
-> `{"reason":"gateway_not_configured","mode":"degraded"}`. This was the highest-risk unknown — the
-> failure mode would have been a silently 404-serving static site — and it is closed.
-
-> **Is `functions/api/_lib/` exposed?** **No.** `GET /api/_lib/env.js` returns the site's static HTML
-> fallback, not module source and not a route. Note it answers **200 with HTML**, not 404, so anything
-> testing for "route missing" must check the content type rather than the status code.
-
-> **Does `sim/web/_headers` apply to an `/api/*` response?** **No — and this one mattered.** The same
-> preview served `/sim.html` with the `/*` block's `Referrer-Policy` (so `_headers` works) and served
-> `/api/health` with **no `Referrer-Policy` at all**. The only headers a Function carries are the ones
-> `functions/api/_lib/envelope.js` sets in code. The `/api/*` block in `_headers` is kept as
-> documentation but has **no effect**; `Referrer-Policy` was moved into `envelope.js`, and a test now
-> fails if the two ever disagree. **If you add a security header for the API, add it in the code.**
-
-Still unverified from inside the repo, and each needs your dashboard or a deliberate experiment: the
-Functions wall-clock and request-body limits on your plan; the free-tier request allowance; and
-whether Production and Preview variables are truly separate — the preview is keyless *today*, but so
-is Production, so that is not yet a proof. Check it with one `curl` of a preview **after** you set
-Production-only variables, because **every branch push publishes a public preview**.
-
-## 6. After deploying: which mode am I in?
-
-The page says so — a badge and a pill. To check from a terminal:
+## 6. Which mode am I in?
 
 ```sh
 curl -s https://YOUR-DOMAIN/api/health
 ```
 
-`/api/health` **never calls the gateway** (`health.js`:14-15) — the mode is derived from configuration
-alone, so probing is free. What comes back:
-
-| `mode` | Means |
+| `mode` | Meaning |
 |---|---|
-| `live` | configured and working; a visitor gets a real brain |
-| `busy` | at the concurrency ceiling; the page says so and degrades gracefully |
-| `degraded` | configured but unusable right now (over budget, upstream down, or `DEMO_ENABLED=0`), **or** not configured at all — `reason` says which |
-| `offline` | the route itself is absent (404, a plain CDN, `file://`) — behaviour and copy byte-identical to the static demo |
+| `live` | Configured; visitors get a real brain. |
+| `busy` | At the concurrency ceiling. |
+| `degraded` | Not configured, switched off, over budget, or upstream down; `reason` says which. |
+| `offline` | No API at all (plain static hosting); behaves like the static demo. |
 
-`voice` and `ears` are booleans only: whether a TTS/STT model is configured, never which one.
-
-> **`/api/health` GREEN DOES NOT MEAN THE BRAIN WORKS, and the row above is the trap.** That table is
-> the envelope's whole `mode` vocabulary, which `/api/chat` uses in full — but health derives its mode
-> **from configuration alone**, so of the `degraded` causes listed there it can see `DEMO_ENABLED=0`
-> and not-configured, and it **cannot see an upstream outage at all**. Measured, same minute, during a
-> `gateway.graphlings.net` 503:
->
-> ```
-> GET  /api/health -> ok=true  degraded=false mode=live      reason=null
-> POST /api/chat   -> ok=false degraded=true  mode=degraded  reason=upstream_down
-> ```
->
-> This is not a bug in `health.js` — never awaiting upstream is what makes a 30-second poll free, and
-> it says so in its own header. It is a bug in reading it as a liveness probe. **Health answers "is
-> this deployment configured?" — nothing more.**
-
-To ask whether a visitor actually gets a real brain right now, you have to spend a real request:
+**Health reads configuration only and never calls the gateway**, so it is free to poll but cannot see
+an upstream outage: it can say `live` while chat fails with `upstream_down`. To test the brain, spend a
+real request (one of the visitor's five per minute):
 
 ```sh
 curl -s -X POST https://YOUR-DOMAIN/api/chat \
@@ -206,31 +119,16 @@ curl -s -X POST https://YOUR-DOMAIN/api/chat \
   -d '{"text":"hello"}'
 ```
 
-Two things about that call, both of which will otherwise look like outages:
+The field is `text` (an OpenAI `messages` array is ignored and gives `too_short`), and the `origin`
+header is required (otherwise `forbidden_origin`).
 
-- **The field is `text`.** A `messages` array — the OpenAI shape, and the first thing anyone tries —
-  is not merely ignored; it leaves `text` empty and the route answers `too_short` **without touching
-  the gateway**. Client `model`, `system`, `max_tokens` and friends are dropped the same way, by
-  design (`functions/api/chat.js`).
-- **The `origin` header is required.** Without it you get `forbidden_origin`, which is the demo's
-  anti-leech guard doing its job, not a fault.
+`node sim/check_deployed.mjs <url>` checks a deployment in a phone-sized browser without spending
+anything; `node sim/check_hosted_mic.mjs` exercises the microphone path and does spend.
 
-It costs one request against the visitor rate limit (`chat_per_min`, 5), so poll health for
-configuration and spend this one only when you need to know about upstream.
+## Known gaps
 
-## 7. What still does not work
-
-- **The child's voice is mute** (§2). Its clips exist and are unreachable.
-- **No spoken recovery line.** Moxie says the cloud went quiet when it does; she does not announce
-  when it comes back.
-- **Freely typed text has no pre-rendered clip**, by definition — in degraded mode it falls to the
-  browser voice.
-- **The microphone-to-gateway join has never run end to end.** Each half is verified against the
-  other — the browser's WAV encoder parsed by the server's own RIFF walker, its header matching a clip
-  that transcribed live — but **no automated test may open a microphone**. One person, one browser,
-  one sentence settles it.
-- **Nothing here is verified on a real Pages deployment.** Every claim above is from the code or from
-  a local run.
+- Moxie says when the cloud goes quiet, but not when it comes back.
+- Typed text has no pre-rendered clip, so in degraded mode it uses the browser's own voice.
 
 ---
-📖 [The live-Sim spec](../architecture/backlog/live-sim-demo.md) · [The static experience](../architecture/static-experience.md) · [Guides](README.md)
+[Live Sim design](../architecture/backlog/live-sim-demo.md) · [The static site](../architecture/static-experience.md) · [Guides](README.md)

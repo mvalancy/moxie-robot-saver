@@ -1,4 +1,4 @@
-# 🔐 Letting a robot in — "pending" and how to permit it
+# Letting a robot in — "pending" and how to permit it
 
 Your Moxie server does **not** hand your child's details to just anything that connects to
 it. A robot has to be on its list first. This guide is the whole story: what *pending*

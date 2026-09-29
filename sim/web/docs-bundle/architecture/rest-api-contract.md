@@ -1,4 +1,4 @@
-# 🛂 Parent-app server — REST services contract
+# Parent-app server — REST services contract
 
 > **Spec version 1 · derived from parent app `com.embo.embodied.parent` v2.2.2 (versionCode 249).**
 > The *implementation-facing* contract for **Channel 1** — the REST API the phone (and the original
@@ -39,46 +39,20 @@ recovery phrase via Argon2id) is the key; the server never sees plaintext or the
 **keeps this exactly** — it is zero-knowledge, the owner holds the keys. Details:
 [`crypto-and-keys.md`](../reverse-engineering/phone/crypto-and-keys.md).
 
-> ### ⚠️ CONFORMANCE GAP FILED 2026-09-05 — one code path stores the seed and the recovery phrase in the clear
->
-> **This is filed, not fixed, because the fix is a product decision the owner should make.**
->
-> `server/moxie_server/db.py` declares `pairings(… , seed_hex TEXT, phrase TEXT)`, and the two writers
-> of that table disagree with each other — which is the strongest evidence that the posture is a
-> choice rather than an oversight:
->
-> * [`routes/robots.py`](../../server/moxie_server/routes/robots.py) `pairing_info` (the phone-facing
->   pairing call) leaves the seed and phrase columns **deliberately NULL**.
-> * [`routes/pairing.py`](../../server/moxie_server/routes/pairing.py) `pairing_prepare` (the local
->   setup flow that mints the QR for our own web UI) writes `keys.seed.hex(), phrase` — **both in
->   plaintext** (deleted with the account by `DELETE /api/users/me`).
->
-> **Why it matters, stated precisely rather than dramatically.** Per
-> [`crypto.py`](../../server/moxie_server/crypto.py):5-10, the recovery phrase is the Argon2id input to
-> `derive_seed()`, and that single 32-byte seed deterministically yields the Ed25519 signing key, the
-> X25519 box keypair **and** the XSalsa20-Poly1305 key — the one that encrypts child PII. The
-> `secret_keys(user_id, pubkey_b64, sealed_b64)` table exists so the server holds only copies *sealed*
-> to the account's public keys. On path B the raw seed is stored beside them, so on that path the
-> sealing protects nothing: anyone who can read `moxie.db` — a backup, a synced folder, a shared host —
-> can derive every key and decrypt every child record. It also means the phrase is recoverable by
-> someone who never knew it, which is the property the escrow design exists to prevent.
->
-> **The honest counter-argument, which is why this is a decision and not a bug report.** This is a
-> **self-hosted appliance**: the owner runs the box and holds the keys, so the vendor-cloud threat model
-> does not transfer unchanged. Persisting the phrase is what makes *"restore your child's data"* work for
-> an owner who did not write it down, and [`first-time-setup.md`](../guides/first-time-setup.md):26
-> promises exactly that. Removing it without replacing it would silently delete a recovery path.
->
-> **What the owner needs to decide, in one sentence:** should the local server keep the recovery phrase
-> so a forgotten phrase is survivable, or discard it after showing it once so that reading `moxie.db`
-> never yields child PII? If the former, this contract's *"must preserve"* wording is what should change
-> — and the deviation belongs here, in the open. If the latter, path B should mirror path A's `NULL,
-> NULL` and the setup guide should tell the owner the phrase is the only copy.
->
-> Not filed as a defect against either path: path A already conforms, and path B may be doing what the
-> product wants. What is *not* defensible is the current state, where the two disagree and neither the
-> contract nor the setup guide says so.
+### Known deviation: one path stores the seed in the clear
 
+The two writers of the `pairings` table (`server/moxie_server/db.py`) disagree:
+
+- `pairing_info` in [`routes/robots.py`](../../server/moxie_server/routes/robots.py) (the phone-facing
+  call) leaves `seed_hex` and `phrase` **NULL**, as this principle requires.
+- `pairing_prepare` in [`routes/pairing.py`](../../server/moxie_server/routes/pairing.py) (our own web
+  UI's setup flow) stores the seed and recovery phrase **in plaintext**.
+
+The seed yields every key, including the one that encrypts child data, so anyone who can read
+`moxie.db` on that path can decrypt child records. Keeping the phrase is also what lets a forgetful
+owner restore data, which the [setup guide](../guides/first-time-setup.md) promises. This is an open
+owner decision: either keep the phrase and relax "must preserve" here, or make `pairing_prepare` store
+NULL like `pairing_info` and tell owners the phrase is the only copy.
 
 ## Minimum viable server (the pairing-critical path)
 
@@ -174,4 +148,4 @@ Where it lives in this repo: [`../server/`](../../server/) (the parent-app REST 
 half is [`../mqtt/`](../../mqtt/); the two meet at `iot-endpoint` + the pairing key.
 
 ---
-📖 [Docs index](../README.md) · [Architecture: overview](overview.md) · [MQTT & conversation](mqtt-and-conversation.md) · [AI seam](ai-seam.md)
+[Docs index](../README.md) · [Architecture: overview](overview.md) · [MQTT & conversation](mqtt-and-conversation.md) · [AI seam](ai-seam.md)

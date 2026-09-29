@@ -300,4 +300,4 @@ All met. Tests cite them by number.
 Everything else here is provable in CI.
 
 ---
-📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Content-module contract](../content-module-contract.md) · [Orchestration plan](../orchestration-plan.md) · [Attribution](../../../ATTRIBUTION.md)
+📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Content-module contract](../content-module-contract.md) · [Orchestration plan](../agent-workflow.md) · [Attribution](../../../ATTRIBUTION.md)

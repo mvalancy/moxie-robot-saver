@@ -4,7 +4,7 @@ The sentence segmenter (`moxie_sdk/segment.py`) — pure, no transport, no model
 This is the piece that turns a streaming brain into *speakable* chunks: a finished
 sentence goes on the wire as its own `RemoteChatResponse` the moment the model writes
 it, so a child hears real words at first-token latency instead of waiting 18-45 s for a
-whole completion (docs/architecture/implementation-plan.md:138).
+whole completion.
 
 Everything a segmenter can get wrong costs the child something concrete, so each case
 below is a thing we would otherwise ship: a split decimal ("three point... five"), a

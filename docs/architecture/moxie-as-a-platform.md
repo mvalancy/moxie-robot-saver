@@ -1,4 +1,4 @@
-# 🎭 Moxie as a platform — the SDK
+# Moxie as a platform — the SDK
 
 The bigger idea: **Moxie is an embodied avatar that any AI can drive.** Once a robot is on your
 network and pointed at your server, it becomes a friendly physical body — eyes, voice, expression,

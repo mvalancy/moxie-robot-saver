@@ -101,4 +101,4 @@ Kept briefly so the question is not re-asked from scratch. None is planned.
   exists, but nobody has read it back against a target.
 
 ---
-📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Community signals](community-signals.md) · [Mobile first visit](mobile-first-visit.md) · [Live Sim demo](live-sim-demo.md) · [Implementation plan](../implementation-plan.md)
+📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Community signals](community-signals.md) · [Mobile first visit](mobile-first-visit.md) · [Live Sim demo](live-sim-demo.md) · [Implementation plan](../../../ROADMAP.md)

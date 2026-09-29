@@ -172,7 +172,7 @@ def test_the_data_file_carries_the_citation_it_was_ingested_under():
     assert re.fullmatch(r"[0-9a-f]{64}", src["sha256_of_ids"])
     # the two warnings that travel with the ids
     assert "crash" in src["upstream_caution"].lower()
-    assert "mqtt-and-conversation.md:824" in src["upstream_caution"]
+    assert "mqtt-and-conversation.md:780" in src["upstream_caution"]
     # and the promise that no code came with them
     assert "no code" in src["what_we_took"]
 

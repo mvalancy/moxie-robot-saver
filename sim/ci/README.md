@@ -1,4 +1,4 @@
-# ⚙️ `sim/ci/` — CI workflow templates
+# `sim/ci/` — CI workflow templates
 
 The source of truth for our GitHub Actions workflows, plus the voice fetcher the live voice tier uses.
 

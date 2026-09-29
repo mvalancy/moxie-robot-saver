@@ -50,4 +50,4 @@ in its first lines. When the page and the code disagree, the code wins; fix the 
   (`live-sim-demo.md §4.1`). Renumber only together with those citations.
 
 ---
-📖 [Docs index](../../README.md) · [Architecture index](../README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Implementation plan](../implementation-plan.md)
+📖 [Docs index](../../README.md) · [Architecture index](../README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Implementation plan](../../../ROADMAP.md)

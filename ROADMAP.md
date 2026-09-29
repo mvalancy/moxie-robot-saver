@@ -1,112 +1,105 @@
-# Roadmap — end-to-end Moxie revival
+# Roadmap
 
-**Mission: an end-to-end system to revive _any_ Moxie robot, fully local.** The complete arc from
-"bricked robot" to "Moxie talks and sees again" — and, for units too old for the software path,
-whatever firmware-level work it takes. Each phase is independently useful; we don't stop at "it works."
+The goal: revive any Moxie robot on hardware its owner controls, and let any AI be its brain.
+This page says what works, what is next, and what is blocked. Detailed designs for open items live
+in [`docs/architecture/backlog/`](docs/architecture/backlog/README.md).
 
-Legend: ✅ done · 🔨 in progress · ⬜ planned · 🔬 research
+## Definition of done
 
----
+The system is done when all six hold together:
 
-## Phase 0 — Reverse engineering  ✅
-Completely map the parent app so nothing is guessed.
-- ✅ Decompile + map the REST API, auth, crypto, pairing, QR formats, app structure.
-- ✅ Survey the community (OpenMoxie) so we build the gap, not a duplicate.
-- ✅ **Exhaustive feature catalog** — every user-facing *and* hidden/developer feature.
-- ✅ **Robot lifecycle** — pairing, unpair, **factory reset**, restore/backup, reboot, OTA.
-- ✅ **MQTT + conversation protocol** spec — distilled into the `docs/architecture/` contracts (MQTT topics, the AI seam, config & telemetry).
+| # | Criterion | Status |
+|---|---|---|
+| 1 | A child can talk to Moxie end to end: mic, speech-to-text, brain, markup, voice, and the Sim speaks and moves | Done in the Sim, with a real brain and real voice. |
+| 2 | Content is data: activities are authored modules the brain runs | Done. |
+| 3 | Cloud management: the parent console shows robot state, edits config, shows insights, and honors the `LoggingPolicy` privacy setting | Done. |
+| 4 | Interchangeable clients: the Sim and a real robot connect to the same backend the same way | **Half done.** The Sim works; no physical Moxie has connected to this broker yet. |
+| 5 | One command: `docker compose up` runs broker, supervisor, brain and speech | Done (voice and speech-to-text are opt-in profiles). |
+| 6 | Green and tested: every feature has a test, CI is green, and a live test passes against a real gateway when keys are present | Done; CI on `dev` and `main` is green. |
 
-## Phase 1 — Parent app (control plane)  ✅ working
-Recreate the app owners used to set up Moxie — client + server, local, account-free.
-- ✅ REST server: login, users, children, robots, pairing-info, secret-key-collection.
-- ✅ Mobile web client served on the LAN.
-- ✅ Clean-room **Wi-Fi pairing QR** — **verified: a real Moxie scanned it and joined Wi-Fi.**
-- ✅ Deterministic recovery-key crypto (Argon2id → Ed25519/X25519/secretbox).
-- ✅ Hardware-free pairing test (`simulate-robot-scan`).
-- ⬜ Wire the feature catalog into the web UI (child profile depth, robot settings, insights view).
-- ⬜ **Factory reset / unpair** actions in the web UI (see `docs/features/`).
-- ⬜ Compatibility mode for pointing the *original* Android APK at this server.
+Criterion 4 cannot be closed without a robot on the bench.
 
-## Phase 2 — Get Moxie onto our cloud  🔨
-Move the robot off the dead Embodied cloud and onto our box.
-- ⬜ **Endpoint-config QR** generator (the "second QR" a firmware-801/803 Moxie waits for) —
-  `{"debug":{"command":"om","param":"<ServiceConfiguration2>"}}`, pointing at our MQTT host.
-- ⬜ **MQTT broker** (mosquitto, TLS :8883, self-signed CA — works on firmware 24.10.803).
-- ⬜ Detect robot connect/disconnect; push the initial robot config (`pairing_status`, schedule, settings).
-- ⬜ Firmware-version guidance + the 801→803 upgrade note (see `docs/architecture/revival-path.md`).
+## What works today
 
-## Phase 3 — Make Moxie talk  ⬜
-The live experience, powered entirely by local AI.
-- ⬜ **Conversation engine** — RemoteChatRequest/Response turns over MQTT.
-- ⬜ **Local STT** — Whisper (e.g. faster-whisper) on the GPU; ZMQ-over-MQTT audio bridge.
-- ⬜ **Local LLM** — any local model via an OpenAI-compatible endpoint (LiteLLM / vLLM / Ollama / LM Studio); OpenAI itself only as an optional fallback. **Never hard-wired to a vendor.**
-- ⬜ **Local TTS** — on-device voice synthesis.
-- 🔨 **Behavior markup** — the text→Moxie-expression engine so Moxie moves/emotes, not just speaks. The
-  SIL bridge ([`sim/web/bridge/`](sim/web/bridge/)) already parses the `cmd:` marks and drives the
-  avatar: `playback-mood`→one of the 11 authentic Eyeseme faces, `Gesture_*`→arm poses, and the
-  distinctive `Bht_*` behaviour trees (spin, greet, pickup/putdown, wake, search…). Server-side
-  emission from the conversation engine is the remaining piece.
+**Parent app (control plane)** — `server/`
+- Account-free reimplementation of the parent-app REST API, and a phone web app served on the LAN.
+- Wi-Fi pairing QR, **verified on a real Moxie** (it scanned the code and joined the network).
+- Recovery-key crypto matched to the original app, and a hardware-free pairing test.
 
-## Phase 4 — The full experience  ⬜
-- ⬜ Content **modules/activities** (Daily Missions, Reading, Tips, jokes, breathing, …).
-- ⬜ **Insights** populated from real robot activity (the MQTT data source).
-- ⬜ Schedules, missions, rewards, "sensitive conversations."
-- ⬜ Puppet / telehealth remote-control mode.
+**Robot cloud** — `mqtt/`
+- Mosquitto broker with TLS, per-appliance certificates, per-robot ACLs and a device permit list.
+- Endpoint QR generator (`tools/pairing/moxie_endpoint_qr.py`) that points a robot at your broker.
+- Supervisor that speaks Moxie's protocol: connect detection, config push, `/state` and telemetry
+  ingest, streamed conversation turns with a filler line while the brain thinks, input and output
+  safety checks, and brain-driven actions (launch, exit, sleep).
+- Brain: any OpenAI-compatible endpoint, chosen per child. No endpoint is built in; you configure one.
+- Voice: a built-in tone, local Piper, or a gateway voice. Ears: local Whisper or a gateway.
+  Both are picked in the console.
+- Content modules, memory (`persist_data` and end-of-session summaries), an adaptive day plan,
+  content packs (export and import with review) and a content editor.
+- Expressive markup: every reply gets moods, gestures and behaviors.
+- Remote puppet ("Be Moxie") mode.
 
-## Phase 5 — Packaging  ⬜
-Make it something a non-engineer can run.
-- ⬜ One-command deploy (Docker Compose / a single installer) for **any GPU box** — gaming PC, home server, Jetson Orin.
-- ⬜ Optional hosted deployment for owners who can't self-host (multi-tenant, still zero-knowledge).
-- ⬜ Setup wizard, health dashboard, backup/restore of the whole appliance.
+**Parent console** — robot state, settings, insights, memory browser, voice picker, and erase
+controls that respect the privacy setting.
 
-## Milestone — the experience, hosted online (static) ✅
-A **combined parent app + simulator + example cloud UI** on **Cloudflare Pages** — "just the basics
-online," growing into the real end-to-end system. Deploy root is `sim/web/` (shared vendored deps).
-Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-experience.md).
-- ✅ **Simulator** — the 3D Moxie with a stub brain + pre-rendered audio; talks with no server.
-- ✅ **Parent app (basics)** — [`sim/web/setup.html`](sim/web/setup.html): phone-first, server-free
-  Wi-Fi + server QR, built client-side by [`sim/web/qr.js`](sim/web/qr.js) (byte-identical to the CLI).
-- ✅ **Revival QR in-browser** — plain-JSON QR types generated client-side (no install).
-- ✅ **Example cloud UI** — [`sim/web/cloud.html`](sim/web/cloud.html): read-only parent console (child,
-  Daily Missions & rewards, conversation + activity log, robot, notifications) from fixture JSON whose
-  shapes mirror the real REST API + MQTT content model.
-- ✅ **Landing hub** — [`sim/web/index.html`](sim/web/index.html): one front door presenting the three surfaces.
-- ✅ **Docs explorer** — [`sim/web/docs.html`](sim/web/docs.html): browses every `docs/*.md` (plus the
-  linked `.tsv`/`.dts` manifests, rendered as code) with
-  Mermaid rendered (marked + mermaid vendored), built by `sim/tools/build_docs_bundle.py`, with every internal link **and #section anchor** validated in CI (`scripts/check-doc-links.py`); the docs are organized into map-aligned subfolders (phone/protocol/runtime/firmware/hardware) the explorer renders as labeled sub-groups, guarded for order + orphans. Collapsible tree,
-  **full-text search** (lazy `docs-search.json`), **relevance-ranked** within each section, with snippets + in-document match highlighting & scroll-to-hit,
-  shareable section deep links (heading permalinks + `#doc#section` URLs), prev/next pager in **curated README order** (+ `[`/`]` keys, `/` to search), "On this page" TOC + scroll-spy, per-doc reading-time + diagram-count meta, and code
-  **syntax highlighting** + per-block copy buttons (highlight.js vendored). Runtime behavior guarded by `sim/test_docs_explorer.mjs`.
-- ✅ **Cloudflare Pages deploy** — live at [moxie.mattvalancy.com](https://moxie.mattvalancy.com);
-  `_headers` cache policy + clean URLs, pre-cached MP3 voice + ambient self-talk, responsive across phone→ultrawide.
-  Environment-aware: the hosted demo detects it has no backend and skips the local-sidecar `/health`
-  probes (no doomed requests), annotating the server-only controls — guarded by `sim/test_env_hosted.mjs`.
+**Packaging** — one `docker compose up`; multi-arch images (`amd64`, `arm64`) published to GHCR on
+release tags, with a no-clone compose file ([guide](docs/guides/one-command-stack.md)).
 
----
+**Simulator and hosted demo** — `sim/`, `functions/`
+- A 3D Moxie in the browser that speaks the real protocol, plus a virtual robot for tests.
+- A static hosted version on Cloudflare Pages with a real brain, voice and ears, per-visitor and
+  global rate limits, a capacity indicator, and a scripted fallback when the gateway is down
+  ([deploy guide](docs/guides/deploy-cloudflare.md)).
+- Setup page, example parent console and a docs explorer, all served from the same site.
 
-## Parallel research tracks 🔬
-Longer-horizon work that runs alongside the phases. In-scope, honestly hard, documented as we go.
+## Unproven: needs a real robot
 
-### Track A — Moxie sees (camera + vision)
-Give Moxie real vision, feeding the conversation.
-- ⬜ Subscribe to on-device vision **events** over MQTT (`eb-found-face`, `eb-lost-target`, marker
-  events) — the non-invasive starting point (semantic only; no pixels).
-- 🔬 An **external camera** + local vision stack (OpenCV → fast detector → local **VLM** on an
-  OpenAI-compatible endpoint), fused back into the conversation, for a true "Moxie sees" experience.
-- 🔬 Investigate any path to the robot's **own** camera frames (blocked in stock firmware today).
-- Detail + honest feasibility: [`docs/architecture/vision.md`](docs/architecture/vision.md).
+Everything below is built and tested against the Sim, but no physical robot has exercised it.
 
-### Track B — Older robots (firmware)
-Bring back units older than firmware 24.10.801, which lack the custom-endpoint (QR relocation) path.
-- ⬜ Obtain / relay the signed **803 OTA** for 801 units.
-- 🔬 **Firmware acquisition & analysis** — dump and study a system image from a robot we own.
-- 🔬 **Bootloader / Verified Boot** investigation (unlock, downgrade, or signed-update paths).
-- 🔬 Hardware-assisted methods (serial/eMMC/CSI) for **research units only**, last resort.
-- Detail + the lockdown facts: [`hardware/firmware-and-older-robots.md`](hardware/firmware-and-older-robots.md).
+- A re-homed robot (firmware 24.10.801/803) connecting to our broker and holding a conversation.
+- Our markup and moods played on the robot's own face and body.
+- On-device vision events (face found or lost) driving greetings.
+- Puppet mode.
+- Reflashing an older (pre-801) robot to 803 with `rkdeveloptool`. The method and a signed image are
+  documented in [`hardware/firmware-and-older-robots.md`](hardware/firmware-and-older-robots.md).
 
----
+## Next
 
-### Deployment target
-Designed to run on **any machine with a CUDA GPU** — a gaming PC, a home server, or an NVIDIA
-Jetson Orin — as a self-contained appliance. Cross-platform (Linux / Windows / macOS for the
-control plane; GPU box for the AI layer). No internet required at runtime.
+Ordered by priority.
+
+1. **First visit to the hosted Sim.** Walk the full path (instructions, microphone permission or
+   refusal, waiting, reply, interruption, second turn, goodbye, degraded mode) and fix the worst
+   stranger-facing defect.
+2. **Spending protection.** The edge rate-limit counters are per-colo and fail open, so they are not a
+   global ceiling. Confirm a hard budget at the gateway before claiming one.
+3. **Answer quality on the hosted demo.** Run the grounding check with a real negative control
+   ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
+4. **A second brain for the demo.** Today one gateway outage silences it. Needs a second credential
+   and an owner cost decision ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
+5. **Parent app depth.** Factory reset and unpair from the web UI; they are specified in
+   [`docs/features/robot-lifecycle.md`](docs/features/robot-lifecycle.md) but not built.
+6. **Storage.** Per-robot state is JSON files. That is fine for one home; move to a database only if
+   multi-process access needs it.
+
+## Deliberately not now
+
+- **OTA push** (the 801-to-803 upgrade over the air). Specified, not built, on purpose
+  ([brief](docs/architecture/backlog/ota-push.md)).
+- **Gamified missions in the public Sim.** The owner chose a simple meet-Moxie chat
+  ([evidence](docs/architecture/backlog/gamify-the-public-sim.md)).
+- **Pointing the original Android app at this server.** Not planned; the web app replaces it.
+- **Multi-tenant hosting for other owners.** Not planned; self-hosting is the model.
+
+## Research tracks
+
+- **Moxie sees.** Use on-device vision events first; an external camera with a local vision model
+  later. The robot's own camera frames are not reachable in stock firmware.
+  See [`docs/architecture/vision.md`](docs/architecture/vision.md).
+- **Older robots.** Pre-801 firmware pins the cloud address and cannot be moved by QR. The known
+  route is a reflash; bootloader and verified-boot details are in the hardware docs.
+
+## Where it runs
+
+Any machine on your home network: a PC, a home server, a Raspberry Pi 4/5 (control plane and
+gateway-backed speech), or a GPU box such as a Jetson Orin for fully local speech and models.

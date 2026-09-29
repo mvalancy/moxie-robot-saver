@@ -35,7 +35,7 @@
         "MX_130_Nose_": "Nose"
       },
       "mapping_note": "Each id is MX_<nnn>_<Group>_<Detail>; the group prefix names the layer, and each prefix maps to exactly one recovered MoxieCustomizationType. An id whose prefix does not map with confidence goes to `unmapped`, never guessed.",
-      "upstream_caution": "Upstream's own note above the list records that some of these assets crashed Unity on a real Moxie and that problem assets should be removed once found. It does not say which, so every manifest-origin entry here carries `caution: true`. Our own corpus says the same thing independently: docs/architecture/mqtt-and-conversation.md:824 - \"some face customization assets crash Unity and are excluded\"."
+      "upstream_caution": "Upstream's own note above the list records that some of these assets crashed Unity on a real Moxie and that problem assets should be removed once found. It does not say which, so every manifest-origin entry here carries `caution: true`. Our own corpus says the same thing independently: docs/architecture/mqtt-and-conversation.md:780 - \"some face customization assets crash Unity and are excluded\"."
     }
   },
   "slots": {

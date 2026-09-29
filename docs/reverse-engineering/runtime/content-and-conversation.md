@@ -140,7 +140,7 @@ the same mechanism as OTA images. The base firmware ships only the engines.
   cloud and delivered per turn in these blocks (plus each module's templated `prompt`). The robot carries
   only the slots and the `gpt_status` flag, so a revival server authors the character (warm, playful,
   kid-safe SEL mentor — cues: [GRL lore](../firmware/unity-assets.md), age adaptation, mood + markup) —
-  the ecosystem's [LLM-agent workstream](../../architecture/moxie-ecosystem.md#5-brain-llm-agent-personality).
+  the ecosystem's [LLM-agent workstream](../../architecture/moxie-as-a-platform.md).
 - **Holidays/events** — `EventsAndHolidaysData{holidays[]}`, `Holiday{event_uid, holiday_id, name, tag,
   date, region}`: region-specific dated events for topical content.
 - **Content tags** — `Tag{uuid, name}` / `ContentTag{replaced, finalized, review}`: the tag lifecycle

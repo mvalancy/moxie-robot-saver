@@ -1,11 +1,9 @@
-# ⚙️ Config & telemetry contract — what the server manages on the robot
+# Config and telemetry contract — what the server manages on the robot
 
 > **Spec version 1 · robot side stamped to firmware v3.6.4-Zephyr / OTA v24.10.803.**
-> The *implementation-facing* contract for the robot's **remotely-managed state**: the one config
-> document the server pushes **down**, the status the robot reports **up**, and the telemetry +
-> privacy-policy gate between them. This is the data model behind the **parent console** (bedtime,
-> volume, alarms, OTA, privacy) and the robot-health view. Reads standalone; cites the study for
-> provenance. Source: [`device-config-and-telemetry.md`](../reverse-engineering/protocol/device-config-and-telemetry.md),
+> The robot's remotely managed state: the one config document the server pushes **down**, the status
+> the robot reports **up**, and the telemetry and privacy gate between them. This is the data model
+> behind the parent console (bedtime, volume, alarms, OTA, privacy) and robot health. Sources: [`device-config-and-telemetry.md`](../reverse-engineering/protocol/device-config-and-telemetry.md),
 > [`cloud-protocol.md`](../reverse-engineering/protocol/cloud-protocol.md),
 > [`crypto-and-keys.md`](../reverse-engineering/phone/crypto-and-keys.md).
 
@@ -16,13 +14,11 @@ but it is a **separate concern** from the [AI seam](ai-seam.md): it's device man
 
 ```mermaid
 flowchart LR
-  console["🖥️ parent console<br/>(our web UI)"] -->|"writes settings"| server["🛂 server"]
-  server -->|"/config · RobotCloudConfig"| robot(["🤖 Moxie"])
+  console["parent console<br/>(our web UI)"] -->|"writes settings"| server["server"]
+  server -->|"/config · RobotCloudConfig"| robot(["Moxie"])
   robot -->|"/state · RobotStatus + SystemState"| server
   robot -->|"telemetry · Packet (policy-gated)"| server
   server -->|"reads status + insights"| console
-  classDef s fill:#0e0e14,stroke:#00f0ff,color:#e8edf5;
-  class console,server,robot s;
 ```
 
 Two MQTT topics carry it ([topic map](../reverse-engineering/protocol/cloud-protocol.md#exact-topic-map-google-iot-core-convention-kept-post-migration)):
@@ -36,9 +32,9 @@ One document is the robot's entire remotely-managed runtime state. Change any kn
 
 | Group | Fields |
 |---|---|
-| **Child / user** | `child` (`ChildEncrypted` ciphertext), `child_pii` (`ChildDecrypted` plaintext — incl. **`face_options`**, the child's chosen appearance, see [§Appearance](#-appearance-the-childs-chosen-face)), `secret_key` (pairing seed), `num_children`, `max_children`, `switch_user_config` |
+| **Child / user** | `child` (`ChildEncrypted` ciphertext), `child_pii` (`ChildDecrypted` plaintext — incl. **`face_options`**, the child's chosen appearance, see [§Appearance](#appearance-the-childs-chosen-face)), `secret_key` (pairing seed), `num_children`, `max_children`, `switch_user_config` |
 | **Quiet hours** | `privacy_mode_enabled`, `weekday_bedtime_enabled` + `…_starts_at`/`…_ends_at`, `weekend_bedtime_*` |
-| **Wake / alarms** | `alarms` (`WakeSchedule{ WakeEntry{days[], time}…, enabled }`), `wake_button_enabled`, `audio_wake_set`, `touch_wake_enabled`, `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) — **all built**, see [§Wake alarms & scheduled activities](#wake-alarms-scheduled-activities-the-json-we-emit) |
+| **Wake / alarms** | `alarms` (`WakeSchedule{ WakeEntry{days[], time}…, enabled }`), `wake_button_enabled`, `audio_wake_set`, `touch_wake_enabled`, `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) — see [§Wake alarms & scheduled activities](#wake-alarms-scheduled-activities-the-json-we-emit) |
 | **Device** | `audio_volume`, `screen_brightness`, `timezone_id`, `settings` (`DeviceSettings` k/v) |
 | **OTA** | `ota_update {id, version}`, `forbid_otaver` |
 | **Mode / privacy** | `moxie_mode` (`DEFAULT_MODE`/`TELEHEALTH`), `data_sharing`, `grl_connected`, `rc_topic` |
@@ -46,13 +42,10 @@ One document is the robot's entire remotely-managed runtime state. Change any kn
 
 ### Wake alarms & scheduled activities — the JSON we emit
 
-Two of the parent's most visible settings — *"wake Moxie at 7:15 on school days"* and *"do the
-drawing activity after school"* — are the config's `alarms` and `schedule_preferences`. Both are
-**built** (`mqtt/moxie_sdk/cloud_config.py`: `build_robot_cloud_config(alarms=…,
-schedule_preferences=…)`, `normalize_wake_schedule`, `normalize_schedule_preferences`) and both are
-parent-editable through the console's ⚙️ Settings form.
-
-The shapes are ours, from the recovered protos —
+*"Wake Moxie at 7:15 on school days"* and *"do the drawing activity after school"* are the config's
+`alarms` and `schedule_preferences` (`mqtt/moxie_sdk/cloud_config.py`: `build_robot_cloud_config(alarms=…,
+schedule_preferences=…)`, `normalize_wake_schedule`, `normalize_schedule_preferences`), editable in the
+console's Settings form. The shapes come from the recovered protos —
 [`Cloud.proto`](../reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto):113-127
 (catalogued in [`proto-catalog.md`](../reverse-engineering/protocol/proto-catalog.md):286-296),
 carried by `RobotCloudConfig.alarms = 24` and `RobotCloudConfig.schedule_preferences = 28`:
@@ -75,10 +68,8 @@ so the JSON on `/devices/{id}/config` is:
 "schedule_preferences": { "parent_requests": [ { "module_id": "DRAW", "scheduled_at": 1788422400 } ] }
 ```
 
-> **Three honest assumptions.** The protos give the *types*, not the *encodings*, and no capture of a
-> real alarms push survives in our corpus (OpenMoxie never implemented these fields either, so there is
-> no field-proven shape to follow). We chose, and isolated each choice behind one constant so it is a
-> one-line change if a capture ever contradicts it:
+> **Assumptions.** The protos give types, not encodings, and no capture of a real alarms push exists
+> (OpenMoxie does not implement these fields). Each choice sits behind one constant:
 > - **`days`** is `repeated uint32`, so 0-6 — we emit **0 = Monday … 6 = Sunday** (`datetime.weekday()`,
 >   the convention the rest of this repo dates by). The single source is `cloud_config.WAKE_DAY_NAMES`;
 >   the console's day checkboxes are ordered to match it.
@@ -91,72 +82,52 @@ so the JSON on `/devices/{id}/config` is:
 >   down rather than accepted at face value.
 >
 > `module_id` is *not* assumed: it is validated against the one on-board activity catalog
-> (`moxie_sdk/schedule.py::ONBOARD_MODULES`), so a parent can only ask for an activity the robot has.
+> (`moxie_sdk/schedule/catalog.py::ONBOARD_MODULES`), so a parent can only ask for an activity the robot has.
 
-### 🎨 Appearance — the child's chosen face
+### Appearance: the child's chosen face
 
-Moxie's face is a **composite of independent layers**, not one picture, and which layers it
-wears is part of the child profile. So appearance rides down inside `child_pii`, in
-`ChildDecrypted.face_options` — `repeated string`, field **17**
-([`Cloud.proto`](../reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto):166,
-catalogued at [`proto-catalog.md`](../reverse-engineering/protocol/proto-catalog.md):334; the sealed
-twin `ChildEncrypted.face_options = 16` is Cloud.proto:144 · proto-catalog.md:313). It is **not** one of
-the encrypted fields: both
-[`device-config-and-telemetry.md`](../reverse-engineering/protocol/device-config-and-telemetry.md):52-54
-and [`crypto-and-keys.md`](../reverse-engineering/phone/crypto-and-keys.md):358-362 list it among the
-*clear* metadata sitting beside the `*_encrypted` blobs, so a server fills it in directly.
+Moxie's face is a composite of independent layers, and which layers it wears is part of the child
+profile. Appearance rides down inside `child_pii`, in `ChildDecrypted.face_options` — `repeated string`,
+field **17** ([`Cloud.proto`](../reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto):166;
+the sealed twin `ChildEncrypted.face_options = 16` is Cloud.proto:144). It is clear metadata, not one of
+the encrypted fields ([`device-config-and-telemetry.md`](../reverse-engineering/protocol/device-config-and-telemetry.md):52-54,
+[`crypto-and-keys.md`](../reverse-engineering/phone/crypto-and-keys.md):358-362), so a server fills it
+directly.
 
-**The anatomy — 14 layers, cited.**
-[`unity-face-animation.md`](../reverse-engineering/runtime/unity-face-animation.md):34-42 records
-`MoxieCustomizationType` as "14 independent, swappable slots" and names every one:
+**The 14 layers** (`MoxieCustomizationType`,
+[`unity-face-animation.md`](../reverse-engineering/runtime/unity-face-animation.md):34-42):
 
 | Slot(s) | |
 |---|---|
-| `EyeColor` · `EyeDesign` · `EyeLid` | the eyes — the expressive core |
+| `EyeColor` · `EyeDesign` · `EyeLid` | the eyes |
 | `Brows` · `Mouth` · `Nose` · `Mustache` | brows and lower-face features |
-| `FaceColor` · `FaceDesign` | base head colour + surface pattern |
-| `Hair` · `Glasses` · `Stickers` · `Extras` · `Misc` | cosmetic add-on layers |
+| `FaceColor` · `FaceDesign` | base head colour and pattern |
+| `Hair` · `Glasses` · `Stickers` · `Extras` · `Misc` | cosmetic add-ons |
 
-**The options — 12, across 2 of the 14, and that is all we have.** Our corpus lists concrete choices
-for exactly two slots, and lists them *with hex*, which is why those two are the only ones the console
-can preview ([`robot-lifecycle.md`](../features/robot-lifecycle.md):280-283 = the `Robot.java`
-`EYE_COLORS`/`FACE_COLORS` constants; repeated at
-[`feature-catalog.md`](../features/feature-catalog.md):238-241, which also gives the Channel-1 spelling
-`ChildrenModel.eye-color`/`face-color` → `PUT children/{id}`, gated by the account flags
-`supports-eye-color`/`supports-face-color`):
+**The options.** Two sources, each tagged per option with its `origin` in
+[`mqtt/moxie_sdk/faces.py`](../../mqtt/moxie_sdk/faces.py) — 72 options across 11 of the 14 slots, no
+invented ids:
 
-* `EyeColor{green 42D02B, blue 8491EF, purple 9437DE, brown 443319, gold F4BF03, teal 38ADAE}`
-* `FaceColor{blue BBCFE1, yellow F0F055, green 9BDB9B, teal 7ED6DD, pink E1A2A2, purple C395D4}`
+- `recovered-enum` — 12 options with hex, the only previewable ones (from the parent app's
+  `Robot.java` constants; see [`robot-lifecycle.md`](../features/robot-lifecycle.md)). On Channel 1
+  they are `ChildrenModel.eye-color`/`face-color` → `PUT children/{id}`, gated by the account flags
+  `supports-eye-color`/`supports-face-color`.
+  - `EyeColor{green 42D02B, blue 8491EF, purple 9437DE, brown 443319, gold F4BF03, teal 38ADAE}`
+  - `FaceColor{blue BBCFE1, yellow F0F055, green 9BDB9B, teal 7ED6DD, pink E1A2A2, purple C395D4}`
+- `openmoxie-manifest` — 60 `MX_<nnn>_<Group>_<Detail>` ids transcribed (strings only) from OpenMoxie's
+  `site/hive/content/data.py::MOXIE_CUSTOMIZATIONS` into
+  [`mqtt/moxie_sdk/face_assets.json`](../../mqtt/moxie_sdk/face_assets.json), which carries the full
+  citation. Each has `caution: true`, because upstream notes some of them crash Unity without saying which.
 
-For the other **twelve** slots our corpus names the slot and stops. That is structural, not an oversight:
-the customization art is loaded by `MoxieCustomizationAsset`/`MoxieCustomizationPreview` out of a
-**streamed** bundle ([`content-delivery.md`](../reverse-engineering/runtime/content-delivery.md):79,
-source `REMOTE_ASSETBUNDLES`) rather than the base APK, which is exactly why the UnityPy inventory in
-[`unity-assets.md`](../reverse-engineering/firmware/unity-assets.md):19-67 found none of them; and
-[`behavior-markup.md`](../reverse-engineering/runtime/behavior-markup.md):161-163 records that the
-generators "accept **any** id the loaded bundle defines", so the id space is bundle-defined and cannot
-be inferred *from our corpus*.
+Our own corpus cannot supply the other ids: the art streams from `REMOTE_ASSETBUNDLES`, not the APK
+([`content-delivery.md`](../reverse-engineering/runtime/content-delivery.md):79), and the generators
+accept any id the bundle defines ([`behavior-markup.md`](../reverse-engineering/runtime/behavior-markup.md):161-163).
+`Stickers`, `Extras` and `Misc` stay empty (`cited: false`); a parent who knows real labels supplies
+them verbatim through `face.custom`, which is never rewritten.
 
-**So we ingested someone else's, as data (2026-09-02).** OpenMoxie (MIT) ships a 60-entry table of real
-`MX_<nnn>_<Group>_<Detail>` labels harvested from robots its authors can run
-(`site/hive/content/data.py::MOXIE_CUSTOMIZATIONS`). We transcribed **the id strings and nothing else** —
-no code, no comments, no function bodies — into [`mqtt/moxie_sdk/face_assets.json`](../../mqtt/moxie_sdk/face_assets.json),
-which carries the full citation inline (repo, path, symbol, commit `c8c2d380`, MIT, ingest date, entry
-count, sha256 of the id list). The slot mapping — each group prefix to exactly one recovered
-`MoxieCustomizationType` — and every human-readable label are ours; an id we could not place would sit in
-`unmapped` rather than be guessed, and all 60 placed. **`moxie_sdk/faces.py` therefore ships 72 options
-across 11 of the 14 slots and still zero invented ids**, each tagged with its `origin`:
-`recovered-enum` (the 12 with hex, previewable) or `openmoxie-manifest` (the 60, every one carrying
-`caution: true`, because upstream's own note beside the list records that some of these crashed Unity
-**without saying which** — [`mqtt-and-conversation.md`](mqtt-and-conversation.md):824 says the same
-independently, "some face customization assets crash Unity and are excluded").
-
-`Stickers`, `Extras` and `Misc` remain listed and empty (`cited: false`) — neither source names a piece
-for them. A parent who knows their robot's real labels supplies them verbatim through `face.custom`,
-which we never rewrite. **The wire spelling depends on the origin:** a `recovered-enum` option is an enum
-*member* name and is joined to the slot's `MoxieCustomizationType` spelling (`EyeColor_teal` — the
-assumption below); an `openmoxie-manifest` option is already a whole asset label and travels verbatim
-(`MX_010_Eyes_Hazel`). The mechanism and the ingest are both credited in `ATTRIBUTION.md`.
+**Wire spelling.** A `recovered-enum` option joins slot and member (`EyeColor_teal`); an
+`openmoxie-manifest` option is already a whole label and travels verbatim (`MX_010_Eyes_Hazel`).
+Credits: `ATTRIBUTION.md`.
 
 So the JSON on `/devices/{id}/config` is:
 
@@ -166,41 +137,26 @@ So the JSON on `/devices/{id}/config` is:
                "id": "a6f3609a-0e20-512c-ae72-a16153adf140" }
 ```
 
-**Layering.** The parent-facing override is `face` — an object, so `merge_config_layers` deep-merges it
-**per slot**: a fleet-default look ("all our robots are teal-eyed") survives a per-robot edit that only
-changes the face colour, and a robot-layer `null` on one slot clears just that layer. An explicit
-`face: null` from the robot layer clears the whole selection, and — like `weekday_bedtime` — beats an
-inherited fleet look, so "this robot wears nothing" stays expressible. With no face chosen, neither
-`face_options` nor `id` is emitted and the document is byte-for-byte what it was before appearance
-existed.
+**Layering.** The parent-facing override is `face`, an object, so `merge_config_layers` deep-merges it
+per slot: a fleet look survives a per-robot edit of one slot, a robot-layer `null` on a slot clears that
+layer, and `face: null` clears the whole selection (beating an inherited fleet look). With no face
+chosen, neither `face_options` nor `id` is emitted.
 
-> **Two honest assumptions**, each isolated behind one function in
-> [`mqtt/moxie_sdk/faces.py`](../../mqtt/moxie_sdk/faces.py), and **neither observed on a physical
-> robot — this project has none**:
+> **Assumptions**, each behind one function in [`mqtt/moxie_sdk/faces.py`](../../mqtt/moxie_sdk/faces.py),
+> neither observed on a physical robot:
 >
-> - **The label format.** `face_options` is `repeated string`; nothing in our corpus records what those
->   strings look like. `face_option_label()` joins two *cited* spellings — the `MoxieCustomizationType`
->   slot name and the enum member name — as `EyeColor` + `_` + `teal` → `"EyeColor_teal"`. Every
->   character is quoted from a document above; only the join is ours. `face.custom` bypasses it entirely.
-> - **The cache-buster.** A layered face is composited into a texture, and a robot that has one has no
->   reason to redo the work. Our corpus does not record the cache key: it gives `ChildDecrypted.id = 14`
->   as the child's identity in the pushed config, `SwitchUserConfig{action, restore_id, child_id, force,
->   child_name}` as the user-switch lever (proto-catalog.md:341-347), and `USER_DATA_UPDATE` as both the
->   cloud-visible lifecycle state (device-config-and-telemetry.md:73) and the on-device disengage reason
->   for "the child's data/profile is being updated"
->   ([power-and-system-events.md](../reverse-engineering/protocol/power-and-system-events.md):85) — but
->   it never says the texture cache is keyed on `child_pii.id`. OpenMoxie's face editor does, from a
->   server that drives real robots, by writing a fresh `uuid4` there on every save. So this is
->   **field-proven, not capture-proven**, exactly like `UNPAIRED_PAIRING_STATUS`. We take the mechanism
->   and make it deterministic: `face_child_id()` is a **UUIDv5** over the child key + the rendered layer
->   list, so the same look re-pushes the same id (an idempotent push does not disturb the robot) and any
->   layer change yields a new one (a stale record cannot match). One function; a contradicting capture
->   is a one-line fix.
+> - **Label format.** Nothing records what `face_options` strings look like. `face_option_label()` joins
+>   the cited slot name and member name as `"EyeColor_teal"`. `face.custom` bypasses it.
+> - **Cache-buster.** The robot composites the face into a texture, and our corpus does not record the
+>   cache key. OpenMoxie's face editor (a server that drives real robots) writes a fresh id into
+>   `child_pii.id` on every save, so we take that mechanism as field-proven. Ours is deterministic:
+>   `face_child_id()` is a UUIDv5 over the child key + rendered layers, so the same look re-pushes the same
+>   id and any change yields a new one.
 
 **Surface.** Supervisor: `POST /config?device_id=…` (or `?scope=fleet`) with `{"face": {…}}`, the same
 whitelisted path every other setting uses; `GET /status` publishes `face_catalog` (the SDK's catalog, so
-the console never keeps a second copy) and each robot's `face_cache_id`. Console: the 🎨 Moxie's look
-card in the 🤖 Moxie tab, per-robot with the fleet look underneath. Owner guide:
+the console never keeps a second copy) and each robot's `face_cache_id`. Console: the Moxie's look
+card in the Moxie tab, per-robot with the fleet look underneath. Owner guide:
 [`../guides/moxies-look.md`](../guides/moxies-look.md).
 
 ### Fleet defaults ⊕ per-robot overrides
@@ -210,9 +166,8 @@ One appliance can drive several robots, so the config the server pushes is layer
 nested objects merge key-by-key (`settings.props`, `alarms.enabled`), scalars and lists replace, and an
 explicit `null` from the robot layer clears an inherited value. The fleet layer is one durable record,
 `$MOXIE_DATA_DIR/fleet/config.json` (`store.py::read_shared`/`write_shared`), written by
-`POST /config?scope=fleet` on the supervisor (the console's `POST /local/fleet/config`, the ⚙️ form's
-*"Apply to all robots"*) and re-pushed to every connected robot at once. With no fleet record the push
-is byte-for-byte what it was before the layer existed. *Credit:* the idea is OpenMoxie's
+`POST /config?scope=fleet` on the supervisor (the console's `POST /local/fleet/config`, the Settings
+form's *"Apply to all robots"*) and re-pushed to every connected robot at once. *Credit:* the idea is OpenMoxie's
 `HiveConfiguration` + `robot_data.py::build_config` deep-merge (MIT) — see `ATTRIBUTION.md`.
 
 ### The pairing gate — permits, and what a *pending* robot is sent
@@ -226,8 +181,8 @@ closed by default** — `$MOXIE_DATA_DIR/fleet/permits.json`, beside `fleet/conf
   "devices": { "d_<uuid>": { "permitted_at": 1788353318, "label": "Sam's Moxie" } } }
 ```
 
-* **Permitted** (or `allow_unverified_bots`) → the full `RobotCloudConfig` above, exactly
-  as it was before the gate: `pairing_status:"paired"` + `child_pii` + the parent's layers.
+* **Permitted** (or `allow_unverified_bots`) → the full `RobotCloudConfig` above:
+  `pairing_status:"paired"` + `child_pii` + the parent's layers.
 * **Not permitted** → the robot is *pending* and gets `build_unpaired_cloud_config()`:
 
 ```jsonc
@@ -242,32 +197,25 @@ closed by default** — `$MOXIE_DATA_DIR/fleet/permits.json`, beside `fleet/conf
   build is one forgotten key away from a leak. Everything else a pending robot asks for is
   refused or answered empty ([mqtt §3.7](mqtt-and-conversation.md)).
 
-> **ASSUMPTION — the un-paired value is field-proven, not capture-proven.** Our corpus
-> gives `CloudStatus.UserState` (`NONE`=1 = unpaired) for the robot's *upward* report, and
-> §3.6's note that `pairing_status` must stay `"paired"` for the robot to run — but **no
-> capture of Embodied's cloud pushing a non-`paired` `pairing_status`**. We push
-> `"unpairing"` because that is the value OpenMoxie's device form writes and reads back as
-> "Unpaired/Blocked" (`site/hive/models.py::MoxieDevice.is_paired`) in a server that drives
-> real robots. What a *physical* Moxie displays on receiving it is **not verified** — we
-> have no robot to observe. It sits behind one constant (`UNPAIRED_PAIRING_STATUS`), so a
-> contradicting capture is a one-line fix.
+> **Assumption: the un-paired value is field-proven, not capture-proven.** No capture shows
+> Embodied's cloud pushing a non-`paired` `pairing_status`. We push `"unpairing"` because OpenMoxie
+> (which drives real robots) writes it and reads it back as "Unpaired/Blocked"
+> (`site/hive/models.py::MoxieDevice.is_paired`). What a physical Moxie shows is not verified. It sits
+> behind one constant, `UNPAIRED_PAIRING_STATUS`.
 
 *Credit:* the idea is OpenMoxie's `MoxieDevice.permit` + `HiveConfiguration.allow_unverified_bots`
 (MIT — see `ATTRIBUTION.md`); no code was copied, and note that upstream stores the flag but
 never enforces it on the MQTT path, so the enforcement here is ours.
 
-**Switches.** `MOXIE_ALLOW_UNVERIFIED_BOTS=1` (env) restores the pre-gate behavior for a
-deployment that was already running; `0` pins it shut. Precedence: constructor argument →
+**Switches.** `MOXIE_ALLOW_UNVERIFIED_BOTS=1` (env) serves every robot; `0` pins the gate shut. Precedence: constructor argument →
 env → the stored fleet flag → **closed**. The console shows the flag *as enforced*
 alongside the stored one, so an appliance opened by the environment cannot look closed.
 
 **The same record also renders the broker ACL.** `mqtt/moxie_sdk/broker_acl.py::render_acl`
 turns this file into a mosquitto ACL — the `%c` device floor plus one `user d_<uuid>` block
-per permitted device. It is **generated and inert** today: no robot authenticates, so no
-`user` block can match ([`backlog/security-broker-auth.md`](backlog/security-broker-auth.md)
-§2.3). It exists so that when the broker gains a way to verify a device, `permits.json`
-stays the one place that says which robots are ours — for service, for the ACL and for
-broker auth alike.
+per permitted device. It is generated but inert: robots do not authenticate, so no `user` block
+can match yet ([`backlog/security-broker-auth.md`](backlog/security-broker-auth.md) §2.3). When
+the broker can verify a device, `permits.json` stays the single source of which robots are ours.
 
 **Surface.** Supervisor: `GET /permits`, `POST /permits {device_id, permitted, label}` or
 `{allow_unverified_bots}`. Console: `GET /local/permits`, `POST /local/robots/{id}/permit`,
@@ -339,13 +287,10 @@ via `LoggingStateChangeRequest{state, path}`, reporting back the effective `uplo
 > **This is the child-privacy contract, not a cosmetic flag.** A server (or custom firmware) MUST honor
 > `NO_DATA`/`NO_MEDIA`. Staged files land under `/sdcard/EmbodiedData` and upload only per policy.
 
-### How this server persists telemetry *(built, v1 2026-09-02)*
+### How this server persists telemetry
 
-A `Packet` that reaches us has already passed the gate **on the robot**. What the server then
-decides is narrower and stricter: whether it goes to **disk**, and with its payload or without.
-Until 2026-09-02 that decision did not exist — an ingested packet lived in the supervisor's RAM
-(`RobotContext.extra["telemetry"]`, 50 events) and a restart erased it, so the 📈 Insights card was
-an event log over one process's lifetime and *"what did Moxie do last week"* had no answer.
+A `Packet` that reaches us has already passed the gate on the robot. The server then decides whether
+it goes to disk, and with or without its payload.
 
 **Two records per robot, not one**, because a parent asks two different questions and only one of
 them needs the packets ([`moxie_sdk/telemetry.py`](../../mqtt/moxie_sdk/telemetry.py) owns both
@@ -356,30 +301,18 @@ shapes, both caps and the filter; the runtime is the only thing that touches dis
 | `robots/<id>/telemetry_packets.json` | a ring of the newest `Packet` envelopes | *"what just happened"* — the event list + the by-event roll-up |
 | `robots/<id>/telemetry_daily.json` | one row per **local calendar day**: a count, counts by `event_name`, and the day's first/last stamp | *"what has been happening"* — a week, a month |
 
-**The two are a log and a view over it — not two counters.** They used to be two counters: the
-runtime appended an envelope, then wrote a separately-advanced roll-up, and nothing ever compared
-them again. Two files, two `os.replace` calls, and a window in between where the ring holds a
-packet the roll-up has never counted. On **2026-09-05** that window produced a red `sil` job on a
-PR whose diff could not reach either record — three envelopes on disk, two counted — and the
-version that matters is not the red test: a supervisor **killed** in that window made the
-disagreement *permanent*, and the console's 📈 card reads the roll-up for its lifetime total, so a
-parent would have been shown a confidently wrong number while the ring held the truth. Since then
-every stored envelope carries a monotonic **`seq`** (stamped by the server *after* the privacy
-gate, so a robot cannot forge one — `storable_packet` keeps only the wire fields) and the roll-up
-carries **`through_seq`**, the highest it has folded. *"Has this been counted?"* is therefore a
-fact on disk, `reconcile_rollup` replays whatever the roll-up is missing, and the roll-up is
-written **before** the ring so that no reader whose leading edge is the ring — the fixture, the
-console's event list, a restart hydrating its buffer — can observe an under-count. A crash between
-the two now costs one envelope from a record whose contract is already *"the newest 500"*, and
-costs the lifetime count nothing. `seq` and `through_seq` are **server bookkeeping and not wire
-fields**: nothing in `Cloud.proto` has them and a robot never sees either.
+**The daily roll-up is a view over the ring, not a second counter.** Every stored envelope carries a
+monotonic **`seq`** (stamped by the server after the privacy gate; `storable_packet` keeps only wire
+fields, so a robot cannot forge one), and the roll-up carries **`through_seq`**, the highest `seq` it has
+folded. `reconcile_rollup` replays whatever the roll-up is missing, and the roll-up is written **before**
+the ring, so no reader can observe an under-count and a crash between the two writes costs at most one
+envelope from the ring, never the lifetime count. `seq` and `through_seq` are server bookkeeping, not
+wire fields.
 
 **A third file is under the same switch, and it is not a telemetry record.**
 `robots/<id>/mentor_behaviors.json` is the durable per-child behavioural log — which activity
 was finished, which was quit, which was refused, with a timestamp on each — written by
-`MoxieRuntime.ingest_mentor_behavior` and read by the schedule recommender. It was **ungated
-until 2026-09-04**: a robot whose parent had chosen `NO_DATA` still accumulated a behavioural
-profile on disk while its telemetry and its transcript were being refused. It is gated on
+`MoxieRuntime.ingest_mentor_behavior` and read by the schedule recommender. It is gated on
 `telemetry_policy` rather than `memory_policy` because a `MentorBehavior` is a *report the robot
 uploads* on `client-service-activity-log` — the same kind of thing as a `Packet`, and the thing
 `LoggingPolicy` is about — rather than a fact a content module chose to remember (that is
@@ -401,14 +334,13 @@ three.
 > [`moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule/)`::telemetry_signals` records for
 > `event_name`. Nothing available to us proves a given blob is not audio or video, and a store that
 > guessed would be a **privacy incident, not a bug**. So the rule is the payload, never the event's
-> name. ⚠️ **Flagged assumption:** we have never seen a real robot's `event_data`, so we do not know
+> name. **Assumption:** we have never seen a real robot's `event_data`, so we do not know
 > what proportion of it is media; withholding all of it is the conservative reading of the contract.
 
 **The default is `NO_MEDIA`**, not `NO_DATA`, and that is deliberate: `RobotCloudConfig`'s own
 default for `data_sharing` **is** `NO_DATA`, which is about what the *robot uploads to us* — inheriting
-it here would mean the feature never stored anything at all. This matches the two sibling records that
-made the same call, the safety journal and long-term memory (`moxie_runtime.SAFETY_JOURNAL_POLICY`,
-`MEMORY_POLICY`). A parent who explicitly sets `logging_policy` — per robot **or** fleet-wide — wins,
+it here would mean the feature never stored anything at all. This matches the safety journal and long-term memory
+(`SAFETY_JOURNAL_POLICY`, `MEMORY_POLICY` in `mqtt/supervisor/moxie_runtime/`). A parent who explicitly sets `logging_policy` — per robot **or** fleet-wide — wins,
 in both directions.
 
 **Bounded, because this is an appliance and not a warehouse.** The store rewrites the whole file on
@@ -426,26 +358,20 @@ retained count so the two are never confused. A day whose `recorded_at` is missi
 before 2020 or more than a day in the future is filed under **arrival** time: device clocks lie and
 the field is optional.
 
-**Reads survive the restart too.** The in-memory buffer still exists, but it is now a cache of the
-ring hydrated from disk on first touch — so `telemetry_count` in the console snapshot, the insights
+**Reads survive a restart.** The in-memory buffer is a cache of the ring, hydrated from disk on first
+touch — so `telemetry_count` in the console snapshot, the insights
 view and the schedule planner's signals all see history rather than only this process, with no second
 place to forget to load it. A robot **known to the store but not currently connected** still answers:
 a parent asking about last week should not need the robot to be on the broker.
 
-**Erasing it — the button that was missing** *(built 2026-09-04)*. Until this landed telemetry had a
-policy gate and **no erasure path at all**: `do_DELETE` accepted only `/memory`, so a parent could
-turn recording off and still be left with every packet, every day row and every behaviour record
-already on disk, with nothing to press. That made the `NO_DATA` row above false the moment the
-switch was *flipped* rather than set, and it made this contract's *"reads and erase always work"*
-false for telemetry. Two paths now, and neither is policy-gated — an erase works under `NO_DATA`,
-`NO_MEDIA` and `FULL` alike:
+**Erasing it.** Two paths, neither policy-gated (an erase works under `NO_DATA`, `NO_MEDIA` and `FULL`):
 
 | the parent does | what happens |
 |---|---|
-| presses **Erase history** on the 📈 Insights card (`DELETE /telemetry?device_id=…` → `MoxieRuntime.erase_telemetry`) | all three files go, and the in-RAM cache goes with them so the console cannot serve a stale hydrate of what was just erased |
+| presses **Erase history** on the Insights card (`DELETE /telemetry?device_id=…` → `MoxieRuntime.erase_telemetry`) | all three files go, and the in-RAM cache goes with them so the console cannot serve a stale hydrate of what was just erased |
 | moves **data sharing to `NO_DATA`** (per robot or fleet-wide) | the same erase runs for every robot the switch now covers — `purge_telemetry`, at boot and on any config edit that could have moved it |
 
-> **Why the flip erases retroactively here, when the *facts* store does not.** The
+> **Why a switch to `NO_DATA` erases this retroactively, when memory items do not.** The
 > [content-module contract](content-module-contract.md) keeps a robot's stored `MemoryStore` items
 > across a flip to `NO_DATA` on purpose: a memory item is a sentence about the child that a parent
 > may want to read, correct or pin, and there is a UI for exactly that. The activity record has
@@ -467,18 +393,18 @@ false for telemetry. Two paths now, and neither is policy-gated — an erase wor
 |---|---|
 | Bedtime / quiet hours | `RobotCloudConfig` weekday/weekend bedtime windows + `privacy_mode_enabled` |
 | Volume / brightness | `audio_volume`, `screen_brightness` (down); echoed in `RobotStatus` (up) |
-| Wake alarms & wake toggles | `alarms` (`WakeSchedule`) + `wake_button_enabled`/`touch_wake_enabled`/`audio_wake_set` — weekday checkboxes + a time in the ⚙️ form |
+| Wake alarms & wake toggles | `alarms` (`WakeSchedule`) + `wake_button_enabled`/`touch_wake_enabled`/`audio_wake_set` — weekday checkboxes + a time in the Settings form |
 | Timezone | `timezone_id` |
 | Scheduled activities | `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) — module picker fed by the on-board catalog |
-| Moxie's look (the child's face) | `child_pii.face_options` (14 layers, 72 cited options across 11) + the `child_pii.id` cache-buster — the 🎨 card; see [§Appearance](#-appearance-the-childs-chosen-face) |
+| Moxie's look (the child's face) | `child_pii.face_options` (14 layers, 72 cited options across 11) + the `child_pii.id` cache-buster — the Moxie's look card; see [§Appearance](#appearance-the-childs-chosen-face) |
 | House rules for every robot | the **fleet** layer: `POST /config?scope=fleet` → `fleet/config.json`, merged under each robot's own overrides |
 | OTA target / hold | `ota_update{id,version}`, `forbid_otaver`; status via `ota_reboot_required` + `OTA_LOCK` |
 | Privacy / data sharing | `data_sharing` → `LoggingPolicy` gate |
 | Pairing status | `CloudStatus.UserState` |
-| Which robots may be served | the **permit list** — `fleet/permits.json` + `allow_unverified_bots`; the 🔐 Robot access card lists pending robots and permits them in one click |
+| Which robots may be served | the **permit list** — `fleet/permits.json` + `allow_unverified_bots`; the Robot access card lists pending robots and permits them in one click |
 | Robot health | `RobotStatus` + `SystemState` |
-| Insights / activity history | persisted `Packet` telemetry — a bounded ring + daily roll-ups, [above](#how-this-server-persists-telemetry-built-v1-2026-09-02) |
-| Erase that history | **Erase history** on the 📈 card → `DELETE /telemetry?device_id=…` — the ring, the day rows and the behaviour log, never policy-gated |
+| Insights / activity history | persisted `Packet` telemetry — a bounded ring + daily roll-ups, [above](#how-this-server-persists-telemetry) |
+| Erase that history | **Erase history** on the Insights card → `DELETE /telemetry?device_id=…` — the ring, the day rows and the behaviour log, never policy-gated |
 | Wake a sleeping Moxie | `{"command":"wakeup"}` on `/devices/{id}/commands/wakeup` ([MQTT §3.5](mqtt-and-conversation.md)) — publishes for real; **no acknowledgement exists**, so the console reports *sent*, never *awake* |
 | Reboot the robot | ❌ **not supported.** No cloud→robot reboot command is recovered ([power & system events](../reverse-engineering/protocol/power-and-system-events.md): `STATE_SILENT_REBOOT` is an on-device power state, `ShutdownRequest`/`SystemShutdown` are events the robot *emits*). The console shows the button as unavailable and the endpoint answers **501** rather than inventing a payload |
 | Firmware / OTA status | `robot_firmware_version` + `ota_reboot_required` from `/state`. This appliance serves no `api/ota`, so it **never claims "up to date"** — it reports what the robot said and says no update server is configured |
@@ -522,4 +448,4 @@ Where it lives: [`../../mqtt/`](../../mqtt/) (publishes config, consumes state/t
 [`../../server/`](../../server/) (the console that reads/writes it).
 
 ---
-📖 [Docs index](../README.md) · [REST contract (Channel 1)](rest-api-contract.md) · [MQTT & conversation (Channel 2)](mqtt-and-conversation.md) · [AI seam](ai-seam.md)
+[Docs index](../README.md) · [REST contract (Channel 1)](rest-api-contract.md) · [MQTT & conversation (Channel 2)](mqtt-and-conversation.md) · [AI seam](ai-seam.md)

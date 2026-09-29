@@ -1,4 +1,4 @@
-# 🧠 What Moxie remembers — and how to erase it
+# What Moxie remembers — and how to erase it
 
 > For parents. No code, no protocol. The engineering detail is in
 > [`content-module-contract.md` → Memory](../architecture/content-module-contract.md).

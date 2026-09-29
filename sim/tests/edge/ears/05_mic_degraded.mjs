@@ -190,7 +190,7 @@ import {
   eq(wav.length, 44 + 16000 * 2, "one second at 48 kHz becomes 16 000 samples plus a 44-byte header");
   const parsed = wavlib.pcmFromAudio(wav, { sampleRate: 22050, channels: 1 });
   eq(parsed.container, "wav", "THE SERVER'S OWN RIFF WALKER READS IT as a wav");
-  eq(parsed.sampleRate, 16000, "…at 16 000 Hz — the rate litellm-stt-setup.md says matters");
+  eq(parsed.sampleRate, 16000, "…at 16 000 Hz — the rate gateway-voice-and-ears.md says matters");
   eq(parsed.channels, 1, "…mono");
   eq(parsed.pcm.length, 16000 * 2, "…with the expected PCM length");
   // The header fields of the control clip the gateway was measured to transcribe.

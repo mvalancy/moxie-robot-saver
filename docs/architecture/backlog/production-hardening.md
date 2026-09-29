@@ -358,6 +358,6 @@ needs a transaction or a query (§3.2). It would keep the JSON tree as the expor
 [MQTT and the conversation](../mqtt-and-conversation.md) ·
 [Config & telemetry contract](../config-and-telemetry-contract.md) ·
 [Broker auth](security-broker-auth.md) · [Sandboxed extensions](sandboxed-extensions.md) ·
-[Live Sim demo](live-sim-demo.md) · [Orchestration plan](../orchestration-plan.md) ·
+[Live Sim demo](live-sim-demo.md) · [Orchestration plan](../agent-workflow.md) ·
 [Remote-chat protocol](../../reverse-engineering/protocol/remote-chat-protocol.md) ·
 [Attribution](../../../ATTRIBUTION.md)

@@ -1,101 +1,75 @@
-# 🤖 Revive your Moxie — the full path
+# Revive your Moxie
 
-> **Goal.** Take a Moxie that's been dead since the cloud shut down and get it **talking again** on
-> hardware you own — or, with no robot at all, run the **[simulator](../../sim/)** and get the whole
-> experience in a browser. Robot side is grounded in firmware
-> **v3.6.4-Zephyr / OTA v24.10.803** ([reference](../reverse-engineering/firmware/firmware-803-reference.md)).
->
-> ⚠️ **Unofficial fan project — not affiliated with, endorsed by, or connected to Embodied, Inc.**
-> "Moxie" is their trademark. This exists so retired robots don't become landfill.
+Get a Moxie that died with the cloud **talking again** on hardware you own — or, with no robot, run the
+[simulator](../../sim/README.md) and get the same experience in a browser. Robot details refer to
+firmware v3.6.4-Zephyr / OTA v24.10.803 ([reference](../reverse-engineering/firmware/firmware-803-reference.md)).
+
+This is an unofficial fan project, not affiliated with Embodied, Inc.; "Moxie" is their trademark.
 
 ## Which path are you on?
 
 ```mermaid
 flowchart TD
   q{"Do you have a robot?"}
-  q -->|"No / not yet"| sim["🖥️ Path A — run the SIMULATOR<br/>everything in a browser, no hardware"]
+  q -->|"No"| sim["Path A: run the simulator"]
   q -->|"Yes"| fw{"Firmware version?"}
-  fw -->|"24.10.803 (or 801)"| qr["📷 Path B — re-home with a QR<br/>no disassembly"]
-  fw -->|"older than 801"| flash["🔧 Path C — flash it first<br/>(opens the shell)"]
+  fw -->|"24.10.801 or 803"| qr["Path B: re-home it with a QR<br/>(no disassembly)"]
+  fw -->|"older than 801"| flash["Path C: flash it first<br/>(opens the shell)"]
   flash --> qr
-  classDef d fill:#0e0e14,stroke:#00f0ff,color:#e8edf5;
-  class sim,qr,flash,q,fw d;
 ```
 
-**You need the same backend for all three paths** — build that first.
+All three paths use the same backend, so set that up first.
 
----
+## 1. Stand up the backend
 
-## 1. Stand up the backend (everyone)
-
-The backend is what a robot (or the sim) connects to: an MQTT broker, the supervisor that speaks
-Moxie's protocol, and the brain. One command:
-
-```sh
-docker compose -f sim/docker-compose.yml up          # broker + supervisor + web UI
-```
-
-Or run the pieces directly (see [`sim/README.md`](../../sim/README.md) and [`mqtt/`](../../mqtt/)).
-
-### Give it a brain (LLM)
-Copy `mqtt/.env.example` → `mqtt/.env` (git-ignored; **never commit keys**) and pick one:
+Follow the [one-command stack](one-command-stack.md): `docker compose up` gives you the broker, the
+supervisor and the parent console. Set `MOXIE_LLM_BASE_URL` in `.env` to give Moxie a brain — any
+OpenAI-compatible endpoint. Fully offline with Ollama:
 
 ```sh
-# Ollama — fully offline, recommended
 ollama pull llama3.1 && ollama serve
-MOXIE_LLM_BASE_URL=http://127.0.0.1:11434/v1
+# .env
+MOXIE_LLM_BASE_URL=http://host.docker.internal:11434/v1
 MOXIE_LLM_API_KEY=ollama
 MOXIE_LLM_MODEL=llama3.1
 ```
-…or any **OpenAI-compatible** endpoint (LiteLLM, vLLM, LM Studio) with its own base URL/key/model.
-The brain ([`LLMApp`](../../mqtt/moxie_sdk/apps/llm_app.py)) speaks a **Moxie personality** and emits real
-**[behavior markup](../reverse-engineering/runtime/behavior-markup.md)** — so Moxie *gestures and emotes* while
-it talks, on the sim or the real robot.
 
-### Give it a voice and ears (optional but fun)
-```sh
-python3 sim/tts/server.py 8081     # Piper TTS  (voice: amy) -> Moxie speaks
-python3 sim/stt/server.py 8082     # faster-whisper STT      -> you can talk to it
-```
-Both are **offline**, no API keys. Setup details in [`sim/README.md`](../../sim/README.md).
+The brain speaks as Moxie and emits [behavior markup](../reverse-engineering/runtime/behavior-markup.md),
+so Moxie gestures and emotes while it talks. For a real voice and ears, use the compose `voice` and
+`stt` profiles (offline) or a [gateway](gateway-voice-and-ears.md).
 
----
-
-## Path A — no robot: run the simulator
+## Path A: no robot, run the simulator
 
 ```sh
-python3 sim/serve.py 8080          # hub at http://localhost:8080  (simulator: /sim.html)
+docker compose -f sim/docker-compose.yml up     # then open http://localhost:8080/sim.html
 ```
-You get the **3D Moxie** — face, arms, head, body, liveness — driven by the same protocol a real robot
-speaks. Click **Connect** (live bus), **Listen** to talk to it, or **Play demo** for a canned
-conversation with no services running. Full design + scope: [`sil-and-cicd.md`](../architecture/sil-and-cicd.md).
 
-**Everything you prove here works on hardware** — the sim and a real robot are interchangeable clients
-of the same backend ([why](../architecture/moxie-ecosystem.md)).
+You get the 3D Moxie, driven by the same protocol a real robot speaks. Click **Connect** for the live
+bus, **Listen** to talk, or **Play demo** for a canned conversation with nothing running. The simulator
+and a real robot are interchangeable clients of the backend ([why](../architecture/sim-as-a-client.md)).
 
----
-
-## Path B — you have an 801/803 robot: re-home it with a QR
+## Path B: re-home an 801 or 803 robot with a QR
 
 No disassembly. The robot scans a QR that points it at **your** server.
 
-1. **Get the robot on Wi-Fi + paired** — [`first-time-setup.md`](first-time-setup.md).
+1. **Get the robot on Wi-Fi and paired:** [first-time setup](first-time-setup.md).
 2. **Point it at your backend**: generate an endpoint QR and show it to Moxie's camera.
 
-   **From a phone, nothing installed** — open the static **[setup page](../../sim/web/setup.html)**
-   (`setup.html`, deployable to Cloudflare Pages) and follow the two steps: make the **Wi-Fi** code, then
-   the **server** code. The endpoint, Wi-Fi and debug QRs are **plain JSON**, so the page builds them
-   client-side; no server, no Python. (The simulator's **Revive a robot** rail panel does the same thing.)
+   **From a phone, nothing installed:** open the [setup page](../../sim/web/setup.html) and make the
+   **Wi-Fi** code, then the **server** code. The page builds them in the browser.
 
    **From a terminal**, the toolkit does the same thing:
    ```sh
    python -m moxie_toolkit.cli endpoint OPEN_MOXIE --png fix.png
    ```
-   Both emit **byte-identical payloads** (asserted by `node sim/test_qr.mjs`).
-   `OPEN_MOXIE` (=11) and `EMBODIED_LOCAL` (=8) are **built into the shipped firmware**, so the robot
-   natively knows how to home to a self-hosted server ([`qr-commands.md`](../reverse-engineering/protocol/qr-commands.md)).
-3. **TLS**: the robot validates against the CA store with **no pinning**, so a real domain + Let's
-   Encrypt cert is trusted ([`network-trust.md`](../reverse-engineering/protocol/network-trust.md)).
+   Both produce identical payloads. `OPEN_MOXIE` (=11) and `EMBODIED_LOCAL` (=8) are built into the
+   shipped firmware, so the robot already knows how to use a self-hosted server
+   ([QR commands](../reverse-engineering/protocol/qr-commands.md)). The parent console's **Server
+   Pairing** tab and `tools/pairing/moxie_endpoint_qr.py` make the same code for your broker.
+3. **TLS.** Firmware 803 honors `disable_verify` in the endpoint QR, so the stack's self-signed
+   certificate works. Firmware 801 needs a publicly trusted certificate (a real domain and Let's
+   Encrypt); the robot does no certificate pinning
+   ([network trust](../reverse-engineering/protocol/network-trust.md), [revival path](../architecture/revival-path.md)).
 4. Moxie connects to your broker, your brain answers, and it talks.
 
 **Wi-Fi caveats** (from the firmware): Open / WPA2-PSK / hidden SSIDs work; **WPA3-only, enterprise
@@ -103,9 +77,7 @@ No disassembly. The robot scans a QR that points it at **your** server.
 robot is only certified on the **lower U-NII-1 channels (36–48)**
 ([`fcc-teardown.md`](../reverse-engineering/hardware/fcc-teardown.md)).
 
----
-
-## Path C — a pre-801 robot: flash it first
+## Path C: flash an older robot first
 
 Robots older than 801 have the cloud endpoint **hardcoded to `mqtt.googleapis.com`** with CA-validated
 TLS, so **no QR or DNS trick can relocate them** — they need new firmware.
@@ -117,14 +89,12 @@ TLS, so **no QR or DNS trick can relocate them** — they need new firmware.
   (ports, buttons, UART, the STM32 `ISP & DEBUG` header) is in
   [`hardware-access.md`](../reverse-engineering/hardware/hardware-access.md) and
   [`fcc-teardown.md`](../reverse-engineering/hardware/fcc-teardown.md).
-- ⚠️ **This opens the shell** and can wipe `/data` (forceencrypt f2fs). It's the honest price for a
+- **This opens the shell** and can wipe `/data` (forceencrypt f2fs). It's the honest price for a
   pre-801 unit. Once flashed to 803, **Path B applies**.
 
 > **Still open (bench work):** whether the `LOAD` button and a USB port are reachable **without**
 > opening the shell — that would make pre-801 revival no-disassembly too. Tracked in
 > [`EXPLORATION-MAP.md`](../reverse-engineering/EXPLORATION-MAP.md#open-items-need-a-bench-unit-or-an-external-artifact).
-
----
 
 ## Going further
 - **Custom software on the robot** — a debug-signed APK in `/system/priv-app` inherits full privileges;
@@ -135,4 +105,4 @@ TLS, so **no QR or DNS trick can relocate them** — they need new firmware.
   [file-sync protocol](../reverse-engineering/protocol/cloud-protocol.md#file-sync-how-a-server-delivers-content-voice-chatscript).
 
 ---
-📖 [Field guide](../reverse-engineering/FIELD-GUIDE.md) · [Ecosystem plan](../architecture/moxie-ecosystem.md) · [Simulator](../../sim/README.md) · [Docs index](../README.md)
+📖 [Field guide](../reverse-engineering/FIELD-GUIDE.md) · [Architecture overview](../architecture/overview.md) · [Simulator](../../sim/README.md) · [Docs index](../README.md)

@@ -48,7 +48,7 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   `/audio/transcriptions`; live on our gateway since 2026-09-02, the answer for a hosted box with
   nowhere to put a model). `FallbackTranscriber` puts one behind the other and latches on the
   first failure, so an outage is a downgrade rather than a traceback mid-sentence. Setup + the
-  deployment matrix: [litellm-stt-setup.md](../../docs/guides/litellm-stt-setup.md).
+  deployment matrix: [gateway-voice-and-ears.md](../../docs/guides/gateway-voice-and-ears.md).
 - [`audio_models.py`](audio_models.py) — pure name rules that split a gateway's flat
   `GET /v1/models` list into voices and ears (`classify_audio_models`, `default_tts_model`,
   `default_stt_model`). LiteLLM's listing says nothing about *mode*, so the names are the only

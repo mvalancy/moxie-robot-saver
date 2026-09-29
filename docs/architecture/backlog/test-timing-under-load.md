@@ -92,4 +92,4 @@ without loading a shared machine. It does not reproduce memory pressure, GPU con
 compositor scheduling.
 
 ---
-📖 [Backlog index](README.md) · [Architecture index](../README.md) · [Orchestration log](../orchestration-plan.md)
+📖 [Backlog index](README.md) · [Architecture index](../README.md) · [Orchestration log](../agent-workflow.md)

@@ -1,4 +1,4 @@
-# 🧪 `sim/tests/` — the pytest suite
+# `sim/tests/` — the pytest suite
 
 Two families in one directory: a large **hermetic** pytest suite (no browser, no network, no
 credentials; what CI gates on) and a small **Playwright** suite that drives the static site in
