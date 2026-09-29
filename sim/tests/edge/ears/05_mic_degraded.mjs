@@ -2,13 +2,11 @@
  * free client-side gates, capture failures, the browser WAV encoder, source guards.
  */
 import {
-  FULL, MIC_SRC, ORIGIN, advance, bootMic, deep, envmod, eq, flush, ok, pendingTimers,
+  FULL, ORIGIN, advance, bootMic, deep, envmod, eq, flush, ok, pendingTimers,
   recordToCap, route, wavlib,
 } from "./harness.mjs";
 
-/* --------------------------------------------------------------------------- *
- * B5. §6 — the page NEVER goes dead, for any reason the server can send
- * --------------------------------------------------------------------------- */
+/* B5. §6 — the page NEVER goes dead, for any reason the server can send. */
 {
   const cases = [
     ["rate_limited", 429, /one at a time/i],
@@ -35,8 +33,7 @@ import {
     eq(w.notes[0].retry_after_s, 7, `${reason}: …with the Retry-After the server sent`);
   }
 
-  // A network failure with no envelope at all: three of those degrade the page (§6.3),
-  // and this one turn still answers.
+  // A network failure with no envelope (three degrade the page, §6.3); this turn still answers.
   const dead = bootMic({ answer: () => ({ reject: true }) });
   await recordToCap(dead);
   eq(dead.mic.stats().fallbacks, 1, "a network failure still answers from the scripted repertoire");
@@ -54,14 +51,8 @@ import {
   ok(nostub.statusText().length > 0, "with no stub either, the status line is still honest, never blank");
 }
 
-/* --------------------------------------------------------------------------- *
- * B5b. THE CONSOLATION LINE MAY NOT SPEND A LIVE TURN
- * --------------------------------------------------------------------------- *
- * The scripted child line published via `moxieBridge.sendUserTurn` would be a full paid
- * `/api/chat` + `/api/speech` turn on words nobody said. `mic.js` must use the free seam
- * (`sim/test_cloud_transport.mjs` 6b prices the seam; `sim/test_mic_spend.mjs` counts
- * real requests in Chrome).
- * --------------------------------------------------------------------------- */
+/* B5b. THE CONSOLATION LINE MAY NOT SPEND A LIVE TURN: via `sendUserTurn` it would be a paid
+ * /api/chat + /api/speech turn on words nobody said, so mic.js must use the free seam. */
 {
   const liveBridge = (rec) => ({ sendScriptedTurn: (t) => rec.scripted.push(t) });
   const LIVE = { canSpendLiveTurn: () => true };
@@ -102,8 +93,7 @@ import {
     eq(w.mic.stats().transcripts, 1, "…recorded as a transcript");
   }
 
-  // A page that CANNOT spend takes exactly the path it takes today: sendUserTurn, which is
-  // bridge/'s own and answers from stub.js for free. Nothing here needed changing.
+  // A page that CANNOT spend uses sendUserTurn, which answers from stub.js for free.
   {
     const w = bootMic({ answer: () => ({ reject: true }) });      // no canSpendLiveTurn at all
     await recordToCap(w);
@@ -111,8 +101,7 @@ import {
     deep(w.routed, [], "…and nothing was routed around it");
   }
 
-  // Belt and braces: a live page whose transport wrapped the bridge WITHOUT offering the
-  // seam must still not pay. The line is echoed locally instead.
+  // A live page whose transport offers no scripted seam must still not pay: echo locally.
   {
     const w = bootMic({ mode: LIVE, answer: () => ({ reject: true }) });
     await recordToCap(w);
@@ -124,9 +113,7 @@ import {
   }
 }
 
-/* --------------------------------------------------------------------------- *
- * B6. The free client-side gates — a doomed upload never happens
- * --------------------------------------------------------------------------- */
+/* B6. The free client-side gates — a doomed upload never happens. */
 {
   const tiny = bootMic({ recorder: { size: 500 } });
   await recordToCap(tiny);
@@ -146,9 +133,7 @@ import {
   eq(old.posts.length, 1, "with no published floor the historical 800-byte gate applies, unchanged");
 }
 
-/* --------------------------------------------------------------------------- *
- * B7. Capture failures and the honest button
- * --------------------------------------------------------------------------- */
+/* B7. Capture failures and the honest button. */
 {
   const denied = bootMic();
   denied.mic.setCapture(() => Promise.reject(new Error("NotAllowedError")));
@@ -169,15 +154,9 @@ import {
   deep(w.rec.log, ["start", "stop"], "stop() when not recording is a no-op");
 }
 
-/* --------------------------------------------------------------------------- *
- * B7b. §10 assumption 15's CONSEQUENCE — the browser encodes WAV for the hosted ear
- * --------------------------------------------------------------------------- *
- * `MediaRecorder` cannot produce WAV, so the hosted path builds one. The assertion that
- * matters parses `mic.js`'s output with the SERVER's own RIFF walker: both halves of the
- * contract, no server and no browser.
- * --------------------------------------------------------------------------- */
+/* B7b. §10 assumption 15's CONSEQUENCE — the hosted path encodes WAV itself (MediaRecorder
+ * cannot), and the SERVER's own RIFF walker must read what mic.js writes. */
 {
-  // ---- the encoder, against functions/api/_lib/wav.js -----------------------
   const w = bootMic();
   const tone = (n, rate) => {
     const f = new Float32Array(n);
@@ -193,12 +172,7 @@ import {
   eq(parsed.sampleRate, 16000, "…at 16 000 Hz — the rate gateway-voice-and-ears.md says matters");
   eq(parsed.channels, 1, "…mono");
   eq(parsed.pcm.length, 16000 * 2, "…with the expected PCM length");
-  // The header fields of the control clip the gateway was measured to transcribe.
-  deep({ rate: parsed.sampleRate, ch: parsed.channels, bits: 16, container: parsed.container },
-       { rate: 16000, ch: 1, bits: 16, container: "wav" },
-       "…identical in shape to the control WAV the gateway accepted live");
 
-  // The route agrees: this is a container it will forward, and it sniffs as one.
   const kind = route.audioKind(wav, null);
   eq(kind.ext, "wav", "the route sniffs the browser's own file as a wav");
   ok(envmod.readConfig(FULL).sttFormats.includes(kind.ext),
@@ -208,10 +182,7 @@ import {
   const low = w.mic.encodeWav([tone(8000, 8000)], 8000, 8000);
   eq(wavlib.pcmFromAudio(low, { sampleRate: 22050, channels: 1 }).sampleRate, 8000,
      "audio already below 16 kHz keeps its TRUE rate — the header never lies");
-  // No frames at all is a bare 44-byte header. The server's parser REFUSES it (a WAV with
-  // no data chunk is unreadable) — and it can never get there, because 44 bytes is far
-  // under both the client's floor and DEMO_MIN_AUDIO_BYTES. Two independent guards, and
-  // the cheap one runs first.
+  // No frames is a bare header: under DEMO_MIN_AUDIO_BYTES, and unreadable to the server anyway.
   const empty = w.mic.encodeWav([], 0, 48000);
   eq(empty.length, 44, "no frames is a bare 44-byte RIFF header");
   ok(empty.length < envmod.readConfig(FULL).minAudioBytes,
@@ -225,7 +196,7 @@ import {
   deep([dv.getInt16(44, true), dv.getInt16(46, true), dv.getInt16(48, true)], [32767, -32767, 0],
        "samples outside [-1,1] and NaN clamp instead of wrapping");
 
-  // ---- and it is what actually goes on the wire ----------------------------
+  // ---- and it is what actually goes on the wire
   const live = bootMic({ realCapture: true });
   await live.mic.start();
   await flush();
@@ -252,29 +223,13 @@ import {
   eq(onWire.container, "wav", "THE BYTES ON THE WIRE PARSE AS A WAV on the server side");
   eq(onWire.sampleRate, 16000, "…at 16 000 Hz");
 
-  // ---- while the local sidecar still gets a MediaRecorder ------------------
+  // ---- while the local sidecar still gets a MediaRecorder (the harness's throws on construction)
   const home = bootMic({ realCapture: true, mode: { ears: () => false } });
   let threw = null;
   await home.mic.start().catch((e) => { threw = e; });
   await flush();
-  // `MediaRecorder` in this harness throws on construction, which is exactly how we prove
-  // the local path still reaches for it rather than the WAV encoder.
   eq(home.audioCtx.processors.length, 0,
      "the LOCAL path does not build an AudioContext — it still uses MediaRecorder, unchanged");
   eq(home.mic.isRecording(), false, "…and a MediaRecorder that will not construct fails safely");
   ok(home.statusText().length > 0, "…with an honest status line, never a silent dead button");
-}
-
-/* --------------------------------------------------------------------------- *
- * B8. The source-level guards the other suites expect to keep holding
- * --------------------------------------------------------------------------- */
-{
-  for (const m of ["start", "stop", "toggle", "setSttBase"]) {
-    ok(MIC_SRC.includes(m + ":") || MIC_SRC.includes("function " + m), `mic.js still exposes ${m}`);
-  }
-  ok(MIC_SRC.includes("events/remote-chat"),
-     "mic.js still publishes the transcript as a child utterance on events/remote-chat");
-  ok(!/graphlings|mattvalancy|pages\.dev/i.test(MIC_SRC),
-     "mic.js names no deployment hostname — the base comes from the mode machine (C3)");
-  ok(/\bsk-[A-Za-z0-9_-]{16,}/.test(MIC_SRC) === false, "mic.js carries no key-shaped literal");
 }

@@ -28,9 +28,8 @@ import {
   // At 2500 ms exactly, the wait elapses and the words go out ALONE.
   await advance(500);
   deep(world.spy.setSpeech, ["A slow answer."], "AT SPEECH_WAIT_MS (2500 ms) THE WORDS LAND ANYWAY");
-  eq(world.spy.speak.length, 1, "…and speak from the clip/browser voice, exactly as today");
-  eq(world.spy.playCloudTTS.length, 0, "…with no gateway audio yet");
-  deep(globalThis.window.moxieBridge.transportStats().order, ["chat"], "…chat routed first this time");
+  deep([world.spy.speak.length, world.spy.playCloudTTS.length, globalThis.window.moxieBridge.transportStats().order],
+       [1, 0, ["chat"]], "…spoken by the clip/browser voice, chat routed first, no gateway audio yet");
 
   // The audio finally arrives at 4000 ms. The local voice is already in the air, so it is
   // DROPPED — the double voice §3.4 warns about must not happen on the slow path either.
@@ -38,10 +37,8 @@ import {
   await turn;
   eq(world.spy.playCloudTTS.length, 0, "LATE AUDIO IS DROPPED while the local voice is speaking");
   const st = globalThis.window.moxieBridge.transportStats();
-  eq(st.chatFirst, 1, "the chat-first path was taken");
-  eq(st.voiceFirst, 0, "…not the voice-first one");
-  eq(st.lateSpeechDropped, 1, "…and the late audio was recorded as dropped");
-  eq(st.speechOk, 1, "…even though the speech call itself succeeded");
+  deep([st.chatFirst, st.voiceFirst, st.lateSpeechDropped, st.speechOk], [1, 0, 1, 1],
+       "the chat-first path was taken and the late (successful) audio recorded as dropped");
 }
 
 /* =========================================================================== *
@@ -61,9 +58,7 @@ import {
   await say("hello", 6000);
   eq(world.spy.playCloudTTS.length, 1, "with nothing speaking, LATE AUDIO IS PLAYED rather than lost");
   const st = globalThis.window.moxieBridge.transportStats();
-  eq(st.lateSpeechPlayed, 1, "…and recorded as played");
-  eq(st.lateSpeechDropped, 0, "…not as dropped");
-  deep(st.order, ["chat", "tts"], "…arriving after the words, which is the honest order for it");
+  deep([st.lateSpeechPlayed, st.lateSpeechDropped, st.order], [1, 0, ["chat", "tts"]], "…recorded as played, arriving after the words");
 }
 
 /* =========================================================================== *
@@ -80,15 +75,12 @@ import {
   inner.route("/devices/d_sim/commands/remote_chat", chatWire("Two voices at once.", EID));
   eq(world.spy.speak.length, 1, "chat-first: `speakLocally` SPOKE IMMEDIATELY (no broker connected)");
   inner.route("/devices/d_sim/commands/tts", ttsWire(EID));
-  eq(world.spy.playCloudTTS.length, 1, "…and then the gateway audio played too");
-  eq(world.spy.speak.length + world.spy.playCloudTTS.length, 2,
-     "THE NAIVE ORDER REALLY DOES PRODUCE TWO VOICES — this is the bug §3.4 designs around");
+  eq(world.spy.playCloudTTS.length, 1, "THE NAIVE ORDER REALLY DOES PRODUCE TWO VOICES — the gateway audio played too (§3.4)");
 
   // And the shipped order, on the same bridge, produces one.
   const world2 = await boot({ answer: () => ({ status: 200, json: envelope() }) });
   const inner2 = globalThis.window.moxieBridge;
   inner2.route("/devices/d_sim/commands/tts", ttsWire(EID));
   inner2.route("/devices/d_sim/commands/remote_chat", chatWire("One voice.", EID));
-  eq(world2.spy.playCloudTTS.length, 1, "tts-first: the gateway voice played");
-  eq(world2.spy.speak.length, 0, "…and the local voice stood down (cloudVoice latched)");
+  deep([world2.spy.playCloudTTS.length, world2.spy.speak.length], [1, 0], "tts-first: the gateway voice played and the local voice stood down");
 }

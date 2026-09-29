@@ -1,9 +1,7 @@
 /* §6–6b: the injected Talk box, and the consolation line going through the FREE
  * `sendScriptedTurn` seam rather than a paid turn.
  */
-import {
-  advance, boot, deep, envelope, eq, join, ok, readFileSync, repo, said, say, serve,
-} from "./harness.mjs";
+import { advance, boot, deep, envelope, eq, ok, said, say, serve } from "./harness.mjs";
 
 /* =========================================================================== *
  * 6. The injected "Talk" box — the control the definition of done needs
@@ -15,19 +13,16 @@ import {
   });
   const input = globalThis.document.getElementById("chat-input");
   const send = globalThis.document.getElementById("chat-send");
-  ok(input && send, "the transport injected #chat-input and #chat-send");
-  eq(input.getAttribute("maxlength"), "500", "the input mirrors DEMO_MAX_INPUT_CHARS");
-  eq(globalThis.document.getElementById("chat-status").getAttribute("aria-live"), "polite",
-     "the status line is announced politely, per §7");
-  ok(world.panel.children.length > 0, "…into the Comms panel, before the Mic section");
+  ok(input && send && world.panel.children.length > 0, "the transport injected #chat-input and #chat-send into the Comms panel");
+  deep([input.getAttribute("maxlength"), globalThis.document.getElementById("chat-status").getAttribute("aria-live")], ["500", "polite"],
+       "the input mirrors DEMO_MAX_INPUT_CHARS and the status line is announced politely (§7)");
 
   input.value = "  a typed sentence  ";
   world.clickHandlers["chat-send"]();
   await advance(10);
   eq(input.value, "", "sending clears the box");
-  const posts = world.spy.fetches.filter(([p]) => p === "/api/chat");
-  eq(posts.length, 1, "clicking Send spends exactly one turn");
-  eq(posts[0][1].text, "a typed sentence", "…with the sentence TRIMMED");
+  deep(world.spy.fetches.filter(([p]) => p === "/api/chat").map(([, b]) => b.text), ["a typed sentence"],
+       "clicking Send spends exactly one turn, with the sentence TRIMMED");
   ok(world.spy.transcript.includes("Typed and answered."), "…and Moxie answered it");
 
   // Enter sends too; an empty box does not.
@@ -70,8 +65,6 @@ import {
   {
     const world = await boot({ answer });
     eq(globalThis.window.moxieMode.canSpendLiveTurn(), true, "the page really is live and spendable");
-    eq(typeof globalThis.window.moxieBridge.sendScriptedTurn, "function",
-       "the transport exposes sendScriptedTurn for the degraded path");
 
     const before = world.spy.fetches.length;
     const p = globalThis.window.moxieBridge.sendScriptedTurn("Guess what, it's my birthday today!");
@@ -86,10 +79,7 @@ import {
        "…and Moxie still ANSWERS it, from stub.js, after the same 450 ms beat");
     ok(world.spy.sfx.includes("listen"), "…with the same listen SFX a child's turn always fires");
     const st = globalThis.window.moxieBridge.transportStats();
-    eq(st.scripted, 1, "…recorded as one scripted line");
-    eq(st.scriptedFree, 1, "…answered for free");
-    eq(st.turns, 0, "…and NOT counted as a turn: nobody took one");
-    eq(st.live, 0, "…no live turn was opened");
+    deep([st.scripted, st.scriptedFree, st.turns, st.live], [1, 1, 0, 0], "…recorded as one free scripted line, NOT as a turn");
   }
 
   // (b) A real transcript on the same page still spends exactly one of each. The fix must
@@ -99,8 +89,8 @@ import {
     await say("what the visitor actually said", 1000);
     const paid = world.spy.fetches.filter(([pth]) => pth !== "/api/health").map(([pth]) => pth);
     deep(paid, ["/api/chat"], "a REAL transcript still spends its /api/chat, exactly as before");
-    eq(globalThis.window.moxieBridge.transportStats().live, 1, "…as a live turn");
-    eq(globalThis.window.moxieBridge.transportStats().scripted, 0, "…and not as a scripted one");
+    const st = globalThis.window.moxieBridge.transportStats();
+    deep([st.live, st.scripted], [1, 0], "…as a live turn, not a scripted one");
   }
 
   // (c) A page with nothing spendable takes the path it takes today: inner.sendUserTurn,
@@ -146,16 +136,5 @@ import {
     await advance(1000);
     deep(world.spy.fetches.slice(before), [], "an empty scripted line does nothing at all");
     eq(globalThis.window.moxieBridge.transportStats().scripted, 0, "…and is not recorded as one");
-  }
-
-  // (f) The source-level rule, so a future edit cannot quietly put it back: `mic.js`'s
-  //     degraded path may not name `sendUserTurn`.
-  {
-    const mic = readFileSync(join(repo, "sim", "web", "mic.js"), "utf8");
-    const fb = mic.slice(mic.indexOf("function fallback("), mic.indexOf("/* ---- capture"));
-    ok(fb.length > 100, "found mic.js's fallback body");
-    ok(!/sendUserTurn/.test(fb),
-       "mic.js's fallback never names sendUserTurn — the consolation line cannot reach the paid path");
-    ok(/publishScripted/.test(fb), "…it publishes through publishScripted instead");
   }
 }

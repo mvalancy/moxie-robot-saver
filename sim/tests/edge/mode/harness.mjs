@@ -25,6 +25,6 @@ export const FULL = {
 /** Call `/api/health` with a plain `context.env`. */
 export async function probe(env) {
   const res = await health.onRequestGet({ env });
-  const text = await res.text();
+  const text = await res.clone().text();
   return { res, text, body: JSON.parse(text) };
 }

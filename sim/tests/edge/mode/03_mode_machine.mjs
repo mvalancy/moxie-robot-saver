@@ -6,19 +6,13 @@ import {
 
 const MODE_SRC = readFileSync(join(here, "web", "mode.js"), "utf8");
 
-// --------------------------------------------------------------------------- //
-// 4. sim/web/mode.js — the state machine, on injected time and injected timers
-// --------------------------------------------------------------------------- //
 const HEALTH_BARE = (await probe({})).text;
 const HEALTH_LIVE = (await probe(FULL)).text;
 const envelopeText = (over) => JSON.stringify(env2.envelope(over));
 
 const flush = async (n = 8) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
 
-/**
- * Load mode.js under a stubbed browser. `replies` is consumed one per fetch; when it runs
- * dry the last one repeats, so a backoff ladder needs only one entry.
- */
+/** Load mode.js under a stubbed browser; `replies` are consumed one per fetch, the last repeating. */
 function boot(opts) {
   const o = opts || {};
   const timers = [];
@@ -148,7 +142,6 @@ for (const body of ["<!doctype html><html>index</html>", "", "null", "[1,2,3]",
   eq(h.m.reason(), null, "live carries no reason");
   eq(h.m.voice(), true, "the live probe reported a voice");
   eq(h.m.ears(), true, "the live probe reported ears");
-  // P0-a ships no cloud-transport.js, so nothing can USE a live mode yet.
   eq(h.m.hasTransport(), false, "P0-a ships no live transport");
   eq(h.m.badge(), "HOSTED DEMO · SCRIPTED",
      "a live mode with no transport must NOT paint LIVE — that is the dishonesty being removed");
@@ -210,8 +203,7 @@ for (const [reason, badge, snippet] of [
   eq(h.m.state(), "degraded", "upstream_down degrades at once");
   eq(h.m.stats().lastDelayMs, 60000, "...and re-polls on Retry-After");
 }
-// 429 is a SOFT degrade: the mode stays live (a rate-limited visitor is not a broken
-// deployment) but nothing is spent until Retry-After has passed.
+// 429 is a SOFT degrade: the mode stays live but nothing is spent until Retry-After passes.
 {
   const h = await bootLive();
   h.m.note({ status: 429, reason: "rate_limited", retry_after_s: 7 });
@@ -224,8 +216,7 @@ for (const [reason, badge, snippet] of [
   eq(h.m.canSpendLiveTurn(), true, "live turns resume once the window has passed");
   eq(h.m.retryAfterS(), 0, "...and the countdown is spent");
 }
-// at_capacity is a LOAD signal, not a broken deployment (§7 gives it the BUSY badge in
-// the live row, which is how §6.3's blanket "503" and §4.5's at_capacity row reconcile).
+// at_capacity is a LOAD signal, not a broken deployment (§7's BUSY badge in the live row).
 {
   const h = await bootLive();
   h.m.note({ status: 503, reason: "at_capacity", retry_after_s: 15 });

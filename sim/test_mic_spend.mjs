@@ -1,16 +1,7 @@
-/* test_mic_spend.mjs — a refused microphone must not spend a live turn. In Chrome.
- *
- * `mic.js` consoles a visitor whose ears failed with a SCRIPTED child line; that line once
- * went out through the live transport and bought a paid `/api/chat` + `/api/speech` nobody
- * said. Billing is a claim about requests that really left a page, so this counts them
- * (`page.on("request")`) — and pairs every "spends nothing" with proof the visitor was still
- * consoled OUT LOUD (the shipped clips, identified by byte size, audibly scheduled), so the
- * fix cannot be "delete the consolation line". `/api/*` is answered at the browser and the
- * recorder injected via `moxieMic.setCapture`: no gateway, no network, no live microphone.
- *
- *   1 refused transcription · 2 clip over max_audio_bytes · 3 transcriber unreachable
- *   4 a real transcript (exactly one chat + speech) · 5 clip under min_audio_bytes
- *   6 a microphone that will not open → typed recovery on desktop and phone
+/* test_mic_spend.mjs — a refused microphone must not spend a live turn (a scripted
+ * consolation line once bought a paid /api/chat + /api/speech). Counts requests that really
+ * left Chrome, and pairs every "spends nothing" with proof the visitor was still consoled OUT
+ * LOUD (shipped clips, by byte size), so the fix cannot be "delete the consolation line".
  *
  *   node sim/test_mic_spend.mjs
  */
@@ -32,9 +23,8 @@ const FX = await liveFixture({ eid: "sim-micspend01", reply: REPLY, tone: TONE }
 /** The limits the page is actually operating under — read from the envelope, never guessed. */
 const LIMITS = FX.limits;
 
-/* The two utterances a consoled visitor must HEAR: `mic.js::fallback`'s child line and
- * `stub.js`'s answer, both played from the pre-rendered clip the SHIPPED MANIFEST names
- * (so re-rendering moves the assertion with it). Their byte sizes are what `spoke()` matches. */
+/* What a consoled visitor must HEAR (mic.js's child line, stub.js's answer), identified by
+ * the byte size of the clip the SHIPPED manifest names. */
 const CHILD_LINE = "Thank you Moxie!";
 const MOXIE_LINE = "You're so welcome. I love celebrating with you!";
 const MANIFEST = JSON.parse(readFileSync(join(repo, "sim", "web", "audio", "index.json"), "utf8"));
@@ -53,11 +43,8 @@ const browser = await launchBrowser(puppeteer, chrome,
 
 const json = (body, status = 200) => ({ status, contentType: "application/json", body });
 
-/**
- * Open the hosted, live sim with `/api/*` answered at the browser. `transcribe` is
- * "ok" | "refused" | "dead". `/api/chat` and `/api/speech` ALWAYS succeed, so a turn that
- * should never have been spent shows up as a real answer rather than a second failure.
- */
+/** Open the hosted live sim, `/api/*` answered at the browser; `transcribe` is ok|refused|dead.
+ *  chat/speech ALWAYS succeed, so a wrongly spent turn shows up as a real answer. */
 async function open(opts) {
   const page = await browser.newPage();
   await page.setViewport(opts.viewport || { width: 1440, height: 900 });
@@ -104,13 +91,9 @@ const spend = (reqs) => ({
   speech: reqs.filter((u) => /\/api\/speech\b/.test(u)).length,
 });
 
-/**
- * Press, hold and release `#mic-btn` with a FAKE recorder (the `moxieMic.setCapture` seam)
- * that yields exactly `size` bytes; the caps, size gates and fallback are the REAL ones.
- * 3 s is the floor a request that should never happen has to appear; `utterances` then
- * WAITS for that many sounds — a slow runner once snapshotted before Moxie's clip arrived.
- * The wait only extends the window, so the spend assertions lose nothing.
- */
+/** Press and release `#mic-btn` with a fake recorder yielding exactly `size` bytes (caps,
+ *  gates and fallback are real). 3 s is the window a forbidden request has to appear in;
+ *  `utterances` then WAITS for that many sounds, which only ever extends it. */
 async function press(page, size, opts) {
   await page.evaluate((n) => {
     window.moxieMic.setCapture(() => {

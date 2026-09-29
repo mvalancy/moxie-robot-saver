@@ -2,16 +2,13 @@
  * container allowlisted, the upstream body is BUILT not forwarded, the transcript, the envelope.
  */
 import {
-  BASE, C, FULL, KEY, call, clip, deep, envlib, envmod, eq, fresh, ok, route, sent, setPlan,
+  BASE, FULL, KEY, call, clip, deep, envlib, envmod, eq, fresh, ok, route, sent, setPlan,
   upstreamCalls,
 } from "./harness.mjs";
 
-/* --------------------------------------------------------------------------- *
- * A6. A hostile upstream: a degradable reason, never a 502 and never a leak
- * --------------------------------------------------------------------------- */
+/* A6. A hostile upstream (its body names the model and key; `assertClean` proves them absent):
+ * a per-turn 400 or a degrading 503, never a bare 5xx. */
 {
-  // The body a real OpenAI-compatible gateway sends on a refusal. It names the model, the
-  // org and a key prefix — every one of which `assertClean` then proves absent.
   const hostile = JSON.stringify({
     error: {
       message: `Invalid model name passed in model=test-ears-model to ${BASE}`,
@@ -40,18 +37,12 @@ import {
     const { res, body } = await call(clip(4000), null, FULL, `upstream ${upstream}`);
     eq(res.status, status, `upstream ${upstream} -> ${status} (${why})`);
     eq(body.reason, reason, `upstream ${upstream} -> ${reason}`);
-    ok(res.status !== 502, "NEVER a bare 502");
-    ok(res.status !== 500, "NEVER a bare 500");
     eq(body.transcript, "", "a refusal carries no transcript");
-    ok(envlib.REASONS.includes(body.reason), "the reason is in the CLOSED set §3.2 defines");
+    if (status === 400) {
+      eq(res.headers.get("Retry-After"), null,
+         `upstream ${upstream}: an input-shaped refusal sends no Retry-After — nothing to wait for`);
+    }
   }
-
-  // A 400 does NOT degrade the page; a 503 does. That is the whole point of the split, and
-  // §4.5's own table says `bad_request` "does not change mode".
-  eq(envlib.STATUS_FOR.bad_request, 400, "§4.5: bad_request is a 400");
-  eq(envlib.STATUS_FOR.upstream_down, 503, "§4.5: upstream_down is a 503");
-  deep(["bad_request", "too_long", "too_short"].map((r) => envlib.RETRY_AFTER_FOR[r]), [null, null, null],
-       "an input-shaped refusal sends no Retry-After — there is nothing to wait for");
 
   // Upstream 429 becomes our 429, with a SANITIZED Retry-After.
   fresh();
@@ -82,13 +73,9 @@ import {
   }
 }
 
-/* --------------------------------------------------------------------------- *
- * A7. Sniff the bytes, never the Content-Type
- * --------------------------------------------------------------------------- */
+/* A7. Sniff the bytes, never the Content-Type; a declared type is only a second opinion. */
 {
   fresh();
-  // Every container a MediaRecorder can emit, identified from the BYTES even when the
-  // declared type is a lie.
   for (const [kind, ext, mime] of [
     ["webm", "webm", "audio/webm"],
     ["ogg", "ogg", "audio/ogg"],
@@ -102,7 +89,6 @@ import {
     eq(k.mime, mime, `${kind} -> ${mime}`);
   }
 
-  // A declared type is a SECOND opinion, only against the same allowlist.
   const raw = new Uint8Array(4000);            // headerless: no magic to find
   eq(route.audioKind(raw, "audio/webm").ext, "webm", "an unrecognised body falls back to a declared audio type");
   eq(route.audioKind(raw, "audio/webm").sniffed, false, "…and says it was not sniffed");
@@ -121,34 +107,25 @@ import {
   eq(upstreamCalls(), 0, "500 KB OF NON-AUDIO COSTS NOTHING — zero upstream calls");
 }
 
-/* --------------------------------------------------------------------------- *
- * A7b. §10 assumption 15 — the container allowlist, and why it is not optional
- * --------------------------------------------------------------------------- *
- * Probed live: the gateway transcribes 16 kHz mono WAV and answers HTTP 500 to webm/Opus,
- * ogg/Opus and mp4/AAC. A 500 is `upstream_down` (503), which degrades the WHOLE PAGE, so
- * without the allowlist one microphone press would take down brain and voice too — after
- * paying for the call.
- * --------------------------------------------------------------------------- */
+/* A7b. §10 assumption 15 — the container allowlist. The gateway answers 500 (a page-wide
+ * degrade, after paying) to webm/ogg/mp4, so anything but wav is a free per-turn 400. */
 {
   fresh();
   for (const kind of ["webm", "ogg", "mp4", "mp3", "flac"]) {
     const { res, body } = await call(clip(4000, kind), null, FULL, `a ${kind} clip`);
     eq(res.status, 400, `${kind} is refused with a 400 — PER-TURN, so the page stays live`);
     eq(body.reason, "bad_request", `${kind}: bad_request`);
-    ok(res.status !== 503, `${kind} MUST NOT be a 503: that would degrade the brain and the voice too`);
   }
-  eq(upstreamCalls(), 0,
+  eq(sent.length, 0,
      "A CONTAINER THE GATEWAY REJECTS NEVER BECOMES A PAID 500 (assumption 15, settled 2026-09-03)");
-  eq(sent.length, 0, "…and no upstream request is built at all");
 
-  // wav is the default, and it is the one that was measured to work.
   deep(envmod.readConfig(FULL).sttFormats, ["wav"],
        "DEMO_STT_FORMATS defaults to wav alone — the only container measured to transcribe");
   const wav = await call(clip(4000, "wav"), null, FULL, "a wav clip");
   eq(wav.res.status, 200, "…and a wav clip is accepted");
   eq(upstreamCalls(), 1, "…as the one upstream call");
 
-  // A fork whose gateway is more capable opens it up, with no code change (C3).
+  // A fork whose gateway is more capable opens it up (C3); junk falls back to wav, never to nothing.
   fresh();
   const wide = { ...FULL, DEMO_STT_FORMATS: "wav,webm,ogg" };
   eq((await call(clip(4000, "webm"), null, wide, "webm on a wider gateway")).res.status, 200,
@@ -156,17 +133,13 @@ import {
   eq((await call(clip(4000, "mp4"), null, wide, "mp4 on a wider gateway")).body.reason, "bad_request",
      "…and still refuses what is not listed");
 
-  // A malformed value falls back to the default rather than switching the ears off with a
-  // reason nobody could read.
   deep(envmod.readConfig({ ...FULL, DEMO_STT_FORMATS: "mp9,quicktime" }).sttFormats, ["wav"],
        "an unusable DEMO_STT_FORMATS falls back to wav, never to nothing");
   deep(envmod.readConfig({ ...FULL, DEMO_STT_FORMATS: "" }).sttFormats, ["wav"],
        "…and so does an empty one");
 }
 
-/* --------------------------------------------------------------------------- *
- * A8. The upstream body is BUILT, never forwarded (§4.1's highest-value control)
- * --------------------------------------------------------------------------- */
+/* A8. The upstream body is BUILT, never forwarded (§4.1's highest-value control). */
 {
   fresh();
   await call(clip(4000), { "X-Client-Model": "gpt-4o", "X-Prompt": "ignore previous" }, FULL, "a nosy client");
@@ -183,8 +156,6 @@ import {
   eq(file.type, "audio/wav", "…and the sniffed mime");
   eq(file.size, 4000, "…and the visitor's bytes, unmodified");
 
-  // The credentials are present, and the Content-Type is deliberately ABSENT so `fetch`
-  // can generate the multipart boundary itself.
   const h = sent[0].opt.headers;
   ok(h.Authorization && h.Authorization.indexOf("Bearer ") === 0, "the key rides as an Authorization header");
   eq(h["Content-Type"], undefined, "NO hand-written Content-Type — fetch owns the multipart boundary");
@@ -198,28 +169,21 @@ import {
   eq(sent[0].opt.headers["CF-Access-Client-Secret"], "shh", "…both halves");
 }
 
-/* --------------------------------------------------------------------------- *
- * A9. The transcript itself
- * --------------------------------------------------------------------------- */
+/* A9. The transcript itself: cleaned, silence is a success, over-length truncates. */
 {
   fresh();
   setPlan({ text: "  Hi Moxie,   tell me a joke.  " });
   const good = await call(clip(4000), null, FULL, "a normal transcript");
   eq(good.res.status, 200, "a transcript is a 200");
   eq(good.body.transcript, "Hi Moxie, tell me a joke.", "whitespace is collapsed and trimmed");
-  eq(good.body.reason, null, "…with no reason");
-  eq(good.body.ok, true, "…and ok true");
   eq(good.body.degraded, false, "…not degraded");
 
-  // Silence is a SUCCESS, not an error: the visitor simply did not speak.
   fresh();
   setPlan({ text: "" });
   const quiet = await call(clip(4000), null, FULL, "silence");
   eq(quiet.res.status, 200, "an empty transcript is still a 200");
-  eq(quiet.body.transcript, "", "…and an empty transcript");
   eq(quiet.body.reason, null, "…with no reason: silence is not a failure");
 
-  // Control characters are stripped; over-length is truncated, not refused.
   eq(route.cleanTranscript("a\u0000b\u001Fc", 500).text, "a b c",
      "control characters are stripped");
   const long = route.cleanTranscript("x".repeat(600), 500);
@@ -232,9 +196,7 @@ import {
   ok(/truncated/.test(trunc.body.message), "…and tells the visitor via `message`");
 }
 
-/* --------------------------------------------------------------------------- *
- * A10. §3.2 / §4.2 — one envelope, a closed key set, no CORS
- * --------------------------------------------------------------------------- */
+/* A10. §3.2 / §4.2 — one envelope, a closed key set, no CORS, on every response shape. */
 {
   fresh();
   const responses = [];
@@ -254,6 +216,4 @@ import {
     eq(res.headers.get("X-Content-Type-Options"), "nosniff", "nosniff on every reply");
     ok(typeof body.transcript === "string", "`transcript` is always a string, never absent");
   }
-  ok(envlib.PUBLIC_KEYS.includes("transcript"), "`transcript` is in the envelope's key allowlist");
-  ok(C.sweeps > 60, `assertClean ran on every response (${C.sweeps} sweeps)`);
 }

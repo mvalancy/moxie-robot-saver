@@ -59,13 +59,10 @@ import {
     refuse = true;
     await say("tell me a joke", 1000);
 
-    eq(globalThis.window.moxieMode.state(), "live", "a 429 does NOT leave the live state (§6.3 soft degrade)");
-    eq(globalThis.window.moxieMode.reason(), "rate_limited", "…the reason is recorded");
-    eq(globalThis.window.moxieMode.badge(), "MOXIE ONLINE", "…the badge stays LIVE");
-    eq(globalThis.window.moxieMode.message(), "One at a time! Give Moxie a few seconds.",
-       "…and §7's transient chip copy is shown");
-    ok(globalThis.window.moxieMode.retryAfterS() > 0, "…with a Retry-After window open");
-    eq(globalThis.window.moxieMode.canSpendLiveTurn(), false, "…so live turns are suppressed");
+    const M = globalThis.window.moxieMode;
+    deep([M.state(), M.reason(), M.badge(), M.message(), M.retryAfterS() > 0, M.canSpendLiveTurn()],
+         ["live", "rate_limited", "MOXIE ONLINE", "One at a time! Give Moxie a few seconds.", true, false],
+         "a 429 does NOT leave the live state (§6.3 soft degrade): §7's chip copy, a Retry-After window, live turns suppressed");
     ok(world.spy.transcript.includes("Why did the robot cross the road? To recharge on the other side!"),
        "THE REFUSED TURN IS STILL ANSWERED, from stub.js — the page never goes silent (A5)");
     eq(globalThis.window.moxieBridge.transportStats().fallbacks, 1, "…recorded as one fallback");
@@ -76,41 +73,20 @@ import {
     eq(world.spy.fetches.length, before, "no /api/chat is spent while the Retry-After window is open");
   }
 
-  // (d) `upstream_down`: a full degrade, still answered.
-  {
+  // (d) `upstream_down`, and `gateway_unreachable_or_gated` (an Access login page in front of
+  // the tunnel): the visitor sees the same thing; mode.js must RECOGNISE the second, since an
+  // unknown reason is coerced to null and would read as a healthy turn.
+  for (const reason of ["upstream_down", "gateway_unreachable_or_gated"]) {
     const world = await boot({
-      answer: live({ status: 503, json: envelope({
-        ok: false, degraded: true, reason: "upstream_down", retry_after_s: 60, mode: "degraded" }) }),
+      answer: live({ status: 503, json: envelope({ ok: false, degraded: true, reason, retry_after_s: 60, mode: "degraded" }) }),
     });
     await say("hi moxie", 1000);
-    eq(globalThis.window.moxieMode.state(), "degraded", "upstream_down degrades the mode");
-    eq(globalThis.window.moxieMode.badge(), "HOSTED DEMO · SCRIPTED", "…with §7's SCRIPTED badge");
-    eq(globalThis.window.moxieMode.message(), "Moxie’s brain is unreachable right now — she’s running on what she remembers.",
-       "…and §7's copy");
-    ok(world.spy.transcript.length === 2, "…and the turn is still answered from the stub");
-  }
-
-  // (d2) `gateway_unreachable_or_gated` — a Cloudflare Access login page in front of the
-  // tunnel. The VISITOR sees exactly what `upstream_down` shows (the brain is unreachable,
-  // she runs on what she remembers); only an operator reading the reason learns the door
-  // is locked rather than the room empty. Crucially, `mode.js` must RECOGNISE the reason:
-  // an unknown one is coerced to null and would be read as a healthy turn.
-  {
-    const world = await boot({
-      answer: live({ status: 503, json: envelope({
-        ok: false, degraded: true, reason: "gateway_unreachable_or_gated", retry_after_s: 60, mode: "degraded" }) }),
-    });
-    await say("hi moxie", 1000);
-    eq(globalThis.window.moxieMode.state(), "degraded",
-       "a gated gateway degrades the mode — NOT read as a healthy turn");
-    eq(globalThis.window.moxieMode.reason(), "gateway_unreachable_or_gated",
-       "…and the reason survives mode.js's closed-set filter");
-    eq(globalThis.window.moxieMode.badge(), "HOSTED DEMO · SCRIPTED", "…with the SCRIPTED badge");
-    eq(globalThis.window.moxieMode.message(),
-       "Moxie’s brain is unreachable right now — she’s running on what she remembers.",
-       "…and exactly upstream_down's copy: a visitor learns nothing about our plumbing");
-    ok(world.spy.transcript.length === 2, "…and the turn is still answered from the stub");
-    eq(globalThis.window.moxieBridge.transportStats().fallbacks, 1, "…recorded as one fallback");
+    const M = globalThis.window.moxieMode;
+    deep([M.state(), M.reason(), M.badge(), M.message()],
+         ["degraded", reason, "HOSTED DEMO · SCRIPTED", "Moxie’s brain is unreachable right now — she’s running on what she remembers."],
+         `${reason} degrades the mode (reason kept) with §7's SCRIPTED badge and copy`);
+    deep([world.spy.transcript.length, globalThis.window.moxieBridge.transportStats().fallbacks], [2, 1],
+         `…and the ${reason} turn is still answered from the stub`);
   }
 
   // (e) A transport error with no envelope at all — the browser could not even reach the
@@ -123,9 +99,8 @@ import {
       await say(t, 1000);
     }
     const st = globalThis.window.moxieBridge.transportStats();
-    eq(st.chatErrors, 3, "three transport errors recorded");
-    eq(st.fallbacks, 3, "…and three stub answers, so the page answered every time");
-    eq(globalThis.window.moxieMode.state(), "degraded", "…and the 3-strike rule degraded the mode (§6.3)");
+    deep([st.chatErrors, st.fallbacks, globalThis.window.moxieMode.state()], [3, 3, "degraded"],
+         "three transport errors, three stub answers, and the 3-strike rule degraded the mode (§6.3)");
   }
 
   // (f) A safety BLOCK: `ok: true`, `reason: "blocked"`, and the route's own redirect line
@@ -140,10 +115,8 @@ import {
     ok(world.spy.transcript.includes("Thank you for telling me. Feelings this big need a grown-up."),
        "the redirect line is what Moxie says");
     const st = globalThis.window.moxieBridge.transportStats();
-    eq(st.blocked, 1, "…recorded as a block");
-    eq(st.fallbacks, 0, "…and the stub was NOT used, because a kind line was supplied");
-    eq(world.spy.playCloudTTS.length, 0, "…and no gateway voice was requested (a block spends nothing)");
-    deep(world.spy.fetches.filter(([p]) => p === "/api/speech"), [], "…no /api/speech call at all");
+    deep([st.blocked, st.fallbacks, world.spy.fetches.filter(([p]) => p === "/api/speech").length], [1, 0, 0],
+         "…recorded as a block, the stub NOT used (a kind line was supplied), and no /api/speech call");
   }
 
   // (g) No voice configured: the words render and speak locally, with no speech request.
