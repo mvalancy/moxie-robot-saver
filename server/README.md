@@ -28,7 +28,7 @@ the browser suites `sim/test_console_insights.mjs`, `sim/test_robot_lifecycle.mj
 | `moxie_server/supervisor.py` | Server-side calls to the MQTT supervisor (every `/local/*` card proxy) |
 | `moxie_server/fleet/` | Pure card views over supervisor payloads — [index](moxie_server/fleet/README.md) |
 | `moxie_server/lifecycle.py` | Unpair and factory reset: the answer's wording and the `restore_factory` code (dependency-free) |
-| `moxie_server/child_profile.py` | The child's name Moxie says: sent to the robot's supervisor, cleared on unpair, shown only to the robot's account |
+| `moxie_server/child_profile.py` | The child's name Moxie says: sent to the robot's supervisor, cleared on unpair, named in the status views only for a token of the robot's account |
 | `moxie_server/auth.py` | Bearer-token dependency + token minting |
 | `moxie_server/crypto.py` | Deterministic seed/keys (Argon2id → Ed25519/X25519/secretbox) |
 | `moxie_server/diceware.py` | Recovery-phrase generation (EFF short wordlist) |
@@ -58,9 +58,10 @@ the browser suites `sim/test_console_insights.mjs`, `sim/test_robot_lifecycle.mj
   (`unclaimed_known: false` when the supervisor could not be asked) and those another account has
   as `on_other_accounts` ([bench runbook](../docs/guides/bench-runbook.md)).
 - **The child's name** goes to the robot from the account's child record: on the claim, on a
-  rename (`PUT /api/children/{id}`, the Wi-Fi tab's name field) and on Permit; unpair clears the
-  robot's copy. `fleet`, `broker/status` and a robot's config answer name a robot's child only to
-  the account that has it ([where the name goes](../docs/architecture/config-and-telemetry-contract.md#the-childs-name-the-parents-record-per-robot)).
+  rename (`PUT /api/children/{id}`, the Wi-Fi tab's name field) and on Permit (an account with no
+  name sends a clear instead); unpair clears the robot's copy. `fleet`, `broker/status` and a
+  robot's config answer name a robot's child only for a token of the account that has it, which
+  `quicklogin` gives for an email alone: a filter, not a lock ([where the name goes](../docs/architecture/config-and-telemetry-contract.md#the-childs-name-the-parents-record-per-robot)).
 - **`/local/*` fleet + access** (proxied to the MQTT supervisor): `fleet`, `broker/status`,
   `robots/{id}/config`, `fleet/config`, `robots/{id}/telemetry`, `robots/{id}/safety`, and the
   **device allowlist** — `permits`, `robots/{id}/permit`, `fleet/permits`

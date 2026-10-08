@@ -255,8 +255,10 @@ birthday?}` on that robot's own layer (`POST /config?device_id=…`;
 [`server/moxie_server/child_profile.py`](../../server/moxie_server/child_profile.py)) when a robot is
 added to the account, when the child is renamed, and when **Permit** lets in a robot an account's
 record names. `MOXIE_CHILD_NICKNAME` (default `friend`) is only the **fallback** for a robot no account
-names. The pairing placeholder `Moxie Kid` is never sent, so it is never said. A house rule
-(`?scope=fleet`) cannot carry a child: that is a `400`.
+names. The pairing placeholder `Moxie Kid` is never sent, so it is never said: when the account names
+no child, or names one the rule below refuses, a robot joining it (the claim, Simulate robot scan,
+Permit) gets `child: null` instead and says the fallback, never a name an earlier record left on it.
+A house rule (`?scope=fleet`) cannot carry a child: that is a `400`.
 
 **One name rule**, the Try it card's (`cloud_config.NAME_RE`): up to 40 letters, digits, spaces,
 periods, apostrophes or hyphens on one line. `<exit>`, `{{ x }}`, a line break, a blank name or 41
@@ -269,9 +271,10 @@ characters are a `400` and change nothing. `child: null` clears it.
 | The console's database | The account's child record (`moxie.db`). Kept on unpair ([robot lifecycle](../features/robot-lifecycle.md#built-here-unpair-and-factory-reset) §2) until the parent deletes the profile. |
 | The supervisor's disk | `robots/<id>/config.json` (the robot's saved settings), and the day plan's stored "why" lines (`robots/<id>/schedule_explain.json`), which are dropped when the name changes or is cleared. |
 | The robot | `child_pii.nickname` (and `birthday` when the record has one) in its `/config`, over your MQTT broker like every other setting. Pushed now if it is connected, else on its next connect. |
-| The brain | Every brain prompt for that robot: the `llm` brain's system prompt ("You are talking to …"), the `content` brain's `volley.config.child_pii.nickname`, the `webhook` brain's request. **These requests go to the endpoint you configured (`MOXIE_LLM_BASE_URL`, `MOXIE_WEBHOOK_ENDPOINT`), which may be a cloud service.** |
+| The brain | Every brain prompt for that robot: the `llm` brain's system prompt ("You are talking to …"), the `content` brain's `volley.config.child_pii` (a module's prompt renders `nickname`), the `webhook` brain's request (its `child` object, with `birthday_iso` when the record has a birthday). **These requests go to the endpoint you configured (`MOXIE_LLM_BASE_URL`, `MOXIE_WEBHOOK_ENDPOINT`), which may be a cloud service.** |
 | The voice | Any line Moxie says that contains the name (the hello, the opener, an answer) is sent to the speech endpoint you configured when this appliance synthesizes speech. |
-| `/status` | The robot's `child` field and its config layers. The console's views of it (`/local/fleet`, `/local/broker/status`) and a robot's config answer name a robot's child only to a caller signed in to the account that has that robot, and mask the other child names in the activity feed. |
+| The supervisor's `/status` | The robot's `child` field, its config layers and its face cache id (`child_pii.id`, a UUIDv5 of the name and the look, so a list of first names recovers the name from it). The supervisor's own status server asks no one to sign in: compose publishes it (`MOXIE_PORT_STATUS`, `8931`) on `MOXIE_BIND_HOST`, which `.env.example` sets to `0.0.0.0`, so with that `.env` anyone on your network can read the name there. |
+| The console's views of `/status` | `/local/fleet`, `/local/broker/status` and a robot's config answer name a robot's child (and keep its face cache id) only for a caller with a token for the account that has that robot, and mask the other child names in the activity feed. That keeps the name off what any device on your network can poll without asking; it is not a lock, because this console gives a token to anyone who types the account's email (`POST /local/quicklogin`, no password). |
 
 It is never written by this path to the supervisor's log, the activity feed or telemetry: their lines
 name the keys that changed (`config updated: child`), never a value. A line Moxie **says** can carry
@@ -281,8 +284,11 @@ anyone who can open the console on your network, as every console card shows the
 
 **Unpair and factory reset** clear the robot's copy (`child: null`) before the record is deleted and
 before the permit is revoked; the robot then falls back to `MOXIE_CHILD_NICKNAME`, and its saved
-settings keep no `child` key. A write for a robot that is away is kept: a robot on the permit list or
-in the roster has it saved (`online: false, pushed: false`) and pushed when it connects.
+settings keep no `child` key. When that clear cannot reach the supervisor the answer says so, and the
+name stays on the robot until it joins an account again. A write for a robot that is away is kept: a
+robot on the permit list or in the roster has it saved (`online: false, pushed: false`: no connected
+robot heard it) and the settle pushes it when the robot connects (OpenMoxie keeps an offline robot's
+edit the same way: `site/hive/mqtt/moxie_server.py:284-290`).
 
 > **Unverified on a physical Moxie.** Whether a real robot re-reads `child_pii.nickname` from a config
 > push without reconnecting, and where it says it, has not been observed by this project. OpenMoxie

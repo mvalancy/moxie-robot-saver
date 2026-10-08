@@ -204,7 +204,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config and telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 36748,
+   "bytes": 37990,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -1068,7 +1068,7 @@
    "path": "features/robot-lifecycle.md",
    "title": "Map 11 — Robot Lifecycle (pairing / unpair / FACTORY RESET / restore / reboot / OTA / state model)",
    "section": "features",
-   "bytes": 30950,
+   "bytes": 31096,
    "mermaid": 0,
    "headings": [
     "Built here: unpair and factory reset",
@@ -1166,7 +1166,7 @@
    "path": "guides/first-time-setup.md",
    "title": "First-time setup",
    "section": "guides",
-   "bytes": 4156,
+   "bytes": 4347,
    "mermaid": 0,
    "headings": [
     "1. Start the server",
@@ -1182,7 +1182,7 @@
    "path": "guides/bench-runbook.md",
    "title": "Bench runbook: bring a real Moxie onto your server",
    "section": "guides",
-   "bytes": 11945,
+   "bytes": 12067,
    "mermaid": 0,
    "headings": [
     "Before you start",

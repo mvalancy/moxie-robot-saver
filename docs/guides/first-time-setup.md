@@ -31,7 +31,9 @@ interface your phone uses (LAN or VPN).
 server, and it is sent to the robot. It is also in every prompt Moxie's brain gets, and in every line
 Moxie says that names your child, so it goes to whatever brain and voice endpoints you configured,
 which may be cloud services. Unpair and factory reset take it off the robot's settings; your child's
-profile stays on your account until you delete it. The full list:
+profile stays on your account until you delete it. This server has no real sign-in yet (an account is
+just its email), so someone on your network who opens the console with your email, or reads the
+supervisor's status port, can see the name. The full list:
 [config contract, the child's name](../architecture/config-and-telemetry-contract.md#the-childs-name-the-parents-record-per-robot).
 
 The code carries only your network name and password: it is the **Wi-Fi-only** code, the right

@@ -20,8 +20,8 @@ dependency from [`../auth.py`](../auth.py); every `/local/*` card proxy goes thr
   account; one robot per account, fails closed).
 - [`console.py`](console.py) — the supervisor-backed console cards: fleet, config, permits,
   preview, telemetry, connection, safety, Be Moxie, today's plan, voice, brain, memory. The
-  fleet view, the raw status and a config answer name a robot's child only to the account that
-  has it; Permit sends a bound robot's child name.
+  fleet view, the raw status and a config answer name a robot's child only to a caller with a
+  token for the account that has it (a filter, not a lock); Permit sends a bound robot's child name.
 - [`content.py`](content.py) — 📦 content packs and ✍️ authoring (validation stays in the supervisor).
 
 ---

@@ -80,9 +80,11 @@ one click:
 - lets it in, with the same permit the **Permit** button sends, so the robot gets your child's
   settings straight away;
 - sends your child's name (the one typed in the Wi-Fi tab), so Moxie says it from the first word.
-  "Moxie Kid" is a placeholder and is never sent: Moxie keeps its default name until you type
+  "Moxie Kid" is a placeholder and is never sent: Moxie says its default name until you type
   one. The live box then says **Moxie calls your child: …**; if it names your child's old name
   with "not sent yet", the reason is beside it ([where the name goes](../architecture/config-and-telemetry-contract.md#the-childs-name-the-parents-record-per-robot)).
+  What a physical Moxie does with the name (`child_pii.nickname`) has not been observed yet:
+  listen for it on the bench.
 
 The robot card then appears: live state, **⚙️ Settings**, **📈 Insights**, **🛡️ Safety**, **🧠 What
 Moxie remembers**, **Wake up**, **Unpair this robot** and **Factory reset**. The card's *Serial* line
