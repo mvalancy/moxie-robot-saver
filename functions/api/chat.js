@@ -26,12 +26,17 @@
  *  - THE REPLY IS CHECKED BEFORE ANY TICKET IS MINTED (`_lib/safety.js`, §4.12). A
  *    completion that trips a Moxie-side block never reaches `output.text`, a ticket or the
  *    context blob: the rule's redirect line is served in its place, marked like an input
- *    block, with no extra upstream call. A hurt child's reply that names no trusted
- *    grown-up gets ONE referral sentence appended, spoken as its own last ticket.
+ *    block, with no extra upstream call; a diagram that trips it is dropped. A hurt child's
+ *    reply that names no trusted grown-up gets ONE referral sentence appended, spoken as
+ *    its own last ticket.
+ *  - A HURT CHILD IS NEVER ANSWERED WITH A CHANGE OF SUBJECT. When a line that discloses
+ *    hurt is blocked, or its reply is swapped, the line spoken instead is a referral
+ *    (`hurtRedirectFor`); so is the line that replaces a completion which had itself
+ *    pointed the child to a grown-up. The self-harm lines already refer and keep precedence.
  */
 import { readConfig, modeOf, publicLimits, publicTurnstile, upstreamHeaders } from "./_lib/env.js";
 import { respond } from "./_lib/envelope.js";
-import { assess, disclosesHurt, MOXIE, withReferral } from "./_lib/safety.js";
+import { assess, disclosesHurt, hasReferral, hurtRedirectFor, MOXIE, withReferral } from "./_lib/safety.js";
 import { admit, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
 import { mintContext, mintTickets, verifyContext } from "./_lib/hmac.js";
 import { TOKEN_FIELD, verify as verifyTurnstile } from "./_lib/turnstile.js";
@@ -113,12 +118,13 @@ export async function onRequestPost(context) {
     if (!history.ok) stats_expiredContext++;
 
     // 6. Pre-inference safety. A hard block never calls the gateway and spends nothing.
-    //    The verdict is kept: a `hurt_disclosure` flag decides at step 9 whether the reply
-    //    must point the child to a grown-up.
+    //    The verdict is kept: a `hurt_disclosure` flag decides what a blocked turn says
+    //    back (a referral, never a change of subject) and, at step 9, whether a served
+    //    reply must point the child to a grown-up.
     const verdict = assess(text);
     if (verdict.blocked) {
       slot.refundBudget();
-      return await blocked(cfg, slot, verdict);
+      return await blocked(cfg, slot, verdict, { text, refer: disclosesHurt(verdict) });
     }
 
     // 7. The bot control, and its POSITION is the design: after every free refusal
@@ -153,13 +159,19 @@ export async function onRequestPost(context) {
 
     // 8c. The output floor (§4.12): her own words, assessed on the Moxie side of the table
     //     BEFORE a ticket is minted or the context is signed. A hard block swaps in the
-    //     rule's redirect line, spoken from tickets of its own, and marks the turn the way
-    //     an input block is marked. The upstream call was really made, so the units stay
-    //     charged. A soft flag changes nothing.
+    //     rule's redirect line — or the referral line, for a child who disclosed hurt
+    //     (step 6's verdict) and for a completion that had itself pointed the child to a
+    //     grown-up — spoken from tickets of its own, and marks the turn the way an input
+    //     block is marked. The upstream call was really made, so the units stay charged.
+    //     A soft flag changes nothing. The diagram is rendered on the page, so it is read
+    //     too: one that trips the table is dropped and the spoken reply kept.
     const own = assess(served.text, MOXIE);
     if (own.blocked) {
-      return await blocked(cfg, slot, own, { speak: true });
+      return await blocked(cfg, slot, own, {
+        speak: true, text, refer: disclosesHurt(verdict) || hasReferral(served.text, text),
+      });
     }
+    if (served.diagram && assess(served.diagram, MOXIE).blocked) served.diagram = "";
 
     // 9. The reply. `served.chosen`, `served.diagram` and `served.text` travel together, so
     //    a re-rolled line never wears the face, or shows the picture, the model chose for
@@ -313,11 +325,16 @@ async function callGateway(cfg, body, timeoutMs) {
  * OUTPUT swap (`speak: true`, `verdict` from Moxie's own reply) mints tickets for the
  * redirect line only — the completion it replaces never reaches a ticket — so the line
  * can be spoken in her voice; the unsafe completion is in no field of the response.
+ *
+ * `refer` (with `text`, the child's line): the child disclosed hurt, or the swapped reply
+ * had itself pointed them to a grown-up, so the line spoken is the referral
+ * (`hurtRedirectFor`), never a change of subject. The self-harm lines already refer and
+ * keep precedence.
  */
 async function blocked(cfg, slot, verdict, o) {
   const messages = [];
   let speech = [];
-  const r = verdict.redirect;
+  const r = o && o.refer && verdict.phraseSet !== "self_harm" ? hurtRedirectFor(o.text) : verdict.redirect;
   if (r) {
     const eid = eventId();
     const markup = MK.mood(r.mood) + MK.gesture(r.gesture) + r.text;

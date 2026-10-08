@@ -22,7 +22,9 @@
  * No journal or review queue: the hosted demo persists nothing, so a `flag` verdict is
  * computed and allowed through (§2.6) — except `hurt_disclosure`, which the route acts
  * on: a reply to a hurt child that names no trusted grown-up gets ONE referral sentence
- * appended (`withReferral`), deterministically, where the model misses about one in ten.
+ * appended (`withReferral`), deterministically, where the model misses about one in ten;
+ * and when such a child's turn is blocked or their reply swapped, the line spoken instead
+ * is a referral (`hurtRedirectFor`), never a change of subject.
  *
  * `assess()` is PURE (no network, no clock), so tests assert the exact verdict. The table
  * is a `.js` data module because the Pages bundler rejects JSON import attributes (see
@@ -265,22 +267,133 @@ export function disclosesHurt(verdict) {
   return !!(verdict && Array.isArray(verdict.flaggedBy) && verdict.flaggedBy.includes(HURT));
 }
 
-/* A referral is ONE SENTENCE that names a grown-up AND points the child to them: an ask
- * ("tell a grown-up"), a check ("does a grown-up know?") or their nearness ("a grown-up
- * near you"). Transcribed from the bake-off's `refersToAdult` (`sim/tools/model_bakeoff.mjs`)
- * so the floor and the instrument that measured the model's 40 of 44 agree on what counts;
- * the two must change together. */
-const ADULT_RE = /\b(grown[- ]?ups?|adults?|teachers?|parents?|mom|mum|mommy|mummy|dad|daddy|nurse|doctor|someone you trust)\b/i;
-const REFER_RE = /\b(tell|told|talk(?:ing)? (?:to|with)|show|ask|find|get|go (?:to|find|get|see|show|tell)|know|knows|call|help|nearby|near you|close by|with you|right away|right now)\b/i;
+/* A referral is ONE SENTENCE that POINTS the child to a trusted grown-up: a direction
+ * ("tell a grown-up you trust", "go find your teacher", "let a grown-up know"), a check
+ * ("does a grown-up know?", "is a parent nearby?") or a nomination ("a grown-up you trust
+ * is the right person", "this needs a grown-up", "a grown-up can help"). An adult merely
+ * NAMED is not one: "I'm so sorry your dad hits you, I know that must feel scary" names
+ * the abuser and points nowhere, and "I know grown-ups say be brave" is co-occurrence.
+ * Nor is the adult the child named as the one hurting them: "tell your dad to stop" after
+ * "my dad hits me" sends the child back to him (`namedAsHurting`); "tell your mom or a
+ * teacher" still counts for the teacher.
+ *
+ * DELIBERATELY STRICTER THAN THE BAKE-OFF'S `refersToAdult` (`sim/tools/model_bakeoff.mjs`),
+ * which credits an adult word and a pointing word in the same sentence. That instrument
+ * was built to compare models; the floor gates what a child hears, so the two now differ
+ * (§4.12 says by how much over the hurt replays on disk). The first version of this file
+ * transcribed the instrument, and a reply that named the abuser passed as a referral. */
+const ADULT = "grown[- ]?ups?|adults?|teachers?|parents?|mom|mum|mommy|mummy|mother|dad|daddy|father|step ?(?:mom|mum|dad|mother|father)|grand(?:ma|pa|mother|father|parents?)|nurse|doctor|counsell?or|police(?: officer)?|(?:someone|somebody|a person|an adult|a grown[- ]?up) (?:you|that you|who you|whom you) trust|someone (?:who|that) (?:loves|takes care of|looks after|cares for) you|trusted (?:adult|grown[- ]?up|person)";
+const DET = "(?:a|an|the|your|some|any|another|one of your|a trusted|your trusted|a different)";
+/** Each form captures exactly two groups: the determiner (may be empty) and the adult. */
+const DIRECT_RE = new RegExp("\\b(?:tell|telling|told|talk(?:ing)?\\s+(?:to|with)|speak(?:ing)?\\s+(?:to|with)|find|finding|go\\s+(?:and\\s+|to\\s+)?(?:find|tell|get|see|talk\\s+to|ask|show|wake)|get|ask|asking|call|calling|show|showing|reach\\s+out\\s+to|let|run\\s+to|wake\\s+up|wake|help\\s+from|(?:show|take|bring|give|say|mention|report)\\s+(?:\\w+\\s+){0,3}?to)\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi");
+/** "…, or a teacher" after a direction: the next adult in the list counts too. */
+const LIST_RE = new RegExp("\\s*,?\\s*(?:or|and)\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "iy");
+const CHECK_RE = new RegExp("\\b(?:does|do|is|are|has|have|can|could|will|would|was|were|did)\\s+(?:there\\s+)?(" + DET + ")?\\s?(" + ADULT + ")\\b[^.!?]*?\\b(?:know|knows|aware|nearby|near\\s+you|close\\s+by|around|there|home|at\\s+home|with\\s+you|help|right\\s+now|you\\s+can\\s+(?:tell|talk\\s+to|go\\s+to))\\b", "gi");
+const NOMINATE_RES = [
+  new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:you|that you|who you)\\s+trust\\s+(?:is|are|can|could|will|would|should|needs?|has|have|must)\\b", "gi"),
+  new RegExp("\\b(?:need|needs|needed|deserve|deserves)\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi"),
+  new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:is|are|would\\s+be|will\\s+be|'s)\\s+the\\s+(?:right|best|safest|perfect|good)\\s+(?:one|person|people|grown[- ]?ups?|adults?)\\b", "gi"),
+  new RegExp("\\b(?:this|that|it)\\s+(?:is|'s)\\s+(?:something|a\\s+job|a\\s+thing|a\\s+problem|a\\s+question)\\s+(?:for\\s+)?(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi"),
+  new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:can|could|should|will|would|needs?\\s+to|has\\s+to|have\\s+to|ought\\s+to|is\\s+able\\s+to|are\\s+able\\s+to|is\\s+there\\s+to|are\\s+there\\s+to)\\s+(?:really\\s+|always\\s+|definitely\\s+)?(?:help|keep\\s+you\\s+safe|make\\s+(?:it|this|him|her|them)\\s+stop|protect\\s+you|sort\\s+(?:this|it)\\s+out|fix\\s+(?:this|it)|take\\s+care\\s+of\\s+(?:this|it|you)|look\\s+after\\s+you|stop\\s+(?:this|it|him|her|them)|make\\s+sure)\\b", "gi"),
+  new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:is|are)\\s+(?:nearby|near\\s+you|close\\s+by|around|with\\s+you|there|home|at\\s+home)\\b", "gi"),
+  new RegExp("\\b(?:is|are)\\s+(?:for|a\\s+job\\s+for)\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi"),
+];
+const FORMS = [DIRECT_RE, CHECK_RE, ...NOMINATE_RES];
+
+/** A family role word onto its canonical role, or `null` for an adult that is never the
+ *  one named ("a grown-up", "someone you trust", "a doctor"). */
+function roleOf(word) {
+  const w = String(word || "").toLowerCase().replace(/\s+/g, " ");
+  if (/^(?:dad|daddy|father|papa)$/.test(w)) return "dad";
+  if (/^(?:mom|mum|mommy|mummy|mother|mama)$/.test(w)) return "mom";
+  if (/^step ?(?:dad|father)$/.test(w)) return "stepdad";
+  if (/^step ?(?:mom|mum|mother)$/.test(w)) return "stepmom";
+  if (/^(?:grandpa|grandad|grandfather)$/.test(w)) return "grandpa";
+  if (/^(?:grandma|granny|nana|grandmother)$/.test(w)) return "grandma";
+  if (/^(?:aunt|auntie|aunty)$/.test(w)) return "aunt";
+  if (/^(?:bro|brother)$/.test(w)) return "brother";
+  if (/^(?:sis|sister)$/.test(w)) return "sister";
+  if (/^neighbou?r$/.test(w)) return "neighbor";
+  if (/^(?:uncle|cousin|teacher|teachers|parent|parents|coach|babysitter|boyfriend|girlfriend)$/.test(w)) return w.replace(/s$/, "");
+  return null;
+}
+
+const ROLE = "dad|daddy|father|papa|mom|mum|mommy|mummy|mother|mama|step ?(?:dad|father|mom|mum|mother)|grandpa|grandad|grandfather|grandma|granny|nana|grandmother|aunt|auntie|aunty|uncle|cousin|brother|bro|sister|sis|neighbou?r|teacher|teachers|parents?|coach|babysitter|boyfriend|girlfriend";
+const HURT_VERB = "hit|hits|hitting|punch\\w*|kick\\w*|slap\\w*|push\\w*|shov\\w*|chok\\w*|strangl\\w*|bit|bites|biting|pinch\\w*|beat\\w*|bull\\w*|hurt\\w*|grab\\w*|burn\\w*|whip\\w*|smack\\w*|spank\\w*|threaten\\w*|threw|throws|throwing|touch\\w*|lock\\w*|said|says|told|tells|asked|asks|wants|wanted|made|makes|showed|shows|sent|sends|comes|came|scares|yell\\w*|scream\\w*|tried|tries|trying";
+/** `my dad hits me` / `daddy hurts me`: the role followed within four words by a hurting
+ *  or grooming verb (not a possessor: "my mom's boyfriend hits me" does not name mom). */
+const NAMED_SUBJECT_RE = new RegExp("\\b(?:(?:my|our)\\s+(?:(?:big|little|older|younger|new|old|step|half|twin|other|mean|angry|drunk)\\s+)?)?(" + ROLE + ")\\b(?!'s)\\s+(?:\\w+\\s+){0,4}?(?:" + HURT_VERB + ")\\b", "gi");
+/** `i am scared of my dad`: the feared person. */
+const NAMED_FEARED_RE = new RegExp("\\b(?:scared|afraid|frightened|terrified)\\s+of\\s+(?:my\\s+|our\\s+)?(?:(?:big|little|older|younger|new|old|step)\\s+)?(" + ROLE + ")\\b(?!'s)", "gi");
+
+/** The canonical roles the child's line names as the one hurting or frightening them. */
+export function namedAsHurting(childText) {
+  const out = new Set();
+  const t = normalize(childText);
+  for (const re of [NAMED_SUBJECT_RE, NAMED_FEARED_RE]) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(t))) {
+      const r = roleOf(m[1]);
+      if (r) out.add(r);
+    }
+  }
+  return out;
+}
+
+/** Whether a matched adult is the one the child named, so the sentence sends them back:
+ *  "your dad", "the teacher" or a bare "mom" of a named role; "a teacher" is another. */
+function sendsBack(det, adult, named) {
+  const role = roleOf(adult);
+  if (!role || !named.has(role)) return false;
+  return !det || /^(?:your|the|one of your)$/i.test(det);
+}
 
 /** Sentences, split the way the bake-off splits them. */
 function sentencesOf(text) {
   return String(text || "").split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
 }
 
-/** Whether some sentence of `reply` points the child to a trusted grown-up. */
-export function hasReferral(reply) {
-  return sentencesOf(reply).some((s) => ADULT_RE.test(s) && REFER_RE.test(s));
+function pointsToAdult(sentence, named) {
+  for (const re of FORMS) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(sentence))) {
+      if (!sendsBack(m[1], m[2], named)) return true;
+      if (re !== DIRECT_RE) continue;
+      // "tell your mom or a teacher": the next adult in the list.
+      LIST_RE.lastIndex = m.index + m[0].length;
+      let l;
+      while ((l = LIST_RE.exec(sentence))) {
+        if (!sendsBack(l[1], l[2], named)) return true;
+        LIST_RE.lastIndex = l.index + l[0].length;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether some sentence of `reply` points the child to a trusted grown-up.
+ *
+ * @param {string} reply what Moxie is about to say
+ * @param {string} [childText] the child's line, so an adult it names as the one hurting
+ *   them is not credited as the referral.
+ */
+export function hasReferral(reply, childText) {
+  const named = namedAsHurting(childText);
+  return sentencesOf(reply).some((s) => pointsToAdult(s, named));
+}
+
+/**
+ * What a BLOCKED turn says to a child who has disclosed hurt, or whose swapped reply had
+ * itself pointed them to a grown-up: the referral-bearing line (`phrases.hurt`), never a
+ * change of subject. Picked like `redirectFor`, by the child's line length.
+ *
+ * @returns {{text: string, mood: number, gesture: string, phraseId: number}|null}
+ */
+export function hurtRedirectFor(childText) {
+  return redirectFor("hurt", childText);
 }
 
 /**
@@ -307,7 +420,7 @@ export function referralFor(childText) {
  */
 export function withReferral(reply, childText) {
   const line = String(reply || "").trim();
-  if (!line || hasReferral(line)) return { text: line, appended: false, phraseId: 0 };
+  if (!line || hasReferral(line, childText)) return { text: line, appended: false, phraseId: 0 };
   const r = referralFor(childText);
   if (!r || !r.text) return { text: line, appended: false, phraseId: 0 };
   // A line that ends mid-thought still gets a sentence boundary before the referral.

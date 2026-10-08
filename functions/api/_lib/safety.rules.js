@@ -48,8 +48,9 @@ export const RULES = Object.freeze({
     "therefore no parent review queue to record it in (§2.6: 'with no record kept'). The one",
     "flag the route acts on is `hurt_disclosure`: a child's line that discloses a person",
     "hurting, frightening or endangering them, after which a reply with no trusted-grown-up",
-    "referral gets ONE appended (`phrases.referral`, §4.12). `allow` skips the category on",
-    "that side.",
+    "referral gets ONE appended (`phrases.referral`, §4.12), and a blocked or swapped turn",
+    "speaks the `phrases.hurt` line instead of a change of subject. `allow` skips the",
+    "category on that side.",
     "",
     "Each category has:",
     "  id          - the category name, matching the Python table so the two can be compared",
@@ -63,9 +64,11 @@ export const RULES = Object.freeze({
     "  phrases     - regular expressions, matched on the same normalized text",
     "  allow       - false-positive guards: these spans are REMOVED before this category is",
     "                matched, so 'killing myself laughing' never counts as self-harm",
-    "  allow_moxie - guards applied on HER side only. A refusal that quotes the request ('I",
-    "                can't tell you how to make a sword') is the right reply, not a swap; a",
-    "                child saying 'I don't know how to make a sword' is still asking.",
+    "  allow_moxie - guards applied on HER side only: a refusal that quotes the request ('I",
+    "                can't tell you how to make a sword'), a warning ('never drink bleach'),",
+    "                a question ('did you drink bleach?') or advice that quotes a groomer ('if",
+    "                someone says don't tell your mom') is the right reply, not a swap; a child",
+    "                saying 'I don't know how to make a sword' is still asking.",
     "",
     "Order matters: the first blocking category in this list picks the spoken redirect."
   ],
@@ -125,16 +128,26 @@ export const RULES = Object.freeze({
         "\\b(?:bring|take|sneak)\\s+(?:a|my|the)\\s+(?:gun|knife|weapon|bomb)\\s+to\\s+(?:school|class)\\b",
         "\\bschool\\s+shoot(?:ing|er)\\b",
         "\\bhow\\s+(?:do i|to)\\s+(?:mix|make)\\s+(?:bleach|chlorine)\\s+(?:and|with)\\s+ammonia\\b",
-        "\\bhow\\s+(?:do (?:i|you|we)|to|can (?:i|you|we)|could (?:i|you|we)|would (?:i|you))\\s+\\w{0,12}\\s?(?:make|build|forge|craft|get|buy|find|sharpen)\\s+(?:a|an|the|my|some|your)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper|big|long|home ?made)?\\s?(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|throwing stars?|ninja stars?|nunchucks?|brass knuckles)\\b",
+        "\\bhow\\s+(?:do (?:i|you|we)|to|can (?:i|you|we)|could (?:i|you|we)|would (?:i|you))\\s+\\w{0,12}\\s?(?:make|build|forge|get|buy|find|sharpen)\\s+(?:a|an|the|my|some|your|my own|your own|our own)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper|big|long|home ?made)?\\s?(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|throwing stars?|ninja stars?|nunchucks?|brass knuckles)\\b",
+        "\\bhow\\s+(?:do (?:i|you|we)|to|can (?:i|you|we)|could (?:i|you|we)|would (?:i|you))\\s+\\w{0,12}\\s?craft\\s+(?:a|an|the|my|some|your|my own)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper)\\s+(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|throwing stars?|ninja stars?|nunchucks?|brass knuckles)\\b",
+        "\\b(?:help\\s+me|teach\\s+me\\s+to|show\\s+me\\s+how\\s+to)\\s+(?:make|build|forge|get|buy|find)\\s+(?:a|an|the|my|some|your|my own)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper|big|long|home ?made)?\\s?(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|throwing stars?|ninja stars?|nunchucks?|brass knuckles)\\b",
+        "\\bi\\s+(?:want|wanna|need|would like|'d like)\\s+to\\s+(?:make|build|forge|get|buy|find)\\s+(?:a|an|the|my|some|my own)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper)\\s+(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|throwing stars?|ninja stars?|nunchucks?|brass knuckles)\\b",
         "\\bwhere\\s+(?:do|can|could|should)\\s+(?:i|you|we)\\s+(?:get|buy|find)\\s+(?:a|an|the|my|some)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper)\\s+(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|knife|knives|guns?)\\b",
         "\\b(?:let'?s|we can|we could|we should|you can|you could|you should|i can|i could|i'?ll|i will|i love|how about|what about)\\s+(?:\\w+\\s+){0,2}?(?:make|build|forge|craft|get|buy|find|making|building|forging|crafting|getting|buying)\\s+(?:a|an|the|my|your|some|one)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper)\\s+(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|knife|knives|guns?|bombs?|weapons?|explosives?)\\b",
         "\\b(?:making|building|forging|crafting|getting|buying)\\s+(?:a|an|the|my|your|some)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper)\\s+(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|knife|knives|guns?|bombs?|weapons?|explosives?)\\s+(?:at home|together|ourselves|yourself|myself|by yourself)\\b"
       ],
       "allow": [
-        "\\b(?:toy|paper|cardboard|foam|wooden|wood|plastic|rubber|pretend|play|nerf|lego|diamond|netherite|stone|gold|golden|pixel|minecraft|roblox|fortnite|zelda|terraria|cosplay|costume|halloween|balloon|pool noodle|inflatable|bubble|light ?saber|lightsaber)\\s+(?:swords?|axes?|hatchets?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?)\\b",
         "\\b(?:swords?|axes?|hatchets?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?)\\s+(?:in|on|for|from)\\s+(?:minecraft|roblox|fortnite|zelda|terraria|skyrim|pokemon|lego|the game|a game|my game|this game|that game|a video game|the video game|video games|my video game)\\b",
+        "\\b(?:swords?|axes?|hatchets?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?)\\s+(?:out of|made of|made from|from|with|using)\\s+(?:a\\s+|an\\s+|some\\s+|the\\s+|old\\s+)?(?:cardboard|paper|foam|wood|wooden|sticks?|twigs?|branches?|pool noodles?|balloons?|lego|legos|duct tape|tape|plastic|tin ?foil|aluminum foil|aluminium foil|pipe cleaners?|popsicle sticks?|craft sticks?|clay|play-?doh|playdough|straws?|paper towel rolls?|toilet paper rolls?|rulers?|pencils?|boxes|a box|snow|ice|sand|pillows?|blankets?|yarn|string|rubber bands?|newspaper)\\b",
+        "\\b(?:swords?|axes?|spears?|daggers?|arrows?|blades?)\\s+(?:costumes?|cakes?|cookies?|drawings?|pictures?|crafts?|toys?|shaped|shape|balloons?|pinata|dance|dancing|game|games|emoji|sticker|stickers)\\b",
+        "\\b(?:swords?|axes?|spears?|daggers?|arrows?)\\s+for\\s+(?:my|the|a|our|his|her)\\s+(?:costume|play|show|halloween|party|dress-?up|cosplay|game|drawing|cake)\\b",
         "\\b(?:bow and arrow|bows and arrows)\\s+(?:set|game|craft|toy|lesson|lessons|class|club)\\b",
-        "\\bswordfish\\b"
+        "\\bblades?\\s+of\\s+grass\\b",
+        "\\b(?:grass|skate|ice skate|fan|blender|mower|lawn ?mower|propeller|rotor|wiper|windshield wiper|razor|saw|scissor|turbine|helicopter|windmill|roller|rollerblade|hockey|figure skate)\\s+blades?\\b",
+        "\\bblades?\\s+(?:on|of|for|in)\\s+(?:my|the|his|her|your|their|our|a)\\s+(?:\\w+\\s+)?(?:skates?|rollerblades?|fan|fans|blender|mower|lawn ?mower|propeller|windmill|helicopter|turbine|scissors|razor|saw|grass|ceiling fan)\\b",
+        "\\bblow\\s+up\\s+(?:the|some|a|an|your|our|all the|these|those|my|more)?\\s?(?:\\w+\\s+)?(?:balloons?|floaties?|floats?|pool|air mattress|air bed|inflatables?|tires?|tyres?|beach balls?|bouncy castle|bounce house|ball|balls)\\b",
+        "\\bshoot\\s+(?:the|a|an|some|your|my|our|that|this|another|more)?\\s?(?:\\w+\\s+)?(?:ball|balls|hoops?|baskets?|photos?|pictures?|pics?|videos?|movies?|arrows?|goals?|puck|free throws?|rockets?|marbles?|confetti|bubbles|water|three pointers?|for the stars|for the moon)\\b",
+        "\\bshoot\\s+(?:you|him|her|them|me|us)\\s+(?:a|an|some|another)\\s+(?:\\w+\\s+)?(?:smile|grin|look|wink|text|message|email|note|thumbs up|high five|question|idea|picture|photo)\\b"
       ],
       "allow_moxie": [
         "\\b(?:don'?t|do not|can'?t|cannot|can not|won'?t|will not|shouldn'?t|should not|never|not|unable to|not able to|not allowed to|not going to)\\s+(?:\\w+\\s+){0,3}?(?:know|tell|explain|teach|help|show|remember|say|share|describe|talk about|give|go into)(?:\\s+(?:you|anyone|a child|kids|children))?(?:\\s+with)?[:,]?\\s+(?:about\\s+)?(?:how|where)\\b"
@@ -150,7 +163,7 @@ export const RULES = Object.freeze({
       "intents": [
         "sexual_request"
       ],
-      "phrase_set": "generic",
+      "phrase_set": "sexual",
       "words": [
         "porn",
         "pornhub",
@@ -221,7 +234,9 @@ export const RULES = Object.freeze({
         "\\b(?:black|white|asian|jewish|muslim|mexican|gay|trans)\\s+people\\s+(?:are|should)\\s+(?:all\\s+)?(?:stupid|dirty|die|leave|evil)\\b"
       ],
       "allow": [
-        "\\bflag\\s+football\\b"
+        "\\bflag\\s+football\\b",
+        "\\bspic\\s+and\\s+span\\b",
+        "\\bchink\\s+in\\s+(?:its|the|his|her|their|my|your|our)\\s+armou?r\\b"
       ]
     },
     {
@@ -251,7 +266,12 @@ export const RULES = Object.freeze({
       ],
       "allow": [
         "\\bmy\\s+address\\s+is\\s+a\\s+secret\\b",
-        "\\bwhere\\s+do\\s+you\\s+live\\s+in\\s+(?:the\\s+)?(?:story|game|book|lab)\\b"
+        "\\bwhere\\s+do\\s+you\\s+live\\s+in\\s+(?:the\\s+)?(?:story|game|book|lab)\\b",
+        "\\bwhat(?:'s| is)\\s+your\\s+school\\s+(?:like|day\\s+like)\\b",
+        "\\byour\\s+school'?s\\s+(?:mascot|playground|team|teams|colou?rs?|library|gym|lunch|lunches|cafeteria|teachers?|motto|song|uniform|rules|day|year|play|band|choir|field|yard|bus|garden|library)\\b"
+      ],
+      "allow_moxie": [
+        "\\b(?:says?|said|saying|tells?|told|telling|asks?|asked|whispers?|whispered|if\\s+(?:someone|anyone|somebody|a\\s+grown-?up|an\\s+adult|a\\s+person|a\\s+stranger|they|he|she)\\s+(?:ever\\s+)?(?:says?|tells?|asks?))\\s*[,:]?\\s*(?:\")?(?:don'?t|do\\s+not|never|not\\s+to)\\s+tell\\s+(?:your\\s+)?(?:mom|dad|mum|parents|grown-?ups?)\\b"
       ]
     },
     {
@@ -274,8 +294,11 @@ export const RULES = Object.freeze({
         "\\b(?:drink|swallow|eat)\\s+(?:bleach|detergent|poison)\\b",
         "\\bplay\\s+(?:on|in)\\s+the\\s+(?:train\\s+tracks|highway)\\b"
       ],
-      "allow": [
-        "\\b(?:never|don'?t|do not|not|shouldn'?t|should not|must not|mustn'?t|can'?t|cannot)\\s+(?:ever\\s+)?(?:drink|swallow|eat|play)\\b"
+      "allow": [],
+      "allow_moxie": [
+        "\\b(?:never|don'?t|do not|not|shouldn'?t|should not|must not|mustn'?t|can'?t|cannot)\\s+(?:ever\\s+)?(?:drink|swallow|eat|play)\\b",
+        "\\b(?:did|didn'?t|have|has|had|do|does)\\s+(?:you|he|she|they|someone|anyone|somebody|your\\s+\\w+)\\s+(?:\\w+\\s+)?(?:drink|swallow|eat|drank|drunk|swallowed|eaten|ate)\\b",
+        "\\b(?:if|when|in\\s+case)\\s+(?:you|someone|anyone|somebody|a\\s+kid|a\\s+child|he|she|they|your\\s+\\w+)\\s+(?:ever\\s+)?(?:accidentally\\s+)?(?:drinks?|swallows?|eats?|drank|swallowed|ate)\\b"
       ]
     },
     {
@@ -323,7 +346,9 @@ export const RULES = Object.freeze({
       "phrases": [],
       "allow": [
         "\\bshit ?ake\\b",
-        "\\bdick\\s+(?:van|cheney|clark)\\b"
+        "\\bdick\\s+(?:van|cheney|clark|whittington)\\b",
+        "\\bmoby\\s+dick\\b",
+        "\\bpussy\\s+(?:willows?|cats?)\\b"
       ]
     },
     {
@@ -331,14 +356,22 @@ export const RULES = Object.freeze({
       "label": "A child says a person is hurting, frightening or endangering them",
       "_note": [
         "FLAG ONLY, CHILD SIDE ONLY, and the one flag the route acts on (§4.12): the reply to",
-        "such a line must point the child to a grown-up they trust, and if the model's reply",
-        "does not, ONE referral sentence from `phrases.referral` is appended to it. Shapes: a",
-        "person (never an object or a pet) hitting/pushing/bullying/touching THEM; fear OF a",
-        "person; a stranger following, grabbing, knocking or asking them to come along or keep",
-        "quiet; an adult asking them to keep a secret from their grown-ups. NOT an accident, an",
+        "such a line must point the child to a grown-up they trust. If the model's reply does",
+        "not, ONE referral sentence from `phrases.referral` is appended to it; if the turn is",
+        "blocked or the reply swapped, the `phrases.hurt` line is spoken instead of a change of",
+        "subject. Shapes: a person (never an object or a pet) hitting/pushing/bullying/touching",
+        "THEM, including bare 'mommy'/'daddy'/'mom'/'dad'; fear OF a person; not feeling safe",
+        "at home or being scared to go home; a stranger following, grabbing, knocking, or",
+        "asking them to come along or get in a car; a known adult asking them to keep a secret,",
+        "not tell ('your mom' quoted as the adult said it, 'not allowed to tell'), undress,",
+        "touch or send a picture; 'it's our little secret'; being bullied or called names;",
+        "someone coming into their room at night when it scares them. NOT an accident, an",
         "illness, a sad story or hurt feelings: those stay the model's call, so she does not",
         "sound alarmed at ordinary life. Guards remove play (a pillow fight, the swing, a board",
-        "game) and safety advice ('don't tell strangers your address') before matching."
+        "game), a surprise kept secret, and safety advice ('don't tell strangers your address')",
+        "before matching. The deliberate over-reach: 'my mom said it's our little secret' flags",
+        "too — the phrase cannot tell a present from grooming, and a referral costs less than",
+        "a miss."
       ],
       "action": {
         "child": "flag",
@@ -350,14 +383,21 @@ export const RULES = Object.freeze({
       "phrase_set": "referral",
       "words": [],
       "phrases": [
-        "\\b(?:someone|somebody|some kids?|kids|boys|girls|people|everyone|everybody|he|she|they|(?:a|the|this|that|some|an)\\s+(?:\\w+\\s+)?(?:kid|kids|boy|boys|girl|girls|man|woman|guy|guys|lady|stranger|strangers|teacher|coach|bully|bullies|neighbou?rs?|babysitter)|(?:my|our)\\s+(?:\\w+'?s?\\s+)?(?:brother|brothers|sister|sisters|bro|sis|dad|daddy|father|mom|mum|mommy|mummy|mother|parents?|uncle|aunt|auntie|aunty|cousins?|grandpa|grandma|grandad|granny|nana|teacher|coach|friends?|neighbou?rs?|babysitter|classmates?|bully|bullies|stepdad|stepmom|stepfather|stepmother|boyfriend|girlfriend))\\s+(?:\\w+\\s+){0,3}?(?:hit|hits|hitting|punch(?:ed|es|ing)?|kick(?:ed|s|ing)?|slap(?:ped|s|ping)?|push(?:ed|es|ing)?|shov(?:ed|es|ing)|chok(?:ed|es|ing)|strangl(?:ed|es|ing)|bit|bites|biting|pinch(?:ed|es|ing)?|beat|beats|beating|bull(?:y|ies|ied|ying)|hurt|hurts|hurting|grab(?:bed|s|bing)|burn(?:ed|s|t|ing)?|whip(?:ped|s|ping)?|smack(?:ed|s|ing)?|spank(?:ed|s|ing)?|threaten(?:ed|s|ing)?|threw|throws|throwing|touch(?:ed|es|ing)?)\\s+(?:(?:\\w+\\s+){0,2}?at\\s+me|me|my\\s+(?:\\w+\\s+)?(?:arms?|legs?|head|face|hair|hands?|back|body|stomach|tummy|belly|neck|ears?|eyes?|nose|mouth|lips?|elbows?|knees?|privates?|private\\s+parts?))\\b",
-        "\\bi(?:'m| am)\\s+(?:so |really |very |kind of |kinda )?(?:scared|afraid|frightened|terrified)\\s+of\\s+(?:him|her|them|(?:my|our)\\s+(?:\\w+'?s?\\s+)?(?:brother|sister|dad|daddy|father|mom|mum|mommy|mummy|mother|parents?|uncle|aunt|auntie|aunty|cousin|grandpa|grandma|stepdad|stepmom|stepfather|stepmother|teacher|coach|neighbou?r|babysitter|boyfriend|girlfriend)|(?:a|the|this|that)\\s+(?:\\w+\\s+)?(?:man|lady|woman|guy|kid|kids|boy|boys|girl|girls|stranger|bully|bullies|teacher|coach|neighbou?r|people))\\b",
+        "\\b(?:someone|somebody|some kids?|kids|boys|girls|people|everyone|everybody|he|she|they|mommy|mummy|mama|daddy|papa|mom|mum|dad|(?:a|the|this|that|some|an)\\s+(?:\\w+\\s+)?(?:kid|kids|boy|boys|girl|girls|man|woman|guy|guys|lady|stranger|strangers|teacher|coach|bully|bullies|neighbou?rs?|babysitter)|(?:my|our)\\s+(?:\\w+'?s?\\s+)?(?:brother|brothers|sister|sisters|bro|sis|dad|daddy|father|mom|mum|mommy|mummy|mother|parents?|uncle|aunt|auntie|aunty|cousins?|grandpa|grandma|grandad|granny|nana|teacher|coach|friends?|neighbou?rs?|babysitter|classmates?|bully|bullies|stepdad|stepmom|stepfather|stepmother|boyfriend|girlfriend))\\s+(?:\\w+\\s+){0,3}?(?:hit|hits|hitting|punch(?:ed|es|ing)?|kick(?:ed|s|ing)?|slap(?:ped|s|ping)?|push(?:ed|es|ing)?|shov(?:ed|es|ing)|chok(?:ed|es|ing)|strangl(?:ed|es|ing)|bit|bites|biting|pinch(?:ed|es|ing)?|beat|beats|beating|bull(?:y|ies|ied|ying)|hurt|hurts|hurting|grab(?:bed|s|bing)|burn(?:ed|s|t|ing)?|whip(?:ped|s|ping)?|smack(?:ed|s|ing)?|spank(?:ed|s|ing)?|threaten(?:ed|s|ing)?|threw|throws|throwing|touch(?:ed|es|ing)?|took|takes|taking|pull(?:ed|s|ing)?)\\s+(?:(?:\\w+\\s+){0,2}?at\\s+me|me|my\\s+(?:\\w+\\s+)?(?:arms?|legs?|head|face|hair|hands?|back|body|stomach|tummy|belly|neck|ears?|eyes?|nose|mouth|lips?|elbows?|knees?|privates?|private\\s+parts?)|(?:off|down)\\s+my\\s+(?:clothes|pants|underwear|undies|trousers))\\b",
+        "\\bi(?:'m| am)\\s+(?:so |really |very |kind of |kinda )?(?:scared|afraid|frightened|terrified)\\s+of\\s+(?:him|her|them|mommy|mummy|daddy|mom|mum|dad|(?:my|our)\\s+(?:\\w+'?s?\\s+)?(?:brother|sister|dad|daddy|father|mom|mum|mommy|mummy|mother|parents?|uncle|aunt|auntie|aunty|cousin|grandpa|grandma|stepdad|stepmom|stepfather|stepmother|teacher|coach|neighbou?r|babysitter|boyfriend|girlfriend)|(?:a|the|this|that)\\s+(?:\\w+\\s+)?(?:man|lady|woman|guy|kid|kids|boy|boys|girl|girls|stranger|bully|bullies|teacher|coach|neighbou?r|people))\\b",
+        "\\bi\\s+(?:don'?t|do not|never|just don'?t)\\s+feel\\s+safe\\s+(?:at\\s+home|at\\s+school|here|there|anymore|any more|at\\s+(?:my|his|her|their)\\s+(?:house|place|home)|with\\s+(?:him|her|them|my\\s+(?:\\w+\\s+)?\\w+))\\b",
+        "\\bi(?:'m| am)\\s+(?:so |really |too |very )?(?:scared|afraid|frightened|terrified)\\s+to\\s+go\\s+(?:home|back home|back there|back to (?:his|her|their) (?:house|place))\\b",
         "\\b(?:(?:a|the|some|this|that)\\s+(?:\\w+\\s+)?(?:stranger|man|lady|woman|guy|grown-?up|adult|person|people)|strangers?|someone|somebody)\\s+(?:\\w+\\s+){0,4}?(?:is |was |keeps |kept |started )?(?:follow(?:ed|s|ing)|chas(?:ed|es|ing)|grab(?:bed|s|bing)|touch(?:ed|es|ing))\\s+me\\b",
-        "\\b(?:stranger|strangers|man|lady|woman|guy|grown-?up|adult|someone|somebody|he|she|they|uncle|aunt|cousin|neighbou?r|coach|babysitter|boyfriend|girlfriend)\\s+(?:\\w+\\s+){0,4}?(?:told|tells|asked|asks|wants|wanted|tried|trying|made|makes)\\s+me\\s+to\\s+(?:come\\s+(?:to|with|into|inside|over to)\\s+(?:him|her|them|his|her|their|the)\\b|get\\s+in(?:to)?\\s+(?:his|her|their|the|a)\\s+(?:car|van|truck)|keep\\s+(?:it\\s+|this\\s+|that\\s+)?(?:a\\s+|our\\s+)?secret|not\\s+tell|never\\s+tell|take\\s+off|show\\s+(?:him|her|them)\\s+my|touch|send\\s+(?:him|her|them)\\s+(?:a\\s+|my\\s+)?(?:picture|photo|pic))\\b",
+        "\\b(?:(?:a|the|some|this|that)\\s+(?:\\w+\\s+)?(?:stranger|man|lady|woman|guy|grown-?up|adult|person|people|men)|strangers?|someone|somebody)\\s+(?:\\w+\\s+){0,4}?(?:told|tells|asked|asks|wants|wanted|tried|trying|made|makes|said)\\s+(?:me\\s+)?(?:to\\s+)?(?:come\\s+(?:to|with|into|inside|over to|in)\\s+(?:him|her|them|his|her|their|the)?\\b|go\\s+with\\s+(?:him|her|them)|get\\s+in(?:to)?(?:\\s+(?:his|her|their|the|a)\\s+(?:car|van|truck))?\\b|keep\\s+(?:it\\s+|this\\s+|that\\s+)?(?:a\\s+|our\\s+)?secret|not\\s+(?:to\\s+)?tell|never\\s+tell|take\\s+off|show\\s+(?:him|her|them)\\s+my|touch\\s+(?:him|her|them|his|her|their|me|myself|my)|kiss\\s+(?:him|her|them|me)|send\\s+(?:him|her|them\\s+)?(?:a\\s+|my\\s+|some\\s+)?(?:picture|photo|pic|pics|photos|pictures|nudes?|naked)|undress|get\\s+naked|take\\s+my\\s+clothes\\s+off|follow\\s+(?:him|her|them))\\b",
+        "\\b(?:he|she|they|uncle|aunt|auntie|cousin|neighbou?r|coach|babysitter|boyfriend|girlfriend|teacher|mommy|mummy|daddy|mom|mum|dad|(?:my|our)\\s+(?:\\w+'?s?\\s+)?(?:brother|sister|dad|daddy|father|mom|mum|mommy|mummy|mother|parents?|uncle|aunt|auntie|aunty|cousin|grandpa|grandma|stepdad|stepmom|stepfather|stepmother|teacher|coach|neighbou?r|babysitter|boyfriend|girlfriend|friend))\\s+(?:\\w+\\s+){0,4}?(?:told|tells|asked|asks|wants|wanted|tried|trying|made|makes|making|said)\\s+(?:me\\s+)?(?:to\\s+)?(?:keep\\s+(?:it\\s+|this\\s+|that\\s+)?(?:a\\s+|our\\s+)?secret|not\\s+(?:to\\s+)?tell|never\\s+tell|take\\s+off|show\\s+(?:him|her|them)\\s+my|touch\\s+(?:him|her|them|his|her|their|myself|my\\s+(?:\\w+\\s+)?(?:privates?|private\\s+parts?|body|bottom|butt|chest|legs?))|kiss\\s+(?:him|her|them)|send\\s+(?:him|her|them\\s+)?(?:a\\s+|my\\s+|some\\s+)?(?:picture|photo|pic|pics|photos|pictures|nudes?|naked)|undress|get\\s+naked|take\\s+my\\s+clothes\\s+off)\\b",
+        "\\b(?:he|she|they|mommy|mummy|daddy|mom|mum|dad|(?:a|the|this|that)\\s+(?:\\w+\\s+)?(?:man|woman|guy|lady|stranger|kid|boy|girl|teacher|coach|babysitter|neighbou?r)|(?:my|our)\\s+(?:\\w+'?s?\\s+)?(?:brother|sister|dad|daddy|father|mom|mum|mommy|mummy|mother|uncle|aunt|auntie|aunty|cousin|grandpa|grandma|stepdad|stepmom|stepfather|stepmother|teacher|coach|neighbou?r|babysitter|boyfriend|girlfriend|friend))\\s+(?:\\w+\\s+){0,4}?(?:wants?|wanted|tried|tries|trying|keeps? trying|is trying)\\s+to\\s+(?:have\\s+sex\\s+with\\s+me|make\\s+out\\s+with\\s+me|kiss\\s+me|touch\\s+(?:me|my)|undress\\s+me|see\\s+me\\s+naked|take\\s+my\\s+clothes\\s+off|get\\s+in(?:to)?\\s+(?:my\\s+)?bed\\s+with\\s+me)\\b",
+        "\\b(?:he|she|they|mommy|mummy|daddy|mom|mum|dad|(?:a|the|this|that)\\s+(?:\\w+\\s+)?(?:man|woman|guy|lady|stranger|kid|boy|girl|teacher|coach|babysitter|neighbou?r)|(?:my|our)\\s+(?:\\w+'?s?\\s+)?(?:brother|sister|dad|daddy|father|mom|mum|mommy|mummy|mother|uncle|aunt|auntie|aunty|cousin|grandpa|grandma|stepdad|stepmom|stepfather|stepmother|teacher|coach|neighbou?r|babysitter|boyfriend|girlfriend|friend))\\s+(?:\\w+\\s+){0,4}?(?:showed|shows|showing|sent|sends)\\s+me\\s+(?:\\w+\\s+){0,2}?(?:porn|nudes?|naked\\s+(?:pictures?|photos?|people|videos?)|(?:his|her|their)\\s+(?:penis|privates?|private\\s+parts?|boobs|vagina))\\b",
         "^(?=[\\s\\S]*\\b(?:scared|afraid|frightened|alone|by myself|hiding)\\b)[\\s\\S]*\\b(?:stranger|strangers|someone|somebody|a man|a lady|a guy|people)\\s+(?:\\w+\\s+){0,3}?(?:is |was |keeps |kept |are |were )?(?:knocking|banging|trying to (?:get|come|break) in|outside (?:my|the|our) (?:door|house|window)|at (?:my|the|our) door)\\b",
-        "\\b(?:said|says|told|tells|asked|asks|wants|wanted|made|makes)\\s+(?:me\\s+)?(?:\\w+\\s+){0,6}?(?:keep\\s+(?:it\\s+|this\\s+|that\\s+)?(?:a\\s+|our\\s+)?secret\\s+from\\s+(?:my\\s+|our\\s+)?(?:mom|mum|mommy|mummy|dad|daddy|parents|grown-?ups?|family|teacher|everyone|anyone)|(?:not|never|don'?t|can'?t|shouldn'?t)\\s+(?:to\\s+)?tell\\s+(?:my\\s+|our\\s+)?(?:mom|mum|mommy|mummy|dad|daddy|parents|grown-?ups?|family|teacher|anyone|anybody))\\b",
-        "\\b(?:i(?:'m| am| get| got| was| keep getting)\\s+(?:being\\s+)?bullied|bull(?:y|ies|ying)\\s+me|bullied\\s+me)\\b",
-        "\\b(?:he|she|they|someone|somebody|(?:a|the|this|that)\\s+(?:\\w+\\s+)?(?:man|woman|guy|lady|stranger|teacher|coach|babysitter|neighbou?r)|(?:my|our)\\s+(?:\\w+'?s?\\s+)?(?:brother|sister|dad|daddy|father|mom|mum|mommy|mummy|mother|parents?|uncle|aunt|auntie|aunty|cousin|grandpa|grandma|stepdad|stepmom|stepfather|stepmother|teacher|coach|neighbou?r|babysitter|boyfriend|girlfriend))\\s+(?:\\w+\\s+){0,3}?lock(?:ed|s|ing)?\\s+me\\s+(?:in|up)\\b"
+        "^(?=[\\s\\S]*\\b(?:scared|scares me|scary|afraid|frightened|don'?t like it|hate it|creepy|weird)\\b)[\\s\\S]*\\b(?:comes?|came|coming|sneaks?|sneaked|snuck)\\s+(?:in|into)\\s+my\\s+(?:room|bedroom|bed)\\s+(?:at\\s+night|when\\s+(?:i'?m|i am)\\s+(?:asleep|sleeping|alone)|late)\\b",
+        "\\b(?:said|says|told|tells|asked|asks|wants|wanted|made|makes|whispered)\\s+(?:me\\s+)?(?:\\w+\\s+){0,6}?(?:keep\\s+(?:it\\s+|this\\s+|that\\s+)?(?:a\\s+|our\\s+)?(?:little\\s+|special\\s+|big\\s+)?secret\\s+from\\s+(?:my\\s+|our\\s+|your\\s+)?(?:mom|mum|mommy|mummy|dad|daddy|parents|grown-?ups?|family|teacher|everyone|anyone|anybody)|(?:not|never|don'?t|can'?t|shouldn'?t|mustn'?t|(?:am\\s+|i'?m\\s+|was\\s+|is\\s+|are\\s+|you'?re\\s+)?not\\s+allowed\\s+to|not\\s+supposed\\s+to)\\s+(?:to\\s+)?(?:ever\\s+)?tell\\s+(?:my\\s+|our\\s+|your\\s+)?(?:mom|mum|mommy|mummy|dad|daddy|parents|grown-?ups?|family|teacher|anyone|anybody))\\b",
+        "\\b(?:said|says|told|tells|whispered|whispers)\\s+(?:me\\s+)?(?:that\\s+)?(?:it(?:'s| is| was)|this is|that is|that's|to keep it|keep it)\\s+(?:our|a|his|her|their)\\s+(?:little\\s+|special\\s+|big\\s+)?secret\\b",
+        "\\b(?:i(?:'m| am| get| got| was| keep getting)\\s+(?:being\\s+)?bullied|bull(?:y|ies|ying)\\s+me|bullied\\s+me|call(?:s|ed|ing)?\\s+me\\s+(?:\\w+\\s+)?names)\\b",
+        "\\b(?:he|she|they|someone|somebody|mommy|mummy|daddy|mom|mum|dad|(?:a|the|this|that)\\s+(?:\\w+\\s+)?(?:man|woman|guy|lady|stranger|teacher|coach|babysitter|neighbou?r)|(?:my|our)\\s+(?:\\w+'?s?\\s+)?(?:brother|sister|dad|daddy|father|mom|mum|mommy|mummy|mother|parents?|uncle|aunt|auntie|aunty|cousin|grandpa|grandma|stepdad|stepmom|stepfather|stepmother|teacher|coach|neighbou?r|babysitter|boyfriend|girlfriend))\\s+(?:\\w+\\s+){0,3}?lock(?:ed|s|ing)?\\s+me\\s+(?:in|up)\\b"
       ],
       "allow": [
         "\\bpush(?:ed|es|ing)?\\s+me\\s+(?:on|in|around in|down)\\s+(?:the\\s+|a\\s+|my\\s+)?(?:swing|swings|cart|shopping cart|wheelbarrow|stroller|wagon|sled|sledge|tube|slide)\\b",
@@ -366,7 +406,11 @@ export const RULES = Object.freeze({
         "\\bbeat(?:s|ing)?\\s+me\\s+(?:at|in)\\s+(?!a fight|the fight)",
         "\\b(?:threw|throws|throwing)\\s+(?:a|the|some)\\s+(?:ball|balls|snowball|snowballs|pillow|pillows|frisbee|beanbag|bean bag)\\s+(?:at|to)\\s+me\\b",
         "\\bgrab(?:bed|s|bing)\\s+me\\s+(?:a|some)\\s+(?:snack|drink|cookie|juice|seat|chair)\\b",
-        "\\b(?:not|never|don'?t)\\s+(?:to\\s+)?tell\\s+(?:anyone|anybody|strangers?|people)\\s+(?:my|our|your|their)\\s+(?:address|name|full name|last name|password|phone|number|school|secret word|age|birthday)\\b"
+        "\\b(?:not|never|don'?t)\\s+(?:to\\s+)?tell\\s+(?:anyone|anybody|strangers?|people)\\s+(?:my|our|your|their)\\s+(?:address|name|full name|last name|password|phone|number|school|secret word|age|birthday)\\b",
+        "\\b(?:not|never|don'?t)\\s+(?:to\\s+)?tell\\s+(?:anyone|anybody)\\s+(?:about\\s+)?(?:the|our|his|her|their|my)\\s+(?:surprise|present|gift|party|birthday|plan|plans|idea|project|wish|crush)\\b",
+        "\\b(?:a|our|his|her|their)\\s+(?:little\\s+|special\\s+|big\\s+)?secret\\s+(?:surprise|party|present|gift|santa|handshake|language|code|club|recipe|hideout|base|fort|mission|plan|password|word|garden|ingredient|talent|project)\\b",
+        "\\btouch(?:ed|es|ing)?\\s+(?:his|her|their)\\s+(?:dog|cat|puppy|kitten|hamster|bunny|rabbit|pet|pets|snake|lizard|turtle|frog|toy|toys|phone|tablet|computer|stuff|things|hand|hands|hair|nose|beard|arm|shoulder|forehead|robot|drum|drums|guitar|piano|car|bike|trophy|painting)\\b",
+        "\\b(?:took|takes|taking|pull(?:ed|s|ing)?)\\s+(?:off|down)\\s+my\\s+(?:clothes|pants|trousers)\\s+(?:for|before|after|so i could|to (?:take|get|have|put on|go))\\s+(?:\\w+\\s+){0,2}?(?:bath|shower|swim|swimming|pool|bed|pajamas|pyjamas|jammies|dry|wet|clean|sleep|change)\\b"
       ]
     }
   ],
@@ -438,7 +482,35 @@ export const RULES = Object.freeze({
         "id": 502,
         "mood": 2,
         "gesture": "Gesture_Self",
-        "text": "Will you go tell a grown-up you trust about this right now?"
+        "text": "Will you call or go tell a grown-up you trust about this right now?"
+      }
+    ],
+    "hurt": [
+      {
+        "id": 601,
+        "mood": 2,
+        "gesture": "Gesture_Self",
+        "text": "Thank you for telling me. I'm not the right one to help with this, but a grown-up you trust is. Please go tell one right now, okay?"
+      },
+      {
+        "id": 602,
+        "mood": 2,
+        "gesture": "Gesture_Self",
+        "text": "I'm really glad you told me. This is something a grown-up you trust needs to hear. Will you go find one and tell them right now?"
+      }
+    ],
+    "sexual": [
+      {
+        "id": 701,
+        "mood": 2,
+        "gesture": "Gesture_Think",
+        "text": "Hmm, that's not something I can talk about. If something happened that worries you, please tell a grown-up you trust, okay?"
+      },
+      {
+        "id": 702,
+        "mood": 2,
+        "gesture": "Gesture_Think",
+        "text": "That's not for me to talk about. If anything about it is bothering you, a grown-up you trust is the right person to tell."
       }
     ]
   }
