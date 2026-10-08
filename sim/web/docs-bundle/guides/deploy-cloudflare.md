@@ -96,19 +96,21 @@ the same key when its environment has one.
 
 ### Her voice and her ears
 
+Two more settings decide what she sounds like and how she hears:
+
 | Setting | Production (2026-10-08) | Why |
 |---|---|---|
 | `DEMO_TTS_MODEL` | `tts-piper-kristin` | Picked by ear from 18 gateway voices. Every one of her pre-recorded clips (`sim/web/audio/`) is in this voice too, so her scripted lines and her live replies sound like one Moxie. Change it only together with a re-render of every clip (`sim/tools/prerender_audio.py --engine gateway`). |
 | `DEMO_STT_MODEL` | `stt-whisper-small` | Word-perfect and the quickest of four speech-to-text aliases on a 2026-10-08 spot check (one clip each). It hears one utterance at a time, so a burst of four queues for about 10 s. |
 
-**Every value in these tables is a gateway alias.** What serves an alias is the gateway's business,
-and this repo never names it. Two things follow:
+**Every model named here is a gateway alias.** What serves an alias is the gateway's business, and
+this repo never names it. Two things follow:
 
 - **Provision before you switch.** A gateway that scopes a key to a list of models refuses the
   others, so put the new alias on the production key's list first. A model the key may not call
   fails on the live site as `upstream_down` (or `rate_limited`, if the gateway answers 429), even
-  though the same alias answers your own key. Then switch, redeploy (section 7), and listen to one
-  real turn.
+  though the same alias answers your own key. Then change the variable, make a new deployment (a
+  change applies only to the next one; see section 7), and listen to one real turn.
 - **A fallback is the gateway's, not this code's.** The reference gateway falls back from
   `moxie-brain-dense` to `moxie-brain` when the first errors. Nothing here can see which one
   answered, which is why both were measured.

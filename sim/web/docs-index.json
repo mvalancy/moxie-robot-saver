@@ -1291,7 +1291,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 15959,
+   "bytes": 16089,
    "mermaid": 0,
    "headings": [
     "1. Deploy",
