@@ -48,6 +48,14 @@ function isoLocal(sec){
   const d=new Date(sec*1000), p=n=>String(n).padStart(2,'0');
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+// A per-robot save the supervisor applied but could not write to disk (`saved:false` on its
+// answer) is live now and gone after a restart, so the card says that instead of "Saved".
+// An answer without the flag (the house rules, an older supervisor) keeps `text`.
+function savedText(r, text){
+  return (r && r.saved===false)
+    ? '⚠️ Applied, but NOT saved — this change will be lost when the supervisor restarts.'
+    : text;
+}
 async function saveConfig(){
   const fleet=!!($('#cfg-fleet')&&$('#cfg-fleet').checked);
   if(!liveDevice && !fleet){ return; }
@@ -74,17 +82,24 @@ async function saveConfig(){
   try{
     const r=await api(url,{method:'POST',auth:false,body});
     s.textContent = r.ok
-      ? (fleet ? '✅ Saved as house rules — pushed to every robot.'
-               : '✅ Saved — pushed to Moxie.')
+      ? savedText(r, fleet ? '✅ Saved as house rules — pushed to every robot.'
+                           : '✅ Saved — pushed to Moxie.')
       : `⚠️ ${r.error||'failed'}`;
     refreshLive();
   }catch(e){ s.textContent='⚠️ '+(e.message||'save failed'); }
 }
 function renderRobot(r){
+  // The card's status line (#dev-status) is about the robot on the card, so a redraw of
+  // that same robot keeps it. Add to my account writes its answer there (its ⚠️ says to
+  // press Permit), and both the Wi-Fi tab's poll, on seeing the record a claim made, and
+  // re-opening the tab redraw. A card shown again, or for another robot, starts empty.
+  const rc=$('#robot-card'), id=String(r.id);
+  const same=!$('#moxie-card').classList.contains('hidden') && rc.dataset.id===id;
   $('#moxie-none').classList.add('hidden');
   $('#moxie-card').classList.remove('hidden');
   $('#memory-card').classList.remove('hidden');
-  $('#robot-card').innerHTML =
+  rc.dataset.id=id;
+  rc.innerHTML =
     `<div><strong>${escapeHtml(r.name||'Moxie')}</strong></div>
      <div class="k">Serial: ${escapeHtml(r.serial||r['embodied-robot-id']||'—')}</div>
      <div class="k">Wi-Fi: ${escapeHtml(r['wifi-ssid']||'—')}</div>
@@ -113,7 +128,7 @@ function renderRobot(r){
     rb.onclick=null;
   }
   lcWire(r);       // Unpair / Factory reset (js/robot.js)
-  say('');
+  if(!same) say('');
 }
 function flash(sel,txt){const b=$(sel),o=b.textContent;b.textContent=txt;setTimeout(()=>b.textContent=o,1200);}
 
@@ -217,9 +232,9 @@ async function saveFace(reset){
   try{
     const r=await api(url,{method:'POST',auth:false,body});
     s.textContent = r.ok
-      ? (reset ? '✅ Back to the default look.'
-               : (fleet ? '✅ Saved as house rules — every robot re-draws its face.'
-                        : '✅ Saved — Moxie re-draws its face.'))
+      ? savedText(r, reset ? '✅ Back to the default look.'
+                           : (fleet ? '✅ Saved as house rules — every robot re-draws its face.'
+                                    : '✅ Saved — Moxie re-draws its face.'))
       : `⚠️ ${r.error||'failed'}`;
     if(r.ok){ const b=$('#face-box'); if(b) b.dataset.dirty='0'; }
     refreshLive();

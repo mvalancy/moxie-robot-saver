@@ -220,7 +220,7 @@ def normalize_brain_robot(entry: Optional[dict]) -> dict:
 @card_view("brain", {
     "ok": False, "available": [], "pin": "", "pin_note": "", "default": "", "fleet": "",
     "appliance": "", "env_var": "MOXIE_APP", "installed": [], "robots": [],
-    "applied": None, "reason": "", "error": "supervisor not reachable"})
+    "applied": None, "saved": None, "reason": "", "error": "supervisor not reachable"})
 def normalize_brain(p: dict) -> dict:
     """Runtime `/brain` (GET or POST) → the 🧠 card."""
     ok = bool(p.get("ok"))
@@ -236,6 +236,8 @@ def normalize_brain(p: dict) -> dict:
         "robots": [normalize_brain_robot(r) for r in _seq(p.get("robots"))
                    if isinstance(r, dict)],
         "applied": p.get("applied") if isinstance(p.get("applied"), dict) else None,
+        # False when a pick applied but the supervisor could not save it (lost on restart)
+        "saved": p.get("saved") if isinstance(p.get("saved"), bool) else None,
         "reason": str(p.get("reason") or ""),
         "error": _error(p, ok, "no brain settings available", "error", "reason"),
     }

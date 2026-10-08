@@ -31,6 +31,34 @@ const CSP = H["Content-Security-Policy"] || "";
 const directive = (name) => (CSP.split(";").find((d) => d.trim().startsWith(name)) || "").trim();
 const sources = (name) => directive(name).split(/\s+/).slice(1);
 
+/** What Pages SENDS for `path` under `_headers`, by its documented merge, NOT "the later rule
+ *  wins": EVERY matching rule applies in file order, a header two rules set is comma-JOINED
+ *  (measured on a preview: `public, max-age=86400, no-cache`), and a rule's `! Name` detaches
+ *  what earlier rules set before its own values land. Splats and :placeholders as documented;
+ *  an absolute-URL rule is taken to match every host. {lower-case name: [one value per rule]}. */
+function pagesSend(text, path) {
+  const rules = [];
+  for (const raw of text.split("\n")) {
+    const l = raw.trim();
+    if (!l || l.startsWith("#")) continue;
+    if (!/^\s/.test(raw)) {
+      const re = l.replace(/^https:\/\/[^/]+/, "").replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+                  .replace(/\*/g, ".*").replace(/:[A-Za-z]\w*/g, "[^/]+");
+      rules.push({ hit: new RegExp(`^${re}$`).test(path), unset: [], set: [] });
+    } else if (rules.length) {
+      const i = l.indexOf(":");
+      if (l.startsWith("!")) rules.at(-1).unset.push(l.slice(1).trim().toLowerCase());
+      else if (i > 0) rules.at(-1).set.push([l.slice(0, i).trim().toLowerCase(), l.slice(i + 1).trim()]);
+    }
+  }
+  const out = {};
+  for (const r of rules.filter((x) => x.hit)) {
+    for (const h of r.unset) delete out[h];
+    for (const [h, v] of r.set) (out[h] ||= []).push(v);
+  }
+  return out;
+}
+
 /* Served under a NON-local hostname mapped to loopback — the configuration Pages ships into.
  * On a local host env.js also probes the :8081/:8082 sidecars, a dev-only refusal. */
 const HOST = `http://moxie.hosted.test:${site.port}`;
@@ -152,6 +180,30 @@ try {
     if (js.length) ok(new RegExp(`^/${dir.name}/\\*\\n\\s+Cache-Control:\\s*no-cache$`, "m").test(headerText),
                       `sim/web/${dir.name}/ ships ${js.length} scripts and has a /${dir.name}/* no-cache rule`);
   }
+  /* The clip MANIFEST revalidates while the clips keep their day cache. Riding /audio/*'s day,
+   * it hid a deploy's new clips from a repeat visitor, whose lines then fell to the browser's
+   * robotic voice. A new line is a new sha1 file name, so the clips themselves may stay. */
+  const mergeProbe = "/a/*\n  X: 1\n/a/b\n  X: 2\n/a/c\n  ! X\n  X: 3\n";
+  deep([pagesSend(mergeProbe, "/a/b").x, pagesSend(mergeProbe, "/a/c").x], [["1", "2"], ["3"]],
+       "the merge model is Pages': two matching rules JOIN, and `! Name` detaches first");
+  const cacheOf = (path) => (pagesSend(headerText, path)["cache-control"] || []).join(", ");
+  eq(cacheOf("/audio/index.json"), "no-cache",
+     "Pages sends the clip manifest /audio/index.json as no-cache, with no day cache joined in");
+  const clips = Object.values(JSON.parse(readFileSync(join(web, "audio", "index.json"), "utf8")))
+    .flatMap((group) => Object.values(group)).map((file) => "/audio/" + file);
+  ok(clips.length > 50, `the clip list was read from the manifest (${clips.length} clips)`);
+  deep(clips.filter((c) => cacheOf(c) !== "public, max-age=86400"), [],
+       "every clip the manifest names keeps its day cache (public, max-age=86400)");
+  /* …and the class: no shipped file gets a JOINED Cache-Control, and no JSON (each one names
+   * what to fetch next) outlives the 5-minute tier. /vendor/ is content-addressed. */
+  const walk = (d) => readdirSync(d, { withFileTypes: true })
+    .flatMap((e) => e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name).slice(web.length)]);
+  const shipped = walk(web);
+  deep(shipped.filter((p) => (pagesSend(headerText, p)["cache-control"] || []).length > 1), [],
+       "no shipped file gets two Cache-Control values comma-joined (detach with `! Cache-Control` first)");
+  const ageOf = (cc) => (/no-cache|no-store/.test(cc) ? 0 : Number((/max-age=(\d+)/.exec(cc) || [0, 0])[1]));
+  deep(shipped.filter((p) => p.endsWith(".json") && !p.startsWith("/vendor/") && ageOf(cacheOf(p)) > 300), [],
+       "every shipped .json revalidates or is cached 5 minutes at most");
 
   /* =====================================================================
    * 2. EVERY PAGE WORKS under the policy — driven, not merely rendered (a page whose glue

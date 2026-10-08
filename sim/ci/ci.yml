@@ -394,3 +394,5 @@ jobs:
         run: node sim/test_robot_lifecycle.mjs
       - name: Parent console — 💬 Try it (a preview turn, published nowhere)
         run: node sim/test_console_tryit.mjs
+      - name: Parent console — Add to my account (one click, one claim; never automatic)
+        run: node sim/test_robot_claim.mjs

@@ -69,12 +69,21 @@ yet"), for a Moxie still paired somewhere else; showing it changes nothing on th
 
 ### Not done yet
 
-- A robot paired by scanning the QR gets no account record (only the console's simulated scan creates
-  one), so its robot card, and the Unpair button with it, does not appear. For that robot, unpair is
-  Revoke in Robot access and the reset is the code alone.
-- Per-robot settings the supervisor keeps under the robot's id (volume, bedtime, look, brain) are not
-  cleared. A reset robot that rejoins with a new id starts clean; one that kept its id would get them
-  back once permitted again.
+- A robot paired by scanning the codes gets its account record only when the parent presses **Add to
+  my account** (`POST /local/robots/{id}/claim`, in Robot access and on the *No Moxie paired yet* card);
+  then its robot card, with Unpair and Factory reset, appears ([bench runbook](../guides/bench-runbook.md)).
+  The claim is the parent's word, the same trust as Permit: nothing the robot sends proves which
+  robot a `d_…` id is. It is tested hermetically ([`test_robot_claim.py`](../../sim/tests/test_robot_claim.py),
+  [`test_robot_claim.mjs`](../../sim/test_robot_claim.mjs)) and against the real supervisor with an
+  MQTT client standing in for the robot ([`test_sil_robot_claim.py`](../../sim/tests/test_sil_robot_claim.py));
+  no physical robot has been added, unpaired or reset this way yet.
+- Per-robot settings the supervisor keeps under the robot's id (volume, bedtime, look, brain, data
+  sharing) are not cleared. They are saved in `robots/<id>/config.json` and survive a supervisor restart
+  ([production hardening](../architecture/backlog/production-hardening.md)). A reset robot that rejoins
+  with a new id starts clean; one that kept its id gets them back once permitted again. Two owner
+  questions are open: should a factory reset clear these robot-level settings and the robot's roster
+  entry (not the child's data)? And should the sheet's optional erase gain safety-journal and transcript
+  checkboxes, closing the next bullet by the parent's choice rather than automatically?
 - The safety journal and conversation transcripts have no erase control of their own (switching data
   sharing to `NO_DATA` purges transcripts), so the erase choice cannot cover them.
 - Restore from backup (§3) is not built: `POST /api/robots/{id}/restores` still answers `204`.
