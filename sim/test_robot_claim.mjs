@@ -11,6 +11,8 @@
  *      server permits as part of the claim), it does not also send Permit
  *   C3 a refusal is shown to the parent in its own words, and no robot card appears
  *   C4 an account that already has a robot is offered no second one
+ *   C5 when the supervisor could not be asked (`unclaimed_known: false`) the card says the
+ *      robot service cannot be reached, instead of looking as if no robot arrived
  *   W1 the Wi-Fi tab's code is Wi-Fi ONLY by default: one POST /local/wifi/payload, its
  *      payload shown, no recovery phrase; once the robot is on the broker the tab says to
  *      add it, and claims nothing itself
@@ -66,6 +68,7 @@ def snap(pending):
 print(json.dumps({
     "pending": fleet.normalize_fleet(snap(True)),
     "served": fleet.normalize_fleet(snap(False)),
+    "down": fleet.normalize_fleet({"ok": False, "error": "supervisor not reachable"}),
     "unpair": L.unpair_result(rid, unpaired=True, factory_reset=False,
                               child={"id": cid, "name": "Moxie Kid"}, codes_voided=0,
                               access=L.access_view(dev, revoked=True)),
@@ -85,6 +88,8 @@ ok(FIX.pending.pending_count === 1 && FIX.pending.robots[0].pending === true,
    "fixture: the real normalize_fleet lists the bench robot as pending");
 ok(FIX.served.pending_count === 0 && FIX.served.robots.length === 1,
    "fixture: once claimed it is served");
+ok(FIX.down.ok === false && FIX.down.robots.length === 0,
+   "fixture: the real normalize_fleet of a supervisor that cannot be asked");
 ok(FIX.unpair.unpaired === true, "fixture: the real unpair_result produced an unpair answer");
 ok(FIX.wifi_decoded.secret_key === null && FIX.wifi_decoded.hide_pair === true,
    "fixture: the real encode_wifi_only carries no key and the wifi-only flag");
@@ -116,8 +121,10 @@ const browser = await puppeteer.launch({
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A fresh first visit, logged in, on the Moxie tab. Until a claim succeeds the account has
- *  `robots` and the broker one pending robot; every POST and DELETE lands in `st.calls`. */
-async function drive({ mutate = null, robots = [], unclaimed = [DEV], refuse = false, tab = "moxie" } = {}) {
+ *  `robots` and the broker one pending robot; every POST and DELETE lands in `st.calls`.
+ *  `known: false` is a supervisor that could not be asked (/local/state and /local/fleet). */
+async function drive({ mutate = null, robots = [], unclaimed = [DEV], refuse = false, tab = "moxie",
+                       known = true } = {}) {
   const st = { calls: [], auth: [], bodies: {}, claimed: false, unpaired: false };
   const page = await browser.newPage();
   await page.evaluateOnNewDocument(() => { try { localStorage.clear(); } catch (e) {} });
@@ -143,9 +150,10 @@ async function drive({ mutate = null, robots = [], unclaimed = [DEV], refuse = f
       const mine = st.unpaired ? [] : st.claimed ? [CLAIMED] : robots;
       return J({ user: { id: "u1", email: "parent@home.lan" },
                  children: [{ id: CID, "child-first-name": "Moxie Kid" }],
-                 robots: mine, unclaimed: st.claimed ? [] : unclaimed });
+                 robots: mine, unclaimed: st.claimed || !known ? [] : unclaimed,
+                 unclaimed_known: known });
     }
-    if (p === "/local/fleet") return J(st.claimed ? FIX.served : FIX.pending);
+    if (p === "/local/fleet") return J(!known ? FIX.down : st.claimed ? FIX.served : FIX.pending);
     if (call === CLAIM) {
       if (refuse) { aborted.refused++; return J(REFUSED, 409); }
       st.claimed = true;
@@ -196,6 +204,7 @@ const view = (page) => page.evaluate(() => {
     cardButtons: texts("#moxie-none .claim-btn"), rowButtons: texts("#permits-box .claim-btn"),
     allButtons: texts(".claim-btn"), permitButtons: texts("#permits-box .permit-btn"),
     claimStatus: text("#claim-status"), devStatus: text("#dev-status"),
+    unknown: shown("#claim-unknown"), unknownText: text("#claim-unknown").replace(/\s+/g, " ").trim(),
     qrCard: shown("#wifi-qr-card"), recovery: shown("#recovery-box"), phrase: text("#phrase"),
     qrKind: text("#qr-kind"), pairStatus: text("#pair-status"),
     qrPayload: decodeURIComponent((($("#qr-img") || {}).getAttribute
@@ -219,6 +228,7 @@ const SCENARIOS = {
       C.ok(v.none && !v.card, "C1: with no record the tab shows No Moxie paired yet");
       C.eq(JSON.stringify(v.cardButtons), JSON.stringify(["Add to my account"]),
            "C1: the card offers exactly one Add to my account for the one unclaimed robot");
+      C.ok(!v.unknown, "C1: a supervisor that answered is not reported unreachable");
       await sleep(1200);
       C.eq(claims(st), 0, "C1: nothing is claimed without the click");
       await page.click("#moxie-none .claim-btn");
@@ -298,6 +308,19 @@ const SCENARIOS = {
     } finally { await page.close(); }
   },
 
+  async C5(C, o) {
+    const { page, st, errs, aborted } = await drive({ ...o, known: false });
+    try {
+      const v = await view(page);
+      C.ok(v.none && !v.card, "C5: with no record the tab shows No Moxie paired yet");
+      C.ok(v.unknown && /cannot be reached right now/.test(v.unknownText),
+           `C5: the card says the robot service cannot be reached — got "${v.unknownText}"`);
+      C.eq(v.allButtons.length, 0, "C5: and offers nothing to add");
+      C.eq(claims(st), 0, "C5: nothing is claimed");
+      C.eq(notable(errs, aborted).length, 0, `C5: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+    } finally { await page.close(); }
+  },
+
   async W1(C, o) {
     const { page, st, errs, aborted } = await drive({ ...o, tab: "wifi" });
     try {
@@ -357,8 +380,8 @@ for (const name of Object.keys(SCENARIOS)) await run({ ok, eq }, name);
 /* ---- TEETH: each mutation must redden the scenario that guards it ------------------- */
 const TEETH = [
   ["a claim made without the click", "C1",
-   (s) => s.replace("  wireClaims(list, '#claim-status');\n}",
-                    "  wireClaims(list, '#claim-status');\n  if(ids.length) claimRobot(ids[0], '#claim-status');\n}")],
+   (s) => s.replace("  wireClaims(list, '#claim-status');\n",
+                    "  wireClaims(list, '#claim-status');\n  if(ids.length) claimRobot(ids[0], '#claim-status');\n")],
   ["no button on the No Moxie card", "C1",
    (s) => s.replace("<span>${escapeHtml(id)}</span> ${claimButton(id)}</div>", "<span>${escapeHtml(id)}</span></div>")],
   ["the claim's answer never rendered", "C1",
@@ -370,6 +393,10 @@ const TEETH = [
   ["a second robot offered", "C4",
    (s) => s.replace("function claimable(deviceId){ return !ACCOUNT.robots.length && ",
                     "function claimable(deviceId){ return ")],
+  ["a supervisor that cannot be asked never said", "C5",
+   (s) => s.replace("u.classList.toggle('hidden', ACCOUNT.known);", "u.classList.toggle('hidden', true);")],
+  ["a supervisor that answered reported unreachable", "C1",
+   (s) => s.replace("u.classList.toggle('hidden', ACCOUNT.known);", "u.classList.toggle('hidden', false);")],
   ["the pairing-key code by default", "W1",
    (s) => s.replace("const withKey=!!($('#pairing-key') && $('#pairing-key').checked);",
                     "const withKey=true;")],

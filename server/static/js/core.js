@@ -163,13 +163,14 @@ async function pollMonitor(){
 function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 // ---- Moxie status ----
-// The account's side of the last /local/state: its robot records, and the robots on the
-// broker that no account has added (`unclaimed`). 🔐 Robot access reads it too.
-let ACCOUNT={robots:[], unclaimed:[]};
+// The account's side of the last /local/state: its robot records, the robots on the
+// broker that no account has added (`unclaimed`), and whether that list could be checked
+// at all (`known`). 🔐 Robot access reads it too.
+let ACCOUNT={robots:[], unclaimed:[], known:true};
 async function refreshMoxie(){
   try{
     const st=await api('/local/state');
-    ACCOUNT={robots:st.robots||[], unclaimed:st.unclaimed||[]};
+    ACCOUNT={robots:st.robots||[], unclaimed:st.unclaimed||[], known:st.unclaimed_known!==false};
     if(st.robots && st.robots.length){ renderRobot(st.robots[0]); }
     else { $('#moxie-none').classList.remove('hidden'); $('#moxie-card').classList.add('hidden');
            $('#memory-card').classList.add('hidden'); }
@@ -195,6 +196,8 @@ function renderClaims(){
   box.classList.toggle('hidden', !ids.length);
   list.innerHTML=ids.map(id=>`<div class="ev"><span>${escapeHtml(id)}</span> ${claimButton(id)}</div>`).join('');
   wireClaims(list, '#claim-status');
+  // Nobody could ask the supervisor: say so, rather than look as if no robot arrived.
+  { const u=$('#claim-unknown'); if(u) u.classList.toggle('hidden', ACCOUNT.known); }
 }
 let claiming=false;
 async function claimRobot(deviceId, statusSel){

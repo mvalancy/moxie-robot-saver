@@ -355,12 +355,13 @@ def local_state(u=Depends(current_user)):
     robots = [{"id": r["id"], **json.loads(r["attributes"]), "child_id": r["child_id"]}
               for r in db.robots_of(u["id"])]
     # Robots on the broker that no account's record names: what "Add to my account"
-    # offers. Empty when the supervisor cannot be asked.
+    # offers. Empty when the supervisor cannot be asked, and then `unclaimed_known` is
+    # false: nobody could check, which is not the same as no robot having arrived.
     seen = _devices_for_state()
     unclaimed = sorted(seen["connected"] - db.bound_device_ids()) if seen else []
     return {"user": {"id": u["id"], **json.loads(u["attributes"])},
             "children": rows(db.children_of(u["id"])), "robots": robots,
-            "unclaimed": unclaimed}
+            "unclaimed": unclaimed, "unclaimed_known": seen is not None}
 
 
 @router.get("/healthz")

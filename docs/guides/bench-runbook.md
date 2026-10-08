@@ -108,7 +108,8 @@ If it says no, nothing was changed:
 - The Wi-Fi tab's code: `POST /local/wifi/payload`; the pairing-key code: `POST /local/pairing/prepare`
   ([`routes/pairing.py`](../../server/moxie_server/routes/pairing.py)).
 - Add to my account: `POST /local/robots/{device_id}/claim` with the parent's token; `/local/state`
-  lists the connected robots no account has added as `unclaimed`.
+  lists the connected robots no account has added as `unclaimed`, and says `unclaimed_known: false`
+  when the supervisor could not be asked (the list is then empty because nobody could check).
 - Tests: [`test_wifi_first_qr.py`](../../sim/tests/test_wifi_first_qr.py),
   [`test_robot_claim.py`](../../sim/tests/test_robot_claim.py), the browser suite
   [`test_robot_claim.mjs`](../../sim/test_robot_claim.mjs), and
