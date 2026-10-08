@@ -14,8 +14,8 @@
  *     decoder, so `DEMO_STT_FORMATS` defaults to `wav` alone — a fork that widens it re-opens
  *     the gap with no warning from the code.
  *  6b. A WAV the gateway cannot decode is refused too (`_lib/wav.js::sttWavProblem`): its
- *     STT answers one with a 500, and three 500s cool the STT group down for EVERY visitor
- *     for about a minute.
+ *     STT answers undecodable audio with a 500, and three 500s cool the STT group down for
+ *     EVERY visitor for about a minute.
  *  7. A bot control (`_lib/turnstile.js`) with its OWN action, so a chat token cannot buy
  *     the ears. This is the more expensive route to leave open: 60/hour x 15 s from one
  *     address with no daily window.

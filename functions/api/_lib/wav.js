@@ -283,9 +283,9 @@ export const STT_WAV = Object.freeze({ minRate: 8000, maxRate: 48000, maxChannel
 /**
  * Why a RIFF/WAVE body is NOT fit for speech-to-text, or `null` when it is.
  *
- * WHY: the gateway's STT answers a body it cannot decode with HTTP 500, and three 500s in a
- * few seconds put the whole STT group into a ~60 s cooldown, so every visitor's microphone
- * fails for a minute. `transcribe.js` therefore forwards only a WAV whose header it can read
+ * WHY: the gateway's STT answers audio it cannot decode with HTTP 500 (measured on webm, ogg
+ * and mp4; inferred, never tried, for a broken WAV), and three 500s in a few seconds put the
+ * whole STT group into a ~60 s cooldown, so every visitor's microphone fails for a minute. `transcribe.js` therefore forwards only a WAV whose header it can read
  * and whose `fmt ` is plain 16-bit PCM in a sane range (measured to transcribe: 16 and
  * 22.05 kHz mono); anything else is refused for free, before the one upstream call.
  *
