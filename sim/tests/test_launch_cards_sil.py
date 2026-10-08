@@ -24,7 +24,7 @@ from virtual_moxie import FIRMWARE, VirtualMoxie            # noqa: E402
 from moxie_sdk import launch_cards as cards                 # noqa: E402
 from moxie_sdk import presence as P                         # noqa: E402
 from moxie_sdk.app import MoxieApp                          # noqa: E402
-from moxie_sdk.types import Reply                           # noqa: E402
+from moxie_sdk.types import Reply, ResultCode               # noqa: E402
 
 DEV = "d_cards_sil"
 QR = P.QR_EVENT
@@ -126,8 +126,8 @@ def test_a_scanned_card_leaves_the_robot_holding_the_launch():
     # (b) and the wire it read that off, in the recovered shape
     entry, = _wire_actions(vm)
     assert entry["action"] == "launch" and entry["module_id"] == "DM", entry
-    assert entry["output_type"] == "GLOBAL", entry
-    assert vm.reply_payload["result"] == "SUCCESS", vm.reply_payload
+    assert entry["output_type"] == "GLOBAL_RESPONSE", entry
+    assert vm.reply_payload["result"] == ResultCode.SUCCESS, vm.reply_payload
     assert vm.reply_payload["event_id"] == _published_event(vm)["event_id"], \
         "the launch came back on some other turn than the scan"
 
@@ -205,7 +205,7 @@ def test_a_refused_card_leaves_the_robot_holding_nothing_and_still_answers(label
     # The turn was ANSWERED. A refusal that hung would leave a real robot waiting on an
     # event_id forever — the contract requires a response to every subscribed event.
     assert vm.got_reply.is_set(), f"{label}: the robot was never answered"
-    assert vm.reply_payload["result"] == "NOREPLY_ACK", vm.reply_payload
+    assert vm.reply_payload["result"] == ResultCode.NOREPLY_ACK, vm.reply_payload
     assert vm.reply_payload["event_id"] == _published_event(vm)["event_id"], \
         vm.reply_payload
     assert vm.reply_text == "", vm.reply_text
@@ -220,7 +220,7 @@ def test_a_card_value_on_a_different_marker_event_launches_nothing_at_the_robot(
         rt, vm, dev, _ = _pair()
         _scan(vm, rt, "GO<launch:DM>", event=event)
         assert vm.action_stats()["applied"] == [], (event, vm.action_stats())
-        assert vm.reply_payload["result"] == "NOREPLY_ACK", (event, vm.reply_payload)
+        assert vm.reply_payload["result"] == ResultCode.NOREPLY_ACK, (event, vm.reply_payload)
         # the value did travel — it just travelled as what it is
         assert _published_event(vm)["input_vars"] == {
             P.VALUE_KEYS[event]: "GO<launch:DM>"}, event
@@ -234,7 +234,7 @@ def test_a_qr_value_smuggled_onto_another_marker_event_launches_nothing():
                                                   "$eb_qr_value": "GO<launch:DM>"})
     rt._pool.shutdown(wait=True)
     assert vm.action_stats()["applied"] == [], vm.action_stats()
-    assert vm.reply_payload["result"] == "NOREPLY_ACK", vm.reply_payload
+    assert vm.reply_payload["result"] == ResultCode.NOREPLY_ACK, vm.reply_payload
 
 
 def test_a_refused_card_does_not_disarm_the_next_real_one():
@@ -269,7 +269,7 @@ def test_run_face_events_carries_the_face_value_and_records_what_arrived():
     assert ok, vm.errors
 
     row, = vm.face_replies
-    assert row["kind"] == QR and row["result"] == "SUCCESS", row
+    assert row["kind"] == QR and row["result"] == ResultCode.SUCCESS, row
     assert row["text"] == "", row
     assert row["actions"] == [{"action": "launch", "module_id": "DM",
                                "content_id": "", "function": "", "args": []}], row

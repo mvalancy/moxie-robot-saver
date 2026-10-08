@@ -134,7 +134,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT and conversation contract (the robot cloud)",
    "section": "architecture",
-   "bytes": 48025,
+   "bytes": 48716,
    "mermaid": 0,
    "headings": [
     "0. The mechanism in five lines",
@@ -180,7 +180,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM, STT and TTS interface contract",
    "section": "architecture",
-   "bytes": 27615,
+   "bytes": 31704,
    "mermaid": 1,
    "headings": [
     "The three seams",
@@ -703,7 +703,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 17551,
+   "bytes": 17932,
    "mermaid": 0,
    "headings": [
     "0. Why the scope is what it is",

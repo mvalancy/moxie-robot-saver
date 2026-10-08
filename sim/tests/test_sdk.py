@@ -20,7 +20,7 @@ def test_resultcode_values_match_recovered_proto():
 def test_default_response_is_success_by_name():
     resp = build_chat_response("evt-1", "Hi there!")
     assert resp["command"] == "remote_chat"
-    assert resp["result"] == "SUCCESS"          # wire value is the enum NAME, not "OK"
+    assert resp["result"] == ResultCode.SUCCESS          # wire value is the enum NAME, not "OK"
     assert resp["output"]["text"] == "Hi there!"
     assert resp["output"]["markup"] == "Hi there!"   # defaults to text
     assert resp["event_id"] == "evt-1"
@@ -30,7 +30,7 @@ def test_offline_reply_signals_error_offline():
     r = Reply.offline()
     assert r.result_code is ResultCode.ERROR_OFFLINE
     resp = build_chat_response("evt-2", r.text, result=r.result_code)
-    assert resp["result"] == "ERROR_OFFLINE"    # robot uses its local fallback
+    assert resp["result"] == ResultCode.ERROR_OFFLINE    # robot uses its local fallback
 
 def test_scored_output_fields_optional():
     bare = build_chat_response("e", "hi")
@@ -54,7 +54,7 @@ def test_action_passthrough():
 def test_int_result_is_coerced_to_name():
     # a caller passing the raw proto int still serializes to the enum name
     resp = build_chat_response("e", "hi", result=4)
-    assert resp["result"] == "ERROR_OFFLINE"
+    assert resp["result"] == ResultCode.ERROR_OFFLINE
 
 
 # ---- build_activity_response (the `query_result` / CloudQueryResponse encoder) ----

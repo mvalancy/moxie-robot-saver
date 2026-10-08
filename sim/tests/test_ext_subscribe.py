@@ -26,7 +26,7 @@ from moxie_sdk.chat import make_openai_chat, make_openai_stream
 from moxie_sdk.content import ext as E
 from moxie_sdk.content import content_app as CA
 from moxie_sdk.content.volley import Volley
-from moxie_sdk.types import Turn, Reply, Action, ActionType
+from moxie_sdk.types import Turn, Reply, Action, ActionType, ResultCode
 from moxie_sdk.wire import build_chat_response
 
 QR = P.QR_EVENT                    # "eb-qr-event"
@@ -225,7 +225,7 @@ def test_a_subscription_rides_a_reply_that_already_carries_an_action():
     resp = build_chat_response("e", "Show me a card!", actions=[act],
                                subscribe_events=[QR])
     assert resp["response_actions"] == [
-        {"output_type": "GLOBAL", "action": "execute", "module_id": None,
+        {"output_type": "GLOBAL_RESPONSE", "action": "execute", "module_id": None,
          "content_id": None, "function_id": "eb_enable_qr", "function_args": ["true"],
          "event_subscription": {"active": [QR], "clear": False}}]
 
@@ -343,7 +343,7 @@ def test_a_subscribed_event_now_wakes_the_pack_that_asked_for_it():
     assert app.perceived == [QR], "the pack asked for this event and must be woken by it"
     assert app.responded == ["hello"], \
         "…and the divert survived: the event never reached `respond`"
-    assert resp["result"] == "SUCCESS" and resp["output"]["text"] == "I saw a card!"
+    assert resp["result"] == ResultCode.SUCCESS and resp["output"]["text"] == "I saw a card!"
     assert resp["event_id"] == "e-eye", "answered on the event's own event_id (§7.4)"
     assert resp["output"]["markup"] and "<mark" in resp["output"]["markup"], \
         "a pack's line is performed through the markup floor like any other"
@@ -452,7 +452,7 @@ def test_a_woken_pack_costs_zero_model_calls_and_a_counter_says_so():
     resp = drive_turn(rt, dev, FOUND, event_id="e4")
     assert C.model_calls() == before, \
         f"an unmatched perception event spent {C.model_calls() - before} model call(s)"
-    assert resp["result"] == "NOREPLY_ACK", resp
+    assert resp["result"] == ResultCode.NOREPLY_ACK, resp
 
 
 def test_the_counter_is_wired_to_the_real_gateway_seam():
@@ -487,7 +487,7 @@ def test_a_pack_that_matches_nothing_leaves_the_greeting_exactly_as_it_was():
     fresh_pool(rt)
     seed_absent(rt, dev, away_s=900.0)
     resp = drive_turn(rt, dev, FOUND, event_id="evt-eye")
-    assert resp["result"] == "SUCCESS", resp
+    assert resp["result"] == ResultCode.SUCCESS, resp
     text = resp["output"]["text"]
     assert "Sam" in text and len(text) < 70, text
     assert "<mark" in (resp["output"]["markup"] or ""), "the hello is still performed"
@@ -509,7 +509,7 @@ def test_the_greeting_switch_still_switches_it_off_with_a_pack_installed():
         rt._pack_subscribed[dev][FOUND] = "CHAT"
     fresh_pool(rt)
     seed_absent(rt, dev, away_s=9000.0)
-    assert drive_turn(rt, dev, FOUND, event_id="e2")["result"] == "NOREPLY_ACK"
+    assert drive_turn(rt, dev, FOUND, event_id="e2")["result"] == ResultCode.NOREPLY_ACK
 
 
 def test_an_app_that_never_heard_of_perception_is_untouched():
@@ -518,7 +518,7 @@ def test_an_app_that_never_heard_of_perception_is_untouched():
     rt, dev = make_runtime(_SubscribeApp(events=[QR]))
     drive_turn(rt, dev, "hello", event_id="e1")
     fresh_pool(rt)
-    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == "NOREPLY_ACK"
+    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == ResultCode.NOREPLY_ACK
 
 
 # --------------------------------------------------------------------------- #
@@ -532,7 +532,7 @@ def test_a_pack_is_not_woken_by_an_event_it_did_not_ask_for():
     _subscribed(rt, dev, app)
     resp = drive_turn(rt, dev, FOUND, event_id="e-eye")
     assert app.perceived == [], "an event nobody asked for must not reach a pack"
-    assert resp["result"] == "NOREPLY_ACK", resp
+    assert resp["result"] == ResultCode.NOREPLY_ACK, resp
 
 
 def test_a_request_made_under_one_module_does_not_wake_the_next_one():
@@ -541,7 +541,7 @@ def test_a_request_made_under_one_module_does_not_wake_the_next_one():
     rt, dev = make_runtime(app)
     _subscribed(rt, dev, app)
     rt.robots[dev].module_id = "BEDTIME"
-    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == "NOREPLY_ACK"
+    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == ResultCode.NOREPLY_ACK
     assert app.perceived == []
 
 
@@ -560,7 +560,7 @@ def test_vision_off_refuses_to_wake_a_pack_too():
     rt, dev = make_runtime(app)
     _subscribed(rt, dev, app)
     rt.vision = False
-    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == "NOREPLY_ACK"
+    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == ResultCode.NOREPLY_ACK
     assert app.perceived == []
 
 
@@ -571,7 +571,7 @@ def test_an_unpermitted_robot_cannot_wake_a_pack():
     _subscribed(rt, dev, app)
     rt.allow_unverified_bots = lambda: False
     assert not rt.is_permitted(dev)
-    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == "NOREPLY_ACK"
+    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == ResultCode.NOREPLY_ACK
     assert app.perceived == []
 
 
@@ -589,7 +589,7 @@ def test_a_pack_that_raises_still_leaves_the_child_a_hello():
     seed_absent(rt, dev, away_s=900.0)
     resp = drive_turn(rt, dev, FOUND, event_id="e2")
     assert app.perceived == [FOUND]
-    assert resp["result"] == "SUCCESS" and "Sam" in resp["output"]["text"]
+    assert resp["result"] == ResultCode.SUCCESS and "Sam" in resp["output"]["text"]
 
 
 def test_a_pack_that_answers_with_nothing_falls_through_to_the_greeting():
@@ -606,7 +606,7 @@ def test_a_pack_that_answers_with_nothing_falls_through_to_the_greeting():
     seed_absent(rt, dev, away_s=900.0)
     resp = drive_turn(rt, dev, FOUND, event_id="e2")
     assert app.perceived == [FOUND]
-    assert resp["result"] == "SUCCESS" and "Sam" in resp["output"]["text"]
+    assert resp["result"] == ResultCode.SUCCESS and "Sam" in resp["output"]["text"]
 
 
 def test_a_woken_pack_can_act_and_re_subscribe_on_the_same_reply():

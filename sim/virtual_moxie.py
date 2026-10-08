@@ -50,13 +50,17 @@ def is_echo_reply(text: str, prompt: str = SMOKE_PROMPT) -> bool:
     return bare == ECHO_TEMPLATE.format(speech=prompt).strip()
 
 
-#: 🎬 The action verbs this client implements: our server's `ActionType` and
+#: 🎬 The action verbs this client implements: the recovered `ActionID` names our server
+#: emits (`moxie_sdk.types.ACTION_IDS`) plus the two older spellings it used to send
+#: (`exit`, `enable_qr`), kept for older doubles. Same list as
 #: `sim/web/bridge/actions.js::ACTION_KINDS`. A literal on purpose (no SDK import);
 #: `test_sim_client_parity.py` pins the three lists together.
-#: ⚠️ `exit` and `enable_qr` are not recovered `ActionID` names (proto-catalog.md:2091:
-#: `exit_module`; `execute` + `function_id: "eb_enable_qr"`). This client decodes what our
-#: server sends; fixing the wire is a contract change (backlog/qr-launch-cards.md §7 R3).
-ACTION_KINDS = ("launch", "exit", "sleep", "enable_qr", "execute")
+ACTION_KINDS = ("launch", "exit", "exit_module", "sleep", "enable_qr", "execute")
+
+#: `RemoteChatResponse.ResultCode.REPLY_PENDING` (RemoteChat.proto:317): `result` is a
+#: `uint32` on the wire (:320), so the server sends the number; the name is still
+#: understood for older doubles.
+REPLY_PENDING = 9
 
 
 class VirtualMoxie:
@@ -86,6 +90,7 @@ class VirtualMoxie:
         #: Every RemoteChatResponse of the current turn, in arrival order.
         self.chat_payloads: list = []
         self.query_results: dict = {}       # CloudQuery name -> last CloudQueryResponse
+        self.module_list: list | None = None   # last `query_data.modules` (module query)
         self.spoke: dict | None = None      # last decoded CloudTTSResponse (audio playback)
         self.face_replies: list = []        # what the server answered each vision event
         # 🎭 telehealth: commands received, and the state we reported.
@@ -229,7 +234,10 @@ class VirtualMoxie:
         parts[int(chunk_num) if chunk_num is not None else 0] = text
         result = payload.get("result")
         completed = bool((payload.get("consistency_control") or {}).get("is_completed"))
-        pending = result == "REPLY_PENDING" and not completed
+        pending = result in (REPLY_PENDING, "REPLY_PENDING") and not completed
+        if isinstance(payload.get("query_data"), dict):
+            # A module-query answer: `RemoteDataBlock.modules` (RemoteChat.proto:296-300).
+            self.module_list = payload["query_data"].get("modules")
         if pending:
             self.log(f"← remote_chat chunk {chunk_num}: {text[:60]!r} (more to come)")
             return
@@ -325,11 +333,11 @@ class VirtualMoxie:
             self.actions["asleep"] = False
             self.actions["launches"] += 1
             self.log(f"🎬 launch {module_id}" + (f":{content_id}" if content_id else ""))
-        elif kind == "exit":
+        elif kind in ("exit", "exit_module"):
             self.actions["module_id"] = ""
             self.actions["content_id"] = ""
             self.actions["exits"] += 1
-            self.log("🎬 exit")
+            self.log(f"🎬 {kind}")
         elif kind == "sleep":
             self.actions["asleep"] = True
             self.log("🎬 sleep")
@@ -404,6 +412,19 @@ class VirtualMoxie:
              "software_version": FIRMWARE, "module_name": "virtual-moxie"}))
         self.log(f"→ events/client-service-activity-log query={query!r} id={request_id}")
         return request_id
+
+    def send_module_query(self) -> str:
+        """Ask which modules the cloud serves: a RemoteChatRequest with `backend: "data"`
+        and `query: RemoteDataQuery{query: modules}` (RemoteChat.proto:41-51, :79) on the
+        remote-chat topic. The answer lands in `module_list` (via `_on_chat_reply`)."""
+        self._reset_turn()
+        event_id = str(uuid.uuid4())
+        self.client.publish(self.t_event("remote-chat"), json.dumps(
+            {"timestamp": int(time.time() * 1000), "event_id": event_id,
+             "backend": "data", "query": {"query": "modules"},
+             "software_version": FIRMWARE, "module_name": "virtual-moxie"}))
+        self.log(f"→ events/remote-chat module query id={event_id}")
+        return event_id
 
     def report_mentor_behavior(self, mbh: dict):
         """Report a finished activity: an ActivityUpdate whose `mentor_behavior` field

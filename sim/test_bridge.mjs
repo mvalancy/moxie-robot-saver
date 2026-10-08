@@ -65,20 +65,20 @@ const speechAtInterrupt = calls.setSpeech.slice();
 
 // ---- response_actions (the golden script `test_sim_client_parity.py` pins by event_id) ----
 mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
-  Buffer.from(JSON.stringify({ command: "remote_chat", result: "SUCCESS", event_id: "act-1",
+  Buffer.from(JSON.stringify({ command: "remote_chat", result: 0, event_id: "act-1",
     output: { text: "Yes! Let's draw.", markup: "Yes! Let's draw." },
-    response_actions: [{ output_type: "GLOBAL", action: "launch",
+    response_actions: [{ output_type: "GLOBAL_RESPONSE", action: "launch",
                          module_id: "DRAW", content_id: "default" }] })));
 const afterLaunch = window.moxieBridge.actionStats();
 
 // An action-less entry carrying ONLY an event subscription — legal, and not an error.
 mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
-  Buffer.from(JSON.stringify({ command: "remote_chat", result: "NOREPLY_ACK", event_id: "act-2",
+  Buffer.from(JSON.stringify({ command: "remote_chat", result: 6, event_id: "act-2",
     output: { text: "", markup: "" },
-    response_action: { output_type: "GLOBAL",
+    response_action: { output_type: "GLOBAL_RESPONSE",
                        event_subscription: { active: ["eb-found-face", "eb-lost-target"],
                                              clear: false } },
-    response_actions: [{ output_type: "GLOBAL",
+    response_actions: [{ output_type: "GLOBAL_RESPONSE",
                          event_subscription: { active: ["eb-found-face", "eb-lost-target"],
                                                clear: false } }] })));
 
@@ -86,14 +86,14 @@ mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
 mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
   Buffer.from(JSON.stringify({ command: "remote_chat", event_id: "act-3",
     output: { text: "…", markup: "…" },
-    response_actions: [{ output_type: "GLOBAL", action: "teleport_to_mars" }, "nonsense"] })));
+    response_actions: [{ output_type: "GLOBAL_RESPONSE", action: "teleport_to_mars" }, "nonsense"] })));
 
 // …then goodbye: exit the module and go to sleep.
 mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
-  Buffer.from(JSON.stringify({ command: "remote_chat", result: "SUCCESS", event_id: "act-4",
+  Buffer.from(JSON.stringify({ command: "remote_chat", result: 0, event_id: "act-4",
     output: { text: "Bye Sam!", markup: "Bye Sam!" },
-    response_actions: [{ output_type: "GLOBAL", action: "exit" },
-                       { output_type: "GLOBAL", action: "sleep" }] })));
+    response_actions: [{ output_type: "GLOBAL_RESPONSE", action: "exit_module" },
+                       { output_type: "GLOBAL_RESPONSE", action: "sleep" }] })));
 const act = window.moxieBridge.actionStats();
 
 // ---- robot -> cloud: the activity log, byte-compared with the SIL robot's ----

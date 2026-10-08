@@ -291,7 +291,7 @@ and **publishes** to one robot:
 
 | Event | Purpose |
 |---|---|
-| `remote-chat` (and `remote-chat-staging`) | `RemoteChatRequest`, the conversation channel. `backend:"data"` + `query:"modules"` asks for the remote module list; `backend:"router"` is a conversational turn (§4). |
+| `remote-chat` (and `remote-chat-staging`) | `RemoteChatRequest`, the conversation channel. `backend:"router"` is a conversational turn (§4). `backend:"data"` + `query:{"query":"modules"}` (a `RemoteDataQuery`, [`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):41-51, :79) asks which modules the cloud serves; the plain `query:"modules"` string is accepted too. Answered on `commands/remote_chat` with `result: 0` and the list in `query_data.modules` (`RemoteDataBlock`, :296-300, :339), each entry `{info:{id}, rules, source:"REMOTE_CHAT", content_infos:[{id}]}`, before any brain is consulted; a pending robot gets an empty list. Built to the recovered protocol and OpenMoxie's field-proven shapes (`moxie_server.py:170-176`); unverified on our hardware — see [AI seam §②, the wire a robot can read](ai-seam.md#the-wire-a-robot-can-read). |
 | `client-service-activity-log` | Multiplexed by `subtopic`: `query:"schedule"`, `query:"mentor_behaviors"`, `query:"license"` (e.g. the `google_speech` key), `mentor_behavior` reports, and `subtopic:"telehealth"` puppet state. |
 | `zmq` | ZMQ bridge: payload `"{proto.full_name}:" + protobuf_bytes`, e.g. `embodied.perception.audio.zmqSTTRequest` (mic audio). |
 | `device-logs` | Per-robot log records (`tag`, `message`). |

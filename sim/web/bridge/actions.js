@@ -12,7 +12,9 @@
   const B = window.__moxieBridge;
   const status = (t) => B.status(t);
 
-  const ACTION_KINDS = ["launch", "exit", "sleep", "enable_qr", "execute"];
+  // `exit_module` is the recovered ActionID name (what the server sends since 2026-10);
+  // `exit` and `enable_qr` are the older spellings, still accepted.
+  const ACTION_KINDS = ["launch", "exit", "exit_module", "sleep", "enable_qr", "execute"];
   const actionState = B.actionState = {
     applied: [],            // [{action, module_id, content_id, function, args, t}] bounded
     unknown: 0,             // action types this client does not implement (skipped safely)
@@ -69,6 +71,7 @@
         status(`action: launch ${moduleId}${contentId ? ":" + contentId : ""}`);
         break;
       case "exit":
+      case "exit_module":
         actionState.module_id = ""; actionState.content_id = ""; actionState.exits += 1;
         if (m && m.clearIcons) m.clearIcons();
         B.behaviourTree("Bht_Sign_off");

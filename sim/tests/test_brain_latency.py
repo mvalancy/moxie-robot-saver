@@ -21,7 +21,7 @@ from helpers_runtime import (CHAT_TOPIC, CountingSynth, LatchClient,  # noqa: E4
 from moxie_sdk.app import MoxieApp                                # noqa: E402
 from moxie_sdk.filler import FILLERS, pick_filler                 # noqa: E402
 from moxie_sdk.tts import strip_markup               # noqa: E402
-from moxie_sdk.types import Reply                                 # noqa: E402
+from moxie_sdk.types import Reply, ResultCode                     # noqa: E402
 
 TTS_TOPIC = "/devices/{device_id}/commands/tts"
 FILLER_TEXTS = [text for (text, _markup) in FILLERS]
@@ -108,7 +108,7 @@ def test_a_zero_budget_disables_the_filler_entirely():
     app.release.set()
     rt._pool.shutdown(wait=True)
     replies = _chats(rt, dev)
-    assert [r["result"] for r in replies] == ["SUCCESS"], replies
+    assert [r["result"] for r in replies] == [ResultCode.SUCCESS], replies
 
 
 # ------------------------------------------------------------------ the slow path
@@ -123,7 +123,7 @@ def test_slow_brain_speaks_a_filler_then_the_real_answer():
     heard_at = time.monotonic() - t0
     assert app.calls == 1 and not app.release.is_set(), "the brain answered early"
     filler = _chats(rt, dev)[0]
-    assert filler["result"] == "REPLY_PENDING", filler
+    assert filler["result"] == ResultCode.REPLY_PENDING, filler
     assert filler["chunk_num"] == 0
     assert filler["event_id"] == "evt-slow"
     assert filler["consistency_control"] == {"is_completed": False}
@@ -140,7 +140,7 @@ def test_slow_brain_speaks_a_filler_then_the_real_answer():
     replies = _chats(rt, dev)
     assert len(replies) == 2, replies
     real = replies[1]
-    assert real["result"] == "SUCCESS", real
+    assert real["result"] == ResultCode.SUCCESS, real
     assert real["chunk_num"] == 1
     assert real["event_id"] == "evt-slow"
     assert real["consistency_control"] == {"is_completed": True}
@@ -162,7 +162,7 @@ def test_the_filler_never_repeats_itself_on_the_same_robot():
         assert rt._last_filler[dev] == said[-1]
     assert all(a != b for a, b in zip(said, said[1:])), said
     assert all(s in FILLER_TEXTS for s in said)
-    assert [r["result"] for r in _chats(rt, dev)] == ["REPLY_PENDING"] * 6
+    assert [r["result"] for r in _chats(rt, dev)] == [ResultCode.REPLY_PENDING] * 6
 
 
 def test_pick_filler_rotates_without_ever_repeating_the_last_line():

@@ -384,8 +384,9 @@ def assert_spec_response(resp: dict, *, device_id: str = None, event_id: str = N
     """Assert a published payload really is a spec-conformant RemoteChatResponse
     (embodied/robotbrain/RemoteChat.proto — see moxie_sdk/wire.py::build_chat_response).
     Returns the response so callers can chain."""
+    from moxie_sdk.types import ResultCode
     assert resp.get("command") == "remote_chat", resp
-    assert resp.get("result") == "SUCCESS", resp
+    assert resp.get("result") == ResultCode.SUCCESS, resp   # the uint32 value, 0
     assert resp.get("backend") == "router", resp
     if event_id is not None:
         assert resp.get("event_id") == event_id, resp

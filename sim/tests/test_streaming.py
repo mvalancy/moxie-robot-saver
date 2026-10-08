@@ -149,7 +149,7 @@ def test_a_streamed_answer_is_chunks_then_one_completed_success():
 
     replies = chats(rt, dev)
     assert [r["output"]["text"] for r in replies] == lines
-    assert [r["result"] for r in replies] == ["REPLY_PENDING", "REPLY_PENDING", "SUCCESS"]
+    assert [r["result"] for r in replies] == [ResultCode.REPLY_PENDING, ResultCode.REPLY_PENDING, ResultCode.SUCCESS]
     assert [r["chunk_num"] for r in replies] == [0, 1, 2], "chunk_num must be monotonic"
     assert {r["event_id"] for r in replies} == {"evt-stream"}, "one turn, one event_id"
     assert [r["consistency_control"] for r in replies] == [
@@ -172,7 +172,7 @@ def test_a_one_sentence_stream_is_wire_identical_to_a_plain_reply():
     push(rt, dev, "hello", "evt-solo")
     rt._pool.shutdown(wait=True)
     (reply,) = chats(rt, dev)
-    assert reply["result"] == "SUCCESS" and reply["output"]["text"] == "Hi Sam!"
+    assert reply["result"] == ResultCode.SUCCESS and reply["output"]["text"] == "Hi Sam!"
     assert "chunk_num" not in reply and "consistency_control" not in reply
 
 
@@ -189,7 +189,7 @@ def test_a_streamed_action_rides_on_its_own_chunk():
     rt._pool.shutdown(wait=True)
     first, last = chats(rt, dev)
     assert first["response_actions"] == [
-        {"output_type": "GLOBAL", "action": "launch", "module_id": "DRAW",
+        {"output_type": "GLOBAL_RESPONSE", "action": "launch", "module_id": "DRAW",
          "content_id": None}]
     assert "response_actions" not in last
 
@@ -203,7 +203,7 @@ def test_a_late_first_token_gets_a_filler_and_then_the_stream():
 
     assert rt.client.wait_for(lambda pub: fillers(pub), PATIENCE), "no filler published"
     first = chats(rt, dev)[0]
-    assert first["result"] == "REPLY_PENDING" and first["chunk_num"] == 0
+    assert first["result"] == ResultCode.REPLY_PENDING and first["chunk_num"] == 0
     assert first["consistency_control"] == {"is_completed": False}
     assert first["output"]["text"] in FILLER_TEXTS
     assert first["output"]["markup"] != first["output"]["text"], "filler carries markup"
@@ -217,7 +217,7 @@ def test_a_late_first_token_gets_a_filler_and_then_the_stream():
     assert [r["output"]["text"] for r in replies[-2:]] == [
         "Here comes the answer at last.", "All done!"]
     assert [r["chunk_num"] for r in replies] == list(range(len(replies)))
-    assert replies[-1]["result"] == "SUCCESS"
+    assert replies[-1]["result"] == ResultCode.SUCCESS
     assert replies[-1]["consistency_control"] == {"is_completed": True}
     assert len(fillers(rt.client.published)) == 1
 
@@ -253,7 +253,7 @@ def test_a_stalled_stream_re_arms_the_filler_once_and_never_a_third_time():
     assert heard[0] in FILLER_TEXTS and heard[1] == "First, the moon has no light of its own."
     assert heard[-1] == "It borrows sunlight!"
     assert [r["chunk_num"] for r in replies] == list(range(len(replies)))
-    assert replies[-1]["result"] == "SUCCESS"
+    assert replies[-1]["result"] == ResultCode.SUCCESS
     assert replies[-1]["consistency_control"] == {"is_completed": True}
 
 
@@ -302,7 +302,7 @@ def test_a_stream_that_dies_before_a_word_falls_back_to_one_success():
     push(rt, dev, "hello", "evt-boom")
     rt._pool.shutdown(wait=True)
     (reply,) = chats(rt, dev)
-    assert reply["result"] == "SUCCESS"
+    assert reply["result"] == ResultCode.SUCCESS
     assert reply["output"]["text"] == app.fallback
     assert "chunk_num" not in reply and "consistency_control" not in reply
     assert app.respond_calls == 1
@@ -317,7 +317,7 @@ def test_a_stream_that_dies_mid_answer_still_closes_the_sequence():
     push(rt, dev, "hello", "evt-halfboom")
     rt._pool.shutdown(wait=True)
     replies = chats(rt, dev)
-    assert [r["result"] for r in replies] == ["REPLY_PENDING", "SUCCESS"]
+    assert [r["result"] for r in replies] == [ResultCode.REPLY_PENDING, ResultCode.SUCCESS]
     assert replies[-1]["consistency_control"] == {"is_completed": True}
     assert replies[0]["output"]["text"] == "The first half arrived fine."
     assert app.respond_calls == 0, "half an answer must not be re-asked"
@@ -329,7 +329,7 @@ def test_an_app_that_streams_nothing_still_ends_the_turn():
     push(rt, dev, "hello", "evt-empty")
     rt._pool.shutdown(wait=True)
     (reply,) = chats(rt, dev)
-    assert reply["result"] == "SUCCESS" and "chunk_num" not in reply
+    assert reply["result"] == ResultCode.SUCCESS and "chunk_num" not in reply
 
 
 # ------------------------------------------------------ (vi) the MOXIE_STREAMING knob
@@ -379,7 +379,7 @@ def test_config_exposes_the_knob(monkeypatch):
 
 
 # ------------------------------------------------------------- (vii) the SIL client
-def _rcr(event_id, text, chunk_num=None, result="SUCCESS", completed=None):
+def _rcr(event_id, text, chunk_num=None, result=ResultCode.SUCCESS, completed=None):
     from moxie_sdk.wire import build_chat_response
     return build_chat_response(event_id, text, backend="router",
                                result=getattr(ResultCode, result),
@@ -394,12 +394,12 @@ def _virtual_moxie():
 
 def test_the_sil_client_joins_the_chunks_of_one_turn():
     vm = _virtual_moxie()
-    vm._on_chat_reply(_rcr("E", "Hmm, let me think.", 0, "REPLY_PENDING", False))
+    vm._on_chat_reply(_rcr("E", "Hmm, let me think.", 0, ResultCode.REPLY_PENDING, False))
     assert not vm.got_reply.is_set(), "a filler is not the answer"
     vm._on_chat_reply(_rcr("E", "The moon has no light of its own.", 1,
-                           "REPLY_PENDING", False))
+                           ResultCode.REPLY_PENDING, False))
     assert not vm.got_reply.is_set(), "a pending chunk is not the answer either"
-    vm._on_chat_reply(_rcr("E", "It borrows sunlight!", 2, "SUCCESS", True))
+    vm._on_chat_reply(_rcr("E", "It borrows sunlight!", 2, ResultCode.SUCCESS, True))
     assert vm.got_reply.is_set()
     assert vm.reply_text == ("Hmm, let me think. The moon has no light of its own. "
                             "It borrows sunlight!")
@@ -408,9 +408,9 @@ def test_the_sil_client_joins_the_chunks_of_one_turn():
 
 def test_the_sil_client_orders_chunks_by_chunk_num_not_arrival():
     vm = _virtual_moxie()
-    vm._on_chat_reply(_rcr("E", "second.", 1, "REPLY_PENDING", False))
-    vm._on_chat_reply(_rcr("E", "first.", 0, "REPLY_PENDING", False))
-    vm._on_chat_reply(_rcr("E", "third.", 2, "SUCCESS", True))
+    vm._on_chat_reply(_rcr("E", "second.", 1, ResultCode.REPLY_PENDING, False))
+    vm._on_chat_reply(_rcr("E", "first.", 0, ResultCode.REPLY_PENDING, False))
+    vm._on_chat_reply(_rcr("E", "third.", 2, ResultCode.SUCCESS, True))
     assert vm.reply_text == "first. second. third."
 
 
@@ -510,7 +510,7 @@ def test_llm_app_lifts_a_leading_action_tag_onto_the_first_chunk():
     chunks = list(_llm_app(_FakeStream(tokens=_tokens(raw))).respond_stream(_turn("bye")))
     assert chunks[0].text == "Bye Sam, I loved hearing about your day."
     assert "<exit>" not in "".join(c.text for c in chunks)
-    assert [a.type.value for a in chunks[0].actions] == ["exit"]
+    assert [a.type.value for a in chunks[0].actions] == ["exit_module"]
     assert all(not c.actions for c in chunks[1:])
 
 

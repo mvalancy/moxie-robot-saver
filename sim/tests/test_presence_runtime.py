@@ -18,7 +18,7 @@ from helpers_runtime import (CountingSynth, drive_turn,   # noqa: E402
 
 from moxie_sdk import presence as P                                    # noqa: E402
 from moxie_sdk.app import MoxieApp                                     # noqa: E402
-from moxie_sdk.types import Reply                                      # noqa: E402
+from moxie_sdk.types import Reply, ResultCode                          # noqa: E402
 
 FOUND, LOST = P.FOUND_FACE, P.LOST_TARGET
 TTS_TOPIC = "/devices/{}/commands/tts"
@@ -63,7 +63,7 @@ def test_a_vision_event_updates_presence_and_never_reaches_the_brain():
     resp = _vision(rt, dev, FOUND)
     assert app.turns == [] and rt.history.get(dev, []) == []
     assert app.events and app.events[0][0] == FOUND
-    assert resp["command"] == "remote_chat" and resp["result"] == "NOREPLY_ACK", resp
+    assert resp["command"] == "remote_chat" and resp["result"] == ResultCode.NOREPLY_ACK, resp
     assert resp["event_id"] == "evt-eye"
     assert (resp["output"]["text"] or "") == ""
     state = rt.robots[dev].extra["presence"]
@@ -253,7 +253,7 @@ def test_walking_back_in_after_a_long_absence_earns_one_spoken_hello():
     rt.set_synthesizer(CountingSynth())
     seed_absent(rt, dev, away_s=900.0)
     resp = _vision(rt, dev, FOUND)
-    assert resp["result"] == "SUCCESS", resp
+    assert resp["result"] == ResultCode.SUCCESS, resp
     text = resp["output"]["text"]
     assert "Sam" in text and len(text) < 70, text
     assert resp["output"]["markup"] and "<mark" in resp["output"]["markup"], \
@@ -267,31 +267,31 @@ def test_the_hello_is_rate_limited_to_once_per_absence():
     rt, dev = _runtime()
     seed_absent(rt, dev, away_s=900.0)
     first = _vision(rt, dev, FOUND, event_id="e1")
-    assert first["result"] == "SUCCESS"
+    assert first["result"] == ResultCode.SUCCESS
     # the tracker re-announces the same face: no second hello, no second turn
     state = dict(rt.robots[dev].extra["presence"])
     state.update({"face_present": False, "last_lost_at": state["greeted_at"] - 5.0})
     rt.robots[dev].extra["presence"] = state
     second = _vision(rt, dev, FOUND, event_id="e2")
-    assert second["result"] == "NOREPLY_ACK", second
+    assert second["result"] == ResultCode.NOREPLY_ACK, second
 
 
 def test_a_short_step_out_of_frame_earns_nothing():
     rt, dev = _runtime(greet_after_s=300.0)
     seed_absent(rt, dev, away_s=30.0)
-    assert _vision(rt, dev, FOUND)["result"] == "NOREPLY_ACK"
+    assert _vision(rt, dev, FOUND)["result"] == ResultCode.NOREPLY_ACK
 
 
 def test_a_first_ever_sighting_never_greets():
     """`away_s` is None — Moxie does not shout hello at someone it has never seen."""
     rt, dev = _runtime(greet_after_s=1.0)
-    assert _vision(rt, dev, FOUND)["result"] == "NOREPLY_ACK"
+    assert _vision(rt, dev, FOUND)["result"] == ResultCode.NOREPLY_ACK
 
 
 def test_the_greeting_can_be_switched_off_entirely():
     rt, dev = _runtime(greet_after_s=0.0)
     seed_absent(rt, dev, away_s=9000.0)
-    assert _vision(rt, dev, FOUND)["result"] == "NOREPLY_ACK"
+    assert _vision(rt, dev, FOUND)["result"] == ResultCode.NOREPLY_ACK
 
 
 def test_an_unpermitted_robot_is_never_greeted():
@@ -316,7 +316,7 @@ def test_bedtime_hours_suppress_the_hello():
     rt._config_overrides[dev] = {"weekday_bedtime": [start, end],
                                  "weekend_bedtime": [start, end]}
     assert rt._in_bedtime(dev) is True, f"window {start}-{end} must contain {cur:%H:%M}"
-    assert _vision(rt, dev, FOUND)["result"] == "NOREPLY_ACK"
+    assert _vision(rt, dev, FOUND)["result"] == ResultCode.NOREPLY_ACK
 
 
 def test_the_synthetic_bedtime_windows_hold_at_every_minute():
@@ -383,7 +383,7 @@ def test_a_hello_earned_mid_turn_is_queued_not_spoken_over_the_answer():
     seed_absent(rt, dev, away_s=900.0)
     rt._busy.add(dev)                       # a turn is in flight
     resp = _vision(rt, dev, FOUND)
-    assert resp["result"] == "NOREPLY_ACK", "never talk over Moxie's own answer"
+    assert resp["result"] == ResultCode.NOREPLY_ACK, "never talk over Moxie's own answer"
     assert rt._pending_opener[dev], "the hello is kept for the next turn"
 
 
@@ -396,9 +396,9 @@ def test_a_queued_hello_is_delivered_as_chunk_zero_of_the_next_turn():
     assert len(chats) == 2, chats
     opener, answer = chats
     assert opener["output"]["text"] == "Hey Sam, there you are! I missed you."
-    assert opener["result"] == "REPLY_PENDING" and opener["chunk_num"] == 0
+    assert opener["result"] == ResultCode.REPLY_PENDING and opener["chunk_num"] == 0
     assert opener["consistency_control"] == {"is_completed": False}
-    assert answer["result"] == "SUCCESS" and answer["chunk_num"] == 1
+    assert answer["result"] == ResultCode.SUCCESS and answer["chunk_num"] == 1
     assert answer["consistency_control"] == {"is_completed": True}
     assert resp is answer or resp == answer
     assert dev not in rt._pending_opener, "delivered once, then gone"
@@ -424,7 +424,7 @@ def test_a_queued_hello_is_delivered_ahead_of_a_streamed_answer_too():
     assert chats[0]["output"]["text"].startswith("Oh hello Sam")
     assert chats[0]["chunk_num"] == 0
     assert [c["chunk_num"] for c in chats] == [0, 1, 2], chats
-    assert chats[-1]["result"] == "SUCCESS"
+    assert chats[-1]["result"] == ResultCode.SUCCESS
 
 
 # --------------------------------------------------------------------------- #
