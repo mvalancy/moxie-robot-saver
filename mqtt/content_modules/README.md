@@ -16,6 +16,17 @@ Data-driven content modules loaded by the [content engine](../moxie_sdk/content/
   written by a `complete_handler` is theirs; these prompts, the declarative `memory` block
   and the structured summary are ours.*
 
+Both files carry the same two leave-taking globals, so either one ends a chat properly. Neither
+calls the brain:
+
+- **`Goodbye`**: a whole-utterance goodbye (*"Bye, Moxie!"*, *"I gotta go"*, *"I'm done"*,
+  *"stop"*) gets one of several warm lines that start with `<exit>`. The runtime then ends the
+  conversation, and its memory summary is written then, not at the next disconnect.
+- **`Sleep`**: *"go to sleep, Moxie"* or *"time for bed"* answers with `<sleep>`.
+
+A conversation's `opener` is spoken when the robot starts it, as a `prompt` with no speech.
+See the [contract](../../docs/architecture/content-module-contract.md#conversations-llm-driven-chats).
+
 ## The `extension` block
 
 *(BEYOND #6 P0, 2026-09-03. Design:

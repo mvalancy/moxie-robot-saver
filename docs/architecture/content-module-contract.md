@@ -40,6 +40,14 @@ A module is JSON with three optional sections:
   [how a prompt is rendered](#how-a-prompt-is-rendered)). Common vars:
   `volley.config.child_pii.nickname`, `volley.persist_data.*`, `session.overflow`.
 - **`opener`** supports `|`-alternatives and inline tags (`<opener>`, `<exit>`, `<sleep>`, `<launch:XX>`).
+  It is what a conversation starts with: a `prompt` with no speech (after `extra_lines`) is answered
+  with the opener and no LLM call. That reading is OpenMoxie's: its `conversations.py`
+  `handle_volley` answers `prompt` with a random alternative from `get_opener()`. Here only an
+  *empty* `prompt` does, so a typed or spoken first line still reaches the brain, as do `continue`
+  and `reprompt`. A robot hears the first alternative first, and after that never the same line
+  twice in a row. `<opener>` is stripped; `<exit>`, `<sleep>` and `<launch:XX>` become actions, as
+  in a model's line. A conversation with no opener asks the brain, as before. *Built to this
+  contract and the OpenMoxie reference; no physical robot has sent us an empty `prompt` yet.*
 - **`code`** is OpenMoxie's slot for Python hooks (`pre_process`, `post_process`,
   `complete_handler`, `notify_handler`, and `handle_volley` for globals). This appliance **carries it as
   data and never executes it**; runnable behavior uses [`extension`](#extensions-a-pack-that-can-do-something).
@@ -133,11 +141,12 @@ activity (timers, "stop", wake words for commands).
 
 #### The ten the real robot listened for
 
-[`runtime/content-and-conversation.md`](../reverse-engineering/runtime/content-and-conversation.md):136-138
+[`runtime/content-and-conversation.md`](../reverse-engineering/runtime/content-and-conversation.md):123-125
 recovered the always-listening set from `FlexibleGlobalCommand1`: **`Sleep`, `WakeUp`, `Hello`,
 `ListenToMe`, `Earmuffs`, `HoldOn`, `RepeatThat`, `SpeakLouder`, `SpeakSofter`, `SomethingElse`**.
-`starter.json` ships three of them — `HoldOn`, `SomethingElse`, `Earmuffs` — authored as
+`starter.json` ships four of them — `HoldOn`, `SomethingElse`, `Earmuffs`, `Sleep` — authored as
 `extension` programs (`say` + `handled`), so they cost **no LLM call** and work during any activity.
+`Sleep` answers with a line that starts with `<sleep>`, which becomes a SLEEP action.
 
 **`Hello` is deliberately not authored.** A global short-circuits *before* the brain, so matching a
 greeting would replace every "hi Moxie" with one fixed string. Free chat greets better than a canned
@@ -148,11 +157,41 @@ line does; authoring it would make her less like Moxie, not more.
 [`unity-face-animation.md`](../reverse-engineering/runtime/unity-face-animation.md):187-191). That is not
 wired here, so the line must not claim Moxie stopped listening.
 
+**`Goodbye` is authored, though it is not one of the ten.** Here a canned line is the better answer:
+both shipped prompts ask a follow-up question every turn, so on the content brain "bye Moxie" got another question, the
+conversation never ended, and its memory summary waited for the robot to disconnect. The `Goodbye`
+global answers with one of several warm lines that start with `<exit>`, picked with `random.pick`,
+so the runtime ends the conversation and writes the summary. It costs no LLM call. A good night
+gets a good-night line. `memory_chat.json` carries the same `Goodbye` and `Sleep` items.
+
+Both patterns match the **whole utterance**, because a global answers before the brain. Inside a
+sentence the words are ordinary speech: *"my dog said bye to the mailman"* must still reach the brain.
+Around the goodbye, the patterns allow what speech-to-text writes: punctuation, a leading
+*ok*/*um*/*yeah*, *Moxie* or *Moxy* at either end, and two goodbyes in a row (*"I gotta go, bye!"*). A
+bare *"done"* or *"night"* is not a goodbye, because either can be a plain answer to Moxie. Every word
+in the pattern can be read only one way, so a transcript that loops (*"bye bye bye …"*) cannot make
+the regex backtrack exponentially. `random` is a shipped grant, so an edited `Goodbye` stops running
+and the brain answers in its place.
+
+The brain is the backstop for goodbyes the pattern does not cover (*"okay I need to eat dinner now,
+bye"*). After the module's prompt, the content brain's single system message carries the `<exit>` and
+`<sleep>` rules (`actions.LEAVE_TAG_PROMPT`) and never `<launch>`. This brain is never told a module
+id, and a launch id it invented would reach the robot unchecked.
+
+*Not yet shown on a robot:* the goodbye's EXIT goes out as `RemoteChatAction` `exit`. The recovered
+`ActionID` is `exit_module`
+([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):260),
+so whether a physical robot leaves the module depends on the wire-conformance work. The server-side
+end of the conversation and the memory write do not depend on it. (`sleep` already matches the
+proto's spelling, line 264.)
+
 > **Over-matching is the silent failure.** A global short-circuits before the brain, so a pattern one
 > word too loose quietly answers a real sentence with a canned line (a bare "something else" pattern
 > would swallow *"my mum said something else happened at work"*). Anchor a global on the request, not
 > its words, and test both directions: `sim/tests/test_content_wiring.py` checks the command fires with
 > no LLM call *and* that an ordinary sentence containing its words reaches the brain.
+> `sim/tests/test_leave_taking.py` does the same for `Goodbye` and `Sleep` on both shipped modules,
+> with two dozen everyday sentences that contain *bye*, *stop*, *night* or *done*.
 
 ### `schedules[]` — what to offer when
 ```json
