@@ -36,6 +36,10 @@
 
   // Canned exchanges. Keys are matched loosely against what the child said.
   var SCRIPT = [
+    // A feeling comes first: "my birthday was sad", "hi, I'm sad" and "I'm sad, surprise me"
+    // all get this line, not the birthday, greeting, joke or opener line.
+    { match: /sad|upset|angry/i, say: "I'm sorry you're feeling that way. Do you want to talk about it?",
+      mood: 2, gesture: "Gesture_Self" },
     { match: /birthday/i, say: "Happy birthday! I hope your day is amazing.",
       mood: 1, gesture: "Gesture_Celebrate", icon: "Birthday" },
     { match: /thank/i, say: "You're so welcome. I love celebrating with you!",
@@ -60,8 +64,6 @@
     { match: /\bsurprise\b/i,
       say: "Surprise! An octopus has three hearts. I only have one, and it glows for you.",
       mood: 5, gesture: "Gesture_Large" },
-    { match: /sad|upset|angry/i, say: "I'm sorry you're feeling that way. Do you want to talk about it?",
-      mood: 2, gesture: "Gesture_Self" },
     { match: /school/i, say: "School days can be big days. What happened today?",
       mood: 1, gesture: "Gesture_Question", icon: "School" },
     { match: /sleep|tired|bed/i, say: "Getting sleepy? I could use a rest too.",

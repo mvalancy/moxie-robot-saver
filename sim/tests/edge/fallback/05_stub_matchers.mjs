@@ -116,5 +116,20 @@ for (const t of lines) {
   ok(/[.!?]$/.test(t) && t.length <= 120, `a finished sentence of at most 120 characters: ${JSON.stringify(t)}`);
 }
 
+/* 12d. A FEELING COMES FIRST: a line that names one gets the line a bare "I'm sad" gets, whatever
+ * else it holds. The matchers above first sat ahead of it and took 8 of 8 such lines ("I'm sad,
+ * surprise me" got the octopus, "I'm upset, what's your name again?" her name), and the shipped
+ * stub already answered "my birthday was sad because nobody came" with "Happy birthday!". */
+const SORRY = say("I'm sad");
+ok(matched("I'm sad") && !OPENERS.map(say).includes(SORRY),
+   `a bare "I'm sad" gets a matched line of its own — got ${JSON.stringify(SORRY)}`);
+const FEELINGS = ["I'm sad, surprise me", "What makes you happy? I'm sad today", "I'm upset, what's your name again?",
+                  "I feel sad, what are you up to", "hi moxie, I'm sad", "my birthday was sad because nobody came",
+                  "tell me a joke, I'm sad", "how are you? I'm angry at my brother", "thanks moxie, I'm still sad"];
+for (const s of FEELINGS) {
+  eq(say(s), SORRY, `a feeling outranks every other word in ${JSON.stringify(s)}`);
+}
+
 notes.push(`stub: ${OPENERS.length}/3 openers, ${GOODBYES.length} goodbyes (with her wave), 5 name questions ` +
-           `matched; ${NOT_GOODBYES.length} non-goodbyes never waved off; ${FALLBACKS.size} fallback lines ask nothing`);
+           `matched; ${NOT_GOODBYES.length} non-goodbyes never waved off; ${FALLBACKS.size} fallback lines ask nothing; ` +
+           `${FEELINGS.length} lines with a feeling get the sympathy line`);
