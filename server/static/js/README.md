@@ -12,6 +12,8 @@ this order** by [`../index.html`](../index.html). No build step, no dependencies
 - [`perform.js`](perform.js) — 🎭 Be Moxie and 🎬 rehearsal.
 - [`voice-brain.js`](voice-brain.js) — 🎚️ voice and 🧠 brain pickers.
 - [`content.js`](content.js) — 📦 content packs and the ✍️ editor.
+- [`robot.js`](robot.js) — Unpair and Factory reset: the typed-confirmation sheet, the erase
+  choice (the existing calls) and the reset code. `sim/test_robot_lifecycle.mjs` mutates this file.
 
 ---
 📖 [static](../README.md) · [Back to top](../../../README.md)
