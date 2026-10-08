@@ -833,8 +833,9 @@ a tag that feeds an op it does not follow line by line (`get`, `replace`, `join`
 launch whose module is worked out at run time reads *"Moxie starts an activity it works
 out"*. A `say` that can speak more than 256 different lines (or a million characters across
 them) is not read line by line: every text written in it and in its `let` names counts, as
-*sometimes*, with each `concat` read as one text through its literal parts, nested
-`concat`s, case ops and `let` names. Three kinds of tag cannot be read ahead:
+*sometimes*, with each `concat` of up to a million characters read as one text through its
+literal parts, nested `concat`s, case ops and `let` names. Three kinds of tag cannot be
+read ahead:
 
 - one that needs text the program reads at run time (what the child said, a memory,
   something the robot sent) for its `<`, its name, a `:` or its `>`;
