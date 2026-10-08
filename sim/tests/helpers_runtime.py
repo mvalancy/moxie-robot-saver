@@ -394,7 +394,10 @@ def assert_spec_response(resp: dict, *, device_id: str = None, event_id: str = N
     assert isinstance(out, dict), resp
     assert out.get("text", "").strip(), f"empty spoken text: {resp!r}"
     assert out.get("markup", "").strip(), f"empty markup: {resp!r}"
-    assert isinstance(resp.get("end_turn"), bool), resp
+    # A spec response is the whole turn: no open chunk (REPLY_PENDING / is_completed:false
+    # say "more is coming"; `end_turn` has no proto field and is not on the wire).
+    assert (resp.get("consistency_control") or {}).get("is_completed") is not False, resp
+    assert "end_turn" not in resp, resp
     return resp
 
 

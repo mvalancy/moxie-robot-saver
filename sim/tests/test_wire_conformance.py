@@ -14,11 +14,11 @@ and `output.signals` was a list where the proto has a `RemoteSignals` message (:
 The oracle is the committed pb2 (`tools/robot-toolkit/moxie_toolkit/embodied/robotbrain/
 RemoteChat_pb2.py`) through `google.protobuf.json_format.ParseDict` with
 `ignore_unknown_fields=False`: every field name, value type and enum name must be one
-the proto knows. The ONLY fields excepted are `wire.NON_PROTO_FIELDS`: `command`, which
+the proto knows. The ONLY field excepted is `wire.NON_PROTO_FIELDS`: `command`, which
 OpenMoxie (MIT, field-proven on real robots) also sends on every response (volley.py
-`create_response`; moxie_server.py:176), and `end_turn`, ours alone (an SDK hint with no
-proto home, kept for the Sim and webhook contracts; a robot skips it as it skips
-`command`).
+`create_response`; moxie_server.py:176). `end_turn`, an SDK hint with no proto home that
+nothing on the robot side reads, left the wire on 2026-10-08: a robot that consumes
+`command` and parses the rest strictly would have rejected every reply over it.
 
 Field reference, cited not copied: OpenMoxie volley.py `create_response` (result 0,
 `GLOBAL_RESPONSE`), `add_launch_or_exit` (`exit_module`), moxie_server.py:170-176
@@ -289,12 +289,15 @@ def test_the_name_is_what_a_protobuf_robot_cannot_read():
                               ignore_unknown_fields=True)
 
 
-def test_the_non_proto_exceptions_are_exactly_command_and_end_turn():
-    """`strict` excepts `NON_PROTO_FIELDS` and nothing else; the list must stay two long
-    and load-bearing (a plain reply really does not parse with them left in)."""
-    assert NON_PROTO_FIELDS == ("command", "end_turn")
-    resp = build_chat_response("e", "hi")
-    assert set(resp) - PROTO_FIELDS == set(NON_PROTO_FIELDS)
+def test_the_only_non_proto_field_is_command():
+    """`strict` excepts `NON_PROTO_FIELDS` and nothing else; the list is exactly the one
+    key OpenMoxie also sends, and load-bearing (a plain reply really does not parse with
+    it left in). `end_turn` — accepted by the encoder for `Reply` symmetry — is never
+    written: no proto field, no reader on the robot side."""
+    assert NON_PROTO_FIELDS == ("command",)
+    resp = build_chat_response("e", "hi", end_turn=True)
+    assert set(resp) - PROTO_FIELDS == {"command"}
+    assert "end_turn" not in resp
     with pytest.raises(json_format.ParseError, match="command"):
         json_format.ParseDict(resp, RC.RemoteChatResponse(), ignore_unknown_fields=False)
 

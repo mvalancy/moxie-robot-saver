@@ -180,7 +180,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM, STT and TTS interface contract",
    "section": "architecture",
-   "bytes": 31704,
+   "bytes": 31969,
    "mermaid": 1,
    "headings": [
     "The three seams",
@@ -282,7 +282,7 @@
    "path": "architecture/moxie-as-a-platform.md",
    "title": "Moxie as a platform — the SDK",
    "section": "architecture",
-   "bytes": 3841,
+   "bytes": 4117,
    "mermaid": 1,
    "headings": [
     "The one interface that matters: `MoxieApp`",

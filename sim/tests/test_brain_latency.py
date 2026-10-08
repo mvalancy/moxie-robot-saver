@@ -129,7 +129,9 @@ def test_slow_brain_speaks_a_filler_then_the_real_answer():
     assert filler["consistency_control"] == {"is_completed": False}
     assert filler["output"]["text"] in FILLER_TEXTS
     assert filler["output"]["markup"] != filler["output"]["text"], "filler carries markup"
-    assert filler["end_turn"] is False, "the turn is not over — the answer is coming"
+    # "the turn is not over — the answer is coming" is said by REPLY_PENDING and
+    # is_completed:false above; `end_turn` has no proto field and is not on the wire.
+    assert "end_turn" not in filler, filler
     # Not published before the budget, and not minutes after it. The ceiling is loose on
     # purpose: this asserts "inside the window", not a benchmark.
     assert 0.2 <= heard_at < 5.0, heard_at

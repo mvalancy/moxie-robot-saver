@@ -79,12 +79,13 @@ def encode_signals(signals) -> dict:
     return out
 
 
-#: Fields on our `remote_chat` JSON that `RemoteChatResponse` does not declare. A robot
-#: parsing as protobuf JSON skips unknown fields (OpenMoxie sends `command` on every
-#: response and is field-proven); a type error, as `result: "SUCCESS"` was, it cannot
-#: skip. `end_turn` is ours alone (an SDK hint with no proto home), listed so the
-#: conformance test can except exactly these and nothing else.
-NON_PROTO_FIELDS = ("command", "end_turn")
+#: Fields on our `remote_chat` JSON that `RemoteChatResponse` does not declare: exactly
+#: the one OpenMoxie also sends on every response (field-proven on real robots), the
+#: `command` dispatch key. A robot that consumes `command` and parses the rest strictly
+#: would reject any other extra, so nothing else is added — `Reply.end_turn`, an SDK
+#: hint with no proto field, left the wire on 2026-10-08. The conformance test excepts
+#: exactly this list and nothing else.
+NON_PROTO_FIELDS = ("command",)
 
 
 def build_chat_response(event_id, text, markup="", *, backend="router",
@@ -99,7 +100,9 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
     Every value is what the robot's protobuf-JSON parser accepts for its field: `result`
     is the integer (`uint32`, :320), enum-typed fields carry enum NAMES, and the whole
     document parses strictly through the committed pb2 files but for `NON_PROTO_FIELDS`
-    (`sim/tests/test_wire_conformance.py`).
+    (`sim/tests/test_wire_conformance.py`). `end_turn` is accepted for `Reply` /
+    `ReplyChunk` symmetry and is NOT written: it has no proto field, nothing on the
+    robot side reads it, and `REPLY_PENDING` already says more is coming.
 
     * **Chunks.** `result=REPLY_PENDING` + `chunk_num` (field 22) order a streamed turn;
       `is_completed` sets `consistency_control.is_completed` (field 18) on the last.
@@ -132,7 +135,7 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
     if signals:
         output["signals"] = encode_signals(signals)
     resp = {"command": "remote_chat", "result": int(rc), "backend": backend,
-            "event_id": event_id, "output": output, "end_turn": bool(end_turn)}
+            "event_id": event_id, "output": output}
     ra = [e for e in map(encode_action, actions or []) if e is not None]
     if subscribe_events:
         if not ra:

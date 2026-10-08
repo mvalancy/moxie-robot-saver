@@ -292,12 +292,14 @@ No physical Moxie has yet parsed a reply from this appliance. What is held inste
 runtime publishes** — plain, streamed chunk, `REPLY_PENDING` filler, offline line, each action, the
 event subscription, a safety redirect, the not-paired line and the module-list answer — through the
 committed `RemoteChat_pb2` with `ignore_unknown_fields=False`, so every field name, value type and
-enum name is one the proto knows. Exactly two fields are excepted (`wire.NON_PROTO_FIELDS`):
-`command`, which OpenMoxie also sends on every response and real robots accept, and `end_turn`, an
-SDK hint of ours with no proto field (a robot skips it as it skips `command`; it is never acted on by
-hardware). Until 2026-10-08 none of our replies passed even a lenient parse (the `result` name), and a
-lenient parse of `output_type: "GLOBAL"` / `action: "exit"` silently produced `CATCH_ALL` /
-`UNSET_ACTION_ID`.
+enum name is one the proto knows. Exactly one field is excepted (`wire.NON_PROTO_FIELDS`):
+`command`, which OpenMoxie also sends on every response and real robots accept. Nothing else is
+added: OpenMoxie sends no other non-proto key, and a robot that consumes `command` and parses the rest
+strictly would reject every reply over one. The SDK's `Reply.end_turn` is an input-side hint (the
+webhook contract, the console's preview) with no proto field and no reader on the robot side, so it is
+not written to the wire; `REPLY_PENDING` already tells a robot more is coming. Until 2026-10-08 none of
+our replies passed even a lenient parse (the `result` name), and a lenient parse of
+`output_type: "GLOBAL"` / `action: "exit"` silently produced `CATCH_ALL` / `UNSET_ACTION_ID`.
 
 **The module list.** The robot asks which modules the cloud serves with `backend: "data"` and
 `query: {"query": "modules"}` — a `RemoteDataQuery` (RemoteChat.proto:41-51, field 23 at :79;

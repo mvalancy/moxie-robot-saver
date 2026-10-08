@@ -207,7 +207,9 @@ def test_a_late_first_token_gets_a_filler_and_then_the_stream():
     assert first["consistency_control"] == {"is_completed": False}
     assert first["output"]["text"] in FILLER_TEXTS
     assert first["output"]["markup"] != first["output"]["text"], "filler carries markup"
-    assert first["end_turn"] is False, "the turn is not over — the answer is coming"
+    # "the turn is not over — the answer is coming" is said by REPLY_PENDING and
+    # is_completed:false above; `end_turn` has no proto field and is not on the wire.
+    assert "end_turn" not in first, first
 
     rt.brain_budget_s = 0                        # no more fillers; just the answer
     app.plans[0].release_all()
