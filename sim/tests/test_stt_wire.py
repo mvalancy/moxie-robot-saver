@@ -915,13 +915,27 @@ def _shipped_content_brain(brain):
                       content_defaults=defaults, memory=False, safety_classifier=False)
 
 
+def _exits(robot) -> list:
+    """Every EXIT the robot was handed, read the way the robot reads it: the ActionID name
+    `exit_module` (RemoteChat.proto:260; `ActionType.EXIT`) in a reply's
+    `response_actions`. The enum's own name, "EXIT", never appears on the wire."""
+    return [a for r in robot.replies for a in (r.get("response_actions") or [])
+            if a.get("action") == "exit_module"]
+
+
 def _goodbye_loopback(tmp_path, timers, pcm, uuid):
     """A robot that acts on its FINALs (`echo=True`), streaming one utterance whose engine
-    answers 'Bye.', against the shipped content brain. Returns what each side saw."""
+    answers 'Bye.', against the shipped content brain. Its fake model answers a goodbye
+    the way the llm brain is taught to (`<exit>` first, llm_app.py), and the content brain
+    lifts that tag into an EXIT (actions.py): the harm a phantom 'Bye.' does on a tree
+    without #312's Goodbye global, which ends the session the same way without the model.
+    Returns what each side saw."""
     seen = {"brain": [], "respond": [], "ended": []}
 
     def brain(messages):
         seen["brain"].append(messages)
+        if "bye" in str(messages[-1].get("content", "")).lower():
+            return "<exit>Bye bye! That was so much fun."
         return "That sounds fun! What else did you do today?"
 
     app = _shipped_content_brain(brain)
@@ -945,7 +959,9 @@ def test_loopback_a_phantom_bye_on_room_tone_never_becomes_the_childs_turn(timer
     """Whisper writes 'Bye.' for room tone, and a goodbye ends the activity (the llm brain
     is taught <exit> for one; K5's content-brain Goodbye, #312, accepts a lone 'By.'/'Bye.').
     Now the robot is told the child said nothing, so it sends no turn: the shipped content
-    brain is never asked, no EXIT is published and the conversation does not end."""
+    brain is never asked, nothing at all is sent back (so no `exit_module`) and the
+    conversation does not end. `test_loopback_with_the_gate_off_a_phantom_bye_ends_the_activity`
+    is the same clip with the gate off: there every one of these checks reads the harm."""
     robot, ears, seen = _goodbye_loopback(tmp_path, timers, tone_pcm(1500, rms=0.004),
                                           "utt-quiet")
     assert ears.calls == 1, "room tone is not digital silence: the engine was asked"
@@ -953,15 +969,33 @@ def test_loopback_a_phantom_bye_on_room_tone_never_becomes_the_childs_turn(timer
     assert (final.type, final.speech, final.uuid) == (final.FINAL, "", "utt-quiet")
     assert robot.prompts == [], "the robot sent the phantom back as the child's turn"
     assert seen["respond"] == [] and seen["brain"] == []
-    assert not any("EXIT" in json.dumps(r.get("response_actions") or [])
-                   for r in robot.replies), robot.replies
+    assert _exits(robot) == [], "the phantom goodbye ended the activity"
+    assert robot.replies == [], "the robot was answered although the child said nothing"
     assert seen["ended"] == []
+
+
+def test_loopback_with_the_gate_off_a_phantom_bye_ends_the_activity(timers, tmp_path,
+                                                                     monkeypatch):
+    """The kill switch end to end, and the proof that the quiet loopback's checks can fail:
+    with `MOXIE_STT_PHANTOM_GATE=off` the same room-tone 'Bye.' is the child's FINAL again,
+    the robot sends it as the turn, an `exit_module` goes out and the conversation ends,
+    read with the same `_exits`. Holds with and without #312: there K5's Goodbye global
+    answers instead of the model, with the same EXIT."""
+    monkeypatch.setenv("MOXIE_STT_PHANTOM_GATE", "off")
+    robot, ears, seen = _goodbye_loopback(tmp_path, timers, tone_pcm(1500, rms=0.004),
+                                          "utt-quiet")
+    final = robot.heard[-1]
+    assert (final.type, final.speech, final.uuid) == (final.FINAL, "Bye.", "utt-quiet")
+    assert robot.prompts == ["Bye."] and seen["respond"] == ["Bye."]
+    assert len(_exits(robot)) == 1, robot.replies
+    assert seen["ended"] == ["exit"]
 
 
 def test_loopback_a_loud_bye_is_still_the_childs_word(timers, tmp_path):
     """The same 'Bye.' on speech-level audio is the child's: the FINAL carries it, the robot
-    sends it as the turn and the content brain answers it. (With #312's Goodbye global
-    that turn ends the session, as test_leave_taking.py pins for typed goodbyes.)"""
+    sends it as the turn, the answer carries an `exit_module` and the conversation ends
+    (here the model's `<exit>`; with #312, K5's Goodbye global without the model, as
+    test_leave_taking.py pins for typed goodbyes)."""
     robot, ears, seen = _goodbye_loopback(tmp_path, timers, tone_pcm(800, amplitude=0.3),
                                           "utt-loud")
     final = robot.heard[-1]
@@ -970,3 +1004,5 @@ def test_loopback_a_loud_bye_is_still_the_childs_word(timers, tmp_path):
     assert seen["respond"] == ["Bye."], "the child's goodbye never reached the brain"
     answered = [r for r in robot.replies if r.get("event_id") == "evt-utt-loud"]
     assert answered and (answered[-1].get("output") or {}).get("text"), robot.replies
+    assert len(_exits(robot)) == 1, robot.replies
+    assert seen["ended"] == ["exit"], "the child's goodbye did not end the conversation"
