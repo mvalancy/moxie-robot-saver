@@ -172,6 +172,21 @@ def test_a_template_filter_in_an_opener_is_not_an_alternative():
     assert said == ["Hi SAM! Ready?", "Hey Sam!", "Hi SAM! Ready?"]
 
 
+def test_a_bar_inside_a_block_tag_or_a_comment_is_not_an_alternative():
+    """`{% … %}` and `{# … #}` are template constructs too: a `|` in an `{% if %}` test or
+    in a comment does not separate alternatives. Splitting inside the `{% if %}` would have
+    the child hear "if volley.config.child_pii.nickname" first."""
+    chat, calls = _counting()
+    opener = ("{% if volley.config.child_pii.nickname | length > 2 %}Hi "
+              "{{ volley.config.child_pii.nickname }}!{% else %}Hi pal!{% endif %}"
+              "|{# one line | or the other #}Ready to play?")
+    app = ContentApp(load_module(_with_opener(opener)), chat)
+    said = [app.respond(Turn(robot=_robot(), speech="", command="prompt")).text
+            for _ in range(3)]
+    assert calls == [], "an opener must not cost a model call"
+    assert said == ["Hi Sam!", "Ready to play?", "Hi Sam!"]
+
+
 def test_what_a_starting_extension_asks_for_rides_out_with_the_opener():
     """A `turn.before` program that acts and subscribes without taking the turn: both go
     out with the opener, as they would with a model's line."""
