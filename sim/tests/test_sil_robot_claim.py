@@ -78,12 +78,12 @@ class StandIn:
         self._c.disconnect()
 
 
-def _wait(predicate, timeout: float = 20.0, what: str = "condition"):
-    """Poll a real distributed system; `time` here is a deadline, never a date."""
+def _wait(predicate, attempts: int = 130, what: str = "condition"):
+    """Poll a real distributed system: a bounded number of 0.15 s naps (about 20 s), so
+    no clock is read (`test_clock_dependence.py`)."""
     import time
-    deadline = time.time() + timeout
     last = None
-    while time.time() < deadline:
+    for _ in range(attempts):
         last = predicate()
         if last:
             return last
