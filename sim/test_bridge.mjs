@@ -1,8 +1,11 @@
 /* sim/web/bridge/ under bare node: firmware markup -> window.moxie, telehealth, response
- * actions, robot->cloud envelopes (byte-compared with the SIL robot's golden) and the
- * presence events. No browser, no network. Run: node sim/test_bridge.mjs
+ * actions, robot->cloud envelopes (byte-compared with the SIL robot's golden), the
+ * presence events, and the face following the sentence (with life.js's idle beats).
+ * No browser, no network. Run: node sim/test_bridge.mjs
  */
-import { loadBridge, audioSpy, readGolden, checks } from "./bridge_harness.mjs";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { loadBridge, audioSpy, readGolden, checks, here } from "./bridge_harness.mjs";
 
 /* Both voice doors are spied: a child line must use `speakClipOnly`, never `speak()`
  * (which would read a visitor's own words back at them). */
@@ -251,6 +254,118 @@ ok(parity.length === 0,
   ok(B.presenceStats().present === true, "the toggle walks the child back in");
 }
 
+
+// ---- the face follows the sentence: the mood mark owns the face, gestures move the arms ----
+/* The hosted brain's markup (the REAL functions/api/_lib/wire.js floor over the model's own
+ * {mood, gesture}) through the real bridge. think/question/celebrate used to re-set the face
+ * after the mood mark, so a concerned line ended 'thinking' and a sad one 'happy'. */
+const wire = await import(join(here, "..", "functions", "api", "_lib", "wire.js"));
+/** One reply as /api/chat answers it, through a fresh bridge; its recorded calls. */
+function hostedLine(text, chosen, extraMarks = "") {
+  const L = loadBridge({ connect: false });
+  L.bridge.route("/devices/d_sim/commands/remote_chat", JSON.stringify(wire.buildChatResponse(
+    { eventId: "sim-face", text, markup: wire.markupFloor(text, chosen) + extraMarks })));
+  return L.calls;
+}
+for (const [text, chosen, want, motor] of [
+  ["Oh no, I'm sorry to hear that, Sam. School can be tricky sometimes.",
+   { mood: "concerned", gesture: "think" }, "concerned", [3, 8000]],
+  ["What is your favorite animal?", { mood: "curious", gesture: "question" }, "curious", [3, 8000]],
+  ["That makes me a little sad too.", { mood: "sad", gesture: "celebrate" }, "sad", [0, 30000]],
+  ["What happened at school today?", null, "curious", [3, 8000]],     // the floor alone ('?')
+]) {
+  const c = hostedLine(text, chosen);
+  const label = `${JSON.stringify(chosen)} "${text.slice(0, 30)}…"`;
+  ok(JSON.stringify(c.setFace) === JSON.stringify([want]),
+     `${label}: the line wears one face, its mood '${want}'; got ${JSON.stringify(c.setFace)}`);
+  ok(c.setMotor.some(([i, v]) => i === motor[0] && v === motor[1]),
+     `${label}: its gesture still moves the arm (${motor}); got ${JSON.stringify(c.setMotor)}`);
+}
+{
+  // No mood mark (a brain that sends only a gesture), or a mood the bridge cannot map: the
+  // gesture still supplies the face, as it does for alive.js's thinking cue.
+  const L = loadBridge({ connect: false });
+  const think = wire.MK.gesture("Gesture_Think");
+  const say = (text, markup) => L.bridge.route("/devices/d_sim/commands/remote_chat",
+    JSON.stringify({ command: "remote_chat", output: { text, markup } }));
+  say("Hmm.", think + "Hmm.");
+  say("Hmm?", wire.MK.mood(42) + think + "Hmm?");
+  ok(JSON.stringify(L.calls.setFace) === '["thinking","thinking"]',
+     `no usable mood mark: think still shows 'thinking'; got ${JSON.stringify(L.calls.setFace)}`);
+}
+{
+  // A goodbye line ends on a Bht_Sign_off tree (the hosted goodbye turn appends one): the mood
+  // rule must not swallow the wave (arm up, then the hand swings out).
+  const signOff = '<mark name="cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,' +
+    '+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,' +
+    '+behaviour+:+Bht_Sign_off+,+Track+:++}"/>';
+  const c = hostedLine("Bye, Sam! See you later!", { mood: "happy", gesture: "none" }, signOff);
+  ok(c.setMotor.some(([i, v]) => i === 0 && v === 30000) && c.setMotor.some(([i, v]) => i === 1 && v === 26000),
+     `goodbye + Bht_Sign_off: she still waves; got ${JSON.stringify(c.setMotor)}`);
+}
+
+// ---- …and life.js's idle beats leave the line's face alone while she says it ----
+/* The REAL sim/web/life.js beat loop on a virtual clock: a frame every 16 ms, a beat forced
+ * every 256 ms (the page beats every 1.4-4 s; forcing them fills every window with face
+ * beats), a seeded Math.random, and a moxieAudio whose isMoxieBusy (voice/'s broad
+ * predicate) is the only sign she is speaking. */
+{
+  const saved = { perf: Object.getOwnPropertyDescriptor(globalThis, "performance"),
+                  raf: globalThis.requestAnimationFrame, random: Math.random };
+  let now = 0, frames = [], seed = 7;
+  Object.defineProperty(globalThis, "performance",
+    { value: { now: () => now }, configurable: true, writable: true });
+  globalThis.requestAnimationFrame = (cb) => frames.push(cb);
+  Math.random = () => {                                     // mulberry32: same beats every run
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  let line = [Infinity, Infinity];                          // [start, end) of her voice
+  const audio = { speak() {}, stop() {}, sfx() {}, speakClipOnly() {},
+    // voice/core.js's meaning: speaking now, or stopped less than `grace` ms ago
+    isMoxieBusy: (grace) => (now >= line[0] && now < line[1]) ||
+                            (+grace > 0 && now >= line[1] && now - line[1] < +grace) };
+  const L = loadBridge({ connect: false, audio,
+    moxie: { isAlive: () => true, isUserHeld: () => false, MOTOR_CENTER: 16384 } });
+  (0, eval)(readFileSync(join(here, "web", "life.js"), "utf8"));
+  /** Run the beat loop for `ms`; the faces it set meanwhile. */
+  const live = (ms) => {
+    const n0 = L.calls.setFace.length;
+    for (const end = now + ms; now < end;) {
+      now += 16;
+      if (now % 256 === 0) window.moxieLife.beatNow();
+      const due = frames; frames = [];
+      due.forEach((f) => f(now));
+    }
+    return L.calls.setFace.slice(n0);
+  };
+
+  const idle = live(4000);
+  ok(idle.length > 0, `CONTROL: idle, life.js does shift her face (else the next checks prove nothing); got ${JSON.stringify(idle)}`);
+  line = [now, now + 4000];
+  const speaking = live(4000);
+  ok(speaking.length === 0, `while a 4 s line plays, life.js sets no face; got ${JSON.stringify(speaking)}`);
+  const finished = live(6000);
+  ok(finished.length > 0, `…and after the line the idle mood shifts come back; got ${JSON.stringify(finished)}`);
+
+  // A reply's face lands before its audio (the voice is still on its way): it holds anyway.
+  const text = "That sounds really lonely, and I am sorry it happened to you.";
+  L.bridge.route("/devices/d_sim/commands/remote_chat", JSON.stringify(wire.buildChatResponse(
+    { eventId: "sim-hold", text, markup: wire.markupFloor(text, { mood: "sad", gesture: "self" }) })));
+  ok(L.calls.setFace[L.calls.setFace.length - 1] === "sad",
+     `the reply set its face; got ${JSON.stringify(L.calls.setFace.slice(-1))}`);
+  const beforeVoice = live(3900);
+  ok(beforeVoice.length === 0, `for 4 s after a reply lands, voice or not, life.js keeps its face; got ${JSON.stringify(beforeVoice)}`);
+  const released = live(6000);
+  ok(released.length > 0, `…then the hold ends and the mood shifts come back; got ${JSON.stringify(released)}`);
+
+  if (saved.perf) Object.defineProperty(globalThis, "performance", saved.perf);
+  globalThis.requestAnimationFrame = saved.raf;
+  Math.random = saved.random;
+}
+
 report("✅ bridge unit test OK — markup->avatar, telehealth, response_actions, activity-log " +
-       `parity with ${golden.reference_client}, presence events`);
+       `parity with ${golden.reference_client}, presence events, the face following the sentence`);
 process.exit(0);   // the local-voice grace timer would otherwise hold the loop open
