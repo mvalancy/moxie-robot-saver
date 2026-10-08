@@ -22,6 +22,7 @@ import time
 
 import pytest
 
+from helpers_ext import CHAT_MODULE, app_with, robot as ext_robot
 from helpers_runtime import CHAT_TOPIC, CountingSynth, LatchClient, make_runtime
 from moxie_sdk import presence as presence_seam
 from moxie_sdk.actions import ACTION_TAG_PROMPT, parse_action_tags
@@ -304,22 +305,193 @@ def test_a_parent_reads_the_shipped_goodbye_and_sleep_plainly(name):
                 assert not re.search(rf"\b{re.escape(cap)}\b", line), (cap, line)
 
 
+def _effect_of(action):
+    """What `ext.explain()` calls an action a robot is sent."""
+    if action.type == ActionType.EXIT:
+        return "the conversation ends"
+    if action.type == ActionType.SLEEP:
+        return "Moxie goes to sleep"
+    assert action.type == ActionType.LAUNCH, action
+    return f"Moxie starts the {action.module_id} activity"
+
+
 def test_explain_reads_a_tag_as_the_robot_does_and_nothing_else_moved():
     """explain.py restates the tag grammar (its package imports nothing outside itself), so
-    it must agree with `actions.parse_action_tags` on which tags do something. The six
+    for every line it must name exactly the actions `actions.parse_action_tags` makes of
+    it, in order: the same kinds and the same modules, not only as many. The six
     conformance rows still read exactly as recorded."""
     from moxie_sdk.content.ext.explain import _tag_effects
     for line in ["<exit>Bye!", "Night.<sleep>", "Let's draw!<launch:DRAW>",
                  "<launch:DRAW:default>Go!", "<launch_if_confirmed:DRAW>Draw?", "<EXIT>Bye",
                  "< sleep >zz", "<exit:now>hm", "<launch>no", "<launch:A:B:C>no",
-                 "<launch: :x>no", "<opener>Hi", "<mark name='x'/>Hi", "plain"]:
-        assert len(_tag_effects(line)) == len(parse_action_tags(line)[1]), line
+                 "<launch: :x>no", "<opener>Hi", "<mark name='x'/>Hi", "plain",
+                 "<exit:>ok", "<sleep : >zz", "<launch:DRAW:>go", "<launch:A:B:>go",
+                 "<Launch:Draw>hi", "<launch_if_confirmed:A:B>x", "<sleep><exit>both",
+                 "<exit>a<exit>twice", "<launch::x>no", "<exitx>no", "<launch_x:A>no",
+                 "<<exit>>x", "<launch:DR<exit>AW>x", "<\u017fleep>no", "<exit\u00a0>nb"]:
+        read = _tag_effects(line)
+        assert all(sure for _, sure in read), line
+        assert [effect for effect, _ in read] == \
+            [_effect_of(a) for a in parse_action_tags(line)[1]], line
     with open(os.path.join(REPO, "sim", "tests", "data", "ext_conformance.json"),
               encoding="utf-8") as fh:
         rows = json.load(fh)["rows"]
     assert len(rows) == 6
     for row in rows:
         assert E.explain(row["ast"]) == row["explain"], row["name"]
+
+
+def _imported(rule, caps=("handled", "say")):
+    return {"ext_format": 1, "capabilities": list(caps), "on": "global", "rules": [rule]}
+
+
+def _says(say, let=None, caps=("handled", "say")):
+    rule = {"do": [{"say": say}, {"handled": True}]}
+    if let:
+        rule["let"] = let
+    return _imported(rule, caps)
+
+
+DRAW = "Moxie starts the DRAW activity"
+_WANTS_DRAW = {"contains": [{"lower": [{"var": "speech"}]}, "draw"]}
+
+#: Imported programs whose `say` reaches an action tag in different ways: how the pack
+#: review's sentence ends, and what the robot is sent for each thing the child says. Before
+#: this, every one but the plain line and `random.pick` read with no "then" at all.
+IMPORTED_SAYS = {
+    "if with a fixed test": (
+        _says({"if": [True, "<launch:DRAW>Let's draw!", "Hi"]}),
+        f"; then {DRAW}.", {"hi there": [DRAW]}),
+    "if on what the child said": (
+        _says({"if": [_WANTS_DRAW, "<launch:DRAW>Let's draw!", "Hi"]}),
+        f"; then sometimes {DRAW}.", {"let's draw": [DRAW], "hello": []}),
+    "upper": (
+        _says({"upper": ["<exit>bye now"]}),
+        "; then the conversation ends.", {"hi": ["the conversation ends"]}),
+    "lower, which lowers the module too": (
+        _says({"lower": ["<launch:DRAW>OK"]}),
+        "; then Moxie starts the draw activity.", {"hi": ["Moxie starts the draw activity"]}),
+    "concat": (
+        _says({"concat": ["<sleep>", "Night ", "night"]}),
+        "; then Moxie goes to sleep.", {"hi": ["Moxie goes to sleep"]}),
+    "a tag split across concat parts": (
+        _says({"concat": ["<ex", "it>See you!"]}),
+        "; then the conversation ends.", {"hi": ["the conversation ends"]}),
+    "a let-bound line": (
+        _says({"var": "line"}, let={"line": "<exit>See you!"}),
+        "; then the conversation ends.", {"hi": ["the conversation ends"]}),
+    "a let bound to an earlier let": (
+        _says({"var": "nap"}, let={"tag": "<sleep>",
+                                   "nap": {"concat": [{"var": "tag"}, "Nap time!"]}}),
+        "; then Moxie goes to sleep.", {"hi": ["Moxie goes to sleep"]}),
+    "or": (
+        _says({"or": [{"var": "input_vars.line"}, "<exit>Bye"]}),
+        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+    "a tag assembled from literals": (
+        _says({"replace": ["<exot>Bye", "o", "i"]}),
+        "; then the conversation ends.", {"hi": ["the conversation ends"]}),
+    "get at a worked-out index": (
+        _says({"get": [{"lit": ["<exit>Bye", "Hi"]},
+                       {"%": [{"len": [{"var": "speech"}]}, 2]}]}),
+        "; then sometimes the conversation ends.",
+        {"ab": ["the conversation ends"], "abc": []}),
+    "a launch of a worked-out module": (
+        _says({"concat": ["<launch:", {"upper": [{"trim": [{"var": "speech"}]}]},
+                          ">Off we go!"]}),
+        "; then sometimes Moxie starts an activity it works out.", {"draw": [DRAW]}),
+    "a line that is only a tag": (
+        _says("<sleep>"), "; then Moxie goes to sleep.", {"hi": ["Moxie goes to sleep"]}),
+    "two lines, of which the robot is sent the last": (
+        _imported({"do": [{"say": "<exit>Bye"}, {"say": "Hi there"}, {"handled": True}]}),
+        "", {"hi": []}),
+}
+
+
+def _names(phrase, effect):
+    """True when one of the review's phrases names `effect`, an action the robot was sent
+    (a launch of a worked-out module names any launch)."""
+    phrase = phrase[len("sometimes "):] if phrase.startswith("sometimes ") else phrase
+    return phrase == effect or (phrase == "Moxie starts an activity it works out"
+                                and effect.startswith("Moxie starts the "))
+
+
+@pytest.mark.parametrize("shape", sorted(IMPORTED_SAYS))
+def test_an_imported_say_names_what_its_tags_do_however_it_is_built(shape):
+    """An extension's line goes through `parse_action_tags` with no other grant check, so
+    the review's sentence is the only place a parent learns that it ends the chat, puts
+    Moxie to sleep or starts an activity. Each program runs as an imported global with only
+    the default grants: the sentence (in `explain()` and in the pack review) names what the
+    robot is sent, "sometimes" when not every line it can say does it, and reads no tag."""
+    program, then, heard = IMPORTED_SAYS[shape]
+    (sentence,) = E.explain(program)
+    assert sentence.endswith(then) if then else "; then" not in sentence, sentence
+    assert "<" not in sentence and ">" not in sentence, sentence
+    assert sentence in P.extension_warnings({"extension": program})
+    named = sentence.partition("; then ")[2].rstrip(".").split(" and ") if then else []
+    module = dict(CHAT_MODULE, globals=[{"name": "Probe", "pattern": r"\w",
+                                         "extension": program}])
+    for speech, want in heard.items():
+        brain = Brain()
+        reply = app_with(module, chat=brain).respond(
+            Turn(robot=ext_robot(), speech=speech))
+        assert brain.turns == [] and reply.text != QUESTION, (shape, speech)
+        sent = [_effect_of(a) for a in reply.actions]
+        assert sent == want, (shape, speech, reply)
+        # What the robot was sent is named; what is named without "sometimes" always is.
+        assert all(any(_names(n, e) for n in named) for e in sent), (sent, named)
+        assert all(any(_names(n, e) for e in sent)
+                   for n in named if not n.startswith("sometimes ")), (sent, named)
+
+
+def test_a_random_pick_among_computed_lines_names_its_tag_as_sometimes():
+    """`random.pick` over a `list` op (not a fixed `lit` list): the review says "sometimes",
+    and across turns the robot is sent the EXIT on some and nothing on others."""
+    program = _says({"random.pick": [{"list": ["<exit>Bye", "Hi"]}]},
+                    caps=("handled", "random", "say"))
+    (sentence,) = E.explain(program)
+    assert sentence.endswith("; then sometimes the conversation ends."), sentence
+    module = dict(CHAT_MODULE, globals=[{"name": "Probe", "pattern": r"\w",
+                                         "extension": program}])
+    app = app_with(module, chat=Brain(), ext_grants=E.DEFAULT_GRANTS | {"random"},
+                   clock=lambda: 1_700_000_000)
+    sent = {tuple(_effect_of(a) for a in app.respond(
+        Turn(robot=ext_robot(), speech=f"turn {n}")).actions) for n in range(12)}
+    assert sent == {(), ("the conversation ends",)}, sent
+
+
+def test_every_op_explain_does_not_follow_holds_no_text_or_passes_a_tag_on():
+    """`_Reader` follows a few ops line by line. Of the rest, `_NO_TEXT_OPS` yield numbers
+    and yes/no, and every other op may hand an argument's text on, so a tag in its
+    arguments is read as "sometimes". A new op has to be put on one side on purpose."""
+    from moxie_sdk.content.ext.explain import _CASE, _NO_TEXT_OPS
+    followed = {"if", "and", "or", "concat", "random.pick"} | set(_CASE)
+    assert followed <= set(E.OPS) and _NO_TEXT_OPS <= set(E.OPS)
+    assert not followed & _NO_TEXT_OPS
+    assert set(E.OPS) - followed - _NO_TEXT_OPS == {
+        "slice", "replace", "split", "join", "repeat", "format", "plural", "list", "get",
+        "compact", "reverse", "sort", "keys"}
+
+
+def test_a_say_built_to_multiply_is_read_in_bounded_time_and_still_names_its_tag():
+    """Thirty `let` names that each double the lines of the last, and a `concat` of 32
+    `if`s: each name is read once, in binding order, and past 256 lines every tag written
+    in the `say` and its names counts as "sometimes". Read one by one, the first would be
+    2^30 lines and the second 2^32."""
+    chain = {"a0": {"if": [{"var": "speech"}, "<exit>Bye", "Hi"]}}
+    for k in range(1, 30):
+        chain[f"a{k}"] = {"if": [{"var": "speech"}, {"var": f"a{k - 1}"},
+                                 {"concat": [{"var": f"a{k - 1}"}, "!"]}]}
+    doubling = _says({"var": "a29"}, let=chain)
+    wide = _says({"concat": [{"if": [{"var": "speech"}, "<sleep>z", "z"]}] * 32})
+    for program in (doubling, wide):
+        assert E.validate(program, grants=E.DEFAULT_GRANTS) == []
+    try:
+        with _hard_limit(5.0):
+            read = E.explain(doubling) + E.explain(wide)
+    except _Stalled:
+        pytest.fail("explain() was still reading after 5 s")
+    assert read[0].endswith("; then sometimes the conversation ends."), read[0]
+    assert read[1].endswith("; then sometimes Moxie goes to sleep."), read[1]
 
 
 # --------------------------------------------------------------------------- #

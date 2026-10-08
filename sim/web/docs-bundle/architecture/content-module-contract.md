@@ -812,7 +812,20 @@ activity is triggered: tells your child 'The time is …' and answers without as
 AI."* Both appear in the pack review beside the diff. A parent never reads a raw action tag:
 it is lifted out of the quoted line, and the sentence ends with what it does, so the shipped
 `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and answers without asking
-the AI; then the conversation ends."*
+the AI; then the conversation ends."* That sentence is the only place a parent learns of a
+tag, because an extension's line goes through the same tag parse as a model's with no grant
+of its own. So `explain()` reads every line the rule's last `say` can speak (each `say`
+replaces the line before it): through `if`, `and`/`or`, `concat`, `let` names,
+`random.pick`, `upper`/`lower`/`trim`/`str`, and any part built only from literals, which it
+works out with the evaluator itself (a tag split across `concat` parts or assembled with
+`replace` included). An effect that not every one of those lines has reads *sometimes*
+(*"…; then sometimes Moxie starts the DRAW activity."*), and so does a tag that feeds an op
+it does not follow line by line (`get`, `replace`, `join`, …). A launch whose module is
+worked out at run time reads *"Moxie starts an activity it works out"*. A tag can also arrive
+in what the program reads at run time, such as what the child said or a memory it wrote on
+an earlier turn: that is not the program's own text, and `explain()` cannot read it ahead.
+`sim/tests/test_leave_taking.py` runs each shape through the real `ContentApp` and checks
+the sentence against what the robot is sent.
 
 **Capability escalation.** An incoming item declaring a capability the installed version
 did not is defaulted **un-ticked** whatever its state, with its own sentence — *"This
