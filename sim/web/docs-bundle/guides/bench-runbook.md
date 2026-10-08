@@ -8,8 +8,9 @@ Robot details refer to firmware v3.6.4-Zephyr / OTA v24.10.803
 > **Status.** A real Moxie has scanned this project's Wi-Fi code and joined the network
 > ([live notes](../debugging/live-hardware-debug.md)). Everything after that (the server code
 > landing on our broker, the Connection monitor lines for a real robot, Add to my account for a
-> real robot) is built to the documented contract and tested against the simulator and hermetic
-> doubles. **No physical Moxie has completed this flow on this project yet.**
+> real robot) is built to the documented contract and tested against hermetic doubles, and against a
+> real broker and the real supervisor with an MQTT client standing in for the robot. **No physical
+> Moxie has completed this flow on this project yet.**
 
 ## Before you start
 
@@ -18,9 +19,9 @@ Robot details refer to firmware v3.6.4-Zephyr / OTA v24.10.803
 - **The broker address is one the robot can reach.** The console's **🔗 Server** tab fills in this
   computer's LAN address. A VPN address only your laptop can reach will not work for the robot.
 - **Know the firmware.** Look under the code box on Moxie's face: a badge reading
-  "EmbodiedProduction" or "OpenMoxie" means firmware 801 or 803, which a code can re-home. No badge
-  means older than 801: no code can move it, it needs the
-  [flash-first path](revive-your-moxie.md#path-c-flash-an-older-robot-first)
+  "EmbodiedProduction" or "OpenMoxie" means firmware 801 or 803, which a code can re-home (the badge
+  may only show once it has joined Wi-Fi). No badge means older than 801: no code can move it, it
+  needs the [flash-first path](revive-your-moxie.md#path-c-flash-an-older-robot-first)
   ([live notes](../debugging/live-hardware-debug.md)).
 - **Pick the simplest network.** A normal WPA2 network on 2.4 GHz, or **🚀 Moxie Direct** (this
   computer's own access point), which removes every router setting from the question.
