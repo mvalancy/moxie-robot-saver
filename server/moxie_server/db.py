@@ -138,3 +138,54 @@ def unpair_robot(rid, uid):
         voided = _C.execute("UPDATE pairings SET consumed=? WHERE user_id=? AND consumed=?",
                             (PAIRING_VOID, uid, PAIRING_OPEN)).rowcount
         return row, voided
+
+
+def device_id_of(row) -> str:
+    """The MQTT identity (`d_<uuid>`) a robot record names, or `""`."""
+    return str(json.loads(row["attributes"]).get("mqtt-device-id") or "").strip()
+
+
+def bound_device_ids() -> set:
+    """Every MQTT identity some account's robot record names."""
+    return {d for d in map(device_id_of, q("SELECT attributes FROM robots")) if d}
+
+
+def claim_robot(uid, device_id, attributes: dict, robot_setting: dict, child_attrs: dict):
+    """Bind the robot behind one MQTT identity to an account, in one transaction, keeping
+    two rules: a robot is on one account, and an account has one robot (the web app shows
+    `robots[0]`). `(outcome, row)`, and only `"created"` changes anything:
+
+    * `"exists"`: this account's record already names it (`row`);
+    * `"taken"`: another account's record names it (`row` is None);
+    * `"occupied"`: this account has a different robot (`row`);
+    * `"created"`: `row` is the new record, bound to the account's first child. An
+      account with no child gets one from `child_attrs` first, as pairing does."""
+    with _LOCK, _C:
+        rows = _C.execute("SELECT * FROM robots").fetchall()
+        mine = [r for r in rows if r["user_id"] == uid]
+        same = next((r for r in mine if device_id_of(r) == device_id), None)
+        if same is not None:
+            return "exists", same
+        if any(device_id_of(r) == device_id for r in rows):
+            return "taken", None
+        if mine:
+            return "occupied", mine[0]
+        kid = _C.execute("SELECT id FROM children WHERE user_id=?", (uid,)).fetchone()
+        if kid:
+            child_id = kid["id"]
+        else:
+            child_id = new_id()
+            _C.execute("INSERT INTO children(id,user_id,attributes,created_at) VALUES(?,?,?,?)",
+                       (child_id, uid, json.dumps(child_attrs), now_s()))
+            user = json.loads(_C.execute("SELECT attributes FROM users WHERE id=?",
+                                         (uid,)).fetchone()["attributes"])
+            if not user.get("active-child-id"):      # the first child is the active one
+                user["active-child-id"] = child_id
+                _C.execute("UPDATE users SET attributes=? WHERE id=?", (json.dumps(user), uid))
+        rid = new_id()
+        _C.execute("INSERT INTO robots(id,user_id,child_id,attributes,robot_setting,"
+                   "last_seen_at,created_at) VALUES(?,?,?,?,?,?,?)",
+                   (rid, uid, child_id, json.dumps({"embodied-robot-id": rid, **attributes,
+                                                    "mqtt-device-id": device_id}),
+                    json.dumps(robot_setting), now_s(), now_s()))
+        return "created", _C.execute("SELECT * FROM robots WHERE id=?", (rid,)).fetchone()

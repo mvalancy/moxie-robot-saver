@@ -2,8 +2,9 @@
 
 Login without an email round trip, the whole pre-QR crypto dance server-side, the QR
 images (EC level L by default: the original app used ZXing L because Moxie's camera
-struggles with dense codes), the factory-reset code, Moxie Direct, and
-`simulate-robot-scan`, which completes a pairing with no hardware.
+struggles with dense codes), the factory-reset code, Moxie Direct,
+`simulate-robot-scan`, which completes a pairing with no hardware, and the claim that adds
+a robot which paired by QR to the parent's account.
 """
 from __future__ import annotations
 import base64
@@ -15,6 +16,7 @@ import socket
 import sys
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
 from .. import crypto, db, diceware, lifecycle, supervisor
 from ..auth import current_user, mint_tokens, read_json
@@ -202,6 +204,85 @@ async def simulate_robot_scan(request: Request):
     return out
 
 
+def _supervisor_devices():
+    """What the supervisor's permit view says about robots, or `None` when it cannot be
+    asked: `connected` (on the broker now, served or pending), `listed` (that, plus every
+    id on the permit list) and `permitted` (served if it connects)."""
+    out, code = supervisor.call("GET", "/permits", timeout=2)
+    if code != 200 or not out.get("ok"):
+        return None
+    def ids(values):
+        return {str(v).strip() for v in values or [] if v and str(v).strip()}
+    connected = ids(out.get("connected")) | ids(out.get("pending"))
+    on_list = ids(p.get("device_id") for p in out.get("permits") or [] if isinstance(p, dict))
+    return {"connected": connected, "listed": connected | on_list,
+            "permitted": on_list, "open": bool(out.get("allow_unverified_bots"))}
+
+
+def _claim_refusal(status: int, error: str, reason: str, device_id: str, **extra):
+    return JSONResponse(status_code=status, content={
+        "ok": False, "error": error, "reason": reason, "device_id": device_id, **extra})
+
+
+#: The label a claim leaves on the robot's permit. Robot access is not per-account, so it
+#: names no one.
+CLAIM_LABEL = "added to a parent account"
+
+
+@router.post("/local/robots/{device_id}/claim")
+def claim_robot(device_id: str, u=Depends(current_user)):
+    """Add a robot that paired by QR to this account: the record a simulated scan makes,
+    for the `d_<uuid>` the supervisor lists, so the robot card (settings, insights,
+    safety, memory, Wake, Unpair, Factory reset) has something to render.
+
+    A claim is the parent's word that the robot is theirs, the same trust as Permit:
+    nothing the robot sends carries the pairing seed, so no pairing code is used and no
+    `public-key` is written. It fails closed: 503 when the supervisor cannot say which
+    robots it has seen, 404 for an id it has never listed, 409 for a robot on another
+    account or an account that already has a different robot. On success it posts the
+    console's Permit body once (best-effort: `permitted: false` and the reason if that
+    fails). A repeat returns the same record and posts nothing."""
+    device_id = device_id.strip()
+    seen = _supervisor_devices()
+    if seen is None:
+        return _claim_refusal(
+            503, supervisor.UNREACHABLE,
+            "This server cannot reach its robot side, so it cannot check which robots "
+            "have connected. Nothing was changed: start the supervisor and try again.",
+            device_id)
+    if device_id not in seen["listed"]:
+        return _claim_refusal(
+            404, "unknown robot",
+            "No robot with that id has connected to this server. Show Moxie the Wi-Fi "
+            "code and then the server code; it is listed in Robot access once it arrives.",
+            device_id)
+    outcome, row = db.claim_robot(
+        u["id"], device_id,
+        {"serial": device_id, "name": "Moxie", "state": "paired", "pairing-status": "paired"},
+        {"volume": 0.7, "screen-brightness": 0.8}, {"child-first-name": "Moxie Kid"})
+    if outcome == "taken":
+        return _claim_refusal(
+            409, "on another account",
+            "That robot is already on another account on this server. Unpair it there "
+            "first, then add it here.", device_id)
+    if outcome == "occupied":
+        name = json.loads(row["attributes"]).get("name") or "Moxie"
+        return _claim_refusal(
+            409, "account already has a robot",
+            f"This account already has a robot ({name}). Unpair the current robot first, "
+            "then add this one.", device_id, robot_id=row["id"])
+    out = {"ok": True, "robot_id": row["id"], "device_id": device_id,
+           "child_id": row["child_id"], "created": outcome == "created",
+           "permitted": seen["open"] or device_id in seen["permitted"], "permit_error": None}
+    if outcome == "created":
+        res, code = supervisor.post_json("/permits", {
+            "device_id": device_id, "permitted": True, "label": CLAIM_LABEL})
+        out["permitted"] = bool(code == 200 and res.get("ok"))
+        if not out["permitted"]:
+            out["permit_error"] = res.get("error") or f"supervisor returned {code}"
+    return out
+
+
 @router.get("/local/state")
 def local_state(u=Depends(current_user)):
     def rows(rs):
@@ -210,8 +291,13 @@ def local_state(u=Depends(current_user)):
     # erase choice with that child's name.
     robots = [{"id": r["id"], **json.loads(r["attributes"]), "child_id": r["child_id"]}
               for r in db.robots_of(u["id"])]
+    # Robots on the broker that no account's record names: what "Add to my account"
+    # offers. Empty when the supervisor cannot be asked.
+    seen = _supervisor_devices()
+    unclaimed = sorted(seen["connected"] - db.bound_device_ids()) if seen else []
     return {"user": {"id": u["id"], **json.loads(u["attributes"])},
-            "children": rows(db.children_of(u["id"])), "robots": robots}
+            "children": rows(db.children_of(u["id"])), "robots": robots,
+            "unclaimed": unclaimed}
 
 
 @router.get("/healthz")

@@ -378,3 +378,5 @@ jobs:
         run: node sim/test_console_insights.mjs
       - name: Parent console — Unpair and Factory reset (typed confirmation, erase order, reset code)
         run: node sim/test_robot_lifecycle.mjs
+      - name: Parent console — Add to my account (one click, one claim; never automatic)
+        run: node sim/test_robot_claim.mjs

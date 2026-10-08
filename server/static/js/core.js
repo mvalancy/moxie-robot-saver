@@ -1,5 +1,6 @@
 /* Parent console, part 1 of 7: the app shell — api(), tabs, login, pairing QRs, the
- * connection monitor, the live fleet poll that drives every card, and 🔐 robot access.
+ * connection monitor, the live fleet poll that drives every card, 🔐 robot access and
+ * ➕ Add to my account.
  * Plain classic scripts sharing one global scope, loaded in order by index.html. */
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
@@ -148,14 +149,57 @@ async function pollMonitor(){
 function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 // ---- Moxie status ----
+// The account's side of the last /local/state: its robot records, and the robots on the
+// broker that no account has added (`unclaimed`). 🔐 Robot access reads it too.
+let ACCOUNT={robots:[], unclaimed:[]};
 async function refreshMoxie(){
   try{
     const st=await api('/local/state');
+    ACCOUNT={robots:st.robots||[], unclaimed:st.unclaimed||[]};
     if(st.robots && st.robots.length){ renderRobot(st.robots[0]); }
     else { $('#moxie-none').classList.remove('hidden'); $('#moxie-card').classList.add('hidden');
            $('#memory-card').classList.add('hidden'); }
+    renderClaims();
   }catch(e){}
   refreshLive();
+}
+
+// ---- ➕ Add to my account ----
+// A robot that paired by scanning the codes reaches the broker with no account record, so
+// it has no robot card. One click claims it (the server permits it too); nothing is ever
+// claimed without that click. Offered only where it can work: an account has one robot.
+function claimable(deviceId){ return !ACCOUNT.robots.length && ACCOUNT.unclaimed.includes(deviceId); }
+function claimButton(deviceId){
+  return `<button class="primary claim-btn" data-id="${escapeHtml(deviceId)}">Add to my account</button>`;
+}
+function wireClaims(box, statusSel){
+  box.querySelectorAll('.claim-btn').forEach(b=>{ b.onclick=()=>claimRobot(b.dataset.id, statusSel); });
+}
+function renderClaims(){
+  const box=$('#claim-box'), list=$('#claim-list'); if(!box||!list) return;
+  const ids=ACCOUNT.unclaimed.filter(claimable);
+  box.classList.toggle('hidden', !ids.length);
+  list.innerHTML=ids.map(id=>`<div class="ev"><span>${escapeHtml(id)}</span> ${claimButton(id)}</div>`).join('');
+  wireClaims(list, '#claim-status');
+}
+let claiming=false;
+async function claimRobot(deviceId, statusSel){
+  if(claiming) return;                       // one click, one claim
+  claiming=true;
+  $$('.claim-btn').forEach(b=>{ b.disabled=true; });
+  const s=$(statusSel); if(s) s.textContent='Adding Moxie to your account…';
+  let r=null;
+  try{
+    r=await api(`/local/robots/${encodeURIComponent(deviceId)}/claim`,{method:'POST'});
+    if(s) s.textContent='';
+  }catch(e){ if(s) s.textContent=oops(e,'could not add it'); }
+  claiming=false;
+  await refreshMoxie();
+  const d=$('#dev-status');
+  if(r && d) d.textContent = !r.created ? 'This robot is already on your account.'
+    : r.permitted ? '✅ Added to your account. Moxie is let in and gets your settings.'
+    : `⚠️ Added to your account, but this server could not let it in yet (${r.permit_error}). `
+      + 'Press Permit in Robot access.';
 }
 // live runtime state (battery/volume/Wi-Fi/mode/telemetry) from the MQTT supervisor
 let liveDevice=null;
@@ -238,15 +282,20 @@ function renderPermits(f){
     `<div class="ev"><span>${escapeHtml(r.device_id||'')}</span> `
     + `<b>${escapeHtml(r.permit_label||r.summary||'')}</b> ${act}</div>`;
   const parts=[];
+  const adding=pending.some(r=>claimable(r.device_id));
   if(pending.length) parts.push('<div class="insights-hd">Waiting for you</div>'
+    + (adding ? '<div class="muted">Add to my account lets it in and gives you its robot card; '
+              + 'Permit only lets it in.</div>' : '')
     + pending.map(r=>row(r,
-        `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="1">Permit</button>`)).join(''));
+        `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="1">Permit</button>`
+        + (claimable(r.device_id) ? ' '+claimButton(r.device_id) : ''))).join(''));
   if(permitted.length) parts.push('<div class="insights-hd">Allowed</div>'
     + permitted.map(r=>row(r,
         `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="0">Revoke</button>`)).join(''));
   if(!parts.length) parts.push('<div class="live-off">No robot has connected yet.</div>');
   box.innerHTML=parts.join('');
   box.querySelectorAll('.permit-btn').forEach(b=>{ b.onclick=()=>setPermit(b.dataset.id, b.dataset.permit==='1'); });
+  wireClaims(box, '#permit-status');
 }
 async function setPermit(deviceId, permitted){
   const s=$('#permit-status'); if(s) s.textContent = permitted?'Permitting…':'Revoking…';

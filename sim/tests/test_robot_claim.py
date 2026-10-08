@@ -1,0 +1,215 @@
+"""Add a robot that paired by QR to the parent's account (ROADMAP Next #5).
+
+A real Moxie scans the Wi-Fi code and the server code, reaches the broker and shows up in
+Robot access. Until now the only thing that made an account robot record was the
+console's simulated scan, so that robot never got a robot card: no settings, insights,
+safety review, memory, Wake, Unpair or Factory reset. `POST /local/robots/{id}/claim`
+makes the record. What each test below pins:
+
+* a claim binds the device id the supervisor lists to this account and its child, and
+  permits it with the console's own Permit body, once;
+* it fails closed and changes nothing when it cannot be sure: no bearer (401), an id the
+  supervisor never listed (404), a supervisor it cannot ask (503), a robot on another
+  account or an account that already has a robot (409); a repeat is a no-op;
+* it is the parent's word, not a proof: no pairing code is used, no public key is written;
+* the whole lifecycle (Wake, Unpair, Factory reset) then works on that record;
+* `/local/state.unclaimed` lists the connected robots no account has added.
+
+The supervisor is `helpers_console_supervisor.FakeSupervisor`, which lists exactly one
+connected robot, `DEVICE`; its `permit_posts`, `memory_erases`, `telemetry_erases`,
+`config_posts` and `wakeups` record every call that reached it. The console database is
+shared by every console module in a run, so each test starts with no record naming
+`DEVICE` and an empty permit list.
+"""
+import json
+
+import pytest
+
+pytest.importorskip("fastapi", reason="console tests need fastapi")
+pytest.importorskip("httpx", reason="console tests need httpx (fastapi TestClient)")
+
+from helpers_console import set_status_url  # noqa: E402
+from helpers_console_supervisor import (DEAD, DEVICE, client,  # noqa: E402,F401
+                                        quicklogin, supervisor)
+
+PERMIT = {"device_id": DEVICE, "permitted": True}
+REVOKE = {"device_id": DEVICE, "permitted": False, "label": ""}
+RESTORE_FACTORY = '{"debug":{"command":"restore_factory"}}'
+
+
+@pytest.fixture(autouse=True)
+def no_record_names_the_robot(client, supervisor):
+    """Every test starts where a bench robot does: on the broker, on no account, not on
+    the permit list. Read straight from the table, never through the code under test."""
+    from moxie_server import db
+    for row in db.q("SELECT id, attributes FROM robots"):
+        if json.loads(row["attributes"]).get("mqtt-device-id") == DEVICE:
+            db.ex("DELETE FROM robots WHERE id=?", (row["id"],))
+    supervisor.permits["devices"].clear()
+    yield
+
+
+def _claim(client, auth, device_id=DEVICE):
+    return client.post(f"/local/robots/{device_id}/claim", headers=auth)
+
+
+def _me_robots(client, auth):
+    return [i for i in client.get("/api/users/me", headers=auth).json()["included"]
+            if i["type"] == "robots"]
+
+
+def _state(client, auth):
+    r = client.get("/local/state", headers=auth)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _calls(supervisor):
+    """Every supervisor call a claim must never make, as one comparable snapshot."""
+    return (len(supervisor.memory_erases), len(supervisor.telemetry_erases),
+            len(supervisor.config_posts), len(supervisor.wakeups))
+
+
+def _rows_naming(device_id):
+    from moxie_server import db
+    return [r for r in db.q("SELECT * FROM robots")
+            if json.loads(r["attributes"]).get("mqtt-device-id") == device_id]
+
+
+def test_a_robot_that_paired_by_qr_can_be_added_to_the_account(client, supervisor):
+    auth = quicklogin(client, "bench@claim.lan")
+    assert _me_robots(client, auth) == []          # the bench-day defect: no record at all
+    assert _state(client, auth)["children"] == []
+
+    r = _claim(client, auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["device_id"] == DEVICE and body["robot_id"] and body["created"] is True
+    assert body["permitted"] is True and body["permit_error"] is None
+
+    robots = _me_robots(client, auth)
+    assert [x["id"] for x in robots] == [body["robot_id"]]
+    assert robots[0]["attributes"]["mqtt-device-id"] == DEVICE
+    state = _state(client, auth)
+    kids = state["children"]
+    assert [k["child-first-name"] for k in kids] == ["Moxie Kid"]   # made, as pairing does
+    assert state["user"]["active-child-id"] == kids[0]["id"]
+    assert [(x["id"], x["child_id"]) for x in state["robots"]] == [(body["robot_id"],
+                                                                    kids[0]["id"])]
+    assert body["child_id"] == kids[0]["id"]
+
+
+def test_a_claim_binds_the_accounts_own_child(client):
+    auth = quicklogin(client, "has-a-child@claim.lan")
+    cid = client.post("/api/children", headers=auth,
+                      json={"child": {"child-first-name": "Ada"}}).json()["data"]["id"]
+    assert _claim(client, auth).json()["child_id"] == cid
+    state = _state(client, auth)
+    assert [k["id"] for k in state["children"]] == [cid]           # no second child
+    assert state["robots"][0]["child_id"] == cid
+
+
+def test_the_claim_permits_the_robot_once_and_a_repeat_changes_nothing(client, supervisor):
+    auth = quicklogin(client, "once@claim.lan")
+    posts, calls = len(supervisor.permit_posts), _calls(supervisor)
+    first = _claim(client, auth).json()
+    sent = supervisor.permit_posts[posts:]
+    assert len(sent) == 1 and {k: sent[0][k] for k in PERMIT} == PERMIT
+    assert set(sent[0]) == {"device_id", "permitted", "label"}     # the Permit button's body
+    assert sent[0]["label"].strip()                               # says where it came from
+    assert DEVICE in supervisor.permits["devices"]
+    assert _calls(supervisor) == calls          # no erase, no config push, no wake-up
+
+    again = _claim(client, auth)
+    assert again.status_code == 200, again.text
+    assert again.json()["robot_id"] == first["robot_id"] and again.json()["created"] is False
+    assert again.json()["permitted"] is True
+    assert len(supervisor.permit_posts) == posts + 1
+    assert len(_rows_naming(DEVICE)) == 1 and _calls(supervisor) == calls
+
+
+def test_refusals_create_no_record_and_post_nothing(client, supervisor, monkeypatch):
+    """Each refusal says why in a sentence (`reason`, what the web app shows) and leaves
+    the account, its children and the permit list exactly as they were."""
+    from moxie_server import db
+    owner = quicklogin(client, "owner@claim.lan")
+    stranger = quicklogin(client, "stranger@claim.lan")
+    taken = quicklogin(client, "has-a-robot@claim.lan")
+    assert _claim(client, owner).status_code == 200                 # DEVICE is the owner's
+    prep = client.post("/local/pairing/prepare", headers=taken,
+                       json={"ssid": "Home", "password": "pw"}).json()
+    assert client.post("/local/simulate-robot-scan",
+                       json={"qr_payload": prep["qr_payload"]}).status_code == 200
+
+    def snapshot():
+        return (db.q1("SELECT COUNT(*) n FROM robots")["n"],
+                db.q1("SELECT COUNT(*) n FROM children")["n"],
+                len(supervisor.permit_posts), dict(supervisor.permits["devices"]),
+                _calls(supervisor))
+
+    before = snapshot()
+    for headers in ({}, {"Authorization": "Bearer nope"}):
+        assert _claim(client, headers).status_code == 401
+    never = _claim(client, stranger, "d_never_seen")
+    assert never.status_code == 404 and "connected" in never.json()["reason"]
+    other = _claim(client, stranger)
+    assert other.status_code == 409 and "another account" in other.json()["reason"]
+    assert snapshot() == before
+
+    for row in _rows_naming(DEVICE):                      # the robot is free again ...
+        db.ex("DELETE FROM robots WHERE id=?", (row["id"],))
+    before = snapshot()
+    full = _claim(client, taken)                          # ... but this account is not
+    assert full.status_code == 409, full.text
+    assert "Unpair the current robot first" in full.json()["reason"]
+    set_status_url(DEAD, monkeypatch)
+    down = _claim(client, stranger)
+    assert down.status_code == 503 and "Nothing was changed" in down.json()["reason"]
+    assert snapshot() == before
+    state = _state(client, stranger)
+    assert state["robots"] == [] and state["children"] == []
+
+
+def test_a_claim_uses_no_pairing_code_and_writes_no_public_key(client):
+    """Nothing the robot sends carries the pairing seed, so the server cannot tell which
+    code (if any) this robot scanned: a claim asserts nothing about one."""
+    from moxie_server import db
+    auth = quicklogin(client, "no-seed@claim.lan")
+    client.post("/local/pairing/prepare", headers=auth, json={"ssid": "Home", "password": "pw"})
+    codes = lambda: sorted(tuple(r) for r in db.q("SELECT id_hash, consumed FROM pairings"))
+    before = codes()
+    rid = _claim(client, auth).json()["robot_id"]
+    assert codes() == before
+    attrs = client.get(f"/api/robots/{rid}", headers=auth).json()["data"]["attributes"]
+    assert "public-key" not in attrs and attrs["mqtt-device-id"] == DEVICE
+
+
+def test_wake_unpair_and_factory_reset_work_on_a_claimed_robot(client, supervisor):
+    auth = quicklogin(client, "lifecycle@claim.lan")
+    rid = _claim(client, auth).json()["robot_id"]
+    wake = client.post(f"/api/robots/{rid}/wakeup", headers=auth)
+    assert wake.status_code == 200, wake.text
+    assert wake.json()["resolved_by"] == "record" and supervisor.wakeups[-1] == DEVICE
+
+    posts = len(supervisor.permit_posts)
+    gone = client.delete(f"/api/robots/{rid}", headers=auth).json()
+    assert gone["unpaired"] is True and supervisor.permit_posts[posts:] == [REVOKE]
+    assert _me_robots(client, auth) == []
+
+    rid = _claim(client, auth).json()["robot_id"]                  # added again, then reset
+    posts = len(supervisor.permit_posts)
+    reset = client.delete(f"/api/robots/{rid}?rfs=1", headers=auth).json()
+    assert reset["unpaired"] is True and reset["factory_reset"] is True
+    assert reset["reset"]["qr_payload"] == RESTORE_FACTORY
+    assert supervisor.permit_posts[posts:] == [REVOKE]
+
+
+def test_unclaimed_lists_the_connected_robots_no_account_has_added(client, monkeypatch):
+    first, second = quicklogin(client, "a@unclaimed.lan"), quicklogin(client, "b@unclaimed.lan")
+    assert _state(client, first)["unclaimed"] == [DEVICE]
+    assert _state(client, second)["unclaimed"] == [DEVICE]
+    assert _claim(client, first).status_code == 200
+    assert _state(client, first)["unclaimed"] == []
+    assert _state(client, second)["unclaimed"] == []    # nobody is offered a robot that is taken
+    set_status_url(DEAD, monkeypatch)
+    assert _state(client, second)["unclaimed"] == []
