@@ -6,6 +6,7 @@ from moxie_sdk.types import ResultCode
 from moxie_sdk.wire import build_activity_response
 from moxie_sdk import safety as safety_seam
 from moxie_sdk import performance as performance_seam
+from moxie_sdk.cloud_config import LoggingPolicy
 from markup import perform
 
 
@@ -333,7 +334,15 @@ class FleetMixin:
         # write: two edits at once reach the disk in the order they changed RAM, so the
         # file never ends up holding the older one (`_settings_record`).
         with self._settings_record(device_id) as held:
-            self._config_overrides.setdefault(device_id, {}).update(overrides)
+            layer = self._config_overrides.setdefault(device_id, {})
+            if (device_id in self._settings_unreadable
+                    and self._storable_settings(overrides)[0]):
+                # A parent's save ends `_fail_closed`: data sharing is this save's own
+                # choice again, or the layer underneath (house rule, default).
+                self._settings_unreadable.discard(device_id)
+                if "logging_policy" not in overrides:
+                    layer.pop("logging_policy", None)
+            layer.update(overrides)
             # Saved before the purge and the push: a crash after this line still boots
             # with the parent's choice, so a NO_DATA that was set is swept at the next start.
             self._save_config_overrides(device_id, held)
@@ -357,6 +366,11 @@ class FleetMixin:
     # `moxie_mode` is not in the whitelist, so it is not kept: its session lives in RAM,
     # and a restart hands the robot back to its own brain, as before.
     ROBOT_CONFIG_COLLECTION = "config"          # → $MOXIE_DATA_DIR/robots/<id>/config.json
+    #: What a robot whose saved data-sharing choice cannot be read runs under: the most
+    #: restrictive LoggingPolicy (enums.proto: NO_DATA keeps nothing, NO_MEDIA all but
+    #: audio and video, FULL everything). "A policy it cannot read fails closed rather
+    #: than open" (config-and-telemetry-contract.md).
+    UNREADABLE_SETTINGS_POLICY = LoggingPolicy.NO_DATA
 
     @staticmethod
     def _storable_settings(overrides) -> tuple:
@@ -397,6 +411,8 @@ class FleetMixin:
         """Write this robot's saved settings (the store's locked, atomic write), inside
         `_settings_record`. A write that fails, or a record that could not be held, is said
         aloud: the edit still applies now, but not after a restart."""
+        if device_id in self._settings_unreadable:
+            return False                         # kept as found until a parent saves
         saved = False
         if held:
             kept, _ = self._storable_settings(
@@ -417,8 +433,9 @@ class FleetMixin:
 
         Runs in the constructor and never raises. A damaged or non-object record reads as
         no settings (one line). A key the whitelist now refuses, or a brain the current
-        `MOXIE_APP` pin refuses, is dropped (one line per robot) and never pushed. Loading
-        writes nothing: the next save for that robot rewrites its record."""
+        `MOXIE_APP` pin refuses, is dropped (one line per robot) and never pushed. Either
+        way a data-sharing choice that cannot be read fails closed (`_fail_closed`).
+        Loading writes nothing: the next save for that robot rewrites its record."""
         from moxie_sdk import brains as brain_seam
         pin = brain_seam.pin_for_env(os.environ.get(brain_seam.ENV_VAR, ""))
         loaded = {}
@@ -428,6 +445,7 @@ class FleetMixin:
             print(f"[runtime] ⚠️  saved settings not loaded: {e}", flush=True)
             return loaded
         missing = object()
+        restored = 0
         for device_id in devices:
             path = self.store.path(device_id, self.ROBOT_CONFIG_COLLECTION)
             try:
@@ -440,6 +458,7 @@ class FleetMixin:
                 what = "unreadable" if raw is missing else "not a settings object"
                 print(f"[runtime] ⚠️  {path} is {what}: no saved settings for {device_id} "
                       f"(the next save rewrites it)", flush=True)
+                loaded[device_id] = self._fail_closed(device_id, {}, "its saved settings")
                 continue
             kept, dropped = self._storable_settings(raw)
             brain = kept.get(brain_seam.CONFIG_KEY)
@@ -449,8 +468,27 @@ class FleetMixin:
             if dropped:
                 print(f"[runtime] ⚠️  {device_id}: saved settings dropped at load (not "
                       f"accepted here now): {', '.join(sorted(dropped))}", flush=True)
+            restored += bool(kept)
+            if "logging_policy" in raw and "logging_policy" not in kept:
+                kept = self._fail_closed(device_id, kept, "its saved data-sharing choice")
             if kept:
                 loaded[device_id] = kept
-        if loaded:
-            print(f"[runtime] restored saved settings for {len(loaded)} robot(s)", flush=True)
+        if restored:
+            print(f"[runtime] restored saved settings for {restored} robot(s)", flush=True)
         return loaded
+
+    def _fail_closed(self, device_id, kept: dict, what: str) -> dict:
+        """`kept` plus `UNREADABLE_SETTINGS_POLICY`, for a robot whose saved data-sharing
+        choice cannot be read. It runs under that policy in every sense, as any NO_DATA
+        robot does (no new transcript, memory, activity record or safety excerpt, and the
+        boot sweep clears its stored transcript and activity record), until a parent's
+        next save (`update_config`). Until then its record stays as found, so a restart
+        fails closed again. The activity feed says so in one line."""
+        self._settings_unreadable.add(device_id)
+        policy = self.UNREADABLE_SETTINGS_POLICY
+        line = (f"🔒 {device_id}: {what} could not be read, so it runs under "
+                f"{policy.name} (the strictest data sharing) until a parent saves its "
+                f"settings again")
+        self._note("error", line)
+        print(f"[runtime] {line}", flush=True)
+        return {**kept, "logging_policy": int(policy)}

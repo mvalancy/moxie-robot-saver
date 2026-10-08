@@ -170,6 +170,14 @@ explicit `null` from the robot layer clears an inherited value. The fleet layer 
 form's *"Apply to all robots"*) and re-pushed to every connected robot at once. *Credit:* the idea is OpenMoxie's
 `HiveConfiguration` + `robot_data.py::build_config` deep-merge (MIT) — see `ATTRIBUTION.md`.
 
+The per-robot layer is durable too: `$MOXIE_DATA_DIR/robots/<id>/config.json`, rewritten by every
+per-robot edit and read back once when the supervisor starts, so a restart re-pushes each robot's own
+settings ([production hardening §8](backlog/production-hardening.md#8-phases-and-risks)). A robot
+whose saved data-sharing choice cannot be read (a damaged record, or a stored `logging_policy` the
+whitelist refuses) **fails closed**: it runs under `NO_DATA` until a parent saves a setting for that
+robot again, and the console's activity feed says so in one line. Its other settings come from what
+can still be read, or from the layers underneath.
+
 ### The pairing gate — permits, and what a *pending* robot is sent
 
 Our broker accepts anonymous connections ([mqtt §3b](mqtt-and-conversation.md)), so the
@@ -370,6 +378,11 @@ a parent asking about last week should not need the robot to be on the broker.
 |---|---|
 | presses **Erase history** on the Insights card (`DELETE /telemetry?device_id=…` → `MoxieRuntime.erase_telemetry`) | all three files go, and the in-RAM cache goes with them so the console cannot serve a stale hydrate of what was just erased |
 | moves **data sharing to `NO_DATA`** (per robot or fleet-wide) | the same erase runs for every robot the switch now covers — `purge_telemetry`, at boot and on any config edit that could have moved it |
+
+A robot whose saved data-sharing choice cannot be read runs under `NO_DATA` until a parent saves
+again ([above](#fleet-defaults-per-robot-overrides)), so the boot sweep erases its activity record
+as well. Whether failing closed should erase is an open owner question
+([production hardening §7](backlog/production-hardening.md#7-known-gaps)).
 
 > **Why a switch to `NO_DATA` erases this retroactively, when memory items do not.** The
 > [content-module contract](content-module-contract.md) keeps a robot's stored `MemoryStore` items

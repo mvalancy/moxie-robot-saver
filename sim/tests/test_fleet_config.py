@@ -306,20 +306,97 @@ def test_a_per_robot_no_data_still_holds_after_a_restart(tmp_path, monkeypatch):
     assert again.history.get("d_one") in (None, [])
 
 
+def _fail_closed_lines(rt, device_id="d_one"):
+    """The activity-feed lines saying this robot runs under NO_DATA because its saved
+    data-sharing choice could not be read."""
+    return [n for n in rt.recent if device_id in n["text"] and "NO_DATA" in n["text"]
+            and "could not be read" in n["text"]]
+
+
 @pytest.mark.parametrize("damage", ["{not json", "[1, 2]", "null", '"loud"'])
-def test_a_damaged_record_reads_as_no_settings_and_never_breaks_construction(
+def test_a_damaged_record_fails_closed_and_never_breaks_construction(
         tmp_path, capsys, damage):
     """One bad file costs that robot its saved settings, never the appliance its boot.
-    The push is the no-override document, and the operator is told once."""
-    from moxie_sdk.cloud_config import build_robot_cloud_config
+    The data-sharing choice in it is unreadable too, so the robot FAILS CLOSED: it runs
+    under NO_DATA, the most restrictive policy, until a parent saves its settings again
+    (config-and-telemetry-contract.md: "a policy it cannot read fails closed rather than
+    open"). Everything else is the no-override document. The log names the file once,
+    and the activity feed says what it means in one line."""
+    from moxie_sdk.cloud_config import LoggingPolicy, build_robot_cloud_config
     path = _record(tmp_path)
     path.parent.mkdir(parents=True)
     path.write_text(damage)
     rt = _runtime(tmp_path, devices=("d_one",))
-    assert rt._config_overrides.get("d_one", {}) == {}
+    assert rt._config_overrides["d_one"] == {"logging_policy": int(LoggingPolicy.NO_DATA)}
+    assert (rt.safety_policy("d_one"), rt.memory_policy("d_one"),
+            rt.telemetry_policy("d_one")) == (LoggingPolicy.NO_DATA,) * 3
+    # The robot is told NO_DATA as well, which is also the document's own default.
     assert rt._push_config("d_one") == build_robot_cloud_config(rt.child)
     said = [ln for ln in capsys.readouterr().out.splitlines() if str(path) in ln]
     assert len(said) == 1, said
+    feed = _fail_closed_lines(rt)
+    assert len(feed) == 1 and feed[0]["kind"] == "error", list(rt.recent)
+    assert feed[0] in rt.status_snapshot()["recent"]    # what the console's feed shows
+    assert path.read_text() == damage                    # loading writes nothing
+
+
+@pytest.mark.parametrize("stored", [7, "SOME_DATA", None, [0]])
+def test_a_data_sharing_choice_the_whitelist_refuses_fails_closed(
+        tmp_path, monkeypatch, stored):
+    """A stored `logging_policy` the whitelist now refuses (a hand edit, a value from
+    another build) is a choice a parent made that cannot be read. Dropping it would hand
+    the child to the house default and start keeping their words again, so the robot
+    runs under NO_DATA instead, in every sense: as for any NO_DATA robot the boot sweep
+    clears a transcript already on disk. Its other settings still load."""
+    from helpers_runtime import drive_turn
+    from moxie_sdk.cloud_config import LoggingPolicy
+    memdir = tmp_path / "transcripts"
+    monkeypatch.setenv("MOXIE_MEMORY_DIR", str(memdir))     # read at construction
+    memdir.mkdir()
+    (memdir / "d_one.json").write_text(json.dumps([{"role": "user", "content": "old"}]))
+    path = _record(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"audio_volume": 0.3, "logging_policy": stored}))
+    rt = _runtime(tmp_path, devices=("d_one",), app=_echo())
+    assert rt._config_overrides["d_one"] == {
+        "audio_volume": 0.3, "logging_policy": int(LoggingPolicy.NO_DATA)}
+    assert len(_fail_closed_lines(rt)) == 1, list(rt.recent)
+    assert not (memdir / "d_one.json").exists() and rt.history.get("d_one") in (None, [])
+    drive_turn(rt, "d_one", "a-marker")
+    assert not (memdir / "d_one.json").exists(), "the child's words were kept"
+    assert rt.memory_store().save("d_one", {"chat": {"facts": ["a-marker"]}}) is False
+
+
+@pytest.mark.parametrize("save", [{"audio_volume": 0.4}, {"brain": None},
+                                  {"logging_policy": 2}])
+def test_a_parents_next_save_ends_the_fail_closed_policy(tmp_path, monkeypatch, save):
+    """Fail-closed lasts until a parent saves this robot's settings. That save decides
+    data sharing again (its own `logging_policy`, else the layer underneath) and rewrites
+    the record, so the next start reads it with no warning. Until then the record stays
+    exactly as found, so a restart fails closed again, and Be Moxie, which is not a
+    setting a parent saves, does not end it."""
+    from moxie_sdk.cloud_config import LoggingPolicy
+    from moxie_runtime.constants import MEMORY_POLICY
+    monkeypatch.delenv("MOXIE_APP", raising=False)
+    path = _record(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json")
+    rt = _runtime(tmp_path, devices=("d_one",))
+    rt.telehealth_enable("d_one", True)
+    assert rt.memory_policy("d_one") == LoggingPolicy.NO_DATA
+    assert path.read_text() == "{not json"
+    again = _runtime(tmp_path, devices=("d_one",))          # a restart before any save
+    assert again.memory_policy("d_one") == LoggingPolicy.NO_DATA
+    assert len(_fail_closed_lines(again)) == 1
+
+    rt.update_config("d_one", **save)                       # the parent saves
+    decided = LoggingPolicy(save.get("logging_policy", MEMORY_POLICY))
+    assert rt.memory_policy("d_one") == decided
+    assert json.loads(path.read_text()) == save
+    fresh = _runtime(tmp_path, devices=("d_one",))
+    assert fresh._config_overrides["d_one"] == save
+    assert fresh.memory_policy("d_one") == decided
+    assert _fail_closed_lines(fresh) == []
 
 
 def test_a_stored_value_the_whitelist_now_refuses_is_dropped_at_load(tmp_path, capsys):

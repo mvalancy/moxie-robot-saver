@@ -269,7 +269,7 @@ idle box and a few under load. That is why the harness reports a *rate* and asse
 | S6 | A supervisor started with no broker retries instead of dying | same |
 | S7 (a–c) | An event from an unregistered but permitted device registers it; a stranger is still refused | same |
 | — | Roster resume, the ghost fix, per-run `MOXIE_DATA_DIR` in every SIL script | `test_roster.py` |
-| — | Per-robot settings (volume, bedtime, brain, `NO_DATA`, a cleared value) survive a restart; a damaged record, a value the whitelist now refuses and a pinned-away brain are dropped at load and never pushed; a refused save is reported | `test_fleet_config.py` |
+| — | Per-robot settings (volume, bedtime, brain, `NO_DATA`, a cleared value) survive a restart; a value the whitelist now refuses and a pinned-away brain are dropped at load and never pushed, and a hand-edited value loads canonical; a damaged record or an unreadable data-sharing choice fails closed to `NO_DATA` until a parent saves; two edits at once land in order; a refused save is reported | `test_fleet_config.py` |
 | — | The telemetry stream, its cap and summary | `test_conn_telemetry.py` |
 | — | The soak's own A1/A2 accounting | `test_soak_accounting.py` |
 | K1 | `run_soak.sh` meets every §5.3 bar | deep tier (`sim/ci/ci-deep.yml`) |
@@ -294,6 +294,11 @@ idle box and a few under load. That is why the harness reports a *rate* and asse
   2. Should the reset sheet's optional erase gain safety-journal and transcript checkboxes? That would
      close the lifecycle page's "no erase control" gap by the parent's choice rather than
      automatically.
+- **Failing closed also erases** (§8). A robot whose saved data-sharing choice cannot be read runs
+  under `NO_DATA` in every sense, so the boot sweep clears its stored transcript and activity record,
+  as it would had the parent chosen `NO_DATA`. That loses a history the parent may have wanted kept
+  when the lost choice was `FULL` or `NO_MEDIA`. Keeping it would need a gate that stops new writes
+  without the sweep, in `memory.py` and `telemetry.py`; whether to build one is an owner question.
 
 ## 8. Phases and risks
 
@@ -343,10 +348,23 @@ transcript, long-term memory, activity record and safety-journal excerpts again.
   the safety journal, the status snapshot and the console's `GET /config` read the per-robot dict
   directly, so a lazy read would leave them blind until something else touched the config.
 - **Only what the console could have set.** Each stored key is re-checked on its own by
-  `sanitize_config_overrides`, the `POST /config` whitelist. A key it now refuses, or a brain pick the
-  current `MOXIE_APP` pin refuses, is dropped at load with one log line and never pushed. A damaged or
-  non-object record reads as no settings, with one log line. Loading writes nothing: the next save for
-  that robot rewrites its record.
+  `sanitize_config_overrides`, the `POST /config` whitelist, and loads as the canonical value the
+  whitelist returns (a hand-edited `audio_volume: 30` loads as 0.3). A key it now refuses, or a brain
+  pick the current `MOXIE_APP` pin refuses, is dropped at load with one log line and never pushed. A
+  damaged or non-object record reads as no settings, with one log line. Loading writes nothing: the
+  next save for that robot rewrites its record.
+- **Fails closed when the data-sharing choice cannot be read.** A damaged record, or a stored
+  `logging_policy` the whitelist refuses, leaves the robot's data sharing unknown. The robot then runs
+  under `NO_DATA`, the most restrictive `LoggingPolicy` (`fleet.py::UNREADABLE_SETTINGS_POLICY`),
+  instead of falling back to the house rule or the default ("a policy it cannot read fails closed
+  rather than open", [config contract](../config-and-telemetry-contract.md)). It is `NO_DATA` in every
+  sense: no new transcript, memory, activity record or safety excerpt, and the boot sweep clears its
+  stored transcript and activity record (§7). The activity feed says so in one line. It lasts until a
+  parent saves a setting for that robot (the settings form, the look, a brain pick); that save decides
+  data sharing again, from its own `logging_policy` or else the layer underneath, and rewrites the
+  record. Until then the record stays as found, so a restart fails closed again. Its other settings
+  still load (after a refused choice) or fall back to the layers underneath (after a damaged record).
+  A Be Moxie toggle is not a parent's save and does not end it.
 - **Not the telehealth mode.** `moxie_mode` is not in the whitelist, so "Be Moxie" is not kept. Its
   session lives in RAM, and a restart still hands the robot back to its own brain.
 - **Not cleared by an unpair or a factory reset**, as before (§7 records the owner questions).
