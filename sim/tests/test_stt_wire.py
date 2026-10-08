@@ -795,6 +795,27 @@ def test_status_carries_when_the_robot_was_asked_and_the_console_says_so(timers,
     assert "mic asked" not in robot_summary({"stt_subscribed_at": None})
 
 
+def test_the_card_tells_the_time_of_the_ask_in_the_robots_own_zone():
+    """`mic asked HH:MM` is read by a parent at home, and the appliance container runs
+    on UTC with no TZ set. So the time is shown in the robot's configured `timezone_id`
+    (the house's zone, from the config the robot was pushed) when the record carries
+    one, else labelled `UTC`; never the server's unlabelled local time. A zone this box
+    cannot resolve falls back to the labelled UTC rather than failing the card."""
+    asked = 1_700_000_000.0                    # 2023-11-14 22:13:20 UTC
+    assert "mic asked 22:13 UTC" in _summary({"stt_subscribed_at": asked})
+    assert "mic asked 22:13 UTC" in _summary({"stt_subscribed_at": asked,
+                                              "config_effective": {}})
+    assert "mic asked 14:13 PST" in _summary(
+        {"stt_subscribed_at": asked, "config_effective": {"timezone_id": "America/Los_Angeles"}})
+    assert "mic asked 07:13 JST" in _summary(
+        {"stt_subscribed_at": asked, "config_effective": {"timezone_id": "Asia/Tokyo"}})
+    for bad in ("Mars/Olympus_Mons", "", None, 7):
+        assert "mic asked 22:13 UTC" in _summary(
+            {"stt_subscribed_at": asked, "config_effective": {"timezone_id": bad}}), bad
+    assert "mic asked" not in _summary({"stt_subscribed_at": None,
+                                        "config_effective": {"timezone_id": "Asia/Tokyo"}})
+
+
 # --------------------------------------------------------------------------- #
 # 6. loopback: a robot that streams only once asked, and hears the answer
 # --------------------------------------------------------------------------- #
