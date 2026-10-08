@@ -185,6 +185,11 @@ def _strings(value) -> list:
     return []
 
 
+def _effects_in(texts) -> list:
+    """What the tags in `texts` do, each once."""
+    return list(dict.fromkeys(e for text in texts for e, _ in _tag_effects(text)))
+
+
 class _Reader:
     """Reads ahead every line one `say` can speak, from the program's own text: through
     `if`/`and`/`or` branches, `concat` parts, `let` names, `random.pick` and the case, trim
@@ -199,8 +204,9 @@ class _Reader:
         self.maybe: list = []
         #: The `let` values made of literals only.
         self.known: dict = {}
-        #: `(kind, name)` → `(lines, maybe)`, one per `let` name, worked out in binding
-        #: order (as `evaluate` does), so a chain of names is never walked twice or deeply.
+        #: `(kind, name)` → `(what it reads as, its maybe)`, one per `let` name and kind,
+        #: worked out in binding order (as `evaluate` does), so a chain of names is never
+        #: walked twice or deeply.
         self.memo: dict = {}
         #: How many `let` names the expression being read can see: a binding sees the
         #: earlier ones only, the `say` sees them all.
@@ -210,7 +216,7 @@ class _Reader:
                 value = self.run(expr)
                 if value is not _UNRUN:
                     self.known[name] = value
-            for kind in ("lines", "choices"):
+            for kind in ("lines", "choices", "tags_in"):
                 self.maybe = []
                 try:
                     got = getattr(self, kind)(expr)
@@ -221,9 +227,11 @@ class _Reader:
         self.maybe = []
 
     def bound(self, name, kind: str) -> list:
-        """`let` name `name` read as `kind` ("lines", or "choices" for a `random.pick`)."""
+        """`let` name `name` read as `kind`: "lines", "choices" (for a `random.pick`) or
+        "tags_in"."""
         if not isinstance(name, str) or self.index.get(name, self.sees) >= self.sees:
-            return [_HOLE]                 # a fact, or a later binding (null at run time)
+            # A fact, or a later binding (null at run time): no text of the program's own.
+            return [] if kind == "tags_in" else [_HOLE]
         got, maybe = self.memo[(kind, name)]
         self.maybe += [e for e in maybe if e not in self.maybe]
         if got is None:
@@ -324,55 +332,44 @@ class _Reader:
         return [branches[0] if test else branches[1]]
 
     def collect(self, node, depth: int = 0) -> None:
-        """`node` feeds an op whose value is not worked out here: each tag in a string it
-        can hold may or may not reach the line (`maybe`)."""
-        if self.constant(node, depth):
-            value = self.run(node)
-            if value is not _UNRUN:
-                texts = _strings(value)
-            else:
-                texts = self.written(node, depth)
-        else:
-            texts = [x for x in self.lines(node, depth) if x is not None]
-        for text in texts:
-            self.note(text)
+        """`node` feeds an op whose value is not worked out here: each tag it can come out
+        with, or hold in a list or map, may or may not reach the line (`maybe`)."""
+        found = [e for x in self.lines(node, depth) if x is not None
+                 for e, _ in _tag_effects(x)] + self.tags_in(node, depth)
+        self.maybe += [e for e in dict.fromkeys(found) if e not in self.maybe]
 
-    def written(self, node, depth: int = 0) -> list:
-        """Every string written in `node`, or worked out from literals in it; `let` names
-        are not followed (their expressions are read on their own)."""
+    def tags_in(self, node, depth: int = 0) -> list:
+        """What the tags do in every string written in `node`, in the `let` names it reads
+        and in what its literal-only parts work out to, wherever they sit (a list, a map)."""
         if self.constant(node, depth):
             value = self.run(node)
             if value is not _UNRUN:
-                return _strings(value)
+                return _effects_in(_strings(value))
         if depth > MAX_DEPTH or not isinstance(node, dict) or len(node) != 1:
             return []
         key, arg = next(iter(node.items()))
         if key == "lit":                   # too big for the evaluator's value cap
-            return _strings(arg)
-        if isinstance(arg, list):
-            return [s for a in arg for s in self.written(a, depth + 1)]
-        return []
-
-    def note(self, text) -> None:
-        for effect, _ in _tag_effects(text):
-            if effect not in self.maybe:
-                self.maybe.append(effect)
+            return _effects_in(_strings(arg))
+        if key == "var":
+            return self.bound(arg, "tags_in")
+        if not isinstance(arg, list):
+            return []
+        return list(dict.fromkeys(e for a in arg for e in self.tags_in(a, depth + 1)))
 
 
 def _say_effects(value, binds=None) -> list:
     """What a `say` makes happen through the tags in the line it speaks, in a parent's
     words, read from every line it can speak (`_Reader`). An effect that is not certain on
-    every one of those lines happens "sometimes". What the program reads at run time (what
-    the child said, a memory) is not its own text and is not read here."""
+    every one of those lines happens "sometimes". Not read: a tag in what the program reads
+    at run time (what the child said, a memory), which is not its own text, and one that an
+    op `_Reader` does not follow puts together at run time from pieces (`join`, `replace`,
+    `format` around a fact)."""
     reader = _Reader(binds)
     try:
         lines = reader.lines(value)
     except _TooMany:
         # Too many lines to read one by one: each tag written in it may be said.
-        lines, reader.maybe = [], []
-        for expr in [value] + list(reader.binds.values()):
-            for text in reader.written(expr):
-                reader.note(text)
+        lines, reader.maybe = [], reader.tags_in(value)
     each = [[] if line is None else _tag_effects(line) for line in lines]
     order = []
     for effects in each:

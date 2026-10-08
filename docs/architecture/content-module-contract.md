@@ -825,9 +825,10 @@ works out with the evaluator itself (a tag split across `concat` parts or assemb
 `replace` included). An effect that not every one of those lines has reads *sometimes*
 (*"…; then sometimes Moxie starts the DRAW activity."*), and so does a tag that feeds an op
 it does not follow line by line (`get`, `replace`, `join`, …). A launch whose module is
-worked out at run time reads *"Moxie starts an activity it works out"*. A tag can also arrive
-in what the program reads at run time, such as what the child said or a memory it wrote on
-an earlier turn: that is not the program's own text, and `explain()` cannot read it ahead.
+worked out at run time reads *"Moxie starts an activity it works out"*. Two kinds of tag
+cannot be read ahead: one that arrives in what the program reads at run time (what the child
+said, or a memory it wrote on an earlier turn), and one that an op it does not follow puts
+together at run time from pieces (a `join` of `"<ex"`, what the child said and `"it>"`).
 `sim/tests/test_leave_taking.py` runs each shape through the real `ContentApp` and checks
 the sentence against what the robot is sent.
 

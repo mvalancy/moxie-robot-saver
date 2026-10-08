@@ -402,6 +402,12 @@ IMPORTED_SAYS = {
                        {"%": [{"len": [{"var": "speech"}]}, 2]}]}),
         "; then sometimes the conversation ends.",
         {"ab": ["the conversation ends"], "abc": []}),
+    "a tag inside a list that get takes from": (
+        _says({"get": [{"var": "said"}, 0]},
+              let={"said": {"if": [{"contains": [{"lower": [{"var": "speech"}]}, "bye"]},
+                                   {"lit": ["<exit>See you!"]}, {"lit": ["Hi!"]}]}}),
+        "; then sometimes the conversation ends.",
+        {"bye now": ["the conversation ends"], "hello": []}),
     "a launch of a worked-out module": (
         _says({"concat": ["<launch:", {"upper": [{"trim": [{"var": "speech"}]}]},
                           ">Off we go!"]}),
