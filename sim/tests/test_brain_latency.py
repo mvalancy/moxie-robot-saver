@@ -21,7 +21,7 @@ from helpers_runtime import (CHAT_TOPIC, CountingSynth, LatchClient,  # noqa: E4
 from moxie_sdk.app import MoxieApp                                # noqa: E402
 from moxie_sdk.filler import FILLERS, pick_filler                 # noqa: E402
 from moxie_sdk.tts import strip_markup               # noqa: E402
-from moxie_sdk.types import Reply, ResultCode                     # noqa: E402
+from moxie_sdk.types import Reply, ReplyChunk, ResultCode         # noqa: E402
 
 TTS_TOPIC = "/devices/{device_id}/commands/tts"
 FILLER_TEXTS = [text for (text, _markup) in FILLERS]
@@ -214,6 +214,124 @@ def test_a_stale_turn_never_even_gets_a_filler():
     assert rt._speak_filler(dev, "evt-old", 6, state) is None
     assert state["filler"] is None
     assert _chats(rt, dev) == []
+
+
+# ------------------------------------------- an abandoned turn costs no model call
+class _SlowThenFastStreamApp(MoxieApp):
+    """`_SlowThenFastApp` for a streaming brain: the first stream blocks until released,
+    later ones answer at once. `calls` counts `respond_stream` entries."""
+    name = "slow-then-fast-stream"
+
+    def __init__(self):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._lock = threading.Lock()
+        self.calls = 0
+
+    def respond(self, turn):
+        return Reply(text="never: this brain streams")
+
+    def respond_stream(self, turn):
+        with self._lock:
+            self.calls += 1
+            first = self.calls == 1
+        return self._gen(turn, first)
+
+    def _gen(self, turn, first):
+        if first:
+            self.entered.set()
+            assert self.release.wait(PATIENCE), "the test never released the first turn"
+        yield ReplyChunk(text=f"the {'OLD' if first else 'NEW'} answer about {turn.speech}",
+                         final=True)
+
+
+def _saturated(app):
+    """A runtime whose pool has ONE worker, so a second and third prompt queue behind
+    the first instead of starting at once (with eight workers the newest prompt is
+    never a stale one, and nothing is saved)."""
+    from concurrent.futures import ThreadPoolExecutor
+    rt, dev = _slow_runtime(app, budget=0)       # no filler noise
+    rt._pool = ThreadPoolExecutor(max_workers=1)
+    return rt, dev
+
+
+def _three_prompts(rt, dev, app):
+    _push(rt, dev, "what is a quasar?", "evt-1")
+    assert app.entered.wait(PATIENCE), "the first turn never reached the brain"
+    _push(rt, dev, "no wait, what is a comet?", "evt-2")   # queued behind evt-1
+    _push(rt, dev, "actually, can we sing?", "evt-3")      # queued; now the newest
+    app.release.set()
+    rt._pool.shutdown(wait=True)
+    return _chats(rt, dev)
+
+
+def test_a_turn_the_robot_already_abandoned_never_costs_a_model_call():
+    """Prompt 1 holds the brain while prompts 2 and 3 arrive. By the time prompt 2 runs
+    the robot has re-prompted (prompt 3 is the newest), so it must not reach the brain
+    at all: two app calls in total, the OLD answer dropped, the newest answered.
+    origin/dev: three calls — a queued re-prompt still spent a model call."""
+    app = _SlowThenFastApp()
+    rt, dev = _saturated(app)
+    replies = _three_prompts(rt, dev, app)
+    assert [r["event_id"] for r in replies] == ["evt-3"], replies
+    assert "NEW answer about actually, can we sing?" in replies[0]["output"]["text"]
+    assert app.calls == 2, "the queued, already-abandoned turn still cost a model call"
+    assert sum("skipped a superseded turn" in n["text"] for n in rt.recent) == 1
+    assert all("OLD" not in h["content"] for h in rt.history[dev]), rt.history[dev]
+
+
+def test_a_streaming_brain_is_not_entered_for_an_abandoned_turn():
+    """The same saturation with a streaming brain: `respond_stream` is entered twice,
+    not three times, and only the newest turn is spoken."""
+    app = _SlowThenFastStreamApp()
+    rt, dev = _saturated(app)
+    replies = _three_prompts(rt, dev, app)
+    assert [r["event_id"] for r in replies] == ["evt-3"], replies
+    assert "NEW answer" in replies[0]["output"]["text"]
+    assert app.calls == 2, "respond_stream was entered for the abandoned turn"
+
+
+# ------------------------------------- the hang bound sits above the filler budget
+class _GatedCompletion:
+    """The openai client's `chat.completions` seam: the completion lands when the test
+    releases it — a brain that answers AFTER the budget, with no sleep."""
+
+    def __init__(self, text):
+        self.text, self.release, self.calls = text, threading.Event(), 0
+        self.chat = self.completions = self
+
+    def create(self, **kw):
+        self.calls += 1
+        assert self.release.wait(PATIENCE), "the test never released the completion"
+        msg = type("M", (), {"content": self.text})()
+        return type("R", (), {"choices": [type("C", (), {"message": msg})()]})()
+
+
+def test_a_slow_but_answering_brain_is_never_cut_off_by_the_bound(monkeypatch):
+    """`MOXIE_BRAIN_TIMEOUT_S` (60 s by default; a hang bound, chosen not measured) sits
+    far above the filler budget: a non-streamed content brain whose completion lands
+    after the budget still gets the filler and then its answer, never ERROR_OFFLINE.
+    Driven through the real `make_openai_chat` (its deadline included) over a client
+    released only once the filler is on the wire."""
+    from helpers_runtime import reload_config
+    from moxie_sdk.chat import make_openai_chat
+    from moxie_sdk.content import ContentApp, load_module
+    c = reload_config(monkeypatch, ("MOXIE_BRAIN_TIMEOUT_S",))
+    gate = _GatedCompletion("The Moon is about 384,400 kilometres away.")
+    chat = make_openai_chat("http://127.0.0.1:1/v1", "k", "m", client=gate,
+                            timeout_s=c.BRAIN_TIMEOUT_S, on_backoff=None)
+    module = load_module({"conversations": [
+        {"module_id": "FREE_CHAT", "content_id": "default", "prompt": "Answer the child."}]})
+    rt, dev = _slow_runtime(ContentApp(module, chat), budget=0.2)
+    _push(rt, dev, "how far is the moon?", "evt-slow-content")
+    assert rt.client.wait_for(lambda pub: len(pub) >= 1), "no filler was published"
+    assert gate.calls == 1 and not gate.release.is_set()
+    gate.release.set()                           # the answer lands after the budget
+    rt._pool.shutdown(wait=True)
+    replies = _chats(rt, dev)
+    assert [r["result"] for r in replies] == [ResultCode.REPLY_PENDING, ResultCode.SUCCESS]
+    assert replies[1]["output"]["text"] == gate.text
+    assert replies[1]["consistency_control"] == {"is_completed": True}
 
 
 # ------------------------------------------------------------------------- voice

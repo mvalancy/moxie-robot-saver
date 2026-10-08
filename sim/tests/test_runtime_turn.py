@@ -9,6 +9,7 @@ import base64
 import datetime
 import json
 import os
+import threading
 import urllib.error
 import urllib.request
 
@@ -147,6 +148,262 @@ def test_history_accumulates_across_the_pipeline():
     h = rt.history.get("d_hist", [])
     assert {"role": "user", "content": "hi"} in h
     assert any(m["role"] == "assistant" for m in h)
+
+
+# --------------------------------------------------------------------------- #
+# The launch check: no made-up launch on the wire
+# --------------------------------------------------------------------------- #
+
+CHAT = "/devices/{did}/commands/remote_chat"
+STOCK = "Hmm, let me think about that."
+
+
+def _actions_on(resp):
+    """The real actions of a reply (the action-less envelope entry excluded)."""
+    return [a for a in resp["response_actions"] if a.get("action")]
+
+
+class _Canned:
+    """The OpenAI client seam with one canned assistant message."""
+
+    def __init__(self, content):
+        self._content = content
+        self.chat = self.completions = self
+
+    def create(self, **kw):
+        msg = type("M", (), {"content": self._content})()
+        return type("R", (), {"choices": [type("C", (), {"message": msg})()]})()
+
+
+def test_a_launch_of_an_activity_the_robot_does_not_have_is_dropped(capsys):
+    """`<launch:ROBOTDANCE>` from the LLM brain, through the real tag parser and the
+    real runtime: the words are spoken, the launch never reaches the wire, one log line,
+    one note. origin/dev: `wire.encode_action` sends ROBOTDANCE unchecked."""
+    from moxie_sdk.apps import LLMApp
+    app = LLMApp("http://127.0.0.1:1/v1", "k", model="m", client=_Canned(
+        '{"say": "<launch:ROBOTDANCE>Let\'s dance!", "mood": "happy", "gesture": "celebrate"}'))
+    rt = _rt("d_dance", app=app, nickname="Sam", streaming=False)
+    resp = _chat(_turn(rt, "d_dance", "can we dance?"), "d_dance")
+    assert resp["result"] == ResultCode.SUCCESS
+    assert resp["output"]["text"] == "Let's dance!"
+    assert _actions_on(resp) == [], resp["response_actions"]
+    assert "ROBOTDANCE" not in json.dumps(resp)
+    out = capsys.readouterr().out
+    assert out.count("asked to launch 'ROBOTDANCE', which this robot does not have") == 1
+    notes = [n for n in rt.recent if "ROBOTDANCE" in n["text"]]
+    assert len(notes) == 1 and "which this robot does not have" in notes[0]["text"]
+
+
+def test_a_launch_the_robot_has_passes_and_so_does_a_packs_own_module():
+    """DRAW (the launch-card catalog) rides as before; a content pack launching one of
+    the remote-chat modules this appliance itself serves (`remote_modules()`) rides too,
+    though no card could launch it."""
+    from moxie_sdk import launch_cards
+    from moxie_sdk.content import ContentApp, load_module
+    resp = _chat(_drive(_ActionApp(), speech="let's draw"))
+    assert [(a["action"], a["module_id"]) for a in _actions_on(resp)] == [("launch", "DRAW")]
+
+    module = load_module({"conversations": [
+        {"module_id": "TEAPARTY", "content_id": "default", "prompt": "Pour the tea."}]})
+    app = ContentApp(module, lambda messages: "<launch:TEAPARTY:default>Tea is served!")
+    rt = _rt(app=app, nickname="Sam")
+    did = "d_pack"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child,
+                                  module_id="TEAPARTY", content_id="default")
+    assert not launch_cards.is_launchable("TEAPARTY")
+    assert "TEAPARTY" in [mid for mid, _cids in rt.remote_modules()]
+    resp = _chat(_turn(rt, did, "more tea please"), did)
+    assert resp["output"]["text"] == "Tea is served!"
+    assert [(a["action"], a["module_id"], a["content_id"]) for a in _actions_on(resp)] \
+        == [("launch", "TEAPARTY", "default")]
+    assert not any("does not have" in n["text"] for n in rt.recent)
+
+
+# --------------------------------------------------------------------------- #
+# The worker guard: a dead worker still closes the turn
+# --------------------------------------------------------------------------- #
+
+class _LoudApp(MoxieApp):
+    """A Reply whose `mood_intensity` the staging cannot read: the worker dies AFTER
+    the brain answered (`_stage`'s `int(strength)`)."""
+    name = "loud"
+
+    def respond(self, turn):
+        return Reply(text="I am SO excited!", mood="happy", mood_intensity="loud")
+
+
+class _BananaApp(MoxieApp):
+    """A `result_code` with no `ResultCode`: the wire encoder refuses it."""
+    name = "banana"
+
+    def respond(self, turn):
+        return Reply(text="Sure!", result_code="banana")
+
+
+class _SlowLoudThenFineApp(MoxieApp):
+    """The first turn blocks until released and then dies in staging; later turns are
+    fine. Lets a test put a filler, or a newer turn, in front of the failure."""
+    name = "slow-loud-then-fine"
+
+    def __init__(self):
+        self.entered = threading.Event()         # the first turn reached the brain
+        self.release = threading.Event()
+        self._lock = threading.Lock()
+        self.calls = 0
+
+    def respond(self, turn):
+        with self._lock:
+            self.calls += 1
+            first = self.calls == 1
+        if first:
+            self.entered.set()
+            assert self.release.wait(10), "the test never released the first turn"
+            return Reply(text="I am SO excited!", mood_intensity="loud")
+        return Reply(text=f"fine: {turn.speech}")
+
+
+def _failed_lines(capsys):
+    return capsys.readouterr().out.count("turn failed")
+
+
+@pytest.mark.parametrize("app_cls", [_LoudApp, _BananaApp])
+def test_a_dead_worker_still_closes_the_turn(app_cls, capsys):
+    """One closing SUCCESS with the stock line, one printed 'turn failed' line, one
+    `error` note. origin/dev: the exception died inside the discarded future — nothing
+    published, nothing logged, the robot left waiting."""
+    rt = _rt("d_dead", app=app_cls(), nickname="Sam")
+    published = _turn(rt, "d_dead", "hello", event_id="evt-dead")
+    replies = _on(published, CHAT.format(did="d_dead"))
+    assert len(replies) == 1, replies
+    assert replies[0]["result"] == ResultCode.SUCCESS
+    assert replies[0]["output"]["text"] == STOCK and replies[0]["output"]["markup"]
+    assert replies[0]["event_id"] == "evt-dead" and "chunk_num" not in replies[0]
+    assert _failed_lines(capsys) == 1
+    assert len([n for n in rt.recent if n["kind"] == "error"]) == 1
+    assert all(STOCK not in h["content"] for h in rt.history.get("d_dead", [])), \
+        "the stock line is not something Moxie meant to say"
+
+
+def test_a_dead_worker_closes_a_turn_whose_filler_already_went_out(capsys):
+    """Brain budget 0.05 s and a slow app: the filler (chunk 0, REPLY_PENDING) is on the
+    wire when the worker dies, so the stock line closes the sequence as chunk 1 with
+    `is_completed`, and both replies parse strictly through the committed pb2."""
+    pytest.importorskip("google.protobuf")
+    import sys
+    from google.protobuf import json_format
+    from helpers_runtime import LatchClient, toolkit_pb2
+    from moxie_sdk.wire import NON_PROTO_FIELDS
+    # The generated pb2 imports its siblings as `embodied.…`: the package root goes on
+    # the path APPENDED (it also holds a `markup.py` that would shadow the supervisor's).
+    toolkit_root = os.path.join(REPO, "tools", "robot-toolkit", "moxie_toolkit")
+    if toolkit_root not in sys.path:
+        sys.path.append(toolkit_root)
+    RC = toolkit_pb2("embodied.robotbrain.RemoteChat_pb2")
+    app = _SlowLoudThenFineApp()
+    rt = _rt("d_filler", app=app, nickname="Sam", brain_budget_s=0.05)
+    rt.client = LatchClient()
+    rt._on_remote_chat("d_filler", rt.robots["d_filler"], json.dumps(
+        {"command": "prompt", "event_id": "evt-filler", "speech": "hello"}))
+    assert rt.client.wait_for(lambda pub: len(pub) >= 1, 10), "no filler was published"
+    app.release.set()
+    rt._pool.shutdown(wait=True)
+    replies = _on(rt.client.published, CHAT.format(did="d_filler"))
+    assert [r["result"] for r in replies] == [ResultCode.REPLY_PENDING, ResultCode.SUCCESS]
+    assert [r["chunk_num"] for r in replies] == [0, 1]
+    assert replies[1]["consistency_control"] == {"is_completed": True}
+    assert replies[1]["output"]["text"] == STOCK
+    assert {r["event_id"] for r in replies} == {"evt-filler"}
+    for resp in replies:
+        body = {k: v for k, v in resp.items() if k not in NON_PROTO_FIELDS}
+        msg = json_format.ParseDict(body, RC.RemoteChatResponse(),
+                                    ignore_unknown_fields=False)
+    assert msg.chunk_num == 1 and msg.consistency_control.is_completed is True
+    assert _failed_lines(capsys) == 1
+
+
+def test_the_guard_never_speaks_for_a_superseded_turn(capsys):
+    """`_is_stale` FIRST, the closed flag second. The plain path drops a superseded
+    turn before anything can fail in staging (measured: a slow app whose late reply
+    cannot be staged logs nothing, because the stale check precedes `_stage`), so the
+    guard is exercised directly: a turn registered as open and unanswered after its
+    filler, a newer turn started — the failure is logged and nothing is published;
+    the same failure on the current turn closes it as chunk 1."""
+    from moxie_runtime import turns as turns_mod
+    rt = _rt("d_super", app=_ActionApp(), nickname="Sam")
+    with turns_mod._OPEN_TURNS_LOCK:
+        rt._open_turns()[("d_super", "evt-old")] = {"closed": False, "next_chunk": 1}
+    rt._turn_seq["d_super"] = 4                  # evt-old was turn 3; a newer one started
+    rt._close_failed_turn("d_super", "evt-old", 3, ValueError("loud"))
+    assert _on(rt.client.published, CHAT.format(did="d_super")) == []
+    assert _failed_lines(capsys) == 1
+    assert len([n for n in rt.recent if n["kind"] == "error"]) == 1
+
+    rt._close_failed_turn("d_super", "evt-old", 4, ValueError("loud"))   # the current turn
+    (reply,) = _on(rt.client.published, CHAT.format(did="d_super"))
+    assert reply["output"]["text"] == STOCK and reply["chunk_num"] == 1
+    assert reply["consistency_control"] == {"is_completed": True}
+    rt._close_failed_turn("d_super", "evt-old", 4, ValueError("loud"))   # closed: no more
+    assert len(_on(rt.client.published, CHAT.format(did="d_super"))) == 1
+    assert _failed_lines(capsys) == 2
+
+
+def test_a_late_reply_for_a_superseded_turn_is_dropped_before_it_can_fail(capsys):
+    """The measurement behind the test above: the old `_is_stale` check sits before
+    staging, so a superseded turn whose reply could not be staged costs no failure
+    line and no reply — the newer turn's answer is the only one."""
+    from helpers_runtime import LatchClient
+    app = _SlowLoudThenFineApp()
+    rt = _rt("d_late", app=app, nickname="Sam")
+    rt.client = LatchClient()                    # waited on, never polled
+    rt._on_remote_chat("d_late", rt.robots["d_late"], json.dumps(
+        {"command": "prompt", "event_id": "evt-old", "speech": "what is a quasar?"}))
+    assert app.entered.wait(10), "the first turn never reached the brain"
+    rt._on_remote_chat("d_late", rt.robots["d_late"], json.dumps(
+        {"command": "prompt", "event_id": "evt-new", "speech": "can we sing?"}))
+    assert rt.client.wait_for(lambda pub: any(p.get("event_id") == "evt-new"
+                                              for _t, p in pub)), "no new answer"
+    app.release.set()                            # the old reply lands, stale
+    rt._pool.shutdown(wait=True)
+    replies = _on(rt.client.published, CHAT.format(did="d_late"))
+    assert [r["event_id"] for r in replies] == ["evt-new"], replies
+    assert replies[0]["output"]["text"] == "fine: can we sing?"
+    assert _failed_lines(capsys) == 0
+    assert any("dropped a stale answer" in n["text"] for n in rt.recent), list(rt.recent)
+
+
+def test_the_guard_never_closes_a_turn_twice(capsys):
+    """The closed flag second: a failure AFTER the closing reply went out (here the
+    post-publish summarize step) is logged, and the robot's one reply stays the only
+    one — it never hears the stock line on top of the answer."""
+    rt = _rt("d_twice", app=_ActionApp(), nickname="Sam")
+
+    def boom(*a, **kw):
+        raise RuntimeError("the summary store is gone")
+
+    rt._maybe_end_conversation = boom
+    published = _turn(rt, "d_twice", "hello", event_id="evt-twice")
+    replies = _on(published, CHAT.format(did="d_twice"))
+    assert len(replies) == 1 and replies[0]["output"]["text"] == "You said: hello"
+    assert _failed_lines(capsys) == 1
+    assert len([n for n in rt.recent if n["kind"] == "error"]) == 1
+
+
+# --------------------------------------------------------------------------- #
+# The connect settle timer is a daemon
+# --------------------------------------------------------------------------- #
+
+def test_the_connect_settle_timer_never_holds_a_shutdown_open():
+    """`_device_connect` arms a one-second settle timer for the config push; it was the
+    one non-daemon timer in the runtime, so a supervisor stopping inside that second
+    waited on it. origin/dev: `daemon` is False."""
+    rt = _rt()
+    rt._device_connect("d_settle")
+    timers = [t for t in threading.enumerate() if isinstance(t, threading.Timer)
+              and getattr(getattr(t, "function", None), "__name__", "") == "_settle"]
+    for t in timers:
+        t.cancel()
+    assert timers, "no settle timer was armed"
+    assert all(t.daemon for t in timers)
 
 
 # --------------------------------------------------------------------------- #
