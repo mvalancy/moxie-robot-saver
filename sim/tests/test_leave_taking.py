@@ -203,8 +203,8 @@ def test_a_looping_transcript_cannot_stall_the_patterns():
 
 
 def test_an_edited_goodbye_falls_back_to_the_brain_which_is_taught_the_same_rule():
-    """`random` is a shipped grant, anchored to the program's digest: an edited copy does
-    not run, and the turn goes to the brain, which carries the <exit> rule."""
+    """`random` is a shipped grant, anchored to the program's digest: a changed program
+    does not run, and the turn goes to the brain, which carries the <exit> rule."""
     raw = _raw("starter.json")
     defaults = P.shipped_items(raw)
     edited = json.loads(json.dumps(defaults["global:Goodbye"]))
@@ -216,6 +216,22 @@ def test_an_edited_goodbye_falls_back_to_the_brain_which_is_taught_the_same_rule
     reply = app.respond(Turn(robot=robot("FREE_CHAT"), speech="bye"))
     assert len(brain.turns) == 1 and reply.text == QUESTION
     assert brain.turns[0][0]["content"].count(EXIT_LINE) == 1
+
+
+def test_an_edited_goodbye_pattern_keeps_the_shipped_lines():
+    """The grant's digest covers the program (`extension`) only, so a parent who changes
+    the pattern (what the console's editor can change; it never touches a program) keeps
+    the shipped goodbye running."""
+    raw = _raw("starter.json")
+    defaults = P.shipped_items(raw)
+    edited = json.loads(json.dumps(defaults["global:Goodbye"]))
+    edited["data"]["pattern"] = r"^\W*(?:toodles|ta\W*ta)\W*$"
+    brain = Brain()
+    app = ContentApp(P.build_module(defaults, {"global:Goodbye": edited}), brain,
+                     persona=DEFAULT_PERSONA, content_defaults=defaults, memory=False)
+    reply = app.respond(Turn(robot=robot("FREE_CHAT"), speech="Toodles!"))
+    assert brain.turns == [], "the edited pattern's goodbye cost a model call"
+    assert [a.type for a in reply.actions] == [ActionType.EXIT] and reply.text, reply
 
 
 # --------------------------------------------------------------------------- #

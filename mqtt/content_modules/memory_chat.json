@@ -63,8 +63,9 @@
         "Both directions are tested in sim/tests/test_leave_taking.py.",
         "",
         "`random` is not a default grant. This runs because it ships: the wider grant set is",
-        "anchored to this program's digest, so an edited copy does not run, and the brain",
-        "answers instead, taught the same <exit> rule (moxie_sdk/actions.py LEAVE_TAG_PROMPT)."
+        "anchored to the digest of this program (the extension block), so a changed program",
+        "does not run, and the brain answers instead, taught the same <exit> rule",
+        "(moxie_sdk/actions.py LEAVE_TAG_PROMPT). A changed pattern keeps it running."
       ],
       "extension": {
         "ext_format": 1,

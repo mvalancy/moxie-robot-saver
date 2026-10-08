@@ -182,20 +182,25 @@ OpenMoxie's own command patterns accept (`content_modules/MoxieTimers.json`, `Mo
 it. *"See you later, alligator!"* is a goodbye. A bare *"done"* or *"night"* is not, because either can
 be a plain answer to Moxie. Every word in the pattern can be read only one way, so a transcript that
 loops (*"bye bye bye …"*) cannot make the regex backtrack exponentially. `random` is a shipped grant,
-so an edited `Goodbye` stops running and the brain answers in its place.
+anchored to the digest of the program (the `extension` block), not to the item's name. Editing the
+pattern, which is what the console's editor can change (it never changes a program), keeps the
+shipped goodbyes running. A different program under the name `Goodbye`, as an imported pack could
+carry, loses the grant: it does not run, and the brain answers in its place, taught the same `<exit>`
+rule.
 
 The brain is the backstop for goodbyes the pattern does not cover (*"okay I need to eat dinner now,
 bye"*). After the module's prompt, the content brain's single system message carries the `<exit>` and
 `<sleep>` rules (`actions.LEAVE_TAG_PROMPT`) and never `<launch>`. This brain is never told a module
 id, and a launch id it invented would reach the robot unchecked.
 
-*Not yet shown on a robot:* a physical robot leaves the module only if the goodbye's EXIT reaches it
-as the recovered `ActionID` `exit_module`
-([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):260);
-a lenient protobuf parse reads a name it does not know as `UNSET_ACTION_ID`. The SDK spells every
-action in one place, `wire.encode_action`, to the `RemoteChatAction` contract in the
-[AI seam](ai-seam.md) §2. The server-side end of the conversation and the memory write do not depend
-on that spelling. (`sleep` is the proto's own name, line 264.)
+*Not yet shown on a robot:* the goodbye's EXIT goes out as the recovered `ActionID` `exit_module` and
+a SLEEP as `sleep`
+([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):260
+and 264), both spelled in one place, `wire.encode_action`, to the `RemoteChatAction` contract in the
+[AI seam](ai-seam.md) §2. The spelling matters because a lenient protobuf parse reads a name it does
+not know as `UNSET_ACTION_ID`. No physical robot has yet been seen leaving the module or going to
+sleep on either action. The server-side end of the conversation and the memory write do not depend
+on the robot.
 
 > **Over-matching is the silent failure.** A global short-circuits before the brain, so a pattern one
 > word too loose quietly answers a real sentence with a canned line (a bare "something else" pattern
