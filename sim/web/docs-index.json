@@ -400,7 +400,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 59306,
+   "bytes": 64054,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -415,7 +415,7 @@
     "3.1 The picture",
     "3.2 The routes and the envelope",
     "3.3 The context blob",
-    "3.4 Voice-first ordering",
+    "3.4 Voice-first ordering, one ticket per sentence",
     "3.5 `cloud-transport.js` wraps, it does not replace",
     "4. The security model",
     "4.1 The controls",
