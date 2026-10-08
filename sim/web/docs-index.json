@@ -204,7 +204,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config and telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 30946,
+   "bytes": 32535,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -498,7 +498,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening: a supervisor that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 26473,
+   "bytes": 34413,
    "mermaid": 0,
    "headings": [
     "0. The ceiling",
@@ -727,7 +727,7 @@
    "path": "architecture/backlog/insights.md",
    "title": "Insights that mean something — parent-console insights from telemetry",
    "section": "architecture",
-   "bytes": 12814,
+   "bytes": 13437,
    "mermaid": 0,
    "headings": [
     "0. The ceiling",
@@ -1065,7 +1065,7 @@
    "path": "features/robot-lifecycle.md",
    "title": "Map 11 — Robot Lifecycle (pairing / unpair / FACTORY RESET / restore / reboot / OTA / state model)",
    "section": "features",
-   "bytes": 29507,
+   "bytes": 29974,
    "mermaid": 0,
    "headings": [
     "Built here: unpair and factory reset",

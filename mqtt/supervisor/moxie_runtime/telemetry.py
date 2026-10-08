@@ -124,6 +124,8 @@ class TelemetryMixin:
     # Three files, one verb: telemetry_packets, telemetry_daily, mentor_behaviors. Never
     # policy-gated. Flipping to NO_DATA erases retroactively (as for transcripts): the
     # contract promises an empty store under NO_DATA (config-and-telemetry-contract.md §3).
+    # A robot that failed closed (fleet.py `failed_closed`) is not swept: its NO_DATA is a
+    # settings file that could not be read, not a parent's choice.
 
     #: What `erase_telemetry` removes, in order — one list, so none can be forgotten.
     ACTIVITY_COLLECTIONS = (telemetry_seam.PACKETS_COLLECTION,
@@ -160,8 +162,9 @@ class TelemetryMixin:
         return out
 
     def purge_telemetry(self) -> int:
-        """Erase the activity record of every robot now under NO_DATA (connected or not).
-        Runs at startup and after config edits; best effort."""
+        """Erase the activity record of every robot now under NO_DATA (connected or not),
+        except a robot that failed closed (`failed_closed`). Runs at startup and after
+        config edits; best effort."""
         try:
             known = set(self.store.devices()) | set(self.robots)
         except Exception as e:
@@ -169,7 +172,7 @@ class TelemetryMixin:
             return 0
         purged = 0
         for device_id in sorted(known):
-            if self.telemetry_persists(device_id):
+            if self.telemetry_persists(device_id) or self.failed_closed(device_id):
                 continue
             if self.erase_telemetry(device_id).get("erased"):
                 purged += 1
