@@ -336,6 +336,7 @@ details.lc-entry summary{cursor:pointer;color:var(--muted);font-size:13px}
 .lc-sheet::backdrop{background:rgba(15,16,23,.55)}
 @media (min-width:600px){.lc-sheet{margin:auto;border-radius:16px}}
 .lc-sheet h3{font-size:15px;margin:16px 0 6px}
+.lc-sheet h2:focus{outline:none}   /* focused only to move a reader to the answer */
 .lc-list{margin:8px 0;padding-left:20px;font-size:14px}
 .lc-list li{margin:4px 0}
 .lc-erase{border:1px solid var(--line);border-radius:10px;padding:4px 12px 8px;margin:12px 0}

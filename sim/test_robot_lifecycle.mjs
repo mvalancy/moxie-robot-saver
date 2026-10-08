@@ -10,14 +10,16 @@
  *   S5 a factory reset needs RESET plus "cannot be undone", sends ?rfs=1, and shows the
  *      restore_factory code with every step's basis and the honest limit
  *   S6 with no robot record, the reset code is shown and NOTHING is sent
- *   S7 at phone width the sheet fits the screen and its button is not covered
+ *   S7 at phone width the sheet fits the screen, its button is not covered, and the
+ *      answer starts at its headline
  *
  * No FastAPI: `serveStatic` serves server/static and every `/local/*` and `/api/*` call is
  * answered at the browser. The DELETE answers, the reset view and the fleet come out of the
  * REAL server modules (`moxie_server.lifecycle`, `moxie_server.fleet`, both dependency-free)
  * in a python3 subprocess, so a fixture cannot drift from what the route returns.
- * TEETH: three mutated copies of js/robot.js (no typed gate; the child deleted whatever the
- * box says; an erase failure ignored) must each redden the scenario that guards it.
+ * TEETH: four mutated copies of js/robot.js (no typed gate; the child deleted whatever the
+ * box says; an erase failure ignored; the answer left scrolled where the question was) must
+ * each redden the scenario that guards it.
  *
  *   node sim/test_robot_lifecycle.mjs
  */
@@ -365,6 +367,18 @@ const SCENARIOS = {
         return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === b;
       });
       C.ok(hit, "S7: nothing covers the confirm button at phone width");
+      /* The answer replaces the question inside a sheet the parent has scrolled down to
+       * the confirm box: it must start from the headline, not mid-list. */
+      await page.click("#lc-go");
+      await isDone(page);
+      const top = await page.evaluate(() => {
+        const m = document.querySelector("#lc-message").getBoundingClientRect();
+        return { top: m.top, bottom: m.bottom, h: innerHeight,
+                 focus: document.activeElement && document.activeElement.id };
+      });
+      C.ok(top.top >= 0 && top.bottom <= top.h,
+           `S7: after the reset the headline is on screen (${Math.round(top.top)}..${Math.round(top.bottom)} of ${top.h})`);
+      C.eq(top.focus, "lc-title", "S7: focus moves to the sheet's title with the answer");
       C.eq(notable(errs, aborted).length, 0, `S7: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
     } finally { await page.close(); }
   },
@@ -385,6 +399,8 @@ const TEETH = [
   ["no typed gate", "S1", (s) => s.replace("function lcConfirmed(){", "function lcConfirmed(){ return true;")],
   ["child deleted whatever the box says", "S2",
    (s) => s.replace("if($('#lc-erase-child').checked && res.child_id){", "if(res.child_id){")],
+  ["the answer left scrolled where the question was", "S7",
+   (s) => s.replace("  $('#lc-sheet').scrollTop=0;\n  $('#lc-title').focus();", "  $('#lc-close').focus();")],
   ["erase failure ignored", "S4",
    (s) => s.replace("catch(e){ return stop(oops(e,'erase failed')+' Nothing was unpaired; you can try again.'); }",
                     "catch(e){}")],

@@ -158,7 +158,10 @@ function lcDone(res, extra){
     $('#lc-after').textContent=code.after||'';
     $('#lc-limit').textContent=code.limit||'';
   }
-  $('#lc-close').focus();
+  // The answer replaces the question in place: start reading it from the top, not from
+  // wherever the confirm box had scrolled the sheet to.
+  $('#lc-sheet').scrollTop=0;
+  $('#lc-title').focus();
 }
 
 { const d=$('#lc-sheet');
