@@ -4,7 +4,8 @@ import json, threading
 
 from moxie_sdk.types import Turn, Reply, ReplyChunk, RobotContext, ResultCode
 from moxie_sdk.wire import (build_chat_response, build_activity_response,
-                            build_remote_modules, is_module_query)
+                            build_remote_modules, is_data_query, is_module_query,
+                            query_name)
 from moxie_sdk.filler import pick_filler
 from moxie_sdk import safety as safety_seam
 from moxie_sdk import presence as presence_seam
@@ -77,12 +78,23 @@ class TurnsMixin:
         robot.module_id = rcr.get("module_id") or robot.module_id
         robot.content_id = rcr.get("content_id") or robot.content_id
 
-        # module list query (backend:data, RemoteDataQuery{query: modules}) → the
-        # remote-chat modules this appliance serves, before any brain is consulted
-        if is_module_query(rcr):
-            return self._publish_chat(device_id, event_id, backend, "", markup="",
-                                      result=ResultCode.SUCCESS,
-                                      query_data=build_remote_modules(self.remote_modules()))
+        # A data request (backend:data) is never a conversational turn. The module query
+        # (RemoteDataQuery{query: modules}) gets the remote-chat modules this appliance
+        # serves, before any brain is consulted. Any other data query — `contexts`, or no
+        # query at all — gets no brain and no reply: nothing in the recovered proto makes
+        # one mandatory (every field is optional, RemoteChat.proto:41-51, :296-300),
+        # OpenMoxie answers only the module query and `router` turns
+        # (moxie_server.py:170-179), and a brain line here would be words the child never
+        # asked for.
+        if is_data_query(rcr):
+            if is_module_query(rcr):
+                return self._publish_chat(device_id, event_id, backend, "", markup="",
+                                          result=ResultCode.SUCCESS,
+                                          query_data=build_remote_modules(self.remote_modules()))
+            self._note("chat", f"ignored a data query ({query_name(rcr)!r}) from {device_id}")
+            print(f"[runtime] ignored a data query ({query_name(rcr)!r}) from {device_id}: "
+                  "only the module list is served", flush=True)
+            return None
 
         # rebuild history from notify events (Moxie is authoritative about what it said)
         if command == "notify":

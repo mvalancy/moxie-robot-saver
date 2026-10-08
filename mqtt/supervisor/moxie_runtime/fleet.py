@@ -3,7 +3,8 @@ from __future__ import annotations
 import json, os, time
 
 from moxie_sdk.types import ResultCode
-from moxie_sdk.wire import build_activity_response, build_remote_modules, is_module_query
+from moxie_sdk.wire import (build_activity_response, build_remote_modules, is_data_query,
+                            is_module_query)
 from moxie_sdk import safety as safety_seam
 from moxie_sdk import performance as performance_seam
 from markup import perform
@@ -168,7 +169,7 @@ class FleetMixin:
     def _serve_unpermitted(self, device_id, name, payload):
         """Everything a not-permitted device gets on `/events/…`:
         * remote-chat prompt -> one fixed child-free line (no brain, no history); `notify`
-          is dropped.
+          is dropped. A module query -> an empty list; any other data query -> dropped.
         * activity-log queries (`schedule`, `mentor_behaviors`, `license`) -> an empty
           CloudQueryResponse so the robot's pull resolves; reports are dropped.
         * everything else (zmq audio, telemetry, vision, lifecycle) -> dropped.
@@ -185,6 +186,9 @@ class FleetMixin:
                 return self._publish_chat(device_id, rcr.get("event_id"), backend, "",
                                           markup="", result=ResultCode.SUCCESS,
                                           query_data=build_remote_modules([]))
+            if is_data_query(rcr):          # no other data query is answered (turns.py)
+                self._note("permit", f"ignored a data query from pending {device_id}")
+                return None
             self._note("permit", f"⛔ turn refused — {device_id} is pending")
             line, scored = self._stage(self.NOT_PAIRED_LINE)
             return self._publish_chat(device_id, rcr.get("event_id"), backend,

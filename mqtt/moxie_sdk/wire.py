@@ -147,7 +147,29 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
 
 
 # ---- the remote module list: RemoteDataQuery in, RemoteDataBlock out ----
+DATA_BACKEND = "data"
 MODULES_QUERY = "modules"
+#: `RemoteDataQuery.Query.modules` by number (RemoteChat.proto:42-46): protobuf JSON spells
+#: an enum by name or by number, so a robot may send either. Pinned against the committed
+#: pb2 by `test_wire_conformance.py`.
+MODULES_QUERY_VALUE = 2
+
+
+def is_data_query(rcr) -> bool:
+    """A `backend: "data"` RemoteChatRequest: a data request, never a conversational turn.
+    OpenMoxie answers only the module query and `backend == "router"` turns
+    (moxie_server.py:170-179)."""
+    return isinstance(rcr, dict) and rcr.get("backend") == DATA_BACKEND
+
+
+def query_name(rcr):
+    """What a data request asks for, as sent: `RemoteDataQuery.query` by name or by number
+    (`{"query": {"query": "modules"}}`, `{"query": {"query": 2}}`), or the plain string
+    older test doubles send (`{"query": "modules"}`); None when there is no query."""
+    query = rcr.get("query") if isinstance(rcr, dict) else None
+    if isinstance(query, dict):
+        query = query.get("query")
+    return query
 
 
 def is_module_query(rcr) -> bool:
@@ -155,15 +177,11 @@ def is_module_query(rcr) -> bool:
 
     The recovered request is `backend: "data"` with `query: RemoteDataQuery{query:
     modules}` (RemoteChat.proto:41-51, field 23 at :79), which OpenMoxie reads as
-    `rcr['query']['query'] == "modules"` (moxie_server.py:170). The plain `query:
-    "modules"` string our browser Sim and older doubles send is accepted too.
+    `rcr['query']['query'] == "modules"` (moxie_server.py:170); the enum's number, 2, is
+    the other spelling protobuf JSON allows. The plain `query: "modules"` string is
+    accepted too — only older test doubles send it (the browser Sim sends no module query).
     """
-    if not isinstance(rcr, dict) or rcr.get("backend") != "data":
-        return False
-    query = rcr.get("query")
-    if isinstance(query, dict):
-        query = query.get("query")
-    return query == MODULES_QUERY
+    return is_data_query(rcr) and query_name(rcr) in (MODULES_QUERY, MODULES_QUERY_VALUE)
 
 
 def build_remote_modules(modules) -> dict:

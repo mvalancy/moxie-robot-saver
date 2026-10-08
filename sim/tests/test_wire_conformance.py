@@ -49,8 +49,9 @@ from helpers_runtime import drive_turn, loopback, make_runtime            # noqa
 from moxie_sdk.app import MoxieApp                                        # noqa: E402
 from moxie_sdk.types import (ACTION_IDS, Action, ActionType, Reply,       # noqa: E402
                              ReplyChunk, ResultCode)
-from moxie_sdk.wire import (NON_PROTO_FIELDS, build_chat_response,        # noqa: E402
-                            build_remote_modules, is_module_query)
+from moxie_sdk.wire import (MODULES_QUERY_VALUE, NON_PROTO_FIELDS,        # noqa: E402
+                            build_chat_response, build_remote_modules,
+                            is_module_query)
 
 PROTO_FIELDS = {f.name for f in RC.RemoteChatResponse.DESCRIPTOR.fields}
 SHIPPED = ("starter.json", "memory_chat.json")          # mqtt/content_modules/
@@ -330,6 +331,45 @@ def test_an_llm_only_appliance_lists_the_day_plans_chat_module():
     strict(resp)
 
 
+def test_the_module_query_by_enum_number_is_the_module_query():
+    """`RemoteDataQuery.Query.modules` is 2 (RemoteChat.proto:45) and protobuf JSON may
+    carry the number instead of the name; the committed pb2 says which number."""
+    assert RC.RemoteDataQuery.Query.Value("modules") == MODULES_QUERY_VALUE == 2
+    assert RC.RemoteDataQuery.Query.Value("contexts") == 1
+    assert is_module_query({"backend": "data", "query": {"query": 2}})
+    assert not is_module_query({"backend": "data", "query": {"query": 1}})
+    req = json_format.ParseDict({"backend": "data", "query": {"query": 2}},
+                                RC.RemoteChatRequest(), ignore_unknown_fields=False)
+    assert RC.RemoteDataQuery.Query.Name(req.query.query) == "modules"
+    app, calls = _shipped_content_app()
+    rt, dev = make_runtime(app)
+    resp = drive_turn(rt, dev, "", backend="data", event_id="q-2", query={"query": 2})
+    assert calls == [] and _module_ids(resp) == SHIPPED_IDS
+    strict(resp)
+
+
+@pytest.mark.parametrize("query", [
+    {"query": {"query": "contexts"}},          # RemoteDataQuery{query: contexts}, by name
+    {"query": {"query": 1}},                   # …by number (RemoteChat.proto:44)
+    {},                                        # a data request with no query at all
+], ids=["contexts", "contexts-by-number", "no-query"])
+def test_a_data_query_that_is_not_the_module_list_reaches_no_brain_and_says_nothing(query):
+    """Measured on origin/dev and on this branch before the fix: each of these went to the
+    brain and Moxie spoke its line, published as backend "router". OpenMoxie answers only
+    the module query and `router` turns (moxie_server.py:170-179), and nothing in the
+    recovered proto makes a reply mandatory (RemoteChat.proto:41-51, :296-300: every
+    field optional). So: no brain, nothing published, one logged line."""
+    app = _Say("Hi Sam!")
+    rt, dev = make_runtime(app)
+    rt._on_remote_chat(dev, rt.robots[dev], json.dumps(
+        {"backend": "data", "event_id": "q-other", **query}))
+    rt._pool.shutdown(wait=True)
+    assert app.calls == 0, "the brain was asked"
+    assert rt.client.published == [], "something was published"
+    assert rt.history.get(dev, []) == []
+    assert [n for n in rt.recent if "data query" in n["text"]], list(rt.recent)
+
+
 def test_a_pending_robots_module_query_is_answered_empty_in_query_data():
     rt, dev = make_runtime(_Say(), allow_unverified_bots=False)
     rt._serve_unpermitted(dev, "remote-chat", json.dumps(
@@ -338,6 +378,20 @@ def test_a_pending_robots_module_query_is_answered_empty_in_query_data():
     assert resp["query_data"]["modules"] == [] and "modules" not in resp
     msg = strict(resp)
     assert msg.event_id == "q-pending" and list(msg.query_data.modules) == []
+
+
+def test_a_pending_robots_other_data_query_is_dropped_not_told_to_find_a_grown_up():
+    """The pending path spoke NOT_PAIRED_LINE to a `contexts` query: spoken output for a
+    data request. Dropped now, as on the permitted path; the module query by number is
+    still answered empty."""
+    rt, dev = make_runtime(_Say(), allow_unverified_bots=False)
+    rt._serve_unpermitted(dev, "remote-chat", json.dumps(
+        {"event_id": "q-c", "backend": "data", "query": {"query": "contexts"}}))
+    assert rt.client.published == [], rt.client.published
+    rt._serve_unpermitted(dev, "remote-chat", json.dumps(
+        {"event_id": "q-2", "backend": "data", "query": {"query": 2}}))
+    (resp,) = rt.client.chat_replies(dev)
+    assert resp["event_id"] == "q-2" and resp["query_data"]["modules"] == []
 
 
 def test_content_infos_use_the_protos_contentdetail_shape_not_openmoxies_nesting():
