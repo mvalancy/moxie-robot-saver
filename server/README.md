@@ -16,8 +16,9 @@ Open `http://<this-computer's-ip>:8080` on a phone on the same network (or over 
 it together with the robot side, use the repo-root `docker compose up`
 ([guide](../docs/guides/one-command-stack.md)). Tests: `sim/tests/test_parent_api.py`,
 `test_fleet.py`, `test_robot_lifecycle.py`, `test_robot_claim.py`, `test_wifi_first_qr.py` and the
-`test_console_*.py` files (`test_sil_robot_claim.py` runs the claim against the real supervisor); the browser suites `sim/test_console_insights.mjs`,
-`sim/test_robot_lifecycle.mjs` and `sim/test_robot_claim.mjs`.
+`test_console_*.py` files (`test_sil_robot_claim.py` runs the claim against the real supervisor);
+the browser suites `sim/test_console_insights.mjs`, `sim/test_robot_lifecycle.mjs` and
+`sim/test_robot_claim.mjs`.
 
 ## Layout
 | Path | Role |

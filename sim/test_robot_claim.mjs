@@ -121,7 +121,7 @@ const CLAIM_OK = { ok: true, robot_id: RID, device_id: DEV, child_id: CID, creat
                    permitted: true, permit_error: null };
 const REFUSED = { ok: false, error: "account already has a robot", device_id: DEV,
                   reason: "This account already has a robot (Moxie (simulated)). Unpair the "
-                          + "current robot first, then add this one." };
+                          + "current robot first, then add this one.", robot_id: SIMULATED.id };
 const CLAIM = `POST /local/robots/${DEV}/claim`, PERMIT = `POST /local/robots/${DEV}/permit`;
 const WIFI = "POST /local/wifi/payload", KEYED = "POST /local/pairing/prepare";
 const PHRASE = "apple banana cherry dune";

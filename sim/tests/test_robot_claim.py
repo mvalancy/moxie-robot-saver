@@ -20,7 +20,8 @@ connected robot, `DEVICE`; its `permit_posts`, `memory_erases`, `telemetry_erase
 `config_posts` and `wakeups` record every call that reached it. A robot on its permit list
 that is not `DEVICE` is listed but offline (`OFFLINE`). The console database is shared by
 every console module in a run, so each test starts with no record naming `DEVICE` or
-`OFFLINE` and an empty permit list.
+`OFFLINE` and an empty permit list, and the module deletes every robot record it made when
+it ends.
 """
 import json
 
@@ -38,6 +39,19 @@ REVOKE = {"device_id": DEVICE, "permitted": False, "label": ""}
 RESTORE_FACTORY = '{"debug":{"command":"restore_factory"}}'
 #: A robot permitted earlier and switched off now: on the permit list, not connected.
 OFFLINE = "d_claim_offline"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def leaves_no_robot_record(client):
+    """The console database is shared by every console module in a run: every robot
+    record this module made (DEVICE claimed, simulated scans) is deleted when it ends, so
+    no later module finds DEVICE already on an account."""
+    from moxie_server import db
+    before = {r["id"] for r in db.q("SELECT id FROM robots")}
+    yield
+    for row in db.q("SELECT id FROM robots"):
+        if row["id"] not in before:
+            db.ex("DELETE FROM robots WHERE id=?", (row["id"],))
 
 
 @pytest.fixture(autouse=True)
