@@ -46,7 +46,8 @@ pytest.importorskip("numpy")
 
 import helpers_audio as A                                    # noqa: E402
 from helpers_runtime import (FakeClient, assert_spec_response, drive_turn,  # noqa: E402,F401
-                             load_repo_dotenv, make_runtime)
+                             load_repo_dotenv, make_runtime, parse_zmq_frame,
+                             toolkit_pb2)
 
 STARTER = os.path.join(REPO, "mqtt", "content_modules", "starter.json")
 
@@ -167,12 +168,14 @@ def _hear_utterance(rt, device_id, pcm16, uuid="utt-live-1"):
             out = rt._on_event(device_id, "zmq", frame)
             if out is not None:
                 transcript = out
-    # the runtime must also answer the robot with a FINAL zmqSTTResponse
+    # the runtime must also answer the robot with a FINAL zmqSTTResponse, in the bus
+    # framing the robot parses (decoded here with the committed pb2 oracle)
     published = rt.client.on(f"/devices/{device_id}/commands/zmq")
     assert published, f"no zmqSTTResponse published; saw {rt.client.published!r}"
-    final = published[-1]
-    assert final["type"] == "FINAL" and final["uuid"] == uuid, final
-    assert final["speech"] == transcript, (final, transcript)
+    pb = toolkit_pb2("embodied.perception.audio.zmqSTT_pb2")
+    final = parse_zmq_frame(published[-1], pb.zmqSTTResponse)
+    assert final.type == final.FINAL and final.uuid == uuid, final
+    assert final.speech == transcript, (final, transcript)
     return transcript, s
 
 

@@ -2,7 +2,8 @@
 # The broker uses host networking so a Moxie on your LAN can reach :8883.
 services:
   broker:
-    image: eclipse-mosquitto:2
+    # Pinned like the root compose: DISCONNECT_RE knows this exact mosquitto's leave lines.
+    image: eclipse-mosquitto:2.0.20
     network_mode: host
     restart: unless-stopped
     volumes:
