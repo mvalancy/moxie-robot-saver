@@ -155,17 +155,63 @@
       if(abs.indexOf("sim/web/")===0) img.setAttribute("src", abs.slice(8));
     });
   }
+  /* The repo's home on GitHub, read from the footer markup in docs.html rather than written
+     here: shipped JS names no deployment (sim/tests/test_no_deployment_defaults.py), and a
+     fork whose footer points at itself gets links into itself. Null if the footer names no
+     GitHub repo; links then stay as written. */
+  var REPO=(function(){
+    var t=document.getElementById("docfoot"), as=t&&t.content?t.content.querySelectorAll("a[href]"):[];
+    for(var i=0;i<as.length;i++){ try{ var u=new URL(as[i].getAttribute("href"), location.href);
+      if(u.hostname==="github.com"&&/^\/[^/]+\/[^/]+\/?$/.test(u.pathname)) return u.origin+u.pathname.replace(/\/$/,""); }catch(e){} }
+    return null;
+  })();
+  var REF="main";   // the branch the site is deployed from
+  /* The bundle path of a REPO path when the bundle has that doc (the inverse of repoPathOf). */
+  function bundlePathOf(repo){
+    var p=repo.indexOf("docs/")===0?repo.slice(5):"_root/"+repo;
+    return idx.files.some(function(f){return f.path===p;})?p:null;
+  }
+  /* The page of this site a REPO path stands for, if any: `sim/web/` is the site root (the
+     rule fixImages uses), and the simulator's README stands for the simulator. */
+  function sitePageOf(repo, isDir){
+    if(repo==="sim/README.md") return "sim";
+    if(repo==="sim/web"&&isDir) return "./";
+    return /^sim\/web\/.+\.html$/.test(repo)?repo.slice(8):null;
+  }
+  /* A link whose whole text is a code span (`sim/README.md`, `setup.html`) names a FILE. */
+  function namesFile(a){
+    var c=a.firstElementChild;
+    return a.childElementCount===1&&c.tagName==="CODE"&&a.textContent.trim()===c.textContent.trim();
+  }
+  /* Docs write links for GitHub, which resolves them against the doc's place in the REPO.
+     Served from `docs-bundle/`, the same string resolves against /docs.html, and Pages answers
+     a path with no file behind it with the hub: 681 links across 87 of 145 docs, and every
+     "source" link, landed on the hub (measured 2026-10-08). So resolve each link the way
+     GitHub does, then send it to the best place this site has: a bundled doc opens here (at
+     its heading); a page this site serves opens that page, when the link is prose ("the
+     simulator", "the setup page" mean the thing; `sim/README.md` in code names the file);
+     anything else opens on GitHub, where it lives. An in-page "#heading" link keeps its doc
+     in the URL, so a reload or a shared link lands on that section, not on the home doc. */
   function fixLinks(root, fromPath){
-    var baseDir=fromPath.indexOf("/")>=0?fromPath.replace(/\/[^/]*$/,""):"";
+    var repoDir=repoPathOf(fromPath).replace(/\/?[^/]*$/,"");
     fixImages(root, fromPath);
     Array.prototype.forEach.call(root.querySelectorAll("a[href]"),function(a){
       var href=a.getAttribute("href");
-      if(/^(https?:|mailto:|#)/.test(href)){ if(/^https?:/.test(href)){a.target="_blank";a.rel="noopener";} return; }
+      if(/^(https?:|mailto:)/.test(href)){ if(/^https?:/.test(href)){a.target="_blank";a.rel="noopener";} return; }
+      if(href.charAt(0)==="#"){
+        if(href.length>1){ a.setAttribute("href","#"+fromPath+href);
+          a.onclick=function(){ var el=anchorEl(root, href); if(el) el.scrollIntoView({block:"start",behavior:reduce?"auto":"smooth"}); }; }
+        return;
+      }
+      if(/^([a-z][a-z0-9+.-]*:|\/\/)/i.test(href)) return;            // another scheme: leave alone
       var hash=""; var m=href.match(/#.*$/); if(m){ hash=m[0]; href=href.slice(0,m.index); }
-      if(!href||!/\.(md|tsv|dts)$/i.test(href)) return;   // .md docs + bundled .tsv/.dts manifests
-      var target=joinPath(baseDir, href);
-      var hit=idx.files.some(function(f){return f.path===target;})?target:(idx.files.some(function(f){return f.path==="_root/"+target;})?"_root/"+target:null);
-      if(hit){ var frag=hash; a.setAttribute("href","#"+hit); if(frag) a.dataset.anchor=frag; a.onclick=function(ev){ ev.preventDefault(); openDoc(hit, frag); }; }
+      if(!href) return;
+      var isDir=/\/$/.test(href), repo=joinPath(href.charAt(0)==="/"?"":repoDir, href);
+      var hit=bundlePathOf(repo);                                     // .md docs + bundled .tsv/.dts manifests
+      if(hit){ var frag=hash; a.setAttribute("href","#"+hit+frag); if(frag) a.dataset.anchor=frag; a.onclick=function(ev){ ev.preventDefault(); openDoc(hit, frag); }; return; }
+      var page=namesFile(a)?null:sitePageOf(repo, isDir);
+      if(page){ a.setAttribute("href", page+hash); return; }
+      if(REPO){ a.setAttribute("href", REPO+(isDir?"/tree/":"/blob/")+REF+"/"+repo+hash); a.target="_blank"; a.rel="noopener"; }
     });
   }
   var HLJS_ALIAS={proto:"protobuf",sh:"bash",shell:"bash",jsonc:"json",yml:"yaml",js:"javascript",py:"python"};
@@ -344,8 +390,8 @@
     var meta=document.getElementById("docmeta");
     if(meta){ var mins=Math.max(1,Math.round((f.bytes||0)/1100));
       meta.textContent='~'+mins+' min'+(f.mermaid?'  ·  ◈ '+f.mermaid+' diagram'+(f.mermaid>1?'s':''):''); }
-    var srcRel=f.path.indexOf("_root/")===0?("../../"+f.path.replace("_root/","")):("../../docs/"+f.path);
-    elSrc.href=srcRel;
+    // the doc's source on GitHub (the relative fallback finds it only where the repo root is served)
+    elSrc.href=REPO?REPO+"/blob/"+REF+"/"+repoPathOf(f.path):"../../"+repoPathOf(f.path);
     // ensure the doc's section group is open + active
     var sec=path.split("/")[0];
     var grp=elTree.querySelector('a.doc[data-path="'+CSS.escape(path)+'"]');
