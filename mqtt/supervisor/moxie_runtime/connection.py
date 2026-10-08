@@ -385,7 +385,8 @@ class ConnectionMixin:
         # surface interesting broker activity to the UI (any sign of life)
         low = line.lower()
         if any(k in low for k in ("new connection", "new client", "disconnect",
-                                  "closed its connection", "error", "socket", "denied")):
+                                  "closed its connection", "closing old connection",
+                                  "error", "socket", "denied")):
             kind = "error" if ("error" in low or "socket" in low) else "conn"
             self._note(kind, line.split(": ", 1)[-1] if ": " in line else line)
         m = CONNECT_RE.search(line)
