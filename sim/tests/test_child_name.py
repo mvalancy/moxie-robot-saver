@@ -91,7 +91,7 @@ def test_the_whitelist_keeps_a_childs_name_and_refuses_what_is_not_one():
         "child": {"nickname": "Sam"}}
     assert s({"child": {"nickname": "Sam", "birthday": "2019-05-01"}}) == {
         "child": {"nickname": "Sam", "birthday": "2019-05-01"}}
-    for bad in ("<exit>", "{{ x }}", "Sam\nexit", "Sam\r\n", "Sam ", "", "   ",
+    for bad in ("<exit>", "{{ x }}", "Sam\nexit", "Sam\r\n", "Sam\u2028", "", "   ",
                 "x" * 41, 5, None):
         with pytest.raises(ValueError):
             s({"child": {"nickname": bad}})

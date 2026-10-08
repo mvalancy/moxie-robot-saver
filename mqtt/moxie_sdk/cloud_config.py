@@ -397,7 +397,7 @@ NAME_MAX_CHARS = 40
 #: Unicode letters and digits, spaces, periods, apostrophes, hyphens: no tags, no braces.
 NAME_RE = _re.compile(r"^[\w .'\-]+$")
 #: Every line boundary `str.splitlines` knows: a name is one line.
-_LINE_BREAK = _re.compile(r"[\n\r\v\f\x1c-\x1e\x85  ]")
+_LINE_BREAK = _re.compile(r"[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
 _YMD = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #: The words a refusal uses. Never the name itself: a refusal is echoed to the console.
 NAME_RULE = (f"A child's name is one line of up to {NAME_MAX_CHARS} letters, digits, "

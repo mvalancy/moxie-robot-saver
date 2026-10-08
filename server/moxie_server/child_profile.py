@@ -153,7 +153,8 @@ def viewer(authorization: Optional[str]):
 
 
 def _names(rows) -> set:
-    return {n for n in map(name_for, rows) if len(n) >= 2}
+    """The names on these child rows, lower-cased (the feed's mask ignores case)."""
+    return {n.lower() for n in map(name_for, rows) if len(n) >= 2}
 
 
 def redact_status(snapshot, user) -> dict:
@@ -172,7 +173,7 @@ def redact_status(snapshot, user) -> dict:
     for r in snap.get("robots") or []:
         if not isinstance(r, dict):
             continue
-        name = " ".join(str(r.get("child") or "").split())
+        name = " ".join(str(r.get("child") or "").split()).lower()
         if r.get("device_id") in mine:
             own.add(name)
         else:

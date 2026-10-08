@@ -231,6 +231,8 @@ def test_the_status_views_name_a_robots_child_only_to_its_account(client, superv
     owner, _, _ = _claimed(client, "owner-view@child.lan", "Sam")
     stranger = quicklogin(client, "stranger-view@child.lan")
     _child(client, stranger, "José")
+    # another account's child spelled another way: the owner's own name still shows
+    _child(client, quicklogin(client, "shouty-view@child.lan"), "SAM")
     snap = {"ok": True, "app": "content", "robots": [
         {"device_id": DEVICE, "child": "Sam", "config_overrides": {
             "child": {"nickname": "Sam"}, "audio_volume": 0.4},
