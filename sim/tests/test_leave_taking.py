@@ -789,8 +789,8 @@ def test_every_other_turn_publishes_what_origin_dev_published(
     assert [m[1:] for m in brain.turns] == [[{"role": "user", "content": heard}]]
 
 
-#: Openers the console's content preview used to show differently from what the robot
-#: says: it split on every `|` and left the tags in.
+#: Openers the content preview route (`POST /content/render`) used to return differently
+#: from what the robot says: it split on every `|` and left the tags in.
 PREVIEW_OPENERS = [
     "Hi {{ volley.config.child_pii.nickname | upper }}! Ready?|Hey!",
     "{% if volley.config.child_pii.nickname | length > 2 %}Hi "
@@ -807,9 +807,10 @@ PREVIEW_OPENERS = [
 
 @pytest.mark.parametrize("opener", PREVIEW_OPENERS, ids=[
     "filter", "if-filter", "comment-launch", "exit", "sleep", "empty-first", "shipped"])
-def test_the_console_preview_shows_the_line_a_robot_hears_first(tmp_path, opener):
-    """The preview splits and lifts tags as the robot path does (`pick_opener`), and a
-    robot's rotation never leaks into it."""
+def test_the_content_preview_route_returns_the_line_a_robot_hears_first(tmp_path, opener):
+    """The route splits and lifts tags as the robot path does (`pick_opener`), and a
+    robot's rotation never leaks into it. (The console's editor card shows only the
+    prompt from this route, not the opener.)"""
     from moxie_sdk.content.content_app import opener_alternatives
     conv = {"name": "Chat", "module_id": "CHAT", "content_id": "default",
             "prompt": "You are Moxie.", "opener": opener}

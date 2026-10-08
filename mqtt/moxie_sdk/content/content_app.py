@@ -107,7 +107,7 @@ def pick_opener(opener: str, context: dict, last: Optional[str] = None,
     `<exit>`/`<sleep>`/`<launch:…>` still in; None when no alternative says anything.
 
     With no `last` it is the first alternative that says something: what a robot hears
-    first, and what the console's content preview shows. Otherwise it is a random other
+    first, and the `opener` the content preview route returns. Otherwise it is a random other
     one, and `last` again only when nothing else says anything. Only the alternative drawn
     is rendered, so an opener with thousands of alternatives costs one render, not one
     per alternative."""

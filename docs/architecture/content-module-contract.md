@@ -50,10 +50,11 @@ A module is JSON with three optional sections:
   `{{ }}`, `{% %}` and `{# #}` separates alternatives; inside them it is a Jinja filter
   (`{{ volley.config.child_pii.nickname | upper }}`) or comment text. OpenMoxie splits on every `|`
   (`conversations.py`:218), but it never templates an opener (:56-57). The split is one pass and
-  only the line said is rendered, so a long opener costs one render per turn. The console's content
-  preview (`POST /content/render`) uses the same split and pick, and shows the line a robot hears
-  first with its tags lifted. *Built to this contract and the OpenMoxie reference; no physical robot
-  has sent us an empty `prompt` yet.*
+  only the line said is rendered, so a long opener costs one render per turn. The content preview
+  route (`POST /content/render`) uses the same split and pick: its `opener` is the line a robot hears
+  first, with its tags lifted. The console's editor card shows only the rendered prompt so far, not
+  the opener. *Built to this contract and the OpenMoxie reference; no physical robot has sent us an
+  empty `prompt` yet.*
 - **`code`** is OpenMoxie's slot for Python hooks (`pre_process`, `post_process`,
   `complete_handler`, `notify_handler`, and `handle_volley` for globals). This appliance **carries it as
   data and never executes it**; runnable behavior uses [`extension`](#extensions-a-pack-that-can-do-something).
