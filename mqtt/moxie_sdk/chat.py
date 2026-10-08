@@ -10,6 +10,7 @@ caller signals ERROR_OFFLINE), and how to back off when the gateway rate-limits.
 from __future__ import annotations
 import os
 import random
+import threading
 import time
 from typing import Callable, Iterator, Optional
 
@@ -31,6 +32,11 @@ StreamFn = Callable[[list], Iterator[str]]   # messages -> a trickle of text del
 # diagnostic, never a billing ledger.
 
 _MODEL_CALLS = {"chat": 0, "stream": 0}
+
+#: The same record seen from ONE thread. The console's *Try it* runs its turn on a worker
+#: of its own, so it can read exactly what that turn spent and how its last request ended
+#: while robots' turns move the process-wide counter beside it.
+_THREAD = threading.local()
 
 
 class ModelCallBudgetExceeded(RuntimeError):
@@ -60,6 +66,7 @@ def note_model_call(kind: str = "chat") -> None:
         raise ModelCallBudgetExceeded(
             f"model-call campaign limit exhausted ({attempted}/{limit})")
     _MODEL_CALLS[kind] = _MODEL_CALLS.get(kind, 0) + 1
+    _THREAD.calls = thread_model_calls() + 1
 
 
 def model_calls(kind: str = "") -> int:
@@ -67,6 +74,18 @@ def model_calls(kind: str = "") -> int:
     if kind:
         return int(_MODEL_CALLS.get(kind, 0))
     return sum(_MODEL_CALLS.values())
+
+
+def thread_model_calls() -> int:
+    """How many model requests THIS thread has attempted (`note_model_call`)."""
+    return int(getattr(_THREAD, "calls", 0))
+
+
+def last_call_error() -> Optional[Exception]:
+    """How this thread's most recent `call_with_backoff` ended: the exception it gave up
+    on, or None when it succeeded. An app turns that failure into a friendly line for the
+    child (`LLMApp.respond`); this keeps the reason for whoever is asking why."""
+    return getattr(_THREAD, "error", None)
 
 
 def reset_model_calls() -> None:
@@ -163,6 +182,7 @@ def call_with_backoff(fn, *, max_retries=4, base=0.6, cap=20.0, on_backoff=None,
             out = fn()
             if pacer:
                 pacer.on_success()
+            _THREAD.error = None
             return out
         except Exception as e:
             rate_limited = is_rate_limit_error(e)
@@ -170,6 +190,7 @@ def call_with_backoff(fn, *, max_retries=4, base=0.6, cap=20.0, on_backoff=None,
                 pacer.on_rate_limit()
             transient = rate_limited or is_server_error(e) or is_offline_error(e)
             if not transient or attempt >= max_retries:
+                _THREAD.error = e
                 raise
             ra = retry_after_seconds(e)
             delay = ra if ra is not None else min(cap, base * (2 ** attempt)) + random.uniform(0, base)
