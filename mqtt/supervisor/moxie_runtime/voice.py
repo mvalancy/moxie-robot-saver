@@ -216,9 +216,13 @@ class VoiceMixin:
         ignored. Live VAD sessions are dropped: they captured the old engine. Every
         permitted robot we know of that is not yet asked for its microphone this session
         is asked now: the Listening picker may turn the ears on after the robots
-        connected. Ghosts included (served before our socket dropped, silent since): a
-        robot that sat connected through our blip never announces itself again (the
-        broker log is live-only), so leaving it out would leave it deaf."""
+        connected. Deliberately every robot in `self.robots`, not only those confirmed on
+        this connection: a ghost (served before our socket dropped, silent since) may well
+        still be connected, and it never announces itself again (the broker log is
+        live-only), so leaving it out would leave it deaf. The ask to a ghost costs one
+        QoS 0 message if it is gone and is not recorded (`_subscribe_stt`). `None` (the
+        picker's `off`) asks nobody and keeps each record: the robot was asked and, as
+        far as we know, still streams."""
         self._transcriber = transcriber
         self._stt_sessions.clear()
         for device_id in list(self.robots):

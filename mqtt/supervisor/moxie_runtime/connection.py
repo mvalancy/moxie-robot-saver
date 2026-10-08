@@ -448,8 +448,12 @@ class ConnectionMixin:
             if not self.is_permitted(device_id):
                 return
             # Config first, then the ask for mic audio: the order the field-proven
-            # community server uses (mqtt-and-conversation.md §3.4).
-            self._subscribe_stt(device_id)
+            # community server uses (mqtt-and-conversation.md §3.4). Always, even when a
+            # Listening pick, a wake or a Permit already asked inside this one-second
+            # window: that ask preceded the config push (and maybe the robot's own
+            # re-subscribe, which the settle waits for), so it must not stand in for
+            # this one. At most one redundant QoS 0 message.
+            self._subscribe_stt(device_id, again=True)
             try:
                 self.app_for(device_id).on_connect(robot)
             except Exception as e:

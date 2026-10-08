@@ -7,8 +7,10 @@ The robot's STT dialect on the wire (ai-seam.md §①, mqtt-and-conversation.md 
    `b'<full_name>:' + protobuf`, never JSON;
 3. the ask is repeated whenever the robot's session may have lost it: a second broker
    connect line with no disconnect in between (community signal C4, "crossed ears"), a
-   wake, a re-permit, the Listening picker turning the ears on, a broker outage (in
-   whichever order the supervisor and the robot come back), a supervisor restart;
+   wake, a re-permit (or the fleet-wide toggle letting the robot in), the Listening
+   picker turning the ears on, a broker outage (in whichever order the supervisor and
+   the robot come back), a supervisor restart; and the settle after a connect line
+   always asks, even when one of those landed inside its one-second window;
 4. every way mosquitto 2.0.20 (and 1.6) says a robot left is recognised, so the robot's
    return is a fresh onboarding.
 
@@ -31,8 +33,8 @@ import threading
 
 import pytest
 
-from helpers_runtime import (REPO, FakeClient, deliver, http_json, loopback,  # noqa: E402
-                             make_runtime, parse_zmq_frame, split_zmq_frame,
+from helpers_runtime import (REPO, FakeClient, FakeInfo, deliver, http_json,  # noqa: E402
+                             loopback, make_runtime, parse_zmq_frame, split_zmq_frame,
                              status_server, toolkit_pb2)
 from helpers_audio import pb_zmq_stt_frame                          # noqa: E402
 from moxie_sdk.app import MoxieApp                                  # noqa: E402
@@ -415,6 +417,25 @@ def test_the_listening_picker_asks_the_robots_not_yet_asked(timers, tmp_path):
     assert _asks(rt, "d_c3") == [[ZMQ_STT_REQUEST]]
 
 
+def test_the_listening_picker_also_asks_a_ghost_without_recording_it(timers, tmp_path):
+    """A robot served before OUR socket dropped and silent since (a ghost) may well
+    still be connected: the broker log is live-only, so it never announces itself
+    again, and leaving it out would leave it deaf. The picker asks it too (one QoS 0
+    message to nobody if it is gone) but records nothing, so its own return is still
+    asked (`test_an_ask_sent_while_the_robot_was_away_does_not_silence_its_return`).
+    The deliberate choice `set_transcriber` documents."""
+    rt = _runtime(tmp_path, ears=False)
+    rt.client.up()
+    _connect(rt)
+    timers.fire()                              # config only: no ears yet
+    rt.client.drop()                           # our blip; the robot said nothing
+    rt.client.up()
+    assert rt.status_snapshot()["robots"][0]["seen_since_connect"] is False
+    rt.set_transcriber(Ears())
+    assert _asks(rt) == [[ZMQ_STT_REQUEST]], "the ghost was asked"
+    assert rt.status_snapshot()["robots"][0]["stt_subscribed_at"] is None, "not recorded"
+
+
 def test_a_broker_outage_clears_the_latch_so_the_next_onboarding_asks_again(timers, tmp_path):
     """Our socket died: the robot's session is unknown, the belief is dropped, and its
     next evidence (a `/state`) is a fresh onboarding with a fresh ask."""
@@ -484,6 +505,43 @@ def test_an_ask_sent_while_the_robot_was_away_does_not_silence_its_return(
              for t, p in rt.client.published[mark:] if t.startswith(f"/devices/{DEV}/")]
     assert since == ["config", PROTO_SUBSCRIBE], since
     assert rt.status_snapshot()["robots"][0]["stt_subscribed_at"], "asked, and recorded"
+
+
+def test_a_listening_pick_inside_the_settle_window_does_not_rob_the_settle_of_its_ask(
+        timers, tmp_path):
+    """A parent saves a voice pick in the second between a robot's connect line and its
+    settle. That ask goes out before the config push, and possibly before the robot has
+    re-subscribed to its command topics (the reason the settle waits). The settle must
+    still ask after its config push: at most one redundant QoS 0 message."""
+    rt = _runtime(tmp_path, ears=False)
+    _connect(rt)
+    rt.set_transcriber(Ears())                 # inside the window: before the settle
+    assert _order(rt) == [PROTO_SUBSCRIBE], "the pick asked the connected robot at once"
+    assert timers.fire("_settle") == 1
+    assert _order(rt) == [PROTO_SUBSCRIBE, "config", PROTO_SUBSCRIBE], _order(rt)
+    assert rt.status_snapshot()["robots"][0]["stt_subscribed_at"]
+
+
+def test_a_wake_inside_the_settle_window_does_not_rob_the_settle_of_its_ask(timers, tmp_path):
+    """The same second, a parent presses Wake: the wakeup's ask lands before the config
+    push; the settle's own ask still follows the config."""
+    rt = _runtime(tmp_path)
+    _connect(rt)
+    assert rt.wake_robot(DEV)["published"]
+    assert _order(rt) == ["wakeup", PROTO_SUBSCRIBE]
+    assert timers.fire("_settle") == 1
+    assert _order(rt) == ["wakeup", PROTO_SUBSCRIBE, "config", PROTO_SUBSCRIBE], _order(rt)
+
+
+def test_a_sub_second_flap_is_asked_by_both_settles(timers, tmp_path):
+    """A robot whose second connect line arrives before its first settle fired: the
+    stale settle asks the (rebuilt) session, and the new settle must not take that as
+    its own ask. Each settle ends with config, then the ask."""
+    rt = _runtime(tmp_path)
+    _connect(rt)
+    _connect(rt)                               # no disconnect line, inside the window
+    assert timers.fire("_settle") == 2
+    assert _order(rt) == ["config", PROTO_SUBSCRIBE] * 2, _order(rt)
 
 
 def test_a_supervisor_restart_asks_the_robots_in_the_roster(timers, tmp_path):
@@ -572,7 +630,8 @@ def test_a_connect_or_a_stranger_is_not_a_robot_leaving(line):
 def test_the_old_pattern_missed_the_lines_a_sleeping_robot_produces():
     """Pinned: the pattern this replaced matched only two spellings. A robot that slept
     through its keepalive produced `has exceeded timeout` and was never forgotten, so its
-    return was never a fresh onboarding — the crossed-ears mechanism."""
+    return was never a fresh onboarding — a crossed-ears mechanism (one of the plausible
+    ones; none is verified on hardware)."""
     old = re.compile(r"Client (d_[a-f0-9-]+) (?:closed its connection|disconnected)", re.I)
     missed = [l for l in LEAVE_LINES if not old.search(l)]
     assert len(missed) == 5, missed
@@ -601,6 +660,41 @@ def test_a_bytes_publish_goes_out_untouched(tmp_path):
     frame = bytearray(b"embodied.logging.ProtoSubscribe:\x08\x01")
     assert rt._publish(ZMQ.format(d=dev), frame) == (True, "")
     assert rt.client.published == [(ZMQ.format(d=dev), bytes(frame))]
+
+
+#: paho's `MQTT_ERR_QUEUE_SIZE`: the socket is up but the outbound queue refused the message.
+MQTT_ERR_QUEUE_SIZE = 15
+
+
+class RefusingClient(FakeClient):
+    """A transport whose socket is up but whose publish is refused (paho returns a non-zero
+    rc, e.g. its outbound queue is full): the message never left the box."""
+
+    def publish(self, topic, payload):
+        self.dropped.append((topic, payload))
+        return FakeInfo(MQTT_ERR_QUEUE_SIZE)
+
+
+def test_an_ask_the_transport_refused_is_not_recorded(timers, tmp_path):
+    """The socket is up, the robot is confirmed on this connection, and paho refuses the
+    publish. The robot never heard that ask, so `/status` must not say it did (the
+    console would show `mic asked` for a deaf robot); once the transport takes the
+    next ask, it is recorded."""
+    rt = _runtime(tmp_path, ears=False)
+    _connect(rt)
+    timers.fire()                              # config only: no ears yet
+    rt.client = RefusingClient(runtime=rt)
+    rt.set_transcriber(Ears())                 # the ask, at a CONFIRMED robot
+    assert rt.client.published == [] and len(rt.client.dropped) == 1
+    assert split_zmq_frame(rt.client.dropped[0][1])[0] == PROTO_SUBSCRIBE
+    assert rt.publish_drops == 1
+    assert rt.status_snapshot()["robots"][0]["stt_subscribed_at"] is None, \
+        "a refused publish is not an ask the robot heard"
+
+    rt.client = FakeClient(runtime=rt)         # the transport takes it now
+    rt.set_transcriber(Ears())
+    assert _asks(rt) == [[ZMQ_STT_REQUEST]]
+    assert rt.status_snapshot()["robots"][0]["stt_subscribed_at"]
 
 
 def test_status_carries_when_the_robot_was_asked_and_the_console_says_so(timers, tmp_path):
