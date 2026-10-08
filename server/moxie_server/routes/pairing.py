@@ -174,6 +174,12 @@ def direct_wifi_qr(ec: str = "l"):
     return png(wifi, ec)
 
 
+#: Why Simulate robot scan refuses a pairing-key code that is no longer open.
+CODE_VOIDED = ("this pairing QR was cancelled when a robot was unpaired from this account "
+               "— make a new one")
+CODE_USED = "this pairing QR has already been used"
+
+
 @router.post("/local/simulate-robot-scan")
 async def simulate_robot_scan(request: Request):
     """Do what a real Moxie does when it phones home after scanning: decode the QR, find
@@ -181,11 +187,12 @@ async def simulate_robot_scan(request: Request):
     Body: `{qr_payload, device_id?}`.
 
     A pairing completes once; a replayed QR is a 409, and one voided by an unpair is a
-    410. With `device_id` (the MQTT `d_<uuid>`, which the QR does not carry) it also
-    permits that robot on the supervisor and remembers the id on the record for later
-    device commands — best-effort: a down supervisor leaves the robot pending, it never
-    fails the pairing. A `device_id` another account's record names is a 409 in the
-    claim's words, before anything changes: one robot is on one account on every path."""
+    410, also when that scan or unpair lands while this one runs. With `device_id` (the
+    MQTT `d_<uuid>`, which the QR does not carry) it also permits that robot on the
+    supervisor and remembers the id on the record for later device commands —
+    best-effort: a down supervisor leaves the robot pending, it never fails the pairing.
+    A `device_id` another account's record names is a 409 in the claim's words, before
+    anything changes: one robot is on one account on every path."""
     body = await read_json(request)
     decoded = moxie_qr.decode_proto(body.get("qr_payload", ""))
     seed = decoded.get("secret_key")
@@ -196,10 +203,9 @@ async def simulate_robot_scan(request: Request):
     if not pairing:
         raise HTTPException(404, "no pending pairing matches this QR")
     if pairing["consumed"] == db.PAIRING_VOID:
-        raise HTTPException(410, "this pairing QR was cancelled when a robot was unpaired "
-                                 "from this account — make a new one")
+        raise HTTPException(410, CODE_VOIDED)
     if pairing["consumed"]:
-        raise HTTPException(409, "this pairing QR has already been used")
+        raise HTTPException(409, CODE_USED)
     keys = crypto.keys_from_seed(seed)      # the robot derives its identity from the seed
     rid = db.new_id()
     attrs = {"embodied-robot-id": rid, "serial": "SIM-" + rid[:8],
@@ -213,11 +219,17 @@ async def simulate_robot_scan(request: Request):
     if device_id:
         attrs["mqtt-device-id"] = device_id
         out["device_id"] = device_id
-    # The record first, checked against every other account in the same transaction, and
-    # only then the permit post, the one call here that waits on the network: a claim that
-    # lands meanwhile finds the robot on this account, so it is never on two.
-    if not db.bind_scanned_robot(rid, pairing["user_id"], pairing["child_id"], attrs,
-                                 {"volume": 0.7, "screen-brightness": 0.8}, id_hash):
+    # The record first, checked against the code's state and every other account in the
+    # same transaction, and only then the permit post, the one call here that waits on the
+    # network: a claim that lands meanwhile finds the robot on this account, so it is never
+    # on two, and an unpair or a second scan of this code cannot slip in between.
+    outcome = db.bind_scanned_robot(rid, pairing["user_id"], pairing["child_id"], attrs,
+                                    {"volume": 0.7, "screen-brightness": 0.8}, id_hash)
+    if outcome == "void":
+        raise HTTPException(410, CODE_VOIDED)
+    if outcome == "used":
+        raise HTTPException(409, CODE_USED)
+    if outcome == "taken":
         return _claim_refusal(409, "on another account", ON_ANOTHER_ACCOUNT, device_id)
     if device_id:
         res, code = supervisor.post_json("/permits", {

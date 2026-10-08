@@ -13,7 +13,9 @@ makes the record. What each test below pins:
   account or an account that already has a robot (409); a repeat is a no-op;
 * it is the parent's word, not a proof: no pairing code is used, no public key is written;
 * the whole lifecycle (Wake, Unpair, Factory reset) then works on that record;
-* `/local/state.unclaimed` lists the connected robots no account has added.
+* `/local/state.unclaimed` lists the connected robots no account has added;
+* Simulate robot scan keeps the same rules, also when a claim, an unpair or another scan
+  lands while it runs.
 
 The supervisor is `helpers_console_supervisor.FakeSupervisor`, which lists exactly one
 connected robot, `DEVICE`; its `permit_posts`, `memory_erases`, `telemetry_erases`,
@@ -276,6 +278,48 @@ def test_a_claim_that_lands_mid_scan_leaves_the_robot_on_one_account(client, mon
     assert scan.status_code == 200, scan.text
     assert raced[0].status_code == 409
     assert json.loads(raced[0].body)["reason"] == pairing.ON_ANOTHER_ACCOUNT
+
+
+@pytest.mark.parametrize("meanwhile, status", [("unpair", 410), ("scan", 409)])
+def test_a_scan_checks_its_code_again_in_the_step_that_writes_the_record(
+        client, monkeypatch, meanwhile, status):
+    """The scan reads its code open, derives the robot's keys, then writes the record. An
+    unpair that lands in between voids the code (it voids every code the account still
+    had open), and another scan of the same code that lands in between uses it: either way
+    this scan must not complete, so the record's step checks the code again. The other
+    step runs inside the key derivation, the one between the read and the record."""
+    from moxie_server import crypto, db
+    from moxie_server.routes import pairing
+    auth = quicklogin(client, f"mid-scan-{meanwhile}@claim.lan")
+    uid = _state(client, auth)["user"]["id"]
+    prepare = lambda: client.post("/local/pairing/prepare", headers=auth,
+                                  json={"ssid": "Home", "password": "pw"}).json()
+    old = client.post("/local/simulate-robot-scan",
+                      json={"qr_payload": prepare()["qr_payload"]}).json()["robot_id"]
+    code = prepare()                        # made while the account still has that robot
+    real, ran = crypto.keys_from_seed, []
+
+    def keys_from_seed(seed):
+        if not ran:
+            ran.append(meanwhile)
+            if meanwhile == "unpair":
+                assert db.unpair_robot(old, uid)[1] == 1         # this code is voided
+            else:                                                 # the other scan's record
+                assert db.bind_scanned_robot(db.new_id(), uid, code["child_id"],
+                                             {"name": "Moxie (other scan)"}, {},
+                                             code["secret_hash"]) == "bound"
+        return real(seed)
+
+    monkeypatch.setattr(crypto, "keys_from_seed", keys_from_seed)
+    scan = client.post("/local/simulate-robot-scan", json={"qr_payload": code["qr_payload"]})
+    assert ran == [meanwhile]
+    assert scan.status_code == status, scan.text
+    assert scan.json()["detail"] == (pairing.CODE_VOIDED if meanwhile == "unpair"
+                                     else pairing.CODE_USED)
+    names = sorted(json.loads(r["attributes"]).get("name")
+                   for r in db.q("SELECT attributes FROM robots WHERE user_id=?", (uid,)))
+    assert names == ([] if meanwhile == "unpair"
+                     else ["Moxie (other scan)", "Moxie (simulated)"]), names
 
 
 def test_a_claim_uses_no_pairing_code_and_writes_no_public_key(client):
