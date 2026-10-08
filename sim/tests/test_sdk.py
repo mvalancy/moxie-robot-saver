@@ -51,6 +51,16 @@ def test_action_passthrough():
     assert ra[0]["content_id"] == "memory"
 
 
+def test_the_older_exit_spelling_is_still_read_and_goes_out_as_exit_module():
+    """`{"type": "exit"}` is what the webhook contract documents (webhook_app.py:11-12,
+    moxie-as-a-platform.md) and what this SDK spelled until 2026-10. `ActionType._missing_`
+    keeps reading it; the wire carries the ActionID name (RemoteChat.proto:260)."""
+    assert ActionType("exit") is ActionType.EXIT is ActionType("exit_module")
+    assert ActionType.EXIT.value == "exit_module"
+    resp = build_chat_response("e", "Bye!", actions=[Action(type=ActionType("exit"))])
+    assert [a["action"] for a in resp["response_actions"]] == ["exit_module"]
+
+
 def test_int_result_is_coerced_to_name():
     # a caller passing the raw proto int still serializes to the enum name
     resp = build_chat_response("e", "hi", result=4)

@@ -96,6 +96,15 @@ mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
                        { output_type: "GLOBAL_RESPONSE", action: "sleep" }] })));
 const act = window.moxieBridge.actionStats();
 
+// The older `exit` spelling (what this server sent before 2026-10) must still take the
+// SIM out of a module, and not be counted as an unknown verb.
+mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
+  Buffer.from(JSON.stringify({ command: "remote_chat", result: 0, event_id: "act-5",
+    output: { text: "Okay, all done.", markup: "Okay, all done." },
+    response_actions: [{ output_type: "GLOBAL_RESPONSE", action: "launch", module_id: "DM" },
+                       { output_type: "GLOBAL_RESPONSE", action: "exit" }] })));
+const legacyExit = window.moxieBridge.actionStats();
+
 // ---- robot -> cloud: the activity log, byte-compared with the SIL robot's ----
 window.moxieBridge.reportMentorBehavior({ module_id: "DRAW", content_id: "default",
                                           action: "completed", timestamp: 1788360800925 });
@@ -195,6 +204,9 @@ ok(JSON.stringify(act.subscribed) === JSON.stringify(["eb-found-face", "eb-lost-
    `event_subscription recorded; got ${JSON.stringify(act.subscribed)}`);
 ok(act.applied.every((a) => a.action !== "teleport_to_mars"),
    `an unknown action never reaches the avatar; got ${JSON.stringify(act.applied)}`);
+ok(legacyExit.exits === 2 && legacyExit.module_id === "" && legacyExit.last === "exit" &&
+   legacyExit.unknown === act.unknown,
+   `the older 'exit' spelling still leaves the module and is not unknown; got ${JSON.stringify(legacyExit)}`);
 
 ok(log.topic === "/devices/d_sim/events/client-service-activity-log",
    `activity log rides the recovered topic; got ${log.topic}`);

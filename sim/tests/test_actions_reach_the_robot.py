@@ -159,6 +159,32 @@ def test_actions_from_an_external_brain_reach_the_robot_too():
     assert vm.action_stats()["module_id"] == "GAME"
 
 
+def test_a_webhooks_older_exit_spelling_leaves_the_module_as_exit_module():
+    """`{"type": "exit"}` is the alias the webhook contract documents (webhook_app.py:11-12);
+    `ActionType._missing_` reads it, the wire carries `exit_module` (RemoteChat.proto:260)
+    and the robot leaves the module it was in."""
+    from moxie_sdk.apps import WebhookApp
+
+    class _Webhook(WebhookApp):
+        def _post(self, path_hint, body):
+            return {"text": "Bye Sam!", "actions": [{"type": "exit"}]}
+
+    rt, dev = make_runtime(_Webhook("http://127.0.0.1:1/turn"), device_id=DEV)
+    vm = VirtualMoxie(host="127.0.0.1", port=1, device_id=dev, verbose=False)
+    loopback(rt, vm)
+    vm._on_chat_reply({"command": "remote_chat", "result": 0, "event_id": "e0",
+                       "output": {"text": ""},
+                       "response_actions": [{"output_type": "GLOBAL_RESPONSE",
+                                             "action": "launch", "module_id": "DM"}]})
+    vm.client.publish(vm.t_event("remote-chat"), json.dumps(
+        {"event_id": "evt-webhook-exit", "command": "prompt", "backend": "router",
+         "speech": "bye"}))
+    rt._pool.shutdown(wait=True)
+    ra = [a["action"] for a in vm.reply_payload.get("response_actions", []) if a.get("action")]
+    assert ra == ["exit_module"], vm.reply_payload
+    assert vm.action_stats()["exits"] == 1 and vm.action_stats()["module_id"] == ""
+
+
 def test_the_robot_records_the_event_subscription_the_brain_asked_for():
     """`RemoteChatAction.EventSubscription` rides an action-LESS entry, which is the one
     shape a naive reader would treat as an error. The runtime subscribes every robot it

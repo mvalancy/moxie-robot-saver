@@ -65,6 +65,17 @@ def test_a_service_may_use_both_and_the_declared_one_comes_first():
     assert [x.type for x in reply.actions] == [ActionType.LAUNCH, ActionType.EXIT]
 
 
+def test_the_documented_exit_alias_is_read_and_spelled_exit_module_on_the_wire():
+    """`{"type": "exit"}` is the alias the contract documents (webhook_app.py:11-12,
+    moxie-as-a-platform.md); `ActionType._missing_` reads it and the wire still carries
+    the recovered ActionID name `exit_module` (RemoteChat.proto:260)."""
+    from moxie_sdk.wire import build_chat_response
+    reply = _brain({"text": "Bye!", "actions": [{"type": "exit"}]}).respond(_turn("bye"))
+    assert [x.type for x in reply.actions] == [ActionType.EXIT], reply.actions
+    on_wire = build_chat_response("e", reply.text, actions=reply.actions)
+    assert [a["action"] for a in on_wire["response_actions"]] == ["exit_module"]
+
+
 def test_behavior_markup_is_not_a_tag_and_survives_untouched():
     """`<mark .../>` is the robot's own behavior language, not one of the four names we
     claim. A blanket "strip every angle bracket" would eat it — this asserts we don't."""
