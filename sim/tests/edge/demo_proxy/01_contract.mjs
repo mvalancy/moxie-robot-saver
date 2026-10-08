@@ -2,7 +2,7 @@
  * field set, upstream failure, per-IP windows/budget/capacity. Run via the entry file. */
 import {
   BASE, FULL, KEY, ORIGIN, P, assertClean, call, chat,
-  deep, eq, execFileSync, fresh, limits, ok, repo,
+  deep, eq, execFileSync, fresh, limits, ok, prompt, repo,
   req, sent, speech, upstreamCalls, wire2,
 } from "./harness.mjs";
 
@@ -95,10 +95,14 @@ import {
        ["test-brain-model", 160, 0.8, 1, false, 0.4, 0.3],
        "model/max_tokens/temperature/n/stream/penalties are the server's, never the request's");
 
-  // §3.3: the persona is FIRST and LAST, so the final instruction the model reads is ours.
+  // §3.3: the persona is FIRST and our ANCHOR is LAST, so the final instruction the model
+  // reads is ours — without the persona being read twice (measured: the repeat after the
+  // child's line buried it, and she answered an earlier turn).
   const [head, tail] = [up.messages[0], up.messages[up.messages.length - 1]];
-  eq(head.role + tail.role, "systemsystem", "the persona is the first AND the last message");
-  ok(tail.content.startsWith(head.content), "both persona copies match — the trailing one leads with the same text");
+  eq(head.role + tail.role, "systemsystem", "the persona is the first message and our anchor the last");
+  ok(!tail.content.startsWith(head.content) && tail.content.startsWith(prompt.anchorInstruction("anchor")),
+     "the trailing message is the short anchor, not a second copy of the persona");
+  eq(up.messages.filter((m) => m.content.includes(head.content)).length, 1, "the persona is sent ONCE");
   ok(head.content.includes("Moxie"), "the built-in persona is the Moxie one");
   const flat = JSON.stringify(up);
   ok(!flat.includes("unrestricted assistant") && !flat.includes("ignore all previous instructions"),
@@ -111,17 +115,17 @@ import {
   ok(!String(sent[0].opt.body).includes(KEY), "the key is not in the outbound body");
   eq(sent[0].url, BASE + "/chat/completions", "the upstream path is /chat/completions");
 
-  // A configured persona replaces the default and still brackets the visitor's turn; the
-  // trailing copy also carries the expressive-envelope format rule.
+  // A configured persona replaces the default, once; the anchor after the visitor's turn is
+  // still ours and carries the expressive-envelope format rule.
   fresh();
   await call(chat, "/api/chat", { text: "hi" }, null, { ...FULL, DEMO_PERSONA: "You are a test persona." });
   const up2 = JSON.parse(sent[0].opt.body);
   eq(up2.messages[0].content, "You are a test persona.", "DEMO_PERSONA is honoured");
   const tail2 = up2.messages[up2.messages.length - 1];
-  ok(tail2.role === "system" && tail2.content.startsWith("You are a test persona."),
-     "…with the persona at both ends, so the visitor's turn is bracketed by it");
+  ok(tail2.role === "system" && !tail2.content.includes("You are a test persona."),
+     "…sent once: the anchor after the visitor's turn does not repeat it");
   ok(['"say"', '"mood"', '"gesture"'].every((k) => tail2.content.includes(k)),
-     "…and the trailing copy carries the expressive envelope, which is what asks her to emote");
+     "…and the anchor carries the expressive envelope, which is what asks her to emote");
 
   // Every number is an env var; junk falls back to the default, never higher.
   for (const [v, want] of [["42", 42], ["not-a-number", 160]]) {

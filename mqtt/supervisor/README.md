@@ -25,6 +25,7 @@ The robot-cloud runtime. Speaks the robot's MQTT protocol directly and turns it 
 | `content.py` | content packs + authoring |
 | `schedule.py` | the day plan and its explanations |
 | `telehealth.py` | "Be Moxie" puppet mode |
+| `tryit.py` | the console's 💬 Try it: a preview turn through the robot's own brain, published nowhere |
 
 ---
 📖 [Back to top](../../README.md)

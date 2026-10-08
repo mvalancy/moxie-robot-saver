@@ -4,9 +4,9 @@ Binds 127.0.0.1 only; the console reaches it through `status_proxy.py`. Every ro
 thin adapter onto one runtime method, which owns the behaviour and the refusal wording.
 
 GET     /status /conn /permits /voice /brain /content /content/export
-        /telemetry /safety /schedule /config /memory /telehealth   (`?device_id=…`)
+        /telemetry /safety /schedule /config /memory /telehealth /tryit   (`?device_id=…`)
 POST    /config /safety /permits /telehealth /voice /voice/test /brain /preview /wakeup
-        /memory /content/{review,import,undo,item,render}
+        /memory /content/{review,import,undo,item,render} /tryit
 DELETE  /memory /telemetry   (erases are never policy-gated)
 """
 from __future__ import annotations
@@ -14,6 +14,8 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
+
+from .tryit import TRY_MAX_BODY_BYTES, TRY_STATUS
 
 
 def _first(q: dict, key: str, default: str = "") -> str:
@@ -121,6 +123,10 @@ class _Handler(BaseHTTPRequestHandler):
                     {"ok": False, "error": f"unknown device_id {device_id!r}"}, 404)
             return self._json_out({**self._robot_config(device_id),
                                    "fleet_config": rt.fleet_config()})
+        if u.path == "/tryit":
+            out = rt.tryit_view(device_id)
+            return self._json_out(out, 200 if out.get("ok")
+                                  else TRY_STATUS.get(out.get("kind"), 400))
         if u.path == "/content/export":
             # `?items=kind:key,…&name=…&id=…` -> the pack JSON itself; no items = all.
             keys = [k for part in (q.get("items") or [])
@@ -164,8 +170,40 @@ class _Handler(BaseHTTPRequestHandler):
         route = {"/memory": self._memory_write, "/telehealth": self._telehealth,
                  "/preview": self._preview, "/wakeup": self._wakeup, "/brain": self._brain,
                  "/permits": self._permits, "/safety": self._safety,
-                 "/config": self._config}.get(u.path)
+                 "/config": self._config, "/tryit": self._tryit}.get(u.path)
         return route(u.query) if route else self._not_found()
+
+    def _tryit(self, query):
+        """`{"speech", "history", "device_id", "brain", "module", "nickname"}`: one preview
+        turn through the robot's own brain, never published (`TryItMixin.tryit_turn`).
+        Holds this server for the brain's answer (at most `TRY_TIMEOUT_S`), as a voice
+        test does; a body over `TRY_MAX_BODY_BYTES` is a 413, refused unread."""
+        if int(self.headers.get("Content-Length") or 0) > TRY_MAX_BODY_BYTES:
+            reason = (f"A try is at most {TRY_MAX_BODY_BYTES // 1024} KiB, and this one "
+                      f"(mostly the session sent back) is larger. Start over to keep trying.")
+            return self._json_out({"ok": False, "kind": "too_large", "error": reason,
+                                   "reason": reason}, 413)
+        try:
+            body = self._body(strict=True)
+        except Exception as e:
+            return self._json_out({"ok": False, "kind": "bad_request", "error": str(e),
+                                   "reason": "The console sent something that is not a "
+                                             "try."}, 400)
+        device_id = _first(parse_qs(query), "device_id")
+        if device_id and not body.get("device_id"):
+            body["device_id"] = device_id
+        try:
+            out = self.rt.tryit_turn(body)
+        except Exception as e:
+            # Answer, never drop the connection: the console would read that as "down".
+            reason = (f"The try failed inside the supervisor ({type(e).__name__}); "
+                      f"the supervisor log has the details.")
+            print(f"[runtime] try-it failed: {type(e).__name__}: {e}", flush=True)
+            return self._json_out({"ok": False, "kind": "internal", "error": reason,
+                                   "reason": reason, "preview": True,
+                                   "published": False}, TRY_STATUS["internal"])
+        return self._json_out(out, 200 if out.get("ok")
+                              else TRY_STATUS.get(out.get("kind"), 400))
 
     def _preview(self, query):
         """`{"text", "speak", "icons", "sfx"}`: rehearse one line (expressiveness.md §2.4)."""
