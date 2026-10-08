@@ -219,10 +219,12 @@ def _hard_limit(seconds):
 def test_a_looping_transcript_cannot_stall_the_patterns():
     """Speech-to-text can loop ("bye bye bye ...", or glued: "byebyebyebye"). Every word of
     these patterns reads one way only. An ambiguous one backtracks exponentially: a Goodbye
-    mutated to `(?:bye\\W*)+` took 0.56 s at 20 repeats and 17 s at 25, and one mutated
-    to `(?:\\w*bye)+` grows five- to eightfold per glued "byebyebyebye". The count ramps up
-    one repeat at a time and every match runs under a hard 0.5 s alarm, so such a pattern
-    fails at 0.5 s into the first match past the budget, however steep its growth."""
+    mutated to `(?:bye\\W*)+` doubles per repeat (0.6-0.7 s at 20 repeats, 17-22 s at 25),
+    and one mutated to `(?:\\w*bye)+` grows about eightfold per glued "byebyebyebye". The
+    count ramps up one repeat at a time, which already stops a doubling pattern one repeat
+    past the budget, 0.9-1.4 s into the test with the alarm or without it. The hard 0.5 s
+    alarm on every match is a bound, not a speedup: no single match runs longer than 0.5 s,
+    however steep the pattern's growth."""
     module = load_modules(_raw("starter.json"))
     patterns = [g for g in module.globals if g.name in ("Goodbye", "Sleep")]
     assert len(patterns) == 2
