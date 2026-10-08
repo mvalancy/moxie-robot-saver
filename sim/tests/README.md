@@ -32,7 +32,9 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 - [`helpers_runtime.py`](helpers_runtime.py) — drive a turn through the real `MoxieRuntime`:
   `FakeClient`, `LatchClient`, `make_runtime`/`drive_turn`, `assert_spec_response`, `free_port`,
   `status_server`, `loopback` (in-process broker between `sim/virtual_moxie.py` and a runtime),
-  `load_repo_dotenv` / `LIVE_KEYS`.
+  `deliver` (one message into `_on_message`, a broker log line included), the binary
+  `commands/zmq` readers `split_zmq_frame` / `parse_zmq_frame` with `toolkit_pb2` (the committed
+  `tools/robot-toolkit` pb2 oracles), `load_repo_dotenv` / `LIVE_KEYS`.
 - [`helpers_stack.py`](helpers_stack.py) — boot the real broker + `mqtt/run.py` on free ports.
 - [`helpers_console.py`](helpers_console.py) / [`helpers_console_supervisor.py`](helpers_console_supervisor.py) —
   import the parent console in-process; a fake supervisor status server for `test_console_*.py`.

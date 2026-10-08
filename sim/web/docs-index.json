@@ -134,7 +134,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT and conversation contract (the robot cloud)",
    "section": "architecture",
-   "bytes": 49312,
+   "bytes": 54183,
    "mermaid": 0,
    "headings": [
     "0. The mechanism in five lines",
@@ -180,7 +180,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM, STT and TTS interface contract",
    "section": "architecture",
-   "bytes": 34157,
+   "bytes": 36282,
    "mermaid": 1,
    "headings": [
     "The three seams",
@@ -877,7 +877,7 @@
    "path": "architecture/backlog/community-signals.md",
    "title": "Community signals — what owners of real robots report",
    "section": "architecture",
-   "bytes": 7210,
+   "bytes": 8364,
    "mermaid": 0,
    "headings": [
     "1. Where owner reports live",

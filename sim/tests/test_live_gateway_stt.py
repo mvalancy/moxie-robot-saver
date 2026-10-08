@@ -250,8 +250,13 @@ def test_a_child_utterance_through_the_runtime_on_gateway_ears_brain_and_voice()
                 transcript = out
     assert transcript, "the runtime never produced a transcript for the child's audio"
     turn_ratio = A.word_overlap(CHILD_LINE, transcript)
+    # the answer the robot reads: a FINAL zmqSTTResponse in the bus framing
+    from helpers_runtime import parse_zmq_frame, toolkit_pb2
+    pb = toolkit_pb2("embodied.perception.audio.zmqSTT_pb2")
     published = rt.client.on(f"/devices/{device_id}/commands/zmq")
-    assert published and published[-1]["type"] == "FINAL", published
+    assert published, f"no zmqSTTResponse published; saw {rt.client.published!r}"
+    final = parse_zmq_frame(published[-1], pb.zmqSTTResponse)
+    assert final.type == final.FINAL and final.speech == transcript, final
 
     with A.Stage("brain") as t_brain:
         resp = drive_turn(rt, device_id, transcript, event_id="evt-gw-stt")
