@@ -5,7 +5,10 @@ description: Generate a Moxie Wi-Fi pairing QR code (the "PA"+protobuf code you 
 
 # Generate a Moxie pairing QR
 
-Moxie scans a QR code to receive Wi-Fi credentials plus a pairing seed. Two ways to make one.
+Moxie scans a QR code to join Wi-Fi. There are two kinds: the **Wi-Fi-only** code (network name and
+password, `StartPairingQR.wifi_only`), which is the first code for a robot coming to your own server,
+and the original app's **pairing-key** code, which also carries a pairing key and sends a re-homed
+robot looking for the dead cloud (`docs/debugging/live-hardware-debug.md`). Two ways to make one.
 
 ## Option A — CLI (no server needed)
 ```bash
@@ -13,11 +16,22 @@ python tools/pairing/moxie_pair.py \
     --ssid "<WIFI_NAME>" --password "<WIFI_PASSWORD>" \
     --band 24g --out qr.png
 ```
+- **This makes a pairing-key code. For a re-home use the Wi-Fi-only code instead** (Option B, Moxie
+  Direct, or the snippet below). `--hide-pair` drops the key but still writes field 8 (`iot_endpoint`),
+  so its bytes are not the `encode_wifi_only` bytes a real robot has joined Wi-Fi with.
 - `--band 24g` is recommended (Moxie prefers 2.4 GHz); `any` or `5g` if needed. `--hidden` for a hidden SSID.
 - A random 32-byte Ed25519 seed is generated and printed; `--secret-key-hex <64 hex chars>` supplies your
   own (it must match what your server registered).
 - `--mode json` emits the legacy JSON format instead of `"PA"`+protobuf.
 - The QR is written to `qr.png` and printed to the terminal as ASCII (`--no-ascii` to suppress).
+
+The Wi-Fi-only code from the command line (`moxie_qr.encode_wifi_only`, the bytes the console's Wi-Fi
+tab and Moxie Direct serve):
+```bash
+python -c 'import sys; sys.path.insert(0, "tools/pairing"); import moxie_qr as q, segno
+code = q.encode_wifi_only(q.WifiInfo("<WIFI_NAME>", "<WIFI_PASSWORD>", band=q.Band.ONLY_24G))
+segno.make(code, error="l").save("wifi-only.png", scale=10, border=4); print(code)'
+```
 
 ## Option B — local server + phone (recommended for owners)
 ```bash
