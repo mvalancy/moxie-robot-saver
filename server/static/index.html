@@ -63,7 +63,10 @@
       </div>
     </section>
 
-    <!-- TAB: Wi-Fi Pairing -->
+    <!-- TAB: Wi-Fi Pairing. The code is Wi-Fi ONLY unless the pairing-key box is ticked:
+         the first code of the re-home flow must carry no pairing key, or the robot goes
+         looking for the original cloud (docs/debugging/live-hardware-debug.md). The
+         pairing-key code is the original app's, the one Simulate robot scan completes. -->
     <section class="tabpanel" id="tab-wifi">
       <div class="card">
         <span class="step">Step 1</span>
@@ -82,14 +85,23 @@
             </select></label>
           <label class="check"><input id="hidden" type="checkbox"> Hidden</label>
         </div>
-        <button id="btn-qr" class="primary">Generate pairing QR</button>
+        <details class="dev" id="pairing-key-opt">
+          <summary>For the original Moxie app or Simulate robot scan</summary>
+          <label class="check"><input id="pairing-key" type="checkbox"> Put a pairing key in
+            the code</label>
+          <p class="muted">Leave this off for a robot coming to this server: a pairing key
+            sends Moxie looking for the original cloud, which is gone. It is only for pairing
+            the way the original app did, or for testing with Simulate robot scan.</p>
+        </details>
+        <button id="btn-qr" class="primary">Make the Wi-Fi code</button>
       </div>
 
       <div class="card hidden" id="wifi-qr-card">
         <h2>Show this to Moxie</h2>
         <p class="muted">Put Moxie on its pairing screen, then hold this QR up to its camera.</p>
-        <div class="qrwrap"><img id="qr-img" alt="Wi-Fi pairing QR"></div>
-        <div class="recovery">
+        <div class="qrwrap"><img id="qr-img" alt="Wi-Fi code for Moxie's camera"></div>
+        <p class="muted" id="qr-kind"></p>
+        <div class="recovery hidden" id="recovery-box">
           <strong>Save your recovery phrase</strong>
           <p class="muted">Write this down — it restores your child's data. It never leaves this server.</p>
           <code id="phrase"></code>
@@ -137,13 +149,33 @@
         <label class="check"><input id="permit-allowall" type="checkbox">
           Let any robot that connects use this server</label>
         <div id="permit-warn" class="muted"></div>
-        <div id="permit-status" class="muted"></div>
+        <div id="permit-status" class="muted" role="status" aria-live="polite"></div>
       </div>
+      <!-- A robot that paired by scanning the codes reaches the broker with no account
+           record. "Add to my account" (js/core.js, POST /local/robots/{id}/claim) makes
+           one, so the robot card below has something to render; nothing is claimed
+           without the click. -->
       <div class="card" id="moxie-none">
         <h2>No Moxie paired yet</h2>
-        <p class="muted">Finish Wi-Fi + Server pairing, then your robot appears here.</p>
+        <p class="muted">Show Moxie the Wi-Fi code, then the server code. When it reaches this
+          server it is listed here: add it to your account for its settings, insights and
+          Unpair.</p>
+        <p id="claim-unknown" class="muted hidden" role="status">⚠️ The robot service cannot be
+          reached right now (the MQTT supervisor is not answering), so this page cannot tell
+          whether a robot has arrived. Start it; a robot waiting on this server then shows
+          here.</p>
+        <div id="claim-box" class="hidden">
+          <div class="insights-hd">On this server, on no account</div>
+          <div id="claim-list"></div>
+          <p class="muted">This server cannot tell one Moxie from another. Add a robot only
+            if it is the one you just showed the codes to.</p>
+        </div>
+        <!-- Outside #claim-box on purpose: a refused click redraws the box away (the robot
+             was added elsewhere, or left), and the answer must stay in view. -->
+        <div id="claim-status" class="muted" role="status" aria-live="polite"></div>
         <details class="dev"><summary>Test without a robot</summary>
-          <p class="muted">Simulate a robot scanning the Wi-Fi QR.</p>
+          <p class="muted">Simulate a robot scanning a pairing-key code (make one in the Wi-Fi
+            tab, under For the original Moxie app or Simulate robot scan).</p>
           <button id="btn-sim" class="ghost">Simulate robot scan</button></details>
         <details class="lc-entry"><summary>Factory reset a robot</summary>
           <p class="muted">For a Moxie that is still paired somewhere else, or one you are
@@ -154,6 +186,9 @@
       <div class="card hidden" id="moxie-card">
         <h2>✅ Your Moxie</h2>
         <div id="robot-card"></div>
+        <!-- Another robot on no account is waiting, and why Add to my account is not offered
+             for it (an account has one robot): js/core.js renderClaims. -->
+        <div id="claim-why" class="muted hidden" role="status"></div>
         <div id="robot-live" class="livebox"></div>
         <div id="robot-insights" class="insightsbox"></div>
         <div id="robot-safety" class="insightsbox"></div>
