@@ -54,7 +54,8 @@ function lcFill(robot){
     what.push('This shows the code Moxie scans to reset itself. Nothing on this server '
       +'changes; if this server still serves that robot, revoke it in Robot access.');
   }
-  if(reset && LC.view) what.push(LC.view.effect.text, LC.view.limit);
+  if(reset && LC.view)
+    what.push(`${LC.view.effect.text} (${LC.view.effect.basis})`, LC.view.limit);
   $('#lc-what').innerHTML=what.map(t=>`<li>${escapeHtml(t)}</li>`).join('');
 
   // The erase choice: the existing calls, offered only where they can name the right robot.
@@ -151,7 +152,9 @@ function lcDone(res, extra){
     $('#lc-qr').src=code.qr_png;
     $('#lc-steps').innerHTML=(code.steps||[]).map(s=>`<li>${escapeHtml(s.text)}`
       +`<span class="lc-basis">${escapeHtml(s.basis)}</span></li>`).join('');
-    $('#lc-effect').textContent=(code.effect&&code.effect.text)||'';
+    const fx=code.effect||{};
+    $('#lc-effect').innerHTML=`${escapeHtml(fx.text||'')}`
+      +`<span class="lc-basis">${escapeHtml(fx.basis||'')}</span>`;
     $('#lc-after').textContent=code.after||'';
     $('#lc-limit').textContent=code.limit||'';
   }

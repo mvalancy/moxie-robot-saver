@@ -42,11 +42,12 @@ def reset_view() -> dict:
                      "this are not documented, and it may ask you to confirm.",
              "basis": INFERRED},
         ],
-        "effect": {"text": "The original app called this \"Reset Moxie Back to New\": your "
-                           "child's progress on the robot is erased and Moxie starts over "
-                           "as a new robot. This cannot be undone.", "basis": APP},
-        "after": "To use Moxie again, pair it from the Wi-Fi tab with a new code. If it "
-                 "comes back with a new robot id, permit it again in Robot access.",
+        "effect": {"text": "The original app called this \"Reset Moxie Back to New\" and "
+                           "warned that all of your child's progress with Moxie is erased and "
+                           "Moxie is reset as new.", "basis": APP},
+        "after": "This cannot be undone. To use Moxie again, pair it from the Wi-Fi tab with "
+                 "a new code. If it comes back with a new robot id, permit it again in Robot "
+                 "access.",
         "limit": LIMIT,
         "verified_on_robot": False,
         # The original reset was relayed by the cloud, but no cloud-to-robot reset command

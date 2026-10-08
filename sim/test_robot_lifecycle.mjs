@@ -172,6 +172,7 @@ const sheet = (page) => page.evaluate(() => {
     message: $("#lc-message").textContent, details: texts("#lc-details li"),
     steps: texts("#lc-steps li"), basis: texts("#lc-steps .lc-basis"),
     limit: $("#lc-limit").textContent, status: $("#lc-status").textContent,
+    effect: $("#lc-effect").textContent,
     qr: $("#lc-qr").getAttribute("src"), qrLoaded: $("#lc-qr").naturalWidth > 0,
     box: { left: r.left, right: r.right, width: r.width },
     viewport: innerWidth, scrollWidth: document.documentElement.scrollWidth,
@@ -298,8 +299,9 @@ const SCENARIOS = {
       let s = await sheet(page);
       C.eq(s.named, "Factory reset this robot", "S5: the reset sheet is named for what it does");
       C.ok(s.ack, "S5: the reset asks for 'cannot be undone' as well as the word");
-      C.ok(s.what.includes(FIX.view.limit) && s.what.includes(FIX.view.effect.text),
-           "S5: before anything is sent, the sheet states the effect and the honest limit");
+      const effect = `${FIX.view.effect.text} (${FIX.view.effect.basis})`;
+      C.ok(s.what.includes(FIX.view.limit) && s.what.includes(effect),
+           "S5: before anything is sent, the sheet states the labelled effect and the honest limit");
       await retype(page, "unpair");
       C.eq((await sheet(page)).go, true, "S5: UNPAIR does not confirm a reset");
       await retype(page, "reset");
@@ -320,6 +322,8 @@ const SCENARIOS = {
       C.eq(JSON.stringify(s.basis), JSON.stringify(FIX.view.steps.map((x) => x.basis)),
            "S5: every instruction is labelled with where it comes from");
       C.eq(s.limit, FIX.view.limit, "S5: the honest limit is stated beside the code");
+      C.eq(s.effect, FIX.view.effect.text + FIX.view.effect.basis,
+           "S5: the effect beside the code carries its basis too");
       C.eq(notable(errs, aborted).length, 0, `S5: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
     } finally { await page.close(); }
   },
