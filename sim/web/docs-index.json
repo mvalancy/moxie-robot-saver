@@ -180,7 +180,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM, STT and TTS interface contract",
    "section": "architecture",
-   "bytes": 36282,
+   "bytes": 39260,
    "mermaid": 1,
    "headings": [
     "The three seams",
@@ -498,7 +498,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening: a supervisor that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 34413,
+   "bytes": 35399,
    "mermaid": 0,
    "headings": [
     "0. The ceiling",
