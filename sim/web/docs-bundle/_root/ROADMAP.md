@@ -108,9 +108,10 @@ Ordered by priority.
    credential and an owner cost decision ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
 5. **Parent app depth.** Partly done: unpair and factory reset are in the web app, behind a typed
    confirmation ([what is built](docs/features/robot-lifecycle.md#built-here-unpair-and-factory-reset)).
-   Still open: a robot paired by scanning the QR gets no account record, so its robot card and
-   Unpair button do not appear (for it, unpair is Revoke in Robot access today), and no physical
-   robot has been reset this way.
+   A robot paired by scanning the codes now joins the account with one click, **Add to my
+   account**, which gives it the robot card and Unpair; the Wi-Fi tab's first code is Wi-Fi only
+   ([bench runbook](docs/guides/bench-runbook.md)). Still open: all of it is tested against the
+   simulator and hermetic doubles only; no physical robot has been added, unpaired or reset this way.
 6. **Storage.** Per-robot state is JSON files. That is fine for one home; move to a database only if
    multi-process access needs it.
 

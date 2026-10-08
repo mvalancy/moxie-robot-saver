@@ -2,11 +2,14 @@
 //
 // test_docs.mjs checks the bundle; this checks RUNTIME behavior in a real browser: the tree
 // populates, markdown renders (with its hero image), code is highlighted, search filters and
-// ranks, a hit highlights and scrolls to the term, keyboard shortcuts and deep links work.
-// Every diagram's rendering is test_mermaid.mjs's.
+// ranks, a hit highlights and scrolls to the term, keyboard shortcuts and deep links work,
+// and every link in every doc goes where it says. Every diagram's rendering is
+// test_mermaid.mjs's.
 //
 //   node sim/test_docs_explorer.mjs
-import { requireBrowser, makeChecks, finish, launchBrowser, serveWeb } from "./browser_harness.mjs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { extname, join, posix } from "node:path";
+import { requireBrowser, makeChecks, finish, launchBrowser, serveWeb, web } from "./browser_harness.mjs";
 
 const LABEL = "docs-explorer tests";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
@@ -26,6 +29,11 @@ try {
    * new remote asset; exactly as many refusals are forgiven as were provoked.
    * `data:`/`blob:` are untouched. */
   const blocked = { n: 0, urls: [] };
+  /* A click that LEAVES the explorer for another page of this site is answered with a stub
+   * and recorded, so check 11 can prove where it went without loading (and logging) that page.
+   * The stub names an icon: a page without one makes Chrome ask for /favicon.ico, which this
+   * server 404s, and whether that console error lands before the next goto is a race. */
+  const left = [];
   await page.setRequestInterception(true);
   page.on("request", (r) => {
     if (r.isInterceptResolutionHandled()) return;
@@ -33,6 +41,11 @@ try {
     if (/^https?:/.test(u) && !u.startsWith(base)) {
       blocked.n++; if (blocked.urls.length < 5) blocked.urls.push(u);
       return r.abort("blockedbyclient");
+    }
+    if (r.isNavigationRequest() && r.frame() === page.mainFrame() && new URL(u).pathname !== "/docs.html") {
+      left.push(u);
+      return r.respond({ status: 200, contentType: "text/html",
+                         body: '<!doctype html><link rel="icon" href="data:,"><title>left the explorer</title>' });
     }
     return r.continue();
   });
@@ -226,6 +239,233 @@ try {
   ok(copyInfo.count > 0, "code blocks should have a Copy button");
   ok(copyInfo.label === "Copied", `clicking Copy should give feedback (got "${copyInfo.label}")`);
   ok(copyInfo.onMermaid === 0, "Mermaid diagrams must not get a Copy button");
+
+  /* 10) EVERY link in EVERY doc goes where it says. The defect (production, 2026-10-08): docs
+   * write links for GitHub, which resolves them against the doc's place in the repo; the
+   * explorer resolved them against /docs.html, and Pages answers a path with no file with
+   * the hub. 681 of 2,644 links across 87 of 145 docs, and every "source" link, landed there
+   * (32 of them on docs the bundle HAS: the README's own links into docs/), and 30 links meant
+   * for the project README (`../../README.md`) opened the docs index instead.
+   * Each doc is rendered by the explorer, and its links are paired, in order, with the hrefs
+   * the same Markdown yields through the page's own `marked` (parsed inert, so nothing loads).
+   * Every relative href is resolved against the doc's REPO path, the way GitHub resolves it,
+   * and must arrive: a bundled doc routes to exactly that doc (and heading); anything else
+   * goes to GitHub at that same path, except that a prose link to one of the few repo paths
+   * that ARE pages of this site (`sim/web/**`, the site root; the simulator's README) opens
+   * that page. A link whose whole text is a code span names the FILE, so it goes to GitHub.
+   * An in-page "#heading" keeps its doc in the URL. Never a same-origin path the site does
+   * not serve. */
+  const idx = JSON.parse(readFileSync(join(web, "docs-index.json"), "utf8"));
+  const docPaths = new Set(idx.files.map((f) => f.path));
+  const repoOf = (p) => (p.startsWith("_root/") ? p.slice(6) : "docs/" + p);
+  const bundleOf = (repo) => { const p = repo.startsWith("docs/") ? repo.slice(5) : "_root/" + repo; return docPaths.has(p) ? p : null; };
+  /* What Pages serves for a path (a directory's index.html; extensionless -> .html). */
+  const served = (pathname) => {
+    let p = decodeURIComponent(pathname);
+    if (p.endsWith("/")) p += "index.html";
+    const f = join(web, posix.normalize(p));
+    return (existsSync(f) && statSync(f).isFile()) || (!extname(p) && existsSync(f + ".html"));
+  };
+  const sitePath = (repo, dir) => repo === "sim/README.md" ? "/sim"
+    : (repo === "sim/web" && dir) ? "/" : (/^sim\/web\/.+\.html$/.test(repo) ? "/" + repo.slice(8) : null);
+  const norm = (u) => new URL(u, base + "/docs.html").href;
+  await page.goto(base + "/docs.html", { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("a.doc", { timeout: 8000 }).catch(() => {});
+  await page.waitForSelector("article h1, article h2", { timeout: 8000 }).catch(() => {});
+  const REPO = await page.evaluate(() => {
+    const t = document.getElementById("docfoot");
+    const a = t && t.content.querySelector('a[href^="https://github.com/"]');
+    return a ? a.getAttribute("href").replace(/\/$/, "") : null;
+  });
+  ok(!!REPO, "docs.html's footer template should link the repo on GitHub — docs.js reads the repo from it");
+  const wrong = [], wrongSrc = [];
+  let swept = 0, pairs = 0, inPage = null;
+  for (const f of idx.files.filter((x) => x.kind === "md")) {
+    await page.evaluate(() => { const a = document.querySelector("#content article"); if (a) a.dataset.stale = "1"; });
+    const opened = await page.evaluate((p) => {
+      const a = document.querySelector('a.doc[data-path="' + CSS.escape(p) + '"]');
+      if (a) a.click();
+      return !!a;
+    }, f.path);
+    if (!opened) { wrong.push(`${f.path}: not in the tree`); continue; }
+    const rendered = await page.waitForFunction((p) => {
+      const a = document.querySelector("#content article");
+      return !!a && !a.dataset.stale && location.hash.startsWith("#" + p);
+    }, { timeout: 15000 }, f.path).then(() => true, () => false);
+    if (!rendered) { wrong.push(`${f.path}: never rendered`); continue; }
+    const got = await page.evaluate(async (p) => {
+      const keep = (a) => !a.classList.contains("hlink") && !a.closest(".pager, .docfoot, .mermaid, svg");
+      /* How far down the reading pane an in-page "#id" lands (its id, or a heading whose slug
+       * it is), or -1 when it has nowhere to land. */
+      const main = document.getElementById("main");
+      const depth = (id) => {
+        const el = document.getElementById(id) ||
+          [...document.querySelectorAll("#content article h1, #content article h2, #content article h3, #content article h4")]
+            .find((h) => h.textContent.toLowerCase().replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-").replace(/-+/g, "-") === id);
+        return el ? el.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop : -1;
+      };
+      const links = [...document.querySelectorAll("#content article a[href]")].filter(keep).map((a) => {
+        const attr = a.getAttribute("href"), own = attr.indexOf("#" + p + "#") === 0;
+        return { href: a.href, attr, text: a.textContent.trim().slice(0, 40),
+                 depth: own ? depth(decodeURIComponent(attr.slice(p.length + 2))) : -1 };
+      });
+      const md = await (await fetch("docs-bundle/" + encodeURI(p))).text();
+      const inert = new DOMParser().parseFromString(marked.parse(md), "text/html");
+      /* `code`: the link's whole text is one code span (`[`sim/`](sim/README.md)`). */
+      return { links, original: [...inert.querySelectorAll("a[href]")].map((a) => ({ href: a.getAttribute("href"),
+                 code: a.childElementCount === 1 && a.firstElementChild.tagName === "CODE" &&
+                       a.textContent.trim() === a.firstElementChild.textContent.trim() })),
+               src: document.getElementById("src").href };
+    }, f.path);
+    swept++;
+    if (got.src !== `${REPO}/blob/main/${repoOf(f.path)}`) wrongSrc.push(`${f.path}: ${got.src}`);
+    if (got.links.length !== got.original.length) {
+      wrong.push(`${f.path}: ${got.original.length} links in its Markdown, ${got.links.length} rendered`);
+      continue;
+    }
+    got.original.forEach(({ href: orig, code }, i) => {
+      const r = got.links[i], bad = (why) => wrong.push(`${f.path} [${r.text}](${orig}) -> ${r.attr}: ${why}`);
+      pairs++;
+      if (/^(https?:|mailto:)/i.test(orig)) { if (r.attr !== orig) bad("an absolute link was rewritten"); return; }
+      if (/^#./.test(orig)) {
+        if (r.href !== norm(`#${f.path}${orig}`)) bad("an in-page heading link should keep its doc in the URL");
+        else if (!inPage && r.depth > 1800) inPage = { doc: f.path, attr: r.attr };   // far below the fold
+        return;
+      }
+      if (!orig || orig === "#" || /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(orig)) return;
+      const [, rel, hash = ""] = orig.match(/^([^#]*)(#.*)?$/);
+      const dir = rel.endsWith("/");
+      const repo = posix.join(rel.startsWith("/") ? "/" : "/" + posix.dirname(repoOf(f.path)), rel)
+        .replace(/^\/+/, "").replace(/\/+$/, "");
+      const doc = bundleOf(repo);
+      if (doc) { if (r.href !== norm(`#${doc}${hash}`)) bad(`should open ${doc}${hash} here`); return; }
+      const github = `${REPO}/${dir ? "tree" : "blob"}/main/${repo}${hash}`, site = code ? null : sitePath(repo, dir);
+      const u = new URL(r.href);
+      if (site ? u.origin === base && u.pathname === site && served(u.pathname) : r.href === norm(github)) return;
+      bad(u.origin === base && !served(u.pathname)
+        ? `lands on ${u.pathname}, which this site does not serve (Pages answers with the hub)`
+        : `should open ${site ? `this site's ${site}` : github}${code && sitePath(repo, dir) ? " (its text is a code span: it names the file)" : ""}`);
+    });
+    if (f.mermaid) {      // let this doc's diagrams finish, so two docs' renders never overlap
+      await page.waitForFunction((n) => {
+        const blocks = document.querySelectorAll("#content article .mermaid");
+        return blocks.length >= n && [...blocks].every((b) => b.querySelector("svg, .err"));
+      }, { timeout: 20000 }, f.mermaid).catch(() => {});
+    }
+  }
+  console.log(`   (link sweep: ${swept} docs, ${pairs} links, ${wrong.length} wrong, ` +
+              `${wrongSrc.length} wrong "source" links)`);
+  ok(swept === idx.files.filter((x) => x.kind === "md").length && pairs > 2000,
+     `the link sweep should cover every doc (swept ${swept} docs, ${pairs} links)`);
+  ok(wrong.length === 0,
+     `${wrong.length} doc link(s) do not go where they say:\n      ${wrong.slice(0, 12).join("\n      ")}`);
+  ok(wrongSrc.length === 0,
+     `every doc's "source" link should be its file on GitHub (${wrongSrc.length} not: ${wrongSrc.slice(0, 3).join(" | ")})`);
+
+  /* 11) The instances the plan named, by their words. "simulator" in the revival guide OPENS
+   * /sim: the click is followed to the request it makes (answered with a stub by the
+   * interceptor above, so the sim never loads). That stub answers ANY navigation away from
+   * /docs.html, so first: nothing before this check went anywhere (unstubbed, it 404'd). */
+  ok(left.length === 0, `nothing before check 11 should leave the explorer (went to ${left.join(", ")})`);
+  await page.goto(base + "/docs.html#guides/revive-your-moxie.md", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => /Revive your Moxie/.test((document.querySelector("article h1") || {}).textContent || ""),
+                             { timeout: 8000 }).catch(() => {});
+  const byText = (t) => page.evaluate((s) => {
+    const a = [...document.querySelectorAll("#content article a[href]")].find((x) => x.textContent.trim() === s);
+    return a ? { href: a.href, target: a.target } : null;
+  }, t);
+  const setup = await byText("setup page"), sim = await byText("simulator");
+  ok(setup && setup.href === base + "/setup.html", `the revival guide's "setup page" should open setup.html (got ${JSON.stringify(setup)})`);
+  ok(sim && sim.href === base + "/sim", `the revival guide's "simulator" should open /sim (got ${JSON.stringify(sim)})`);
+  const leftBefore = left.length;
+  await Promise.all([
+    page.waitForNavigation({ timeout: 8000 }).catch(() => {}),
+    page.evaluate(() => {
+      const a = [...document.querySelectorAll("#content article a[href]")].find((x) => x.textContent.trim() === "simulator");
+      if (a) a.click();
+    }),
+  ]);
+  ok(left.slice(leftBefore).includes(base + "/sim") && page.url() === base + "/sim",
+     `clicking "simulator" should take the reader to /sim (requests ${JSON.stringify(left.slice(leftBefore))}, now at ${page.url()})`);
+
+  // STRUCTURE.md and LICENSE in the README are not in the bundle: they open on GitHub.
+  await page.goto(base + "/docs.html#_root/README.md", { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("#content article h1, #content article h2", { timeout: 8000 }).catch(() => {});
+  for (const name of ["STRUCTURE.md", "LICENSE"]) {
+    const l = await byText(name);
+    ok(l && l.href === `${REPO}/blob/main/${name}` && l.target === "_blank",
+       `the README's ${name} link should open ${REPO}/blob/main/${name} in a new tab (got ${JSON.stringify(l)})`);
+  }
+
+  /* 12) An in-page heading link, clicked, scrolls to its heading AND leaves the doc in the URL,
+   * so a reload lands on the same doc (it used to land on the home doc). The link is one the
+   * sweep found whose heading starts far below the fold, so no scroll means no pass. */
+  ok(!!inPage, "the sweep should have found an in-page heading link far down its doc to click");
+  if (inPage) {
+    const LINK = `#content article a[href="${inPage.attr}"]`;
+    const target = decodeURIComponent(inPage.attr.slice(inPage.attr.indexOf("#", 1) + 1));
+    const openDocAtTop = async () => {
+      await page.goto(base + "/docs.html#" + inPage.doc, { waitUntil: "domcontentloaded" });
+      await page.waitForFunction((s) => !!document.querySelector(s), { timeout: 8000 }, LINK).catch(() => {});
+    };
+    /* The target, and where focus is: its tag and text, and whether it comes after the target. */
+    const where = () => page.evaluate((id) => {
+      const el = document.getElementById(id) || [...document.querySelectorAll("#content article h1, #content article h2, #content article h3, #content article h4")]
+        .find((x) => x.textContent.toLowerCase().replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-").replace(/-+/g, "-") === id);
+      const ae = document.activeElement, main = document.getElementById("main");
+      return { scrollTop: Math.round(main.scrollTop), onTarget: !!el && ae === el,
+               afterTarget: !!el && !!ae && ae !== el && !!(el.compareDocumentPosition(ae) & Node.DOCUMENT_POSITION_FOLLOWING),
+               focus: ae ? `${ae.tagName} "${ae.textContent.trim().slice(0, 40)}"` : null };
+    }, target);
+    /* Landed = the hash names the doc AND the heading, and the heading sits at the top of the
+     * reading pane (or the pane is scrolled to its end, for a heading too low to reach it). */
+    const landed = () => page.waitForFunction((h, id) => {
+      if (location.hash !== h) return false;
+      const el = document.getElementById(id) || [...document.querySelectorAll("#content article h1, #content article h2, #content article h3, #content article h4")]
+        .find((x) => x.textContent.toLowerCase().replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-").replace(/-+/g, "-") === id);
+      const main = document.getElementById("main");
+      if (!el || main.scrollTop < 1) return false;
+      const top = el.getBoundingClientRect().top - main.getBoundingClientRect().top;
+      return top > -5 && (top < 150 || main.scrollTop + main.clientHeight >= main.scrollHeight - 2);
+    }, { timeout: 8000 }, inPage.attr, target).then(() => true, () => false);
+    /* The pane's scroll once it has stopped moving (smooth scrolling animates). */
+    const settled = () => page.evaluate(() => new Promise((resolve) => {
+      const main = document.getElementById("main"), cap = setTimeout(() => resolve(main.scrollTop), 4000);
+      let last = -1, still = 0;
+      const tick = () => { const s = main.scrollTop; still = s === last ? still + 1 : 0; last = s;
+        if (still >= 12) { clearTimeout(cap); resolve(s); } else requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }));
+    await openDocAtTop();
+    await page.evaluate((s) => { const a = document.querySelector(s); if (a) a.click(); }, LINK);
+    ok(await landed(), `clicking ${inPage.attr} in ${inPage.doc} should scroll to its heading with the doc kept in the URL ` +
+                       `(hash ${await page.evaluate(() => location.hash)})`);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForFunction((p) => !!document.querySelector(`a.doc.active[data-path="${p}"]`), { timeout: 8000 }, inPage.doc)
+      .catch(() => {});
+    const after = await page.evaluate(() => { const a = document.querySelector("a.doc.active"); return a ? a.dataset.path : null; });
+    ok(after === inPage.doc, `a reload after that click should reopen ${inPage.doc} (got ${after})`);
+
+    /* …and by KEYBOARD. The href names no element, so the browser moves nothing: the explorer
+     * has to put focus on the heading, or the next Tab resumes at the link, far above, and
+     * drags the pane back up the doc (it did, 2026-10-08: landed 17,486 px down, one Tab, 3,651).
+     * A fresh load, so the reload above has not already scrolled the pane there. */
+    await page.goto("about:blank");
+    await openDocAtTop();
+    await page.focus(LINK).catch(() => {});
+    await page.keyboard.press("Enter");
+    const keyLanded = await landed();
+    await settled();
+    const onEnter = await where();
+    ok(keyLanded && onEnter.onTarget,
+       `Enter on ${inPage.attr} should scroll to its heading and move focus there ` +
+       `(landed ${keyLanded}, focus on ${onEnter.focus}, pane at ${onEnter.scrollTop})`);
+    await page.keyboard.press("Tab");
+    const pane = await settled(), onTab = await where();
+    ok(onTab.afterTarget && pane >= onEnter.scrollTop - 2,
+       `the next Tab should continue below that heading, not jump back up the doc ` +
+       `(focus on ${onTab.focus}, pane ${onEnter.scrollTop} -> ${Math.round(pane)})`);
+  }
 
   /* Forgive exactly the off-origin refusals this suite caused itself, and nothing else. */
   const OFF_ORIGIN = /Failed to load resource: net::ERR_BLOCKED_BY_CLIENT/;
