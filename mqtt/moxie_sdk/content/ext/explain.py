@@ -104,10 +104,10 @@ def _lift_parts(parts) -> list:
     """A `concat`'s arguments with the action tags lifted out of its literal strings, a
     tag split across them (`["<ex", "it>Bye"]`) or with a worked-out part in its fields
     (`["<launch:", {"var": "speech"}, ">"]`) included: the parts are read joined, with a
-    `_HOLE` for each one that is not a string. A tag whose name is split around a
-    worked-out part (`["<ex", {"var": "x"}, "it>"]`) is left in, in its pieces: it forms
-    only if that part comes out empty, and otherwise its pieces stay in the spoken line.
-    `_tag_effects` names what it does when it forms ("sometimes")."""
+    `_HOLE` for each one that is not a string. A tag with another part before its first
+    `:` (`["<ex", {"var": "x"}, "it>"]`), or whose `>` is another part's, is left in, in
+    its pieces: the quote shows only the literal strings, and whether the tag forms depends
+    on that part. `_say_effects` names what it does when it forms."""
     text = "".join(p if isinstance(p, str) else _HOLE for p in parts)
     lifted = list(text)
     for m in _TAG.finditer(text):

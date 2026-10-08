@@ -479,9 +479,9 @@ IMPORTED_SAYS = {
         "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
 }
 
-#: The shapes whose quote shows a tag in its pieces (`'<ex … it>Bye! …'`): its name is split
-#: around a part worked out at run time, so it forms only when that part comes out empty,
-#: and otherwise the pieces are said. Every other shape's quote holds no `<` or `>` at all.
+#: The shapes whose quote shows a tag in its pieces (`'<ex … it>Bye! …'`): another part
+#: stands before the tag's first `:` or holds its `>`, and the quote shows only the literal
+#: strings (`_lift_parts`). Every other shape's quote holds no `<` or `>` at all.
 QUOTED_IN_PIECES = {
     "an always-empty part inside the tag's name",
     "a value the robot did not send inside the tag's name",
@@ -510,7 +510,7 @@ def test_an_imported_say_names_what_its_tags_do_however_it_is_built(shape):
     Moxie to sleep or starts an activity. Each program runs as an imported global with only
     the default grants: the sentence (in `explain()` and in the pack review) names what the
     robot is sent, "sometimes" when not every line it can say does it, and holds no tag
-    (only the pieces of one split around a worked-out part, `QUOTED_IN_PIECES`)."""
+    (only the pieces of one split around another part, `QUOTED_IN_PIECES`)."""
     program, then, heard = IMPORTED_SAYS[shape]
     assert E.validate(program, grants=E.DEFAULT_GRANTS) == [], shape
     (sentence,) = E.explain(program)
