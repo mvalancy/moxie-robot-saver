@@ -17,9 +17,10 @@ makes the record. What each test below pins:
 
 The supervisor is `helpers_console_supervisor.FakeSupervisor`, which lists exactly one
 connected robot, `DEVICE`; its `permit_posts`, `memory_erases`, `telemetry_erases`,
-`config_posts` and `wakeups` record every call that reached it. The console database is
-shared by every console module in a run, so each test starts with no record naming
-`DEVICE` and an empty permit list.
+`config_posts` and `wakeups` record every call that reached it. A robot on its permit list
+that is not `DEVICE` is listed but offline (`OFFLINE`). The console database is shared by
+every console module in a run, so each test starts with no record naming `DEVICE` or
+`OFFLINE` and an empty permit list.
 """
 import json
 
@@ -35,6 +36,8 @@ from helpers_console_supervisor import (DEAD, DEVICE, client,  # noqa: E402,F401
 PERMIT = {"device_id": DEVICE, "permitted": True}
 REVOKE = {"device_id": DEVICE, "permitted": False, "label": ""}
 RESTORE_FACTORY = '{"debug":{"command":"restore_factory"}}'
+#: A robot permitted earlier and switched off now: on the permit list, not connected.
+OFFLINE = "d_claim_offline"
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +46,7 @@ def no_record_names_the_robot(client, supervisor):
     the permit list. Read straight from the table, never through the code under test."""
     from moxie_server import db
     for row in db.q("SELECT id, attributes FROM robots"):
-        if json.loads(row["attributes"]).get("mqtt-device-id") == DEVICE:
+        if json.loads(row["attributes"]).get("mqtt-device-id") in (DEVICE, OFFLINE):
             db.ex("DELETE FROM robots WHERE id=?", (row["id"],))
     supervisor.permits["devices"].clear()
     yield
@@ -126,6 +129,18 @@ def test_the_claim_permits_the_robot_once_and_a_repeat_changes_nothing(client, s
     assert again.json()["permitted"] is True
     assert len(supervisor.permit_posts) == posts + 1
     assert len(_rows_naming(DEVICE)) == 1 and _calls(supervisor) == calls
+
+
+def test_a_robot_on_the_permit_list_can_be_added_while_it_is_offline(client, supervisor):
+    """The supervisor lists a robot that is connected now OR on its permit list: one a
+    grown-up permitted earlier and has switched off can still be added. Keyed on the
+    connected robots alone, this claim would be a 404."""
+    auth = quicklogin(client, "listed-offline@claim.lan")
+    supervisor.permits["devices"][OFFLINE] = {"permitted_at": 1, "label": "permitted earlier"}
+    r = _claim(client, auth, OFFLINE)
+    assert r.status_code == 200, r.text
+    assert r.json()["device_id"] == OFFLINE and r.json()["created"] is True
+    assert [x["attributes"]["mqtt-device-id"] for x in _me_robots(client, auth)] == [OFFLINE]
 
 
 def test_refusals_create_no_record_and_post_nothing(client, supervisor, monkeypatch):
