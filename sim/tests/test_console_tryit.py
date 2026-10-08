@@ -479,6 +479,16 @@ def test_robots_that_are_unknown_or_pending_are_refused_by_name(world):
     assert tryit(world, expect=409, speech="hi", device_id=DEVICE)["kind"] == "pending"
 
 
+def test_a_bug_inside_the_try_is_a_500_not_a_missing_supervisor(world, monkeypatch):
+    def boom(body):
+        raise TypeError("an app returned markup that is not text")
+    monkeypatch.setattr(world.rt, "tryit_turn", boom)
+    out = tryit(world, expect=500, speech="hi")
+    assert out["kind"] == "internal" and "TypeError" in out["error"]
+    assert world.client.get("/local/tryit").json()["ok"] is True, \
+        "the supervisor must still be serving after a failed try"
+
+
 def test_an_oversized_body_is_refused_unread(world):
     code, out = http_call(world.base + "/tryit", method="POST",
                           body={"speech": "hi", "pad": "x" * (65 * 1024)})

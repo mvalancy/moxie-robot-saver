@@ -47,6 +47,7 @@ TRY_STATUS = {
     "unknown_module": 400, "unknown_device": 404, "pending": 409, "too_large": 413,
     "budget": 429, "busy": 429, "brain_unavailable": 503,
     "brain_unreachable": 502, "brain_refused": 502, "brain_error": 502, "timeout": 504,
+    "internal": 500,
 }
 
 _NAME_RE = re.compile(r"^[\w .'\-]+$")

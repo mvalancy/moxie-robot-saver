@@ -230,8 +230,9 @@ per-thread count); `elapsed_ms`; the budget.
 **Errors, each with a sentence:** 400 (`empty`, `too_long`, `bad_request`, `bad_brain`,
 `unknown_module`), 404 (`unknown_device`), 409 (`pending`), 413 (`too_large`), 429 (`budget`, `busy`:
 at most two tries in flight), 503 (`brain_unavailable`: the brain cannot be built here; `unreachable`:
-no supervisor), 502 (`brain_unreachable`, `brain_refused`, `brain_error`) and 504 (`timeout`, after
-30 s). A brain failure is told apart from a real answer by how the try's last model request ended
+no supervisor), 502 (`brain_unreachable`, `brain_refused`, `brain_error`), 504 (`timeout`, after
+30 s) and 500 (`internal`: a fault in the try itself, answered rather than dropped, so the card never
+mistakes it for a missing supervisor). A brain failure is told apart from a real answer by how the try's last model request ended
 (`chat.last_call_error`, per thread): the app has already turned it into a line for the child, so the
 answer carries both that line and the reason (status, error type, and a message with endpoints and
 key-shaped runs scrubbed), and the session does not advance. A try holds the supervisor's console API

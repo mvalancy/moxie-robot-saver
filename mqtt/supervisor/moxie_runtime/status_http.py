@@ -191,7 +191,16 @@ class _Handler(BaseHTTPRequestHandler):
         device_id = _first(parse_qs(query), "device_id")
         if device_id and not body.get("device_id"):
             body["device_id"] = device_id
-        out = self.rt.tryit_turn(body)
+        try:
+            out = self.rt.tryit_turn(body)
+        except Exception as e:
+            # Answer, never drop the connection: the console would read that as "down".
+            reason = (f"The try failed inside the supervisor ({type(e).__name__}); "
+                      f"the supervisor log has the details.")
+            print(f"[runtime] try-it failed: {type(e).__name__}: {e}", flush=True)
+            return self._json_out({"ok": False, "kind": "internal", "error": reason,
+                                   "reason": reason, "preview": True,
+                                   "published": False}, TRY_STATUS["internal"])
         return self._json_out(out, 200 if out.get("ok")
                               else TRY_STATUS.get(out.get("kind"), 400))
 

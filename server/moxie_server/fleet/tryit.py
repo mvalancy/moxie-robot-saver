@@ -13,7 +13,7 @@ from ._coerce import _dict, _error, _int, _num, _seq, _strs, card_view
 TRY_KINDS = ("bad_request", "empty", "too_long", "bad_brain", "unknown_module",
              "unknown_device", "pending", "too_large", "budget", "busy",
              "brain_unavailable", "brain_unreachable", "brain_refused", "brain_error",
-             "timeout", "unreachable")
+             "timeout", "internal", "unreachable")
 
 _UNREACHABLE = "supervisor not reachable"
 
