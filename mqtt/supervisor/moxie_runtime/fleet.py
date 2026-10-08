@@ -426,7 +426,19 @@ class FleetMixin:
                     f"survive a restart")
             self._note("error", line)
             print(f"[runtime] {line}", flush=True)
+            self._settings_unsaved.add(device_id)
+        else:
+            self._settings_unsaved.discard(device_id)  # the record holds the whole layer
         return saved
+
+    def settings_saved(self, device_id) -> bool:
+        """False while this robot's record does not hold the settings it runs with: the
+        store refused the last save, or the record could not be read at start and no
+        parent has saved since (`_fail_closed`). The `POST /config`, `/brain` and
+        `/telehealth` answers carry it as `saved`, and the console then says the change
+        will be lost on a restart instead of "Saved"."""
+        return (device_id not in self._settings_unsaved
+                and device_id not in self._settings_unreadable)
 
     def _load_config_overrides(self) -> dict:
         """Every robot's saved settings, keyed by device id (the store's directory name).

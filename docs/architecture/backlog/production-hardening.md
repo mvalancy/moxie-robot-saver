@@ -294,6 +294,11 @@ idle box and a few under load. That is why the harness reports a *rate* and asse
   2. Should the reset sheet's optional erase gain safety-journal and transcript checkboxes? That would
      close the lifecycle page's "no erase control" gap by the parent's choice rather than
      automatically.
+- **A refused house-rule write is not reported** (found while adding `saved`, not changed here).
+  `update_fleet_config` ignores the store's answer, and because the fleet layer is re-read from disk
+  on every push, a refused `POST /config?scope=fleet` never applies at all: measured, the answer echoed
+  the new `fleet_config` while the robot was pushed the old value. The console still says "Saved as
+  house rules".
 - **Failing closed also erases** (§8). A robot whose saved data-sharing choice cannot be read runs
   under `NO_DATA` in every sense, so the boot sweep clears its stored transcript and activity record,
   as it would had the parent chosen `NO_DATA`. That loses a history the parent may have wanted kept
@@ -343,7 +348,9 @@ transcript, long-term memory, activity record and safety-journal excerpts again.
   into memory, the snapshot and the write run inside the record's `transaction()` (§3), so two edits
   of one robot at once reach the disk in the order they changed memory and the file never ends up
   holding the older one. A write the store refuses still applies to the running supervisor and puts a
-  "NOT saved" line in the activity feed.
+  "NOT saved" line in the activity feed, and the answer to `POST /config`, `/brain` or `/telehealth`
+  carries `saved: false` (`fleet.py::settings_saved`, also false while the robot fails closed), so the
+  console's Settings, look and brain cards say the change will be lost on a restart instead of "Saved".
 - **Read once, at construction**, before the transcript sweep in `_load_memory()`. The brain picker,
   the safety journal, the status snapshot and the console's `GET /config` read the per-robot dict
   directly, so a lazy read would leave them blind until something else touched the config.

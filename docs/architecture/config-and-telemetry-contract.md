@@ -176,7 +176,8 @@ settings ([production hardening §8](backlog/production-hardening.md#8-phases-an
 whose saved data-sharing choice cannot be read (a damaged record, or a stored `logging_policy` the
 whitelist refuses) **fails closed**: it runs under `NO_DATA` until a parent saves a setting for that
 robot again, and the console's activity feed says so in one line. Its other settings come from what
-can still be read, or from the layers underneath.
+can still be read, or from the layers underneath. A per-robot edit the store refuses still applies,
+but its answer says `saved: false` and the console says the change will be lost on a restart.
 
 ### The pairing gate — permits, and what a *pending* robot is sent
 

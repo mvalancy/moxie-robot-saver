@@ -204,7 +204,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config and telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 31940,
+   "bytes": 32084,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -498,7 +498,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening: a supervisor that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 32261,
+   "bytes": 32946,
    "mermaid": 0,
    "headings": [
     "0. The ceiling",

@@ -498,6 +498,87 @@ def test_a_save_the_store_refuses_still_applies_now_and_says_it_was_not_saved(tm
     assert any("d_one" in n["text"] and "NOT saved" in n["text"] for n in rt.recent)
 
 
+def test_the_answer_to_a_robot_edit_says_whether_it_was_saved(tmp_path, monkeypatch):
+    """POST /config, /brain and /telehealth all edit a robot through `update_config`.
+    When the store refuses the write the edit still applies, and the answer says
+    `saved: false`, so the console can say a restart will undo it instead of "Saved"."""
+    from helpers_runtime import http_json, status_server
+    monkeypatch.delenv("MOXIE_APP", raising=False)
+
+    class _Refusing(JsonStore):
+        refuse = False
+
+        def _write_path(self, path, value):
+            if self.refuse and path == self.path("d_one", "config"):
+                return False
+            return super()._write_path(path, value)
+
+    store = _Refusing(root=str(tmp_path))
+    base = status_server(_runtime(tmp_path, devices=("d_one",), store=store))
+
+    def post(route, body):
+        return http_json(base + route, method="POST", body=body)
+
+    assert post("/config?device_id=d_one", {"audio_volume": 30})["saved"] is True
+    store.refuse = True
+    out = post("/config?device_id=d_one", {"audio_volume": 40})
+    assert (out["ok"], out["saved"], out["config_overrides"]["audio_volume"]) == \
+        (True, False, 0.4)                               # applied all the same
+    assert post("/brain?device_id=d_one", {"brain": "content"})["saved"] is False
+    assert post("/telehealth?device_id=d_one", {"action": "enable"})["saved"] is False
+    store.refuse = False
+    assert post("/brain?device_id=d_one", {"brain": None})["saved"] is True
+    assert post("/telehealth?device_id=d_one", {"action": "disable"})["saved"] is True
+    assert json.loads(_record(tmp_path).read_text()) == {"audio_volume": 0.4, "brain": None}
+
+
+def test_while_a_robot_fails_closed_its_answers_say_its_settings_are_not_saved(tmp_path):
+    """A damaged record is not a saved one: until a parent's save is written, an answer
+    about that robot says `saved: false`, and the save that rewrites it says true."""
+    from helpers_runtime import http_json, status_server
+    path = _record(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json")
+    base = status_server(_runtime(tmp_path, devices=("d_one",)))
+    th = http_json(base + "/telehealth?device_id=d_one", method="POST",
+                   body={"action": "enable"})
+    assert th["saved"] is False
+    out = http_json(base + "/config?device_id=d_one", method="POST",
+                    body={"audio_volume": 40})
+    assert out["saved"] is True
+
+
+def test_the_console_says_an_unsaved_change_will_be_lost_on_a_restart_not_saved():
+    """Settings, Moxie's look and the brain card say "Saved" after a save. When the
+    answer carries `saved: false` they say the change will be lost on a restart instead;
+    an answer without the flag (the house rules, an older supervisor) keeps its text.
+    The brain card's answer passes through `normalize_brain`, which must keep the flag."""
+    import re
+    import shutil
+    import subprocess
+    from helpers_console import console_js
+    fleet = _console_fleet()
+    assert fleet.normalize_brain({"ok": True, "saved": False})["saved"] is False
+    assert fleet.normalize_brain({"ok": True, "saved": "no"})["saved"] is None
+    assert fleet.normalize_brain(None)["saved"] is None
+    js = console_js()
+    for name in ("saveConfig", "saveFace", "saveBrain"):
+        body = re.search(r"async function " + name + r"\(.*?\n\}\n", js, re.S)
+        assert body and "savedText(r," in body.group(0), f"{name} never asks savedText"
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    fn = re.search(r"function savedText\(r, ?text\)\{.*?\n\}\n", js, re.S)
+    assert fn, "the console has no savedText"
+    probe = fn.group(0) + (
+        "const ok='✅ Saved — pushed to Moxie.';"
+        "process.stdout.write(JSON.stringify([savedText({ok:true,saved:false},ok),"
+        "savedText({ok:true,saved:true},ok),savedText({ok:true},ok)]));")
+    lost, kept, older = json.loads(subprocess.run(
+        [node, "-e", probe], capture_output=True, text=True, check=True).stdout)
+    assert lost.startswith("⚠️") and "NOT saved" in lost and "restart" in lost
+    assert kept == older == "✅ Saved — pushed to Moxie."
+
 def test_two_edits_of_one_robot_reach_the_disk_in_the_order_they_changed_ram(tmp_path):
     """Two edits of one robot at once (a threaded status server, an operator's script):
     each changes RAM, snapshots it and writes the snapshot. Unless the record is held

@@ -98,8 +98,10 @@ class MoxieRuntime(LifecycleMixin, StatusServerMixin, ConnectionMixin, FleetMixi
         # Rolling broker/runtime activity for the UI; before the load, which may add to it.
         self.recent = deque(maxlen=120)
         # Robots whose saved data-sharing choice could not be read: they fail closed until
-        # a parent saves again (fleet.py `_fail_closed`).
+        # a parent saves again (fleet.py `_fail_closed`); robots whose last save the store
+        # refused (`settings_saved`).
         self._settings_unreadable: set = set()
+        self._settings_unsaved: set = set()
         # Per-device RobotCloudConfig overrides, read back from each robot's saved settings
         # NOW (fleet.py): brain, safety, lifecycle and the status server read this dict
         # directly, and `_load_memory()` gates the transcript through `effective_config`.
