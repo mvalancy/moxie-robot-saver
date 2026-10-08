@@ -804,7 +804,10 @@ big"*); after three breaches the extension is quarantined for the session.
 one sentence per capability from a fixed table (never author-supplied text, which would be
 a place to lie); `ext.explain()` is one English sentence per rule — *"Whenever this
 activity is triggered: tells your child 'The time is …' and answers without asking the
-AI."* Both appear in the pack review beside the diff.
+AI."* Both appear in the pack review beside the diff. A parent never reads a raw action tag:
+it is lifted out of the quoted line, and the sentence ends with what it does, so the shipped
+`Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and answers without asking
+the AI; then the conversation ends."*
 
 **Capability escalation.** An incoming item declaring a capability the installed version
 did not is defaulted **un-ticked** whatever its state, with its own sentence — *"This

@@ -14,15 +14,17 @@ and the wire encoders (`encode_action`, `build_chat_response`), never as wire li
 import hashlib
 import json
 import os
+import re
 import time
 
 import pytest
 
 from helpers_runtime import CHAT_TOPIC, CountingSynth, LatchClient, make_runtime
 from moxie_sdk import presence as presence_seam
-from moxie_sdk.actions import ACTION_TAG_PROMPT
+from moxie_sdk.actions import ACTION_TAG_PROMPT, parse_action_tags
 from moxie_sdk.apps.llm_app import DEFAULT_PERSONA, LLMApp
 from moxie_sdk.content import ContentApp, load_modules
+from moxie_sdk.content import ext as E
 from moxie_sdk.content import packs as P
 from moxie_sdk.content.content_app import opener_alternatives
 from moxie_sdk.memory_items import item_text
@@ -214,6 +216,57 @@ def test_an_edited_goodbye_falls_back_to_the_brain_which_is_taught_the_same_rule
     reply = app.respond(Turn(robot=robot("FREE_CHAT"), speech="bye"))
     assert len(brain.turns) == 1 and reply.text == QUESTION
     assert brain.turns[0][0]["content"].count(EXIT_LINE) == 1
+
+
+# --------------------------------------------------------------------------- #
+# What a parent reads about them (`ext.explain`, shown in the pack review)
+# --------------------------------------------------------------------------- #
+
+SHIPPED_EXPLAIN = {
+    "Goodbye": [
+        "When what your child said contains 'night' or what your child said contains 'bed' "
+        "or what your child said contains 'sleep': says one of 3 goodbyes (picked "
+        "unpredictably) and answers without asking the AI; then the conversation ends.",
+        "Whenever this activity is triggered: says one of 5 goodbyes (picked unpredictably) "
+        "and answers without asking the AI; then the conversation ends.",
+    ],
+    "Sleep": [
+        "Whenever this activity is triggered: tells your child 'Okay, sleepy time! Good "
+        "night.' and answers without asking the AI; then Moxie goes to sleep.",
+    ],
+}
+
+
+@pytest.mark.parametrize("name", sorted(SHIPPED))
+def test_a_parent_reads_the_shipped_goodbye_and_sleep_plainly(name):
+    """It used to read "tells your child one of them, picked unpredictably a fixed list of
+    options", and Sleep's line showed its raw `<sleep>` tag."""
+    shipped = {g["name"]: g for g in _raw(name)["globals"]}
+    for item, want in SHIPPED_EXPLAIN.items():
+        lines = E.explain(shipped[item]["extension"])
+        assert lines == want, (item, lines)
+        for line in lines:                  # T13's rules (test_ext.py) hold here too
+            assert "<" not in line and "{" not in line and "[" not in line, line
+            for cap in E.CAPABILITY_WORDS:
+                assert not re.search(rf"\b{re.escape(cap)}\b", line), (cap, line)
+
+
+def test_explain_reads_a_tag_as_the_robot_does_and_nothing_else_moved():
+    """explain.py restates the tag grammar (its package imports nothing outside itself), so
+    it must agree with `actions.parse_action_tags` on which tags do something. The six
+    conformance rows still read exactly as recorded."""
+    from moxie_sdk.content.ext.explain import _tag_effects
+    for line in ["<exit>Bye!", "Night.<sleep>", "Let's draw!<launch:DRAW>",
+                 "<launch:DRAW:default>Go!", "<launch_if_confirmed:DRAW>Draw?", "<EXIT>Bye",
+                 "< sleep >zz", "<exit:now>hm", "<launch>no", "<launch:A:B:C>no",
+                 "<launch: :x>no", "<opener>Hi", "<mark name='x'/>Hi", "plain"]:
+        assert len(_tag_effects(line)) == len(parse_action_tags(line)[1]), line
+    with open(os.path.join(REPO, "sim", "tests", "data", "ext_conformance.json"),
+              encoding="utf-8") as fh:
+        rows = json.load(fh)["rows"]
+    assert len(rows) == 6
+    for row in rows:
+        assert E.explain(row["ast"]) == row["explain"], row["name"]
 
 
 # --------------------------------------------------------------------------- #

@@ -34,12 +34,61 @@ _OP_WORDS = {
 }
 
 
+#: The action tags a spoken line may carry (`moxie_sdk/actions.py`'s grammar, restated
+#: because this package imports nothing outside itself). A parent never reads one: it is
+#: lifted out of quoted text, and the sentence says what it makes happen instead.
+_TAG = re.compile(r"<\s*(exit|sleep|launch_if_confirmed|launch)\s*((?::[^<>]*?)?)\s*>",
+                  re.I)
+
+
+def _tag_effects(text) -> list:
+    """What the action tags in one line make happen, in a parent's words. A malformed tag
+    does nothing, as in `actions.parse_action_tags`."""
+    out = []
+    for m in _TAG.finditer(str(text)):
+        name = m.group(1).lower()
+        fields = [f.strip() for f in m.group(2)[1:].split(":")] if m.group(2) else []
+        while fields and not fields[-1]:
+            fields.pop()
+        if name in ("exit", "sleep") and not fields:
+            out.append("the conversation ends" if name == "exit" else "Moxie goes to sleep")
+        elif name.startswith("launch") and fields and fields[0] and len(fields) <= 2:
+            out.append(f"Moxie starts the {_plain(fields[0])} activity")
+    return out
+
+
 def _plain(text: str) -> str:
-    """Author text made safe for a parent-facing sentence: no braces or quotes, one line,
-    ≤ 80 chars — never JSON-looking, however hostile the input (T13)."""
-    out = "".join(" " if c in "{}\"\n\r\t" else c for c in str(text))
+    """Author text made safe for a parent-facing sentence: no action tags, braces or quotes,
+    one line, ≤ 80 chars — never JSON-looking, however hostile the input (T13)."""
+    out = "".join(" " if c in "{}\"\n\r\t" else c for c in _TAG.sub(" ", str(text)))
     out = " ".join(out.split())
     return out[:80] + ("…" if len(out) > 80 else "")
+
+
+def _picked_lines(value):
+    """The fixed lines a `random.pick` chooses among, or None when they are computed."""
+    if not isinstance(value, dict) or len(value) != 1 or "random.pick" not in value:
+        return None
+    arg = value["random.pick"]
+    lit = (arg[0].get("lit") if isinstance(arg, list) and len(arg) == 1
+           and isinstance(arg[0], dict) else None)
+    if isinstance(lit, list) and lit and all(isinstance(x, str) for x in lit):
+        return lit
+    return None
+
+
+def _say_effects(value) -> list:
+    """What a `say` makes happen through its lines' tags. An effect only some of the
+    picked lines carry happens "sometimes"."""
+    lines = [value] if isinstance(value, str) else (_picked_lines(value) or [])
+    each = [_tag_effects(x) for x in lines]
+    out = []
+    for effects in each:
+        for e in effects:
+            phrase = e if all(e in other for other in each) else f"sometimes {e}"
+            if phrase not in out:
+                out.append(phrase)
+    return out
 
 
 #: Ops that shape a value without changing what a parent would call it; described by
@@ -68,6 +117,10 @@ def _describe(node, depth: int = 0, binds=None) -> str:
         return "a value it works out"
     key = next(iter(node))
     arg = node[key]
+    picked = _picked_lines(node)
+    if picked:
+        return (_describe(picked[0], depth, binds) if len(picked) == 1
+                else f"one of {len(picked)} options (picked unpredictably)")
     if key == "lit":
         return ("a fixed list of options" if isinstance(arg, (list, dict))
                 else _describe(arg, depth, binds))
@@ -109,6 +162,12 @@ def _describe(node, depth: int = 0, binds=None) -> str:
 def _describe_stmt(s, binds=None) -> str:
     keys = set(s)
     if "say" in keys:
+        lines = _picked_lines(s["say"])
+        if lines and len(lines) > 1:
+            # Lines that all end the conversation are goodbyes, whatever their words.
+            noun = ("goodbyes" if all("the conversation ends" in _tag_effects(x)
+                                      for x in lines) else "lines")
+            return f"says one of {len(lines)} {noun} (picked unpredictably)"
         return f"tells your child {_describe(s['say'], 0, binds)}"
     if "markup" in keys:
         return "makes Moxie move or play a sound"
@@ -154,5 +213,12 @@ def explain(ext) -> list:
             head = f"When {_describe(rule['when'], 0, binds)}"
         else:
             head = "Whenever this activity is triggered"
-        out.append(f"{head}: {body}.")
+        # What the spoken line's tags make happen, said last: it happens after the line.
+        effects = []
+        for s in do:
+            for e in (_say_effects(s["say"]) if "say" in s else []):
+                if e not in effects:
+                    effects.append(e)
+        then = f"; then {' and '.join(effects)}" if effects else ""
+        out.append(f"{head}: {body}{then}.")
     return out
