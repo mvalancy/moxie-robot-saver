@@ -15,6 +15,8 @@ const CONTENT_STATE_TEXT={
   invalid:'Cannot install'};
 
 async function refreshContent(deviceId){
+  // 💬 Try it (tryit.js) sits beside this card and needs no robot: refresh it either way.
+  if(typeof refreshTryit==='function') refreshTryit(deviceId);
   const card=$('#content-card'); if(!card) return;
   if(!deviceId){ card.classList.add('hidden'); return; }
   card.classList.remove('hidden');

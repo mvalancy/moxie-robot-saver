@@ -528,6 +528,38 @@
         <div id="content-packs" class="muted"></div>
         <div id="content-status" class="muted"></div>
       </div>
+      <!-- 💬 Try it (docs/architecture/backlog/content-authoring.md §5.3; the idea is
+           OpenMoxie's Interact page). Type what a child might say and see what Moxie would
+           answer: her words, her face, her moves and anything she would DO. The supervisor
+           runs the same brain a robot's turn runs (the robot's own, or one picked here),
+           the same safety check and the same staging, and stops there: nothing is
+           published to a robot, nothing is remembered, nothing reaches the Safety card.
+           The session lives in this page. Send is click-only, because each send asks the
+           brain once. Works with no robot connected. -->
+      <div class="card hidden" id="tryit-card">
+        <h2>💬 Try it <span class="chip">preview</span></h2>
+        <p class="muted">Talk to Moxie's real brain without a robot. Type what a child might
+          say and see what she would answer: her words, her face, her moves, and anything
+          she would do. This is a preview: nothing is sent to a robot, nothing is
+          remembered about your child, and each line you send asks the brain once.</p>
+        <div class="row">
+          <label class="ed-f grow">Who answers <select id="try-brain"></select></label>
+          <label class="ed-f grow">Activity <select id="try-module"></select></label>
+        </div>
+        <label class="ed-f">Child's name for this try
+          <input id="try-name" type="text" autocomplete="off" maxlength="40"></label>
+        <div id="try-note" class="muted"></div>
+        <div id="try-log" class="try-log" aria-live="polite"></div>
+        <div class="row">
+          <input id="try-text" class="grow" type="text" autocomplete="off" maxlength="500"
+                 placeholder="Something a child might say…" aria-label="What the child says">
+          <button id="btn-try-send" class="primary">Send</button>
+        </div>
+        <div class="row">
+          <button id="btn-try-reset" class="ghost">Start over</button>
+          <span id="try-status" class="muted grow"></span>
+        </div>
+      </div>
     </section>
   </div>
 </main>
@@ -543,5 +575,6 @@
 <script src="/js/perform.js"></script>
 <script src="/js/voice-brain.js"></script>
 <script src="/js/content.js"></script>
+<script src="/js/tryit.js"></script>
 </body>
 </html>
