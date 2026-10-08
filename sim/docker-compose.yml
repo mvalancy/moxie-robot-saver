@@ -8,7 +8,8 @@
 name: moxie-sil
 services:
   broker:
-    image: eclipse-mosquitto:2
+    # Pinned like the root compose: DISCONNECT_RE knows this exact mosquitto's leave lines.
+    image: eclipse-mosquitto:2.0.20
     ports: ["1883:1883", "9001:9001"]          # 1883 MQTT (supervisor/robot), 9001 WS (browser UI)
     volumes: ["./broker/ci-mosquitto.conf:/mosquitto/config/mosquitto.conf:ro"]
     restart: unless-stopped
