@@ -32,7 +32,9 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 - [`helpers_runtime.py`](helpers_runtime.py) — drive a turn through the real `MoxieRuntime`:
   `FakeClient`, `LatchClient`, `make_runtime`/`drive_turn`, `assert_spec_response`, `free_port`,
   `status_server`, `loopback` (in-process broker between `sim/virtual_moxie.py` and a runtime),
-  `load_repo_dotenv` / `LIVE_KEYS`.
+  `deliver` (one message into `_on_message`, a broker log line included), the binary
+  `commands/zmq` readers `split_zmq_frame` / `parse_zmq_frame` with `toolkit_pb2` (the committed
+  `tools/robot-toolkit` pb2 oracles), `load_repo_dotenv` / `LIVE_KEYS`.
 - [`helpers_stack.py`](helpers_stack.py) — boot the real broker + `mqtt/run.py` on free ports.
 - [`helpers_console.py`](helpers_console.py) / [`helpers_console_supervisor.py`](helpers_console_supervisor.py) —
   import the parent console in-process; a fake supervisor status server for `test_console_*.py`.
@@ -79,6 +81,7 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 | `test_csp_hashes`, `test_no_offsite_images`, `test_shared_ceilings`, `test_sim_client_parity`, `test_safety`, `test_sdk` | Static-site CSP, images, shared rate-limit tier, SDK and safety floor |
 | `test_live_*.py`, `test_smoke_live_brain` | Real gateway completions, TTS, STT, hosted ears, voice round trip; skip without credentials |
 | `test_robot_lifecycle` | Unpair and factory reset: account record, permit revoke, voided pairing codes, the `restore_factory` code (need `fastapi` + `httpx`) |
+| `test_robot_claim`, `test_wifi_first_qr` | Bench-day pairing: the Wi-Fi-only first code, Add to my account (the claim), `/local/state`'s lists of robots, and one robot per account on Simulate robot scan too (need `fastapi` + `httpx`); `test_sil_robot_claim` (SIL group) runs the claim against real mosquitto and the real supervisor |
 
 Every file's docstring states what it proves and, where relevant, its mutation-check companion
 in [`../tools/`](../tools/README.md).

@@ -21,7 +21,7 @@ export const sessionsDir = join(web, "sessions");
 
 /* Floors, not equalities: they fail when content is DELETED while letting the ambient layer
  * keep growing. §5's coverage rule is what fails when content is ADDED without a clip. */
-export const FLOORS = { moxie: 30, child: 2, ambient: 56, stubReplies: 11, fillerLines: 8 };
+export const FLOORS = { moxie: 36, child: 2, ambient: 56, stubReplies: 17, fillerLines: 8 };
 
 export const manifest = JSON.parse(readFileSync(join(audioDir, "index.json"), "utf8"));
 export const ambient = JSON.parse(readFileSync(join(web, "ambient.json"), "utf8"));

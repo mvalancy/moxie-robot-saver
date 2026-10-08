@@ -172,7 +172,7 @@ import {
   const p = JSON.parse(msg.payload);
   // Exact set: no chunk_num/consistency_control on one chunk, no emotion (§10 #20), no modules.
   deep(Object.keys(p).sort(), ["backend", "command", "end_turn", "event_id", "output", "result"],
-       "the field set is exactly build_chat_response's");
+       "the field set is exactly the hosted builder's (functions/api/_lib/wire.js)");
   deep([p.command, p.result, p.backend, p.end_turn], ["remote_chat", "SUCCESS", "router", false],
        "command, result (the enum NAME), backend, end_turn:false");
   ok(/^sim-[0-9a-f]{12}$/.test(p.event_id), `event_id is a sim- id, got ${p.event_id}`);
@@ -189,7 +189,18 @@ import {
       "print(json.dumps(sorted(b(text='hi',markup='m',event_id='e',backend='router').keys())))",
     ], { cwd: repo, encoding: "utf8" }).trim());
   } catch { /* no python / moxie_sdk: the transcribed set above still holds */ }
-  if (oracleKeys) deep(Object.keys(p).sort(), oracleKeys, "the field set equals mqtt/moxie_sdk/wire.py's, exactly");
+  // The SDK's ROBOT wire differs from this one in exactly two things, on purpose (2026-10-08):
+  // it carries the robot envelope `response_action`/`response_actions` on every reply (an
+  // action-less GLOBAL_RESPONSE entry, which only a robot's protobuf reader needs — the bridge
+  // reads an absent list as "no action"), and it carries no `end_turn` (no proto field), while
+  // this wire keeps `end_turn` for the goodbye close (10_goodbye_close.mjs). Everything else
+  // must still match key for key, so any other drift between the two builders reddens here.
+  if (oracleKeys) {
+    const want = oracleKeys.filter((k) => k !== "response_action" && k !== "response_actions")
+      .concat(oracleKeys.includes("end_turn") ? [] : ["end_turn"]).sort();
+    deep(Object.keys(p).sort(), want,
+         "the field set equals mqtt/moxie_sdk/wire.py's, but for the robot envelope and end_turn");
+  }
 }
 
 /* 6. §4.5 — upstream failure, and what a visitor is told about it. Every response goes
@@ -275,6 +286,21 @@ import {
   const tiny = { ...FULL, DEMO_UNIT_BUDGET_HOUR: "5", DEMO_UNIT_BUDGET_DAY: "5", DEMO_CHAT_PER_MIN: "50" };
   eq((await call(chat, "/api/chat", { text: "a" }, null, tiny)).res.status, 200, "3 of 5 units: admitted");
   eq((await call(chat, "/api/chat", { text: "b" }, null, tiny)).body.reason, "budget_exhausted", "6 of 5 units: refused");
+
+  // …and with one ticket per sentence a turn is 3 + 2 per chunk: a three-sentence reply,
+  // all of it spoken, is 9 units (§4.1: 66 such turns an hour, 444 a day, against 120 and
+  // 800 for one ticket). A budget of exactly 9 serves it; 8 refuses its last chunk, for free.
+  for (const [budget, want] of [["9", [200, 200, 200]], ["8", [200, 200, 503]]]) {
+    fresh();
+    P.plan = { chat: { content: "Sentence number one is here. Sentence number two is here. Sentence number three is here." } };
+    const env = { ...FULL, DEMO_UNIT_BUDGET_HOUR: budget, DEMO_UNIT_BUDGET_DAY: budget, DEMO_CHAT_PER_MIN: "50" };
+    const c = await call(chat, "/api/chat", { text: "say three things" }, null, env);
+    eq(c.body.speech.length, 3, "a three-sentence reply mints three tickets");
+    const statuses = [];
+    for (const s of c.body.speech) statuses.push((await call(speech, "/api/speech", { ticket: s.ticket }, null, env)).res.status);
+    deep(statuses, want, `DEMO_UNIT_BUDGET_HOUR=${budget}: chat (3) + three chunks (2 each) = 9 units`);
+    eq(upstreamCalls(), 1 + want.filter((x) => x === 200).length, "…and a refused chunk makes no upstream call");
+  }
 
   // The concurrency ceiling. DEMO_QUEUE_MAX_DEPTH=0 restores the instant refusal (§13 waits).
   fresh();

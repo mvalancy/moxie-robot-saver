@@ -1,11 +1,13 @@
 """Fleet/per-robot config, the device permit list, config push, wake and rehearsal preview."""
 from __future__ import annotations
-import json, os, time
+import contextlib, json, os, time
 
 from moxie_sdk.types import ResultCode
-from moxie_sdk.wire import build_activity_response
+from moxie_sdk.wire import (build_activity_response, build_remote_modules, is_data_query,
+                            is_module_query)
 from moxie_sdk import safety as safety_seam
 from moxie_sdk import performance as performance_seam
+from moxie_sdk.cloud_config import LoggingPolicy
 from markup import perform
 
 
@@ -126,16 +128,31 @@ class FleetMixin:
                                         # never trusting mtime granularity
         self._note("permit", f"{'✅ permitted' if permitted else '⛔ revoked'} {device_id}")
         if device_id in self.robots:
-            self._push_config(device_id)
             if permitted:
-                try:
-                    self.app_for(device_id).on_connect(self.robots[device_id])
-                except Exception as e:
-                    print(f"[runtime] app.on_connect error: {e}", flush=True)
+                self._admit(device_id)
+            else:
+                self._push_config(device_id)             # the minimal un-paired document
+                self._forget_stt_ask(device_id)          # pending: never "mic asked"
         return self.permits_view()
 
+    def _admit(self, device_id):
+        """What a connected robot gets the moment it is let in, by a Permit or by the
+        fleet-wide toggle: its full config, then the mic ask, then the app's greeting —
+        the settle's order (`_device_connect`). Asks regardless of the latch: the
+        parent's click is a "make it work" button."""
+        self._push_config(device_id)
+        self._subscribe_stt(device_id, again=True)       # config, then the mic ask
+        try:
+            self.app_for(device_id).on_connect(self.robots[device_id])
+        except Exception as e:
+            print(f"[runtime] app.on_connect error: {e}", flush=True)
+
     def set_allow_unverified_bots(self, allowed: bool) -> dict:
-        """The fleet-wide "serve any robot" toggle; re-pushes every connected robot."""
+        """The fleet-wide "serve any robot" toggle; re-pushes every connected robot. A
+        robot it lets in is onboarded like a Permit (`_admit`), one it shuts out is
+        pending again (the minimal config, no `mic asked`). Judged on the enforced
+        value: under a constructor or env pin the stored flag changes and nothing else."""
+        was = {device_id: self.is_permitted(device_id) for device_id in list(self.robots)}
         rec = self.permits()
         rec["allow_unverified_bots"] = bool(allowed)
         self.store.write_shared(self.FLEET_PERMITS_COLLECTION, rec)
@@ -143,8 +160,14 @@ class FleetMixin:
                                         # never trusting mtime granularity
         self._note("permit", f"🔓 allow_unverified_bots={bool(allowed)}"
                              if allowed else "🔒 allow_unverified_bots=False")
-        for device_id in list(self.robots):
-            self._push_config(device_id)
+        for device_id, before in was.items():
+            now = self.is_permitted(device_id)
+            if now and not before:
+                self._admit(device_id)
+            else:
+                self._push_config(device_id)
+                if not now:
+                    self._forget_stt_ask(device_id)
         return self.permits_view()
 
     def permits_view(self) -> dict:
@@ -168,7 +191,7 @@ class FleetMixin:
     def _serve_unpermitted(self, device_id, name, payload):
         """Everything a not-permitted device gets on `/events/…`:
         * remote-chat prompt -> one fixed child-free line (no brain, no history); `notify`
-          is dropped.
+          is dropped. A module query -> an empty list; any other data query -> dropped.
         * activity-log queries (`schedule`, `mentor_behaviors`, `license`) -> an empty
           CloudQueryResponse so the robot's pull resolves; reports are dropped.
         * everything else (zmq audio, telemetry, vision, lifecycle) -> dropped.
@@ -181,9 +204,13 @@ class FleetMixin:
             if rcr.get("command") == "notify":
                 return
             backend = rcr.get("backend", "router")
-            if backend == "data" and rcr.get("query") == "modules":
+            if is_module_query(rcr):
                 return self._publish_chat(device_id, rcr.get("event_id"), backend, "",
-                                          markup="", result=ResultCode.SUCCESS, modules=[])
+                                          markup="", result=ResultCode.SUCCESS,
+                                          query_data=build_remote_modules([]))
+            if is_data_query(rcr):          # no other data query is answered (turns.py)
+                self._note("permit", f"ignored a data query from pending {device_id}")
+                return None
             self._note("permit", f"⛔ turn refused — {device_id} is pending")
             line, scored = self._stage(self.NOT_PAIRED_LINE)
             return self._publish_chat(device_id, rcr.get("event_id"), backend,
@@ -266,6 +293,7 @@ class FleetMixin:
             # The socket died between the check and the write. Still not a success.
             return {"ok": False, "device_id": device_id, "published": False,
                     "acknowledged": False, "error": "publish failed", "reason": why}
+        self._subscribe_stt(device_id, again=True)   # a woken robot has no mic subscription
         cfg = self.effective_config(device_id) or {}
         # `wake_button_enabled` defaults True: only an explicit False is worth a warning.
         wake_button = cfg.get("wake_button_enabled", True)
@@ -325,12 +353,30 @@ class FleetMixin:
         return out
 
     def update_config(self, device_id, **overrides):
-        """Per-robot config edit: merge overrides into this device's RobotCloudConfig
+        """Per-robot config edit: merge overrides into this device's RobotCloudConfig,
+        save the parent's settings so they survive a restart (`_save_config_overrides`)
         and re-publish it. Overrides persist across re-pushes."""
-        self._config_overrides.setdefault(device_id, {}).update(overrides)
         self._note("config", f"⚙️  config updated: {', '.join(overrides)}")
-        if "logging_policy" in overrides:
-            # The privacy switch moved: under NO_DATA erase transcript + activity record now.
+        # One transaction on the robot's record across the merge, the snapshot and the
+        # write: two edits at once reach the disk in the order they changed RAM, so the
+        # file never ends up holding the older one (`_settings_record`).
+        with self._settings_record(device_id) as held:
+            layer = self._config_overrides.setdefault(device_id, {})
+            ends_fail_closed = (self.failed_closed(device_id)
+                                and bool(self._storable_settings(overrides)[0]))
+            if ends_fail_closed:
+                # A parent's save ends `_fail_closed`: data sharing is this save's own
+                # choice again, or the layer underneath (house rule, default).
+                self._settings_unreadable.discard(device_id)
+                if "logging_policy" not in overrides:
+                    layer.pop("logging_policy", None)
+            layer.update(overrides)
+            # Saved before the purge and the push: a crash after this line still boots
+            # with the parent's choice, so a NO_DATA that was set is swept at the next start.
+            self._save_config_overrides(device_id, held)
+        if "logging_policy" in overrides or ends_fail_closed:
+            # The privacy switch moved (a parent's choice, or a parent's choice back in force
+            # after failing closed): under NO_DATA erase transcript + activity record now.
             self.purge_transcripts()
             self.purge_telemetry()
         if "face" in overrides:
@@ -339,3 +385,162 @@ class FleetMixin:
             look = describe_face(overrides["face"] or {}) or "the default look"
             self._note("config", f"🎨 look updated: {look}")
         return self._push_config(device_id)
+
+    # ---- the per-robot layer on disk: settings survive a restart ----
+    # `robots/<id>/config.json` holds one robot's layer of `effective_config` (volume,
+    # bedtime, look, brain pick, data sharing, ...): only what the console's whitelist,
+    # `sanitize_config_overrides`, accepts. Every `update_config` rewrites it (a record
+    # that failed closed waits for a parent's save, `_fail_closed`); it is read
+    # back ONCE, at construction, before the transcript sweep, because brain, safety,
+    # lifecycle and the status server read `_config_overrides` directly. Telehealth's
+    # `moxie_mode` is not in the whitelist, so it is not kept: its session lives in RAM,
+    # and a restart hands the robot back to its own brain, as before.
+    ROBOT_CONFIG_COLLECTION = "config"          # → $MOXIE_DATA_DIR/robots/<id>/config.json
+    #: What a robot whose saved data-sharing choice cannot be read runs under: the most
+    #: restrictive LoggingPolicy (enums.proto: NO_DATA keeps nothing, NO_MEDIA all but
+    #: audio and video, FULL everything). "A policy it cannot read fails closed rather
+    #: than open" (config-and-telemetry-contract.md).
+    UNREADABLE_SETTINGS_POLICY = LoggingPolicy.NO_DATA
+
+    @staticmethod
+    def _storable_settings(overrides) -> tuple:
+        """`(kept, dropped)`: each key re-checked ON ITS OWN through the console's
+        whitelist, so one bad value costs only itself. `kept` holds canonical values."""
+        from moxie_sdk.cloud_config import sanitize_config_overrides
+        kept, dropped = {}, []
+        for key, value in overrides.items():
+            try:
+                clean = sanitize_config_overrides({key: value})
+            except Exception:                    # ValueError, TypeError, KeyError (enum name)
+                clean = {}
+            if key in clean:
+                kept[key] = clean[key]
+            else:
+                dropped.append(str(key))
+        return kept, dropped
+
+    @contextlib.contextmanager
+    def _settings_record(self, device_id):
+        """Hold this robot's record (`store.transaction`) for one edit. Yields False when
+        it cannot be held (another process kept the lock past the store's timeout, which
+        the store records): the edit still applies, and `_save_config_overrides` says it
+        was not saved instead of waiting on the same lock a second time."""
+        from moxie_sdk.store import StoreLockTimeout
+        held = contextlib.ExitStack()
+        try:
+            held.enter_context(self.store.transaction(device_id, self.ROBOT_CONFIG_COLLECTION))
+        except Exception as e:                   # persistence must never cost the edit
+            if not isinstance(e, StoreLockTimeout):
+                print(f"[runtime] settings write failed for {device_id}: {e}", flush=True)
+            yield False
+            return
+        with held:
+            yield True
+
+    def _save_config_overrides(self, device_id, held: bool = True) -> bool:
+        """Write this robot's saved settings (the store's locked, atomic write), inside
+        `_settings_record`. A write that fails, or a record that could not be held, is said
+        aloud: the edit still applies now, but not after a restart."""
+        if device_id in self._settings_unreadable:
+            return False                         # kept as found until a parent saves
+        saved = False
+        if held:
+            kept, _ = self._storable_settings(
+                dict(self._config_overrides.get(device_id) or {}))
+            try:
+                saved = self.store.write(device_id, self.ROBOT_CONFIG_COLLECTION, kept)
+            except Exception as e:               # persistence must never cost the edit
+                print(f"[runtime] settings write failed for {device_id}: {e}", flush=True)
+        if not saved:
+            line = (f"⚠️  settings for {device_id} applied but NOT saved — they will not "
+                    f"survive a restart")
+            self._note("error", line)
+            print(f"[runtime] {line}", flush=True)
+            self._settings_unsaved.add(device_id)
+        else:
+            self._settings_unsaved.discard(device_id)  # the record holds the whole layer
+        return saved
+
+    def settings_saved(self, device_id) -> bool:
+        """False while this robot's record does not hold the settings it runs with: the
+        store refused the last save, or the record could not be read at start and no
+        parent has saved since (`_fail_closed`). The `POST /config`, `/brain` and
+        `/telehealth` answers carry it as `saved`, and the console then says the change
+        will be lost on a restart instead of "Saved"."""
+        return device_id not in self._settings_unsaved and not self.failed_closed(device_id)
+
+    def failed_closed(self, device_id) -> bool:
+        """True while this robot runs under `UNREADABLE_SETTINGS_POLICY` because its saved
+        data-sharing choice could not be read (`_fail_closed`), until a parent's save. That
+        NO_DATA stops every new write, but it is not a parent's choice, so nothing already
+        stored is erased for it: `purge_transcripts`, `purge_telemetry` and the
+        transcript's write path (`_save_memory`) pass this robot over."""
+        return device_id in self._settings_unreadable
+
+    def _load_config_overrides(self) -> dict:
+        """Every robot's saved settings, keyed by device id (the store's directory name).
+
+        Runs in the constructor and never raises. A damaged or non-object record loads no
+        settings (one line). A key the whitelist now refuses, or a brain the current
+        `MOXIE_APP` pin refuses, is dropped (one line per robot) and never pushed. Either
+        way a data-sharing choice that cannot be read fails closed (`_fail_closed`).
+        Loading writes nothing: a record that failed closed stays as found until a parent
+        saves this robot's settings, and any other record is rewritten by its next edit."""
+        from moxie_sdk import brains as brain_seam
+        pin = brain_seam.pin_for_env(os.environ.get(brain_seam.ENV_VAR, ""))
+        loaded = {}
+        try:
+            devices = self.store.devices()
+        except Exception as e:
+            print(f"[runtime] ⚠️  saved settings not loaded: {e}", flush=True)
+            return loaded
+        missing = object()
+        restored = 0
+        for device_id in devices:
+            path = self.store.path(device_id, self.ROBOT_CONFIG_COLLECTION)
+            try:
+                raw = self.store.read(device_id, self.ROBOT_CONFIG_COLLECTION, missing)
+                if raw is missing and not os.path.exists(path):
+                    continue                     # nothing saved for this robot
+            except Exception:                    # e.g. RecursionError from a hostile file
+                raw = missing
+            if not isinstance(raw, dict):
+                what = "unreadable" if raw is missing else "not a settings object"
+                print(f"[runtime] ⚠️  {path} is {what}: no saved settings for {device_id} "
+                      f"(left as found until a parent saves this robot's settings)",
+                      flush=True)
+                loaded[device_id] = self._fail_closed(device_id, {}, "its saved settings")
+                continue
+            kept, dropped = self._storable_settings(raw)
+            brain = kept.get(brain_seam.CONFIG_KEY)
+            if brain and not brain_seam.honours_pin(brain, pin):
+                del kept[brain_seam.CONFIG_KEY]
+                dropped.append(f"{brain_seam.CONFIG_KEY} ({brain_seam.ENV_VAR} pins {pin})")
+            if dropped:
+                print(f"[runtime] ⚠️  {device_id}: saved settings dropped at load (not "
+                      f"accepted here now): {', '.join(sorted(dropped))}", flush=True)
+            restored += bool(kept)
+            if "logging_policy" in raw and "logging_policy" not in kept:
+                kept = self._fail_closed(device_id, kept, "its saved data-sharing choice")
+            if kept:
+                loaded[device_id] = kept
+        if restored:
+            print(f"[runtime] restored saved settings for {restored} robot(s)", flush=True)
+        return loaded
+
+    def _fail_closed(self, device_id, kept: dict, what: str) -> dict:
+        """`kept` plus `UNREADABLE_SETTINGS_POLICY`, for a robot whose saved data-sharing
+        choice cannot be read, until a parent's next save (`update_config`). Every writer
+        sees NO_DATA, so nothing new is kept (no transcript, memory, activity record or
+        safety excerpt). Nothing already stored is erased (`failed_closed`): a damaged
+        file, or a value from a newer build, is not a parent's choice to erase. Until that
+        save the record stays as found, so a restart fails closed again. The activity
+        feed says so in one line."""
+        self._settings_unreadable.add(device_id)
+        policy = self.UNREADABLE_SETTINGS_POLICY
+        line = (f"🔒 {device_id}: {what} could not be read, so it runs under "
+                f"{policy.name} (the strictest data sharing) until a parent saves its "
+                f"settings again; what is already stored is kept")
+        self._note("error", line)
+        print(f"[runtime] {line}", flush=True)
+        return {**kept, "logging_policy": int(policy)}

@@ -12,7 +12,9 @@
   const B = window.__moxieBridge;
   const status = (t) => B.status(t);
 
-  const ACTION_KINDS = ["launch", "exit", "sleep", "enable_qr", "execute"];
+  // `exit_module` is the recovered ActionID name (what the server sends since 2026-10);
+  // `exit` and `enable_qr` are the older spellings, still accepted.
+  const ACTION_KINDS = ["launch", "exit", "exit_module", "sleep", "enable_qr", "execute"];
   const actionState = B.actionState = {
     applied: [],            // [{action, module_id, content_id, function, args, t}] bounded
     unknown: 0,             // action types this client does not implement (skipped safely)
@@ -69,6 +71,7 @@
         status(`action: launch ${moduleId}${contentId ? ":" + contentId : ""}`);
         break;
       case "exit":
+      case "exit_module":
         actionState.module_id = ""; actionState.content_id = ""; actionState.exits += 1;
         if (m && m.clearIcons) m.clearIcons();
         B.behaviourTree("Bht_Sign_off");
@@ -91,6 +94,15 @@
         // A named on-robot function: RECORDED and shown, never guessed at — nothing is
         // called and no `execute_returns[]` is invented.
         status(`action: execute ${fn || "(unnamed)"}`);
+        // …except the one whose effect this SIM can honestly show: `execute eb_enable_qr
+        // ["true"]` is how the server arms the QR reader since 2026-10 (qr-launch-cards.md
+        // §P0-a), so it raises the same camera badge the older `enable_qr` did.
+        if (fn === "eb_enable_qr" && Array.isArray(args) && String(args[0]).toLowerCase() === "true") {
+          actionState.qr_enabled = true;
+          if (m && m.showIcons) m.showIcons(["QR"]);
+          if (m && m.setFace) m.setFace("curious");
+          status("action: QR scanning on");
+        }
         break;
       default: break;
     }

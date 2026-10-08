@@ -165,7 +165,7 @@ def test_a_tagged_live_turn_reaches_the_wire_as_response_actions():
         pytest.skip("this sample carried no tag; see the rate tests for compliance")
     ra = resp["response_actions"]
     assert ra[0]["action"] == ActionType.EXIT.value, "unexpected wire action"
-    assert ra[0]["output_type"] == "GLOBAL", "unexpected wire action scope"
+    assert ra[0]["output_type"] == "GLOBAL_RESPONSE", "unexpected wire action scope"
     assert "<" not in resp["output"]["text"], "an action tag leaked into wire speech"
     assert "<exit>" not in resp["output"]["markup"], "an action tag leaked into markup"
     print(f"\n[live tags] wire: action_count={len(ra)}")

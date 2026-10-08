@@ -65,6 +65,29 @@ of one utterance and hands them to a `Transcriber` on `END_OF_SPEECH`; the runti
 `zmqSTTResponse`. The audio is **16-bit mono PCM at 16 kHz** (the perception bus's rate); an engine must
 be told that rate, not assume one.
 
+**The robot's dialect, both ways.** Nothing streams until the cloud asks: after the config push the
+supervisor publishes a `ProtoSubscribe{timestamp, protos: ["embodied.perception.audio.zmqSTTRequest"]}`
+on `/devices/{id}/commands/zmq`, and it answers every utterance with a `zmqSTTResponse{timestamp,
+type: FINAL, speech, confidence, uuid}` on the same topic, both as the bus frame
+`b"<proto.full_name>:" + protobuf_bytes` and never as JSON (`stt.py` `encode_proto_subscribe` /
+`encode_zmq_stt_response`: stdlib writers, checked byte for byte against the committed
+`tools/robot-toolkit` pb2 files). An empty transcript is still a `FINAL`; the robot's turn ends on the
+type, not the text. So is a failed one: an engine that raises gets the robot a `FINAL` with no speech
+and the failure in the recovered `error_code` / `error_message` fields (`error_code=66` plus the
+exception text, as OpenMoxie's `zmq_stt_handler.py:70-73` answers), so no turn is left hanging. The ask
+is repeated whenever the robot's session may have lost it (a second broker connect line with no
+disconnect in between, a wake, a Permit or the fleet-wide toggle letting the robot in, the Listening
+picker turning the ears on, a broker outage in whichever order the supervisor and the robot come back,
+the roster resume after a supervisor restart; and the settle after a connect line always asks, even
+when one of those landed inside its one-second window), and `/status` shows `stt_subscribed_at` per
+robot, recorded only for a robot confirmed on this connection (an ask sent while it is away is not its
+session) and cleared by a revoke; see
+[mqtt-and-conversation.md §3.4](mqtt-and-conversation.md#34-connect-and-disconnect-detection).
+Built to the contract and to OpenMoxie's field-proven behaviour (MIT: `site/hive/mqtt/moxie_server.py`
+`on_device_connect` sends config then this subscribe, framed by `send_zmq_to_bot`; `zmq_stt_handler.py`
+answers with a protobuf `zmqSTTResponse`). **Unverified on our hardware**: no physical Moxie has streamed
+audio to this appliance yet. Tests: [`sim/tests/test_stt_wire.py`](../../sim/tests/test_stt_wire.py).
+
 | Engine | `MOXIE_STT` | What it is |
 |---|---|---|
 | `WhisperTranscriber` | `whisper` (alias `local`) | local faster-whisper; no network, no key |
@@ -156,7 +179,7 @@ chunks, fillers, greeting, opener, safety redirect). An app's own scoring wins, 
 | `mood`, `mood_intensity` | `mood` (the `ePlaybackMood` name; the int rides the `cmd:playback-mood` mark), `mood_intensity` |
 | `dialog_act` | `dialog_act` (one of 22 `RemoteDialog.DialogAct`) |
 | `emotion` | `emotion` (one of 7 `RemoteDialog.EmotionState`) |
-| `signal` | `signals[]` (one of 9 `RemoteSignals.Signal`) |
+| `signal` | `signals.single_signal` (one of 9 `RemoteSignals.Signal`; `signals` is a `RemoteSignals` message, not a list) |
 | `beats[]` | `markup`, through the single `render()` |
 
 `auto_tags[]`, `sentiment` and `perplexity` are left empty; nothing produces them yet.
@@ -174,7 +197,12 @@ moves the child between activities and reacts to perception.
 > eb-lost-target, eb-lost-face, eb-qr-event, eb-dr-event, eb-br-event], clear:false}` once per
 `(device, module_id)` (events unsubscribe automatically when the module exits), on a plain action-free
 reply. `MOXIE_VISION=0` turns it off. Without a subscription the robot discards its own vision events
-([`vision.md`](vision.md) §7.1).
+([`vision.md`](vision.md) §7.1). Every entry carries `output_type: "GLOBAL_RESPONSE"`
+(`OutputType` 9, [`ChatResponse.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/ChatResponse.proto):16)
+and `action` is the `ActionID` **name** — `launch`, `exit_module`, `sleep`, `execute`
+([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):256-266).
+The SDK's `ActionType.ENABLE_QR` has no `ActionID` and goes out as `execute` with
+`function_id: "eb_enable_qr"`, `function_args: ["true"]` ([launch cards](backlog/qr-launch-cards.md) §P0-a).
 
 **(c) `RemoteChatInput` — the brain's read of the child (optional).** `emotion`/`dialog_act`/`sentiment`
 + **`InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}`** — the content-moderation verdict.
@@ -202,7 +230,7 @@ child speech ──▶ ① assess(role="child") ──block──▶ redirect li
 whose field 12 is `InputSafety` ([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):180-186,:198,:335):
 
 ```json
-{"command":"remote_chat","result":"SUCCESS","event_id":"…",
+{"command":"remote_chat","result":0,"event_id":"…",
  "output":{"text":"That one's not for me. If it's important, a grown-up you trust is the best person to ask.","markup":"…"},
  "input":{"safety":{"is_unsafe":true,"blocked_by":["violence"],
                     "intents":["violence_instructions","threat"],"phrase_id":404}},
@@ -267,14 +295,92 @@ as the Safety panel. Under LoggingPolicy `NO_DATA` the journal keeps **counts on
 no excerpts — and the block still happens, because blocking is not recording. Parent-facing
 walkthrough: [child-safety guide](../guides/child-safety.md).
 
-**Result codes (`ResultCode`, required):** `SUCCESS` (value **0**) on success; `ERROR_OFFLINE` triggers the robot's
+**Result codes (`ResultCode`, required):** `SUCCESS` (value **0**) on success; `ERROR_OFFLINE` (**4**) triggers the robot's
 **local fallback** (see [`offline-and-brain-state.md`](../reverse-engineering/protocol/offline-and-brain-state.md)) —
 so a backend that returns `ERROR_OFFLINE` degrades gracefully instead of hanging; also `NOREPLY_*`,
 `REPLY_FORCE_ANCHOR` and `REPLY_FORCE_QUIT`. **Streaming:** chunk a long turn with `chunk_num`
-(`REPLY_PENDING` on every chunk but the last). The ten codes are enumerated in
+(`REPLY_PENDING`, **9**, on every chunk but the last). The ten codes are enumerated in
 [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#the-response-remotechatresponse) and
 mirrored by `ResultCode` in [`types.py`](../../mqtt/moxie_sdk/types.py). There is **no** `REPLY` or bare
-`QUIT` code.
+`QUIT` code. **On the wire `result` is the integer**, never the name: the field is a plain
+`uint32 result = 2` ([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):320),
+and a robot parsing the JSON as protobuf rejects `"SUCCESS"` outright (`invalid literal for int()`),
+which it cannot skip the way it skips an unknown field. OpenMoxie sends `result: 0`.
+
+#### The wire a robot can read
+
+*Built to the recovered protocol and OpenMoxie's field-proven shapes; unverified on our hardware.*
+No physical Moxie has yet parsed a reply from this appliance. What is held instead:
+[`test_wire_conformance.py`](../../sim/tests/test_wire_conformance.py) parses **every reply shape the
+runtime publishes** — plain, streamed chunk, `REPLY_PENDING` filler, offline line, each action, the
+event subscription, a safety redirect, the not-paired line and the module-list answer — through the
+committed `RemoteChat_pb2` with `ignore_unknown_fields=False`, so every field name, value type and
+enum name is one the proto knows. Exactly one field is excepted (`wire.NON_PROTO_FIELDS`):
+`command`, which OpenMoxie also sends on every response and real robots accept. Nothing else is
+added: OpenMoxie sends no other non-proto key, and a robot that consumes `command` and parses the rest
+strictly would reject every reply over one. The SDK's `Reply.end_turn` is an input-side hint (the
+webhook contract, the console's preview) with no proto field and no reader on the robot side, so it is
+not written to the wire; `REPLY_PENDING` already tells a robot more is coming. Until 2026-10-08 none of
+our replies passed even a lenient parse (the `result` name), and a lenient parse of
+`output_type: "GLOBAL"` / `action: "exit"` silently produced `CATCH_ALL` / `UNSET_ACTION_ID`.
+
+**The envelope.** Every reply carries `response_actions` — the actions, or one action-less
+`{"output_type": "GLOBAL_RESPONSE"}` entry — and the legacy singular `response_action` mirrors
+`response_actions[0]`, exactly as OpenMoxie's field-proven `volley.py` (`create_response`,
+`add_response_action`) sends on every response; a robot reading `output_type` therefore sees
+`GLOBAL_RESPONSE` on a plain reply rather than the default `CATCH_ALL`. `module_id` / `content_id`
+ride only when set (OpenMoxie omits them; proto3 JSON reads an absent field and a `null` alike). A
+plain reply from this appliance is:
+
+```json
+{"command":"remote_chat","result":0,"backend":"router","event_id":"…",
+ "output":{"text":"Hi Sam!","markup":"…"},
+ "response_action":{"output_type":"GLOBAL_RESPONSE"},
+ "response_actions":[{"output_type":"GLOBAL_RESPONSE"}]}
+```
+
+Built to OpenMoxie's shape, not observed on a robot of ours; the two Sim clients read the action-less
+entry as what it is (no action, nothing unknown).
+
+**The module list.** The robot asks which modules the cloud serves with `backend: "data"` and
+`query: {"query": "modules"}` — a `RemoteDataQuery` (RemoteChat.proto:41-51, field 23 at :79;
+OpenMoxie reads `rcr['query']['query']`, `moxie_server.py:170`). The runtime answers before any
+brain is consulted, in `query_data` (field 21, a `RemoteDataBlock`, :296-300):
+
+```json
+{"command":"remote_chat","result":0,"backend":"data","event_id":"…","output":{"text":"","markup":""},
+ "response_action":{"output_type":"GLOBAL_RESPONSE"},
+ "response_actions":[{"output_type":"GLOBAL_RESPONSE"}],
+ "query_data":{"version":"mrs-…",
+               "modules":[{"info":{"id":"FREE_CHAT"},"rules":"RANDOM","source":"REMOTE_CHAT",
+                           "content_infos":[{"id":"default"}]},
+                          {"info":{"id":"MEMORY_CHAT"},"rules":"RANDOM","source":"REMOTE_CHAT",
+                           "content_infos":[{"id":"default"},{"id":"aboutme"}]}]}}
+```
+
+Each entry is a `ModuleDetail` ([`ContentModule.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/ContentModule.proto):24-73):
+the conversations of every loaded content module plus the day plan's default chat
+(`FREE_CHAT/default`), each `source: REMOTE_CHAT` — the schedule already hands that module to the
+cloud, and the robot can only run it once told it is remote. The enum's number is read as the same
+query (`{"query": {"query": 2}}`, `RemoteDataQuery.Query.modules = 2`, the other spelling protobuf
+JSON allows), and so is the plain `query: "modules"` string — only older test doubles send that; the
+browser Sim sends no module query. Any other `backend: "data"` request (`contexts`, or no query at
+all) is never a turn: no brain call and no reply, one logged line — as OpenMoxie, which answers only
+the module query and `router` turns (`moxie_server.py:170-179`); nothing in the proto makes a reply
+mandatory. A pending robot gets an empty list; `version` is a digest of the ids.
+
+**Two recorded differences from OpenMoxie's module answer.** *The envelope:* OpenMoxie answers with
+the bare `{command, result, event_id, query_data}` (`moxie_server.py:176`); ours is built by
+`build_chat_response` like every other reply, so it also carries `backend`, an empty `output` and
+the envelope above. A deliberate difference: the envelope rides every reply, this one included.
+Every added key is a `RemoteChatResponse` field, and the strict parse in `test_wire_conformance.py`
+accepts this answer; whether the 803 firmware's module-list reader minds the extra fields is
+unverified on a robot. *The content ids:* OpenMoxie nests each content id as
+`content_infos[].info.id` (`moxie_remote_chat.py:75`), but `ModuleDetail.content_infos` is
+`repeated ContentDetail` (`ContentModule.proto:66`) and `ContentDetail.id` is field 1 (:10).
+Measured through the pb2, a strict parse rejects the nested form and a lenient one yields an
+**empty** content id, so this repo emits the proto's shape. Whether the 803 firmware reads the
+nested form some other way is unknown; the test pins what the proto says.
 
 **Taxonomies** (closed sets the brain scores into): `DialogAct`×22, `EmotionState`×7, `Signal`×9,
 `Urgency`×3 — enumerated in [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#taxonomies).

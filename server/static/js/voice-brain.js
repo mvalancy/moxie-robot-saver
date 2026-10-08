@@ -170,9 +170,9 @@ async function saveBrain(brain){
                       {method:'POST',auth:false,body});
     brainDirty=false;
     if(r.ok){
-      s.textContent=(scope==='fleet')
+      s.textContent=savedText(r, (scope==='fleet')
         ? '✅ Saved as the house rule — every robot without its own choice uses it next turn.'
-        : '✅ Saved — the next thing your child says goes to this brain.';
+        : '✅ Saved — the next thing your child says goes to this brain.');
       renderBrainCard(r);
     } else s.textContent='⚠️ '+(r.reason||r.error||'could not save');
   }catch(e){ s.textContent=oops(e,'could not save'); }

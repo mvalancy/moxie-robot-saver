@@ -94,9 +94,18 @@ class MoxieRuntime(LifecycleMixin, StatusServerMixin, ConnectionMixin, FleetMixi
         self._seen_since_connect: set = set()
         self.robots: dict[str, RobotContext] = {}
         self.history: dict[str, list] = {}
-        # Per-device RobotCloudConfig overrides. Must exist before `_load_memory()`: the
-        # transcript privacy gate resolves through `effective_config`.
-        self._config_overrides = {}
+        from collections import deque
+        # Rolling broker/runtime activity for the UI; before the load, which may add to it.
+        self.recent = deque(maxlen=120)
+        # Robots whose saved data-sharing choice could not be read: they fail closed until
+        # a parent saves again (fleet.py `_fail_closed`); robots whose last save the store
+        # refused (`settings_saved`).
+        self._settings_unreadable: set = set()
+        self._settings_unsaved: set = set()
+        # Per-device RobotCloudConfig overrides, read back from each robot's saved settings
+        # NOW (fleet.py): brain, safety, lifecycle and the status server read this dict
+        # directly, and `_load_memory()` gates the transcript through `effective_config`.
+        self._config_overrides = self._load_config_overrides()
         self._memory_dir = os.environ.get("MOXIE_MEMORY_DIR", "").strip()
         self._max_memory = int(os.environ.get("MOXIE_MEMORY_TURNS", "40"))
         self._load_memory()
@@ -110,9 +119,7 @@ class MoxieRuntime(LifecycleMixin, StatusServerMixin, ConnectionMixin, FleetMixi
         self._turn_seq: dict[str, int] = {}      # newest turn per robot (stale guard)
         self._last_filler: dict[str, str] = {}   # last filler spoken (never repeat it)
         from concurrent.futures import ThreadPoolExecutor
-        from collections import deque
         self._pool = ThreadPoolExecutor(max_workers=8)
-        self.recent = deque(maxlen=120)          # rolling broker/runtime activity for the UI
         self.started_at = time.time()
         # Built lazily in run() so tests can inject a fake transport.
         self.client = None

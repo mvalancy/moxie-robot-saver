@@ -20,7 +20,7 @@ from helpers_runtime import drive_turn, make_runtime                    # noqa: 
 from moxie_sdk import launch_cards as cards                             # noqa: E402
 from moxie_sdk import presence as P                                     # noqa: E402
 from moxie_sdk.app import MoxieApp                                      # noqa: E402
-from moxie_sdk.types import Reply                                       # noqa: E402
+from moxie_sdk.types import Reply, ResultCode                           # noqa: E402
 
 QR, FOUND, LOST = P.QR_EVENT, P.FOUND_FACE, P.LOST_TARGET
 
@@ -67,7 +67,7 @@ def test_a_scanned_card_answers_with_exactly_one_launch_action():
     app = EchoApp()
     rt, dev = _runtime(app)
     resp = _scan(rt, dev, "GO<launch:DM>")
-    assert resp["result"] == "SUCCESS", resp
+    assert resp["result"] == ResultCode.SUCCESS, resp
     assert resp["event_id"] == "evt-card", resp
     acts = _actions(resp)
     assert len(acts) == 1, acts
@@ -103,7 +103,7 @@ def test_a_value_that_is_not_a_card_answers_noreply_ack_with_no_action(value):
     interaction"), and `NOREPLY_ACK` is its own word for one that says nothing."""
     rt, dev = _runtime()
     resp = _scan(rt, dev, value)
-    assert resp["result"] == "NOREPLY_ACK", (value, resp)
+    assert resp["result"] == ResultCode.NOREPLY_ACK, (value, resp)
     assert _actions(resp) == [], (value, resp)
 
 
@@ -161,7 +161,7 @@ def test_the_greeting_still_fires_on_its_own_and_carries_no_launch():
     seed_absent(rt, dev, away_s=600.0)
     resp = drive_turn(rt, dev, FOUND, event_id="evt-hello")
     assert len(rt.client.chat_replies(dev)) == 1
-    assert resp["result"] == "SUCCESS" and resp["output"]["text"], resp
+    assert resp["result"] == ResultCode.SUCCESS and resp["output"]["text"], resp
     assert _actions(resp) == [], "a face event must not carry a verb"
 
 
@@ -184,7 +184,7 @@ def test_a_hello_and_a_card_on_one_turn_would_be_one_reply_carrying_both():
     rt._greeting_for = lambda device_id, robot, signals: ("Hi again!", "<mark/>Hi again!")
     resp = _scan(rt, dev, "GO<launch:DM>", event_id="evt-both")
     assert len(rt.client.chat_replies(dev)) == 1
-    assert resp["result"] == "SUCCESS" and resp["output"]["text"] == "Hi again!", resp
+    assert resp["result"] == ResultCode.SUCCESS and resp["output"]["text"] == "Hi again!", resp
     assert len(_actions(resp)) == 1 and _actions(resp)[0]["module_id"] == "DM"
 
 
@@ -204,4 +204,4 @@ def test_an_id_outside_the_catalog_never_reaches_the_wire(module_id):
     rt, dev = _runtime()
     resp = _scan(rt, dev, f"GO<launch:{module_id}>")
     assert _actions(resp) == [], (module_id, resp)
-    assert resp["result"] == "NOREPLY_ACK", (module_id, resp)
+    assert resp["result"] == ResultCode.NOREPLY_ACK, (module_id, resp)
