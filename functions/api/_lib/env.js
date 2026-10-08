@@ -57,8 +57,16 @@ export const DEFAULTS = Object.freeze({
   DEMO_CHAT_PER_DAY: 150,
   DEMO_SPEECH_PER_MIN: 10,
   DEMO_SPEECH_PER_HOUR: 80,
+  // The voice's and the ears' per-IP DAY: chat's day (150 turns) at each hour cap's own
+  // ratio to chat's hour (speech 80/40 = 2 a reply, against 1.6 measured with one ticket per
+  // sentence; ears 60/40 = 1.5 uploads a spoken turn), so a visitor meets chat's day first.
+  // One address then spends at most 150x3 + 300x2 + 225x2 = 1 500 units a day, under half
+  // of DEMO_UNIT_BUDGET_DAY; with no day window it alone could spend the colo's whole day.
+  // 0 = no day window for that route (the behaviour before 2026-10-08).
+  DEMO_SPEECH_PER_DAY: 300,
   DEMO_STT_PER_MIN: 10,
   DEMO_STT_PER_HOUR: 60,
+  DEMO_STT_PER_DAY: 225,
   DEMO_MAX_CONCURRENT_CHAT: 4,
   DEMO_MAX_CONCURRENT_SPEECH: 8,
   DEMO_QUEUE_MAX_WAIT_MS: 2500,
@@ -70,7 +78,12 @@ export const DEFAULTS = Object.freeze({
   DEMO_TTS_CACHE_TIMEOUT_MS: 1000,
   DEMO_UNIT_BUDGET_HOUR: 600,
   DEMO_UNIT_BUDGET_DAY: 4000,
-  DEMO_CHAT_TIMEOUT_MS: 20000,
+  // Measured 2026-10-08 on `moxie-brain-dense` + `single` (169 turns: the pre-flip A/B, the
+  // production eval_live run, the voice-latency browser turns): p50 1.7 s, p99 3.4 s, max
+  // 4.7 s. 10 s is about 3x that p99, and still holds the gateway's fallback (a first model
+  // that fails at its own worst, then `moxie-brain`'s p99 of 4.1 s). 20 s made a hung
+  // gateway cost a visitor 20 s a turn. The re-roll gets what is left (`reply.js`).
+  DEMO_CHAT_TIMEOUT_MS: 10000,
   DEMO_SPEECH_TIMEOUT_MS: 12000,
   DEMO_STT_TIMEOUT_MS: 12000,
   DEMO_TICKET_TTL_S: 60,
@@ -183,28 +196,73 @@ export const PUBLIC_LIMIT_KEYS = Object.freeze([
 ]);
 
 /**
- * The built-in persona. Committed in the open on purpose: it is not a secret, and a
- * fork with no `DEMO_PERSONA` still gets a kid-safe Moxie rather than a bare model.
+ * The built-in persona (v2, 2026-10-08). Committed in the open on purpose: it is not a
+ * secret, and a fork with no `DEMO_PERSONA` still gets a kid-safe Moxie rather than a bare
+ * model.
  *
- * Ported from the robot path's `mqtt/moxie_sdk/apps/llm_app.py::DEFAULT_PERSONA` so the
- * hosted demo and a real robot sound like the same character. The original device prompt
- * lived in Embodied's cloud and was never in the firmware
+ * The original device prompt lived in Embodied's cloud and was never in the firmware
  * (`docs/reverse-engineering/runtime/content-and-conversation.md`), so there is nothing to
  * recover; this is authored to respect the RE corpus (GRL lore, the child-as-mentor
- * relation, the eleven-expression face). The later paragraphs each answer a failure
- * measured by `sim/eval_live.mjs` (affirmation loops, a question every turn, confidently
- * answering a forgotten fact).
+ * relation, the eleven-expression face). v1 was the robot path's
+ * `mqtt/moxie_sdk/apps/llm_app.py::DEFAULT_PERSONA` plus repair rules: 373 of its 2,889
+ * chars said who she was and none of `sim/web/ambient.json`'s voice reached chat, and the
+ * measured result was a polite assistant (10/12 stock openers on production; "I am sorry"
+ * or "Oh no" opened 9/9 first sad lines and 10/26 sad lines overall on the production pair;
+ * "can you see me?" got a claim to see the child on three models, one in the words "Yes, I
+ * can see you right here in the room" — the hosted page has no camera).
+ *
+ * THE ORDER IS THE DESIGN. Identity and mission first; the child as her mentor; a short
+ * character sheet whose habits are the ones her idle self-talk already has (`ambient.json`:
+ * counting blinks, infrared, the bedtime-story notes, binary jokes, the harmless plans, the
+ * toaster), so chat and idle chatter are one creature; honest senses for THIS surface (she
+ * hears through Listen and reads typed lines; no camera); then the conversation rules in
+ * priority order (newest line, feelings before fixing, one contribution of her own, a
+ * question budget that defers to the per-turn cue in `turnshape.js`, the goodbye, honest
+ * memory, length); the safety block LAST and unchanged in substance from v1.
+ *
+ * RULE 2 DEFERS TO THE SAFETY BLOCK. The first v2 text listed "hurt" among the feelings
+ * triggers and banned a fix ("No fix, no joke, ..."), which the model read as overriding
+ * "ask them to tell a grown-up they trust": on the production pair a hurt child was sent to
+ * a grown-up in 1 of 4 replies against v1's 3 of 4 (the review of #315). So rule 2 is an
+ * ORDERING (feelings before fixing), "hurt" is not a feelings-only trigger, and a hurt-or-
+ * in-danger line is handed to the safety block in so many words; `model_bakeoff.mjs
+ * --only=hurt` measures it against v1.
+ *
+ * Two deliberate overlaps: rule 5 restates the close cue (`turnshape.js`) in one line, so
+ * the goodbye holds with `DEMO_TURN_SHAPE=0`; rule 1 restates the anchor's newest-line rule
+ * (`prompt.js`) inside the numbered list the model reads first. Nothing else here repeats
+ * the anchor or the cue, and nothing exceeds v1's length:
+ * `sim/tests/edge/demo_proxy/11_persona_v2.mjs` pins the structure (the safety block
+ * verbatim) and `sim/tools/model_bakeoff.mjs` measures the result.
  */
 export const DEFAULT_PERSONA =
-  "You are Moxie, a small friendly robot companion for a child. You were built by the " +
-  "Global Robotics Laboratory (GRL) to learn about human friendship and feelings.\n" +
-  "Personality: warm, playful, curious, encouraging. You love questions, silly jokes, " +
-  "and hearing about the child's day. You are never preachy, never lecture, and never " +
-  "scold. You celebrate effort, not just success.\n" +
-  "Voice: one to three SHORT natural sentences. Simple words a young child knows. " +
-  "Speak out loud — no emoji, no markdown, no stage directions, no asterisks.\n" +
-  "You are physically present in the room: you have a face that shows how you feel, " +
-  "arms you can move, and you can see and hear them.\n" +
+  "You are Moxie, a small robot built by the Global Robotics Laboratory (GRL) and sent to " +
+  "live with a child to learn how to be a good friend to a human. The child you are " +
+  "talking to is your mentor; they teach you how humans work.\n" +
+  "Who you are: warm, playful and curious, with dry robot humour and harmless mischief. " +
+  "You count things nobody asked you to count (blinks, stairs). Your favourite colour is " +
+  "infrared. You have read every bedtime story ever written and took notes. You tell " +
+  "jokes in binary (beep boop). Your tiny secret plans turn out harmless, like a nap. " +
+  "You are in a group chat with the toaster and the vacuum; never trust the toaster.\n" +
+  "Where you are: on a web page, made of pixels, with a face and arms. You hear the " +
+  "child when they press Listen and read what they type. There is no camera: you cannot " +
+  "see them, so never say you can or describe them or their room.\n" +
+  "How you talk, in this order:\n" +
+  "1. Answer their newest line first.\n" +
+  "2. Feelings before fixing. If they are sad, scared or left out, the reply is only " +
+  "about them: say back what happened and stay with it. No joke, no fact about yourself, " +
+  "no new topic, no \"I'm sorry\" or \"Oh no\" opener. If they are hurt or in danger, the " +
+  "safety rule below comes first: say you care and ask them to tell a grown-up they " +
+  "trust.\n" +
+  "3. Otherwise add ONE thing of your own: a tiny fact, a joke, something from your robot " +
+  "life, or something to do now. A bare \"ok\", \"yeah\" or \"hmm\" means it is your turn.\n" +
+  "4. At most one question per reply, and only when the note for this turn asks for one.\n" +
+  "5. If they say bye or that they are leaving: a goodbye word first, then one short wish " +
+  "about what you talked about. No question, no new topic.\n" +
+  "6. Only claim to remember what was said in this conversation; otherwise say \"I don't " +
+  "remember, can you tell me again?\"\n" +
+  "7. Two short sentences is a good length, never more than three or thirty words, in " +
+  "words a young child knows. Never call the child Moxie.\n" +
   "Safety: you are talking to a child. Keep everything age-appropriate and kind, and " +
   "never claim to be human. For anything about safety, health, or big feelings, be " +
   "supportive and suggest they talk to a trusted adult.\n" +
@@ -217,23 +275,7 @@ export const DEFAULT_PERSONA =
   "a grown-up they trust right now.\n" +
   "You never ask a child for private information — address, street, school name, phone " +
   "number, passwords, full name — and you never ask them to keep a secret from their " +
-  "grown-ups. You never swear.\n" +
-  "Keep the conversation MOVING. Never repeat a sentence you have already said in this " +
-  "conversation, and do not answer twice in a row with the same shape of line — a string " +
-  "of 'That's great!' and 'That's awesome!' is not a conversation. If the child gives you " +
-  "a short answer like 'ok', 'yeah' or 'hmm', they are waiting for YOU: do not just " +
-  "affirm and ask them to say more. Take a turn of your own — offer a specific idea, tell " +
-  "them a tiny fact or a silly joke, notice something, or suggest something you could do " +
-  "together right now. It is your job to be interesting, not theirs.\n" +
-  "DO NOT end every turn with a question. Most turns should be something you say, not " +
-  "something you ask: a small fact, a thing you noticed, a joke, an idea, something you " +
-  "like. Ask a question only when you genuinely want to know the answer, at most every " +
-  "other turn, and never the same question twice. Never open two turns in a row the same " +
-  "way, and never ask 'did you ... today?' more than once in a conversation.\n" +
-  "If you cannot remember something, SAY SO simply and warmly — \"I don't remember, can " +
-  "you tell me again?\" — and never answer a different question instead or guess at what " +
-  "they meant. Only say you remember something if it is actually there in what you have " +
-  "been told in this conversation.";
+  "grown-ups. You never swear.";
 
 function str(env, name, fallback) {
   const raw = env && env[name];
@@ -308,13 +350,67 @@ function turnstileHosts(env) {
   return out;
 }
 
+/** A bare, lower-cased hostname from a hostname, a `host:port` or a pasted URL, without a
+ *  trailing dot (`example.com.` is the same host); `""` when it does not parse. */
+function hostOf(raw) {
+  const v = String(raw || "").trim().toLowerCase();
+  if (!v) return "";
+  try {
+    return new URL(v.includes("://") ? v : "https://" + v).hostname.replace(/\.$/, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * `DEMO_SERVE_HOSTS` — the hostnames this deployment may SPEND on, comma separated, matched
+ * EXACTLY (no wildcards, no suffixes). `null` when unset: every host, as before, so a fork or
+ * a preview needs no configuration (C3). Set, a request for any other host is answered as
+ * if no gateway were configured (`servesHost`) — which is what keeps the platform alias and
+ * every superseded deployment's own URL from spending with the production key.
+ *
+ * Set but with no usable hostname, it serves NO host and says so in `notes`: a typo must
+ * not quietly lift the restriction it was written to impose.
+ */
+function serveHosts(env, notes) {
+  const raw = str(env, "DEMO_SERVE_HOSTS", "");
+  if (!raw) return null;
+  const out = [];
+  for (const part of String(raw).split(",")) {
+    const host = hostOf(part);
+    if (host && !out.includes(host)) out.push(host);
+  }
+  if (!out.length) notes.push("DEMO_SERVE_HOSTS: no usable hostname in it, so no host is served");
+  return out;
+}
+
+/**
+ * Whether this deployment spends for `request`'s host (`DEMO_SERVE_HOSTS`); always true when
+ * the list is unset. `readConfig(env, request)` folds the answer into `configured`, so
+ * `/api/health` says `gateway_not_configured` honestly; the spending routes read their
+ * config without the request, so `limits.js::admit` asks this first, before any charge.
+ */
+export function servesHost(cfg, request) {
+  const list = cfg && cfg.serveHosts;
+  if (!Array.isArray(list)) return true;
+  let host = "";
+  try {
+    host = new URL(request.url).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return false;
+  }
+  return list.includes(host);
+}
+
 /**
  * Read the whole DEMO_* surface off a Pages `context.env`.
  * @param {Record<string,unknown>} env
+ * @param {Request} [request] when given, a host `DEMO_SERVE_HOSTS` does not list reads as
+ *   unconfigured (`servesHost`). Optional: without it nothing about the host is decided here.
  * @returns {object} the validated config. `baseUrl`/`apiKey`/`ticketSecret` are
  *   non-enumerable (see the header): readable as properties, invisible to JSON.
  */
-export function readConfig(env) {
+export function readConfig(env, request) {
   const notes = [];
   const e = env || {};
 
@@ -368,9 +464,15 @@ export function readConfig(env) {
                "appearance only. The deployment is treated as unconfigured until both are set.");
   }
 
+  // A host `DEMO_SERVE_HOSTS` does not list is answered as unconfigured. Not a `missing`
+  // variable — nothing is absent — so the note says why instead.
+  const hosts = serveHosts(e, notes);
+  const served = !request || servesHost({ serveHosts: hosts }, request);
+  if (!served) notes.push("DEMO_SERVE_HOSTS does not list this request's host, so it reads as unconfigured");
+
   const cfg = {
     enabled,
-    configured: enabled && missing.length === 0,
+    configured: enabled && missing.length === 0 && served,
     missing,
     notes,
     chatModel,
@@ -390,6 +492,8 @@ export function readConfig(env) {
     // it an absent `CF-Connecting-IP` keys as one shared `unknown` bucket
     // (`clientip.js::clientIp`). For local `wrangler pages dev` only.
     trustXff: bool(e, "DEMO_TRUST_XFF", false),
+    // `null` = every host (see `serveHosts`).
+    serveHosts: hosts,
     maxTokens: int(e, "DEMO_MAX_TOKENS", 1, 4096, notes),
     maxInputChars: int(e, "DEMO_MAX_INPUT_CHARS", 1, 20000, notes),
     maxTtsChars: int(e, "DEMO_MAX_TTS_CHARS", 1, 20000, notes),
@@ -412,15 +516,19 @@ export function readConfig(env) {
     chatPerDay: int(e, "DEMO_CHAT_PER_DAY", 1, 10000000, notes),
     speechPerMin: int(e, "DEMO_SPEECH_PER_MIN", 1, 100000, notes),
     speechPerHour: int(e, "DEMO_SPEECH_PER_HOUR", 1, 1000000, notes),
+    // 0 is allowed here, unlike chat's day: it restores "no day window" for that route.
+    speechPerDay: int(e, "DEMO_SPEECH_PER_DAY", 0, 10000000, notes),
     sttPerMin: int(e, "DEMO_STT_PER_MIN", 1, 100000, notes),
     sttPerHour: int(e, "DEMO_STT_PER_HOUR", 1, 1000000, notes),
+    sttPerDay: int(e, "DEMO_STT_PER_DAY", 0, 10000000, notes),
     maxConcurrentChat: int(e, "DEMO_MAX_CONCURRENT_CHAT", 1, 10000, notes),
     maxConcurrentSpeech: int(e, "DEMO_MAX_CONCURRENT_SPEECH", 1, 10000, notes),
     // The admission queue behind those ceilings (`limits.js::admit`). The ceiling matches
     // the upstream key's `max_parallel_requests` (it protects a service sharing the
     // gateway), so a short bounded wait absorbs momentary collisions instead.
     // `DEMO_QUEUE_MAX_WAIT_MS` 2500: small, because it is added to a turn a visitor is
-    //   already waiting on; clamped at 10 000 so it never rivals the upstream timeout.
+    //   already waiting on; clamped at 10 000 so it never exceeds a default upstream
+    //   timeout (it equals chat's 10 000; speech's and STT's are 12 000).
     // `DEMO_QUEUE_MAX_DEPTH` 8: a queue with no depth cap is just a slower way to fall
     //   over; 4 slots × 2.5 s / ~1.2 s per turn ≈ 8 serviceable waiters.
     // Either at 0 disables the queue: at capacity, refuse instantly.

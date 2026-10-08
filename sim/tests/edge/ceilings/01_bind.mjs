@@ -135,6 +135,36 @@ section("C");
   const off2 = await admitWith(offOf(CEIL), shared, IP, T0);
   eq(off2.ok, true, "CONTROL: with the tier off, that same turn is admitted");
   off2.release();
+
+  // The voice's and the ears' DAY bind across isolates the same way (DEMO_SPEECH_PER_DAY /
+  // DEMO_STT_PER_DAY): an address hopping isolates cannot spend either around the clock.
+  for (const [route, knobs] of [
+    ["speech", { DEMO_SPEECH_PER_MIN: "60", DEMO_SPEECH_PER_HOUR: "1000", DEMO_SPEECH_PER_DAY: "3" }],
+    ["transcribe", { DEMO_STT_MODEL: "test-ears-model", DEMO_STT_PER_MIN: "60", DEMO_STT_PER_HOUR: "1000", DEMO_STT_PER_DAY: "3" }],
+  ]) {
+    const RON = cfgOf(knobs);
+    const RIP = route === "speech" ? "198.51.100.9" : "198.51.100.10";
+    const store = fakeCache();
+    fresh();
+    for (let i = 1; i <= 2; i++) (await admitWith(RON, store, RIP, T0, route)).release();
+    fresh();
+    const r1 = await admitWith(RON, store, RIP, T0, route);
+    eq(r1.ok, true, `/${route}: isolate B's first call is admitted — the colo has seen 2 of 3 today`);
+    r1.release();
+    const r2 = await admitWith(RON, store, RIP, T0, route);
+    eq(`${r2.ok} ${r2.reason}`, "false rate_limited",
+       `/${route}: isolate B's SECOND is REFUSED on a DAY count its own map never saw`);
+    ok(r2.retryAfterS > 3600 && r2.retryAfterS <= 86400, `/${route}: …until the DAY's end, got ${r2.retryAfterS}`);
+    fresh();
+    const r3 = await admitWith(RON, store, RIP, T1, route);
+    eq(r3.ok, true, `/${route}: …and tomorrow it is admitted again`);
+    r3.release();
+    fresh();
+    (await admitWith(offOf(knobs), store, RIP, T0, route)).release();
+    const off3 = await admitWith(offOf(knobs), store, RIP, T0, route);
+    eq(off3.ok, true, `/${route}: CONTROL: with the tier off, that same call is admitted`);
+    off3.release();
+  }
 }
 
 /* D. THE UNIT BUDGET'S DAY, by charge-on-completion: the colo never hears of a charge that

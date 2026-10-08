@@ -79,6 +79,19 @@ function connectionStrip(c){
     +`${c.last_error?` <span>${escapeHtml(c.last_error)}</span>`:''}</div>`
     +(rows?`<div class="evlog conn">${rows}</div>`:'')+note;
 }
+// Under NO_DATA nothing new is saved. A parent's NO_DATA erased the stored history, so the
+// list holds only what arrived since the start. A robot whose saved settings could not be
+// read runs under NO_DATA too but keeps that history (fleet.py `failed_closed`), and the
+// lifetime total says so: then "a restart clears it" would be false.
+function noDataNote(t){
+  const policy=escapeHtml(t.policy||'NO_DATA');
+  return ((t.totals||{}).total>0)
+    ? `Data sharing is ${policy}, so nothing new is being saved. The history stored `
+      +'before is kept until it is erased; anything new shows here only until the '
+      +'supervisor restarts.'
+    : `Data sharing is ${policy}, so nothing is being saved — this card can only `
+      +'show what has arrived since the supervisor started, and a restart clears it.';
+}
 async function refreshInsights(deviceId){
   const box=$('#robot-insights'); if(!box) return;
   // Fetched first and rendered in every branch — see the note above `connectionStrip`.
@@ -110,9 +123,7 @@ async function refreshInsights(deviceId){
   const hd=`<div class="insights-hd">📈 Insights · ${t.count} event${t.count===1?'':'s'} kept`
     +`${tot.total>t.count?` · ${tot.total} all time`:''}${forget}</div>`;
   if(t.persisted===false){
-    render(hd+'<div class="live-off">Data sharing is '
-      +`${escapeHtml(t.policy||'NO_DATA')}, so nothing is being saved — this card can only `
-      +'show what has arrived since the supervisor started, and a restart clears it.</div>'
+    render(hd+'<div class="live-off">'+noDataNote(t)+'</div>'
       +(t.count?`<div class="evlog">${(t.events||[]).map(e=>{
           const when=e.recorded_at?new Date(e.recorded_at*1000).toLocaleString():'—';
           return `<div class="ev"><span>${escapeHtml(when)}</span> <b>${escapeHtml(e.event_name)}</b></div>`;

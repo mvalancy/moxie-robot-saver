@@ -1,6 +1,7 @@
-"""Shared pytest fixtures: the dotenv/credential fence, an isolated data dir, and the
+"""Shared pytest fixtures: the dotenv/credential fence, an isolated data dir per test, and the
 Playwright harness for the static site (`sim/serve.py` on a free port + a real Chromium,
 reusing puppeteer's cached Chrome; the browser tests skip when none is available)."""
+import itertools
 import os
 import socket
 import subprocess
@@ -74,6 +75,30 @@ def isolated_data_dir(tmp_path_factory):
         os.environ.pop("MOXIE_DATA_DIR", None)
     else:
         os.environ["MOXIE_DATA_DIR"] = prev
+
+
+_TEST_DATA_DIRS = itertools.count()
+
+
+@pytest.fixture(scope="session")
+def _test_data_dirs(tmp_path_factory):
+    return tmp_path_factory.mktemp("moxie-data-per-test")
+
+
+@pytest.fixture(autouse=True)
+def per_test_data_dir(isolated_data_dir, _test_data_dirs):
+    """...and each TEST its own `MOXIE_DATA_DIR`. A runtime on the default store reads
+    every robot's saved settings (`robots/<id>/config.json`) when it is built, so one
+    test's `NO_DATA` on `d_test` must not reach the next test's `d_test`. A session- or
+    module-scoped fixture is built before this runs, so it keeps the session dir. One
+    parent dir and a counter: `tmp_path_factory.mktemp` would rescan the basetemp per test."""
+    path = os.path.join(str(_test_data_dirs), str(next(_TEST_DATA_DIRS)))
+    os.makedirs(path)
+    os.environ["MOXIE_DATA_DIR"] = path
+    try:
+        yield path
+    finally:
+        os.environ["MOXIE_DATA_DIR"] = isolated_data_dir
 
 
 #: `helpers_runtime.LIVE_KEYS`, imported lazily: that module imports `config`, which
