@@ -19,9 +19,20 @@ interface your phone uses (LAN or VPN).
 
 ## 3. Set up the child + Wi-Fi
 1. Enter any email → **Start** (local account name only — no real login, no email sent).
-2. In the **📶 Wi-Fi** tab, enter your child's first name.
+2. In the **📶 Wi-Fi** tab, enter your child's first name. **The name you type is the name Moxie
+   says**: in its hello, its opener and every answer, once the robot is on your account (step
+   *What happens next*). Typing it again later renames your child; it does not add a second one.
+   Up to 40 letters, digits, spaces, periods, apostrophes or hyphens. Until your account has a
+   name for your child, Moxie says its default name (`friend`, or `MOXIE_CHILD_NICKNAME`).
 3. Enter your **Wi-Fi SSID and password**. Leave the band on **2.4 GHz** — Moxie prefers it.
 4. Tap **Make the Wi-Fi code**.
+
+**Where the name goes.** It is kept in this server's database and in the robot's settings on this
+server, and it is sent to the robot. It is also in every prompt Moxie's brain gets, and in every line
+Moxie says that names your child, so it goes to whatever brain and voice endpoints you configured,
+which may be cloud services. Unpair and factory reset take it off the robot's settings; your child's
+profile stays on your account until you delete it. The full list:
+[config contract, the child's name](../architecture/config-and-telemetry-contract.md#the-childs-name-the-parents-record-per-robot).
 
 The code carries only your network name and password: it is the **Wi-Fi-only** code, the right
 first code for a robot coming to this server. Leave **Put a pairing key in the code** (under *For the
@@ -46,7 +57,7 @@ code** before you make it (a Wi-Fi-only code pairs nothing to simulate).
 A firmware-801/803 Moxie then waits for a **second QR**, the endpoint code that points it at your
 broker. Show it the code from the console's **🔗 Server** tab. Once the robot reaches your broker,
 open **🤖 Moxie** and press **Add to my account**: the robot card (settings, insights, memory, Wake,
-Unpair) appears. The [bench runbook](bench-runbook.md) covers every step and what each Connection
+Unpair) appears, and the live box says **Moxie calls your child: …**, the name the robot has now. The [bench runbook](bench-runbook.md) covers every step and what each Connection
 monitor line means; see also [Revive your Moxie, Path B](revive-your-moxie.md#path-b-re-home-an-801-or-803-robot-with-a-qr).
 This part (the server code, then Add to my account) is built to the documented flow and not yet
 done with a physical Moxie ([bench runbook](bench-runbook.md), Status).

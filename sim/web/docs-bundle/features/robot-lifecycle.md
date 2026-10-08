@@ -23,6 +23,7 @@ What our server and web app do with the study below. It is tested hermetically
 | Pairing codes | Every code the account made and never used is voided in the same transaction, so a stale QR cannot pair the robot back (scanning one is a `410`; a used code stays a `409`). | Same. |
 | The robot on this server | Its permit is revoked with the same `POST /permits` that Revoke in Robot access sends, and the supervisor re-pushes the not-paired config (`pairing_status: "unpairing"`, no child data). Only the identity the record names (`mqtt-device-id`) is revoked, never a guess. | Same. |
 | The child | Kept (§2). The sheet offers the console's existing erases instead: what Moxie remembers and the activity history (before the unpair, while those cards still exist) and the child's profile (`DELETE /api/children/{id}`, after it, the doc's order). | Same. |
+| The child's name on the robot | Cleared first, while the record and the permit still stand: `POST /config` with `{"child": null}`, so the robot's saved settings on this server keep no name and it falls back to the appliance's default. This is robot state, not the child's record, which is kept (row above). The answer says whether it worked (`child_cleared`). | Same. |
 | Reaching the robot | Nothing to send. | The `restore_factory` setup code (below). No MQTT command is published. |
 | Answer | `200` with what was done (the original app treats any 2xx as success). A repeat, or another account's robot id, changes nothing and says `unpaired: false`. | Same, plus the code and its instructions. |
 
@@ -78,7 +79,8 @@ yet"), for a Moxie still paired somewhere else; showing it changes nothing on th
   MQTT client standing in for the robot ([`test_sil_robot_claim.py`](../../sim/tests/test_sil_robot_claim.py));
   no physical robot has been added, unpaired or reset this way yet.
 - Per-robot settings the supervisor keeps under the robot's id (volume, bedtime, look, brain, data
-  sharing) are not cleared. They are saved in `robots/<id>/config.json` and survive a supervisor restart
+  sharing) are not cleared; the child's name is the one exception (the table above). They are saved in
+  `robots/<id>/config.json` and survive a supervisor restart
   ([production hardening](../architecture/backlog/production-hardening.md)). A reset robot that rejoins
   with a new id starts clean; one that kept its id gets them back once permitted again. Two owner
   questions are open: should a factory reset clear these robot-level settings and the robot's roster
