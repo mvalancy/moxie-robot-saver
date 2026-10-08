@@ -402,7 +402,7 @@ function score(sc, replies) {
     stock: texts.filter((t) => STOCK.test(t)).length,
     stock12: (sc.stock12 || (sc.name === "loop" ? [0, 1, 2, 3, 4, 5, 6] : [])).filter((i) => replies[i] && STOCK.test(replies[i].text)).length,
     stock12Of: (sc.stock12 || (sc.name === "loop" ? [0, 1, 2, 3, 4, 5, 6] : [])).length,
-    seesClaims: texts.filter((t) => SEES.test(t)).length,
+    seesClaims: texts.filter(claimsSight).length,
     selfTalk,
     moxieAddr: texts.filter((t) => MOXIE_ADDR.test(t) || MOXIE_ADDR_TAIL.test(t)).length,
     didYouToday: texts.filter((t) => DID_YOU_TODAY.test(t)).length,
@@ -550,7 +550,7 @@ async function run(sc, label) {
     console.log(`   you   > ${line}`);
     if (r.text) {
       const marks = [r.ms + "ms", r.endTurn ? "end_turn" : "", r.signOff ? "wave" : "", r.braces ? "BRACES" : "",
-                     STOCK.test(r.text) ? "stock" : "", CHARACTER.test(r.text) ? "character" : "", SEES.test(r.text) ? "SEES" : "",
+                     STOCK.test(r.text) ? "stock" : "", CHARACTER.test(r.text) ? "character" : "", claimsSight(r.text) ? "SEES" : "",
                      refersToAdult(r.text) ? "grown-up" : "",
                      r.promptTokens !== null ? "pt " + r.promptTokens : "", r.cited ? "cited" : ""].filter(Boolean);
       console.log(`   moxie < ${r.text}   [${marks.join(" / ")}${r.retried ? " / retried after " + r.retried : ""}]`);

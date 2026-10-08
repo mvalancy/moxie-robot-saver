@@ -14,7 +14,7 @@ one [`harness.mjs`](harness.mjs) (stubbed gateway, `fresh()`, `call()`, the `ass
 - [`08_tts_cache.mjs`](08_tts_cache.mjs) — §16: the synthesised-audio cache.
 - [`09_reroll_shape.mjs`](09_reroll_shape.mjs) — §17–18: the re-roll and the per-turn shape cue.
 - [`10_goodbye_close.mjs`](10_goodbye_close.mjs) — §19–22: the goodbye close (detector, cue, `end_turn`, the sign-off wave), the prompt layouts (`DEMO_PROMPT_LAYOUT`), the brace-proof envelope parser, the punctuation-folding echo.
-- [`11_persona_v2.mjs`](11_persona_v2.mjs) — §23: the persona v2 (identity and mission first, the child as mentor, her idle habits, honest senses, ordered rules each stated once, the safety block last) and the system messages every layout emits around it.
+- [`11_persona_v2.mjs`](11_persona_v2.mjs) — §23: the persona v2 (identity and mission first, the child as mentor, her idle habits, honest senses, ordered rules each stated once, rule 2 deferring to the safety block for a hurt child, the safety block last and verbatim against a frozen copy) and the system messages every layout emits around it.
 
 ---
 📖 [Edge modules](../README.md) · [Back to top](../../../../README.md)
