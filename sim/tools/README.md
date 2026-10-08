@@ -7,7 +7,7 @@ Hand-run and CI-run tools for the static site, the SIL stack and the test suites
 - [`build_docs_bundle.py`](build_docs_bundle.py) — copies `docs/` (+ top-level `README`/`ROADMAP`) into `sim/web/docs-bundle/` and writes `docs-index.json` / `docs-search.json` for the docs explorer.
 - [`check_bundle_fresh.py`](check_bundle_fresh.py) — exit 1 if the committed docs bundle differs from a fresh rebuild.
 - [`build_csp_hashes.py`](build_csp_hashes.py) — regenerates the `script-src` SHA-256 hashes in `sim/web/_headers` from the pages' inline `<script>` blocks; `--check` verifies. Refuses inline `on*=` handlers and `javascript:` URLs.
-- [`prerender_audio.py`](prerender_audio.py) — renders scripted lines with Piper to `sim/web/audio/{moxie,child,ambient}/<hash>.mp3` + `index.json` for the static demo.
+- [`prerender_audio.py`](prerender_audio.py) — renders scripted lines to `sim/web/audio/{moxie,child,ambient}/<hash>.mp3` + `index.json` for the static demo, with local Piper (`--engine piper`, the default) or any OpenAI-compatible `/audio/speech` (`--engine gateway`: base URL, key and model from flags, the environment or `--env-file mqtt/.env`; no host is hard-coded). The shipped Moxie clips are all `tts-piper-kristin` through the gateway; `--rerender moxie --rerender ambient` re-renders every one, skipping clips already in that voice, so a stopped run resumes. `--max-calls N` caps gateway spend, retries included. Tested by [`../tests/test_prerender_gateway.py`](../tests/test_prerender_gateway.py) against a loopback stub; see [`../web/audio/README.md`](../web/audio/README.md).
 - [`build_ext_conformance.py`](build_ext_conformance.py) — regenerates `sim/tests/data/ext_conformance.json`, the six hand-ported OpenMoxie hooks.
 - [`build_performance_goldens.py`](build_performance_goldens.py) — regenerates `sim/tests/goldens/performance.json`, the behavior planner's 22 dialog-act goldens.
 
@@ -65,6 +65,7 @@ python3 sim/tools/unit_budget_mutation_check.py
 - `page_teeth_check.py --selftest` takes about a minute; the full sweep (`--baseline-dir DIR`) takes hours and mutates `sim/web` transiently. `--check-tree --restore` undoes a breakage an interrupted run left behind.
 - The docs bundle is generated and committed; it is laid out one doc per line with no global hash so branches merge cleanly. `check_bundle_fresh.py` is the only authority on freshness.
 - `prerender_audio.py` keys `index.json` by the exact utterance string; punctuation must match `stub.js` / `ambient.json` / `filler.py` (guarded by `sim/test_fallback_coverage.mjs`).
+- `prerender_audio.py` records each clip's voice in an ID3 `TXXX:moxie_voice` frame, and `test_prerender_gateway.py` fails if any Moxie clip is not in the shipped voice. A new line rendered with the default `--engine piper` therefore fails it: render it with the command in [`../web/audio/README.md`](../web/audio/README.md). The gateway engine never renders child lines (another speaker), never prints the key, and never follows a redirect with it.
 
 ---
 📖 [sim](../README.md) · [Back to top](../../README.md)
