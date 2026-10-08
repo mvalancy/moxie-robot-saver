@@ -10,13 +10,16 @@
  * MQTT BROKER ALWAYS WINS: a self-hoster's supervisor gets the turn.
  *
  * ONE VOICE (§3.4): with no MQTT client, `bridge/index.js::speakLocally` speaks a line at
- * once unless its EVENT expects a server voice. So a turn holding a speech ticket:
- *   1. POST /api/chat  -> the chat message plus a speech ticket;
- *   2. tell the bridge to expect that event's voice, and POST /api/speech immediately;
- *   3. route the chat message when EITHER the speech reply lands (TTS routed FIRST) or
+ * once unless its EVENT expects a server voice. So a turn holding speech tickets:
+ *   1. POST /api/chat  -> the chat message plus the speech tickets, one per sentence;
+ *   2. tell the bridge to expect that event's voice, and POST /api/speech for chunk 0 (and
+ *      the next, `SPEECH_PARALLEL` at a time) immediately;
+ *   3. route the chat message when EITHER chunk 0 lands (TTS routed FIRST) or
  *      `SPEECH_WAIT_MS` elapses — still expecting the voice, which plays when it lands;
- *   4. if the voice fails (refused, unreachable, or no answer by `SPEECH_FETCH_MS`), release
- *      the expectation: the words speak locally, ONCE, and a voice turning up later is dropped.
+ *   4. if chunk 0 fails (refused, unreachable, or no answer by `SPEECH_FETCH_MS`), release
+ *      the expectation: the words speak locally, ONCE, and a voice turning up later is dropped;
+ *   5. the later chunks are routed in order behind chunk 0 as they land; the first that
+ *      fails ends the voice, and nothing local ever stands in for a later chunk.
  * A voice failure is not a brain failure: speech-route reasons are recorded in the stats and
  * never reported to the mode machine.
  *
@@ -58,6 +61,10 @@
     lateSpeechPlayed: 0,     // …and that voice landed later and played
     voiceFallbacks: 0,       // the voice failed: the words were spoken locally, once
     lateSpeechDropped: 0,    // a voice that landed after its words were already spoken locally
+    tickets: 0,              // speech tickets received for live replies (one per sentence)
+    chunksRouted: 0,         // later chunks (1+) routed behind their predecessor
+    chunkFailures: 0,        // a later chunk refused, unreachable or past the deadline: the voice ended there
+    chunksDropped: 0,        // later-chunk audio that landed but was not played (after a failure, or too late)
     blocked: 0,
     botTokens: 0,            // sends that carried a fresh Turnstile token
     botUnavailable: 0,       // sends REFUSED locally because no token could be minted
@@ -185,47 +192,129 @@
     try { if (eid && inner.releaseCloudVoice) inner.releaseCloudVoice(eid); } catch (e) {}
   }
 
-  /* A turn holding a speech ticket never starts a local voice while its own is on the way:
+  /** How many /api/speech redemptions of one reply are in flight at once: chunk 0 and the
+   *  next. The rest follow as each lands, so a long answer never puts three syntheses in
+   *  front of a visitor's first words. */
+  var SPEECH_PARALLEL = 2;
+  /** More tickets than any reply is worth. A server that minted them is misconfigured, and
+   *  nothing past this many is redeemed: each costs the visitor's speech window. */
+  var MAX_TICKETS = 8;
+
+  /** The tickets of a reply in chunk order, chunk 0 first — or none, which is "no voice":
+   *  the words then speak locally, as on a deployment without a TTS model. */
+  function ticketsOf(speech) {
+    var list = Array.isArray(speech) ? speech : [], got = [];
+    for (var i = 0; i < list.length; i++) {
+      var s = list[i];
+      if (s && typeof s.ticket === "string" && s.ticket) got.push({ ticket: s.ticket, n: Number(s.chunk_num) || 0 });
+    }
+    got.sort(function (a, b) { return a.n - b.n; });
+    if (!got.length || got[0].n !== 0) return [];
+    var out = [];
+    for (var j = 0; j < got.length && j < MAX_TICKETS; j++) out.push(got[j].ticket);
+    return out;
+  }
+
+  /* A turn holding speech tickets never starts a local voice while its own is on the way:
    * a stand-in that the late voice then cut and restarted was the double voice measured on
-   * prod (the browser voice at +6,008 ms, hers at +6,166 ms). */
-  function voiceFirst(chatMessages, ticket, eid) {
-    var tts = null;          // her voice, once /api/speech delivers it
-    var settled = false;     // /api/speech has answered, with or without a voice
+   * prod (the browser voice at +6,008 ms, hers at +6,166 ms).
+   *
+   * THE CHUNKS. Chunk 0 decides the turn exactly as one ticket did: voice first, or the
+   * words at SPEECH_WAIT_MS still expecting it, or a local voice once if it fails. The later
+   * chunks are redeemed SPEECH_PARALLEL at a time and ROUTED IN ORDER, chunk k only behind
+   * chunk k-1, because voice/ writes a missing chunk off after TTS_GAP_MS and then drops it
+   * when it does arrive: routed as they landed, a slow sentence 2 would be lost behind a
+   * fast sentence 3. The first chunk that fails ends the voice — nothing later is redeemed
+   * or routed — and no local voice stands in for a later chunk: the words are on screen,
+   * and her first sentence was heard in her voice (or spoken locally, if chunk 0 failed). */
+  function voiceFirst(chatMessages, tickets, eid) {
+    var n = tickets.length;
+    var landed = [];         // chunk -> its TTS messages, once /api/speech delivered them
+    var settled = [];        // chunk -> true once its request answered, failed or timed out
+    var started = 0, inflight = 0;
+    var next = 1;            // the later chunk whose turn it is to be routed
+    var voiced = false;      // chunk 0 has been routed: the later chunks may follow it
+    var over = false;        // the voice is finished with: a chunk failed, or chunk 0 was given up
+    var failedAt = -1;       // the first later chunk known to have failed, noticed in order by pump()
     expectVoice(eid);
-    var speech = post("/api/speech", { ticket: ticket }, SPEECH_FETCH_MS).then(function (res) {
-      settled = true;
-      var body = res.body;
-      // Recorded, NEVER noted: a voice failure is not a brain failure (one speech 503 used to
-      // read the whole page as degraded for ~30 s), so mode.js hears only /api/chat.
-      if (body && body.reason) stats.speechReasons.push(body.reason);
-      if (res.ok && body.messages && body.messages.length) {
-        stats.speechOk++;
-        tts = body.messages;
-      } else if (body) {
-        stats.speechRefused++;
-      } else {
-        stats.speechErrors++;
+
+    /** The voice ends here: nothing later is redeemed, and audio already in hand is not played. */
+    function giveUp() {
+      if (over) return;
+      over = true;
+      for (var j = next; j < n; j++) if (landed[j]) { stats.chunksDropped++; landed[j] = null; }
+    }
+
+    /** Redeem chunk `i`; resolves when it answered, failed, or passed the client's own
+     *  deadline (where `AbortSignal.timeout` is missing the request has none). */
+    function redeem(i) {
+      started++; inflight++;
+      var late = false;
+      var req = post("/api/speech", { ticket: tickets[i] }, SPEECH_FETCH_MS).then(function (res) {
+        var body = res.body;
+        // Recorded, NEVER noted: a voice failure is not a brain failure (one speech 503 used to
+        // read the whole page as degraded for ~30 s), so mode.js hears only /api/chat.
+        if (body && body.reason) stats.speechReasons.push(body.reason);
+        if (res.ok && body.messages && body.messages.length) {
+          stats.speechOk++;
+          // Past its deadline, or the voice is over: the audio is not played. For chunk 0
+          // that is a voice turning up after the line was said (the line is never said twice).
+          if (late || over) { if (i === 0) stats.lateSpeechDropped++; else stats.chunksDropped++; return; }
+          landed[i] = body.messages;
+        } else if (body) {
+          stats.speechRefused++;
+        } else {
+          stats.speechErrors++;
+        }
+      });
+      var deadline = new Promise(function (resolve) { setTimeout(resolve, SPEECH_FETCH_MS); });
+      return Promise.race([req, deadline]).then(function () {
+        late = true; settled[i] = true; inflight--;
+        if (i > 0 && !landed[i] && failedAt < 0) failedAt = i;
+        if (i === 0 && !landed[0]) giveUp();   // no first sentence, so nothing can follow it
+        pump();
+      });
+    }
+
+    /** Start redemptions up to the parallel cap, in chunk order — never past a failure. */
+    function fill() {
+      while (!over && failedAt < 0 && started < n && inflight < SPEECH_PARALLEL) redeem(started);
+    }
+
+    /** Route the later chunks in order as far as they have landed; the first failure ends
+     *  the voice. Then top up the redemptions. */
+    function pump() {
+      while (voiced && !over && next < n && settled[next]) {
+        if (!landed[next]) { stats.chunkFailures++; giveUp(); break; }
+        routeAll(landed[next], "tts");
+        stats.chunksRouted++;
+        next++;
       }
-    });
-    var wait = new Promise(function (resolve) { setTimeout(resolve, SPEECH_WAIT_MS); });
-    // The client's own deadline: where `AbortSignal.timeout` is missing the request has none.
-    var deadline = new Promise(function (resolve) { setTimeout(resolve, SPEECH_FETCH_MS); });
+      fill();
+    }
 
     /** The voice is not coming: its words speak locally, once. */
     function fallBack() {
       stats.voiceFallbacks++;
+      giveUp();
       releaseVoice(eid);     // speaks the held words, if they are already out
     }
 
-    return Promise.race([speech, wait]).then(function () {
-      if (tts) {
-        // Voice first: bubble and audio land together.
-        routeAll(tts, "tts");
+    var speech0 = redeem(0);
+    fill();
+    var wait = new Promise(function (resolve) { setTimeout(resolve, SPEECH_WAIT_MS); });
+
+    return Promise.race([speech0, wait]).then(function () {
+      if (landed[0]) {
+        // Voice first: bubble and audio land together, and the rest follows in order.
+        routeAll(landed[0], "tts");
         routeAll(chatMessages, "chat");
         stats.voiceFirst++;
+        voiced = true;
+        pump();
         return;
       }
-      if (settled) {
+      if (settled[0]) {
         // Refused or unreachable before the wait was up: words and local voice together.
         fallBack();
         routeAll(chatMessages, "chat");
@@ -234,18 +323,19 @@
       // No voice yet: the words go out now, silently, still expecting their own voice.
       routeAll(chatMessages, "chat");
       stats.chatFirst++;
-      return Promise.race([speech, deadline]).then(function () {
-        if (tts && eid) {
+      return speech0.then(function () {
+        if (landed[0] && eid) {
           // However late it is, nothing local has said this line: play it.
-          routeAll(tts, "tts");
+          routeAll(landed[0], "tts");
           stats.lateSpeechPlayed++;
+          voiced = true;
+          pump();
           return;
         }
-        if (tts) { stats.lateSpeechDropped++; return; }   // no event to hold: the words spoke locally
+        if (landed[0]) { stats.lateSpeechDropped++; giveUp(); return; }   // no event to hold: the words spoke locally
+        // Refused, unreachable, or past the deadline: the line is said locally, once, and a
+        // voice turning up after all is dropped (`redeem` counts it).
         fallBack();
-        // A voice turning up after all is dropped: the line has been said. Not returned, so
-        // the turn ends now even if the request never settles.
-        speech.then(function () { if (tts) stats.lateSpeechDropped++; });
       });
     });
   }
@@ -379,13 +469,14 @@
         window.moxieDiagram.render(body.diagram);
       }
       contextBlob = typeof body.context === "string" ? body.context : "";
-      var ticket = body.speech && body.speech[0] && body.speech[0].ticket;
-      if (!ticket) {
+      var tickets = ticketsOf(body.speech);
+      if (!tickets.length) {
         // No voice configured (`voice: false`): the words speak from the clips.
         routeAll(body.messages, "chat");
         return;
       }
-      return voiceFirst(body.messages, ticket, eventOf(body.messages, body.speech));
+      stats.tickets += tickets.length;
+      return voiceFirst(body.messages, tickets, eventOf(body.messages, body.speech));
     });
   }
 

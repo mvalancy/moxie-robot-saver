@@ -423,6 +423,79 @@ const NOW = 1_800_000_000; // a fixed epoch second, so every expiry assertion is
      "…with the same bytes");
 }
 
+/* =========================================================================== *
+ * 11. ONE TICKET PER SENTENCE — the splitter is pure, and the tickets it mints are a reply
+ * =========================================================================== */
+{
+  const S = hmac.splitSentences;
+  const RAINBOW = "Rainbows happen when sunlight shines through tiny drops of water in the air. " +
+    "Each drop bends the light and splits it into colors, like red, orange, yellow, green, blue and purple. " +
+    "That is why you often see a rainbow right after it rains, when the sun comes back out behind you. " +
+    "Next time it rains, look for one!";
+  deep(S("Hi there! Want to hear a joke? Here goes."), ["Hi there!", "Want to hear a joke?", "Here goes."],
+       "a sentence ends at . ! or ? followed by a space");
+  deep(S("Pi is about 3.14 and a million is 1,000,000. Cool!"), ["Pi is about 3.14 and a million is 1,000,000.", "Cool!"],
+       "A NUMBER NEVER SPLITS (3.14, 1,000,000)");
+  deep(S("I am 7. Do you like dinosaurs?"), ["I am 7.", "Do you like dinosaurs?"], "…but a sentence that ends in a number does");
+  deep(S("Dr. Smith met Mrs. Jones on Jan. 5 at 3 p.m. in St. Louis. They talked."),
+       ["Dr. Smith met Mrs. Jones on Jan. 5 at 3 p.m. in St. Louis.", "They talked."], "AN ABBREVIATION NEVER SPLITS (Dr., Mrs., Jan., p.m., St.)");
+  deep(S("She read J. K. Rowling to the U.S. kids. They loved it!"), ["She read J. K. Rowling to the U.S. kids.", "They loved it!"],
+       "initials and acronyms never split");
+  deep(S("Well... I think so. Hmm... Maybe?!"), ["Well... I think so.", "Hmm... Maybe?!"], "an ellipsis continues its sentence; ?! ends one");
+  deep(S('She said "Hello!" Then she left.'), ['She said "Hello!"', "Then she left."], "a closing quote stays with its sentence");
+  const FENCE = "Here is a map. ```mermaid\ngraph TD; A[Start.]-->B{Cold?}; B-->C[Yes. Go in!]\n``` Look at it!";
+  deep(S(FENCE), ["Here is a map.", "```mermaid graph TD; A[Start.]-->B{Cold?}; B-->C[Yes. Go in!] ``` Look at it!"],
+       "NOTHING INSIDE A MERMAID FENCE SPLITS");
+  deep(S("  Hello.  "), ["Hello."], "trimmed, and no boundary at the end");
+  deep(S(""), [], "empty in, nothing out");
+  for (const t of [RAINBOW, "No punctuation at all", FENCE, "One. Two! Three? Four."]) {
+    eq(S(t).join(" "), t.replace(/\s+/g, " ").trim(), "the sentences join back to the (whitespace-normalised) text");
+  }
+
+  const F = hmac.splitForSpeech;
+  deep(F("Hi there! Want to hear a joke?", { maxChars: 300 }), ["Hi there! Want to hear a joke?"],
+       `a tiny first sentence (9 chars < MIN_CHUNK_CHARS ${hmac.MIN_CHUNK_CHARS}) is merged: one ticket, as before`);
+  deep(F("Ooh, a bad day? Tell me what happened. I am a very good listener today."),
+       ["Ooh, a bad day? Tell me what happened.", "I am a very good listener today."], "two chunks once both are long enough");
+  deep(F("I love dinosaurs too! Which one is your favorite? Mine is the stegosaurus. Okay?"),
+       ["I love dinosaurs too! Which one is your favorite?", "Mine is the stegosaurus. Okay?"], "a tiny LAST sentence never stands alone either");
+  const r = F(RAINBOW, { maxChars: 300 });
+  deep([r.length >= 2 && r.length <= 3, r.join(" "), r.every((c) => c.length <= 300)], [true, RAINBOW, true],
+       "THE 311-CHAR REPLY: 2-3 chunks under the cap that join back to all of it");
+  const five = "Sentence number one is here. Sentence number two is here. Sentence number three is here. " +
+    "Sentence number four is here. Sentence number five is here.";
+  const f5 = F(five, { maxChars: 300 });
+  deep([f5.length, f5.join(" ")], [hmac.MAX_SPEECH_CHUNKS, five], `at most MAX_SPEECH_CHUNKS (${hmac.MAX_SPEECH_CHUNKS}) chunks, the last taking the rest`);
+  deep(f5.slice(0, 2), ["Sentence number one is here.", "Sentence number two is here."], "chunk 0 and chunk 1 are single sentences");
+  const long = Array.from({ length: 200 }, (_, i) => "word" + i).join(" ");
+  const fl = F(long, { maxChars: 300 });
+  eq(fl.length, 3, "a single over-long sentence is cut into 3 word-bounded chunks");
+  ok(fl.every((c) => c.length <= 300), `…each under the cap: ${fl.map((c) => c.length)}`);
+  ok(long.startsWith(fl.join(" ")) && long[fl.join(" ").length] === " ", "…a prefix of the text that ends at a word boundary — NEVER MID-WORD");
+  deep(F("x".repeat(200) + ". " + "y".repeat(150) + "."), ["x".repeat(200) + ".", "y".repeat(150) + "."],
+       "two sentences that do not fit one chunk together are two chunks");
+  deep(F("Tiny.", { maxChars: 300 }), ["Tiny."], "one short sentence is one chunk");
+  deep(F("", {}), [], "no text, no chunks");
+  deep(F(five, { maxChars: 300, maxChunks: 1 }), [five], "maxChunks 1 packs every sentence that fits into the one ticket");
+  const one = F(long, { maxChars: 300, maxChunks: 1 });
+  ok(one.length === 1 && one[0].length <= 300 && long.startsWith(one[0]) && long[one[0].length] === " ",
+     "maxChunks 1 on an over-long sentence is the old single ticket, cut at a word boundary");
+  const headed = "Sentence number one is here. " + long;
+  const fill = F(headed, { maxChars: 300, maxChunks: 1 })[0];
+  ok(fill.length > 29 && fill.length <= 300 && headed.startsWith(fill) && headed[fill.length] === " ",
+     `the last chunk fills its room up to the cap at a word boundary (${fill.length} chars)`);
+
+  const mt = await hmac.mintTickets(cfg, { text: five, eventId: "sim-abc123", nowS: NOW });
+  deep(mt.map((t) => [t.event_id, t.chunk_num]), [["sim-abc123", 0], ["sim-abc123", 1], ["sim-abc123", 2]],
+       "mintTickets: one ticket per chunk, chunk_num 0..n-1, one event id");
+  for (const t of mt) {
+    const v = await hmac.verifyTicket(cfg, t.ticket, NOW);
+    deep([v.ok, v.claims && v.claims.chunkNum, v.claims && v.claims.text], [true, t.chunk_num, f5[t.chunk_num]],
+         `chunk ${t.chunk_num}'s ticket verifies, with its own text and number`);
+  }
+  deep(await hmac.mintTickets(cfg, { text: "", eventId: "e", nowS: NOW }), [], "no text, no tickets");
+}
+
 /* --------------------------------------------------------------------------- */
 if (fails.length) {
   console.error(`✗ test_demo_tickets: ${fails.length} failure(s)`);

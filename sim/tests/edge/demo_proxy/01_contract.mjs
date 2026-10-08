@@ -276,6 +276,21 @@ import {
   eq((await call(chat, "/api/chat", { text: "a" }, null, tiny)).res.status, 200, "3 of 5 units: admitted");
   eq((await call(chat, "/api/chat", { text: "b" }, null, tiny)).body.reason, "budget_exhausted", "6 of 5 units: refused");
 
+  // …and with one ticket per sentence a turn is 3 + 2 per chunk: a three-sentence reply,
+  // all of it spoken, is 9 units (§4.1: 66 such turns an hour, 444 a day, against 120 and
+  // 800 for one ticket). A budget of exactly 9 serves it; 8 refuses its last chunk, for free.
+  for (const [budget, want] of [["9", [200, 200, 200]], ["8", [200, 200, 503]]]) {
+    fresh();
+    P.plan = { chat: { content: "Sentence number one is here. Sentence number two is here. Sentence number three is here." } };
+    const env = { ...FULL, DEMO_UNIT_BUDGET_HOUR: budget, DEMO_UNIT_BUDGET_DAY: budget, DEMO_CHAT_PER_MIN: "50" };
+    const c = await call(chat, "/api/chat", { text: "say three things" }, null, env);
+    eq(c.body.speech.length, 3, "a three-sentence reply mints three tickets");
+    const statuses = [];
+    for (const s of c.body.speech) statuses.push((await call(speech, "/api/speech", { ticket: s.ticket }, null, env)).res.status);
+    deep(statuses, want, `DEMO_UNIT_BUDGET_HOUR=${budget}: chat (3) + three chunks (2 each) = 9 units`);
+    eq(upstreamCalls(), 1 + want.filter((x) => x === 200).length, "…and a refused chunk makes no upstream call");
+  }
+
   // The concurrency ceiling. DEMO_QUEUE_MAX_DEPTH=0 restores the instant refusal (§13 waits).
   fresh();
   const NOQ = { ...FULL, DEMO_QUEUE_MAX_DEPTH: "0" };
