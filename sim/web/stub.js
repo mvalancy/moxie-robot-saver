@@ -54,8 +54,8 @@
     { match: /joke/i, say: "Why did the robot cross the road? To recharge on the other side!",
       mood: 1, gesture: "Gesture_Celebrate" },
     // The other two openers in sim.html's #chat-openers (the joke is the one above).
-    { match: /\bmakes? you (?:happy|smile)\b|\bare you happy\b/i,
-      say: "You do! Also a full battery. But mostly you. Do not tell the battery.",
+    { match: /\bmakes? you (?:happy|smile)\b/i,
+      say: "You do! A full battery is nice too, but you are number one. Do not tell the battery.",
       mood: 1, gesture: "Gesture_Point" },
     { match: /\bsurprise\b/i,
       say: "Surprise! An octopus has three hearts. I only have one, and it glows for you.",
