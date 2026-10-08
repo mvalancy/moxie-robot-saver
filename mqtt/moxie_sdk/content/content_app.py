@@ -54,19 +54,76 @@ def _presence_vars(robot) -> dict:
     return _presence.snapshot(getattr(robot, "extra", {}).get("presence") or {})
 
 
-#: One template construct (`{{ … }}`, `{% … %}`, `{# … #}`; render.py's grammar).
-_TEMPLATE_CONSTRUCT = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", re.S)
+#: The start of a template construct (`{{ … }}`, `{% … %}`, `{# … #}`; render.py's
+#: grammar), or an alternative separator.
+_OPENER_TOKEN = re.compile(r"\{[{%#]|\|")
+#: Where each construct ends: the first closer after its opener.
+_CLOSER = {"{{": "}}", "{%": "%}", "{#": "#}"}
 
 
 def opener_alternatives(opener: str) -> list:
     """`opener`'s `|`-separated alternatives, unrendered. A `|` inside a template construct
-    is a Jinja filter (`{{ name | upper }}`), not a separator, so the alternatives are
-    exactly `str.split("|")`'s unless a filter is present."""
-    inside = [m.span() for m in _TEMPLATE_CONSTRUCT.finditer(opener)]
-    cuts = [i for i, ch in enumerate(opener)
-            if ch == "|" and not any(a <= i < b for a, b in inside)]
-    bounds = [-1] + cuts + [len(opener)]
-    return [opener[a + 1:b] for a, b in zip(bounds, bounds[1:])]
+    is a Jinja filter (`{{ name | upper }}`) or comment text, not a separator, so the
+    alternatives are exactly `str.split("|")`'s unless a construct holds one.
+
+    One pass, linear in the length: a construct is skipped whole, and a closer missing
+    from the rest of the text is never searched for again. A regex over every construct
+    was quadratic on an unclosed `{{` (5 s for a 100 KB opener)."""
+    alts, start, pos, unclosed = [], 0, 0, set()
+    while True:
+        m = _OPENER_TOKEN.search(opener, pos)
+        if m is None:
+            break
+        token = m.group()
+        if token == "|":
+            alts.append(opener[start:m.start()])
+            start = pos = m.end()
+            continue
+        end = -1 if token in unclosed else opener.find(_CLOSER[token], m.end())
+        if end >= 0:
+            pos = end + 2
+        else:
+            # Plain text, as is every later one like it; its second character may still
+            # start a construct (`{{%`).
+            unclosed.add(token)
+            pos = m.start() + 1
+    alts.append(opener[start:])
+    return alts
+
+
+def _shuffled(n: int, rng):
+    """`range(n)` in a random order, drawn lazily (Fisher-Yates): a caller that stops at
+    the first draw pays for one."""
+    order = list(range(n))
+    for k in range(n):
+        j = rng.randrange(k, n)
+        order[k], order[j] = order[j], order[k]
+        yield order[k]
+
+
+def pick_opener(opener: str, context: dict, last: Optional[str] = None,
+                rng=random) -> Optional[str]:
+    """The opener line to say, rendered over `context` with `<opener>` stripped and any
+    `<exit>`/`<sleep>`/`<launch:…>` still in; None when no alternative says anything.
+
+    With no `last` it is the first alternative that says something: what a robot hears
+    first, and what the console's content preview shows. Otherwise it is a random other
+    one, and `last` again only when nothing else says anything. Only the alternative drawn
+    is rendered, so an opener with thousands of alternatives costs one render, not one
+    per alternative."""
+    alts, seen = [], set()
+    for alt in opener_alternatives(opener):
+        key = alt.replace("<opener>", "").strip()
+        if key and key not in seen:
+            seen.add(key)
+            alts.append(alt)
+    again = None
+    for i in (range(len(alts)) if last is None else _shuffled(len(alts), rng)):
+        line = render_prompt(alts[i], context).replace("<opener>", "").strip()
+        if line and line != last:
+            return line
+        again = again or line
+    return again or None
 
 ChatFn = Callable[[list], str]          # messages [{role,content}] -> assistant text
 GlobalHandler = Callable[[Volley, Session], None]   # sets volley.output / actions
@@ -298,23 +355,17 @@ class ContentApp(MoxieApp):
         """`conv`'s opener as a Reply, or None when it has none. Never calls the brain.
 
         The `|`-alternatives rotate per device and never repeat back to back; a device
-        hears the first alternative first. `<opener>` is stripped, and `<exit>`, `<sleep>`
-        or `<launch:…>` become actions, as in a model's line."""
+        hears the first alternative first (`pick_opener`). `<opener>` is stripped, and
+        `<exit>`, `<sleep>` or `<launch:…>` become actions, as in a model's line."""
         if conv is None or not conv.opener:
             return None
         context = {"volley": volley or self._volley(Turn(robot=robot, speech="")),
                    "session": Session(), "presence": presence or _presence_vars(robot)}
-        lines = []
-        for alt in opener_alternatives(conv.opener):
-            line = render_prompt(alt, context).replace("<opener>", "").strip()
-            if line and line not in lines:
-                lines.append(line)
-        if not lines:
-            return None
         device_id = getattr(robot, "device_id", "") or ""
-        last = self._last_opener.get(device_id)
-        line = (lines[0] if last is None
-                else self._rng.choice([x for x in lines if x != last] or lines))
+        line = pick_opener(conv.opener, context, self._last_opener.get(device_id),
+                           self._rng)
+        if not line:
+            return None
         self._last_opener[device_id] = line
         text, actions = parse_action_tags(line)
         return Reply(text=text, actions=actions)

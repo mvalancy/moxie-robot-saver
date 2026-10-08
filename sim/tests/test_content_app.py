@@ -6,9 +6,15 @@ handling, and the opener (a `greeting()`, and the answer to a `prompt` with no s
 """
 import os
 import random
+import re
+import time
 
+import pytest
+
+from moxie_sdk.content import content_app as CA  # noqa: E402
 from moxie_sdk.content import ext as E  # noqa: E402
 from moxie_sdk.content import load_module, ContentApp  # noqa: E402
+from moxie_sdk.content.render import render_prompt  # noqa: E402
 from moxie_sdk.types import ActionType, Turn, RobotContext, ChildProfile  # noqa: E402
 
 MODULE = {
@@ -185,6 +191,72 @@ def test_a_bar_inside_a_block_tag_or_a_comment_is_not_an_alternative():
             for _ in range(3)]
     assert calls == [], "an opener must not cost a model call"
     assert said == ["Hi Sam!", "Ready to play?", "Hi Sam!"]
+
+
+def _alternatives_by_regex(opener):
+    """The split `opener_alternatives` replaced, kept as its reference: a `|` inside any
+    construct's span is not a separator. Quadratic, so only ever run on short strings."""
+    rx = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", re.S)
+    inside = [m.span() for m in rx.finditer(opener)]
+    cuts = [i for i, ch in enumerate(opener)
+            if ch == "|" and not any(a <= i < b for a, b in inside)]
+    bounds = [-1] + cuts + [len(opener)]
+    return [opener[a + 1:b] for a, b in zip(bounds, bounds[1:])]
+
+
+def test_the_one_pass_split_agrees_with_the_regex_it_replaced():
+    rng = random.Random(7)
+    for _ in range(4000):
+        s = "".join(rng.choice("{{}}%#|| a\n") for _ in range(rng.randrange(0, 32)))
+        assert CA.opener_alternatives(s) == _alternatives_by_regex(s), repr(s)
+
+
+def test_only_the_alternative_said_is_rendered(monkeypatch):
+    """An empty prompt renders the line it says, not every alternative (5000 renders took
+    2.2 s before). A draw that lands on an alternative that says nothing, or on the line
+    heard last, costs one more render."""
+    renders = []
+
+    def counting(template, context, counts=None):
+        renders.append(template)
+        return render_prompt(template, context)
+
+    monkeypatch.setattr(CA, "render_prompt", counting)
+    opener = "{{ '' }}|" + "|".join(f"Line {i}!" for i in range(5000))
+    app = ContentApp(load_module(_with_opener(opener)), lambda m: "x", rng=random.Random(5))
+    said = []
+    for _ in range(20):
+        before = len(renders)
+        said.append(app.respond(Turn(robot=_robot(), speech="", command="prompt")).text)
+        assert len(renders) - before <= 3, renders[before:]
+    assert said[0] == "Line 0!", "the first alternative that says something comes first"
+    assert all(s.startswith("Line ") for s in said), said
+    assert all(a != b for a, b in zip(said, said[1:])), said
+
+
+#: Openers of 100 KB or more (only the 1 MiB pack cap limits one). Measured per empty
+#: prompt before this change: 5.5 s, 7.1 s and 7.1 s for the three unclosed constructs (a
+#: quadratic split), 4.5 s for the closed one (a quadratic membership test, then a render
+#: per alternative) and 1.3 s for 7000 plain lines (a render per alternative).
+HUGE_OPENERS = {
+    "unclosed {{": "{{ x |" * 16667,
+    "unclosed {%": "{% x |" * 16667,
+    "unclosed {#": "{# x |" * 16667,
+    "closed {{ }}": "Hi {{ x }}|" * 9091,
+    "7000 lines": "|".join(f"Line number {i}!" for i in range(7000)),
+}
+
+
+@pytest.mark.parametrize("name", sorted(HUGE_OPENERS))
+def test_a_huge_opener_takes_one_pass_and_one_render(name):
+    chat, calls = _counting()
+    app = ContentApp(load_module(_with_opener(HUGE_OPENERS[name])), chat)
+    started = time.perf_counter()
+    for _ in range(2):
+        app.respond(Turn(robot=_robot(), speech="", command="prompt"))
+    took = time.perf_counter() - started
+    assert calls == []
+    assert took < 1.0, f"{name}: two empty prompts took {took:.2f}s"
 
 
 def test_what_a_starting_extension_asks_for_rides_out_with_the_opener():
