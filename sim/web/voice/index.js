@@ -40,15 +40,31 @@
     isUnlocked: function () { return !!(V.ctx && V.ctx.state === "running"); },
   };
 
-  // Unlock on the first gesture and announce it, so ambient waits for real audio.
+  /* Unlock audio on the first gesture that CAN start it, and announce it only once the
+   * context really runs, so ambient waits for real audio. Only an activation gesture may
+   * start audio — touchend, click, keydown — never a finger's touchstart/pointerdown, where
+   * the context stays suspended and Chrome warns (on every phone visit, before this). A
+   * gesture that did not start it leaves the listeners armed for the next one. */
+  var GESTURES = ["touchend", "click", "keydown"];
   var unlocked = false;
+  function announce() {
+    if (unlocked || !V.ctx || V.ctx.state !== "running") return;
+    unlocked = true;
+    GESTURES.forEach(function (ev) {
+      try { window.removeEventListener(ev, unlock, { passive: true }); } catch (e) {}
+    });
+    try { window.dispatchEvent(new CustomEvent("moxie-audio-unlocked")); } catch (e) {}
+  }
   function unlock() {
     if (unlocked) return;
-    V.actx();
-    unlocked = true;
-    window.dispatchEvent(new CustomEvent("moxie-audio-unlocked"));
+    var ctx = V.actx();                 // created, or resumed, inside the gesture
+    if (!ctx) return;
+    if (ctx.state === "running") { announce(); return; }
+    // resume() settles once the context runs (a refused one stays pending until a later,
+    // allowed one), so this announces whichever gesture finally starts it.
+    try { var p = ctx.resume(); if (p && p.then) p.then(announce, function () {}); } catch (e) {}
   }
-  ["pointerdown", "click", "keydown", "touchstart"].forEach(function (ev) {
-    window.addEventListener(ev, unlock, { once: true, passive: true });
+  GESTURES.forEach(function (ev) {
+    window.addEventListener(ev, unlock, { passive: true });
   });
 })();

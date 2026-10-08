@@ -60,17 +60,17 @@ const SPEECH_DOWN = (over) => ({ status: 503, json: envelope(Object.assign(
   const t1 = await turn(world, "hi moxie", 4000);
   deep(kinds(t1), ["cloud"], "8a: turn 1 is spoken in her own (gateway) voice, once, and by nothing else");
 
-  const t2 = await turn(world, "tell me a joke", 4000);
+  const t2 = await turn(world, "tell me a joke", 6000);
   ok(world.spy.transcript.includes(STUB_JOKE), "8a: the rate-limited turn is answered from stub.js");
   deep(t2.sounds.map((s) => [s.kind, s.bytes]), [["clip", clipBytes(STUB_JOKE)]],
        "8a: …AND THAT STUB ANSWER IS HEARD — exactly one sound, its own shipped clip, after a voiced turn");
 
   await advance(21000);                       // the 429's Retry-After window lapses
-  const t3 = await turn(world, "something the floor blocks", 4000);
+  const t3 = await turn(world, "something the floor blocks", 6000);
   deep(t3.sounds.map((s) => [s.kind, s.text]), [["browser", REDIRECT]],
        "8a: the SAFETY REDIRECT is heard — once, in the local voice (it carries no voice ticket)");
 
-  const t4 = await turn(world, "tell me about volcanoes", 4000);
+  const t4 = await turn(world, "tell me about volcanoes", 6000);
   deep(t4.sounds.map((s) => [s.kind, s.text]),
        [["browser", "Volcanoes are mountains that can puff out hot melted rock!"]],
        "8a: a reply whose voice was REFUSED is heard — once, locally, never silent");
@@ -79,7 +79,7 @@ const SPEECH_DOWN = (over) => ({ status: 503, json: envelope(Object.assign(
   deep([st.blocked, st.fallbacks, st.voiceFallbacks, st.speechReasons, st.reasons.includes("upstream_down")],
        [1, 1, 1, ["upstream_down"], false],
        "8a: recorded as a block, a stub answer and a voice fallback; the speech route's reason kept apart from the brain's");
-  eq(world.spy.cuts.length, 0, "8a: and in all four turns no voice was cut short");
+  deep(world.spy.cuts, [], "8a: and in all four turns (each allowed to finish) no voice was cut short");
 }
 
 /* =========================================================================== *

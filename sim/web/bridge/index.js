@@ -5,23 +5,52 @@
   const B = window.__moxieBridge;
   const dev = B.dev, status = (t) => B.status(t), nowMs = B.nowMs, rec = B.rec;
 
-  // ---- voice arbitration ----
-  // On a live link the reply text arrives a beat before its CloudTTSResponse: hold the local
-  // voice for a short grace window and drop it the moment real audio lands. Off the bus
-  // there is no server voice, so speak immediately. A streamed answer is several chunks of
-  // one event_id: the grace timer ACCUMULATES them, so they are spoken as one line.
+  // ---- voice arbitration: every reply is spoken ONCE, in one voice ----
+  // Her server voice (a CloudTTSResponse) or a local one (clip, Piper, browser voice), never
+  // both and never neither — decided per EVENT, not per page:
+  //   · the HTTP transport calls `expectCloudVoice(eid)` for a turn holding a speech ticket,
+  //     so its words wait silently for their own voice (no stand-in that hers then cuts);
+  //   · `handleTts` marks the event voiced;
+  //   · `releaseCloudVoice(eid)` (the voice failed) speaks the held words locally, once.
+  // A line with no voice coming — a stub answer, a safety redirect, anything the page
+  // composes — speaks locally at once. (A page-wide latch silenced all of those after her
+  // first voiced reply.)
+  // BUS TRAFFIC has no tickets: a supervisor publishes the words, then synthesizes and
+  // publishes the voice (mqtt/supervisor/moxie_runtime/turns.py). On a live link hold the
+  // local voice a short grace window and drop it the moment real audio lands; once the bus,
+  // or the recording being replayed, has voiced a line, its later lines wait for their voice.
+  // A streamed answer is several chunks of one event_id: the grace timer and the held words
+  // ACCUMULATE them, so they are spoken as one line.
   const TTS_GRACE_MS = 900;
-  let cloudVoice = false, pendingSpeak = 0, pendingText = "";
+  const EXPECTED = 1, VOICED = 2, KEEP_EVENTS = 64;
+  const voices = new Map();     // event_id -> EXPECTED | VOICED (the newest KEEP_EVENTS)
+  const held = new Map();       // event_id -> its words, held for an EXPECTED voice
+  let cloudVoice = false;       // a CloudTTSResponse has arrived, by any route (hasCloudVoice)
+  let busVoiced = false, replayVoiced = false;
+  let pendingSpeak = 0, pendingText = "";
 
-  function speakLocally(text) {
-    if (!window.moxieAudio || cloudVoice) return;
+  function setVoice(eid, v) {
+    voices.delete(eid);                               // re-insert: newest last
+    voices.set(eid, v);
+    if (voices.size > KEEP_EVENTS) voices.delete(voices.keys().next().value);
+  }
+
+  function speakLocally(text, eid) {
+    if (!window.moxieAudio) return;
+    const v = eid ? voices.get(eid) : 0;
+    if (v === VOICED) return;                         // her own voice already said it
+    if (v === EXPECTED) {                             // …or is on its way: hold the words
+      held.set(eid, held.has(eid) ? held.get(eid) + " " + text : text);
+      return;
+    }
+    if ((B.isLive() && busVoiced) || (rec.replaying && replayVoiced)) return;
     if (!B.isLive()) { window.moxieAudio.speak(text); return; }
     pendingText = pendingText ? pendingText + " " + text : text;
     clearTimeout(pendingSpeak);
     pendingSpeak = setTimeout(() => {
       pendingSpeak = 0;
       const say = pendingText; pendingText = "";
-      if (!cloudVoice) window.moxieAudio.speak(say);
+      if (!busVoiced) window.moxieAudio.speak(say);
     }, TTS_GRACE_MS);
   }
 
@@ -30,12 +59,32 @@
     pendingText = "";
   }
 
+  /** A voice is on its way for this event: its words wait for it (see above). */
+  function expectCloudVoice(eid) {
+    if (eid && voices.get(eid) !== VOICED) setVoice(eid, EXPECTED);
+  }
+
+  /** The expected voice is not coming: speak the held words locally, once.
+   *  @returns {boolean} whether words were spoken. */
+  function releaseCloudVoice(eid) {
+    if (!eid || voices.get(eid) !== EXPECTED) return false;
+    voices.delete(eid);
+    const say = held.get(eid) || "";
+    held.delete(eid);
+    if (!say || !window.moxieAudio) return false;
+    window.moxieAudio.speak(say);
+    return true;
+  }
+
   // A CloudTTSResponse: `{audio:{buffer(base64 PCM),channels,sample_rate}, marks[],
   // event_id, chunk_num}`. voice/ decodes the wire itself (like firmware) and plays it;
   // here we only route + arbitrate.
   function handleTts(payload) {
     const msg = B.parse(payload); if (!msg) return;
-    cloudVoice = true;                       // server voice wins from now on
+    cloudVoice = true;
+    if (B.isLive()) busVoiced = true;
+    if (rec.replaying) replayVoiced = true;
+    if (msg.event_id) { setVoice(msg.event_id, VOICED); held.delete(msg.event_id); }
     cancelPendingSpeak();
     if (!window.moxieAudio || !window.moxieAudio.playCloudTTS) return;
     window.moxieAudio.playCloudTTS(msg);
@@ -67,7 +116,7 @@
     if (text) {
       status(`said: "${chatSaid.slice(0, 48)}"`);
       addTranscript("moxie", text, more);
-      speakLocally(text);            // stands down if the server sends real audio
+      speakLocally(text, eid);       // stands down for this event's own server voice
     }
   }
 
@@ -234,6 +283,7 @@
   function replay(session, speed) {
     if (!Array.isArray(session) || !session.length) { status("empty session"); return; }
     speed = speed || 1; rec.replaying = true;
+    replayVoiced = false;            // a recording waits for voices only once IT has voiced a line
     const t0 = session[0].t || 0;
     status(`▶ replaying ${session.length} events`);
     session.forEach((ev) => setTimeout(() => route(ev.topic, ev.payload), Math.max(0, (ev.t - t0) / speed)));
@@ -273,8 +323,12 @@
       return { lines: telehealth.lines.slice(), interrupts: telehealth.interrupts,
                session_id: telehealth.session_id, last_action: telehealth.last_action };
     },
-    // true once a CloudTTSResponse has arrived — the server voice has taken over
+    // true once a CloudTTSResponse has arrived (a server voice exists). It no longer silences
+    // other lines: whether a reply waits for that voice is decided per event (below).
     hasCloudVoice: function () { return cloudVoice; },
+    // The per-event voice seam cloud-transport.js drives for a turn holding a speech ticket.
+    expectCloudVoice: expectCloudVoice,
+    releaseCloudVoice: releaseCloudVoice,
   });
 
   // ---- wire the panel once moxie + DOM are ready ----
