@@ -8,7 +8,8 @@ share state through `window.__moxieBridge`, which `core.js` creates fresh on eve
 
 - **`core.js`** — identity on the bus (`d_sim`, firmware, module name), `status()`, the
   record/replay state, and the namespace itself.
-- **`body.js`** — behavior markup → face, gestures, `Bht_*` trees, icon badges.
+- **`body.js`** — behavior markup → face, gestures, `Bht_*` trees, icon badges. A line's
+  mood mark owns its face (arm gestures keep it); `msSinceLine()` lets `life.js` hold it.
 - **`actions.js`** — `response_actions` (launch/exit/sleep/enable_qr/execute +
   `event_subscription`), mirrored by `sim/virtual_moxie.py`; `actionStats()`.
 - **`presence.js`** — the robot's eyes: vision events, the presence badge (hidden until
