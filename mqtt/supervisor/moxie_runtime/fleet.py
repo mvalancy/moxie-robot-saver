@@ -335,8 +335,9 @@ class FleetMixin:
         # file never ends up holding the older one (`_settings_record`).
         with self._settings_record(device_id) as held:
             layer = self._config_overrides.setdefault(device_id, {})
-            if (device_id in self._settings_unreadable
-                    and self._storable_settings(overrides)[0]):
+            ends_fail_closed = (self.failed_closed(device_id)
+                                and bool(self._storable_settings(overrides)[0]))
+            if ends_fail_closed:
                 # A parent's save ends `_fail_closed`: data sharing is this save's own
                 # choice again, or the layer underneath (house rule, default).
                 self._settings_unreadable.discard(device_id)
@@ -346,8 +347,9 @@ class FleetMixin:
             # Saved before the purge and the push: a crash after this line still boots
             # with the parent's choice, so a NO_DATA that was set is swept at the next start.
             self._save_config_overrides(device_id, held)
-        if "logging_policy" in overrides:
-            # The privacy switch moved: under NO_DATA erase transcript + activity record now.
+        if "logging_policy" in overrides or ends_fail_closed:
+            # The privacy switch moved (a parent's choice, or a parent's choice back in force
+            # after failing closed): under NO_DATA erase transcript + activity record now.
             self.purge_transcripts()
             self.purge_telemetry()
         if "face" in overrides:
@@ -438,17 +440,25 @@ class FleetMixin:
         parent has saved since (`_fail_closed`). The `POST /config`, `/brain` and
         `/telehealth` answers carry it as `saved`, and the console then says the change
         will be lost on a restart instead of "Saved"."""
-        return (device_id not in self._settings_unsaved
-                and device_id not in self._settings_unreadable)
+        return device_id not in self._settings_unsaved and not self.failed_closed(device_id)
+
+    def failed_closed(self, device_id) -> bool:
+        """True while this robot runs under `UNREADABLE_SETTINGS_POLICY` because its saved
+        data-sharing choice could not be read (`_fail_closed`), until a parent's save. That
+        NO_DATA stops every new write, but it is not a parent's choice, so nothing already
+        stored is erased for it: `purge_transcripts`, `purge_telemetry` and the
+        transcript's write path (`_save_memory`) pass this robot over."""
+        return device_id in self._settings_unreadable
 
     def _load_config_overrides(self) -> dict:
         """Every robot's saved settings, keyed by device id (the store's directory name).
 
-        Runs in the constructor and never raises. A damaged or non-object record reads as
-        no settings (one line). A key the whitelist now refuses, or a brain the current
+        Runs in the constructor and never raises. A damaged or non-object record loads no
+        settings (one line). A key the whitelist now refuses, or a brain the current
         `MOXIE_APP` pin refuses, is dropped (one line per robot) and never pushed. Either
         way a data-sharing choice that cannot be read fails closed (`_fail_closed`).
-        Loading writes nothing: the next save for that robot rewrites its record."""
+        Loading writes nothing: a record that failed closed stays as found until a parent
+        saves this robot's settings, and any other record is rewritten by its next edit."""
         from moxie_sdk import brains as brain_seam
         pin = brain_seam.pin_for_env(os.environ.get(brain_seam.ENV_VAR, ""))
         loaded = {}
@@ -470,7 +480,8 @@ class FleetMixin:
             if not isinstance(raw, dict):
                 what = "unreadable" if raw is missing else "not a settings object"
                 print(f"[runtime] ⚠️  {path} is {what}: no saved settings for {device_id} "
-                      f"(the next save rewrites it)", flush=True)
+                      f"(left as found until a parent saves this robot's settings)",
+                      flush=True)
                 loaded[device_id] = self._fail_closed(device_id, {}, "its saved settings")
                 continue
             kept, dropped = self._storable_settings(raw)
@@ -492,16 +503,17 @@ class FleetMixin:
 
     def _fail_closed(self, device_id, kept: dict, what: str) -> dict:
         """`kept` plus `UNREADABLE_SETTINGS_POLICY`, for a robot whose saved data-sharing
-        choice cannot be read. It runs under that policy in every sense, as any NO_DATA
-        robot does (no new transcript, memory, activity record or safety excerpt, and the
-        boot sweep clears its stored transcript and activity record), until a parent's
-        next save (`update_config`). Until then its record stays as found, so a restart
-        fails closed again. The activity feed says so in one line."""
+        choice cannot be read, until a parent's next save (`update_config`). Every writer
+        sees NO_DATA, so nothing new is kept (no transcript, memory, activity record or
+        safety excerpt). Nothing already stored is erased (`failed_closed`): a damaged
+        file, or a value from a newer build, is not a parent's choice to erase. Until that
+        save the record stays as found, so a restart fails closed again. The activity
+        feed says so in one line."""
         self._settings_unreadable.add(device_id)
         policy = self.UNREADABLE_SETTINGS_POLICY
         line = (f"🔒 {device_id}: {what} could not be read, so it runs under "
                 f"{policy.name} (the strictest data sharing) until a parent saves its "
-                f"settings again")
+                f"settings again; what is already stored is kept")
         self._note("error", line)
         print(f"[runtime] {line}", flush=True)
         return {**kept, "logging_policy": int(policy)}

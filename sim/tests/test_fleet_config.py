@@ -343,17 +343,20 @@ def test_a_damaged_record_fails_closed_and_never_breaks_construction(
 @pytest.mark.parametrize("stored", [7, "SOME_DATA", None, [0]])
 def test_a_data_sharing_choice_the_whitelist_refuses_fails_closed(
         tmp_path, monkeypatch, stored):
-    """A stored `logging_policy` the whitelist now refuses (a hand edit, a value from
-    another build) is a choice a parent made that cannot be read. Dropping it would hand
-    the child to the house default and start keeping their words again, so the robot
-    runs under NO_DATA instead, in every sense: as for any NO_DATA robot the boot sweep
-    clears a transcript already on disk. Its other settings still load."""
+    """A stored `logging_policy` the whitelist now refuses (a hand edit, or a value from a
+    newer build after a downgrade) is a choice a parent made that cannot be read.
+    Dropping it would hand the child to the house default and start keeping their words
+    again, so the robot keeps nothing new, as under NO_DATA. It is not a parent's
+    NO_DATA, though: the transcript already on disk stays exactly as found, and Moxie
+    still remembers it. Its other settings still load."""
     from helpers_runtime import drive_turn
     from moxie_sdk.cloud_config import LoggingPolicy
     memdir = tmp_path / "transcripts"
     monkeypatch.setenv("MOXIE_MEMORY_DIR", str(memdir))     # read at construction
     memdir.mkdir()
-    (memdir / "d_one.json").write_text(json.dumps([{"role": "user", "content": "old"}]))
+    old = json.dumps([{"role": "user", "content": "old"}])
+    transcript = memdir / "d_one.json"
+    transcript.write_text(old)
     path = _record(tmp_path)
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"audio_volume": 0.3, "logging_policy": stored}))
@@ -361,9 +364,12 @@ def test_a_data_sharing_choice_the_whitelist_refuses_fails_closed(
     assert rt._config_overrides["d_one"] == {
         "audio_volume": 0.3, "logging_policy": int(LoggingPolicy.NO_DATA)}
     assert len(_fail_closed_lines(rt)) == 1, list(rt.recent)
-    assert not (memdir / "d_one.json").exists() and rt.history.get("d_one") in (None, [])
+    assert transcript.exists() and transcript.read_text() == old, \
+        "the boot erased the transcript"
+    assert rt.history["d_one"] == json.loads(old)
     drive_turn(rt, "d_one", "a-marker")
-    assert not (memdir / "d_one.json").exists(), "the child's words were kept"
+    assert transcript.exists() and transcript.read_text() == old, \
+        "the turn kept the child's words, or erased the stored ones"
     assert rt.memory_store().save("d_one", {"chat": {"facts": ["a-marker"]}}) is False
 
 
@@ -397,6 +403,175 @@ def test_a_parents_next_save_ends_the_fail_closed_policy(tmp_path, monkeypatch, 
     assert fresh._config_overrides["d_one"] == save
     assert fresh.memory_policy("d_one") == decided
     assert _fail_closed_lines(fresh) == []
+
+
+# What failing closed does to a robot's stored history. Every file is written by the
+# runtime's own writers and compared byte for byte. NO_DATA erases the transcript and the
+# activity record when it is a parent's choice; a robot that failed closed must lose
+# nothing to a damaged file.
+ACTIVITY = ("telemetry_packets", "telemetry_daily", "mentor_behaviors")
+
+
+def _report(rt, device_id):
+    """What a robot reports in a session: one telemetry Packet and one finished activity,
+    through the MQTT handlers' own entry points."""
+    from moxie_sdk import telemetry as T
+    rt.ingest_telemetry(device_id, json.dumps(
+        T.build_packet("wake", b"", moxie_id=device_id, recorded_at=1756800000)))
+    rt._on_activity(device_id, json.dumps(
+        {"timestamp": 1756800000, "mentor_behavior": {
+            "module_id": "MODULE_MISSION", "action": "COMPLETED", "content_id": "day1",
+            "timestamp": 1756800000}}))
+
+
+def _keep_history(rt, device_id):
+    """A FULL or NO_MEDIA robot's history on disk: a transcript, the activity record and
+    one remembered fact."""
+    _report(rt, device_id)
+    assert rt.memory_store().save(device_id, {"chat": {"facts": ["a-fact"]}}) is True
+    rt._remember(device_id, "a-marker", "ok")           # the transcript's write path
+
+
+def _stored(tmp_path, memdir, device_id="d_one") -> dict:
+    """Every file this robot's history lives in, with its bytes (lock sidecars aside)."""
+    robot = tmp_path / "robots" / device_id
+    files = {f"robots/{device_id}/{p.name}": p.read_bytes()
+             for p in (sorted(robot.glob("*.json")) if robot.is_dir() else [])}
+    transcript = memdir / f"{device_id}.json"
+    if transcript.exists():
+        files[f"transcripts/{transcript.name}"] = transcript.read_bytes()
+    return files
+
+
+def _erasable(tmp_path, memdir, device_id="d_one") -> list:
+    """Which of the files a parent's NO_DATA erases exist: the transcript and the
+    three activity records."""
+    names = [f"robots/{device_id}/{c}.json" for c in ACTIVITY]
+    names.append(f"transcripts/{device_id}.json")
+    return [n for n in names if n in _stored(tmp_path, memdir, device_id)]
+
+
+@pytest.mark.parametrize("record", [
+    "{not json", "[1, 2]",
+    json.dumps({"audio_volume": 0.3, "logging_policy": 7}),
+    json.dumps({"audio_volume": 0.3, "logging_policy": "SOME_DATA"})])
+def test_failing_closed_keeps_nothing_new_and_erases_nothing_already_stored(
+        tmp_path, monkeypatch, record):
+    """A damaged record, or a data-sharing choice this build refuses (a downgrade from a
+    build with a new policy value), is not a parent's choice to erase anything. The
+    robot fails closed for what is NEW: no transcript line, telemetry, finished activity
+    or remembered fact is written. Nothing ALREADY stored is erased: not by the boot
+    sweep, not on the transcript's write path, and not by the sweep a house-rule edit
+    runs for every robot, which still clears another robot under a parent's NO_DATA."""
+    from helpers_runtime import drive_turn
+    from moxie_sdk.cloud_config import LoggingPolicy
+    memdir = tmp_path / "transcripts"
+    monkeypatch.setenv("MOXIE_MEMORY_DIR", str(memdir))     # read at construction
+    rt = _runtime(tmp_path, devices=("d_one", "d_two"), app=_echo())
+    for device_id in ("d_one", "d_two"):
+        _keep_history(rt, device_id)
+    _record(tmp_path).write_text(record)
+    stored = _stored(tmp_path, memdir)
+    assert len(_erasable(tmp_path, memdir)) == 4 and "robots/d_one/memory.json" in stored
+
+    fresh = _runtime(tmp_path, devices=("d_one", "d_two"), app=_echo())    # the restart
+    assert fresh.failed_closed("d_one") and not fresh.failed_closed("d_two")
+    assert fresh.memory_policy("d_one") == LoggingPolicy.NO_DATA
+    assert _stored(tmp_path, memdir) == stored, "the boot erased what was stored"
+    assert fresh.history["d_one"] == json.loads(stored["transcripts/d_one.json"])
+    view = fresh.telemetry_view("d_one")                  # what the Insights card keys on
+    assert (view["persisted"], view["totals"]["total"]) == (False, 1)
+
+    _report(fresh, "d_one")
+    assert fresh.memory_store().save("d_one", {"chat": {"facts": ["new"]}}) is False
+    fresh.update_fleet_config(logging_policy=int(LoggingPolicy.NO_DATA))
+    assert _erasable(tmp_path, memdir, "d_two") == []     # a parent's NO_DATA still erases
+    drive_turn(fresh, "d_one", "after")                   # last: it spends the worker pool
+    assert _stored(tmp_path, memdir) == stored, \
+        "something new was kept, or something stored was erased"
+
+
+@pytest.mark.parametrize("whose", ["robot", "house"])
+def test_a_parents_own_no_data_still_erases_at_boot_as_before(tmp_path, monkeypatch, whose):
+    """The other half, unchanged: when NO_DATA is a parent's choice, this robot's own or
+    the house rule, the boot sweep clears the stored transcript and activity record, and
+    none of it is loaded back. Remembered facts stay, as on any switch to NO_DATA
+    (config-and-telemetry-contract.md)."""
+    from moxie_sdk.cloud_config import LoggingPolicy
+    memdir = tmp_path / "transcripts"
+    monkeypatch.setenv("MOXIE_MEMORY_DIR", str(memdir))
+    rt = _runtime(tmp_path, devices=("d_one",), app=_echo())
+    _keep_history(rt, "d_one")
+    no_data = {"logging_policy": int(LoggingPolicy.NO_DATA)}
+    if whose == "robot":                  # as a crash between the save and the purge leaves it
+        _record(tmp_path).write_text(json.dumps(no_data))
+    else:
+        rt.store.write_shared(rt.FLEET_CONFIG_COLLECTION, no_data)
+    assert len(_erasable(tmp_path, memdir)) == 4
+
+    fresh = _runtime(tmp_path, devices=("d_one",), app=_echo())
+    assert not fresh.failed_closed("d_one") and _fail_closed_lines(fresh) == []
+    assert _erasable(tmp_path, memdir) == []
+    assert fresh.history.get("d_one") in (None, [])
+    assert "robots/d_one/memory.json" in _stored(tmp_path, memdir)
+
+
+@pytest.mark.parametrize("house, save, erased", [
+    (None, {"audio_volume": 0.4}, False),                 # the default keeps it
+    (None, {"logging_policy": 0}, True),                  # the parent's own NO_DATA
+    ({"logging_policy": 0}, {"audio_volume": 0.4}, True),  # the house NO_DATA, back in force
+])
+def test_the_save_that_ends_failing_closed_erases_only_under_a_parents_no_data(
+        tmp_path, monkeypatch, house, save, erased):
+    """A parent's save ends failing closed and puts a parent's choice back in force: the
+    save's own `logging_policy`, else the house rule or the default. It runs the sweep as
+    any change of data sharing does, so a parent's NO_DATA erases the kept history then
+    (and Moxie stops remembering it), as it would have before; any other choice keeps it."""
+    memdir = tmp_path / "transcripts"
+    monkeypatch.setenv("MOXIE_MEMORY_DIR", str(memdir))
+    rt = _runtime(tmp_path, devices=("d_one",), app=_echo())
+    _keep_history(rt, "d_one")
+    _record(tmp_path).write_text("{not json")
+    if house:
+        rt.store.write_shared(rt.FLEET_CONFIG_COLLECTION, house)
+    fresh = _runtime(tmp_path, devices=("d_one",), app=_echo())
+    kept = _erasable(tmp_path, memdir)
+    assert fresh.failed_closed("d_one") and len(kept) == 4
+
+    fresh.update_config("d_one", **save)                  # the parent saves
+    assert not fresh.failed_closed("d_one")
+    assert _erasable(tmp_path, memdir) == ([] if erased else kept)
+    assert (fresh.history.get("d_one") in (None, [])) is erased
+
+
+def test_the_insights_card_says_a_kept_history_is_kept_not_that_a_restart_clears_it():
+    """Under a parent's NO_DATA the stored history is gone, so the 📈 card says it shows
+    only what arrived since the supervisor started and a restart clears it. A robot that
+    failed closed keeps its history, which its lifetime total shows, and there that
+    sentence would be false: the card says the stored history is kept instead."""
+    import re
+    import shutil
+    import subprocess
+    from helpers_console import console_js
+    js = console_js()
+    card = re.search(r"async function refreshInsights\(.*?\n\}\n", js, re.S)
+    assert card and "noDataNote(t)" in card.group(0), "the card never asks noDataNote"
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    esc = re.search(r"^function escapeHtml\(s\).*$", js, re.M)
+    fn = re.search(r"function noDataNote\(t\)\{.*?\n\}\n", js, re.S)
+    assert esc and fn, "the console has no noDataNote"
+    probe = esc.group(0) + "\n" + fn.group(0) + (
+        "process.stdout.write(JSON.stringify(["
+        "noDataNote({policy:'NO_DATA',totals:{total:3}}),"
+        "noDataNote({policy:'NO_DATA',totals:{total:0}}),"
+        "noDataNote({policy:'NO_DATA'})]));")
+    kept, gone, older = json.loads(subprocess.run(
+        [node, "-e", probe], capture_output=True, text=True, check=True).stdout)
+    assert "kept until it is erased" in kept and "a restart clears it" not in kept
+    assert "nothing new is being saved" in kept
+    assert gone == older and "a restart clears it" in gone
 
 
 def test_a_stored_value_the_whitelist_now_refuses_is_dropped_at_load(tmp_path, capsys):
