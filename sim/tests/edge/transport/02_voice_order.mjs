@@ -129,7 +129,8 @@ const THREE = "One sentence here. Two sentences here. Three sentences here.";
  * 4b. ONE TICKET PER SENTENCE. The chunks are redeemed ONE AT A TIME — chunk 1 the moment
  *     chunk 0 lands, chunk 2 the moment chunk 1 lands — so each later sentence synthesises
  *     while the one before it plays, and chunk 0 never shares the gateway with anything
- *     (measured: two syntheses at once slowed chunk 0 from 1.6-2.6 s to 2.7-3.7 s). They are
+ *     (measured 2026-10-08: beside a second synthesis chunk 0 took 2.4-3.7 s, median 3.3 s,
+ *     against medians of 2.0-2.5 s alone). They are
  *     routed behind chunk 0 in order; one voice, no local stand-in. (origin/dev redeemed
  *     speech[0] only: one /api/speech, one chunk, the rest of the reply never spoken.)
  * =========================================================================== */

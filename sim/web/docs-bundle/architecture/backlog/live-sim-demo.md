@@ -255,9 +255,9 @@ out when chunk 0 lands or after `SPEECH_WAIT_MS` = **2500 ms** (client-side), st
 which plays when it lands. If chunk 0 fails — refused, unreachable, or no answer by the client's own 15 s
 deadline — the held words are spoken locally once (`releaseCloudVoice`) and a voice turning up later is
 dropped. The later chunks are redeemed **one at a time**: chunk k+1 is requested the moment chunk k
-lands, so it synthesises while chunk k plays (two at once were measured to slow chunk 0 from 1.6–2.6 s
-to 2.7–3.7 s, 2026-10-08), and they are routed in order behind chunk 0 (`voice/cloud.js` starts chunks
-in `chunk_num` order and writes a missing one off after 1.2 s, so arrival order would lose a slow
+lands, so it synthesises while chunk k plays (two at once were measured to slow chunk 0 to 2.4–3.7 s,
+median 3.3 s, against medians of 2.0–2.5 s alone, 2026-10-08), and they are routed in order behind
+chunk 0 (`voice/cloud.js` starts chunks in `chunk_num` order and writes a missing one off after 1.2 s, so arrival order would lose a slow
 sentence). The first chunk that fails ends the voice: nothing later is redeemed, and no local voice ever
 stands in for a later chunk — the words are on screen and her first sentence was heard. The result is
 one voice per turn, her first words after one short synthesis; the bridge's per-event seam is its only
@@ -292,7 +292,7 @@ rule rules out model substitution, `n`/`tools` amplification and system-prompt o
 | Concurrency | chat 4 · speech 8 | `transcribe` **shares chat's ceiling**. Matched to the upstream key's parallel limit, which protects a neighbouring service. Deliberately not raised. |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_DEPTH` | 2 500 ms / 8 | At the ceiling a request waits in a bounded FIFO. Past the depth, or when the wait expires, it is refused `at_capacity`. **Either set to 0** gives instant refusal. |
 | Timeouts, chat / speech / STT | 20 000 / 12 000 / 12 000 ms | Chat is below the 45 s worst case on purpose: a fast honest degrade beats a slow success. |
-| Unit budget | 600/hour · 4 000/day | **Request units**, not dollars, because no price sheet exists (assumption 19). chat = 3, speech = 2, transcribe = 2 (`_lib/counters.js::UNITS`). A turn is 3 + 2 per voice chunk: 5 units with one chunk (120 turns an hour, 800 a day), 9 with the three-chunk maximum (66 an hour, 444 a day); measured 2026-10-08, ten typed turns made 16 chunks, 7 units a turn on average (about 85 turns an hour). |
+| Unit budget | 600/hour · 4 000/day | **Request units**, not dollars, because no price sheet exists (assumption 19). chat = 3, speech = 2, transcribe = 2 (`_lib/counters.js::UNITS`). A turn is 3 + 2 per voice chunk: 5 units with one chunk (120 turns an hour, 800 a day), 9 with the three-chunk maximum (66 an hour, 444 a day); measured 2026-10-08, ten typed turns made 16 chunks, 6.2 units a turn on average (about 96 turns an hour, 645 a day). |
 | `DEMO_TICKET_TTL_S` | 60 | long enough for a slow client, short enough that a leaked ticket is useless |
 | `DEMO_ENABLED` | on | kill switch: `0` forces `gateway_not_configured` without deleting the secret |
 
@@ -819,7 +819,7 @@ These numbers are stable, and code cites them.
 | 15 | The gateway accepts webm/Opus for STT | **settled false**: it returns 500 to webm/ogg/mp4 and transcribes 16 kHz mono WAV. So `DEMO_STT_FORMATS=wav`, and `mic.js` encodes WAV in the browser. |
 | 16 | `MediaRecorder` defaults and mic sample rate | moot for the hosted path, which no longer uses `MediaRecorder`; the encoder writes the true rate |
 | 17 | An `https://` page cannot open `ws://` | inferred; irrelevant to the HTTP path |
-| 18 | A robot plays chunk 1+ of an event | unverified on a robot. The SIM does: the hosted turn is up to three chunks and `voice/cloud.js` plays them in order (test_cloud_transport §4b–4g; measured live 2026-10-08 over 20 turns, 12 of them chunked: the longest gap between chunks 139 ms). |
+| 18 | A robot plays chunk 1+ of an event | unverified on a robot. The SIM does: the hosted turn is up to three chunks and `voice/cloud.js` plays them in order (test_cloud_transport §4b–4g; measured live 2026-10-08 over 20 turns, 11 of them chunked: 12 gaps between chunks, 8–139 ms). |
 | 19 | Gateway cost per token or second | unknown: no price sheet, so budgets are in request units |
 | 20 | `emotion` is not in the chat contract | proven |
 | 21–23 | Clip rendering is reproducible; child clips are not played; the account id is public in check-run URLs | proven |

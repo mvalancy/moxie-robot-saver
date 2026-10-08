@@ -193,10 +193,12 @@
   }
 
   /** How many /api/speech redemptions of one reply are in flight at once: ONE. Chunk 1 is
-   *  requested the moment chunk 0 lands and synthesises while chunk 0 plays (a 24-char chunk
-   *  plays ~1.8 s, a synthesis takes ~1.6-2.0 s), and so on. Two at once was measured to
-   *  slow both — chunk 0 took 2.7-3.7 s beside chunk 1 against 1.6-2.6 s alone (2026-10-08,
-   *  10 turns each) — which delays the first words, the one thing chunking is for. */
+   *  requested the moment chunk 0 lands and synthesises while chunk 0 plays (measured: a
+   *  later chunk's round trip 1.7-2.9 s against 2.2-5.4 s of playback before it), and so on.
+   *  Two at once was measured to slow chunk 0 (2026-10-08, two 10-turn arms): 2.4-3.7 s,
+   *  median 3.3 s, on the 5 chunked turns of the two-in-flight arm, against 1.6-2.6 s,
+   *  median 2.0 s, on that arm's single-chunk turns and 2.1-3.3 s, median 2.5 s, on the 6
+   *  chunked turns of this arm — which delays the first words, the one thing chunking is for. */
   var SPEECH_PARALLEL = 1;
   /** More tickets than any reply is worth. A server that minted them is misconfigured, and
    *  nothing past this many is redeemed: each costs the visitor's speech window. */
