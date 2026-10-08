@@ -1,12 +1,19 @@
 # Content authoring
 
-**Status:** P0 shipped (save + a free prompt preview in the parent console); P1 (the paid *Try it*
-rung and the rehearse button) and P2 are proposals. The routes are in
+**Status:** P0 shipped (save + a free prompt preview in the parent console). P1's paid *Try it* rung
+shipped as the console's 💬 **Try it** card, for **installed** items: any conversation, free chat, or
+any brain the appliance offers, through the robot's real brain, with no robot (§5.3). Trying an
+**unsaved draft**, the rehearse button and P2 are proposals. The routes are in
 [`mqtt/supervisor/moxie_runtime/content.py`](../../../mqtt/supervisor/moxie_runtime/content.py)
-(`content_save_item`, `content_render`), the phrase compiler and shadow check are in
-[`packs/authoring.py`](../../../mqtt/moxie_sdk/content/packs/authoring.py), and the editor is in
-[`server/static/js/content.js`](../../../server/static/js/content.js). Tested by
-[`test_content_authoring.py`](../../../sim/tests/test_content_authoring.py) and
+(`content_save_item`, `content_render`) and
+[`moxie_runtime/tryit.py`](../../../mqtt/supervisor/moxie_runtime/tryit.py) (`tryit_view`,
+`tryit_turn`), the phrase compiler and shadow check are in
+[`packs/authoring.py`](../../../mqtt/moxie_sdk/content/packs/authoring.py), and the editor and the card
+are in [`server/static/js/content.js`](../../../server/static/js/content.js) and
+[`tryit.js`](../../../server/static/js/tryit.js). Tested by
+[`test_content_authoring.py`](../../../sim/tests/test_content_authoring.py),
+[`test_console_tryit.py`](../../../sim/tests/test_console_tryit.py),
+[`sim/test_console_tryit.mjs`](../../../sim/test_console_tryit.mjs) and
 [`sim/tools/authoring_mutation_check.py`](../../../sim/tools/authoring_mutation_check.py).
 
 This covers [OpenMoxie feature audit](../openmoxie-feature-audit.md) §4.4 **#6**. Packs made content
@@ -143,7 +150,7 @@ child's data: the editor never sees PII, memory, telemetry, permits or config.
 | 0 type | keystroke | 0 | none | — | shipped |
 | 1 see what the brain will be told | keystroke, 400 ms debounce | 0 | none | `POST /content/render` | shipped |
 | 2 hear the opener performed | a *Rehearse* click | 0 brain (1 TTS if spoken) | none | existing `POST /local/robots/{id}/preview` | **P1** (not wired into the editor) |
-| 3 try the conversation | a *Try it* click, one press = one turn | **exactly 1** | none | `POST /content/try` | **P1** (does not exist) |
+| 3 try the conversation | a *Send* click (or Enter), one press = one turn | **1** on a healthy brain; 0 for a command | none | `POST /local/tryit` → supervisor `POST /tryit` | shipped for installed items; a draft is **P1** |
 | 4 keep it | a *Save* click | 0 | overlay + backup, then `reload_content()` | `POST /content/item` | shipped |
 
 ### 5.1 Rung 1: the resolved prompt, free
@@ -156,32 +163,120 @@ optional `counts=` dict so a caller gets its own counts. The response still sets
 `"counts_advisory": true`, because the module-level `BLOCKED`/`STRIPPED` counters are process-global and
 move with concurrent turns. **Do not add a lock around the renderer**: the turn loop calls it too.
 
-### 5.2 Rung 3 (P1): a paid try that cannot fire on a keystroke
+### 5.2 Rung 3: a paid try that cannot fire on a keystroke
 
-The proposal, with P0 pieces noted:
+What shipped, item by item:
 
-1. `/content/try` is called from **one** place in the console, a click handler, never from a debounce,
-   `oninput` or timer. P0 already guards this: every timer in the editor may call only
-   `renderDraftPrompt`, and Save is click-bound (`test_no_timer_in_the_editor_can_reach_a_model`).
-2. **A visible budget.** `MOXIE_AUTHOR_TRY_BUDGET` (default 40) tries per rolling hour per appliance.
-   Every response carries `remaining`, and going over is a 429 with a sentence. It counts **calls, not
-   tokens**, because nothing in this codebase does token accounting. It is not cost control (A6).
-   *Declared in [`mqtt/config.py`](../../../mqtt/config.py), read by nothing yet.*
-3. `max_tokens` comes from the draft, capped at `MOXIE_AUTHOR_TRY_MAX_TOKENS` (default 300). This is
-   declared, not yet read.
-4. **Trying a command is free:** `match_global` + `explain()` + the extension evaluator, with no gateway
-   call.
+1. **One call site.** `trySend` in [`tryit.js`](../../../server/static/js/tryit.js) is the only place
+   the console calls the brain, bound to the *Send* button and the Enter key (not the Enter that
+   commits an IME composition), never a debounce, `oninput` or timer. Pinned twice: `test_the_card_is_labelled_a_preview_and_its_one_brain_call_is_click_bound`
+   (one `postJson('/local/tryit'` and no timer in the file) and the browser suite
+   [`sim/test_console_tryit.mjs`](../../../sim/test_console_tryit.mjs) (typing alone makes no call; a
+   send-as-you-type copy of the file must redden it). The editor's own guard,
+   `test_no_timer_in_the_editor_can_reach_a_model`, covers `tryit.js` too, because it loads after
+   `content.js`.
+2. **A visible budget.** `MOXIE_AUTHOR_TRY_BUDGET` (default 40) tries per rolling hour per appliance,
+   read per call by `TryItMixin.try_budget`. Every response carries `budget.remaining` and the card
+   shows it; going over is a 429 with a sentence. A try is charged once if it made at least one model
+   request (counted where the request is made, `chat.note_model_call`), never per token or retry; a
+   command, `echo` and `webhook` (which makes no model request of ours) cost nothing, and a try that
+   timed out stays charged. It is not cost control (A6).
+3. `MOXIE_AUTHOR_TRY_MAX_TOKENS` is still declared and unread: it caps a **draft's** own `max_tokens`,
+   and a draft cannot be tried yet. An installed item answers with the brain's own settings.
+4. **Trying a command is free:** it runs `match_global` and the extension evaluator inside the content
+   brain, exactly as a turn does, and costs no gateway call (`model_calls: 0`).
 
-### 5.3 `POST /content/try` (P1), exactly
+### 5.3 The 💬 Try it card: `GET/POST /local/tryit`, exactly
 
-Request: `{"kind": "conversation", "data": {…draft…}, "speech": "…", "history": [...], "device_id": "…"}`.
-It **must** normalize the draft like an import, render with the same `render_prompt` and return the
-resolved prompt beside the reply, call the robot's actually selected brain through the runtime's
-`ChatFn`, keep conversation state in the request, and run the same output-side safety assessment
-`preview` runs (`MoxieRuntime._assess`), reporting the reason to the author. It **must not** write the
-overlay, memory, `persist_data` or telemetry, count as a turn, fire actions, publish to MQTT, or run
-`code`. A try shows *what the brain says to this prompt*, not *what the child experiences*, and the card
-must say so.
+The console proxies `GET/POST /local/tryit` ([`routes/console.py`](../../../server/moxie_server/routes/console.py),
+views in [`fleet/tryit.py`](../../../server/moxie_server/fleet/tryit.py)) to the supervisor's
+`GET/POST /tryit` ([`moxie_runtime/tryit.py`](../../../mqtt/supervisor/moxie_runtime/tryit.py)). The route
+is not `/content/try` because it is not content-only: a parent can try free chat or any brain the
+appliance offers, as well as a conversation.
+
+**Request:** `{"speech", "history"?, "device_id"?, "brain"?, "module"?, "nickname"?}`. `speech` is at
+most 500 characters (the hosted demo's cap); `history` is the session the card holds, a list of
+`{role: user|assistant, content}` lines, cut to the robot's own transcript length
+(`MOXIE_MEMORY_TURNS`); a body over 64 KiB is a 413, refused unread. With no `device_id` the appliance's
+own child and brain answer, so **no robot is needed**.
+
+**What runs is a robot's turn, minus its transport.** The brain is the one `app_for` would pick for that
+robot (`brain_for`), or the one named in `brain`, refused by the same registry and `MOXIE_APP` pin as
+the 🧠 card (`normalize_brain_patch`) and built and cached by the same `app_named`. `module` sets the
+`module_id`/`content_id` the content brain reads, from the live module, so a pick resolves exactly as
+`_active_conversation` would. The `Turn` is assembled as `_on_remote_chat` assembles one; the brain
+streams when the runtime streams (`MOXIE_STREAMING`) and the app can; each piece passes the same
+output classifier and redirect (a blocked sentence of a streamed answer is replaced and ends it, as on
+a robot); a brain that raises is answered by the robot's own fallback, `_safe_respond`; and each piece
+is staged by the same `_stage` at the same chunk index as the published stream. Under one turn key,
+each piece is byte-identical to what that robot is sent (`test_a_try_stages_exactly_what_a_robot_is_sent`,
+`test_each_streamed_piece_is_staged_at_its_own_chunk_index`,
+`test_an_unsafe_sentence_in_a_streamed_answer_is_replaced_and_ends_it`), except the markup the free
+brain writes itself, which it seeds with the device id (below); for that brain the scored fields match
+piece by piece (`test_a_streamed_try_is_chunked_like_the_published_stream`). The tests pin the turn
+key; in use a try has its own. The child's line passes the input classifier first; a blocked line is
+answered with the redirect and never reaches the brain, and only Moxie's line joins the session, as on
+a robot.
+
+**Where a try is not that robot's turn.** Four inputs differ, so a try shows what the brain says, not a
+replay of what the robot would do:
+
+- **No device id.** It is what keeps every store path closed (below), and it is also a seed: the free
+  brain spaces its talking gestures by device id and line (`LLMApp._turn_key`), and a content extension
+  seeds its random choices with it. Where her gestures fall, and an extension's random pick, can
+  differ from that robot's.
+- **Its own turn key**, `tryit-<ms>` where a robot has its event id. It seeds where `_stage` places
+  talking gestures in the markup it builds.
+- **Empty presence.** The `Turn` carries the presence of a robot never heard from (nothing known, no
+  face in view), not that robot's live one, so a prompt or an extension that reads `presence` sees
+  nobody there.
+- **The redirect line** is a random pick from the same phrase set, avoiding the session's last line
+  rather than the robot's last redirect.
+
+**What never runs:** no MQTT publish, no filler, no transcript (`self.history`), no long-term memory,
+no `persist_data`, no telemetry, no safety journal (a verdict is reported to the parent, not filed as
+the child's), and no action is carried out (an `<exit>`, `<launch:…>` or `<sleep>` is shown, with the
+`RemoteChatAction` it would be). The turn runs as a robot with **no device id**, and every store path a
+brain takes is keyed by the device id and does nothing without one, so a try writes zero bytes
+(`test_a_try_writes_nothing_and_a_real_turn_through_the_same_runtime_does`, with a real turn as the
+negative control). The cost of that: a module whose prompt renders what Moxie remembers sees it
+empty.
+
+**Answer:** per piece, the spoken text, the markup, the scored fields, and a readout of the markup
+(`read_markup`: faces in order, gestures, whole-body behaviours, voice styles, icons, sounds, pauses,
+and any id outside the recovered catalog); the actions; the safety verdicts; the next `history`;
+`model_calls` (exact for this try: the turn runs on its own thread, and `moxie_sdk/chat.py` keeps a
+per-thread count); `elapsed_ms`; the budget.
+
+**The session lives in the card.** Every send carries it, and only a real answer moves it on: a failed
+line stays in the box to send again. Start over, a change of who answers (the brain, the activity or
+the child's name) and another robot each start a new session, and an answer still on its way when that
+happens is set aside: it is neither shown nor carried, and the card says so. A refresh (after a save,
+say) keeps the parent's activity pick, "no particular activity" included; the robot's current activity
+fills an empty pick only when the card is first filled or another robot connects. A line typed while
+she was answering stays in the box. The browser suite pins each of these with an answer held in flight
+(steps 6–8, with teeth).
+
+**Errors, each with a sentence:** 400 (`empty`, `too_long`, `bad_request`, `bad_brain`,
+`unknown_module`), 404 (`unknown_device`), 409 (`pending`), 413 (`too_large`: the session has
+outgrown 64 KiB, so the sentence says to Start over; the console forwards it as UTF-8, not `\u`
+escapes), 429 (`budget`, `busy`:
+at most two tries in flight), 503 (`brain_unavailable`: the brain cannot be built here; `unreachable`:
+no supervisor), 502 (`brain_unreachable`, `brain_refused`, `brain_error`), 504 (`timeout`, after
+30 s) and 500 (`internal`: a fault in the try itself, answered rather than dropped, so the card never
+mistakes it for a missing supervisor). A brain failure is told apart from a real answer by how the try's last model request ended
+(`chat.last_call_error`, per thread): the app has already turned it into a line for the child, so the
+answer carries both that line and the reason (status, error type, and a message with endpoints and
+key-shaped runs scrubbed), and the session does not advance. A brain that raises is shown the same way:
+the robot's stock line from `_safe_respond`, and what was raised. A try holds the supervisor's console API
+(a single-threaded server) for as long as the brain takes, as a voice test does.
+
+A try shows *what the brain says*, not *what the child experiences*, and the card says so: it is
+labelled a preview, and nothing it does reaches a robot.
+
+**Still P1: trying an unsaved draft.** The proposal stands: normalize the draft like an import, return
+the resolved prompt beside the reply, cap `max_tokens` at `MOXIE_AUTHOR_TRY_MAX_TOKENS`. Today an
+author saves (one-slot undo) and then tries.
 
 ### 5.4 Rung 2 needs a live device
 
@@ -206,7 +301,7 @@ device-free "stage only" variant (the planner without the publish) is a small ne
 | G3 | The template sandbox, every turn and every preview | `render.render_prompt` |
 | G4 | Extension validation and capability check, every run | `ext.validate` / `ContentApp.run_extension` |
 | G5 | `code` is never executed | no call site exists |
-| G6 | Output-side safety classifier on a rehearsed line or tried reply | `MoxieRuntime._assess` (P1 for try) |
+| G6 | Safety classifier on a rehearsed line, and on both sides of a tried turn (reported, never journaled) | `MoxieRuntime._assess` |
 
 ### 6.3 The one `if`
 
@@ -240,8 +335,9 @@ localhost supervisor routes behind the console's existing session.
 
 ## 7. Tests
 
-[`sim/tests/test_content_authoring.py`](../../../sim/tests/test_content_authoring.py) covers P0. `T`
-numbers follow the original plan, and the rows marked P1 do not exist yet.
+[`sim/tests/test_content_authoring.py`](../../../sim/tests/test_content_authoring.py) covers P0 and
+[`sim/tests/test_console_tryit.py`](../../../sim/tests/test_console_tryit.py) the 💬 Try it card. `T`
+numbers follow the original plan.
 
 | # | Test | Asserts |
 |--:|---|---|
@@ -258,7 +354,13 @@ numbers follow the original plan, and the rows marked P1 do not exist yet.
 | T16 | `test_extension_and_code_are_not_writable` | §4.5 |
 | T17 | `test_the_authoring_routes_are_declared` | Routes pinned as source literals; `/content/try` absent |
 | — | `test_a_second_tab_cannot_silently_discard_the_first`, `test_the_supervisor_route_owns_the_validation_not_the_proxy`, `test_the_chip_list_is_closed_to_the_two_portable_forms`, `test_no_timer_in_the_editor_can_reach_a_model`, the console proxy tests | 409, R6, AC10, the P0 half of T9, end-to-end proxying |
-| P1 | T6 try writes nothing (with a negative control) · T7 try never runs `code` · T8 budget 429 with `remaining` · T9 one click-bound call site · T18 try runs the classifier | not yet |
+| T6 | `test_a_try_writes_nothing_and_a_real_turn_through_the_same_runtime_does` | Zero bytes written, with a real turn as the negative control |
+| T8 | `test_a_busy_appliance_and_a_spent_budget_are_429s` | Budget 429 with `remaining`; a try with no model call is not charged |
+| T9 | `test_the_card_is_labelled_a_preview_and_its_one_brain_call_is_click_bound` + `sim/test_console_tryit.mjs` | One click-bound call site; typing alone, or an IME Enter, never calls (teeth) |
+| T18 | `test_a_blocked_line_is_redirected_without_the_brain_or_the_journal`, `test_an_unsafe_answer_is_replaced_before_anyone_sees_it_as_hers`, `test_an_unsafe_sentence_in_a_streamed_answer_is_replaced_and_ends_it` | Both classifiers run, streamed or not; nothing is journaled |
+| — | `test_a_try_stages_exactly_what_a_robot_is_sent`, `test_a_streamed_try_is_chunked_like_the_published_stream`, `test_each_streamed_piece_is_staged_at_its_own_chunk_index`, `test_a_brain_that_raises_shows_the_robots_own_stock_line_and_why` and the rest of `test_console_tryit.py` | Same brain, prompt, fallback and staging as a published turn; history threading; module and brain choice; actions; every error kind |
+| — | `sim/test_console_tryit.mjs` steps 6–8 | A new session (Start over, another brain, activity or robot) wins over an answer still on its way; a refresh keeps the pick (teeth) |
+| P1 | T7 a draft try never runs `code` | not yet (a draft cannot be tried) |
 
 The mutation check deletes each guard in turn (the `validate_item` call, the schedule refusal, the
 `code`/`extension` refusal, the `reload_content` call, the undo snapshot, the two-tab 409, the
@@ -266,14 +368,15 @@ allowlist, the shadow check, the portability probe) and requires a named test to
 
 ## 8. Acceptance criteria
 
-P0 criteria are met. Criteria 3–5 are P1.
+P0 criteria are met. Criteria 3–5 are met for installed items (§5.3).
 
 1. A parent can create a conversation from the card with no JSON in the default surface, live on the
    next turn with no restart.
 2. Every authored item passes `normalize_data` **and** `validate_item` before it is written.
-3. (P1) A try costs exactly one brain call and writes zero bytes.
-4. (P1) A try has exactly one call site, a click handler.
-5. (P1) Trying a command costs zero gateway calls.
+3. A try costs one brain call on a healthy brain (a failing one is retried with backoff, and each
+   attempt counts) and writes zero bytes.
+4. A try has exactly one call site, a click handler (the Send button, or Enter in the box).
+5. Trying a command costs zero gateway calls.
 6. The render panel shows the resolved prompt with no model call.
 7. An authored item is locally edited, and a later pack with its key reports `CONFLICT`, un-ticked,
    with no change to `review_pack`.
@@ -298,9 +401,14 @@ seams: `openEditor`, `saveItem`, `renderDraftPrompt` and `renderChips` (pinned b
 `.ed-*` styles in `style.css`. **Not in P0, deliberately:** `/content/try`, any brain call, extension or
 schedule editing, a writable raw surface, deletion, and a second author.
 
-**P1 (proposal).** `POST /content/try` with its budget, counter and 429 (§5.2–5.3). The transcript panel
-and *Try it* button. *Rehearse this opener* wired to the existing preview route (§5.4). *Export just this
-one* from the editor. The free command try. T6–T9, T18.
+**P1, shipped.** The 💬 Try it card (§5.2–5.3): supervisor `GET/POST /tryit` in
+[`moxie_runtime/tryit.py`](../../../mqtt/supervisor/moxie_runtime/tryit.py) with its budget, counter and
+429; console `GET/POST /local/tryit`; the transcript panel and Send button in
+[`tryit.js`](../../../server/static/js/tryit.js); the free command try. T6, T8, T9, T18.
+
+**P1, still a proposal.** Trying an unsaved draft (`MOXIE_AUTHOR_TRY_MAX_TOKENS`, the resolved prompt
+beside the reply, T7). *Rehearse this opener* wired to the existing preview route (§5.4). *Export just
+this one* from the editor.
 
 **P2 (proposal).** A writable raw JSON surface behind a developer toggle. Starter templates. Extension
 authoring, **only** via the sandboxed-extensions text-to-AST compiler. Item removal (needs the overlay to
@@ -312,7 +420,7 @@ gain a delete). Schedule authoring (blocked on a physical robot). A second autho
 |--:|---|---|
 | R1 | The card drifts into a developer environment | Raw is read-only; fields come from `packs.FIELDS`; widening needs a code change |
 | R2 | A prompt renders fine on the appliance and thinly on a bare SDK install | Chips are the two portable forms; rung 1 shows `portable_identical` |
-| R3 | (P1) A try is mistaken for a turn | One honest line in the card; T6/T7 assert the absent writes |
+| R3 | A try is mistaken for a turn | The card is labelled a preview and says nothing reaches a robot; T6 asserts the absent writes |
 | R6 | Validation placed in the proxy, bypassed by `curl` | It is in the supervisor route; a test asserts the proxy has none |
 | R7 | Two tabs edit the same item; the second save discards the first | The save carries its opening `local_rev`; a mismatch is a 409 (§6.4). One undo slot is not a fix |
 | R8 | An authored `module_id` names a module the firmware lacks | Warn, never refuse (A8) |
