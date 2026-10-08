@@ -13,6 +13,7 @@ and the wire encoders (`encode_action`, `build_chat_response`), never as wire li
 """
 import contextlib
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -25,7 +26,7 @@ import pytest
 from helpers_ext import CHAT_MODULE, app_with, robot as ext_robot
 from helpers_runtime import CHAT_TOPIC, CountingSynth, LatchClient, make_runtime
 from moxie_sdk import presence as presence_seam
-from moxie_sdk.actions import ACTION_TAG_PROMPT, parse_action_tags
+from moxie_sdk.actions import ACTION_TAG_PROMPT, parse_action_tags, tag_names
 from moxie_sdk.apps.llm_app import DEFAULT_PERSONA, LLMApp
 from moxie_sdk.content import ContentApp, load_modules
 from moxie_sdk.content import ext as E
@@ -218,12 +219,13 @@ def _hard_limit(seconds):
 
 def test_a_looping_transcript_cannot_stall_the_patterns():
     """Speech-to-text can loop ("bye bye bye ...", or glued: "byebyebyebye"). Every word of
-    these patterns reads one way only. An ambiguous one backtracks exponentially: a Goodbye
-    mutated to `(?:bye\\W*)+` doubles per repeat (0.6-0.7 s at 20 repeats, 17-22 s at 25),
-    and one mutated to `(?:\\w*bye)+` grows about eightfold per glued "byebyebyebye". The
-    count ramps up one repeat at a time, which already stops a doubling pattern one repeat
-    past the budget, 0.9-1.4 s into the test with the alarm or without it. The hard 0.5 s
-    alarm on every match is a bound, not a speedup: no single match runs longer than 0.5 s,
+    these patterns reads one way only. An ambiguous one backtracks exponentially: one match
+    of a Goodbye mutated to `(?:bye\\W*)+` doubles per repeat (measured: 0.6-1.3 s at 20
+    repeats, 21.7 s once at 25; the absolute times depend on the machine's load), and one
+    mutated to `(?:\\w*bye)+` grows about eightfold per glued "byebyebyebye". The count
+    ramps up one repeat at a time, which already stops a doubling pattern one repeat past
+    the budget, 0.9-1.4 s into the test with the alarm or without it. The hard 0.5 s alarm
+    on every match is a bound, not a speedup: no single match runs longer than 0.5 s,
     however steep the pattern's growth."""
     module = load_modules(_raw("starter.json"))
     patterns = [g for g in module.globals if g.name in ("Goodbye", "Sleep")]
@@ -360,7 +362,16 @@ def _says(say, let=None, caps=("handled", "say")):
 
 
 DRAW = "Moxie starts the DRAW activity"
+WORKED_OUT = "Moxie starts an activity it works out"
 _WANTS_DRAW = {"contains": [{"lower": [{"var": "speech"}]}, "draw"]}
+#: Nine parts that each come out two ways: a `concat` that holds them can say 512 different
+#: lines, past the 256 `explain()` reads one by one.
+_NINE_IFS = [{"if": [{"var": "speech"}, "a", "b"]}] * 9
+#: Parts worked out at run time that always come out as nothing: a path below a string, a
+#: value the robot did not send, and a list (said as nothing).
+_ALWAYS_EMPTY = {"var": "speech.x"}
+_NOT_SENT = {"var": "input_vars.zz"}
+_A_LIST = {"list": [{"var": "speech"}]}
 
 #: Imported programs whose `say` reaches an action tag in different ways: how the pack
 #: review's sentence ends, and what the robot is sent for each thing the child says. Before
@@ -417,6 +428,71 @@ IMPORTED_SAYS = {
     "two lines, of which the robot is sent the last": (
         _imported({"do": [{"say": "<exit>Bye"}, {"say": "Hi there"}, {"handled": True}]}),
         "", {"hi": []}),
+    # A worked-out part may come out as nothing, and a tag around it then forms.
+    "an always-empty part inside the tag's name": (
+        _says({"concat": ["<ex", _ALWAYS_EMPTY, "it>Bye!"]}),
+        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+    "a value the robot did not send inside the tag's name": (
+        _says({"concat": ["<ex", _NOT_SENT, "it>Bye!"]}),
+        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+    "a list inside the tag's name": (
+        _says({"concat": ["<ex", _A_LIST, "it>Bye!"]}),
+        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+    "a dotted let path inside the tag's name": (
+        _says({"concat": ["<sl", {"var": "x.y"}, "eep>Night"]}, let={"x": "hello"}),
+        "; then sometimes Moxie goes to sleep.", {"hi": ["Moxie goes to sleep"]}),
+    "an empty part between launch and its module": (
+        _says({"concat": ["<launch", _NOT_SENT, ":DRAW>Let's draw!"]}),
+        f"; then sometimes {DRAW}.", {"hi": [DRAW]}),
+    "a tag's name split around an empty part, with its module worked out": (
+        _says({"concat": ["<la", _NOT_SENT, "unch:", {"upper": [{"trim": [{"var": "speech"}]}]},
+                          ">Off we go!"]}),
+        f"; then sometimes {WORKED_OUT}.",
+        {"draw": [DRAW], "hi": ["Moxie starts the HI activity"]}),
+    "a module split around an empty part": (
+        _says({"concat": ["<launch:DR", _ALWAYS_EMPTY, "AW>Go!"]}),
+        f"; then sometimes {WORKED_OUT} and sometimes {DRAW}.", {"hi": [DRAW]}),
+    "an and whose earlier operand is a falsy number": (
+        _says({"concat": ["<launch:", {"and": [{"len": [_NOT_SENT]}, "X"]}, ">Go"]}),
+        f"; then sometimes {WORKED_OUT} and sometimes Moxie starts the X activity.",
+        {"hi": ["Moxie starts the 0 activity"]}),
+    # Past 256 lines, each `concat` is read as one text.
+    "a tag split across literal parts, past 256 lines": (
+        _says({"concat": _NINE_IFS + ["<ex", "it>Bye"]}),
+        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+    "a lowered launch, past 256 lines": (
+        _says({"lower": [{"concat": _NINE_IFS + ["<launch:DRAW>OK"]}]}),
+        "; then sometimes Moxie starts the draw activity.",
+        {"hi": ["Moxie starts the draw activity"]}),
+    "a nested concat that completes a tag, past 256 lines": (
+        _says({"concat": _NINE_IFS + ["<ex", {"concat": ["it>", {"var": "speech"}]}]}),
+        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+    "a part built only from literals that completes a tag, past 256 lines": (
+        _says({"concat": _NINE_IFS + ["<ex", {"replace": ["iz>Bye", "z", "t"]}]}),
+        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+    "a let-bound line that completes a tag, past 256 lines": (
+        _says({"concat": _NINE_IFS + ["<sl", {"var": "rest"}]},
+              let={"rest": {"concat": ["eep>Night, ", {"var": "speech"}]}}),
+        "; then sometimes Moxie goes to sleep.", {"hi": ["Moxie goes to sleep"]}),
+    "an upper part that completes a tag, past 256 lines": (
+        _says({"concat": _NINE_IFS + ["<EX", {"upper": [{"concat": ["it>", {"var": "speech"}]}]}]}),
+        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+}
+
+#: The shapes whose quote shows a tag in its pieces (`'<ex … it>Bye! …'`): its name is split
+#: around a part worked out at run time, so it forms only when that part comes out empty,
+#: and otherwise the pieces are said. Every other shape's quote holds no `<` or `>` at all.
+QUOTED_IN_PIECES = {
+    "an always-empty part inside the tag's name",
+    "a value the robot did not send inside the tag's name",
+    "a list inside the tag's name",
+    "a dotted let path inside the tag's name",
+    "an empty part between launch and its module",
+    "a tag's name split around an empty part, with its module worked out",
+    "a nested concat that completes a tag, past 256 lines",
+    "a part built only from literals that completes a tag, past 256 lines",
+    "a let-bound line that completes a tag, past 256 lines",
+    "an upper part that completes a tag, past 256 lines",
 }
 
 
@@ -424,8 +500,7 @@ def _names(phrase, effect):
     """True when one of the review's phrases names `effect`, an action the robot was sent
     (a launch of a worked-out module names any launch)."""
     phrase = phrase[len("sometimes "):] if phrase.startswith("sometimes ") else phrase
-    return phrase == effect or (phrase == "Moxie starts an activity it works out"
-                                and effect.startswith("Moxie starts the "))
+    return phrase == effect or (phrase == WORKED_OUT and effect.startswith("Moxie starts the "))
 
 
 @pytest.mark.parametrize("shape", sorted(IMPORTED_SAYS))
@@ -434,11 +509,14 @@ def test_an_imported_say_names_what_its_tags_do_however_it_is_built(shape):
     the review's sentence is the only place a parent learns that it ends the chat, puts
     Moxie to sleep or starts an activity. Each program runs as an imported global with only
     the default grants: the sentence (in `explain()` and in the pack review) names what the
-    robot is sent, "sometimes" when not every line it can say does it, and reads no tag."""
+    robot is sent, "sometimes" when not every line it can say does it, and holds no tag
+    (only the pieces of one split around a worked-out part, `QUOTED_IN_PIECES`)."""
     program, then, heard = IMPORTED_SAYS[shape]
+    assert E.validate(program, grants=E.DEFAULT_GRANTS) == [], shape
     (sentence,) = E.explain(program)
     assert sentence.endswith(then) if then else "; then" not in sentence, sentence
-    assert "<" not in sentence and ">" not in sentence, sentence
+    assert ("<" in sentence or ">" in sentence) == (shape in QUOTED_IN_PIECES), sentence
+    assert tag_names(sentence) == [], sentence
     assert sentence in P.extension_warnings({"extension": program})
     named = sentence.partition("; then ")[2].rstrip(".").split(" and ") if then else []
     module = dict(CHAT_MODULE, globals=[{"name": "Probe", "pattern": r"\w",
@@ -454,6 +532,66 @@ def test_an_imported_say_names_what_its_tags_do_however_it_is_built(shape):
         assert all(any(_names(n, e) for n in named) for e in sent), (sent, named)
         assert all(any(_names(n, e) for e in sent)
                    for n in named if not n.startswith("sometimes ")), (sent, named)
+
+
+#: Parts worked out at run time that come out as nothing on some turns or all of them, and
+#: as text without a `<`, `:` or `>` on the others.
+_RUN_TIME_PARTS = {
+    "an always-empty path": _ALWAYS_EMPTY,
+    "a value the robot did not send": _NOT_SENT,
+    "a list": _A_LIST,
+    "what the child said": {"var": "speech"},
+    "an if, empty or z": {"if": [{"contains": [{"var": "speech"}, "x"]}, "", "z"]},
+    "an if, a space or empty": {"if": [{"contains": [{"var": "speech"}, "x"]}, " ", ""]},
+    "an and that stops at 0": {"and": [{"len": [_NOT_SENT]}, "q"]},
+    "a nested concat": {"concat": [_ALWAYS_EMPTY]},
+    "an upper": {"upper": [_ALWAYS_EMPTY]},
+}
+
+
+def _split_tags():
+    """Every tag split at every point around one worked-out part, and the shorter ones at
+    every two points around an always-empty part and what the child said, in both orders."""
+    for tag in ("<exit>", "<sleep>", "<launch:DRAW>", "<launch:DRAW:story>", "< EXIT >",
+                "<launch : DRAW : >", "<launch_if_confirmed:DRAW>"):
+        for at in range(1, len(tag)):
+            for kind, part in _RUN_TIME_PARTS.items():
+                yield f"{tag} split at {at} by {kind}", [tag[:at], part, tag[at:] + "Bye"]
+        if len(tag) > 19:
+            continue
+        for at, to in itertools.combinations(range(1, len(tag)), 2):
+            for first, second in ((_ALWAYS_EMPTY, {"var": "speech"}),
+                                  ({"var": "speech"}, _ALWAYS_EMPTY)):
+                yield (f"{tag} split at {at} and {to}",
+                       [tag[:at], first, tag[at:to], second, tag[to:] + "!"])
+
+
+def test_a_tag_split_around_a_part_worked_out_at_run_time_is_named_however_it_is_split():
+    """A worked-out part can come out as nothing, and a tag written around it then forms
+    from the program's own text: a sweep of 1,612 splits, each read directly and after nine
+    `if`s that take it past 256 lines, and each run through the real `ContentApp` twice.
+    Whatever the robot is sent, the review names; what it names without "sometimes", the
+    robot is sent every time; and no sentence holds a whole tag."""
+    shapes = list(_split_tags())
+    assert len(shapes) == 1612
+    for name, parts in shapes:
+        for capped in (False, True):
+            program = _says({"concat": (_NINE_IFS if capped else []) + parts})
+            assert E.validate(program, grants=E.DEFAULT_GRANTS) == [], name
+            (sentence,) = E.explain(program)
+            assert tag_names(sentence) == [], (name, sentence)
+            named = (sentence.partition("; then ")[2].rstrip(".").split(" and ")
+                     if "; then " in sentence else [])
+            app = app_with(dict(CHAT_MODULE, globals=[
+                {"name": "Probe", "pattern": r"\w", "extension": program}]), chat=Brain())
+            for speech in ("hi", "x marks"):
+                reply = app.respond(Turn(robot=ext_robot(), speech=speech))
+                assert reply.text != QUESTION, (name, capped, speech)
+                sent = [_effect_of(a) for a in reply.actions]
+                where = (name, "past 256 lines" if capped else "", speech, sent, sentence)
+                assert all(any(_names(n, e) for n in named) for e in sent), where
+                assert all(any(_names(n, e) for e in sent)
+                           for n in named if not n.startswith("sometimes ")), where
 
 
 def test_a_random_pick_among_computed_lines_names_its_tag_as_sometimes():
@@ -489,22 +627,41 @@ def test_a_say_built_to_multiply_is_read_in_bounded_time_and_still_names_its_tag
     """Thirty `let` names that each double the lines of the last, and a `concat` of 32
     `if`s: each name is read once, in binding order, and past 256 lines every tag written
     in the `say` and its names counts as "sometimes". Read one by one, the first would be
-    2^30 lines and the second 2^32."""
+    2^30 lines and the second 2^32. A `<` followed by 992 worked-out parts: a tag is looked
+    for in one pass (a regex with three neighbouring repeats that each take a worked-out
+    part took 11.2 s on this line, measured)."""
     chain = {"a0": {"if": [{"var": "speech"}, "<exit>Bye", "Hi"]}}
     for k in range(1, 30):
         chain[f"a{k}"] = {"if": [{"var": "speech"}, {"var": f"a{k - 1}"},
                                  {"concat": [{"var": f"a{k - 1}"}, "!"]}]}
     doubling = _says({"var": "a29"}, let=chain)
     wide = _says({"concat": [{"if": [{"var": "speech"}, "<sleep>z", "z"]}] * 32})
-    for program in (doubling, wide):
+    holes = _says({"concat": ["<"] + [{"concat": [{"var": "speech"}] * 32}] * 31})
+    for program in (doubling, wide, holes):
         assert E.validate(program, grants=E.DEFAULT_GRANTS) == []
     try:
         with _hard_limit(5.0):
-            read = E.explain(doubling) + E.explain(wide)
+            read = E.explain(doubling) + E.explain(wide) + E.explain(holes)
     except _Stalled:
         pytest.fail("explain() was still reading after 5 s")
     assert read[0].endswith("; then sometimes the conversation ends."), read[0]
     assert read[1].endswith("; then sometimes Moxie goes to sleep."), read[1]
+    assert "; then" not in read[2], read[2]
+
+
+def test_a_deep_nest_of_large_literal_parts_is_joined_a_bounded_length_at_a_time():
+    """Past 256 lines each `concat` is read as one text, the text of every `concat` inside it
+    included. A 900 KB pack of 29 nested `concat`s, each of 31 parts that work out to 16 KB,
+    over what the child said, would make that text grow level by level (500 MB at the peak
+    and 1.8 s, measured without the bound). Past a million characters a `concat` is read in
+    its parts only, which no turn could say or pass on under the evaluator's default caps."""
+    from moxie_sdk.content.ext.explain import _MAX_CHARS, _Reader
+    big = {"repeat": ["x" * 1000, 16]}
+    deep = {"concat": [big] * 31 + [{"var": "speech"}]}
+    for _ in range(28):
+        deep = {"concat": [big] * 31 + [deep]}
+    assert E.validate(_says(deep), grants=E.DEFAULT_GRANTS) == []
+    assert max(len(text) for text in _Reader({}).texts_in(deep)) <= _MAX_CHARS
 
 
 # --------------------------------------------------------------------------- #

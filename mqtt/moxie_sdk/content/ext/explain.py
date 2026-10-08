@@ -38,15 +38,25 @@ _OP_WORDS = {
 
 #: An action tag as `moxie_sdk/actions.py` reads one (`<name>` or `<name:field:…>`),
 #: restated because this package imports nothing outside itself; only `_TAG_NAMES` do
-#: anything. A parent never reads one: it is lifted out of quoted text, and the sentence
-#: says what it makes happen instead.
+#: anything. A parent never reads a whole one: it is lifted out of quoted text, and the
+#: sentence says what it makes happen instead (`_lift_parts` says when one is left in
+#: its pieces).
 _TAG = re.compile(r"<\s*([A-Za-z_][A-Za-z0-9_]*)\s*((?::[^<>]*?)?)\s*>")
 _TAG_NAMES = ("exit", "sleep", "launch", "launch_if_confirmed")
 
 #: Stands for a piece of a spoken line that is worked out at run time (what the child said,
-#: a number, a memory). A private-use character: it can sit in a tag's fields, never in its
-#: name.
+#: a number, a memory). A private-use character, so it is never part of a tag by itself. It
+#: may come out as some text or as nothing (null, a list and a map are said as nothing), so
+#: a tag is read both ways (`_tag_effects`).
 _HOLE = "\ue000"
+
+#: Where `_TAG` can match: a `<`, then no `<` or `>`, then a `>`. `_TAG` matches one of these
+#: exactly when the text before its first `:` is `_NAME`, so `_tag_effects` reads a tag in
+#: two steps, each in one pass. (A `_TAG` that lets a `_HOLE` into the name and the spaces
+#: on both sides of it backtracks cubically on a run of them: measured 0.6 s on 400, and
+#: 11.2 s for one valid `say`.)
+_SEGMENT = re.compile(r"<([^<>]*)>")
+_NAME = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*")
 
 
 def _lift(text) -> str:
@@ -58,15 +68,21 @@ def _lift(text) -> str:
 def _tag_effects(text) -> list:
     """What the action tags in one line make happen, in a parent's words, each paired with
     whether it is certain. A malformed tag does nothing, as in `actions.parse_action_tags`.
-    A tag with a worked-out piece (`_HOLE`) in its fields may or may not come out well
-    formed, so it is not certain; a launch whose module is worked out starts "an activity it
-    works out"."""
+    A tag with a worked-out piece (`_HOLE`) in it may or may not form, or come out well
+    formed, so it is not certain. Before its first `:` (its name and the spaces around it)
+    a piece is read as nothing, the only way the tag forms there; in its fields, as some
+    text, so a launch whose module is worked out starts "an activity it works out". A line
+    with worked-out pieces is read again with every one of them empty, and what only that
+    reading finds is not certain either."""
+    text = str(text)
     out = []
-    for m in _TAG.finditer(str(text)):
-        name = m.group(1).lower()
+    for m in _SEGMENT.finditer(text):
+        head, colon, rest = m.group(1).partition(":")
+        named = _NAME.fullmatch(head.replace(_HOLE, ""))
+        name = named.group(1).lower() if named else ""
         if name not in _TAG_NAMES:
             continue
-        fields = [f.strip() for f in m.group(2)[1:].split(":")] if m.group(2) else []
+        fields = [f.strip() for f in rest.split(":")] if colon else []
         while fields and not fields[-1]:
             fields.pop()
         sure = _HOLE not in m.group(0)
@@ -78,14 +94,20 @@ def _tag_effects(text) -> list:
             what = ("an activity it works out" if _HOLE in fields[0]
                     else f"the {_plain(fields[0])} activity")
             out.append((f"Moxie starts {what}", sure))
+    if _HOLE in text:
+        out += [(e, False) for e, _ in _tag_effects(text.replace(_HOLE, ""))
+                if all(e != seen for seen, _ in out)]
     return out
 
 
 def _lift_parts(parts) -> list:
     """A `concat`'s arguments with the action tags lifted out of its literal strings, a
-    tag split across them (`["<ex", "it>Bye"]`) or around a worked-out part (`["<launch:",
-    {"var": "speech"}, ">"]`) included: the parts are read joined, with a `_HOLE` for each
-    one that is not a string."""
+    tag split across them (`["<ex", "it>Bye"]`) or with a worked-out part in its fields
+    (`["<launch:", {"var": "speech"}, ">"]`) included: the parts are read joined, with a
+    `_HOLE` for each one that is not a string. A tag whose name is split around a
+    worked-out part (`["<ex", {"var": "x"}, "it>"]`) is left in, in its pieces: it forms
+    only if that part comes out empty, and otherwise its pieces stay in the spoken line.
+    `_tag_effects` names what it does when it forms ("sometimes")."""
     text = "".join(p if isinstance(p, str) else _HOLE for p in parts)
     lifted = list(text)
     for m in _TAG.finditer(text):
@@ -125,7 +147,7 @@ def _picked_lines(value):
 
 #: At most this many different lines are read out of one `say` (an `if` inside a `concat`
 #: multiplies them), and this many characters across them. Past either, every tag written
-#: in the `say` and its `let` names counts, as "sometimes".
+#: in the `say` and its `let` names counts, as "sometimes" (`_Reader.texts_in`).
 _MAX_LINES = 256
 _MAX_CHARS = 1_000_000
 
@@ -208,6 +230,9 @@ class _Reader:
         #: worked out in binding order (as `evaluate` does), so a chain of names is never
         #: walked twice or deeply.
         self.memo: dict = {}
+        #: Each `concat`'s parts joined (`joined`), by the parts list and the `let` names
+        #: in sight, so a nest of them is joined once, not again for each one around it.
+        self.glued: dict = {}
         #: How many `let` names the expression being read can see: a binding sees the
         #: earlier ones only, the `say` sees them all.
         self.sees = 0
@@ -216,7 +241,7 @@ class _Reader:
                 value = self.run(expr)
                 if value is not _UNRUN:
                     self.known[name] = value
-            for kind in ("lines", "choices", "tags_in"):
+            for kind in ("lines", "choices", "texts_in", "glue"):
                 self.maybe = []
                 try:
                     got = getattr(self, kind)(expr)
@@ -226,12 +251,12 @@ class _Reader:
             self.sees += 1
         self.maybe = []
 
-    def bound(self, name, kind: str) -> list:
-        """`let` name `name` read as `kind`: "lines", "choices" (for a `random.pick`) or
-        "tags_in"."""
+    def bound(self, name, kind: str):
+        """`let` name `name` read as `kind`: "lines", "choices" (for a `random.pick`),
+        "texts_in" or "glue"."""
         if not isinstance(name, str) or self.index.get(name, self.sees) >= self.sees:
             # A fact, or a later binding (null at run time): no text of the program's own.
-            return [] if kind == "tags_in" else [_HOLE]
+            return {"texts_in": [], "glue": _HOLE}.get(kind, [_HOLE])
         got, maybe = self.memo[(kind, name)]
         self.maybe += [e for e in maybe if e not in self.maybe]
         if got is None:
@@ -282,8 +307,8 @@ class _Reader:
         if key == "or" and arg:
             return _union([self.lines(a, depth + 1) for a in arg])
         if key == "and" and arg:
-            # The last operand's value, or an earlier falsy one (which holds no tag).
-            return _union(([[""]] if len(arg) > 1 else [])
+            # The last operand's value, or an earlier falsy one: said as "", "0" or "false".
+            return _union(([[_HOLE]] if len(arg) > 1 else [])
                           + [self.lines(arg[-1], depth + 1)])
         if key == "concat":
             out = [""]
@@ -335,41 +360,85 @@ class _Reader:
         """`node` feeds an op whose value is not worked out here: each tag it can come out
         with, or hold in a list or map, may or may not reach the line (`maybe`)."""
         found = [e for x in self.lines(node, depth) if x is not None
-                 for e, _ in _tag_effects(x)] + self.tags_in(node, depth)
+                 for e, _ in _tag_effects(x)] + _effects_in(self.texts_in(node, depth))
         self.maybe += [e for e in dict.fromkeys(found) if e not in self.maybe]
 
-    def tags_in(self, node, depth: int = 0) -> list:
-        """What the tags do in every string written in `node`, in the `let` names it reads
-        and in what its literal-only parts work out to, wherever they sit (a list, a map)."""
+    def texts_in(self, node, depth: int = 0) -> list:
+        """Each text in `node` a tag can be written in, once: every string, wherever it sits
+        (a list, a map), what its literal-only parts work out to, the `let` names it reads,
+        each `concat`'s parts joined (`joined`), and all of these through a case op as it
+        changes them. Read without multiplying anything out, so its size is the program's."""
         if self.constant(node, depth):
             value = self.run(node)
             if value is not _UNRUN:
-                return _effects_in(_strings(value))
+                return list(dict.fromkeys(_strings(value)))
         if depth > MAX_DEPTH or not isinstance(node, dict) or len(node) != 1:
             return []
         key, arg = next(iter(node.items()))
         if key == "lit":                   # too big for the evaluator's value cap
-            return _effects_in(_strings(arg))
+            return list(dict.fromkeys(_strings(arg)))
         if key == "var":
-            return self.bound(arg, "tags_in")
+            return self.bound(arg, "texts_in")
         if not isinstance(arg, list):
             return []
-        return list(dict.fromkeys(e for a in arg for e in self.tags_in(a, depth + 1)))
+        out = [t for a in arg for t in self.texts_in(a, depth + 1)]
+        if key == "concat":
+            out.append(self.joined(arg, depth))
+        elif key in _CASE and len(arg) == 1:
+            out = [_CASE[key](t) for t in out]
+        return list(dict.fromkeys(out))
+
+    def joined(self, parts, depth: int) -> str:
+        """A `concat`'s parts as one text (`glue`), so a tag split across them is read whole
+        (as `_lift_parts` lifts it). Past `_MAX_CHARS` the whole is a `_HOLE`: no turn can
+        say or pass on a value that long under the evaluator's default caps (`Limits`), and
+        `texts_in` still reads each part on its own."""
+        seen = (id(parts), self.sees)
+        if seen not in self.glued:
+            text = "".join(self.glue(part, depth + 1) for part in parts)
+            self.glued[seen] = text if len(text) <= _MAX_CHARS else _HOLE
+        return self.glued[seen]
+
+    def glue(self, node, depth: int = 0) -> str:
+        """`node` as one piece of a joined `concat`: what it works out to when it is built
+        only from literals, a `concat` or a case op over one read through, a `let` name as
+        what it is bound to, and anything else (a part that can come out as different lines,
+        an op it does not follow, a fact) a `_HOLE`."""
+        if self.constant(node, depth):
+            value = self.run(node)
+            return _HOLE if value is _UNRUN or is_error(value) else _text(value)
+        if depth > MAX_DEPTH or not isinstance(node, dict) or len(node) != 1:
+            return _HOLE
+        op, arg = next(iter(node.items()))
+        if op == "var":
+            return self.bound(arg, "glue")
+        if not isinstance(arg, list):
+            return _HOLE
+        if op == "concat":
+            return self.joined(arg, depth)
+        if op in _CASE and len(arg) == 1:
+            return _CASE[op](self.glue(arg[0], depth + 1))
+        return _HOLE
 
 
 def _say_effects(value, binds=None) -> list:
     """What a `say` makes happen through the tags in the line it speaks, in a parent's
     words, read from every line it can speak (`_Reader`). An effect that is not certain on
-    every one of those lines happens "sometimes". Not read: a tag in what the program reads
-    at run time (what the child said, a memory), which is not its own text, and one that an
-    op `_Reader` does not follow puts together at run time from pieces (`join`, `replace`,
-    `format` around a fact)."""
+    every one of those lines happens "sometimes". Not read: a tag that needs text the
+    program reads at run time (what the child said, a memory, something the robot sent)
+    for its `<`, name, `:` or `>`, which is not its own text; and a tag that needs the text
+    an op `_Reader` does not follow hands on (`get`, `slice`, `replace`, `join`, …), whose
+    arguments are read for whole tags only. Past `_MAX_LINES`, nor a tag that needs the
+    text of a `concat` part that can come out as different lines (an `if`, `and`/`or`,
+    `random.pick`, or a `let` name bound to one)."""
     reader = _Reader(binds)
     try:
         lines = reader.lines(value)
     except _TooMany:
         # Too many lines to read one by one: each tag written in it may be said.
-        lines, reader.maybe = [], reader.tags_in(value)
+        lines = []
+        reader.maybe += [e for e in _effects_in(reader.texts_in(value))
+                         if e not in reader.maybe]
     each = [[] if line is None else _tag_effects(line) for line in lines]
     order = []
     for effects in each:
