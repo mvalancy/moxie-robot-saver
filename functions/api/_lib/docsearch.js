@@ -59,15 +59,13 @@ export function terms(query) {
   return [...new Set(out)];
 }
 
-/** A text's words, split exactly as `terms` splits a query. */
-const words = (text) => new Set(String(text || "").toLowerCase().split(/[^a-z0-9]+/));
-
 /** WHOLE-WORD matching: a term matches a word that is the term or the term plus an
  *  inflection, so "motor" still finds "motors" and "remember" finds "remembers". The old
  *  substring match found words INSIDE other words: "cat" hit "Catalog", "here" hit
- *  "where", "play" hit "Playbook". */
-const ENDINGS = ["", "s", "es", "ed", "d", "ing"];
-const has = (ws, t) => ENDINGS.some((e) => ws.has(t + e));
+ *  "where", "play" hit "Playbook". Word edges are `terms`'s own split ([a-z0-9]), and a
+ *  term is only ever [a-z0-9]+, so it needs no escaping. One regex per term, tested on
+ *  lower-cased text: a word set per paragraph cost 4-6x the CPU of the old match. */
+const wordMatcher = (t) => new RegExp("(?<![a-z0-9])" + t + "(?:s|es|ed|d|ing)?(?![a-z0-9])");
 
 /**
  * Rank the index against a query. Pure, so it is tested on real fixtures.
@@ -81,17 +79,17 @@ const has = (ws, t) => ENDINGS.some((e) => ws.has(t + e));
  * a sandbox note, "Doing it from our local server" in a reset guide).
  */
 export function rank(index, query) {
-  const want = terms(query);
+  const want = terms(query).map(wordMatcher);
   if (!want.length) return [];
   const files = index && Array.isArray(index.files) ? index.files : [];
   const scored = [];
   for (const f of files) {
-    const title = words(f && f.title);
-    const path = words(f && f.path);
-    const heads = words((f && Array.isArray(f.headings) ? f.headings : []).join(" "));
+    const title = String((f && f.title) || "").toLowerCase();
+    const path = String((f && f.path) || "").toLowerCase();
+    const heads = (f && Array.isArray(f.headings) ? f.headings : []).join(" ").toLowerCase();
     let score = 0, inTitle = 0, matched = 0;
-    for (const t of want) {
-      const a = has(title, t), b = has(heads, t), c = has(path, t);
+    for (const re of want) {
+      const a = re.test(title), b = re.test(heads), c = re.test(path);
       score += (a ? 6 : 0) + (b ? 3 : 0) + (c ? 1 : 0);
       if (a) inTitle += 1;
       if (a || b || c) matched += 1;
@@ -118,7 +116,7 @@ const MAX_EXCERPT = 320;
  * because the result is paraphrased aloud to a child.
  */
 export function bestPassage(markdown, query) {
-  const want = terms(query);
+  const want = terms(query).map(wordMatcher);
   const text = String(markdown || "");
   if (!text) return "";
   const blocks = text.split(/\n\s*\n/);
@@ -138,12 +136,12 @@ export function bestPassage(markdown, query) {
     // Skip furniture: fences, tables and front-matter rules read terribly when quoted.
     if (b.length < 60 || b.startsWith("```") || b.startsWith("|") || b.startsWith("---")) continue;
 
-    const ws = words(b);
-    const hs = words(heading);
+    const low = b.toLowerCase();
+    const headLow = heading.toLowerCase();
     let hits = 0, headHits = 0;
-    for (const t of want) {
-      if (has(ws, t)) hits += 1;
-      if (has(hs, t)) headHits += 1;
+    for (const re of want) {
+      if (re.test(low)) hits += 1;
+      if (re.test(headLow)) headHits += 1;
     }
     if (!hits) continue;
     /* Distinct terms dominate, the section heading breaks ties, length is last.
