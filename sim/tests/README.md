@@ -78,6 +78,7 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 | `test_ci_*`, `test_clock_dependence`, `test_mutation_tables`, `test_readiness_guards_are_checked`, `test_harness_readiness`, `test_node_global_stubs`, `test_page_teeth_slow_mode`, `test_promotion_guard` | Guards on CI itself: workflows mirror `sim/ci/`, every `sim/test_*.mjs` is run by a tier, reviewed wall-clock reads |
 | `test_csp_hashes`, `test_no_offsite_images`, `test_shared_ceilings`, `test_sim_client_parity`, `test_safety`, `test_sdk` | Static-site CSP, images, shared rate-limit tier, SDK and safety floor |
 | `test_live_*.py`, `test_smoke_live_brain` | Real gateway completions, TTS, STT, hosted ears, voice round trip; skip without credentials |
+| `test_robot_lifecycle` | Unpair and factory reset: account record, permit revoke, voided pairing codes, the `restore_factory` code (need `fastapi` + `httpx`) |
 
 Every file's docstring states what it proves and, where relevant, its mutation-check companion
 in [`../tools/`](../tools/README.md).
