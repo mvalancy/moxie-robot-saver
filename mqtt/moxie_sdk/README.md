@@ -46,7 +46,10 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   `encode_zmq_stt_response`, the transcript; both the bus frame `full_name:protobuf`, checked byte
   for byte against the committed [`tools/robot-toolkit`](../../tools/robot-toolkit/) pb2 files),
   `SttSession` (accumulate one utterance's
-  VAD-tagged frames, transcribe on `END_OF_SPEECH`, at the bus's 16 kHz) and two **first-class**
+  VAD-tagged frames, transcribe on `END_OF_SPEECH`, at the bus's 16 kHz; the honest ears: digital
+  silence and clips under 120 ms reach no engine, Whisper's sound labels are stripped and its
+  silence phrases such as "Bye." are dropped on a quiet or short clip, `MOXIE_STT_PHANTOM_GATE=off`
+  to turn that off) and two **first-class**
   engines behind one `Transcriber` interface — `WhisperTranscriber` (local faster-whisper: no
   network, no key, the home-appliance answer) and `OpenAITranscriber` (an OpenAI-shaped
   `/audio/transcriptions`; live on our gateway since 2026-09-02, the answer for a hosted box with
