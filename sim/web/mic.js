@@ -353,15 +353,16 @@
   }
 
   /** The degraded answer: a scripted child line (one we have a clip for) so the
-   *  conversation still runs, via `publishScripted` so it never costs a live turn. */
+   *  conversation still runs, via `publishScripted` so it never costs a live turn. Nobody
+   *  said it, so it is never "heard": it is a pretend line, here and in the log
+   *  (`cloud-transport.js::sendScriptedTurn`). */
   function fallback(why) {
     stats.fallbacks++;
     if (window.moxieStub && window.moxieStub.enabled) {
       return window.moxieStub.scriptedLines().then(function (lines) {
         if (!lines.length) { status(why || "stt unavailable — run sim/stt/server.py"); return null; }
         var text = lines[(window.moxieMic._n = (window.moxieMic._n || 0) + 1) % lines.length];
-        status(why ? why + ' — heard (scripted): "' + text.slice(0, 24) + '"'
-                   : 'heard (scripted): "' + text.slice(0, 36) + '"');
+        status((why || "Moxie couldn’t hear that") + ' — pretend line: "' + text.slice(0, 24) + '"');
         publishScripted(text);
         return text;
       });
