@@ -3,8 +3,9 @@
  * Spec: docs/architecture/backlog/live-sim-demo.md §3.2 (route and response shapes), §3.3
  * (signed context blob), §4.1 (caps), §4.2 (what the browser may know), §4.5 (statuses).
  *
- * A typed sentence in; out come the `remote_chat` payload `bridge.js` already renders and a
- * TICKET the browser redeems at `/api/speech` for the voice.
+ * A typed sentence in; out come the `remote_chat` payload `bridge.js` already renders and
+ * the TICKETS — one per sentence, chunk 0 first — the browser redeems at `/api/speech` for
+ * the voice.
  *
  * INVARIANTS
  *  - BUILD THE UPSTREAM BODY; NEVER FORWARD THE CLIENT'S (`_lib/prompt.js`). Only `text` and
@@ -27,7 +28,7 @@ import { readConfig, modeOf, publicLimits, publicTurnstile, upstreamHeaders } fr
 import { respond } from "./_lib/envelope.js";
 import { assess } from "./_lib/safety.js";
 import { admit, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
-import { mintContext, mintTicket, verifyContext } from "./_lib/hmac.js";
+import { mintContext, mintTickets, verifyContext } from "./_lib/hmac.js";
 import { TOKEN_FIELD, verify as verifyTurnstile } from "./_lib/turnstile.js";
 import { lookup as lookupDocs } from "./_lib/docsearch.js";
 import { isGoodbye } from "./_lib/turnshape.js";
@@ -154,15 +155,10 @@ export async function onRequestPost(context) {
       markup: markupFloor(reply, served.chosen, closing ? SIGN_OFF : ""),
     });
 
-    // 10. A voice ticket only when a TTS model is configured, and the next context blob.
-    const speech = [];
-    if (cfg.voice) {
-      speech.push({
-        ticket: await mintTicket(cfg, { text: reply.slice(0, cfg.maxTtsChars), eventId: eid, chunkNum: 0 }),
-        event_id: eid,
-        chunk_num: 0,
-      });
-    }
+    // 10. The voice tickets — one per sentence, chunk 0 first, so her first words need
+    //     only a short synthesis (`_lib/hmac.js::mintTickets`) — only when a TTS model is
+    //     configured; and the next context blob.
+    const speech = cfg.voice ? await mintTickets(cfg, { text: reply, eventId: eid }) : [];
     const nextContext = await mintContext(cfg, [
       ...turns,
       { role: "user", content: text },

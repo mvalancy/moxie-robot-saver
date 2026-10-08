@@ -433,8 +433,11 @@ not captured from the original cloud, and no physical robot has been observed re
 **Where it lives.** `fleet/permits.json` beside `fleet/config.json`
 (`{"allow_unverified_bots": bool, "devices": {device_id: {permitted_at, label}}}`); `GET`/`POST
 /permits` on the supervisor's status server; the console's Robot access card (`GET /local/fleet` →
-`pending`, `POST /local/robots/{id}/permit`). Pairing through the console
-(`POST /local/simulate-robot-scan`) permits the device automatically. Owner guide:
+`pending`, `POST /local/robots/{id}/permit`). Both console paths that put a robot on an account
+also post a permit for it: **Add to my account** (`POST /local/robots/{id}/claim`) and Simulate
+robot scan (`POST /local/simulate-robot-scan`, when it is given the robot's `device_id`). That post
+is best-effort: if it fails, the robot is on the account but still pending, and the answer says so
+(`permitted: false`, `permit_error`). Owner guide:
 [permitting a robot](../guides/permitting-a-robot.md).
 
 ### 3.8 The `schedule` query

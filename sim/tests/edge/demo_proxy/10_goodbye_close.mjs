@@ -19,10 +19,14 @@ const LAYOUTS = wire2.PROMPT_LAYOUTS || [];
 const SIGN_OFF = wire.SIGN_OFF || "Bht_Sign_off";
 const treeMark = typeof wire.MK.tree === "function" ? wire.MK.tree : () => "\u0000";
 const spoken = (r) => (r.body.messages[0] ? JSON.parse(r.body.messages[0].payload) : null);
+/** Everything the voice was PAID to say: the tickets' texts, one per sentence, joined. */
 const ticketText = async (r) => {
-  if (!r.body.speech || !r.body.speech[0]) return "";
-  const v = await hmac.verifyTicket(wire2.readConfig(FULL), r.body.speech[0].ticket);
-  return v.ok ? String(v.claims.text || "") : "";
+  const out = [];
+  for (const s of r.body.speech || []) {
+    const v = await hmac.verifyTicket(wire2.readConfig(FULL), s.ticket);
+    out.push(v.ok ? String(v.claims.text || "") : "");
+  }
+  return out.join(" ");
 };
 
 /* 19. THE DETECTOR: anchored and whole-utterance. A false hit makes her say goodbye mid-talk
@@ -288,8 +292,8 @@ const ticketText = async (r) => {
     const p = spoken(r);
     const ticket = await ticketText(r);
     eq(p && p.output.text, want, `${label}: the spoken line`);
-    ok(p && !LEAK.test(p.output.text) && !LEAK.test(ticket) && ticket === want.slice(0, 300),
-       `${label}: no brace, key, think tag or fence in the text or the PAID ticket (ticket ${JSON.stringify(ticket).slice(0, 60)})`);
+    ok(p && !LEAK.test(p.output.text) && !LEAK.test(ticket) && ticket === want,
+       `${label}: no brace, key, think tag or fence in the text or the PAID tickets (tickets ${JSON.stringify(ticket).slice(0, 60)})`);
     if (mark) {
       const got = { mood: (/\+mood\+:(\d+)/.exec(p.output.markup) || [])[1], gesture: (/\+eventName\+:\+(Gesture_[A-Za-z_]+)\+/.exec(p.output.markup) || [])[1] };
       if (mark.gesture) deep(got, mark, `${label}: the model's own face and move survive the broken JSON`);

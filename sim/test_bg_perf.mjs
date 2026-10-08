@@ -132,9 +132,11 @@ const browser = await puppeteer.launch({
  * the tab is hidden only once the page reports that many new packets (a fixed sleep
  * produced the burst only ~2 runs in 3).
  *
- * @returns {{warm, before, after, frames, armed, flipped, hiddenPushes}}
+ * @returns {{warm, before, after, frames, armed, flipped, hiddenPushes, driveFrom, driven}}
  *   `warm` is the pre-hide reading (reported, never asserted); `before` is read inside the
  *   visibilitychange dispatch. `errs` is everything the page said to the console.
+ *   `driveFrom` is the packet count the drive's wait counts from, read in the same task that
+ *   freezes the drain (null without `drive`); `driven` says whether that wait was met.
  */
 async function hiddenRun(variant, ms, { drive = 0 } = {}) {
   const page = await browser.newPage();
@@ -159,8 +161,9 @@ async function hiddenRun(variant, ms, { drive = 0 } = {}) {
   } catch { armed = false; }
   const warm = await page.evaluate(() => window.__bgLen());
 
+  let driveFrom = null, driven = null;
   if (drive) {
-    await page.evaluate(() => {
+    driveFrom = await page.evaluate(() => {
       window.__bg.driveFrom = window.__bg.packets ? window.__bg.packets.length : 0;
       window.__bg.inflate = 400;              // every frame banks the full SPAWN_CREDIT_MS
       /* Freeze the DRAIN, exactly as block 4 does, so the burst is a monotone increase
@@ -170,12 +173,14 @@ async function hiddenRun(variant, ms, { drive = 0 } = {}) {
         const P = window.__bg.packets; if (!P) return;
         for (const p of P) { p.sp = 0; p.t = 0; }
       }, 10);
+      return window.__bg.driveFrom;
     });
     try {
       await page.waitForFunction(
         (n) => window.__bg.packets && window.__bg.packets.length >= window.__bg.driveFrom + n,
         { timeout: 15000, polling: 50 }, drive);
-    } catch { /* reported by the driveGrowth assertion in block 3, never swallowed */ }
+      driven = true;
+    } catch { driven = false; /* reported by the driveGrowth assertion in block 3, never swallowed */ }
   }
 
   const other = await browser.newPage();
@@ -196,7 +201,7 @@ async function hiddenRun(variant, ms, { drive = 0 } = {}) {
   await other.close();
   await page.close();
   return { warm, before: before || warm, after, frames, armed, flipped, hiddenPushes,
-           errs, aborted };
+           errs, aborted, driveFrom, driven };
 }
 
 /* ---- EYES ----------------------------------------------------------------- *
@@ -265,19 +270,25 @@ ok(now.after.pings <= MAX_PINGS, `pings over cap while hidden: ${now.after.pings
  * While still VISIBLE the clock is inflated 400x and the drain frozen; the tab hides as soon
  * as the page reports `DRIVE_PACKETS` new entries, so a burst is provably in flight at the
  * flip. A `before` sampled from Node fails this every run; one read at the flip passes.
- * `driveGrowth` is this block's own teeth: no burst, no proof. */
+ * `driveGrowth` is this block's own teeth: no burst, no proof. It counts from `driveFrom`, the
+ * baseline the drive's wait counts from, never from `warm`: `warm` is read one round trip
+ * earlier, while packets still retire, so one retiring in between met the wait one packet
+ * short of `warm + 3` and reddened this check with the burst in flight (CI 2026-09-07,
+ * 2026-09-08 and 2026-10-08, each "2 of the 3"; reproduced by retiring a packet between the
+ * two reads: 16 of 16 runs red with the wait met). A spawner that cannot drive still fails it. */
 const DRIVE_PACKETS = 3;
 const burst = await hiddenRun(null, 6000, { drive: DRIVE_PACKETS });
 eyes("the constructed interleaving", burst);
-const driveGrowth = burst.before.packets - burst.warm.packets;
+const driveGrowth = burst.before.packets - burst.driveFrom;
 ok(burst.flipped && burst.after.hidden === true,
    "the constructed-interleaving page never went hidden");
 eq(burst.frames, 0, "requestAnimationFrame kept running while hidden in the constructed run");
 ok(driveGrowth >= DRIVE_PACKETS,
    `the constructed interleaving never happened: driving the spawner with the drain frozen added ` +
-   `only ${driveGrowth} of the ${DRIVE_PACKETS} packets asked for in 15 s ` +
-   `(${burst.warm.packets} -> ${burst.before.packets}), so this block did not put a spawn in ` +
-   `flight and proves nothing`);
+   `only ${driveGrowth} of the ${DRIVE_PACKETS} packets asked for ` +
+   `(${burst.driveFrom} -> ${burst.before.packets}; ` +
+   `${burst.driven ? "the wait was met" : "the wait timed out after 15 s"}), so this block did ` +
+   `not put a spawn in flight and proves nothing`);
 eq(burst.hiddenPushes.length, 0,
    `sim/web/bg.js spawned while hidden with a burst in flight — ${pushSummary(burst.hiddenPushes)} ` +
    `push(es) recorded with document.hidden===true`);

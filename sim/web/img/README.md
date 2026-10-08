@@ -2,13 +2,34 @@
 
 Real frames rendered from the 3D simulator (`../moxie.js`) in headless Chrome, not stock art.
 
-- [`hero-moxie-cute.png`](hero-moxie-cute.png) — front, happy expression; the hub hero.
+- [`hero-moxie-cute.png`](hero-moxie-cute.png) — front, happy expression; the hub hero's source
+  frame (1200x1470, 1.08 MB) and its `og:image`. The hub shows it as a `<picture>`:
+  [`hero-moxie-cute.avif`](hero-moxie-cute.avif) (54 KB, preloaded), then
+  [`hero-moxie-cute.webp`](hero-moxie-cute.webp) (111 KB) for a browser without AVIF; only a
+  browser with neither downloads the PNG. `sim/test_hub_weight.mjs` holds the hub's first load
+  under 400 KB with the beacon production adds, the WebP a browser without AVIF gets included.
 - [`hero-moxie-think.png`](hero-moxie-think.png) — thinking pose; the docs explorer overview.
 - [`sim-hero.png`](sim-hero.png) — a full SIL page (`../sim.html`) frame in hosted-demo mode; the
   top-level README hero (1424x1251, RGB). Vendored because `img-src 'self' data: blob:` refused the
   old off-site URL ([why](../../../docs/architecture/backlog/vendor-the-readme-hero.md)).
 
-Regenerate: load the simulator, pose via `window.moxie`, screenshot `#stage`.
+Regenerate: load the simulator, pose via `window.moxie`, screenshot `#stage`. Then re-encode the
+hub hero from its PNG with `sharp` (`npm install --no-save sharp`; wrangler pulls it in too):
+
+```sh
+node -e 'const s=require("sharp"),i="sim/web/img/hero-moxie-cute";
+s(i+".png").avif({quality:88,effort:9,chromaSubsampling:"4:4:4"}).toFile(i+".avif");
+s(i+".png").webp({quality:95,effort:6,smartSubsample:true}).toFile(i+".webp")'
+```
+
+The face carries a faint scanline texture, and it is what a low quality smooths away first.
+Measured as the mean luma step between vertically adjacent pixels over a flat 160x60 patch of the
+face (x 520, y 470 in the PNG), AVIF q88 keeps all of it (1.03, the PNG's 1.03; q80 keeps 86 %).
+WebP keeps 55 % at q95, the highest quality that holds a browser without AVIF under the 400 KB
+budget (q97 keeps 84 % at 131 KB). So that browser gets a step down: against the PNG the WebP
+scores PSNR 44.4 dB and is up to 61 of 255 levels off on a channel, the AVIF 49.2 dB and 20.
+Rendered on the hub at 390x844 and 1440x900, the AVIF and the PNG differ by at most 15 of 255
+levels on any channel (PSNR above 50 dB); that screenshot comparison covered the AVIF only.
 
 **Doc images live here, not next to the doc.** This directory is the site root's `img/`. Markdown
 writes images repo-relative so GitHub renders them; the docs explorer serves the same Markdown from
