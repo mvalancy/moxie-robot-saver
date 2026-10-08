@@ -37,10 +37,15 @@ class RobotContext:
 
 
 class ResultCode(int, Enum):
-    """The RemoteChat response outcome — `RemoteChatResponse.result` (uint32), values
-    verbatim from embodied/robotbrain/RemoteChat.proto. The robot acts on these:
-    SUCCESS renders the output; ERROR_OFFLINE makes it fall back to its on-device brain
-    (see docs/architecture/ai-seam.md §2). Emitted on the wire as the enum NAME."""
+    """The RemoteChat response outcome — `RemoteChatResponse.result`, values verbatim
+    from the proto's `ResultCode` (embodied/robotbrain/RemoteChat.proto:307-318). The
+    robot acts on these: SUCCESS renders the output; ERROR_OFFLINE makes it fall back to
+    its on-device brain (see docs/architecture/ai-seam.md §2).
+
+    Emitted on the wire as the integer VALUE: the field is a plain `uint32 result = 2`
+    (RemoteChat.proto:320), not the enum, so a robot parsing the JSON as protobuf rejects
+    the name (`invalid literal for int(): 'SUCCESS'`); OpenMoxie sends `result: 0`
+    (volley.py `create_response`)."""
     SUCCESS = 0
     ERROR_TIMEOUT = 1
     ERROR_STATE = 2
@@ -54,12 +59,44 @@ class ResultCode(int, Enum):
 
 
 class ActionType(str, Enum):
-    """Structured things a Reply can ask Moxie to do beyond speaking."""
-    LAUNCH = "launch"      # launch a module/experience (module_id[/content_id])
-    EXIT = "exit"          # end the current module
-    SLEEP = "sleep"        # go to sleep
-    ENABLE_QR = "enable_qr"  # turn on QR scanning (for launch cards)
-    EXECUTE = "execute"    # call a named on-robot function (advanced)
+    """Structured things a Reply can ask Moxie to do beyond speaking.
+
+    Values are the recovered `RemoteChatAction.ActionID` names (RemoteChat.proto:256-266)
+    and go on the wire verbatim — except ENABLE_QR, an SDK convenience with no ActionID of
+    its own, which `wire.encode_action` spells as the contract's `execute` +
+    `ENABLE_QR_FUNCTION` (qr-launch-cards.md §P0-a).
+    """
+    LAUNCH = "launch"      # launch a module/experience (module_id[/content_id]); ActionID 1
+    EXIT = "exit_module"   # end the current module; ActionID 3
+    SLEEP = "sleep"        # go to sleep; ActionID 7
+    ENABLE_QR = "enable_qr"  # turn on QR scanning (for launch cards) → execute eb_enable_qr
+    EXECUTE = "execute"    # call a named on-robot function (advanced); ActionID 6
+
+    @classmethod
+    def _missing_(cls, value):
+        # The spelling this SDK used until 2026-10: still accepted from an app or a
+        # webhook declaring `{"type": "exit"}`, never emitted.
+        return cls.EXIT if value == "exit" else None
+
+
+# ---- wire spellings (one table; `wire.py` reads it, the Sim clients mirror it) ----
+#: `OutputType` (ChatResponse.proto:6-21) on every `RemoteChatAction` we send. A brain's
+#: reply is GLOBAL_RESPONSE (9), as OpenMoxie's field-proven `volley.py` sends on every
+#: response; GLOBAL_COMMAND (2) is a robot-wide command answered without a brain
+#: (OpenMoxie `global_responses.py`) and nothing here emits one yet.
+OUTPUT_TYPE_RESPONSE = "GLOBAL_RESPONSE"
+OUTPUT_TYPE_COMMAND = "GLOBAL_COMMAND"
+
+#: The `ActionID` names this SDK emits (RemoteChat.proto:258,:260,:263,:264), and the two
+#: older spellings of ours that both Sim clients (`sim/virtual_moxie.py`,
+#: `sim/web/bridge/actions.js`) still accept but that no longer go out.
+ACTION_IDS = ("launch", "exit_module", "sleep", "execute")
+LEGACY_ACTION_NAMES = {"exit": "exit_module", "enable_qr": "execute"}
+
+#: What arms the robot's QR reader: `execute` + this `function_id` (field 7) and these
+#: `function_args` (field 8) — the shape qr-launch-cards.md §P0-a / §4 T9 names.
+ENABLE_QR_FUNCTION = "eb_enable_qr"
+ENABLE_QR_ARGS = ("true",)
 
 
 @dataclass

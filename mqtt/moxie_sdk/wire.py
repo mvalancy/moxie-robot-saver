@@ -7,8 +7,10 @@ implementation contract (docs/architecture/ai-seam.md §2).
 """
 from __future__ import annotations
 from collections.abc import Mapping, Sequence
+import hashlib, json
 
-from .types import ResultCode
+from .types import (ActionType, ResultCode, ACTION_IDS, ENABLE_QR_ARGS,
+                    ENABLE_QR_FUNCTION, OUTPUT_TYPE_RESPONSE)
 
 
 def _arg_str(value) -> str:
@@ -27,13 +29,22 @@ def encode_action(a) -> dict:
     sequence → `function_args` (8, `repeated string`), a mapping → `action_args`
     (10, `repeated ActionArgsEntry{key, value}`). Omitted when absent, so other actions
     stay byte-identical.
+
+    `action` is the `ActionID` name (`types.ACTION_IDS`) and `output_type` is
+    `GLOBAL_RESPONSE`, both enum names the robot's protobuf-JSON parser knows; an
+    `ENABLE_QR` has no ActionID and goes out as `execute eb_enable_qr("true")` — its own
+    `function`/`args` are not consulted.
     """
-    entry = {"output_type": "GLOBAL", "action": a.type.value,
+    entry = {"output_type": OUTPUT_TYPE_RESPONSE, "action": a.type.value,
              "module_id": a.module_id, "content_id": a.content_id}
     function = getattr(a, "function", None)
+    args = getattr(a, "args", None)
+    if a.type is ActionType.ENABLE_QR:
+        entry["action"] = ActionType.EXECUTE.value
+        function, args = ENABLE_QR_FUNCTION, list(ENABLE_QR_ARGS)
+    assert entry["action"] in ACTION_IDS, entry["action"]
     if function:
         entry["function_id"] = function
-    args = getattr(a, "args", None)
     if args:
         if isinstance(args, Mapping):
             entry["action_args"] = [{"key": str(k), "value": _arg_str(v)}
@@ -45,21 +56,48 @@ def encode_action(a) -> dict:
     return entry
 
 
+def encode_signals(signals) -> dict:
+    """`RemoteChatOutput.signals` is a `RemoteSignals` MESSAGE (RemoteChat.proto:137-155,
+    field 15 at :176) — `{single_signal, volley_signal}`, two strings — not a list. One
+    name fills `single_signal`; a `(single, volley)` pair fills both; a third has no field.
+    """
+    names = [signals] if isinstance(signals, str) else [s for s in signals if s]
+    out = {}
+    if names:
+        out["single_signal"] = str(names[0])
+    if len(names) > 1:
+        out["volley_signal"] = str(names[1])
+    return out
+
+
+#: Fields on our `remote_chat` JSON that `RemoteChatResponse` does not declare. A robot
+#: parsing as protobuf JSON skips unknown fields (OpenMoxie sends `command` on every
+#: response and is field-proven); a type error, as `result: "SUCCESS"` was, it cannot
+#: skip. `end_turn` is ours alone (an SDK hint with no proto home), listed so the
+#: conformance test can except exactly these and nothing else.
+NON_PROTO_FIELDS = ("command", "end_turn")
+
+
 def build_chat_response(event_id, text, markup="", *, backend="router",
                         result=ResultCode.SUCCESS, actions=None, end_turn=False,
-                        mood=None, dialog_act=None, modules=None,
+                        mood=None, dialog_act=None, query_data=None,
                         chunk_num=None, is_completed=None, safety=None,
                         subscribe_events=None, mood_intensity=None, emotion=None,
                         signals=None) -> dict:
     """Build the RemoteChatResponse JSON (embodied/robotbrain/RemoteChat.proto).
 
     Every optional part is omitted when empty, so a plain reply stays byte-identical.
+    Every value is what the robot's protobuf-JSON parser accepts for its field: `result`
+    is the integer (`uint32`, :320), enum-typed fields carry enum NAMES, and the whole
+    document parses strictly through the committed pb2 files but for `NON_PROTO_FIELDS`
+    (`sim/tests/test_wire_conformance.py`).
 
     * **Chunks.** `result=REPLY_PENDING` + `chunk_num` (field 22) order a streamed turn;
       `is_completed` sets `consistency_control.is_completed` (field 18) on the last.
     * **Scored output** (ai-seam.md §2): `mood`/`mood_intensity` (ePlaybackMood label +
-      0-2), `dialog_act`, `emotion` (EmotionState label), `signals` (always a list —
-      `repeated`). Filled by the behavior planner (`supervisor/markup.py::perform`).
+      0-2), `dialog_act`, `emotion` (EmotionState label), `signals` (a `RemoteSignals`
+      message, see `encode_signals`). Filled by the behavior planner
+      (`supervisor/markup.py::perform`).
     * **Moderation.** `safety` (an `InputSafety`) fills `input.safety` (field 17 → 12)
       and mirrors its intents onto `input_intents` (field 10). Child-side verdicts only;
       an output-side block has no contract field (it goes to the parent review queue).
@@ -69,6 +107,8 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
       on `response_actions[0]` (a bare `{output_type}` entry if there is no action), mirrored
       onto the legacy singular `response_action` (mqtt-and-conversation.md §4.1). Without
       it the robot discards its own vision events.
+    * **Module list.** `query_data` is the `RemoteDataBlock` (field 21) answering a
+      module query — see `build_remote_modules`.
     """
     rc = result if isinstance(result, ResultCode) else ResultCode(result)
     output = {"text": text, "markup": markup or text}
@@ -81,19 +121,19 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
     if emotion:
         output["emotion"] = emotion
     if signals:
-        output["signals"] = [signals] if isinstance(signals, str) else list(signals)
-    resp = {"command": "remote_chat", "result": rc.name, "backend": backend,
+        output["signals"] = encode_signals(signals)
+    resp = {"command": "remote_chat", "result": int(rc), "backend": backend,
             "event_id": event_id, "output": output, "end_turn": bool(end_turn)}
     ra = [encode_action(a) for a in (actions or [])]
     if subscribe_events:
         if not ra:
-            ra.append({"output_type": "GLOBAL"})
+            ra.append({"output_type": OUTPUT_TYPE_RESPONSE})
         ra[0]["event_subscription"] = {"active": list(subscribe_events), "clear": False}
         resp["response_action"] = ra[0]          # legacy singular, kept in sync
     if ra:
         resp["response_actions"] = ra
-    if modules is not None:
-        resp["modules"] = modules
+    if query_data is not None:
+        resp["query_data"] = query_data
     if chunk_num is not None:
         resp["chunk_num"] = int(chunk_num)
     if is_completed is not None:
@@ -104,6 +144,50 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
         if wire.get("intents"):
             resp["input_intents"] = list(wire["intents"])
     return resp
+
+
+# ---- the remote module list: RemoteDataQuery in, RemoteDataBlock out ----
+MODULES_QUERY = "modules"
+
+
+def is_module_query(rcr) -> bool:
+    """Is this RemoteChatRequest the robot asking which modules the cloud serves?
+
+    The recovered request is `backend: "data"` with `query: RemoteDataQuery{query:
+    modules}` (RemoteChat.proto:41-51, field 23 at :79), which OpenMoxie reads as
+    `rcr['query']['query'] == "modules"` (moxie_server.py:170). The plain `query:
+    "modules"` string our browser Sim and older doubles send is accepted too.
+    """
+    if not isinstance(rcr, dict) or rcr.get("backend") != "data":
+        return False
+    query = rcr.get("query")
+    if isinstance(query, dict):
+        query = query.get("query")
+    return query == MODULES_QUERY
+
+
+def build_remote_modules(modules) -> dict:
+    """The `RemoteDataBlock` (RemoteChat.proto:296-300) answering a module query, carried
+    as `RemoteChatResponse.query_data` (field 21, :339): `modules[]` of `ModuleDetail`
+    (ContentModule.proto:24-73), each `{info: ContentDetail{id}, rules, source,
+    content_infos[]: ContentDetail{id}}`, plus `version` (field 1).
+
+    `modules` is `[(module_id, [content_id, …]), …]`. Every entry is a remote-chat
+    module — `source: REMOTE_CHAT` (ContentSource 1, :38) — with `rules: RANDOM`
+    (ContentRules 3, :29): the "bare bones mandatory fields" of OpenMoxie's field-proven
+    answer (moxie_remote_chat.py:73-77, sent by moxie_server.py:176). One deliberate
+    difference: OpenMoxie nests each content id as `content_infos[].info.id`, but
+    `ModuleDetail.content_infos` is `repeated ContentDetail` (:66) and `ContentDetail`
+    carries `id` directly (:10), so a protobuf parse of OpenMoxie's shape yields empty
+    content ids; this emits the proto's shape. `version` is a digest of the ids, so a
+    robot that caches by version sees a change exactly when the list changes.
+    """
+    entries = [{"info": {"id": str(module_id)}, "rules": "RANDOM", "source": "REMOTE_CHAT",
+                "content_infos": [{"id": str(c)} for c in content_ids]}
+               for module_id, content_ids in modules]
+    ids = [[m["info"]["id"], [c["id"] for c in m["content_infos"]]] for m in entries]
+    digest = hashlib.sha1(json.dumps(ids).encode()).hexdigest()[:12]
+    return {"version": f"mrs-{digest}", "modules": entries}
 
 
 # CloudQuery -> (CloudQueryResponse field, its empty value), per the recovered

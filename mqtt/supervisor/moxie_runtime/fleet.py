@@ -3,7 +3,7 @@ from __future__ import annotations
 import json, os, time
 
 from moxie_sdk.types import ResultCode
-from moxie_sdk.wire import build_activity_response
+from moxie_sdk.wire import build_activity_response, build_remote_modules, is_module_query
 from moxie_sdk import safety as safety_seam
 from moxie_sdk import performance as performance_seam
 from markup import perform
@@ -181,9 +181,10 @@ class FleetMixin:
             if rcr.get("command") == "notify":
                 return
             backend = rcr.get("backend", "router")
-            if backend == "data" and rcr.get("query") == "modules":
+            if is_module_query(rcr):
                 return self._publish_chat(device_id, rcr.get("event_id"), backend, "",
-                                          markup="", result=ResultCode.SUCCESS, modules=[])
+                                          markup="", result=ResultCode.SUCCESS,
+                                          query_data=build_remote_modules([]))
             self._note("permit", f"⛔ turn refused — {device_id} is pending")
             line, scored = self._stage(self.NOT_PAIRED_LINE)
             return self._publish_chat(device_id, rcr.get("event_id"), backend,
