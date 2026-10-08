@@ -14,6 +14,7 @@ await runSections(new URL("./tests/edge/mode/", import.meta.url), [
   "03_mode_machine.mjs",
   "04_indicator_lint.mjs",
   "05_grounding_budget.mjs",
+  "06_outage_honesty.mjs",
 ]);
 
 if (fails.length) {
