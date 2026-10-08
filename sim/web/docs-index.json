@@ -1064,7 +1064,7 @@
    "path": "features/robot-lifecycle.md",
    "title": "Map 11 — Robot Lifecycle (pairing / unpair / FACTORY RESET / restore / reboot / OTA / state model)",
    "section": "features",
-   "bytes": 29901,
+   "bytes": 30052,
    "mermaid": 0,
    "headings": [
     "Built here: unpair and factory reset",
@@ -1178,7 +1178,7 @@
    "path": "guides/bench-runbook.md",
    "title": "Bench runbook: bring a real Moxie onto your server",
    "section": "guides",
-   "bytes": 8246,
+   "bytes": 8429,
    "mermaid": 0,
    "headings": [
     "Before you start",

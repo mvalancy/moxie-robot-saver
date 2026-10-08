@@ -109,8 +109,10 @@ If it says no, nothing was changed:
 - Add to my account: `POST /local/robots/{device_id}/claim` with the parent's token; `/local/state`
   lists the connected robots no account has added as `unclaimed`.
 - Tests: [`test_wifi_first_qr.py`](../../sim/tests/test_wifi_first_qr.py),
-  [`test_robot_claim.py`](../../sim/tests/test_robot_claim.py) and the browser suite
-  [`test_robot_claim.mjs`](../../sim/test_robot_claim.mjs).
+  [`test_robot_claim.py`](../../sim/tests/test_robot_claim.py), the browser suite
+  [`test_robot_claim.mjs`](../../sim/test_robot_claim.mjs), and
+  [`test_sil_robot_claim.py`](../../sim/tests/test_sil_robot_claim.py): steps 3 and 4 against a real
+  broker and the real supervisor, with an MQTT client standing in for the robot.
 
 ---
 📖 [Guides index](README.md) · [Revive your Moxie](revive-your-moxie.md) · [Docs index](../README.md)

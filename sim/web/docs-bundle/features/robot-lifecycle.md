@@ -74,8 +74,9 @@ yet"), for a Moxie still paired somewhere else; showing it changes nothing on th
   then its robot card, with Unpair and Factory reset, appears ([bench runbook](../guides/bench-runbook.md)).
   The claim is the parent's word, the same trust as Permit: nothing the robot sends proves which
   robot a `d_…` id is. It is tested hermetically ([`test_robot_claim.py`](../../sim/tests/test_robot_claim.py),
-  [`test_robot_claim.mjs`](../../sim/test_robot_claim.mjs)); no physical robot has been added,
-  unpaired or reset this way yet.
+  [`test_robot_claim.mjs`](../../sim/test_robot_claim.mjs)) and against the real supervisor with an
+  MQTT client standing in for the robot ([`test_sil_robot_claim.py`](../../sim/tests/test_sil_robot_claim.py));
+  no physical robot has been added, unpaired or reset this way yet.
 - Per-robot settings the supervisor keeps under the robot's id (volume, bedtime, look, brain) are not
   cleared. A reset robot that rejoins with a new id starts clean; one that kept its id would get them
   back once permitted again.
