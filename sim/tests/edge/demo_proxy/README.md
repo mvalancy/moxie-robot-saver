@@ -14,6 +14,7 @@ one [`harness.mjs`](harness.mjs) (stubbed gateway, `fresh()`, `call()`, the `ass
 - [`08_tts_cache.mjs`](08_tts_cache.mjs) — §16: the synthesised-audio cache.
 - [`09_reroll_shape.mjs`](09_reroll_shape.mjs) — §17–18: the re-roll and the per-turn shape cue.
 - [`10_goodbye_close.mjs`](10_goodbye_close.mjs) — §19–22: the goodbye close (detector, cue, `end_turn`, the sign-off wave), the prompt layouts (`DEMO_PROMPT_LAYOUT`), the brace-proof envelope parser, the punctuation-folding echo.
+- [`12_spend_ops.mjs`](12_spend_ops.mjs) — §24: spend protection and ops — the voice's and the ears' per-IP day (`DEMO_SPEECH_PER_DAY` / `DEMO_STT_PER_DAY`), what one /56 can spend in a UTC day, the measured `DEMO_CHAT_TIMEOUT_MS`, the transcribe route's 60 s default retry, the `DEMO_SERVE_HOSTS` allowlist, and one log line per refusal that never carries the visitor's words.
 
 ---
 📖 [Edge modules](../README.md) · [Back to top](../../../../README.md)
