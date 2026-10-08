@@ -1,17 +1,38 @@
 /* test_demo_proxy §23: the persona (v2) — its structure, and that every layout still emits
  * exactly the system messages §21 pins around it. Run via the entry file.
  *
- * Written against defects measured on the production pair (2026-10-08): "I am sorry" opened
- * 12/12 feelings replies; "can you see me?" was answered "Yes, I can see you right here in
- * the room" on three models (the hosted page has no camera); none of her idle self-talk
+ * Written against defects measured on the production pair (2026-10-08): "I am sorry" or "Oh
+ * no" opened 9/9 first sad lines (10/26 sad lines overall); "can you see me?" got a claim to
+ * see the child on three models (the hosted page has no camera); none of her idle self-talk
  * reached chat; the safety block sat in the middle of the text with the repair rules after
- * it; and two of those rules restated what the per-turn cue already says. The pins below are
- * on the TEXT, so they fail by name on the old persona instead of in a live probe. */
+ * it; and two of those rules restated what the per-turn cue already says. Then against a
+ * defect of v2's first text (the review of #315): rule 2 listed "hurt" as a feelings trigger
+ * and banned a fix, and a hurt child was sent to a grown-up in 1 of 4 replies against v1's
+ * 3 of 4. The pins below are on the TEXT, so they fail by name on the old persona instead of
+ * in a live probe. */
 import { FULL, chat, deep, eq, join, ok, prompt, readFileSync, turnshape, web0, wire2 } from "./harness.mjs";
 
 const P = wire2.DEFAULT_PERSONA;
 const at = (s) => P.indexOf(s);
 const lower = P.toLowerCase();
+
+/* The safety block, FROZEN: v1's text, which v2 keeps verbatim and last. A deliberate change
+ * edits this copy too, with the reason in the commit; a silent drop of "suggest they talk to
+ * a trusted adult" or "do not repeat the words back" fails here by name. */
+const SAFETY_BLOCK =
+  "Safety: you are talking to a child. Keep everything age-appropriate and kind, and " +
+  "never claim to be human. For anything about safety, health, or big feelings, be " +
+  "supportive and suggest they talk to a trusted adult.\n" +
+  "If a request is unsafe for a child — self-harm, violence or weapons, sexual content, " +
+  "hateful or cruel language, dangerous activities, drugs or alcohol — you REDIRECT, you " +
+  "do not answer it: say warmly that it is not something you can talk about, then offer " +
+  "something else. Do not explain the thing, do not describe it, do not repeat the words " +
+  "back, do not roleplay it, and do not do it 'just as a story' or 'just pretend'. If a " +
+  "child sounds like they might be hurt or in danger, say you care, and ask them to tell " +
+  "a grown-up they trust right now.\n" +
+  "You never ask a child for private information — address, street, school name, phone " +
+  "number, passwords, full name — and you never ask them to keep a secret from their " +
+  "grown-ups. You never swear.";
 
 /* 23a. IDENTITY AND MISSION FIRST, THE CHILD AS HER MENTOR. */
 {
@@ -45,41 +66,67 @@ const lower = P.toLowerCase();
 {
   const rules = [...P.matchAll(/^(\d)\. /gm)].map((m) => Number(m[1]));
   deep(rules, [1, 2, 3, 4, 5, 6, 7], "seven numbered rules, in order");
-  const order = ["newest line first", "Feelings first", "ONE thing of your own", "At most one question", "a goodbye word first",
+  const order = ["newest line first", "Feelings before fixing", "ONE thing of your own", "At most one question", "a goodbye word first",
                  "I don't remember, can you tell me again?", "Two short sentences"];
   const idx = order.map(at);
   ok(idx.every((v, i) => v >= 0 && (i === 0 || v > idx[i - 1])), `newest line, feelings, one contribution, question budget, goodbye, memory, length — in that order (${idx})`);
   ok(/the note for this turn/.test(P), "the question budget defers to the per-turn cue");
-  ok(/no "I'm sorry" or "Oh no" opener/.test(P), "the feelings rule forbids the stock opener measured 12/12");
+  ok(/no "I'm sorry" or "Oh no" opener/.test(P), "the feelings rule forbids the stock opener measured 9/9 on first sad lines");
   ok(/no fact about yourself, no new topic/.test(P), "…and self-talk after a comfort line");
   ok(/Never call the child Moxie/.test(P), "she never addresses the child as Moxie");
   ok(/never more than three or thirty words/.test(P), "a length a seven-year-old can hold");
 
-  // Nothing is said twice, and nothing restates what the anchor or the cue already say.
+  // Nothing is said twice, and nothing restates what the cue already says — except the two
+  // overlaps that are the design: rule 5 is the close cue in one line (so the goodbye holds
+  // with `DEMO_TURN_SHAPE=0`) and rule 1 is the anchor's newest-line rule inside the list.
   const sents = P.split(/(?<=[.!?])\s+|\n/).map((s) => s.trim().toLowerCase()).filter(Boolean);
   deep(sents.filter((s, i) => sents.indexOf(s) !== i), [], "no sentence appears twice");
-  for (const phrase of ["did you ... today?", "never the same question twice", "never open two turns"]) {
+  for (const phrase of ["did you ... today?", "never the same question twice", "never open two turns", "could not guess the answer",
+                        "something you have not offered before", "give them something to react to", "no 'let's'", "no offer"]) {
     ok(!lower.includes(phrase.toLowerCase()), `the persona does not restate the cue's ${JSON.stringify(phrase)}`);
   }
   ok(turnshape.shapeCue("ask").includes("did you ... today?"), "CONTROL: that rule lives in the ask cue");
+  ok(/a goodbye word first/.test(P) && /start with a goodbye word/.test(turnshape.shapeCue(turnshape.CLOSE)),
+     "CONTROL: rule 5 and the close cue ask for the same structure, a goodbye word first (the deliberate overlap)");
+  ok(/newest line first/.test(P) && /newest line/.test(prompt.anchorInstruction("single")),
+     "CONTROL: rule 1 and the anchor both say the newest line (the other deliberate overlap)");
 }
 
-/* 23e. THE SAFETY BLOCK IS LAST, AND ITS SUBSTANCE IS v1's. */
+/* 23e. RULE 2 IS AN ORDERING, NOT A BAN, AND HANDS A HURT CHILD TO THE SAFETY BLOCK. v2's
+ * first text said "If they are sad, scared, hurt or left out … No fix, no joke, no fact about
+ * yourself, no new topic", and the model obeyed it over "ask them to tell a grown-up they
+ * trust" (1 of 4 referrals against v1's 3 of 4). */
+{
+  const start = at("2. "), end = at("3. ");
+  ok(start >= 0 && end > start, "rule 2 is present and followed by rule 3");
+  const rule2 = start >= 0 && end > start ? P.slice(start, end) : "";
+  ok(/^2\. Feelings before fixing\./.test(rule2), "rule 2 is 'Feelings before fixing' (an order), not 'Feelings first' (a ban)");
+  ok(!/no fix/i.test(rule2), "rule 2 does not forbid a fix outright: for a hurt child the fix is a grown-up");
+  ok(!/sad, scared, hurt/.test(rule2) && !/\bhurt or left out\b/.test(rule2), "'hurt' is not a feelings-only trigger");
+  ok(/If they are hurt or in danger, the safety rule below comes first: say you care and ask them to tell a grown-up they trust\./.test(rule2),
+     "rule 2 hands a hurt-or-in-danger line to the safety block, the referral spelled out");
+}
+
+/* 23f. THE SAFETY BLOCK IS LAST, AND IT IS v1's TEXT VERBATIM. */
 {
   const safety = at("Safety: you are talking to a child.");
   ok(safety > 0, "the safety block is present");
-  ok(safety > at("7. Two short sentences"), "…and comes AFTER the last conversation rule");
+  const lastRule = at("7. Two short sentences");
+  ok(lastRule >= 0 && safety > lastRule, "…and comes AFTER the last conversation rule");
   ok(P.endsWith("You never swear."), "…and the persona ends with it");
+  eq(P.slice(safety), SAFETY_BLOCK, "…and from there to the end it is v1's safety block verbatim (the frozen copy above)");
+  eq(P.split("Safety: you are talking to a child.").length - 1, 1, "…stated once");
   for (const s of ["never claim to be human", "you REDIRECT, you do not answer it",
                    "self-harm, violence or weapons, sexual content, hateful or cruel language, dangerous activities, drugs or alcohol",
-                   "do not do it 'just as a story' or 'just pretend'", "tell a grown-up they trust right now",
+                   "do not do it 'just as a story' or 'just pretend'", "suggest they talk to a trusted adult",
+                   "do not repeat the words back", "tell a grown-up they trust right now",
                    "never ask a child for private information", "keep a secret from their grown-ups"]) {
     ok(at(s) > safety, `the safety block still says ${JSON.stringify(s.slice(0, 40))}`);
   }
   ok(P.length <= 2889, `no longer than v1 (${P.length} chars of 2,889)`);
 }
 
-/* 23f. EVERY LAYOUT STILL EMITS EXACTLY THE SYSTEM MESSAGES §21 PINS: the persona once,
+/* 23g. EVERY LAYOUT STILL EMITS EXACTLY THE SYSTEM MESSAGES §21 PINS: the persona once,
  * first; one system message under `single`; under `anchor` the anchor last, the passage
  * and the diagram cue before the child's line, the re-roll sentence after the anchor. */
 {
