@@ -154,7 +154,7 @@ let lookupStats = "";
 
   /* Ordinary lines from the 2026-10 review's two measured sets: a lane's 30 child/stranger
    * lines and 30 more written independently before any result was seen. On the old gate 21
-   * of these cited an engineering note ("what are you doing right now?" -> broker-auth JWT
+   * of these cited an unrelated page ("what are you doing right now?" -> broker-auth JWT
    * notes, "what is your name?" -> a note on sort order). The lane's set also held two
    * questions about how she works; they are pinned in the next table, not here. */
   const SMALL_TALK = [

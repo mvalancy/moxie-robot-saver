@@ -173,7 +173,7 @@ export function bestPassage(markdown, query) {
  *  SMALL TALK ADDRESSED TO HER IS NOT A QUESTION ABOUT HOW SHE WORKS. The gate used to admit
  *  any "what are/is you/your …" and any "how do/does/did you …": on the committed index,
  *  21 of 60 ordinary lines ("what are you doing right now?", "what is your name?", "how did
- *  you sleep?") cited an engineering note, and the passage went into her prompt. Now "your"
+ *  you sleep?") cited an unrelated page, and its passage went into her prompt. Now "your"
  *  needs a part of her ("your firmware", never "your name") and "how … you" needs a verb for
  *  how she WORKS ("how do you remember", never "how do you feel"). */
 const SELF_QUERY = new RegExp("\\b(" + [
