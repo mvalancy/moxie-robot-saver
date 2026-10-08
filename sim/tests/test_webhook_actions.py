@@ -65,10 +65,11 @@ def test_a_service_may_use_both_and_the_declared_one_comes_first():
     assert [x.type for x in reply.actions] == [ActionType.LAUNCH, ActionType.EXIT]
 
 
-def test_the_documented_exit_alias_is_read_and_spelled_exit_module_on_the_wire():
-    """`{"type": "exit"}` is the alias the contract documents (webhook_app.py:11-12,
-    moxie-as-a-platform.md); `ActionType._missing_` reads it and the wire still carries
-    the recovered ActionID name `exit_module` (RemoteChat.proto:260)."""
+def test_the_older_exit_alias_is_read_and_spelled_exit_module_on_the_wire():
+    """`{"type": "exit"}` is back-compat for webhooks written against the pre-K1 value (the
+    SDK spelled it `exit` until 2026-10; webhook_app.py and moxie-as-a-platform.md show only
+    a launch example). `ActionType._missing_` reads it and the wire still carries the
+    recovered ActionID name `exit_module` (RemoteChat.proto:260)."""
     from moxie_sdk.wire import build_chat_response
     reply = _brain({"text": "Bye!", "actions": [{"type": "exit"}]}).respond(_turn("bye"))
     assert [x.type for x in reply.actions] == [ActionType.EXIT], reply.actions

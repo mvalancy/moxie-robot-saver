@@ -143,7 +143,7 @@ class Reply:
     text: str
     markup: Optional[str] = None
     actions: list = field(default_factory=list)   # list[Action]
-    end_turn: bool = False               # True → Moxie stops listening after this
+    end_turn: bool = False               # Try-it card hint only; never sent to the robot
     result_code: ResultCode = ResultCode.SUCCESS  # the RemoteChat outcome (see ResultCode)
     subscribe: list = field(default_factory=list)
     """Robot events this reply ASKS the robot to start pushing us — the app's half of

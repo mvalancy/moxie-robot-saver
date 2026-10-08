@@ -326,6 +326,8 @@ brain is consulted, in `query_data` (field 21, a `RemoteDataBlock`, :296-300):
 
 ```json
 {"command":"remote_chat","result":0,"backend":"data","event_id":"…","output":{"text":"","markup":""},
+ "response_action":{"output_type":"GLOBAL_RESPONSE"},
+ "response_actions":[{"output_type":"GLOBAL_RESPONSE"}],
  "query_data":{"version":"mrs-…",
                "modules":[{"info":{"id":"FREE_CHAT"},"rules":"RANDOM","source":"REMOTE_CHAT",
                            "content_infos":[{"id":"default"}]},
@@ -342,12 +344,20 @@ JSON allows), and so is the plain `query: "modules"` string — only older test 
 browser Sim sends no module query. Any other `backend: "data"` request (`contexts`, or no query at
 all) is never a turn: no brain call and no reply, one logged line — as OpenMoxie, which answers only
 the module query and `router` turns (`moxie_server.py:170-179`); nothing in the proto makes a reply
-mandatory. A pending robot gets an empty list; `version` is a digest of the ids. **One recorded discrepancy with OpenMoxie:** it nests each content id as
+mandatory. A pending robot gets an empty list; `version` is a digest of the ids.
+
+**Two recorded differences from OpenMoxie's module answer.** *The envelope:* OpenMoxie answers with
+the bare `{command, result, event_id, query_data}` (`moxie_server.py:176`); ours is built by
+`build_chat_response` like every other reply, so it also carries `backend`, an empty `output` and
+the envelope above. A deliberate difference: the envelope rides every reply, this one included.
+Every added key is a `RemoteChatResponse` field, and the strict parse in `test_wire_conformance.py`
+accepts this answer; whether the 803 firmware's module-list reader minds the extra fields is
+unverified on a robot. *The content ids:* OpenMoxie nests each content id as
 `content_infos[].info.id` (`moxie_remote_chat.py:75`), but `ModuleDetail.content_infos` is
-`repeated ContentDetail` (:66) and `ContentDetail.id` is field 1 (:10). Measured through the pb2,
-a strict parse rejects the nested form and a lenient one yields an **empty** content id, so this
-repo emits the proto's shape. Whether the 803 firmware reads the nested form some other way is
-unknown; the test pins what the proto says.
+`repeated ContentDetail` (`ContentModule.proto:66`) and `ContentDetail.id` is field 1 (:10).
+Measured through the pb2, a strict parse rejects the nested form and a lenient one yields an
+**empty** content id, so this repo emits the proto's shape. Whether the 803 firmware reads the
+nested form some other way is unknown; the test pins what the proto says.
 
 **Taxonomies** (closed sets the brain scores into): `DialogAct`×22, `EmotionState`×7, `Signal`×9,
 `Urgency`×3 — enumerated in [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#taxonomies).

@@ -52,9 +52,10 @@ def test_action_passthrough():
 
 
 def test_the_older_exit_spelling_is_still_read_and_goes_out_as_exit_module():
-    """`{"type": "exit"}` is what the webhook contract documents (webhook_app.py:11-12,
-    moxie-as-a-platform.md) and what this SDK spelled until 2026-10. `ActionType._missing_`
-    keeps reading it; the wire carries the ActionID name (RemoteChat.proto:260)."""
+    """`"exit"` is what this SDK spelled until 2026-10 (the pre-K1 value), so apps and
+    webhooks written against it may still send it; neither webhook_app.py nor
+    moxie-as-a-platform.md documents it. `ActionType._missing_` keeps reading it as
+    back-compat; the wire carries the ActionID name (RemoteChat.proto:260)."""
     assert ActionType("exit") is ActionType.EXIT is ActionType("exit_module")
     assert ActionType.EXIT.value == "exit_module"
     resp = build_chat_response("e", "Bye!", actions=[Action(type=ActionType("exit"))])

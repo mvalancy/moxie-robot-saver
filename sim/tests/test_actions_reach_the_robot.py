@@ -160,7 +160,8 @@ def test_actions_from_an_external_brain_reach_the_robot_too():
 
 
 def test_a_webhooks_older_exit_spelling_leaves_the_module_as_exit_module():
-    """`{"type": "exit"}` is the alias the webhook contract documents (webhook_app.py:11-12);
+    """`{"type": "exit"}` is back-compat for webhooks written against the pre-K1 value (the
+    SDK spelled it `exit` until 2026-10; the webhook contract's example shows only a launch).
     `ActionType._missing_` reads it, the wire carries `exit_module` (RemoteChat.proto:260)
     and the robot leaves the module it was in."""
     from moxie_sdk.apps import WebhookApp

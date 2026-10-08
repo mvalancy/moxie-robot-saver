@@ -134,7 +134,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT and conversation contract (the robot cloud)",
    "section": "architecture",
-   "bytes": 49274,
+   "bytes": 49312,
    "mermaid": 0,
    "headings": [
     "0. The mechanism in five lines",
@@ -180,7 +180,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM, STT and TTS interface contract",
    "section": "architecture",
-   "bytes": 33440,
+   "bytes": 34157,
    "mermaid": 1,
    "headings": [
     "The three seams",
@@ -282,7 +282,7 @@
    "path": "architecture/moxie-as-a-platform.md",
    "title": "Moxie as a platform — the SDK",
    "section": "architecture",
-   "bytes": 4117,
+   "bytes": 4171,
    "mermaid": 1,
    "headings": [
     "The one interface that matters: `MoxieApp`",
@@ -1343,7 +1343,7 @@
    "path": "reverse-engineering/protocol/remote-chat-protocol.md",
    "title": "RemoteChat — the robot ↔ brain conversation protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 8410,
+   "bytes": 8429,
    "mermaid": 1,
    "headings": [
     "The request — `RemoteChatRequest` (delta over cloud-protocol)",
