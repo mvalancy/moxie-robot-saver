@@ -428,9 +428,9 @@ def _say_effects(value, binds=None) -> list:
     program reads at run time (what the child said, a memory, something the robot sent)
     for its `<`, name, `:` or `>`, which is not its own text; and a tag that needs the text
     an op `_Reader` does not follow hands on (`get`, `slice`, `replace`, `join`, …), whose
-    arguments are read for whole tags only. Past `_MAX_LINES`, nor a tag that needs the
-    text of a `concat` part that can come out as different lines (an `if`, `and`/`or`,
-    `random.pick`, or a `let` name bound to one)."""
+    arguments are read for whole tags only. Past `_MAX_LINES`, also not read: a tag that
+    needs the text of a `concat` part that can come out as different lines (an `if`,
+    `and`/`or`, `random.pick`, or a `let` name bound to one)."""
     reader = _Reader(binds)
     try:
         lines = reader.lines(value)
