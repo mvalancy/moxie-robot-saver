@@ -32,6 +32,9 @@ class LifecycleMixin:
                 # since it was last confirmed on this connection (an ask to a ghost may
                 # have reached nobody, so it is not recorded). An ask, not an ack.
                 "stt_subscribed_at": r.extra.get("stt_subscribed_at"),
+                # Utterances the honest ears answered with no speech since the robot
+                # connected (digital silence, a sound label, a phantom "Bye."; voice.py).
+                "stt_dropped": int(r.extra.get("stt_dropped") or 0),
                 "firmware": r.firmware or st.get("robot_firmware_version"),
                 "battery_level": st.get("battery_level"),
                 "audio_volume": st.get("audio_volume"),

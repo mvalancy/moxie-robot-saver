@@ -289,14 +289,21 @@ class VoiceMixin:
         Returns the final transcript, else None. No transcriber -> no-op. An engine that
         raises still gets the robot its FINAL (no speech, the failure in the recovered
         `error_code`/`error_message` fields, as the field-proven server answers: OpenMoxie
-        `zmq_stt_handler.py:70-73`): a robot is never left waiting on a turn that ended."""
+        `zmq_stt_handler.py:70-73`): a robot is never left waiting on a turn that ended.
+
+        What the honest ears drop (digital silence, a sound label, one of Whisper's
+        silence phrases on a quiet or short clip; `moxie_sdk.stt.SttSession`) is still a
+        FINAL with no speech and the utterance's uuid; it adds one console note with the
+        fixed reason, the canon phrase and the numbers (never the audio, never the
+        transcript) and counts in `/status` as `stt_dropped`."""
         if self._transcriber is None:
             return None
-        from moxie_sdk.stt import STT_ERROR_CODE, encode_zmq_stt_response
+        from moxie_sdk.stt import STT_ERROR_CODE, describe_drop, encode_zmq_stt_response
         if uuid:
             self._stt_uuid[device_id] = uuid          # frames of one utterance share it
+        session = self._stt_session(device_id)
         try:
-            transcript = self._stt_session(device_id).feed(vad, audio)
+            transcript = session.feed(vad, audio)
         except Exception as e:                        # noqa: BLE001 — any engine failure
             why = f"{type(e).__name__}: {e}"
             frame = encode_zmq_stt_response(self._stt_uuid.pop(device_id, device_id), "",
@@ -312,7 +319,16 @@ class VoiceMixin:
         frame = encode_zmq_stt_response(self._stt_uuid.pop(device_id, device_id), transcript)
         self._publish(f"/devices/{device_id}/commands/zmq", frame,
                       device_id=device_id, what="stt_result")
-        self._note("stt", f"👂 heard: '{transcript[:40]}'")
+        drop = getattr(session, "last_drop", None)
+        if drop:
+            robot = self.robots.get(device_id)
+            if robot is not None:
+                robot.extra["stt_dropped"] = int(robot.extra.get("stt_dropped") or 0) + 1
+            line = describe_drop(drop)
+            self._note("stt", f"👂 heard nothing: {line}")
+            print(f"[runtime] 👂 {device_id} heard nothing: {line}", flush=True)
+        else:
+            self._note("stt", f"👂 heard: '{transcript[:40]}'")
         # During telehealth the operator sees the child's side as text (a read of what
         # STT already produced; backlog/telehealth.md §2.5).
         if self._telehealth.get(device_id, {}).get("session_id"):

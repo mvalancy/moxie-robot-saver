@@ -208,6 +208,21 @@ STT_BASE_URL = (os.environ.get("MOXIE_STT_BASE_URL", "").strip()
                 or VOICE_BASE_URL or LLM_BASE_URL)
 STT_API_KEY  = (os.environ.get("MOXIE_STT_API_KEY", "").strip()
                 or VOICE_API_KEY or LLM_API_KEY)
+
+# --- the honest ears (AI seam §1 "What the ears refuse to hear") ---
+# Read by `moxie_sdk/stt.py` itself (`ears_knobs`) each time a robot's listening session
+# starts: the runtime never imports this module. Named here so every knob has one home.
+# The levels come from the hosted page's browser microphones, not Moxie's: tune them on
+# bench day from the console feed's "heard nothing" lines, which carry the numbers.
+#: `off` (0/false/no) restores the ears exactly as they were: every clip to the engine,
+#: its text verbatim. Unset or empty is on.
+STT_PHANTOM_GATE = ((os.environ.get("MOXIE_STT_PHANTOM_GATE") or "on").strip().lower()
+                    not in _OFF)
+#: RMS level (fraction of full scale) below which a clip is room tone: one of Whisper's
+#: silence phrases ("Bye.", "Thank you.", "you") on it is not the child's word.
+STT_ROOM_TONE_RMS = _env_float("MOXIE_STT_ROOM_TONE_RMS", 0.01)
+#: Milliseconds below which a clip that is not loud is too short for that phrase to be real.
+STT_MIN_SPEECH_MS = _env_float("MOXIE_STT_MIN_SPEECH_MS", 250)
 # Seconds the 🎚️ picker trusts one `GET /v1/models` listing (refreshed off the turn path).
 VOICE_DISCOVERY_TTL_S = _env_int("MOXIE_VOICE_DISCOVERY_TTL_S", 300)
 
