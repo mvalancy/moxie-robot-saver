@@ -44,7 +44,8 @@ from . import ext
 from .. import presence as _presence
 from .ext_host import (apply_ext_effects, _clock_local, _ext_digest, EXT_EVENTS_CAP,
     EXT_EVENTS_COLLECTION, ext_facts, ext_namespace, execution_actions_of, full_key_of,
-    SHIPPED_EXTRA_GRANTS, shipped_ext_digests, subscriptions_of)
+    literal_actions, REFUSED_TAG_REASON, REFUSED_TAG_WORDS, SHIPPED_EXTRA_GRANTS,
+    shipped_ext_digests, subscriptions_of)
 from .ext_host import robot_events, robot_functions  # noqa: F401  (re-exported surface)
 
 
@@ -177,8 +178,16 @@ class ContentApp(MoxieApp):
         self._monotonic = monotonic or time.monotonic
         #: `{(device_id, extension_id): breaches}` this session — quarantine counter (§6.4).
         self._ext_breaches: dict = {}
+        #: `{(device_id, extension_id): tags refused}`: a line's tags the review did not
+        #: name, taken out (`ext_host.apply_ext_effects`). Counted apart from breaches: a
+        #: refusal never quarantines.
+        self._ext_refusals: dict = {}
         #: Already-reported `(device_id, extension_id, reason)`: one event per problem.
         self._ext_reported: set = set()
+        #: `{digest: literal_actions(program)}`, the tags each rule of a program wrote whole,
+        #: read once per program (by its content, so a different program under the same
+        #: name never inherits them) rather than on every turn.
+        self._ext_literal: dict = {}
         #: `{device_id: the opener line it heard last}`, so an opener never repeats back
         #: to back; `rng` picks among the others (injectable for tests).
         self._last_opener: dict = {}
@@ -275,24 +284,59 @@ class ContentApp(MoxieApp):
         key = (device_id, ext_id)
         self._ext_breaches[key] = self._ext_breaches.get(key, 0) + 1
         count = self._ext_breaches[key]
-        seen = (device_id, ext_id, result.breach)
+        self._ext_report(device_id, ext_id, hook=hook, reason=result.breach or "invalid",
+                         sentence=result.sentence,
+                         line=f"stopped: {result.reason}; Moxie carried on without it",
+                         quarantined=count >= self._ext_max_breaches())
+
+    def _ext_refused(self, device_id: str, ext_id: str, refused: list, *,
+                     hook: str) -> None:
+        """A line carried an action tag the rule's own text does not write whole, so the
+        host took it out (`ext_host.apply_ext_effects`): count it and tell the parent
+        once, as a breach is told. Not a breach: the line was said without the tag and the
+        turn went on, as with a markup tag the catalogue drops, so it never counts towards
+        quarantine. The log names the tag's kind only, never its text, which may be what
+        the child said."""
+        key = (device_id, ext_id)
+        self._ext_refusals[key] = self._ext_refusals.get(key, 0) + len(refused)
+        kinds = ", ".join(a.type.name.lower() for a in refused)
+        self._ext_report(device_id, ext_id, hook=hook, reason=REFUSED_TAG_REASON,
+                         sentence=REFUSED_TAG_WORDS,
+                         line=f"took {len(refused)} tag(s) out of its line ({kinds}): not "
+                              f"written whole in the rule's own text, so its review names "
+                              f"no such thing; the line was said without them",
+                         quarantined=self._ext_quarantined(device_id, ext_id))
+
+    def _ext_report(self, device_id: str, ext_id: str, *, hook: str, reason: str,
+                    sentence: str, line: str, quarantined: bool) -> None:
+        """Tell the parent once per (device, extension, reason), never the child: one log
+        line, and one row in the bounded `ext_events` ring the console reads (M4)."""
+        seen = (device_id, ext_id, reason)
         if seen in self._ext_reported:
             return
         self._ext_reported.add(seen)
-        print(f"[ext] {ext_id} ({hook}) stopped: {result.reason}; "
-              f"Moxie carried on without it", flush=True)
+        print(f"[ext] {ext_id} ({hook}) {line}", flush=True)
         store = getattr(self.memory, "store", None)
         if store is None or not device_id:
             return
         try:
             store.append(device_id, EXT_EVENTS_COLLECTION, {
                 "at": int(self._clock()), "extension": ext_id, "hook": hook,
-                "reason": result.breach or "invalid",
-                "sentence": result.sentence,
-                "quarantined": count >= self._ext_max_breaches(),
+                "reason": reason, "sentence": sentence, "quarantined": quarantined,
             }, cap=EXT_EVENTS_CAP)
         except Exception as e:
             print(f"[ext] could not record the breach ({e})", flush=True)
+
+    def _ext_allowed(self, digest: str, block: dict, rule: int) -> frozenset:
+        """The actions the matched rule's spoken line may act on: the tags written whole
+        in that rule's own text (`ext_host.literal_actions`), read once per program and
+        kept by the program's digest. No rule, or none that matched: nothing."""
+        sets = self._ext_literal.get(digest)
+        if sets is None:
+            if len(self._ext_literal) >= 256:
+                self._ext_literal.clear()         # a bound, not a policy: packs are few
+            sets = self._ext_literal[digest] = literal_actions(block)
+        return sets[rule] if 0 <= rule < len(sets) else frozenset()
 
     @staticmethod
     def _ext_max_breaches() -> int:
@@ -313,8 +357,9 @@ class ContentApp(MoxieApp):
         if not block or block.get("on") != hook:
             return None
         ext_id = full_key_of(kind, key)
+        digest = _ext_digest(block)
         grants = (self._ext_shipped_grants
-                  if _ext_digest(block) in self._ext_shipped else self._ext_grants)
+                  if digest in self._ext_shipped else self._ext_grants)
         device_id = getattr(turn.robot, "device_id", "") or ""
         if self._ext_quarantined(device_id, ext_id):
             return None                       # already broken three times this session
@@ -342,11 +387,16 @@ class ContentApp(MoxieApp):
             return None
         if not result.effects and not result.handled:
             return None                       # no rule matched: a success, not a failure
-        apply_ext_effects(result.effects, volley=volley, memory=self.memory,
-                          device_id=device_id, namespace=namespace,
-                          classifier=self.classifier,
-                          module_id=getattr(turn.robot, "module_id", "") or "",
-                          content_id=getattr(turn.robot, "content_id", "") or "")
+        # A line acts only on the tags the matched rule wrote whole (the ones its review
+        # names); any other tag it carries is taken out and reported, never acted on.
+        stats = apply_ext_effects(result.effects, volley=volley, memory=self.memory,
+                                  device_id=device_id, namespace=namespace,
+                                  classifier=self.classifier,
+                                  module_id=getattr(turn.robot, "module_id", "") or "",
+                                  content_id=getattr(turn.robot, "content_id", "") or "",
+                                  allowed=self._ext_allowed(digest, block, result.rule))
+        if stats["refused"]:
+            self._ext_refused(device_id, ext_id, stats["refused"], hook=hook)
         for line in result.notes:
             print(f"[ext] {ext_id}: {line}", flush=True)
         return result

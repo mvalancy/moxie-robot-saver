@@ -76,41 +76,54 @@ def _lift(text) -> str:
     return _LIFTED.sub(" ", str(text))
 
 
-def _tag_effects(text) -> list:
-    """What the action tags in one line make happen, in a parent's words, each paired with
-    whether it is certain. A malformed tag does nothing, as in `actions.parse_action_tags`.
-    A tag with a worked-out piece (`_HOLE`) in it may or may not form, or come out well
-    formed, so it is not certain. Before its first `:` (its name and the spaces around it)
-    a piece is read as nothing, the only way the tag forms there; in its fields, as some
-    text, so a launch whose module is worked out starts "an activity it works out". A line
-    with worked-out pieces is read again with every one of them empty, and what only that
-    reading finds is not certain either."""
+def _tag_reads(text, holes: bool = True) -> list:
+    """The action tags in one line as the robot would act on them: `(key, words, sure)`
+    for each, with `key` the action as parsed, `(kind, module, content)` (`kind` one of
+    exit, sleep or launch, as `launch_if_confirmed` launches too; the fields exactly as
+    the robot keeps them, None where there is none), the same identity as the host's
+    `ext_host.literal_actions`; `words` what it makes happen, in a parent's words; and
+    `sure` whether it is certain. A malformed tag does nothing, as in
+    `actions.parse_action_tags`. A tag with a worked-out piece (`_HOLE`) in it may or may
+    not form, or come out well formed, so it is not certain. Before its first `:` (its
+    name and the spaces around it) a piece is read as nothing, the only way the tag forms
+    there; in its fields, as some text, so a launch whose module is worked out starts "an
+    activity it works out". A line with worked-out pieces is read again with every one of
+    them empty, and what only that reading finds is not certain either. With `holes` off,
+    `text` is a string written in the program and is read exactly as the robot parses it:
+    every character is itself, `_HOLE` included, and every tag found is certain."""
     text = str(text)
     out = []
     for m in _SEGMENT.finditer(text):
         head, colon, rest = m.group(1).partition(":")
-        named = _NAME.fullmatch(head.replace(_HOLE, ""))
+        named = _NAME.fullmatch(head.replace(_HOLE, "") if holes else head)
         name = named.group(1).lower() if named else ""
         if name not in _TAG_NAMES:
             continue
         fields = [f.strip() for f in rest.split(":")] if colon else []
         while fields and not fields[-1]:
             fields.pop()
-        sure = _HOLE not in m.group(0)
+        sure = not holes or _HOLE not in m.group(0)
         if name in ("exit", "sleep"):
             if not fields or not sure:
-                out.append(("the conversation ends" if name == "exit"
+                out.append(((name, None, None), "the conversation ends" if name == "exit"
                             else "Moxie goes to sleep", sure))
         elif fields and fields[0] and (len(fields) <= 2 or not sure):
             module = _plain(fields[0])
-            what = ("an activity it works out" if _HOLE in fields[0]
+            what = ("an activity it works out" if holes and _HOLE in fields[0]
                     else f"the {module} activity" if _MODULE_ID.fullmatch(module)
                     else f"the '{module}' activity")
-            out.append((f"Moxie starts {what}", sure))
-    if _HOLE in text:
-        out += [(e, False) for e, _ in _tag_effects(text.replace(_HOLE, ""))
-                if all(e != seen for seen, _ in out)]
+            out.append((("launch", fields[0], fields[1] if len(fields) == 2 else None),
+                        f"Moxie starts {what}", sure))
+    if holes and _HOLE in text:
+        seen = {key for key, _, _ in out}
+        out += [(key, words, False) for key, words, _ in _tag_reads(text.replace(_HOLE, ""))
+                if key not in seen]
     return out
+
+
+def _tag_effects(text, holes: bool = True) -> list:
+    """`_tag_reads` as `(words, sure)` pairs, one per tag, in the order they appear."""
+    return [(words, sure) for _, words, sure in _tag_reads(text, holes)]
 
 
 def _lift_parts(parts) -> list:
@@ -187,6 +200,9 @@ _MAX_NAMED = 16
 #: Every effect a tag can have, in `_tag_effects`'s words.
 _EVERY = ("the conversation ends", "Moxie goes to sleep",
           "Moxie starts an activity it works out")
+#: The same as `_tag_reads` keys them: a launch of no particular module stands for any.
+_EVERY_READS = ((("exit", None, None), _EVERY[0]), (("sleep", None, None), _EVERY[1]),
+                (("launch", None, None), _EVERY[2]))
 
 #: Ops whose value is a number, yes/no, or a fact the host builds: no tag written in their
 #: arguments can reach the line. Any other op `_Reader.lines` does not follow (`get`,
@@ -303,6 +319,10 @@ class _Probe(_Machine):
         if self.work > self.allowance:
             raise _TooBig()
         if size > self.limits.max_value_bytes:
+            if name == "split":
+                # The evaluator charges a list of pieces by their characters, not their
+                # number, so it may well work this out: read on from the program's text.
+                raise _TooBig()
             raise _Breach("value", "too big to work out ahead")
         value = super().apply(name, a)
         self.work += len(value) if isinstance(value, (str, list, dict)) else 1
@@ -505,14 +525,19 @@ class _Reader:
                 out = self.join(out, self.lines(part, depth + 1))
             return out
         if key in _CASE and len(arg) == 1:
-            start = len(self.maybe)
-            out = self.case(key, self.lines(arg[0], depth + 1))
-            if key in ("upper", "lower") and len(self.maybe) > start:
-                # A tag that may pass through this op comes out of it changed too.
-                passed = self.maybe[start:]
-                del self.maybe[start:]
-                for tag in self.case(key, passed):
-                    self.note_tag(tag)
+            # The argument is read with its own `maybe`, so a tag noted earlier (a `let`
+            # name read twice, once under this op) is handed on again here and comes out
+            # of a case op changed too, as it does on the robot.
+            outer, self.maybe = self.maybe, []
+            try:
+                out = self.case(key, self.lines(arg[0], depth + 1))
+                passed = self.maybe
+            finally:
+                self.maybe = outer
+            if key in ("upper", "lower") and passed:
+                passed = self.case(key, passed)
+            for tag in passed:
+                self.note_tag(tag)
             return out
         if key == "random.pick" and len(arg) == 1:
             return self.choices(arg[0], depth + 1)
@@ -651,16 +676,20 @@ class _Reader:
         return _HOLE
 
 
-def _text_effects(value, binds) -> list:
+def _text_effects(value, binds) -> dict:
     """What a `say` can make happen, read from the program's own text in one pass, for when
-    reading it as `_Reader` does would build more than `_BUDGET`. Each tag written whole in a
-    string of the `say` or of its rule's `let` values counts, through every sequence of
-    `upper` and `lower` when the rule has either (`_CASINGS`). Every effect a tag can have
-    counts when the pieces of one could meet (a `<` with no `>` after it in one string, and
-    a `>` with no `<` before it in one), when a `<` or `>` is in what an op that cuts or
-    rewrites text reads (`_CUTTING_OPS`), or past `_MAX_MAYBE` different tags."""
+    reading it as `_Reader` does would build more than `_BUDGET`: `{key: words}` as
+    `_tag_reads` has them, nothing certain. Each tag written whole in a string of the `say`
+    or of its rule's `let` values counts, through every sequence of `upper` and `lower`
+    when the rule has either (`_CASINGS`). Every effect a tag can have counts when the
+    pieces of one could meet (a `<` with no `>` after it in one string, and a `>` with no
+    `<` before it in one), when a `<` or `>` is in what an op that cuts or rewrites text
+    reads (`_CUTTING_OPS`), or past `_MAX_MAYBE` different tags. A `let` name bound to a
+    delimited text (one holding a `<` or `>`) is delimited wherever it is read, worked out
+    in binding order, so a cutting op over the name counts too."""
     seen = {"open": False, "close": False, "cased": False, "any": False}
     tags: dict = {}
+    delimited_names: dict = {}
 
     def walk(node) -> bool:
         """Reads `node`'s strings; True when one holds a `<` or a `>`."""
@@ -681,6 +710,8 @@ def _text_effects(value, binds) -> list:
             return any([walk(item) for item in node])
         if isinstance(node, dict):
             delimited = False
+            if len(node) == 1 and isinstance(node.get("var"), str):
+                delimited = delimited_names.get(node["var"].split(".")[0], False)
             for key, item in node.items():
                 inner = walk(item)
                 delimited |= walk(key) | inner
@@ -691,13 +722,18 @@ def _text_effects(value, binds) -> list:
             return delimited
         return False
 
-    for expr in [value] + (list(binds.values()) if isinstance(binds, dict) else []):
-        walk(expr)
+    for name, expr in (binds.items() if isinstance(binds, dict) else []):
+        delimited_names[name] = walk(expr)
+    walk(value)
     if seen["any"] or (seen["open"] and seen["close"]):
-        return list(_EVERY)
+        return dict(_EVERY_READS)
     casings = _CASINGS if seen["cased"] else (str,)
-    return list(dict.fromkeys(e for tag in tags for case in casings
-                              for e, _ in _tag_effects(case(tag))))
+    out: dict = {}
+    for tag in tags:
+        for case in casings:
+            for key, words, _ in _tag_reads(case(tag)):
+                out.setdefault(key, words)
+    return out
 
 
 def _too_long(line: str) -> bool:
@@ -725,21 +761,24 @@ def _capped(effects: list) -> list:
     return out
 
 
-def _say_effects(value, binds=None, budget=None) -> list:
-    """What a `say` makes happen through the tags in the line it speaks, in a parent's
-    words, read from every line it can speak (`_Reader`) but one too long to be said at all
-    (`_too_long`). An effect that is not certain on every one of those lines happens
-    "sometimes", and at most `_MAX_NAMED` activities are named (`_capped`). Past
-    `_MAX_LINES`, the `say` is read in
-    its parts, every effect "sometimes"; once reading would build more than `budget` (a
-    one-item list, `_BUDGET` by default), from the program's own text in one pass
-    (`_text_effects`). Not read: a tag that needs text the program reads at run time (what
-    the child said, a memory, something the robot sent) for its `<`, name, `:` or `>`,
-    which is not its own text; and a tag that needs the text an op `_Reader` does not follow
-    hands on (`get`, `slice`, `replace`, `join`, …), whose arguments are read for whole
-    tags only. Past `_MAX_LINES`, also not read: a tag that needs the text of a `concat`
-    part that can come out as different lines (an `if`, `and`/`or`, `random.pick`, or a
-    `let` name bound to one)."""
+def _read_ahead(value, binds=None, budget=None) -> dict:
+    """The reading ahead: what a `say` can make happen through the tags in the lines it can
+    speak, `{key: (words, sure)}` as `_tag_reads` has them, `sure` when the tag is on every
+    line the `say` can speak. It decides the wording and "sometimes" for the effects
+    `_rule_effects` names; what a line may act on at all is decided by the rule's own
+    text, not here.
+
+    Read from every line the `say` can speak (`_Reader`) but one too long to be said at
+    all (`_too_long`). Past `_MAX_LINES`, the `say` is read in its parts, nothing certain;
+    once reading would build more than `budget` (a one-item list, `_BUDGET` by default),
+    from the program's own text in one pass (`_text_effects`). Not read: a tag that needs
+    text the program reads at run time (what the child said, a memory, something the robot
+    sent) for its `<`, name, `:` or `>`, which is not its own text; and a tag that needs
+    the text an op `_Reader` does not follow hands on (`get`, `slice`, `replace`, `join`,
+    …), whose arguments are read for whole tags only. Past `_MAX_LINES`, also not read: a
+    tag that needs the text of a `concat` part that can come out as different lines (an
+    `if`, `and`/`or`, `random.pick`, or a `let` name bound to one). None of these can act
+    on the robot (`ext_host.apply_ext_effects`)."""
     reader = _Reader(binds, budget)
     try:
         try:
@@ -750,15 +789,89 @@ def _say_effects(value, binds=None, budget=None) -> list:
             for text in reader.texts_in(value):
                 reader.note(text)
     except _TooBig:
-        return [f"sometimes {e}" for e in _text_effects(value, binds)]
-    read = [[] if line is None or _too_long(line) else _tag_effects(line) for line in lines]
-    order = dict.fromkeys(effect for effects in read for effect, _ in effects)
+        return {key: (words, False) for key, words in _text_effects(value, binds).items()}
+    read = [[] if line is None or _too_long(line) else _tag_reads(line) for line in lines]
+    order: dict = {}
+    for reads in read:
+        for key, words, _ in reads:
+            order.setdefault(key, words)
     for tag in reader.maybe:
-        order.update(dict.fromkeys(_EVERY if tag == _ANY
-                                   else [e for e, _ in _tag_effects(tag)]))
-    each = [set(effects) for effects in read]
-    return _capped([e if each and all((e, True) in effects for effects in each)
-                    else f"sometimes {e}" for e in order])
+        for key, words in (_EVERY_READS if tag == _ANY
+                           else [(k, w) for k, w, _ in _tag_reads(tag)]):
+            order.setdefault(key, words)
+    each = [{(key, sure) for key, _, sure in reads} for reads in read]
+    return {key: (words, bool(each) and all((key, True) in reads for reads in each))
+            for key, words in order.items()}
+
+
+def _say_effects(value, binds=None, budget=None) -> dict:
+    """`_read_ahead` in a parent's words: `{words: sure}`, an effect certain when one of the
+    tags it stands for is."""
+    out: dict = {}
+    for words, sure in _read_ahead(value, binds, budget).values():
+        out[words] = out.get(words, False) or sure
+    return out
+
+
+def _written(node, out: list) -> list:
+    """Every string written in `node`, a JSON tree, map keys included, in document order
+    (the strings `ext_host.literal_actions` reads, in the same order)."""
+    if isinstance(node, str):
+        out.append(node)
+    elif isinstance(node, list):
+        for item in node:
+            _written(item, out)
+    elif isinstance(node, dict):
+        for key, item in node.items():
+            out.append(str(key))
+            _written(item, out)
+    return out
+
+
+def _literal_reads(says, binds) -> dict:
+    """The action tags written whole in a rule's own text, `{key: words}` as `_tag_reads`
+    has them: each tag read exactly as the robot parses it (no worked-out parts) out of a
+    string anywhere in the rule's `say` statements (`says`, their expressions) or `let`
+    values. The host lets the rule's line act on these and on nothing else
+    (`ext_host.literal_actions`, the same keys read with the robot's own parse; the two
+    grammars are held together by `sim/tests/test_ext_say_tags.py`), so these are named
+    whatever the reading ahead finds."""
+    texts: list = []
+    for say in says:
+        _written(say, texts)
+    if isinstance(binds, dict):
+        _written(list(binds.values()), texts)
+    out: dict = {}
+    for text in texts:
+        for key, words, _ in _tag_reads(text, holes=False):
+            out.setdefault(key, words)
+    return out
+
+
+def _literal_effects(says, binds) -> dict:
+    """`_literal_reads` in a parent's words, each effect once."""
+    return dict.fromkeys(_literal_reads(says, binds).values())
+
+
+def _rule_effects(says, binds=None, budget=None) -> list:
+    """What a rule's spoken line makes happen, in a parent's words: every tag written whole
+    in the rule's own text (`_literal_reads`), which is all the robot may act on, at least
+    as "sometimes"; without "sometimes" when the reading ahead (`_read_ahead`, of the last
+    `say`, since each `say` replaces the line before it) finds that same action, module
+    and content as parsed, on every line the `say` can speak. What the reading ahead
+    finds that the rule's text does not write whole (a tag built from pieces, cased, cut
+    out of a longer text, a launch with its content id uppered) is not named: the host
+    takes it out of the line, so it never happens. At most `_MAX_NAMED` activities are
+    named (`_capped`)."""
+    literal = _literal_reads(says, binds)
+    ahead = _read_ahead(says[-1], binds, budget) if says else {}
+    named: dict = {}
+    for key, (words, sure) in ahead.items():
+        if key in literal:
+            named[words] = named.get(words, False) or sure
+    for words in literal.values():
+        named.setdefault(words, False)
+    return _capped([w if sure else f"sometimes {w}" for w, sure in named.items()])
 
 
 #: Ops that shape a value without changing what a parent would call it; described by
@@ -873,7 +986,11 @@ def _describe_stmt(s, binds=None) -> str:
 
 def explain(ext) -> list:
     """One English sentence per rule (§5.4). The grant list says what a pack *may* do;
-    these say what it *will* do, and the pack review shows both."""
+    these say what it *will* do, and the pack review shows both. A rule's sentence ends
+    with what its spoken line's action tags make happen (`_rule_effects`): every tag
+    written whole in the rule's own text, which is all the robot acts on from that line,
+    so for every program and every run-time input the actions the robot is sent from a
+    rule's line are among the effects its sentence names."""
     if not isinstance(ext, dict) or not ext.get("rules"):
         return []
     out = []
@@ -895,10 +1012,7 @@ def explain(ext) -> list:
         else:
             head = "Whenever this activity is triggered"
         # What the spoken line's tags make happen, said last: it happens after the line.
-        # Each `say` replaces the line before it (`Volley.set_output`), so the robot is sent
-        # the last one's tags only.
-        says = [s for s in do if "say" in s]
-        effects = _say_effects(says[-1]["say"], binds, budget) if says else []
+        effects = _rule_effects([s["say"] for s in do if "say" in s], binds, budget)
         then = f"; then {' and '.join(effects)}" if effects else ""
         out.append(f"{head}: {body}{then}.")
     return out

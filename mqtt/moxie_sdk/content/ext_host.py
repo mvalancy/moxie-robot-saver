@@ -4,7 +4,8 @@ touches the world on the evaluator's behalf. `ext/` is the pure evaluator; here:
 
 * `ext_facts()` builds a plain-JSON fact base — no live object to walk (X2).
 * `apply_ext_effects()` applies effects only after the program ended, so a breach leaves
-  nothing half-applied (X11).
+  nothing half-applied (X11), and lets a spoken line act only on the action tags written
+  whole in the rule's own text (`literal_actions()`), never on one it built at run time.
 * `execution_actions_of()` / `subscriptions_of()` bound what a pack may put on the wire to
   the closed robot function / event tables.
 
@@ -19,6 +20,7 @@ from typing import Optional
 from .. import automarkup as _automarkup
 from .. import safety as _safety
 from .. import vocab
+from ..actions import drop_action_tags, parse_action_tags
 from ..types import Action, ActionType
 from .memory import provenance
 from .volley import Volley, Session
@@ -154,21 +156,86 @@ def _ext_del_path(block: dict, key: str) -> bool:
 _MISSING = object()
 
 
+#: What the parent is told when a line's action tag was refused (`apply_ext_effects`): the
+#: `ext_events` row's `reason` and its sentence. Not a breach: as with a markup tag the
+#: catalogue drops (`ext_markup`), the line is said without it and the turn goes on, so a
+#: refusal never counts towards quarantine (`ContentApp._ext_refused`).
+REFUSED_TAG_REASON = "tag"
+REFUSED_TAG_WORDS = "it tried to make Moxie do something its review did not name"
+
+
+def _action_key(action: Action) -> tuple:
+    """An `Action` as a set member: its type and every field exactly as parsed."""
+    return (action.type, action.module_id, action.content_id, action.function,
+            json.dumps(action.args, sort_keys=True, default=str))
+
+
+def _strings_in(node, out: list) -> list:
+    """Every string written in `node`, a JSON tree, map keys included, in document order."""
+    if isinstance(node, str):
+        out.append(node)
+    elif isinstance(node, list):
+        for item in node:
+            _strings_in(item, out)
+    elif isinstance(node, dict):
+        for key, item in node.items():
+            out.append(str(key))
+            _strings_in(item, out)
+    return out
+
+
+def literal_actions(block) -> tuple:
+    """Per rule, the actions written whole in the rule's own text: every action tag that
+    `actions.parse_action_tags` (the parse the robot path uses) reads out of a string
+    literal anywhere inside the rule's `say` statements or `let` values, as a frozenset of
+    `_action_key`s. That is all a rule's spoken line may act on (`apply_ext_effects`). A
+    tag built at run time from pieces, cased by `upper` or `lower`, cut out of a longer
+    text by `get`, `slice`, `split`, `replace` or `reverse`, or read from what the child
+    said, a memory or `input_vars` is not in it, whatever it parses to. The tag name is
+    case-insensitive and the fields compare exactly, as the parse has it. Total: anything
+    that is not a program allows nothing."""
+    out = []
+    rules = block.get("rules") if isinstance(block, dict) else None
+    for rule in (rules if isinstance(rules, list) else []):
+        texts: list = []
+        if isinstance(rule, dict):
+            do = rule.get("do")
+            for s in (do if isinstance(do, list) else []):
+                if isinstance(s, dict) and "say" in s:
+                    _strings_in(s["say"], texts)
+            binds = rule.get("let")
+            if isinstance(binds, dict):
+                _strings_in(list(binds.values()), texts)
+        out.append(frozenset(_action_key(a) for text in texts
+                             for a in parse_action_tags(text)[1]))
+    return tuple(out)
+
+
 def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = "",
                       namespace: str = "", classifier=None, module_id: str = "",
-                      content_id: str = "") -> dict:
+                      content_id: str = "", allowed=frozenset()) -> dict:
     """Apply one extension's effects in order under the §6.3 caps; returns counts
-    `{"spoke", "wrote", "dropped_markup", "blocked", "acted", "subscribed"}`.
+    `{"spoke", "wrote", "dropped_markup", "blocked", "acted", "subscribed"}` and
+    `"refused"`, the actions of the tags a `say` was not allowed to act on.
 
-    `say` passes the same output safety classifier as a model line (unsafe → redirect,
-    M2). `remember`/`forget` name only a key; device and namespace come from the host (X9).
+    `say` acts only on an action tag whose action is in `allowed`, the matched rule's
+    `literal_actions`: any other `<exit>`, `<sleep>` or `<launch:…>` the line carries is
+    taken out before the line is kept (`actions.drop_action_tags`), so it is neither said
+    nor acted on, and the caller reports it. Nothing is allowed unless the caller says so:
+    the default is the empty set, so a line from a caller that passes nothing acts on no
+    tag at all. A line that carries only allowed tags is kept exactly as written. It then
+    passes the same output safety classifier as a model line (unsafe → redirect, M2).
+    `remember`/`forget` name only a key; device and namespace come from the host (X9).
     """
     spoke = wrote = dropped = acted = subscribed = 0
     blocked = False
+    refused: list = []
     for eff in effects or []:
         kind = eff.get("kind")
         if kind == "say":
             text = str(eff.get("text") or "")[:ext.MAX_SAY_CHARS]
+            text, taken = drop_action_tags(text, lambda a: _action_key(a) in allowed)
+            refused += taken
             markup = eff.get("markup")
             if classifier is not None and text:
                 try:
@@ -231,7 +298,7 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
             # silent drop.
             print(f"[ext] {kind} is not plumbed yet; ignored", flush=True)
     return {"spoke": spoke, "wrote": wrote, "dropped_markup": dropped, "blocked": blocked,
-            "acted": acted, "subscribed": subscribed}
+            "acted": acted, "subscribed": subscribed, "refused": refused}
 
 
 def robot_functions() -> frozenset:

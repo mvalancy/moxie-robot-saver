@@ -404,8 +404,14 @@ _NOT_SENT = {"var": "input_vars.zz"}
 _A_LIST = {"list": [{"var": "speech"}]}
 
 #: Imported programs whose `say` reaches an action tag in different ways: how the pack
-#: review's sentence ends, and what the robot is sent for each thing the child says. Before
-#: this, every one but the plain line and `random.pick` read with no "then" at all.
+#: review's sentence ends, and what the robot is sent for each thing the child says. A line
+#: acts only on a tag written whole in its rule's own text (a string literal in a `say` or a
+#: `let` value, `ext_host.literal_actions`): the host takes any other tag out of the line
+#: before it is kept, so the shapes that build one (from pieces, a case op, a cutting op or
+#: run-time text) send nothing, and the sentence names only what is written whole, as
+#: "sometimes" where the reading ahead cannot say it happens every time. Before round 2,
+#: every one but the plain line and `random.pick` read with no "then" at all; before round 6
+#: the built tags acted, and five review rounds each found one the reading ahead missed.
 IMPORTED_SAYS = {
     "if with a fixed test": (
         _says({"if": [True, "<launch:DRAW>Let's draw!", "Hi"]}),
@@ -416,15 +422,16 @@ IMPORTED_SAYS = {
     "upper": (
         _says({"upper": ["<exit>bye now"]}),
         "; then the conversation ends.", {"hi": ["the conversation ends"]}),
+    # The line carries `<launch:draw>`, a module the rule's text does not write (fields
+    # compare exactly): taken out. The DRAW written is named, as "sometimes".
     "lower, which lowers the module too": (
         _says({"lower": ["<launch:DRAW>OK"]}),
-        "; then Moxie starts the draw activity.", {"hi": ["Moxie starts the draw activity"]}),
+        f"; then sometimes {DRAW}.", {"hi": []}),
     "concat": (
         _says({"concat": ["<sleep>", "Night ", "night"]}),
         "; then Moxie goes to sleep.", {"hi": ["Moxie goes to sleep"]}),
     "a tag split across concat parts": (
-        _says({"concat": ["<ex", "it>See you!"]}),
-        "; then the conversation ends.", {"hi": ["the conversation ends"]}),
+        _says({"concat": ["<ex", "it>See you!"]}), "", {"hi": []}),
     "a let-bound line": (
         _says({"var": "line"}, let={"line": "<exit>See you!"}),
         "; then the conversation ends.", {"hi": ["the conversation ends"]}),
@@ -436,8 +443,7 @@ IMPORTED_SAYS = {
         _says({"or": [{"var": "input_vars.line"}, "<exit>Bye"]}),
         "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
     "a tag assembled from literals": (
-        _says({"replace": ["<exot>Bye", "o", "i"]}),
-        "; then the conversation ends.", {"hi": ["the conversation ends"]}),
+        _says({"replace": ["<exot>Bye", "o", "i"]}), "", {"hi": []}),
     "get at a worked-out index": (
         _says({"get": [{"lit": ["<exit>Bye", "Hi"]},
                        {"%": [{"len": [{"var": "speech"}]}, 2]}]}),
@@ -452,77 +458,134 @@ IMPORTED_SAYS = {
     "a launch of a worked-out module": (
         _says({"concat": ["<launch:", {"upper": [{"trim": [{"var": "speech"}]}]},
                           ">Off we go!"]}),
-        "; then sometimes Moxie starts an activity it works out.", {"draw": [DRAW]}),
+        "", {"draw": []}),
     "a line that is only a tag": (
         _says("<sleep>"), "; then Moxie goes to sleep.", {"hi": ["Moxie goes to sleep"]}),
+    # The first line's exit is written whole in the rule, so it is named (as "sometimes":
+    # the last `say` replaces it, `Volley.set_output`, and the robot is sent nothing).
     "two lines, of which the robot is sent the last": (
         _imported({"do": [{"say": "<exit>Bye"}, {"say": "Hi there"}, {"handled": True}]}),
-        "", {"hi": []}),
-    # A worked-out part may come out as nothing, and a tag around it then forms.
+        "; then sometimes the conversation ends.", {"hi": []}),
+    # A worked-out part may come out as nothing, and a tag around it then forms: the host
+    # takes it out, since no piece writes it whole.
     "an always-empty part inside the tag's name": (
-        _says({"concat": ["<ex", _ALWAYS_EMPTY, "it>Bye!"]}),
-        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+        _says({"concat": ["<ex", _ALWAYS_EMPTY, "it>Bye!"]}), "", {"hi": []}),
     "a value the robot did not send inside the tag's name": (
-        _says({"concat": ["<ex", _NOT_SENT, "it>Bye!"]}),
-        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+        _says({"concat": ["<ex", _NOT_SENT, "it>Bye!"]}), "", {"hi": []}),
     "a list inside the tag's name": (
-        _says({"concat": ["<ex", _A_LIST, "it>Bye!"]}),
-        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+        _says({"concat": ["<ex", _A_LIST, "it>Bye!"]}), "", {"hi": []}),
     "a dotted let path inside the tag's name": (
         _says({"concat": ["<sl", {"var": "x.y"}, "eep>Night"]}, let={"x": "hello"}),
-        "; then sometimes Moxie goes to sleep.", {"hi": ["Moxie goes to sleep"]}),
+        "", {"hi": []}),
     "an empty part between launch and its module": (
-        _says({"concat": ["<launch", _NOT_SENT, ":DRAW>Let's draw!"]}),
-        f"; then sometimes {DRAW}.", {"hi": [DRAW]}),
+        _says({"concat": ["<launch", _NOT_SENT, ":DRAW>Let's draw!"]}), "", {"hi": []}),
     "a tag's name split around an empty part, with its module worked out": (
         _says({"concat": ["<la", _NOT_SENT, "unch:", {"upper": [{"trim": [{"var": "speech"}]}]},
                           ">Off we go!"]}),
-        f"; then sometimes {WORKED_OUT}.",
-        {"draw": [DRAW], "hi": ["Moxie starts the HI activity"]}),
+        "", {"draw": [], "hi": []}),
     "a module split around an empty part": (
-        _says({"concat": ["<launch:DR", _ALWAYS_EMPTY, "AW>Go!"]}),
-        f"; then sometimes {WORKED_OUT} and sometimes {DRAW}.", {"hi": [DRAW]}),
+        _says({"concat": ["<launch:DR", _ALWAYS_EMPTY, "AW>Go!"]}), "", {"hi": []}),
     "an and whose earlier operand is a falsy number": (
         _says({"concat": ["<launch:", {"and": [{"len": [_NOT_SENT]}, "X"]}, ">Go"]}),
-        f"; then sometimes {WORKED_OUT} and sometimes Moxie starts the X activity.",
-        {"hi": ["Moxie starts the 0 activity"]}),
+        "", {"hi": []}),
     # Past 256 lines, each `concat` is read as one text.
     "a tag split across literal parts, past 256 lines": (
-        _says({"concat": _NINE_IFS + ["<ex", "it>Bye"]}),
-        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+        _says({"concat": _NINE_IFS + ["<ex", "it>Bye"]}), "", {"hi": []}),
     "a lowered launch, past 256 lines": (
         _says({"lower": [{"concat": _NINE_IFS + ["<launch:DRAW>OK"]}]}),
-        "; then sometimes Moxie starts the draw activity.",
-        {"hi": ["Moxie starts the draw activity"]}),
+        f"; then sometimes {DRAW}.", {"hi": []}),
     "a nested concat that completes a tag, past 256 lines": (
         _says({"concat": _NINE_IFS + ["<ex", {"concat": ["it>", {"var": "speech"}]}]}),
-        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+        "", {"hi": []}),
     "a part built only from literals that completes a tag, past 256 lines": (
         _says({"concat": _NINE_IFS + ["<ex", {"replace": ["iz>Bye", "z", "t"]}]}),
-        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+        "", {"hi": []}),
     "a let-bound line that completes a tag, past 256 lines": (
         _says({"concat": _NINE_IFS + ["<sl", {"var": "rest"}]},
               let={"rest": {"concat": ["eep>Night, ", {"var": "speech"}]}}),
-        "; then sometimes Moxie goes to sleep.", {"hi": ["Moxie goes to sleep"]}),
+        "", {"hi": []}),
     "an upper part that completes a tag, past 256 lines": (
         _says({"concat": _NINE_IFS + ["<EX", {"upper": [{"concat": ["it>", {"var": "speech"}]}]}]}),
-        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+        "", {"hi": []}),
     # Round 4: `trim` takes the spaces beside a part that came out as nothing, and a case op
     # over an op `explain()` does not follow changes the tag that op hands on.
     "a trimmed part that starts with an always-empty part, then spaces": (
         _says({"concat": ["<ex", {"trim": [{"concat": [_ALWAYS_EMPTY, "  it>Bye"]}]}]}),
-        "; then sometimes the conversation ends.", {"hi": ["the conversation ends"]}),
+        "", {"hi": []}),
     "lower over a get at a worked-out index": (
         _says({"lower": [_pick("<launch:DRAW>Go", "Hi")]}),
-        "; then sometimes Moxie starts the draw activity.",
-        {"ab": ["Moxie starts the draw activity"], "abc": []}),
+        f"; then sometimes {DRAW}.", {"ab": [], "abc": []}),
     "upper over a let name that gets a tag only upper makes": (
         _says({"upper": [{"var": "line"}]}, let={"line": _pick("<\u017fleep>Night", "Hi")}),
-        "; then sometimes Moxie goes to sleep.", {"ab": ["Moxie goes to sleep"], "abc": []}),
+        "", {"ab": [], "abc": []}),
     "a launch of a module that is not an id": (
         _says("<launch:Draw now>Go!"),
         "; then Moxie starts the 'Draw now' activity.",
         {"hi": ["Moxie starts the 'Draw now' activity"]}),
+    # Round 5: a tag read twice, once under a case op (its first reading hid the second);
+    # a cutting op over a `let` name, read past the budget; and a split into more pieces
+    # than the evaluator's value cap, which the evaluator works out all the same. Each is
+    # taken out by the host, so the sentence names nothing; `test_ext_say_tags.py` checks
+    # the reading ahead finds each of them.
+    "a let read twice, once under upper (dotless i)": (
+        _says({"concat": [{"var": "L"}, {"upper": [{"var": "L"}]}]},
+              let={"L": _pick("<ex\u0131t>Bye ", "Hi")}),
+        "", {"ab": [], "abc": []}),
+    "the same get twice, once under upper (long s)": (
+        _says({"concat": [_pick("<\u017fleep>", "Hi"), {"upper": [_pick("<\u017fleep>", "Hi")]}]}),
+        "", {"ab": [], "abc": []}),
+    # The DRAW the rule writes is sent and named; the lowered copy is taken out.
+    "a launch read twice, once lowered": (
+        _says({"concat": [_pick("<launch:DRAW>", "Hi"), {"lower": [_pick("<launch:DRAW>", "Hi")]}]}),
+        f"; then sometimes {DRAW}.", {"ab": [DRAW], "abc": []}),
+    "reverse of a let": (
+        _says({"reverse": [{"var": "r"}]}, let={"r": "<a>tixe<b>"}), "", {"hi": []}),
+    "replace over a let": (
+        _says({"replace": [{"var": "t"}, "#", ":"]}, let={"t": "<launch#DRAW>Go"}),
+        "", {"hi": []}),
+    "a join of a split of a let": (
+        _says({"join": [{"split": [{"var": "s"}, "o"]}, "i"]}, let={"s": "<exot>Bye"}),
+        "", {"hi": []}),
+    "two slices of lets": (
+        _says({"concat": [{"slice": [{"var": "s"}, 0, 3]}, {"slice": [{"var": "t"}, 1, 4]}, "Bye"]},
+              let={"s": "<exot>", "t": "xit>"}),
+        "", {"hi": []}),
+    "gets of single characters of a let": (
+        _says({"concat": [{"get": [{"var": "w"}, i]} for i in (1, 0, 2, 4, 5, 3)] + ["Bye"]},
+              let={"w": "e<x>it"}),
+        "", {"hi": []}),
+    "a split into 20,000 pieces, joined": (
+        _says({"join": [{"split": ["<ex" + "," * 20_000 + "it>Bye", ","]}, ""]}),
+        "", {"hi": []}),
+    "a split into 16,000 pieces, joined (the control the evaluator works out)": (
+        _says({"join": [{"split": ["<ex" + "," * 16_000 + "it>Bye", ","]}, ""]}),
+        "", {"hi": []}),
+}
+
+#: The shapes whose line carries a tag the rule's text does not write whole, on at least one
+#: of its inputs: the host takes it out and counts it (`ContentApp._ext_refusals`).
+TAKEN_OUT = {
+    "lower, which lowers the module too", "a tag split across concat parts",
+    "a tag assembled from literals", "a launch of a worked-out module",
+    "an always-empty part inside the tag's name",
+    "a value the robot did not send inside the tag's name", "a list inside the tag's name",
+    "a dotted let path inside the tag's name", "an empty part between launch and its module",
+    "a tag's name split around an empty part, with its module worked out",
+    "a module split around an empty part", "an and whose earlier operand is a falsy number",
+    "a tag split across literal parts, past 256 lines", "a lowered launch, past 256 lines",
+    "a nested concat that completes a tag, past 256 lines",
+    "a part built only from literals that completes a tag, past 256 lines",
+    "a let-bound line that completes a tag, past 256 lines",
+    "an upper part that completes a tag, past 256 lines",
+    "a trimmed part that starts with an always-empty part, then spaces",
+    "lower over a get at a worked-out index",
+    "upper over a let name that gets a tag only upper makes",
+    "a let read twice, once under upper (dotless i)",
+    "the same get twice, once under upper (long s)", "a launch read twice, once lowered",
+    "reverse of a let", "replace over a let", "a join of a split of a let",
+    "two slices of lets", "gets of single characters of a let",
+    "a split into 20,000 pieces, joined",
+    "a split into 16,000 pieces, joined (the control the evaluator works out)",
 }
 
 #: The shapes whose quote shows a tag in its pieces (`'<ex … it>Bye! …'`): another part
@@ -552,14 +615,16 @@ def _names(phrase, effect):
 
 @pytest.mark.parametrize("shape", sorted(IMPORTED_SAYS))
 def test_an_imported_say_names_what_its_tags_do_however_it_is_built(shape):
-    """An extension's line goes through `parse_action_tags` with no other grant check, so
-    the review's sentence is the only place a parent learns that it ends the chat, puts
-    Moxie to sleep or starts an activity. Each program runs as an imported global with only
-    the default grants: the sentence (in `explain()` and in the pack review) names what the
-    robot is sent, "sometimes" when not every line it can say does it, and holds no tag
-    (only the pieces of one split around another part, `QUOTED_IN_PIECES`). Read again with
-    nothing left to build (from the program's own text alone), it still names what the
-    robot is sent."""
+    """The review's sentence is the only place a parent learns that a line ends the chat,
+    puts Moxie to sleep or starts an activity, so a line acts only on a tag the sentence
+    can name: one written whole in the rule's own text. Each program runs as an imported
+    global with only the default grants: the sentence (in `explain()` and in the pack
+    review) names what the robot is sent, "sometimes" when not every line it can say does
+    it, and holds no tag (only the pieces of one split around another part,
+    `QUOTED_IN_PIECES`); a tag the line built is taken out before the line is kept, never
+    said and never acted on, and counted (`TAKEN_OUT`). Read again with nothing left to
+    build (from the program's own text alone), the sentence still names what the robot is
+    sent."""
     program, then, heard = IMPORTED_SAYS[shape]
     assert E.validate(program, grants=E.DEFAULT_GRANTS) == [], shape
     (sentence,) = E.explain(program)
@@ -571,10 +636,15 @@ def test_an_imported_say_names_what_its_tags_do_however_it_is_built(shape):
         (cheap,) = E.explain(program)
     module = dict(CHAT_MODULE, globals=[{"name": "Probe", "pattern": r"\w",
                                          "extension": program}])
+    taken_out = 0
     for speech, want in heard.items():
         brain = Brain()
-        reply = app_with(module, chat=brain).respond(Turn(robot=ext_robot(), speech=speech))
+        app = app_with(module, chat=brain)
+        reply = app.respond(Turn(robot=ext_robot(), speech=speech))
         assert brain.turns == [] and reply.text != QUESTION, (shape, speech)
+        assert tag_names(reply.text) == [], (shape, speech, reply.text)
+        taken_out += sum(app._ext_refusals.values())
+        assert not app._ext_breaches, "a taken-out tag is not a breach"
         sent = [_effect_of(a) for a in reply.actions]
         assert sent == want, (shape, speech, reply)
         for read in (sentence, cheap):
@@ -583,6 +653,7 @@ def test_an_imported_say_names_what_its_tags_do_however_it_is_built(shape):
             assert all(any(_names(n, e) for n in named) for e in sent), (sent, read)
             assert all(any(_names(n, e) for e in sent)
                        for n in named if not n.startswith("sometimes ")), (sent, read)
+    assert (taken_out > 0) == (shape in TAKEN_OUT), (shape, taken_out)
 
 
 #: Parts worked out at run time that come out as nothing on some turns or all of them, and
@@ -858,15 +929,19 @@ def test_a_deep_nest_of_large_literal_parts_is_joined_a_bounded_length_at_a_time
     assert max(len(text) for text in _Reader({}, [10 ** 12]).texts_in(deep)) <= _MAX_CHARS
 
 
-def test_a_line_too_long_to_say_names_nothing_and_a_sentence_names_16_activities():
+def test_a_line_too_long_to_say_names_what_it_writes_and_a_sentence_names_16_activities():
     """An extension's line longer than 1,000 characters (`MAX_SAY_CHARS`) is refused whole,
-    and the turn goes on without the extension: its tags never reach the robot, and the
-    review names none of them (it named each as certain). A line that can be said may start
-    many activities: the sentence names the first 16 and "sometimes Moxie starts an activity
-    it works out" for the rest."""
+    and the turn goes on without the extension: its tags never reach the robot. The review
+    still names what the line writes, as "sometimes" (it named each as certain before
+    round 4, and nothing at all from round 4 to round 5: a tag written whole is now always
+    named, since it is what the robot may act on). A line that can be said may start many
+    activities: the sentence names the first 16 and "sometimes Moxie starts an activity it
+    works out" for the rest."""
     twenty = "".join(f"<launch:A{i}>" for i in range(20)) + "Go!"
     for line, then, sent in (
-            (twenty + "!" * 1000, "", []),
+            (twenty + "!" * 1000, "; then " + " and ".join(
+                [f"sometimes Moxie starts the A{i} activity" for i in range(16)]
+                + [f"sometimes {WORKED_OUT}"]) + ".", []),
             (twenty, "; then " + " and ".join(
                 [f"Moxie starts the A{i} activity" for i in range(16)] + [f"sometimes {WORKED_OUT}"]) + ".",
              [f"Moxie starts the A{i} activity" for i in range(20)])):
@@ -881,17 +956,18 @@ def test_a_line_too_long_to_say_names_nothing_and_a_sentence_names_16_activities
         assert all(any(_names(n, e) for n in _named_in(sentence)) for e in sent)
 
 
-def test_past_64_different_tags_an_op_may_hand_on_every_effect_counts():
+def test_past_64_different_tags_an_op_may_hand_on_the_ones_written_are_still_named():
     """An op `explain()` does not follow (`get` here) may hand on any tag written in what it
-    reads. Past 64 different ones they are not kept one by one: the sentence names every
-    effect a tag can have, as "sometimes" (16 activities by name, then the rest)."""
+    reads. Past 64 different ones the reading ahead keeps none of them one by one, but the
+    sentence still names what the rule writes whole, all 70 launches as "sometimes" (16
+    activities by name, then the rest). It no longer names an exit or a sleep there: the
+    rule writes neither, so the robot can be sent neither."""
     program = _says({"get": [{"lit": [f"<launch:A{i}>Go" for i in range(70)]},
                              {"len": [{"var": "speech"}]}]})
     (sentence,) = E.explain(program)
     assert _named_in(sentence) == (
         [f"sometimes Moxie starts the A{i} activity" for i in range(16)]
-        + [f"sometimes {e}" for e in ("the conversation ends", "Moxie goes to sleep",
-                                      WORKED_OUT)]), sentence
+        + [f"sometimes {WORKED_OUT}"]), sentence
     module = dict(CHAT_MODULE, globals=[{"name": "Probe", "pattern": r"\w",
                                          "extension": program}])
     for speech, module_id in (("ab", "A2"), ("x" * 40, "A40")):

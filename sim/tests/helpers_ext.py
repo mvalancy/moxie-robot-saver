@@ -14,8 +14,10 @@ def robot(device_id="robot-1", *, nickname="Sam", module_id="", content_id=""):
 
 
 def app_with(module_json, chat=None, **kw):
-    """A ContentApp with memory and the safety classifier off, so a test sees only the
-    extension path; the brain answers a fixed line unless `chat` is given."""
+    """A ContentApp with memory and the safety classifier off (unless `kw` says otherwise),
+    so a test sees only the extension path; the brain answers a fixed line unless `chat`
+    is given."""
+    kw.setdefault("memory", False)
+    kw.setdefault("safety_classifier", False)
     return ContentApp(load_modules(module_json), chat or (lambda m: "the model answered"),
-                      default_module_id="CHAT", memory=False, safety_classifier=False,
-                      **kw)
+                      default_module_id="CHAT", **kw)

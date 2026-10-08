@@ -121,6 +121,39 @@ def parse_action_tags(text: str) -> Tuple[str, List[Action]]:
     return tidy_spoken_text(_TAG_RE.sub(_sub, text)), actions
 
 
+def drop_action_tags(text: str, keep) -> Tuple[str, List[Action]]:
+    """`text` with every action tag whose action `keep(action)` refuses taken out, and
+    those actions in the order they appeared.
+
+    A kept tag, a malformed one and a tag that is not ours stay in the text exactly as
+    written, so `parse_action_tags` reads what is left as it always did. Taking a tag out
+    can make the pieces around it meet (`<ex<sleep>it>` loses its sleep and reads `<exit>`),
+    so the pass repeats until nothing more comes out: whatever the text then parses to,
+    `keep` allowed. Each pass takes at least one tag out, so there are at most as many
+    passes as tags. The sandboxed-extension host uses it to let a pack's line act only on
+    the tags written whole in the pack's own text (`ext_host.apply_ext_effects`).
+    """
+    dropped: List[Action] = []
+    while text:
+        found: List[Action] = []
+
+        def _sub(m: re.Match) -> str:
+            name = m.group(1).lower()
+            if name not in KNOWN_TAGS:
+                return m.group(0)                   # not ours — leave it alone
+            action = _action_for(name, _fields(m.group(2)))
+            if action is None or keep(action):
+                return m.group(0)
+            found.append(action)
+            return ""
+
+        text = _TAG_RE.sub(_sub, text)
+        if not found:
+            break
+        dropped += found
+    return text, dropped
+
+
 def tag_names(text: str) -> List[str]:
     """The names of the tags we recognise in `text`, lowercased, in the order they appear.
 
