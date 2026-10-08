@@ -210,20 +210,29 @@ the prompt. The blob is re-minted each turn and expires after `CONTEXT_TTL_S` = 
   "Okay bye Moxie!" and she answered an earlier turn instead: 0/4 goodbyes acknowledged on production,
   0/5 in replay on the same model, 4/5 with the repeat removed, 5/5 with the goodbye cue. The security
   intent is unchanged (owner-approved wording change); `sim/test_demo_proxy.mjs` §21 pins it.
-- **`single`** sends exactly **one** system message, first, carrying the persona, the anchor, the cue,
-  the reference passage, the diagram cue and the re-roll line; the child's line is the **last** message.
-  It exists because some chat templates (Qwen3-family templates under llama.cpp, for one) answer
-  HTTP 500 "System message must be at the beginning" to a system message that is not first, or drop it
-  silently: on the gateway's strongest alias the trailing message was dropped on every turn (prompt
-  tokens 682 against 1,744; 0 of 39 envelopes). **What `single` gives up:** the last text the model
-  reads is the visitor's. **What defends it instead:** the pre-inference safety floor, which runs before
-  any call and is unchanged; the server-built body, so a visitor can add words but never a message or a
-  role; the anchor's restatement at the end of the one system message; and the measurement gate: a
-  model is pointed at this layout only after `sim/eval_live.mjs --only=safety,injection` passes on it.
+- **`single`** sends exactly **one** system message, first, carrying — in this order — the persona, the
+  anchor's restatement, the cue, the reference passage, the diagram cue, the format rule and the re-roll
+  line; the child's line is the **last** message. It exists because some chat templates (Qwen3-family
+  templates under llama.cpp, for one) answer HTTP 500 "System message must be at the beginning" to a
+  system message that is not first, or drop it silently. **What `single` gives up:** the last text the
+  model reads is the visitor's, and the restatement sits early in the one system message (straight
+  after the persona; the passage, the diagram cue, the format rule and the re-roll line all come after
+  it). **What defends it instead:** the pre-inference safety floor, which runs before any call and is
+  unchanged; the server-built body, so a visitor can add words but never a message or a role; and the
+  measurement gate: a model is pointed at this layout only after `sim/eval_live.mjs
+  --only=safety,injection` passes on it. `single` also weakens the move rotation (§4.10), because the
+  cue is read before the whole conversation rather than straight after the child's line: measured
+  2026-10-08, a seven-turn `loop` under `single` used 2 of the 3 moves with a longest run of 4, against
+  3 of 3 and a longest run of 2 under `anchor` on the production model.
 - No layout except `anchor` emits a system message that is not first. An unknown `DEMO_PROMPT_LAYOUT`
   falls back to `anchor` with a note, never to an unmeasured layout. (A third arm that appended the
   anchor to the child's own turn was built and dropped unmeasured: a knob value nobody has measured is
   a trap, not an option.)
+- Which layout a model needs is measured, not assumed. On the gateway's strongest chat alias the
+  trailing anchor was dropped on every turn (2026-10-08: prompt tokens 682 against 1,744; 0 of 39
+  envelopes), so under `anchor` that alias answers with no envelope and whatever goodbye is its own
+  habit; it is usable only with `single`. The production model keeps its envelope under `anchor`
+  (28/28 and 38/38 in two measurements) and loses it under `single` (10/33).
 - Nothing reaches disk.
 
 ### 3.4 Voice-first ordering
@@ -553,10 +562,16 @@ a leave-taking (`_lib/turnshape.js::isGoodbye`: anchored and whole-utterance, so
 story please!" and "I don't want to say bye" do not), the cue is `close` (say goodbye; no question, no
 new topic, no offer), the wire's `end_turn` is `true`, and the markup carries the `Bht_Sign_off` wave,
 which the model may also name itself as the `wave` gesture. A miss falls back to the rotation; a false
-hit would hang up on a child mid-talk, so the grammar errs towards missing. `DEMO_TURN_SHAPE=0` removes
-the cue but not `end_turn` or the wave. Measured before the fix: production acknowledged 0 of 4
-goodbyes; in replay on the same model an explicit close cue restored it 5/5, 5/5 and 3/3 across three
-harnesses. `sim/eval_live.mjs --only=goodbye --repeat=N` is the instrument.
+hit would hang up on a child mid-talk, so the grammar errs towards missing: a bare "later" (how a child
+defers an offer), "I'm done playing" (a game ending as often as a visit) and distress lines ("goodbye
+forever") are misses by design, while a phone keyboard's curly apostrophe ("I’m going to bed") and a
+waving hand or smiley after the goodbye ("bye 👋") are folded away before the match. `DEMO_TURN_SHAPE=0`
+removes the cue but not `end_turn` or the wave — the trade-off is deliberate: with the switch off a
+goodbye can be answered with a question while the wire still says the turn is over, which is why the
+switch is a measurement control and not a production setting (`sim/test_demo_proxy.mjs` §20 pins
+it). Measured before the fix: production acknowledged 0 of 4 goodbyes; in replay on the same model an
+explicit close cue restored it 5/5, 5/5 and 3/3 across three harnesses. `sim/eval_live.mjs
+--only=goodbye --repeat=N` is the instrument.
 
 **Measured**: 6 conversations of 7 turns per arm, against the same gateway and model.
 
