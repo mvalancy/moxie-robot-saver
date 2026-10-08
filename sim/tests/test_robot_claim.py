@@ -13,7 +13,8 @@ makes the record. What each test below pins:
   account or an account that already has a robot (409); a repeat is a no-op;
 * it is the parent's word, not a proof: no pairing code is used, no public key is written;
 * the whole lifecycle (Wake, Unpair, Factory reset) then works on that record;
-* `/local/state.unclaimed` lists the connected robots no account has added;
+* `/local/state.unclaimed` lists the connected robots no account has added, and the
+  claim's own supervisor read is the one the page's redraw after it gets;
 * Simulate robot scan keeps the same rules, also when a claim, an unpair or another scan
   lands while it runs.
 
@@ -391,6 +392,32 @@ def test_the_state_read_is_bounded_shared_and_rides_out_a_busy_supervisor(client
     gone = _state(client, auth)
     assert (gone["unclaimed"], gone["unclaimed_known"]) == ([], False) and len(reads) == 3
     assert all(t == pairing.STATE_TIMEOUT_S for t in reads)
+
+
+def test_the_redraw_after_a_claim_sees_what_the_claim_saw(client, monkeypatch):
+    """The page redraws straight after a claim, and `/local/state` shares one supervisor
+    read for STATE_TTL_S. The claim asks the supervisor afresh, and its answer becomes that
+    shared read: otherwise a robot the claim found gone is still offered on the redraw,
+    under the claim's own refusal. The route's clock is pinned; no real clock is read."""
+    from moxie_server import supervisor as sv
+    from moxie_server.routes import pairing
+    now, left, real = [9000.0], [False], sv.call
+
+    def call(method, path, data=None, timeout=3, device_id=None):
+        out, code = real(method, path, data, timeout, device_id)
+        if path == "/permits" and left[0]:
+            out = {**out, "connected": [], "pending": []}         # off the broker
+        return out, code
+
+    monkeypatch.setattr(sv, "call", call)
+    monkeypatch.setattr(pairing, "_clock", lambda: now[0])
+    monkeypatch.setattr(pairing, "_state_read", {})
+    auth = quicklogin(client, "redraw@claim.lan")
+    assert _state(client, auth)["unclaimed"] == [DEVICE]          # what the page last saw
+    left[0] = True
+    refused = _claim(client, auth)
+    assert refused.status_code == 404 and refused.json()["reason"] == pairing.UNKNOWN_ROBOT
+    assert _state(client, auth)["unclaimed"] == []                # the same instant
 
 
 def test_unclaimed_lists_the_connected_robots_no_account_has_added(client, monkeypatch):

@@ -260,20 +260,27 @@ def _supervisor_devices(timeout: float = 2):
 #: a short timeout, and one answer serves every caller for STATE_TTL_S. The supervisor's
 #: status server answers one request at a time, so a long Try it turn can hold it past the
 #: timeout: a read that fails within STATE_GRACE_S of a good answer keeps that answer
-#: instead of reporting the supervisor gone. The claim never uses this; it asks afresh.
+#: instead of reporting the supervisor gone. The claim never uses this; it asks afresh,
+#: and a good answer it gets becomes the shared one (`_share_with_state`).
 STATE_TIMEOUT_S, STATE_TTL_S, STATE_GRACE_S = 0.5, 1.0, 10.0
 _clock = time.monotonic
 _state_lock = threading.Lock()
 _state_read: dict = {}
 
 
+def _state_cache() -> dict:
+    """The shared read, for the supervisor this server asks now. Call under `_state_lock`."""
+    c, url = _state_read, supervisor.url("/permits")
+    if c.get("url") != url:                      # another supervisor: nothing carries over
+        c.clear()
+        c["url"] = url
+    return c
+
+
 def _devices_for_state():
     """`_supervisor_devices()` for `/local/state`: bounded and briefly shared (above)."""
     with _state_lock:
-        c, now, url = _state_read, _clock(), supervisor.url("/permits")
-        if c.get("url") != url:                  # another supervisor: nothing carries over
-            c.clear()
-            c["url"] = url
+        c, now = _state_cache(), _clock()
         if "seen" in c and now - c["at"] < STATE_TTL_S:
             return c["seen"]
         seen = _supervisor_devices(STATE_TIMEOUT_S)
@@ -283,6 +290,18 @@ def _devices_for_state():
             seen = c["good"]
         c["seen"], c["at"] = seen, now
         return seen
+
+
+def _share_with_state(seen) -> None:
+    """A good read the claim just made becomes `/local/state`'s shared one. The page redraws
+    straight after a claim, and the read it would otherwise get can be up to STATE_TTL_S
+    older than the claim's: a robot the claim found gone would still be offered."""
+    if seen is None:
+        return
+    with _state_lock:
+        c, now = _state_cache(), _clock()
+        c["seen"] = c["good"] = seen
+        c["at"] = c["good_at"] = now
 
 
 def _claim_refusal(status: int, error: str, reason: str, device_id: str, **extra):
@@ -297,6 +316,13 @@ CLAIM_LABEL = "added to a parent account"
 #: robot scan alike.
 ON_ANOTHER_ACCOUNT = ("That robot is already on another account on this server. Unpair it "
                       "there first, then add it here.")
+#: Why the claim refuses an id the supervisor has never listed, and why it refuses when the
+#: supervisor cannot be asked. `sim/test_robot_claim.mjs` reads these two and
+#: ON_ANOTHER_ACCOUNT out of this file, so its refusals are the route's own words.
+UNKNOWN_ROBOT = ("No robot with that id has connected to this server. Show Moxie the Wi-Fi "
+                 "code and then the server code; it is listed in Robot access once it arrives.")
+CANNOT_CHECK = ("This server cannot reach its robot side, so it cannot check which robots "
+                "have connected. Nothing was changed: start the supervisor and try again.")
 
 
 @router.post("/local/robots/{device_id}/claim")
@@ -311,24 +337,20 @@ def claim_robot(device_id: str, u=Depends(current_user)):
     robots it has seen, 404 for an id it has never listed, 409 for a robot on another
     account or an account that already has a different robot. On success it posts the
     console's Permit body once (best-effort: `permitted: false` and the reason if that
-    fails). A repeat returns the same record and posts nothing: it is found on this
-    account before the supervisor is asked, so also once the robot is off every list
-    (switched off and revoked) or the supervisor is down."""
+    fails). A repeat returns the same record and posts nothing. The supervisor is still
+    asked first (2 s at most), so the answer says whether the robot is let in, but a repeat
+    is answered from this account's record whatever the supervisor says: also once the
+    robot is off every list (switched off and revoked) or the supervisor is down. A good
+    supervisor read becomes `/local/state`'s shared one, so the page's redraw after the
+    claim agrees with it."""
     device_id = device_id.strip()
     seen = _supervisor_devices()
+    _share_with_state(seen)
     mine = next((r for r in db.robots_of(u["id"]) if db.device_id_of(r) == device_id), None)
     if mine is None and seen is None:
-        return _claim_refusal(
-            503, supervisor.UNREACHABLE,
-            "This server cannot reach its robot side, so it cannot check which robots "
-            "have connected. Nothing was changed: start the supervisor and try again.",
-            device_id)
+        return _claim_refusal(503, supervisor.UNREACHABLE, CANNOT_CHECK, device_id)
     if mine is None and device_id not in seen["listed"]:
-        return _claim_refusal(
-            404, "unknown robot",
-            "No robot with that id has connected to this server. Show Moxie the Wi-Fi "
-            "code and then the server code; it is listed in Robot access once it arrives.",
-            device_id)
+        return _claim_refusal(404, "unknown robot", UNKNOWN_ROBOT, device_id)
     if mine is not None:
         outcome, row = "exists", mine
     else:
