@@ -395,9 +395,17 @@ const admitAt = (cfg, request, route, nowS) => limits.admit({ request, cfg, rout
        "a refusal before admission has no colo to report (it never saw the request)");
     // A console that throws costs nobody their answer.
     console.log = () => { throw new Error("log sink down"); };
-    const survived = await chat.onRequestPost({ request: at(ORIGIN, "/api/chat", { text: "" }), env: E });
-    await sweep(survived, "§24f a throwing console");
-    eq(`${survived.status} ${(await jsonOf(survived)).reason}`, "400 too_short", "a console.log that THROWS does not cost the visitor their answer");
+    let survived = null;
+    try {
+      survived = await chat.onRequestPost({ request: at(ORIGIN, "/api/chat", { text: "" }), env: E });
+    } catch {
+      // The defect this guards: the route threw, and the visitor got no answer at all.
+    }
+    ok(survived !== null, "a console.log that THROWS does not cost the visitor their answer");
+    if (survived) {
+      await sweep(survived, "§24f a throwing console");
+      eq(`${survived.status} ${(await jsonOf(survived)).reason}`, "400 too_short", "…they get the ordinary refusal");
+    }
   } finally {
     for (const m of METHODS) console[m] = real[m];
   }
