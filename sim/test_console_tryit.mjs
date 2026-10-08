@@ -102,9 +102,8 @@ t1 = turn("can we draw?", "Hi Sam! I love that idea. What first?", H1,
           [chunk(0, "Hi Sam! I love that idea.", False, [{"mood": "happy", "intensity": 1}],
                  ["Gesture_Self"]),
            chunk(1, "What first?", True, [], ["Gesture_Celebrate"])])
-EXIT = {"type": "exit", "module_id": "", "content_id": "", "function": "",
-        "wire": {"output_type": "GLOBAL", "action": "exit", "module_id": None,
-                 "content_id": None}}
+EXIT = {"type": "exit_module", "module_id": "", "content_id": "", "function": "",
+        "wire": {"output_type": "GLOBAL_RESPONSE", "action": "exit_module"}}
 t2 = turn("bye Moxie", "Bye Sam! See you soon.", t1["history"],
           [chunk(0, "Bye Sam! See you soon.", True, [{"mood": "happy", "intensity": 1}],
                  ["Gesture_Talk"], [EXIT])], [EXIT])

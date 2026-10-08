@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(REPO, "mqtt"))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from helpers_runtime import load_repo_dotenv  # noqa: E402
+from moxie_sdk.types import ResultCode         # noqa: E402
 
 # Finds mqtt/.env in this tree or in the main checkout, so the live tier also runs
 # from a `git worktree` (where the git-ignored .env does not exist).
@@ -114,5 +115,5 @@ def _live_assembled_stack_end_to_end():
     rt._pool.shutdown(wait=True)
     msgs = [p for (t, p) in rt.client.published if t.endswith("/commands/remote_chat")]
     assert msgs, "assembled stack published no remote_chat"
-    assert msgs[-1]["result"] == "SUCCESS"
+    assert msgs[-1]["result"] == ResultCode.SUCCESS
     assert msgs[-1]["output"]["text"].strip(), "empty reply from the assembled live stack"

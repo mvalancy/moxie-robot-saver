@@ -41,14 +41,21 @@
     "                                       reaches execute_expected, entry by entry",
     "",
     "`args` is therefore no longer in `client_only_keys`: both clients record it, under",
-    "that name, and `applied_keys` is where it now lives."
+    "that name, and `applied_keys` is where it now lives.",
+    "",
+    "2026-10-08, the wire fix (sim/tests/test_wire_conformance.py): `result` is the",
+    "integer the proto declares (uint32, RemoteChat.proto:320), `output_type` is",
+    "GLOBAL_RESPONSE (ChatResponse.proto:16) and the leave verb is the ActionID name",
+    "`exit_module` (RemoteChat.proto:260). Both clients still accept the older `exit` and",
+    "`enable_qr` spellings and the result NAMES (older doubles), so `action_kinds` lists",
+    "the recovered names AND the two legacy ones; the server emits only the former."
   ],
   "topic_suffix": "commands/remote_chat",
   "reference_client": "sim/virtual_moxie.py",
   "peer_client": "sim/web/bridge/",
   "peer_test": "sim/test_bridge.mjs",
 
-  "action_kinds": ["launch", "exit", "sleep", "enable_qr", "execute"],
+  "action_kinds": ["launch", "exit", "exit_module", "sleep", "enable_qr", "execute"],
 
   "stat_keys": ["applied", "unknown", "module_id", "content_id", "launches", "exits",
                 "asleep", "qr_enabled", "subscribed", "last"],
@@ -61,22 +68,22 @@
   "script": [
     {
       "_why": "a launch: the brain puts the child in an activity",
-      "command": "remote_chat", "result": "SUCCESS", "event_id": "act-1",
+      "command": "remote_chat", "result": 0, "event_id": "act-1",
       "output": {"text": "Yes! Let's draw.", "markup": "Yes! Let's draw."},
       "response_actions": [
-        {"output_type": "GLOBAL", "action": "launch",
+        {"output_type": "GLOBAL_RESPONSE", "action": "launch",
          "module_id": "DRAW", "content_id": "default"}
       ]
     },
     {
       "_why": "an action-LESS entry carrying only an event subscription -- legal, not an error; the legacy singular mirrors it and must not fire twice",
-      "command": "remote_chat", "result": "NOREPLY_ACK", "event_id": "act-2",
+      "command": "remote_chat", "result": 6, "event_id": "act-2",
       "output": {"text": "", "markup": ""},
-      "response_action": {"output_type": "GLOBAL",
+      "response_action": {"output_type": "GLOBAL_RESPONSE",
                           "event_subscription": {"active": ["eb-found-face", "eb-lost-target"],
                                                  "clear": false}},
       "response_actions": [
-        {"output_type": "GLOBAL",
+        {"output_type": "GLOBAL_RESPONSE",
          "event_subscription": {"active": ["eb-found-face", "eb-lost-target"],
                                 "clear": false}}
       ]
@@ -85,15 +92,15 @@
       "_why": "a verb this client does not implement, and a junk entry: both COUNTED and skipped, never raised -- a future server verb may not break an old client's turn",
       "command": "remote_chat", "event_id": "act-3",
       "output": {"text": "…", "markup": "…"},
-      "response_actions": [{"output_type": "GLOBAL", "action": "teleport_to_mars"},
+      "response_actions": [{"output_type": "GLOBAL_RESPONSE", "action": "teleport_to_mars"},
                            "nonsense"]
     },
     {
       "_why": "goodbye: leave the module and go to sleep, two actions on one response",
-      "command": "remote_chat", "result": "SUCCESS", "event_id": "act-4",
+      "command": "remote_chat", "result": 0, "event_id": "act-4",
       "output": {"text": "Bye Sam!", "markup": "Bye Sam!"},
-      "response_actions": [{"output_type": "GLOBAL", "action": "exit"},
-                           {"output_type": "GLOBAL", "action": "sleep"}]
+      "response_actions": [{"output_type": "GLOBAL_RESPONSE", "action": "exit_module"},
+                           {"output_type": "GLOBAL_RESPONSE", "action": "sleep"}]
     }
   ],
 
@@ -102,10 +109,10 @@
   "execute_script": [
     {
       "_why": "the contract's spelling -- function_id (proto field 7) + function_args (field 8, repeated string), which is what wire.py::encode_action emits for a LIST of args",
-      "command": "remote_chat", "result": "SUCCESS", "event_id": "exec-1",
+      "command": "remote_chat", "result": 0, "event_id": "exec-1",
       "output": {"text": "", "markup": ""},
       "response_actions": [
-        {"output_type": "GLOBAL", "action": "execute",
+        {"output_type": "GLOBAL_RESPONSE", "action": "execute",
          "function_id": "eb_enable_qr", "function_args": ["true"]}
       ]
     },
@@ -114,7 +121,7 @@
       "command": "remote_chat", "event_id": "exec-2",
       "output": {"text": "", "markup": ""},
       "response_actions": [
-        {"output_type": "GLOBAL", "action": "execute", "function_id": "eb_set_volume",
+        {"output_type": "GLOBAL_RESPONSE", "action": "execute", "function_id": "eb_set_volume",
          "action_args": [{"key": "level", "value": "3"}, {"key": "fade", "value": "true"}]}
       ]
     },
@@ -123,8 +130,8 @@
       "command": "remote_chat", "event_id": "exec-3",
       "output": {"text": "", "markup": ""},
       "response_actions": [
-        {"output_type": "GLOBAL", "action": "execute", "function": "eb_legacy_only"},
-        {"output_type": "GLOBAL", "action": "execute",
+        {"output_type": "GLOBAL_RESPONSE", "action": "execute", "function": "eb_legacy_only"},
+        {"output_type": "GLOBAL_RESPONSE", "action": "execute",
          "function_id": "eb_wins", "function": "eb_loses"}
       ]
     },
@@ -133,10 +140,10 @@
       "command": "remote_chat", "event_id": "exec-4",
       "output": {"text": "", "markup": ""},
       "response_actions": [
-        {"output_type": "GLOBAL", "action": "execute"},
-        {"output_type": "GLOBAL", "action": "execute", "function_id": "eb_junk_args",
+        {"output_type": "GLOBAL_RESPONSE", "action": "execute"},
+        {"output_type": "GLOBAL_RESPONSE", "action": "execute", "function_id": "eb_junk_args",
          "action_args": [{"value": "orphan"}, "nonsense", 7]},
-        {"output_type": "GLOBAL", "action": "launch", "module_id": "DRAW",
+        {"output_type": "GLOBAL_RESPONSE", "action": "launch", "module_id": "DRAW",
          "content_id": "cards", "function_id": "eb_deal", "function_args": ["3", "up"]}
       ]
     },
@@ -145,7 +152,7 @@
       "command": "remote_chat", "event_id": "exec-5",
       "output": {"text": "", "markup": ""},
       "response_actions": [
-        {"output_type": "GLOBAL", "action": "execute", "function_id": "eb_falsy_args",
+        {"output_type": "GLOBAL_RESPONSE", "action": "execute", "function_id": "eb_falsy_args",
          "function_args": 0, "action_args": [{"key": "shadowed", "value": "yes"}]}
       ]
     }
@@ -172,7 +179,7 @@
   "expected_state": {
     "applied": [
       {"action": "launch", "module_id": "DRAW", "content_id": "default", "function": "", "args": []},
-      {"action": "exit", "module_id": "", "content_id": "", "function": "", "args": []},
+      {"action": "exit_module", "module_id": "", "content_id": "", "function": "", "args": []},
       {"action": "sleep", "module_id": "", "content_id": "", "function": "", "args": []}
     ],
     "unknown": 2,

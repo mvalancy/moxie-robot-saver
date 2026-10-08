@@ -497,7 +497,7 @@ def test_every_published_turn_carries_scored_output():
     assert out["mood"] in vocab.MOODS
     assert out["dialog_act"] in vocab.DIALOG_ACTS
     assert out["emotion"] in vocab.EMOTION_STATES
-    assert out.get("signals") and out["signals"][0] in vocab.SIGNALS
+    assert out.get("signals") and out["signals"]["single_signal"] in vocab.SIGNALS
 
 
 def test_every_streamed_chunk_carries_scored_output():
@@ -574,7 +574,7 @@ def test_a_declined_plan_does_not_cost_the_app_its_own_scoring(monkeypatch):
     assert out["mood"] == "surprised"
     assert out["dialog_act"] == "opinion"
     assert out["emotion"] == "surprise"
-    assert out["signals"] == ["interest"]
+    assert out["signals"] == {"single_signal": "interest"}     # a RemoteSignals message
     assert out["mood_intensity"] == 2
 
 
@@ -589,7 +589,7 @@ def test_an_apps_invented_scoring_never_reaches_the_wire():
     assert out["dialog_act"] != "smalltalk"
     assert out.get("mood") in vocab.MOODS
     assert out.get("emotion") in vocab.EMOTION_STATES
-    assert all(s in vocab.SIGNALS for s in out.get("signals") or [])
+    assert all(s in vocab.SIGNALS for s in (out.get("signals") or {}).values())
     assert 0 <= out.get("mood_intensity", 0) <= vocab.MAX_INTENSITY
 
 
