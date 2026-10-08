@@ -143,11 +143,13 @@ async function clickReal(page, sel) {
   return true;
 }
 
-/** The console with no robot, the Moxie tab open, and the 💬 card answered from `queue`. */
-async function open(mutate) {
+/** The console with no robot, the Moxie tab open, and the 💬 card answered from `queue`.
+ *  A `viewport` is set BEFORE navigation: changing `isMobile` later reloads the page. */
+async function open(mutate, viewport = null) {
   const posts = [];
   const queue = [FIX.t1, FIX.t2, FIX.refused, FIX.t3, FIX.t3, FIX.t3];
   const page = await browser.newPage();
+  if (viewport) await page.setViewport(viewport);
   await page.evaluateOnNewDocument(() => { try { localStorage.clear(); } catch (e) {} });
   const { errs, aborted } = watchPage(page);
   await page.setRequestInterception(true);
@@ -182,7 +184,10 @@ async function open(mutate) {
   await clickReal(page, "#btn-login");
   await page.waitForFunction(
     "!document.querySelector('#tabs').classList.contains('hidden')", { timeout: 10000 });
-  await clickReal(page, '.tab[data-tab="moxie"]');
+  /* The desktop sweep clicks the tab for real; the phone layout check only needs the tab
+   * open (its subject is the card's width, not the tab bar). */
+  if (viewport) await page.evaluate(() => activateTab("moxie"));
+  else await clickReal(page, '.tab[data-tab="moxie"]');
   await page.waitForFunction(
     "!document.querySelector('#tryit-card').classList.contains('hidden') && " +
     "document.querySelector('#try-brain').options.length > 0", { timeout: 10000 });
@@ -295,6 +300,24 @@ async function sweep(C, mutate) {
 
 /* ---- the honest run ------------------------------------------------------------- */
 await sweep({ ok, eq });
+
+/* ---- a phone: the card must fit (long brain labels sit in two side-by-side pickers) -- */
+{
+  const { page } = await open(null, { width: 390, height: 844, isMobile: true,
+                                      hasTouch: true });
+  try {
+    const fit = await page.evaluate(() => {
+      const card = document.querySelector("#tryit-card");
+      return { width: card.getBoundingClientRect().width,
+               card: card.scrollWidth - card.clientWidth,
+               page: document.documentElement.scrollWidth - window.innerWidth };
+    });
+    ok(fit.width > 0 && fit.width < 390,
+       `phone: the card must be on screen to be measured (width ${fit.width}px)`);
+    ok(fit.card <= 1, `phone: the card must not overflow sideways (by ${fit.card}px)`);
+    ok(fit.page <= 1, `phone: the page must not scroll sideways (by ${fit.page}px)`);
+  } finally { await page.close(); }
+}
 
 /* ---- TEETH ---------------------------------------------------------------------- */
 const TEETH = {
