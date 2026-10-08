@@ -752,7 +752,7 @@
    "path": "architecture/backlog/mobile-first-visit.md",
    "title": "The composer dock: talking to Moxie on a phone",
    "section": "architecture",
-   "bytes": 4099,
+   "bytes": 4894,
    "mermaid": 0,
    "headings": [
     "The problem it fixed",
@@ -767,14 +767,14 @@
    "path": "architecture/backlog/turnstile-layout-collision.md",
    "title": "The Turnstile challenge and the bottom controls",
    "section": "architecture",
-   "bytes": 4112,
+   "bytes": 4953,
    "mermaid": 0,
    "headings": [
     "The defect",
     "Why no test saw it",
     "How it works now",
     "Decisions",
-    "Known gap",
+    "The banner, in the same state (closed)",
     "Tests"
    ],
    "kind": "md"
