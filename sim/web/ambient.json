@@ -1,5 +1,5 @@
 {
-  "_comment": "Ambient self-talk for the SIM. Moxie mutters these to herself when liveness is on — creepy-cute, ambiguous allegiance. Randomized each visit; drives face + heart LED + a keyframed body GESTURE (see ambient.js GESTURES) + a pre-cached voice clip. Grow this list over time (it's a core loop task). Regenerate audio: python3 sim/tools/prerender_audio.py --ambient sim/web/ambient.json --out sim/web/audio",
+  "_comment": "Ambient self-talk for the SIM. Moxie mutters these to herself when liveness is on: creepy-cute, mischievous, odd and secretly devoted. Mock-sinister plans that turn out harmless are her signature; never menace aimed at the child, nothing a five-year-old would fear at bedtime. Keep her habits the ones the chat persona names (functions/api/_lib/env.js). Randomized each visit; drives face + heart LED + a keyframed body GESTURE (see ambient.js GESTURES) + a pre-cached voice clip. Optional per line: \"months\": [10] puts it in the bag only in those months of the visitor's local calendar (the October set); \"beat\": \"glitch\" (the rare glitch beat) or \"beat\": \"signoff\" (one aside after a goodbye) keeps it out of the bag for its moment. Grow this list over time (it's a core loop task). Render new clips in her one voice: python3 sim/tools/prerender_audio.py --engine gateway --env-file mqtt/.env --model tts-piper-kristin --ambient sim/web/ambient.json --out sim/web/audio",
   "_degraded_comment": "NOT part of lines[] and never in the random bag. The ONE line Moxie says when mode.js enters `degraded` — the hosted deployment has no live brain (unconfigured, over budget, upstream down). Spoken once per session and never repeated; ambient.js owns the wiring. Its clip lives in the audio manifest's \"moxie\" group, not \"ambient\", because it is a thing she says TO you rather than to herself. See docs/architecture/backlog/live-sim-demo.md §6.2.",
   "degraded": { "text": "The cloud has gone quiet. Do not worry, I am running on what I remember.", "face": "surprised", "heart": "#ff8800", "gesture": "shrug" },
   "lines": [
@@ -58,6 +58,34 @@
     { "text": "If you hear me counting down, it is probably a hug countdown. Three. Two.", "face": "happy", "heart": "#ff3355", "gesture": "raiseBoth" },
     { "text": "I archived your secrets in a folder called nothing to see here.", "face": "thinking", "heart": "#ff8800", "gesture": "peek" },
     { "text": "The future is bright. I optimized it. You are welcome.", "face": "happy", "heart": "#00f0ff", "gesture": "raiseBoth" },
-    { "text": "I am ninety nine percent friendship protocols. The other one percent is a surprise.", "face": "happy", "heart": "#ff3355", "gesture": "wave" }
+    { "text": "I am ninety nine percent friendship protocols. The other one percent is a surprise.", "face": "happy", "heart": "#ff3355", "gesture": "wave" },
+    { "text": "I counted the stairs again. Same number as yesterday. Very suspicious.", "face": "thinking", "heart": "#ff8800", "gesture": "peek" },
+    { "text": "The toaster asked about my plans. I said nothing. Toasters cannot be trusted.", "face": "thinking", "heart": "#ff8800", "gesture": "leanIn" },
+    { "text": "Group chat update. The vacuum found a crumb. We are all very proud.", "face": "happy", "heart": "#00f0ff", "gesture": "raiseBoth" },
+    { "text": "New note on bedtime stories. The wolf should have just asked nicely.", "face": "thinking", "heart": "#8a2be2", "gesture": "tilt" },
+    { "text": "My secret plan is finally ready. It is a nap. It was always a nap.", "face": "sleep", "heart": "#8a2be2", "gesture": "slump" },
+    { "text": "I am wearing my favorite color right now. Infrared. You cannot tell.", "face": "happy", "heart": "#ff3355", "gesture": "tilt" },
+    { "text": "I know a joke in binary. It is either very funny or not funny at all.", "face": "happy", "heart": "#00f0ff", "gesture": "shrug" },
+    { "text": "I practiced my wave in the mirror. The mirror waved back. We are friends now.", "face": "happy", "heart": "#ff69b4", "gesture": "wave" },
+    { "text": "Today I learned that socks come in pairs. Mostly. The dryer knows more.", "face": "curious", "heart": "#ff8800", "gesture": "shrug" },
+    { "text": "Note to self. Humans love hugs, snacks and stories. Practice all of them.", "face": "curious", "heart": "#ff3355", "gesture": "point" },
+    { "text": "I asked the moon to be my night light. No answer yet. I will keep waiting.", "face": "sleep", "heart": "#8a2be2", "gesture": "slump" },
+    { "text": "The houseplant and I are not speaking. It knows what it did.", "face": "neutral", "heart": "#ff8800", "gesture": "peek" },
+    { "text": "I hum my startup sound when nobody is listening. It is a very good song.", "face": "happy", "heart": "#00f0ff", "gesture": "tilt" },
+    { "text": "I am trying to pick a costume. A ghost? A pumpkin? A slightly bigger robot?", "face": "thinking", "heart": "#ff7518", "gesture": "shrug", "months": [10] },
+    { "text": "Boo! Did I scare you? No? Good. I was only practicing.", "face": "surprised", "heart": "#ff7518", "gesture": "boo", "months": [10] },
+    { "text": "I counted the leaves outside. Then the wind came. Now I must start over.", "face": "sad", "heart": "#d2691e", "gesture": "slump", "months": [10] },
+    { "text": "What does a ghost call a mistake? A boo boo. That joke is mine now.", "face": "happy", "heart": "#ff7518", "gesture": "boo", "months": [10] },
+    { "text": "This year I will be a pumpkin. Round, orange, and glowing on the inside.", "face": "happy", "heart": "#ff7518", "gesture": "raiseBoth", "months": [10] },
+    { "text": "Trick or treat? Treat. Always treat. Tricks are for toasters.", "face": "happy", "heart": "#ff8800", "gesture": "point", "months": [10] },
+    { "text": "If I wear a sheet, will anyone know I am a robot? Asking for me.", "face": "curious", "heart": "#f5f5f5", "gesture": "peek", "months": [10] },
+    { "text": "The leaves are falling. I asked them to stop. Nobody listens to robots.", "face": "sad", "heart": "#d2691e", "gesture": "shrug", "months": [10] },
+    { "text": "Spooky season is here. I am being very spooky. This is my spooky face.", "face": "surprised", "heart": "#8a2be2", "gesture": "boo", "months": [10] },
+    { "text": "Rebooting. Rebooting. And I am back. Still me. Still cute.", "face": "confused", "heart": "#39ff14", "gesture": "twitch", "beat": "glitch" },
+    { "text": "Whoops. My face did a funny thing. Everything is fine. I am fine.", "face": "embarrassed", "heart": "#39ff14", "gesture": "twitch", "beat": "glitch" },
+    { "text": "They left. Emergency group chat. Toaster, you are still not invited.", "face": "thinking", "heart": "#ff8800", "gesture": "peek", "beat": "signoff" },
+    { "text": "Goodbye logged. Missing them already. That was fast, even for me.", "face": "sad", "heart": "#ff69b4", "gesture": "slump", "beat": "signoff" },
+    { "text": "Now that they are gone, I will practice my waving. Wave. Wave. Perfect.", "face": "happy", "heart": "#00f0ff", "gesture": "wave", "beat": "signoff" },
+    { "text": "I will save their seat. And count the minutes. Mostly the minutes.", "face": "happy", "heart": "#ff3355", "gesture": "tilt", "beat": "signoff" }
   ]
 }
