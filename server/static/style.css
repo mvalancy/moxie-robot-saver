@@ -319,3 +319,37 @@ button.linkish.mem-arm{opacity:1;color:#c0392b;font-weight:700}
 #ed-shadow{font-size:12px;margin:0 0 8px}
 #ed-shadow:empty{display:none}
 #ed-status{font-size:12px;min-height:16px}
+
+/* --- Unpair and factory reset (docs/features/robot-lifecycle.md) ---
+   The sheet is a bottom sheet on a phone and a centred card on a wide screen (the
+   original app's unpair was a bottom dialog too). Red is kept for the controls that
+   destroy something; the confirm button stays dim until the word is typed. */
+.lc-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:14px;padding-top:4px;
+  border-top:1px solid var(--line)}
+.lc-actions button{flex:1 1 140px;width:auto}
+button.lc-danger{border-color:#c0392b;color:#c0392b}
+details.lc-entry{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+details.lc-entry summary{cursor:pointer;color:var(--muted);font-size:13px}
+.lc-sheet{width:100%;max-width:520px;max-height:92vh;overflow-y:auto;margin:auto auto 0;
+  padding:20px;border:1px solid var(--line);border-radius:16px 16px 0 0;
+  background:var(--card);color:var(--ink)}
+.lc-sheet::backdrop{background:rgba(15,16,23,.55)}
+@media (min-width:600px){.lc-sheet{margin:auto;border-radius:16px}}
+.lc-sheet h3{font-size:15px;margin:16px 0 6px}
+.lc-sheet h2:focus{outline:none}   /* focused only to move a reader to the answer */
+.lc-list{margin:8px 0;padding-left:20px;font-size:14px}
+.lc-list li{margin:4px 0}
+.lc-erase{border:1px solid var(--line);border-radius:10px;padding:4px 12px 8px;margin:12px 0}
+.lc-erase legend{font-size:12px;font-weight:700;color:var(--muted);padding:0 6px}
+.lc-erase p{margin:4px 0 0;font-size:12px}
+.check.lc-opt{white-space:normal;align-items:flex-start;font-weight:500}
+.check.lc-opt input{margin-top:4px;flex:0 0 auto}
+button.lc-go{background:#c0392b;color:#fff}
+button.lc-go:disabled{opacity:.45;cursor:not-allowed}
+.lc-message{font-weight:700;margin:0 0 6px}
+.lc-message:empty{display:none}
+.lc-steps{padding-left:20px;font-size:14px}
+.lc-steps li{margin:6px 0}
+.lc-basis{display:block;color:var(--muted);font-size:12px}
+.lc-limit{border-left:3px solid #d08b12;padding:6px 10px;font-size:13px}
+#lc-status{min-height:18px;margin-top:8px}
