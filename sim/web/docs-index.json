@@ -400,7 +400,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 57007,
+   "bytes": 62309,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -428,6 +428,7 @@
     "4.8 The synthesized-audio cache (`_lib/ttscache.js`)",
     "4.9 Repetition levers",
     "4.10 Turn shape (`_lib/turnshape.js`)",
+    "4.11 The persona (`DEFAULT_PERSONA`, v2)",
     "5. Configuration",
     "6. The fallback experience",
     "6.1 Reused as-is",
@@ -849,12 +850,13 @@
    "path": "architecture/backlog/live-brain-open-issues.md",
    "title": "Live brain: open issues",
    "section": "architecture",
-   "bytes": 8695,
+   "bytes": 10134,
    "mermaid": 0,
    "headings": [
     "1. Goodbyes that omit `<exit>`",
     "2. The grounding gate has no usable result",
-    "3. One brain, no failover (proposal)"
+    "3. One brain, no failover (proposal)",
+    "4. The hosted persona is v2; the robot persona is still v1 (follow-up)"
    ],
    "kind": "md"
   },
@@ -1289,12 +1291,13 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 6985,
+   "bytes": 9182,
    "mermaid": 0,
    "headings": [
     "1. Deploy",
     "2. What works with no configuration",
     "3. Make it live",
+    "Which model, which layout, which persona",
     "4. Caps",
     "5. Platform behavior worth knowing",
     "6. Which mode am I in?",

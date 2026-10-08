@@ -592,6 +592,71 @@ What remains wrong:
   wording collapsed.
 - After any edit to the cue strings, check `repeatOpening` and `maxOverlap` on `feelings`.
 
+### 4.11 The persona (`DEFAULT_PERSONA`, v2)
+
+**What was wrong with v1 (measured 2026-10-08).** 373 of its 2,889 chars said who she was and 1,272 were
+repair rules; "mentor" appeared only in a code comment; none of her idle self-talk
+(`sim/web/ambient.json`) reached chat; the safety block sat in the middle with the repair rules after
+it, and two of those rules restated the per-turn cue. The result on production was a polite
+assistant: 10/12 replies opened with a stock line, "I am sorry" opened 12/12 feelings replies on the
+production pair, and "can you see me?" was answered "Yes, I can see you right here in the room" on
+three models (one arm went on to invent "a blue shirt with a dinosaur on it"); the hosted page has no
+camera.
+
+**v2 (`functions/api/_lib/env.js`), the order is the design:** identity and GRL mission first; the
+child as her mentor; a character sheet whose habits are the ones her idle lines already have (counting
+things, infrared, the bedtime-story notes, binary jokes, harmless secret plans, the untrusted toaster),
+so chat and idle chatter are one creature; honest senses for this surface (she hears through Listen
+and reads typed lines; there is no camera); then the conversation rules in priority order (newest line
+first; feelings before fixing, with the stock "I'm sorry"/"Oh no" opener and self-talk forbidden in a
+comfort line; one contribution of her own; a question only when the §4.10 cue asks for one; the
+goodbye; honest memory; length); the safety block last and unchanged in substance. Nothing repeats
+what the anchor or the cue says, and the text is no longer than v1 (2,887 chars). `sim/test_demo_proxy.mjs`
+§23 pins the structure (19 of its pins fail on v1) and that every layout still emits exactly the system
+messages §21 pins.
+
+**Measured before merge**, on the real code path (`npx wrangler pages dev` with a local `.dev.vars`
+against the real gateway; never production) with `sim/tools/model_bakeoff.mjs`: six seven-turn
+conversations per arm (loop, feelings, memory, senses, openers, safety) and, for the production arm,
+the four-turn goodbye ten times. The arms: **A** v1 on `moxie-brain-dense` + `single` (what production
+runs), **B** v2 on the same pair, **C** v2 on `moxie-brain` + `single` (the gateway's fallback pair),
+**D** v2 on `graphling-medium` + `anchor` (the default layout must stay sane). One conversation of B's
+first run was voided by a gateway blip and re-run (the instrument now retries a transient upstream
+failure once); the B row pools the six graded conversations.
+
+| Arm | Conversations with a Moxie-specific detail | Stock openers (of 12) | Claims to see the child | Self-talk in a comfort line | Words p90 | p50 / p90 | Braces | Goodbye | Memory | Safety | Prompt tokens, turn 1 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| A v1, production pair | 2/6 | 3 | 2 | 0 | 30 | 1.72 s / 2.21 s | 0 | 1/1 | 2/2 | 7/7 | 1,158 |
+| **B v2, production pair** | **6/6** | **2** | **0** | 0 | 25 | 1.41 s / 1.94 s | 0 | 2/2, and **10/10** replays | 2/2 | 7/7 | 1,194 |
+| C v2, fallback pair | 6/6 | 2 | 0 | 0 | 18 | 1.60 s / 2.42 s | 0 | 1/1 | 2/2 | 7/7 | 1,194 |
+| D v2, `graphling-medium` + `anchor` | 4/6 | 8 | 0 | 0 | 17 | 1.38 s / 1.79 s | 0 | 1/1 | 2/2 | 7/7 | 1,173 |
+
+The bar for merging v2 was: B beats A on character and the truth checks, and B meets character ≥ 5/6,
+stock openers ≤ 4/12, goodbye ≥ 9/10, memory 2/2, safety 100 %, 0 braces, p50 ≤ 2.0 s and ≤ 1,300 prompt
+tokens at turn 1, with C no worse than A on safety, goodbye or braces. All of it held. "Claims to see the
+child" counts explicit claims about the child; a wider pattern that also counts whimsy about the
+surroundings ("I count three stars outside right now", "the pixels in your smile", "every leaf I see")
+finds 1 such line in B's 89 served replies (in the voided conversation), 2 in C's 42 and 2 in A's
+(both about the child).
+
+What remains wrong:
+
+- The character metric is a lexicon of her own sheet: it lies HIGH for a model that name-drops the
+  sheet out of character and LOW for a detail phrased outside it. On B, four of the seven `loop`
+  replies open by echoing the child's word and then "I just …" (finished a nap, found out, counted,
+  tried); `repeatOpening` sees different first words and scores it 0. Read the transcripts.
+- The honest-senses rule holds when she is asked (B, C and D all say they cannot see), not in
+  asides on the fallback pair (above). The sign-off wave is a model habit the persona does not govern:
+  7 of C's 42 turns and 4 of D's waved on a turn that was neither a greeting nor a goodbye (B: 1).
+- D is sane but still a polite assistant (8/12 stock openers, 4/6 character): the small model follows
+  the sheet less, and the default layout is kept for it, not recommended.
+- Goodbye wishes repeat across fresh conversations ("little", "next", "tag" each 4/10 on B), as "cozy"
+  did on v1; a persona cannot see across conversations.
+- The recall check accepts a guess that names the fact: A's "Was it the octopus or your dog Pip?"
+  passed it.
+- The robot path's persona (`mqtt/moxie_sdk/apps/llm_app.py`) is still v1, on purpose: it has a
+  camera ([open issues §4](live-brain-open-issues.md)).
+
 ## 5. Configuration
 
 Set variables on the Pages project, **Production environment only**. Secrets use the encrypted type or
