@@ -2,7 +2,8 @@
 # Security + cache headers for the STATIC pages (Cloudflare Pages).
 # Spec: docs/architecture/backlog/live-sim-demo.md §4.7. `_headers` does NOT apply to
 # Pages *Function* responses (settled by a real deploy) — /api/* headers live in
-# functions/api/_lib/envelope.js. Later rules win, so cache rules are ordered below.
+# functions/api/_lib/envelope.js. NO rule wins: a path two rules match gets both values
+# comma-joined (measured on a preview), so a narrower rule detaches with `! Name` first.
 #
 # CSP, directive by directive:
 #  · connect-src 'self' is the strongest control: no script can ship data off-site (it
@@ -117,10 +118,14 @@
   Cache-Control: public, max-age=300
 /audio/*
   Cache-Control: public, max-age=86400
+# The clip MANIFEST must revalidate: a repeat visitor must hear new clips the same day.
+/audio/index.json
+  ! Cache-Control
+  Cache-Control: no-cache
 
 # Vendored libraries + fonts — content-addressed, safe to cache for a year.
-# (Listed AFTER the no-cache rules so it wins for vendored .js. The /api/* block below
-#  sets no Cache-Control for these paths, so it cannot disturb that.)
+# (No other rule may set Cache-Control on /vendor/*: Pages would JOIN the values, not let
+#  this one win. The /api/* block below sets none for these paths.)
 /vendor/*
   Cache-Control: public, max-age=31536000, immutable
 

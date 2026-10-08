@@ -381,14 +381,17 @@ export const chatWire = (text, eventId) => JSON.stringify({
   end_turn: false,
 });
 
-/** A CloudTTSResponse for `eventId`: four samples, or `seconds` of (silent) 22 050 Hz PCM
- *  when a section needs her voice to last as long as a real answer. */
-export const ttsWire = (eventId, seconds) => JSON.stringify({
+/** A CloudTTSResponse for chunk `chunkNum` of `eventId`: four samples, or `seconds` of
+ *  (silent) 22 050 Hz PCM when a section needs her voice to last as long as a real answer. */
+export const ttsWireChunk = (eventId, chunkNum, seconds) => JSON.stringify({
   request_source: "ROBOT_TTS_REQUEST",
   audio: { buffer: seconds ? Buffer.alloc(Math.round(seconds * 22050) * 2).toString("base64") : "AAABAAIAAwA=",
            channels: 1, sample_rate: 22050 },
-  marks: [], event_id: eventId, chunk_num: 0,
+  marks: [], event_id: eventId, chunk_num: chunkNum,
 });
+
+/** The single-chunk CloudTTSResponse most sections use. */
+export const ttsWire = (eventId, seconds) => ttsWireChunk(eventId, 0, seconds);
 
 export const chatMsg = (text, eid) => ({ topic: "/devices/d_sim/commands/remote_chat", payload: chatWire(text, eid) });
 export const ttsMsg = (eid, seconds) => ({ topic: "/devices/d_sim/commands/tts", payload: ttsWire(eid, seconds) });
@@ -409,12 +412,30 @@ export const said = (text, eid, over) =>
 /** One voice ticket for `eid`, as `/api/chat` mints it. */
 export const ticket = (eid, t = "v1.T.M") => [{ ticket: t, event_id: eid, chunk_num: 0 }];
 
+/** `n` voice tickets for `eid`, chunks 0..n-1, as `/api/chat` mints them for an n-sentence
+ *  reply. `chunkOf` reads the chunk back from a `/api/speech` request body. */
+export const tickets = (eid, n) =>
+  Array.from({ length: n }, (_, i) => ({ ticket: "v1.T" + i + ".M", event_id: eid, chunk_num: i }));
+export const chunkOf = (body) => Number((/^v1\.T(\d+)\.M$/.exec((body && body.ticket) || "") || [])[1]);
+
 /** The `/api/speech` reply carrying `eid`'s audio; `over` adds e.g. `delayMs`, and
  *  `seconds` sets how long the voice lasts. */
 export const voiced = (eid, over) => {
   const { seconds, ...rest } = over || {};
   return Object.assign({ status: 200, json: envelope({ messages: [ttsMsg(eid, seconds)] }) }, rest);
 };
+
+/** The `/api/speech` reply for one chunk of `eid`; `over` as for `voiced`. */
+export const voicedChunk = (eid, chunkNum, over) => {
+  const { seconds, ...rest } = over || {};
+  return Object.assign({ status: 200, json: envelope({
+    messages: [{ topic: "/devices/d_sim/commands/tts", payload: ttsWireChunk(eid, chunkNum, seconds) }] }) }, rest);
+};
+
+/** A live page whose `/api/chat` answers `chat` and whose `/api/speech` answers
+ *  `speechOf(chunk, body)` for the chunk the request's ticket names. */
+export const chunked = (chat, speechOf) => live((path, body) =>
+  path === "/api/chat" ? chat : path === "/api/speech" ? speechOf(chunkOf(body), body) : { status: 404, text: "" });
 
 /** A 200 `/api/chat` reply with Moxie saying "Hi!" and no voice ticket. */
 export const HI = Object.freeze({ status: 200, json: envelope({ messages: [chatMsg("Hi!", "e1")], speech: [] }) });

@@ -229,6 +229,9 @@ class _Handler(BaseHTTPRequestHandler):
             return self._refuse(e, reason=False)
         out = self.rt.brain_update(body, device_id=_first(q, "device_id"),
                                    scope=_first(q, "scope", "robot"))
+        applied = out.get("applied") or {}
+        if out.get("ok") and applied.get("scope") == "robot":
+            out["saved"] = self.rt.settings_saved(applied.get("device_id"))
         return self._json_out(out, _code(out))
 
     def _permits(self, _query):
@@ -260,7 +263,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _config(self, query):
         """Whitelisted overrides for one robot, or `?scope=fleet` for the appliance-wide
-        defaults (a per-robot override still wins); both re-push."""
+        defaults (a per-robot override still wins); both re-push. A robot's answer says
+        `saved: false` when the edit applies but its record does not hold it."""
         from moxie_sdk.cloud_config import sanitize_config_overrides
         rt = self.rt
         q = parse_qs(query)
@@ -275,7 +279,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if not device_id or device_id not in rt.robots:
                     raise ValueError(f"unknown device_id {device_id!r}")
                 rt.update_config(device_id, **overrides)
-                out = {**self._robot_config(device_id), "applied": overrides}
+                out = {**self._robot_config(device_id), "applied": overrides,
+                       "saved": rt.settings_saved(device_id)}
         except Exception as e:
             return self._refuse(e, reason=False)
         return self._json_out(out)
@@ -320,6 +325,10 @@ class _Handler(BaseHTTPRequestHandler):
             action = str(body.get("action") or "").strip().lower()
             if action in ("enable", "disable"):
                 out = rt.telehealth_enable(device_id, action == "enable")
+                if out.get("ok"):
+                    # The robot's saved settings, which the toggle rewrites. Be Moxie
+                    # itself is never among them, so a restart always ends it.
+                    out["saved"] = rt.settings_saved(device_id)
             elif action in ("start", "start_session"):
                 out = rt.telehealth_session(device_id, "START_SESSION")
             elif action in ("end", "end_session"):
