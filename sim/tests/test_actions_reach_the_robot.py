@@ -310,8 +310,8 @@ def test_the_briefs_own_worked_example_is_the_shape_that_goes_out():
     resp = build_chat_response("e", "hi", actions=[
         Action(type=ActionType.EXECUTE, function="eb_enable_qr", args=["true"])])
     assert resp["response_actions"] == [
-        {"output_type": "GLOBAL_RESPONSE", "action": "execute", "module_id": None,
-         "content_id": None, "function_id": "eb_enable_qr", "function_args": ["true"]}]
+        {"output_type": "GLOBAL_RESPONSE", "action": "execute",
+         "function_id": "eb_enable_qr", "function_args": ["true"]}]
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_exec4", verbose=False)
     vm._on_chat_reply(resp)
     assert vm.action_stats()["applied"][0]["args"] == ["true"], vm.action_stats()
@@ -373,8 +373,8 @@ def test_the_two_naming_defects_p0a_owned_are_fixed_on_the_wire():
                                                    Action(type=ActionType.EXIT)])
     assert [a["action"] for a in resp["response_actions"]] == ["execute", "exit_module"]
     assert resp["response_actions"][0] == {
-        "output_type": "GLOBAL_RESPONSE", "action": "execute", "module_id": None,
-        "content_id": None, "function_id": "eb_enable_qr", "function_args": ["true"]}
+        "output_type": "GLOBAL_RESPONSE", "action": "execute",
+        "function_id": "eb_enable_qr", "function_args": ["true"]}
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_qr", verbose=False)
     vm._on_chat_reply(resp)
     applied = vm.action_stats()["applied"]

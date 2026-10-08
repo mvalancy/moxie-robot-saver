@@ -105,7 +105,9 @@ def test_the_subscription_is_sent_once_per_module_not_once_per_turn():
     drive_turn(rt, dev, "hello", event_id="e1")
     fresh_pool(rt)
     second = drive_turn(rt, dev, "again", event_id="e2")
-    assert "response_actions" not in second, second
+    # only the action-less entry every reply carries (OpenMoxie's envelope), no subscription
+    assert second["response_actions"] == [{"output_type": "GLOBAL_RESPONSE"}], second
+    assert not _subscribed(second), second
 
 
 # --------------------------------------------------------------------------- #
@@ -242,7 +244,8 @@ def test_the_subscription_can_be_turned_off():
     rt, dev = _runtime()
     rt.vision = False
     resp = drive_turn(rt, dev, "hello")
-    assert "response_actions" not in resp
+    assert resp["response_actions"] == [{"output_type": "GLOBAL_RESPONSE"}], resp
+    assert not _subscribed(resp), resp
 
 
 # --------------------------------------------------------------------------- #

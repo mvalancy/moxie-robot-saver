@@ -143,6 +143,40 @@ def test_a_plain_reply_parses_strictly_with_the_vision_subscription_on_it():
         msg.response_actions[0].event_subscription.active
 
 
+def test_every_reply_carries_the_global_response_entry_openmoxie_sends():
+    """OpenMoxie's field-proven envelope (volley.py `create_response`,
+    `add_response_action`): every reply has `response_actions[0]` and its mirror
+    `response_action` with `output_type: GLOBAL_RESPONSE` — an action-less entry on a plain
+    reply, so a robot reading `output_type` sees GLOBAL_RESPONSE rather than the default
+    CATCH_ALL; the action itself when there is one. `module_id` / `content_id` ride only
+    when set, as OpenMoxie sends them."""
+    plain = build_chat_response("e", "Hi!")
+    assert plain["response_actions"] == [{"output_type": "GLOBAL_RESPONSE"}]
+    assert plain["response_action"] == plain["response_actions"][0]
+    msg = strict(plain)
+    assert output_types(msg) == {"GLOBAL_RESPONSE"} and action_names(msg) == ["UNSET_ACTION_ID"]
+    assert CR.OutputType.Name(msg.response_action.output_type) == "GLOBAL_RESPONSE"
+    acted = build_chat_response("e", "Bye!", actions=[
+        Action(type=ActionType.EXIT), Action(type=ActionType.LAUNCH, module_id="DRAW")])
+    assert acted["response_actions"] == [
+        {"output_type": "GLOBAL_RESPONSE", "action": "exit_module"},
+        {"output_type": "GLOBAL_RESPONSE", "action": "launch", "module_id": "DRAW"}]
+    assert acted["response_action"] == acted["response_actions"][0]
+    msg = strict(acted)
+    assert action_names(msg) == ["exit_module", "launch"]
+    assert output_types(msg) == {"GLOBAL_RESPONSE"}
+    assert RC.RemoteChatAction.ActionID.Name(msg.response_action.action) == "exit_module"
+    # Through the runtime, on a reply with no subscription left to send.
+    rt, dev = make_runtime(_Say("Again!"))
+    rt.vision = False
+    assert drive_turn(rt, dev, "again")["response_actions"] == [{"output_type": "GLOBAL_RESPONSE"}]
+    # …and the SIL robot reads the bare entry as what it is: no action, nothing unknown.
+    from virtual_moxie import VirtualMoxie
+    vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_bare", verbose=False)
+    vm._on_chat_reply(plain)
+    assert vm.action_stats()["unknown"] == 0 and vm.action_stats()["applied"] == []
+
+
 def test_a_streamed_turn_parses_chunk_by_chunk():
     rt, dev = make_runtime(_Stream())
     rt.streaming = True
@@ -209,8 +243,8 @@ def test_an_action_with_no_action_id_is_dropped_alone_and_the_reply_still_goes_o
     assert resp["output"]["text"] == "Let's go!"
     assert action_names(strict(resp)) == ["launch", "exit_module"]
     assert "teleport_to_mars" in capsys.readouterr().out, "the drop must be logged"
-    assert build_chat_response("e", "hi", actions=[Action(type=None)]).get(
-        "response_actions", []) == []
+    alone = build_chat_response("e", "hi", actions=[Action(type=None)])
+    assert [a for a in alone["response_actions"] if a.get("action")] == []
 
 
 def test_an_execute_with_mapped_args_parses_as_action_args_entries():

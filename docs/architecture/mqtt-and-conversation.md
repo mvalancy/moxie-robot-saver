@@ -508,7 +508,9 @@ Meanwhile the permit list (§3.7) stops an unpermitted device from being served 
   `result`, `backend`, `event_id`, **`output:{text, markup}`**,
   `response_actions:[{output_type, action, module_id, content_id, …}]` (plus the legacy singular
   `response_action`, which mirrors `response_actions[0]`; a client must act on one or the other,
-  never both, or it launches twice), `fallback`. Full field list: [AI seam §②](ai-seam.md).
+  never both, or it launches twice; every reply carries at least one action-less
+  `{output_type: "GLOBAL_RESPONSE"}` entry, as OpenMoxie's does, and `module_id`/`content_id` only
+  when set), `fallback`. Full field list: [AI seam §②](ai-seam.md).
 - **Action tags.** The brain may write `<launch:MOD:CID>`, `<exit>` or `<sleep>` inline; they become
   structured `response_actions` and are stripped from the spoken text
   ([`actions.py`](../../mqtt/moxie_sdk/actions.py); OpenMoxie's `volley.py::ingest_action_tags`).

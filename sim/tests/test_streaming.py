@@ -189,9 +189,9 @@ def test_a_streamed_action_rides_on_its_own_chunk():
     rt._pool.shutdown(wait=True)
     first, last = chats(rt, dev)
     assert first["response_actions"] == [
-        {"output_type": "GLOBAL_RESPONSE", "action": "launch", "module_id": "DRAW",
-         "content_id": None}]
-    assert "response_actions" not in last
+        {"output_type": "GLOBAL_RESPONSE", "action": "launch", "module_id": "DRAW"}]
+    # the last chunk carries no action: only the action-less entry every reply has
+    assert last["response_actions"] == [{"output_type": "GLOBAL_RESPONSE"}], last
 
 
 # ------------------------------------------------------- (ii) a late first token

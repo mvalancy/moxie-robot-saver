@@ -24,8 +24,10 @@ def _arg_str(value) -> str:
 def encode_action(a) -> dict:
     """One `moxie_sdk.types.Action` as one `RemoteChatAction` JSON entry.
 
-    `{output_type, action, module_id, content_id}` plus, for an `execute`, the recovered
-    fields (RemoteChat.proto:255-281): `function_id` (7), and `Action.args` by type — a
+    `{output_type, action}` plus `module_id` / `content_id` when set (as OpenMoxie's
+    `add_response_action` sends them, volley.py:125-130; proto3 JSON reads an absent
+    field and a `null` alike) plus, for an `execute`, the recovered fields
+    (RemoteChat.proto:255-281): `function_id` (7), and `Action.args` by type — a
     sequence → `function_args` (8, `repeated string`), a mapping → `action_args`
     (10, `repeated ActionArgsEntry{key, value}`). Omitted when absent, so other actions
     stay byte-identical.
@@ -45,8 +47,11 @@ def encode_action(a) -> dict:
     except ValueError:
         print(f"[wire] dropped an action with no ActionID: {a.type!r}", flush=True)
         return None
-    entry = {"output_type": OUTPUT_TYPE_RESPONSE, "action": kind.value,
-             "module_id": a.module_id, "content_id": a.content_id}
+    entry = {"output_type": OUTPUT_TYPE_RESPONSE, "action": kind.value}
+    if a.module_id:
+        entry["module_id"] = a.module_id
+    if a.content_id:
+        entry["content_id"] = a.content_id
     function = getattr(a, "function", None)
     args = getattr(a, "args", None)
     if kind is ActionType.ENABLE_QR:
@@ -113,12 +118,15 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
     * **Moderation.** `safety` (an `InputSafety`) fills `input.safety` (field 17 → 12)
       and mirrors its intents onto `input_intents` (field 10). Child-side verdicts only;
       an output-side block has no contract field (it goes to the parent review queue).
-    * **Actions** via `encode_action`.
+    * **Actions** via `encode_action`. Every reply carries `response_actions` — the
+      actions, or one action-less `{output_type: GLOBAL_RESPONSE}` entry — and the legacy
+      singular `response_action` mirrors `[0]`: OpenMoxie's field-proven envelope
+      (volley.py `create_response`, `add_response_action`), so a robot reading
+      `output_type` sees GLOBAL_RESPONSE on a plain reply, not the default CATCH_ALL.
     * **Event subscription.** `subscribe_events` fills
       `RemoteChatAction.EventSubscription{clear, active[]}` (remote-chat-protocol.md:81-84)
-      on `response_actions[0]` (a bare `{output_type}` entry if there is no action), mirrored
-      onto the legacy singular `response_action` (mqtt-and-conversation.md §4.1). Without
-      it the robot discards its own vision events.
+      on `response_actions[0]` (mqtt-and-conversation.md §4.1). Without it the robot
+      discards its own vision events.
     * **Module list.** `query_data` is the `RemoteDataBlock` (field 21) answering a
       module query — see `build_remote_modules`.
     """
@@ -137,13 +145,12 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
     resp = {"command": "remote_chat", "result": int(rc), "backend": backend,
             "event_id": event_id, "output": output}
     ra = [e for e in map(encode_action, actions or []) if e is not None]
+    if not ra:
+        ra.append({"output_type": OUTPUT_TYPE_RESPONSE})     # action-less, as OpenMoxie
     if subscribe_events:
-        if not ra:
-            ra.append({"output_type": OUTPUT_TYPE_RESPONSE})
         ra[0]["event_subscription"] = {"active": list(subscribe_events), "clear": False}
-        resp["response_action"] = ra[0]          # legacy singular, kept in sync
-    if ra:
-        resp["response_actions"] = ra
+    resp["response_action"] = ra[0]              # legacy singular, a mirror of [0]
+    resp["response_actions"] = ra
     if query_data is not None:
         resp["query_data"] = query_data
     if chunk_num is not None:

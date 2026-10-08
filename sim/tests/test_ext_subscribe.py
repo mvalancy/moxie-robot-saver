@@ -225,8 +225,8 @@ def test_a_subscription_rides_a_reply_that_already_carries_an_action():
     resp = build_chat_response("e", "Show me a card!", actions=[act],
                                subscribe_events=[QR])
     assert resp["response_actions"] == [
-        {"output_type": "GLOBAL_RESPONSE", "action": "execute", "module_id": None,
-         "content_id": None, "function_id": "eb_enable_qr", "function_args": ["true"],
+        {"output_type": "GLOBAL_RESPONSE", "action": "execute",
+         "function_id": "eb_enable_qr", "function_args": ["true"],
          "event_subscription": {"active": [QR], "clear": False}}]
 
     # Through the runtime: the action makes `mine` None, so the pack's list is the whole list.
@@ -242,8 +242,10 @@ def test_a_subscription_rides_a_reply_that_already_carries_an_action():
     assert published["response_actions"][0]["function_id"] == "eb_enable_qr"
 
 
-def test_a_reply_that_asks_for_nothing_is_unchanged_on_the_wire():
-    """Negative control: an app asking for nothing gets no `response_actions` at all."""
+def test_a_reply_that_asks_for_nothing_carries_no_subscription_and_no_action():
+    """Negative control: an app asking for nothing gets no subscription and no action —
+    only the action-less `{output_type: GLOBAL_RESPONSE}` entry every reply carries
+    (OpenMoxie's `create_response` envelope, `wire.build_chat_response`)."""
     class _Quiet(MoxieApp):
         name = "quiet"
 
@@ -254,7 +256,8 @@ def test_a_reply_that_asks_for_nothing_is_unchanged_on_the_wire():
     drive_turn(rt, dev, "hello", event_id="e1")     # spends the runtime's own list
     fresh_pool(rt)
     resp = drive_turn(rt, dev, "again", event_id="e2")
-    assert "response_actions" not in resp and "response_action" not in resp
+    assert resp["response_actions"] == [{"output_type": "GLOBAL_RESPONSE"}], resp
+    assert resp["response_action"] == {"output_type": "GLOBAL_RESPONSE"}, resp
 
 
 # --------------------------------------------------------------------------- #

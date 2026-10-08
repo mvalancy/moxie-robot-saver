@@ -301,6 +301,24 @@ not written to the wire; `REPLY_PENDING` already tells a robot more is coming. U
 our replies passed even a lenient parse (the `result` name), and a lenient parse of
 `output_type: "GLOBAL"` / `action: "exit"` silently produced `CATCH_ALL` / `UNSET_ACTION_ID`.
 
+**The envelope.** Every reply carries `response_actions` — the actions, or one action-less
+`{"output_type": "GLOBAL_RESPONSE"}` entry — and the legacy singular `response_action` mirrors
+`response_actions[0]`, exactly as OpenMoxie's field-proven `volley.py` (`create_response`,
+`add_response_action`) sends on every response; a robot reading `output_type` therefore sees
+`GLOBAL_RESPONSE` on a plain reply rather than the default `CATCH_ALL`. `module_id` / `content_id`
+ride only when set (OpenMoxie omits them; proto3 JSON reads an absent field and a `null` alike). A
+plain reply from this appliance is:
+
+```json
+{"command":"remote_chat","result":0,"backend":"router","event_id":"…",
+ "output":{"text":"Hi Sam!","markup":"…"},
+ "response_action":{"output_type":"GLOBAL_RESPONSE"},
+ "response_actions":[{"output_type":"GLOBAL_RESPONSE"}]}
+```
+
+Built to OpenMoxie's shape, not observed on a robot of ours; the two Sim clients read the action-less
+entry as what it is (no action, nothing unknown).
+
 **The module list.** The robot asks which modules the cloud serves with `backend: "data"` and
 `query: {"query": "modules"}` — a `RemoteDataQuery` (RemoteChat.proto:41-51, field 23 at :79;
 OpenMoxie reads `rcr['query']['query']`, `moxie_server.py:170`). The runtime answers before any
