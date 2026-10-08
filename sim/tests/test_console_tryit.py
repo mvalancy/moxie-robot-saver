@@ -297,7 +297,9 @@ def test_a_brain_that_cannot_be_built_is_a_readable_503(world):
 # --- actions: shown, never carried out -----------------------------------------------------
 
 @pytest.mark.parametrize("say, kind, module", [
-    ("<exit>Bye Sam! See you tomorrow.", "exit", ""),
+    # `kind` is the recovered ActionID name (RemoteChat.proto:256-266): the card's `type`
+    # is `ActionType.value`, which the wire fix spelled `exit_module`.
+    ("<exit>Bye Sam! See you tomorrow.", "exit_module", ""),
     ("<launch:DRAW>Yes! Let's go make a picture.", "launch", "DRAW"),
     ("<sleep>Okay, nighty night.", "sleep", ""),
 ])
@@ -306,7 +308,8 @@ def test_an_action_is_surfaced_exactly_as_the_wire_would_carry_it(world, say, ki
     out = tryit(world, speech="ok", device_id=DEVICE, brain="llm")
     action, = out["reply"]["actions"]
     assert action["type"] == kind and action["module_id"] == module
-    assert action["wire"]["action"] == kind and action["wire"]["output_type"] == "GLOBAL"
+    assert action["wire"]["action"] == kind
+    assert action["wire"]["output_type"] == "GLOBAL_RESPONSE"
     assert "<" not in out["reply"]["text"], "a tag was left in the spoken words"
     assert world.rt.client.published == [], "an action reached the robot"
 

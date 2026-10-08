@@ -292,7 +292,7 @@ def test_a_pending_robots_module_query_still_answers_empty(tmp_path):
     _wire_event(rt, "remote-chat", {"event_id": "e9", "command": "prompt",
                                     "backend": "data", "query": "modules"})
     replies = rt.client.on(CHAT_TOPIC.format(d=DEVICE))
-    assert replies[-1]["modules"] == []
+    assert replies[-1]["query_data"]["modules"] == []
 
 
 def test_state_is_still_ingested_so_a_pending_robot_is_visible(tmp_path):
