@@ -72,11 +72,16 @@ type: FINAL, speech, confidence, uuid}` on the same topic, both as the bus frame
 `b"<proto.full_name>:" + protobuf_bytes` and never as JSON (`stt.py` `encode_proto_subscribe` /
 `encode_zmq_stt_response`: stdlib writers, checked byte for byte against the committed
 `tools/robot-toolkit` pb2 files). An empty transcript is still a `FINAL`; the robot's turn ends on the
-type, not the text. The ask is repeated whenever the robot's session may have lost it (a second broker
-connect line with no disconnect in between, a wake, a Permit, the Listening picker turning the ears on, a
-broker outage in whichever order the supervisor and the robot come back, the roster resume after a
-supervisor restart), and `/status` shows `stt_subscribed_at` per robot, recorded only for a robot
-confirmed on this connection (an ask sent while it is away is not its session); see
+type, not the text. So is a failed one: an engine that raises gets the robot a `FINAL` with no speech
+and the failure in the recovered `error_code` / `error_message` fields (`error_code=66` plus the
+exception text, as OpenMoxie's `zmq_stt_handler.py:70-73` answers), so no turn is left hanging. The ask
+is repeated whenever the robot's session may have lost it (a second broker connect line with no
+disconnect in between, a wake, a Permit or the fleet-wide toggle letting the robot in, the Listening
+picker turning the ears on, a broker outage in whichever order the supervisor and the robot come back,
+the roster resume after a supervisor restart; and the settle after a connect line always asks, even
+when one of those landed inside its one-second window), and `/status` shows `stt_subscribed_at` per
+robot, recorded only for a robot confirmed on this connection (an ask sent while it is away is not its
+session) and cleared by a revoke; see
 [mqtt-and-conversation.md §3.4](mqtt-and-conversation.md#34-connect-and-disconnect-detection).
 Built to the contract and to OpenMoxie's field-proven behaviour (MIT: `site/hive/mqtt/moxie_server.py`
 `on_device_connect` sends config then this subscribe, framed by `send_zmq_to_bot`; `zmq_stt_handler.py`

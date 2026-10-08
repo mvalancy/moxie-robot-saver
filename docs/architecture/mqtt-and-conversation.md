@@ -324,23 +324,31 @@ connect notices it read; the two readings are not exclusive, and neither is veri
 
 On connect: register the robot, wait about 1 s, push config, then send a ZMQ `ProtoSubscribe`
 asking the robot to stream STT audio (`embodied.perception.audio.zmqSTTRequest`), the order OpenMoxie
-uses (`on_device_connect`, `moxie_server.py:254-266`). The connect line is also evidence of a **new
+uses (`on_device_connect`, `moxie_server.py:254-266`). That settle always asks, even when a Listening
+pick, a wake or a Permit already asked inside its one-second window: such an ask preceded the config
+push (and possibly the robot's own re-subscribe, which the settle waits for), so it does not stand in
+for the settle's; at most one redundant QoS 0 message. The connect line is also evidence of a **new
 session**: a second one for a robot already onboarded, with no disconnect line in between (Wi-Fi dropped
 and came back inside the keepalive, or a line no pattern knows), forgets what the supervisor believed
 about that robot and onboards it again, config and subscribe included. A `/state` or an event is not
-such evidence; it repeats. The subscribe is also re-sent on `wakeup`, on Permit, when the Listening
-picker installs an engine (to every permitted robot the supervisor knows of that is not yet asked,
-ghosts included: a robot that sat connected through our socket blip never announces itself again),
-after a broker outage in whichever order the supervisor and the robot come back (the latch is dropped
-with the socket, and an ask that goes out while the robot is still away, from the roster resume, the
-picker, a wake or a Permit, is not recorded as its session, so its own connect line is still answered
-with config and the ask), and by the roster resume after a supervisor restart; `/status` shows
-`stt_subscribed_at` per robot, set only for a robot confirmed on this connection. Nothing withdraws the
-subscription: a revoke or Listening `off` leaves the robot streaming to the LAN broker, where the permit
-gate or the missing engine drops the audio (the recovered `Log.proto` has no unsubscribe message).
-Built to this contract and OpenMoxie's field-proven behaviour; **unverified on our hardware**.
-[`sim/tests/test_stt_wire.py`](../../sim/tests/test_stt_wire.py) covers every trigger, both
-broker-restart orders and every leave line.
+such evidence; it repeats. The subscribe is also re-sent on `wakeup`, on Permit and on the fleet-wide
+`allow_unverified_bots` toggle for each robot it lets in (config, the ask, then the app's greeting: the
+same onboarding), when the Listening picker installs an engine (to every permitted robot the supervisor
+knows of that is not yet asked, ghosts included: a robot that sat connected through our socket blip
+never announces itself again), after a broker outage in whichever order the supervisor and the robot
+come back (the latch is dropped with the socket, and an ask that goes out while the robot is still away,
+from the roster resume, the picker, a wake or a Permit, is not recorded as its session, so its own
+connect line is still answered with config and the ask), and by the roster resume after a supervisor
+restart. A console config edit (per-robot or fleet) re-pushes config **without** an ask: the robot is
+already streaming. `/status` shows `stt_subscribed_at` per robot, set only for a robot confirmed on this
+connection and only when the transport took the publish; a revoke (by Permit or by the toggle) clears
+it, since a pending robot is never asked. Nothing withdraws the subscription itself: the recovered
+`Log.proto` has no unsubscribe message (`ProtoSubscribe` is its only subscription message), so a revoked
+robot, or one whose parent set Listening to `off` (the record of its ask stands, and the next engine
+installed does not ask again), keeps streaming to the LAN broker, where the permit gate or the missing
+engine drops the audio. Built to this contract and OpenMoxie's field-proven behaviour; **unverified on
+our hardware**. [`sim/tests/test_stt_wire.py`](../../sim/tests/test_stt_wire.py) covers every trigger,
+the settle window, both broker-restart orders and every leave line.
 
 **The log is live-only.** mosquitto does not replay log lines on re-subscribe, so a supervisor that
 restarts while a robot stays connected never sees its connect line, and the robot has no reason to
@@ -566,7 +574,11 @@ windows.
   `b"embodied.perception.audio.zmqSTTResponse:" + bytes`. The robot injects that payload straight onto
   its bus, so JSON there is a frame it cannot route. Ours carries `timestamp`, `type=FINAL`, `speech`,
   `confidence` and `uuid` ([`stt.py`](../../mqtt/moxie_sdk/stt.py)`::encode_zmq_stt_response`); an
-  empty transcript is still a `FINAL`. Field reference: OpenMoxie `zmq_stt_handler.py:52-76` (a protobuf
+  empty transcript is still a `FINAL`, and so is a failed transcription: an engine that raises gets the
+  robot a `FINAL` with no `speech` and the failure in `error_code` / `error_message` (fields 8 and 9 of
+  the recovered proto, which defines no enum for the code; `error_code=66` with the exception text is
+  what the field-proven server sends, `zmq_stt_handler.py:70-73`), so a robot is never left waiting on
+  a turn that ended. Field reference: OpenMoxie `zmq_stt_handler.py:52-76` (a protobuf
   `zmqSTTResponse` with `uuid`, `type=FINAL`, `timestamp`, `speech`, sent through `send_zmq_to_bot`).
   Unverified on our hardware. Engine choices: [AI seam §①](ai-seam.md).
 
