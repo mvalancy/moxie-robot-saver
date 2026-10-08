@@ -268,6 +268,9 @@ class ConnectionMixin:
         for device_id in targets:
             try:
                 self._push_config(device_id)
+                # A robot that sat connected through our restart was asked for its mic
+                # by a supervisor that is gone; one more ask costs one QoS 0 message.
+                self._subscribe_stt(device_id)
                 pushed.append(device_id)
             except Exception as e:
                 print(f"[runtime] roster re-push failed for {device_id}: {e}", flush=True)
@@ -320,8 +323,12 @@ class ConnectionMixin:
         At QoS 0 paho drops (does not queue) a publish with no socket, so every drop is
         counted and recorded. QoS 0 stays on purpose: a QoS 1 queue would deliver stale
         answers after a gap (production-hardening.md §4.2-4.3).
+
+        A `str` or `bytes` payload goes out as it is (the `commands/zmq` frames are
+        binary: `full_name:protobuf`); anything else is JSON.
         """
-        body = payload if isinstance(payload, str) else json.dumps(payload)
+        body = (payload if isinstance(payload, (str, bytes, bytearray))
+                else json.dumps(payload))
         label = what or topic.rsplit("/", 1)[-1]
         if not self._broker_connected():
             self._record_drop(topic, device_id, label, self.NO_BROKER_REASON)
@@ -383,13 +390,16 @@ class ConnectionMixin:
             self._note(kind, line.split(": ", 1)[-1] if ": " in line else line)
         m = CONNECT_RE.search(line)
         if m:
-            return self._device_connect(m.group(2))
+            # The broker's own word that a session began: a second such line for a robot
+            # we never saw leave means a NEW session (see `_device_connect`).
+            return self._device_connect(m.group(2), fresh=True)
         m = DISCONNECT_RE.search(line)
         if m:
-            return self._device_disconnect(m.group(1))
+            return self._device_disconnect(next(g for g in m.groups() if g))
 
-    def _device_connect(self, device_id: str):
-        """Onboard a robot: register it, push its config, and let the app greet it.
+    def _device_connect(self, device_id: str, *, fresh: bool = False):
+        """Onboard a robot: register it, push its config, ask for its microphone, and let
+        the app greet it.
 
         Idempotent per broker *connection*, not per process: after a broker restart the
         `$SYS` disconnect line never arrives, so a returning robot is re-onboarded on its
@@ -397,22 +407,34 @@ class ConnectionMixin:
         disconnect — that would claim knowledge we lack, stampede on a blip and end the
         child's conversation. The `RobotContext` is reused, so history and per-robot state
         survive the outage.
+
+        `fresh=True` is the broker's connect line, which is evidence of a new session:
+        for a robot already onboarded on this connection (it dropped Wi-Fi and came back
+        before the broker noticed, or left with a line `DISCONNECT_RE` does not know)
+        our beliefs are stale, so they are forgotten and it is onboarded again. Without
+        that the robot gets no config and no STT subscribe and cannot hear (community
+        signal C4, "crossed ears"). A `/state` or event is not such evidence: it repeats.
         """
         robot = self.robots.get(device_id)
-        if robot is not None and device_id in self._seen_since_connect:
+        onboarded = robot is not None and device_id in self._seen_since_connect
+        if onboarded and not fresh:
             return                            # already onboarded on this connection
-        returning = robot is not None
-        if robot is None:
-            robot = RobotContext(device_id=device_id, child=self.child)
-            self.robots[device_id] = robot
-        self._seen_since_connect.add(device_id)
-        if returning:
+        if onboarded:
+            self._forget_robot_state(device_id)
+            print(f"[runtime] 🤖 robot reconnected with no disconnect line in between: "
+                  f"{device_id}", flush=True)
+            self._note("robot", f"🤖 robot reconnected with no disconnect line in between: "
+                                f"{device_id} — onboarding it again")
+        elif robot is not None:
             print(f"[runtime] 🤖 robot back after the outage: {device_id}", flush=True)
             self._note("robot", f"🤖 robot back after the outage: {device_id} — "
                                 f"re-pushing config")
         else:
+            robot = RobotContext(device_id=device_id, child=self.child)
+            self.robots[device_id] = robot
             print(f"[runtime] 🤖 robot connected: {device_id}", flush=True)
             self._note("robot", f"🤖 robot connected: {device_id}")
+        self._seen_since_connect.add(device_id)
         self.history.setdefault(device_id, [])
         # Every ingress path converges here, so this is where the roster is written.
         self._roster_seen(device_id)
@@ -422,6 +444,9 @@ class ConnectionMixin:
             # A pending robot never reaches the app; `set_permit` runs `on_connect` later.
             if not self.is_permitted(device_id):
                 return
+            # Config first, then the ask for mic audio: the order the field-proven
+            # community server uses (mqtt-and-conversation.md §3.4).
+            self._subscribe_stt(device_id)
             try:
                 self.app_for(device_id).on_connect(robot)
             except Exception as e:
@@ -429,11 +454,13 @@ class ConnectionMixin:
         threading.Timer(1.0, _settle).start()
 
     # ---- one place that forgets what we believe about a robot's state ----
-    # Cached beliefs (onboarded on this connection; vision subscribed) are pure
-    # optimisation: forgetting costs one redundant message, remembering wrongly leaves a
-    # robot silently half-connected. When in doubt, forget. The vision latch has one extra
-    # invalidator (module exit), hence `vision_only`. Robot *data* (history, memory,
-    # telemetry, presence, the RobotContext) is never forgotten here.
+    # Cached beliefs (onboarded on this connection; vision subscribed; mic asked for) are
+    # pure optimisation: forgetting costs one redundant message, remembering wrongly
+    # leaves a robot silently half-connected. When in doubt, forget. The vision latch has
+    # one extra invalidator (module exit), hence `vision_only`. Robot *data* (history,
+    # memory, telemetry, presence, the RobotContext) is never forgotten here; the STT ask
+    # lives on the RobotContext (`extra["stt_subscribed_at"]`, read by `/status`) but is
+    # a belief about the robot's session, so it goes with the onboarding latch.
     def _forget_robot_state(self, device_id: str | None = None, *, vision_only=False):
         """Drop our cached beliefs about one robot (or all of them, `device_id=None`)."""
         with self._presence_lock:
@@ -447,8 +474,13 @@ class ConnectionMixin:
             return
         if device_id is None:
             self._seen_since_connect.clear()
+            for robot in list(self.robots.values()):
+                robot.extra.pop("stt_subscribed_at", None)
         else:
             self._seen_since_connect.discard(device_id)
+            robot = self.robots.get(device_id)
+            if robot is not None:
+                robot.extra.pop("stt_subscribed_at", None)
 
     def _device_disconnect(self, device_id: str):
         # Real evidence the robot left: drop every belief about its state.

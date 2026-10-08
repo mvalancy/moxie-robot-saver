@@ -1,10 +1,14 @@
 """
-STT seam tests (M3) — the VAD accumulator + transcriber interface + response encoder.
-Pure (no audio libs); the Whisper backend is exercised only for availability/skip.
+STT seam tests (M3) — the VAD accumulator + transcriber interface + the bus-frame
+encoders (checked byte for byte against the committed pb2 oracles). Pure (no audio
+libs); the Whisper backend is exercised only for availability/skip.
 """
+from moxie_sdk import stt  # noqa: E402
 from moxie_sdk.stt import (  # noqa: E402
-    VADState, Transcriber, SttSession, build_stt_response,
+    VADState, Transcriber, SttSession, encode_proto_subscribe, encode_zmq_stt_response,
+    PROTO_SUBSCRIBE, ZMQ_STT_REQUEST, ZMQ_STT_RESPONSE,
 )
+from helpers_runtime import parse_zmq_frame, toolkit_pb2   # noqa: E402
 
 
 class _FakeTranscriber(Transcriber):
@@ -55,11 +59,52 @@ def test_empty_utterance_yields_empty_string():
     assert s.feed(VADState.END_OF_SPEECH, b"") == ""
 
 
-def test_response_encoder_shape():
-    r = build_stt_response("u-1", "hello moxie")
-    assert r == {"type": "FINAL", "speech": "hello moxie",
-                 "confidence": 1.0, "uuid": "u-1"}
-    assert build_stt_response("u", "hi", final=False)["type"] == "PARTIAL"
+def test_response_encoder_writes_what_protoc_writes(monkeypatch):
+    """`encode_zmq_stt_response` is byte-identical to the compiled proto's own serializer
+    (fields 1, 2, 3, 4, 7 in order) wrapped in the bus framing, for a FINAL, a PARTIAL
+    and an empty transcript — the last still a FINAL, since the robot's turn ends on it."""
+    pb = toolkit_pb2("embodied.perception.audio.zmqSTT_pb2")
+
+    def oracle(uuid, speech, final, confidence, ts):
+        r = pb.zmqSTTResponse()
+        r.timestamp, r.speech, r.confidence, r.uuid = ts, speech, confidence, uuid
+        r.type = r.FINAL if final else r.PARTIAL
+        return ZMQ_STT_RESPONSE.encode() + b":" + r.SerializeToString()
+
+    for uuid, speech, final, conf, ts in [("u-1", "hello moxie", True, 1.0, 1700000000000),
+                                          ("u", "hi", False, 0.25, 1),
+                                          ("u-2", "", True, 1.0, 2 ** 40 + 300)]:
+        got = encode_zmq_stt_response(uuid, speech, final=final, confidence=conf,
+                                      timestamp_ms=ts)
+        assert got == oracle(uuid, speech, final, conf, ts), (uuid, speech, final)
+        parsed = parse_zmq_frame(got, pb.zmqSTTResponse)
+        assert (parsed.type, parsed.speech, parsed.uuid, parsed.timestamp) == \
+            (parsed.FINAL if final else parsed.PARTIAL, speech, uuid, ts)
+    # the default timestamp is the SDK's millisecond clock
+    monkeypatch.setattr(stt, "now_ms", lambda: 4242)
+    assert parse_zmq_frame(encode_zmq_stt_response("u", "x"), pb.zmqSTTResponse).timestamp == 4242
+
+
+def test_proto_subscribe_encoder_writes_what_protoc_writes(monkeypatch):
+    """The ask for the microphone: `ProtoSubscribe{timestamp=1, protos=2}` naming
+    `zmqSTTRequest`, framed `b'embodied.logging.ProtoSubscribe:' + bytes`."""
+    Log_pb2 = toolkit_pb2("embodied.logging.Log_pb2")
+    sub = Log_pb2.ProtoSubscribe()
+    sub.timestamp = 1700000000000
+    sub.protos.append(ZMQ_STT_REQUEST)
+    assert encode_proto_subscribe([ZMQ_STT_REQUEST], timestamp_ms=1700000000000) == \
+        PROTO_SUBSCRIBE.encode() + b":" + sub.SerializeToString()
+    assert PROTO_SUBSCRIBE == Log_pb2.ProtoSubscribe.DESCRIPTOR.full_name
+    monkeypatch.setattr(stt, "now_ms", lambda: 1_700_000_000_123)
+    got = parse_zmq_frame(encode_proto_subscribe([ZMQ_STT_REQUEST]), Log_pb2.ProtoSubscribe)
+    assert list(got.protos) == [ZMQ_STT_REQUEST]
+    assert got.timestamp == 1_700_000_000_123
+
+
+def test_now_ms_is_milliseconds_since_the_epoch():
+    """An int in the 10^12 range (seconds would be 10^9, nanoseconds 10^18)."""
+    ms = stt.now_ms()
+    assert isinstance(ms, int) and 1_700_000_000_000 < ms < 10_000_000_000_000
 
 
 from helpers_audio import pb_zmq_stt_frame as _pb_zmq_frame   # noqa: E402

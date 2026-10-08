@@ -5,6 +5,7 @@ connected robot plus the appliance-wide config, the pairing gate and the face ca
 """
 from __future__ import annotations
 import re
+import time
 from typing import Optional
 
 from ._coerce import _dict, _num
@@ -33,6 +34,11 @@ def robot_summary(r: dict) -> str:
         bits.append(f"{n} safety flag{'' if n == 1 else 's'} to review")
     if r.get("ota_reboot_required"):
         bits.append("OTA reboot pending")
+    asked = r.get("stt_subscribed_at")
+    if isinstance(asked, (int, float)) and asked > 0:
+        # The supervisor asked for the robot's microphone (a request; the robot sends no
+        # acknowledgement, so this is never "listening").
+        bits.append(f"mic asked {time.strftime('%H:%M', time.localtime(asked))}")
     return " · ".join(bits) or "connected"
 
 

@@ -164,16 +164,26 @@ def _stt_rt(text_fn):
     return rt
 
 
+def _final(rt, did):
+    """The last `commands/zmq` publish, parsed with the committed `zmqSTTResponse` oracle:
+    the robot reads `b'<full_name>:' + protobuf`, never JSON (test_stt_wire.py)."""
+    from helpers_runtime import parse_zmq_frame, toolkit_pb2
+    pb = toolkit_pb2("embodied.perception.audio.zmqSTT_pb2")
+    msgs = _on(rt.client.published, f"/devices/{did}/commands/zmq")
+    assert msgs, "no zmqSTTResponse published"
+    return parse_zmq_frame(msgs[-1], pb.zmqSTTResponse)
+
+
 def test_stt_frames_through_runtime_publish_transcript():
-    """VAD frames accumulate and, on END_OF_SPEECH, publish a zmqSTTResponse."""
+    """VAD frames accumulate and, on END_OF_SPEECH, publish a FINAL zmqSTTResponse frame."""
     rt = _stt_rt(lambda pcm: f"heard {len(pcm)}b")
     did = "d_stt"
     assert rt.feed_stt(did, 1, b"aa", uuid="u1") is None        # START_OF_SPEECH
     assert rt.feed_stt(did, 2, b"bb") is None                    # SPEECH
     assert rt.feed_stt(did, 3, b"cc") == "heard 6b"              # END_OF_SPEECH
-    msgs = _on(rt.client.published, f"/devices/{did}/commands/zmq")
-    assert msgs and msgs[-1]["type"] == "FINAL"
-    assert msgs[-1]["speech"] == "heard 6b" and msgs[-1]["uuid"] == "u1"
+    final = _final(rt, did)
+    assert final.type == final.FINAL
+    assert final.speech == "heard 6b" and final.uuid == "u1"
 
 
 def test_handle_zmq_json_audio_frame_drives_stt():
@@ -184,8 +194,7 @@ def test_handle_zmq_json_audio_frame_drives_stt():
     rt.handle_zmq(did, json.dumps({"vad": 1, "audio_content": a, "uuid": "u9"}))
     assert rt.handle_zmq(did, json.dumps({"vad": 3, "audio_content": a, "uuid": "u9"})) \
         == "hello moxie"
-    assert _on(rt.client.published, f"/devices/{did}/commands/zmq")[-1]["speech"] == \
-        "hello moxie"
+    assert _final(rt, did).speech == "hello moxie"
 
 
 def test_handle_zmq_real_protobuf_frame_drives_stt():
@@ -195,8 +204,8 @@ def test_handle_zmq_real_protobuf_frame_drives_stt():
     did = "d_pb"
     rt.handle_zmq(did, _frame(1, b"aa", "u5"))                    # START
     assert rt.handle_zmq(did, _frame(3, b"bb", "u5")) == "pb 4b"   # END → transcribe
-    msgs = _on(rt.client.published, f"/devices/{did}/commands/zmq")
-    assert msgs[-1]["speech"] == "pb 4b" and msgs[-1]["uuid"] == "u5"
+    final = _final(rt, did)
+    assert final.speech == "pb 4b" and final.uuid == "u5"
 
 
 def test_no_transcriber_ignores_audio():

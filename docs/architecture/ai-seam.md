@@ -65,6 +65,22 @@ of one utterance and hands them to a `Transcriber` on `END_OF_SPEECH`; the runti
 `zmqSTTResponse`. The audio is **16-bit mono PCM at 16 kHz** (the perception bus's rate); an engine must
 be told that rate, not assume one.
 
+**The robot's dialect, both ways.** Nothing streams until the cloud asks: after the config push the
+supervisor publishes a `ProtoSubscribe{timestamp, protos: ["embodied.perception.audio.zmqSTTRequest"]}`
+on `/devices/{id}/commands/zmq`, and it answers every utterance with a `zmqSTTResponse{timestamp,
+type: FINAL, speech, confidence, uuid}` on the same topic, both as the bus frame
+`b"<proto.full_name>:" + protobuf_bytes` and never as JSON (`stt.py` `encode_proto_subscribe` /
+`encode_zmq_stt_response`: stdlib writers, checked byte for byte against the committed
+`tools/robot-toolkit` pb2 files). An empty transcript is still a `FINAL`; the robot's turn ends on the
+type, not the text. The ask is repeated whenever the robot's session may have lost it (a second broker
+connect line with no disconnect in between, a wake, a Permit, the Listening picker turning the ears on, a
+broker outage, the roster resume after a supervisor restart), and `/status` shows `stt_subscribed_at` per
+robot; see [mqtt-and-conversation.md §3.4](mqtt-and-conversation.md#34-connect-and-disconnect-detection).
+Built to the contract and to OpenMoxie's field-proven behaviour (MIT: `site/hive/mqtt/moxie_server.py`
+`on_device_connect` sends config then this subscribe, framed by `send_zmq_to_bot`; `zmq_stt_handler.py`
+answers with a protobuf `zmqSTTResponse`). **Unverified on our hardware**: no physical Moxie has streamed
+audio to this appliance yet. Tests: [`sim/tests/test_stt_wire.py`](../../sim/tests/test_stt_wire.py).
+
 | Engine | `MOXIE_STT` | What it is |
 |---|---|---|
 | `WhisperTranscriber` | `whisper` (alias `local`) | local faster-whisper; no network, no key |

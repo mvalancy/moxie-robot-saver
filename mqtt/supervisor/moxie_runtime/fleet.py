@@ -128,6 +128,7 @@ class FleetMixin:
         if device_id in self.robots:
             self._push_config(device_id)
             if permitted:
+                self._subscribe_stt(device_id, again=True)   # config, then the mic ask
                 try:
                     self.app_for(device_id).on_connect(self.robots[device_id])
                 except Exception as e:
@@ -266,6 +267,7 @@ class FleetMixin:
             # The socket died between the check and the write. Still not a success.
             return {"ok": False, "device_id": device_id, "published": False,
                     "acknowledged": False, "error": "publish failed", "reason": why}
+        self._subscribe_stt(device_id, again=True)   # a woken robot has no mic subscription
         cfg = self.effective_config(device_id) or {}
         # `wake_button_enabled` defaults True: only an explicit False is worth a warning.
         wake_button = cfg.get("wake_button_enabled", True)

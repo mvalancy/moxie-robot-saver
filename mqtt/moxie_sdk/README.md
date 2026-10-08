@@ -41,7 +41,11 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   TTS engine never reads "grinning face" aloud), the `Synthesizer` interface (Piper, an
   OpenAI-compatible voice server, the built-in tone) and the `CloudTTSResponse` encoder.
 - [`stt.py`](stt.py) — the ears ([ai-seam](../../docs/architecture/ai-seam.md) §1): the
-  dependency-free `zmqSTTRequest` protobuf reader, `SttSession` (accumulate one utterance's
+  dependency-free `zmqSTTRequest` protobuf reader and the matching writers for what goes back
+  (`encode_proto_subscribe`, the ask that makes a robot stream its microphone, and
+  `encode_zmq_stt_response`, the transcript; both the bus frame `full_name:protobuf`, checked byte
+  for byte against the committed [`tools/robot-toolkit`](../../tools/robot-toolkit/) pb2 files),
+  `SttSession` (accumulate one utterance's
   VAD-tagged frames, transcribe on `END_OF_SPEECH`, at the bus's 16 kHz) and two **first-class**
   engines behind one `Transcriber` interface — `WhisperTranscriber` (local faster-whisper: no
   network, no key, the home-appliance answer) and `OpenAITranscriber` (an OpenAI-shaped
