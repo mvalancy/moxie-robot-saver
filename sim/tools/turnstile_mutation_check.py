@@ -323,8 +323,8 @@ MUTATIONS = [
      "    const spentNothing = (reason, extra) => {",
      SUITE, "the same drain needs no token here"),
     ("R5  the safety floor keeps its charge, contradicting its own doc comment", CHAT,
-     "      slot.refundBudget();\n      return blocked(cfg, slot, verdict);",
-     "      return blocked(cfg, slot, verdict);",
+     "      slot.refundBudget();\n      return await blocked(cfg, slot, verdict);",
+     "      return await blocked(cfg, slot, verdict);",
      SUITE, "a hard-blocked utterance leaves the shared budget untouched"),
 
     # ---- H: how the sitekey reaches the browser ------------------------------

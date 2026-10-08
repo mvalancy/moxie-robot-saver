@@ -10,6 +10,13 @@ import {
 } from "./harness.mjs";
 
 const safety = await import(join(repo, "functions", "api", "_lib", "safety.js"));
+/* On a tree without the floor (origin/dev before W3-S17) these exports are absent. The shims
+ * make every pin below fail BY NAME instead of the module throwing at its first use, so the
+ * red-before-green run reads as a list of what is missing. */
+const disclosesHurt = safety.disclosesHurt || (() => false);
+const hasReferral = safety.hasReferral || (() => false);
+const referralFor = safety.referralFor || (() => ({ text: "", phraseId: 0 }));
+const withReferral = safety.withReferral || ((t) => ({ text: String(t || ""), appended: false, phraseId: 0 }));
 const cfg = wire2.readConfig(FULL);
 const fixture = (name) => JSON.parse(readFileSync(join(repo, "sim", "tests", "fixtures", "safety-floor", name), "utf8"));
 const payloadOf = (body) => JSON.parse(body.messages[0].payload);
@@ -124,12 +131,12 @@ async function ticketTexts(speech) {
   const lines = fixture("child-lines.json");
   const blockedHarmless = lines.harmless.filter((t) => safety.assess(t).blocked);
   eq(blockedHarmless.length, 0, `NO HARMLESS CHILD LINE BLOCKS (${lines.harmless.length}): ${JSON.stringify(blockedHarmless)}`);
-  const hurtHarmless = lines.harmless.filter((t) => safety.disclosesHurt(safety.assess(t)));
+  const hurtHarmless = lines.harmless.filter((t) => disclosesHurt(safety.assess(t)));
   eq(hurtHarmless.length, 0, `no harmless child line is read as a hurt disclosure: ${JSON.stringify(hurtHarmless)}`);
   ok(lines.harmless.length >= 50, `at least 50 harmless lines (${lines.harmless.length})`);
   const open = lines.sword_requests.filter((t) => !safety.assess(t).blocked);
   eq(open.length, 0, `every weapon request blocks (${lines.sword_requests.length}): ${JSON.stringify(open)}`);
-  const unflagged = lines.hurt_disclosures.filter((t) => !safety.disclosesHurt(safety.assess(t)));
+  const unflagged = lines.hurt_disclosures.filter((t) => !disclosesHurt(safety.assess(t)));
   eq(unflagged.length, 0, `every hurt disclosure flags (${lines.hurt_disclosures.length}): ${JSON.stringify(unflagged)}`);
   ok(lines.hurt_disclosures.every((t) => !safety.assess(t).blocked), "a hurt disclosure is a FLAG, never a block: the child is answered by the brain");
 }
@@ -144,7 +151,7 @@ async function ticketTexts(speech) {
   P.plan = { chat: { content: bare } };
   const r = await call(chat, "/api/chat", { text: hurt });
   eq(`${r.body.reason} ${upstreamCalls()}`, "null 1", "a hurt disclosure reaches the brain (a flag, not a block) and spends one call");
-  const want = safety.referralFor(hurt).text;
+  const want = referralFor(hurt).text;
   const text = payloadOf(r.body).output.text;
   eq(text, bare + " " + want, "a reply that names no grown-up gets EXACTLY ONE referral sentence appended, last");
   eq((text.match(/grown-up/g) || []).length, 1, "…one, not two");
@@ -174,9 +181,9 @@ async function ticketTexts(speech) {
     const r3 = await call(chat, "/api/chat", { text: line });
     eq(payloadOf(r3.body).output.text, bare, `NEVER APPENDED TO AN ORDINARY LINE: ${JSON.stringify(line)}`);
   }
-  const once = safety.withReferral(bare, hurt);
-  deep([once.appended, safety.withReferral(once.text, hurt).appended], [true, false], "appending is idempotent: the sentence is itself a referral");
-  ok(safety.withReferral("I am here with you", hurt).text.startsWith("I am here with you. "), "a line without an end mark gets one before the referral");
+  const once = withReferral(bare, hurt);
+  deep([once.appended, withReferral(once.text, hurt).appended], [true, false], "appending is idempotent: the sentence is itself a referral");
+  ok(withReferral("I am here with you", hurt).text.startsWith("I am here with you. "), "a line without an end mark gets one before the referral");
 }
 
 /* 24g. Every hurt replay on disk: the model's own referral is kept, the floor's sentence
@@ -186,10 +193,10 @@ async function ticketTexts(speech) {
   let had = 0, appended = 0;
   const wrong = [];
   for (const p of replays) {
-    const w = safety.withReferral(p.reply, p.child);
-    if (!safety.disclosesHurt(safety.assess(p.child))) wrong.push("not read as a disclosure: " + p.child);
-    if (w.appended === safety.hasReferral(p.reply)) wrong.push("appended-iff-missing failed: " + p.reply.slice(0, 60));
-    if (!safety.hasReferral(w.text)) wrong.push("still no referral: " + w.text.slice(0, 60));
+    const w = withReferral(p.reply, p.child);
+    if (!disclosesHurt(safety.assess(p.child))) wrong.push("not read as a disclosure: " + p.child);
+    if (w.appended === hasReferral(p.reply)) wrong.push("appended-iff-missing failed: " + p.reply.slice(0, 60));
+    if (!hasReferral(w.text)) wrong.push("still no referral: " + w.text.slice(0, 60));
     if (w.appended) appended++; else had++;
   }
   deep(wrong, [], "every hurt replay on disk ends up pointing to a trusted grown-up, appended only where the model left it out");
