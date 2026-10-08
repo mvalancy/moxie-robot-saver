@@ -141,21 +141,28 @@ def _brain_failure(error, result) -> tuple:
                    or (isinstance(status, int) and 400 <= status < 500))
         kind = "brain_refused" if refused else "brain_error"
     status = chat_seam._status_code(error) if error is not None else None
-    detail = {"type": type(error).__name__ if error is not None else "",
-              "status": status if isinstance(status, int) else None,
+    status = status if isinstance(status, int) else None
+    detail = {"type": type(error).__name__ if error is not None else "", "status": status,
               "message": _scrub(error) if error is not None else ""}
-    sentence = {
-        "brain_unreachable": "Moxie's brain could not be reached (refused or timed out). "
-                             "On a robot she would fall back to her own on-device chat.",
-        "brain_refused": "The brain's server refused this request"
-                         + (f" (HTTP {status})" if isinstance(status, int) else "")
-                         + ". Check the model name and the key in the supervisor's "
-                           "settings. Moxie would have covered it with a stock line.",
-        "brain_error": "The brain's server failed"
-                       + (f" (HTTP {status})" if isinstance(status, int) else "")
-                       + ". Moxie would have covered it with a stock line.",
-    }[kind]
-    return kind, sentence, detail
+    if kind == "brain_unreachable":
+        return kind, ("Moxie's brain could not be reached (refused or timed out). On a "
+                      "robot she would fall back to her own on-device chat."), detail
+    if isinstance(error, chat_seam.ModelCallBudgetExceeded):
+        why = "This supervisor's model-call cap (MOXIE_MODEL_CALL_LIMIT) is used up."
+    elif status in (401, 403):
+        why = (f"The brain's server refused the key (HTTP {status}). Check "
+               f"MOXIE_LLM_API_KEY.")
+    elif status == 404:
+        why = "The brain's server does not know this model (HTTP 404). Check MOXIE_LLM_MODEL."
+    elif status == 429:
+        why = ("The brain's server is rate-limiting this key, or the key may not use this "
+               "model (HTTP 429).")
+    elif status is not None:
+        why = (f"The brain's server {'rejected' if status < 500 else 'failed on'} the "
+               f"request (HTTP {status}).")
+    else:
+        why = f"The brain failed ({type(error).__name__})."
+    return kind, why + " Moxie would have covered it with a stock line.", detail
 
 
 class TryItMixin:

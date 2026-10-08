@@ -127,12 +127,16 @@ class Engines:
         return self.apps[name]
 
 
+def _no_wait(_seconds):
+    return None
+
+
 @pytest.fixture
 def no_backoff_sleep(monkeypatch):
     """Retries still happen (and are counted); only their waits are skipped."""
     real = chat_seam.call_with_backoff
     monkeypatch.setattr(chat_seam, "call_with_backoff",
-                        lambda fn, **kw: real(fn, **dict(kw, sleep=lambda _s: None)))
+                        lambda fn, **kw: real(fn, **dict(kw, sleep=_no_wait)))
 
 
 @pytest.fixture
@@ -142,12 +146,16 @@ def world(tmp_path, monkeypatch):
     monkeypatch.delenv("MOXIE_AUTHOR_TRY_BUDGET", raising=False)
     store = JsonStore(str(tmp_path / "data"))
     content_llm, free_llm = FakeLLM(raw="Sure thing, let's chat!"), FakeLLM(raw=ENVELOPE)
+    # The brains' adaptive pacers slow down for real after a 429; the tests that provoke
+    # one assert what it costs and says, not how long it takes.
     content = ContentApp(load_modules(MODULE),
                          chat_seam.make_openai_chat("http://127.0.0.1:1/v1", "k", "m",
-                                                    client=content_llm),
+                                                    client=content_llm,
+                                                    pacer=chat_seam.Pacer(sleep=_no_wait)),
                          memory=MemoryStore(store), ext_grants=E.DEFAULT_GRANTS
                          | {"memory.write"})
     llm = LLMApp(base_url="http://127.0.0.1:1/v1", api_key="k", model="m", client=free_llm)
+    llm._pacer = chat_seam.Pacer(sleep=_no_wait)
     rt, _ = make_runtime(content, device_id=DEVICE, store=store, module_id="FREE_CHAT",
                          content_id="default")
     engines = Engines({"content": content, "llm": llm, "echo": EchoApp()})
@@ -395,15 +403,41 @@ def test_a_refused_request_names_the_status_and_hides_the_key(world):
     assert out["model_calls"] == 2, "a 401 is not retried: the stream and its fallback"
 
 
+@pytest.mark.parametrize("status, kind, fix", [
+    (403, "brain_refused", "MOXIE_LLM_API_KEY"),
+    (404, "brain_refused", "MOXIE_LLM_MODEL"),
+    (429, "brain_refused", "rate-limiting this key"),
+    (400, "brain_refused", "rejected the request (HTTP 400)"),
+    (503, "brain_error", "failed on the request (HTTP 503)"),
+])
+def test_each_failure_says_what_to_fix(world, no_backoff_sleep, status, kind, fix):
+    upstream = type("UpstreamError", (Exception,), {"status_code": status})
+    world.content_llm.fail = lambda: upstream("nope")
+    out = tryit(world, expect=502, speech="hi")
+    assert out["kind"] == kind and fix in out["error"], out["error"]
+    assert out["detail"]["status"] == status and out["history"] == []
+
+
+def test_the_model_call_cap_is_named_and_the_try_is_not_charged(world, monkeypatch):
+    monkeypatch.setenv("MOXIE_MODEL_CALL_LIMIT", str(max(1, chat_seam.model_calls())))
+    if chat_seam.model_calls() == 0:
+        chat_seam.note_model_call("chat")            # the cap needs one call behind it
+    out = tryit(world, expect=502, speech="hi")
+    assert out["kind"] == "brain_refused" and "MOXIE_MODEL_CALL_LIMIT" in out["error"]
+    assert out["model_calls"] == 0 and world.content_llm.requests == []
+    assert out["budget"]["remaining"] == out["budget"]["per_hour"], "a try that cost no " \
+        "model call was still charged"
+
+
 def test_a_brain_past_the_deadline_is_a_504_and_frees_its_slot(world):
     world.rt.TRY_TIMEOUT_S = 0.2
-    world.content_llm.delay = 1.0
+    world.content_llm.delay = 1.5
     out = tryit(world, expect=504, speech="hello?")
     assert out["kind"] == "timeout" and "0.2 s" in out["error"]
+    assert world.rt._try_inflight == 1, "the late worker must keep its slot until it ends"
     assert world.content_llm.done.wait(5.0)
-    deadline = time.monotonic() + 5.0
-    while world.rt._try_inflight and time.monotonic() < deadline:
-        time.sleep(0.02)
+    for worker in [t for t in threading.enumerate() if t.name == "tryit"]:
+        worker.join(5.0)
     assert world.rt._try_inflight == 0, "a finished worker kept its slot"
 
 
