@@ -93,7 +93,7 @@ class Stub:
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-                req = {"path": self.path,
+                req = {"method": self.command, "path": self.path,
                        "headers": {k.lower(): v for k, v in self.headers.items()},
                        "json": json.loads(raw or b"{}")}
                 stub.requests.append(req)
@@ -105,6 +105,9 @@ class Stub:
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+
+            # urllib follows a 302 on a POST as a GET, header and all: record that too.
+            do_GET = do_POST
 
             def log_message(self, *args):
                 pass
@@ -331,8 +334,9 @@ def test_a_redirect_is_never_followed_with_the_key(
         gateway.replies.append((302, {"Location": elsewhere.base + "/audio/speech"}, b""))
         code, said = run("--engine", "gateway", "--phrases", phrases(tmp_path),
                          "--out", tmp_path / "audio")
+        assert elsewhere.requests == [], "the Authorization header followed a redirect: " + \
+            repr([(r["method"], "authorization" in r["headers"]) for r in elsewhere.requests])
         assert code != 0 and "HTTP 302" in said
-        assert elsewhere.requests == [], "the Authorization header followed a redirect"
     finally:
         elsewhere.close()
 
