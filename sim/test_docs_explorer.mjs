@@ -250,9 +250,11 @@ try {
    * the same Markdown yields through the page's own `marked` (parsed inert, so nothing loads).
    * Every relative href is resolved against the doc's REPO path, the way GitHub resolves it,
    * and must arrive: a bundled doc routes to exactly that doc (and heading); anything else
-   * goes to GitHub at that same path, or, for the few repo paths that ARE pages of this site
-   * (`sim/web/**`, the site root; the simulator's README), to that page. An in-page
-   * "#heading" keeps its doc in the URL. Never a same-origin path the site does not serve. */
+   * goes to GitHub at that same path, except that a prose link to one of the few repo paths
+   * that ARE pages of this site (`sim/web/**`, the site root; the simulator's README) opens
+   * that page. A link whose whole text is a code span names the FILE, so it goes to GitHub.
+   * An in-page "#heading" keeps its doc in the URL. Never a same-origin path the site does
+   * not serve. */
   const idx = JSON.parse(readFileSync(join(web, "docs-index.json"), "utf8"));
   const docPaths = new Set(idx.files.map((f) => f.path));
   const repoOf = (p) => (p.startsWith("_root/") ? p.slice(6) : "docs/" + p);
@@ -309,7 +311,10 @@ try {
       });
       const md = await (await fetch("docs-bundle/" + encodeURI(p))).text();
       const inert = new DOMParser().parseFromString(marked.parse(md), "text/html");
-      return { links, original: [...inert.querySelectorAll("a[href]")].map((a) => a.getAttribute("href")),
+      /* `code`: the link's whole text is one code span (`[`sim/`](sim/README.md)`). */
+      return { links, original: [...inert.querySelectorAll("a[href]")].map((a) => ({ href: a.getAttribute("href"),
+                 code: a.childElementCount === 1 && a.firstElementChild.tagName === "CODE" &&
+                       a.textContent.trim() === a.firstElementChild.textContent.trim() })),
                src: document.getElementById("src").href };
     }, f.path);
     swept++;
@@ -318,7 +323,7 @@ try {
       wrong.push(`${f.path}: ${got.original.length} links in its Markdown, ${got.links.length} rendered`);
       continue;
     }
-    got.original.forEach((orig, i) => {
+    got.original.forEach(({ href: orig, code }, i) => {
       const r = got.links[i], bad = (why) => wrong.push(`${f.path} [${r.text}](${orig}) -> ${r.attr}: ${why}`);
       pairs++;
       if (/^(https?:|mailto:)/i.test(orig)) { if (r.attr !== orig) bad("an absolute link was rewritten"); return; }
@@ -334,13 +339,12 @@ try {
         .replace(/^\/+/, "").replace(/\/+$/, "");
       const doc = bundleOf(repo);
       if (doc) { if (r.href !== norm(`#${doc}${hash}`)) bad(`should open ${doc}${hash} here`); return; }
-      const github = `${REPO}/${dir ? "tree" : "blob"}/main/${repo}${hash}`, site = sitePath(repo, dir);
+      const github = `${REPO}/${dir ? "tree" : "blob"}/main/${repo}${hash}`, site = code ? null : sitePath(repo, dir);
       const u = new URL(r.href);
-      if (r.href === norm(github)) return;
-      if (site && u.origin === base && u.pathname === site && served(u.pathname)) return;
+      if (site ? u.origin === base && u.pathname === site && served(u.pathname) : r.href === norm(github)) return;
       bad(u.origin === base && !served(u.pathname)
         ? `lands on ${u.pathname}, which this site does not serve (Pages answers with the hub)`
-        : `should open ${github}${site ? ` or this site's ${site}` : ""}`);
+        : `should open ${site ? `this site's ${site}` : github}${code && sitePath(repo, dir) ? " (its text is a code span: it names the file)" : ""}`);
     });
     if (f.mermaid) {      // let this doc's diagrams finish, so two docs' renders never overlap
       await page.waitForFunction((n) => {
@@ -360,7 +364,9 @@ try {
 
   /* 11) The instances the plan named, by their words. "simulator" in the revival guide OPENS
    * /sim: the click is followed to the request it makes (answered with a stub by the
-   * interceptor above, so the sim never loads). */
+   * interceptor above, so the sim never loads). That stub answers ANY navigation away from
+   * /docs.html, so first: nothing before this check went anywhere (unstubbed, it 404'd). */
+  ok(left.length === 0, `nothing before check 11 should leave the explorer (went to ${left.join(", ")})`);
   await page.goto(base + "/docs.html#guides/revive-your-moxie.md", { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => /Revive your Moxie/.test((document.querySelector("article h1") || {}).textContent || ""),
                              { timeout: 8000 }).catch(() => {});

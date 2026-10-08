@@ -13,9 +13,12 @@
  *      request that fetched it was the preload (not the parser finding the <img> late);
  *   3. one copy of the hero crosses the wire: the PNG is a fallback, never a second download;
  *   4. a browser without AVIF, which skips the AVIF-typed preload and <source>, paints the
- *      WebP, one copy, and still fits BUDGET (so the WebP cannot quietly grow past it).
+ *      WebP, one copy, and still fits BUDGET (so the WebP cannot quietly grow past it). It
+ *      skips the preload only because of its `type`: untyped, it would fetch the AVIF it
+ *      cannot show and then the WebP, and 4 fails on both counts.
  * TEETH: the same load with the old hero rebuilt from the shipped markup (no preload, no
- * <source>) must fail 1-3, so none of them can pass by measuring nothing.
+ * <source>) must fail 1 and 2, so neither can pass by measuring nothing. 3 has no tooth there
+ * (the old hub fetched its one PNG once); it counts the resource entries the teeth read for 2.
  *
  *   node sim/test_hub_weight.mjs
  */
@@ -48,6 +51,7 @@ const SHIPPED = readFileSync(join(web, "index.html"), "utf8");
 /* The old hub, derived from the shipped file rather than kept as a copy: drop the preload
  * and every <source>, which leaves the <img> and its PNG exactly as they were. */
 const PRELOAD = /[ \t]*<link rel="preload" as="image"[^>]*>\n/g;
+const AVIF_PRELOAD = /[ \t]*<link rel="preload" as="image"[^>]*\btype="image\/avif"[^>]*>\n/g;
 const SOURCE = /[ \t]*<source [^>]*>\n/g;
 const AVIF_SOURCE = /[ \t]*<source type="image\/avif"[^>]*>\n/g;
 const hasShape = (SHIPPED.match(PRELOAD) || []).length === 1 && (SHIPPED.match(SOURCE) || []).length >= 1 &&
@@ -56,9 +60,10 @@ ok(hasShape, "sim/web/index.html has no `<link rel=\"preload\" as=\"image\">` li
              "`<source type=\"image/avif\">` line for the hero — the preload or the light formats are " +
              "gone, or the markup was reshaped and this suite's teeth need updating");
 const OLD_HUB = SHIPPED.replace(PRELOAD, "").replace(SOURCE, "");
-/* What a browser without AVIF is served, in effect: it skips the preload (its `type`) and the
- * AVIF <source>, so the <picture> hands it the WebP. */
-const NO_AVIF_HUB = SHIPPED.replace(PRELOAD, "").replace(AVIF_SOURCE, "");
+/* What a browser without AVIF is served, in effect: it skips a preload typed `image/avif` (one
+ * with no type it fetches, format unseen) and the AVIF <source>, so the <picture> hands it the
+ * WebP. */
+const NO_AVIF_HUB = SHIPPED.replace(AVIF_PRELOAD, "").replace(AVIF_SOURCE, "");
 const VARIANTS = { old: OLD_HUB, noavif: NO_AVIF_HUB };
 
 const server = http.createServer((req, res) => {
