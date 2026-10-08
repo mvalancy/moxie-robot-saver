@@ -1,6 +1,6 @@
 # Production hardening: a supervisor that stays connected, and a store two processes can share
 
-**Status:** shipped (P0 + P1). Implemented in `mqtt/moxie_sdk/store.py`, `mqtt/supervisor/moxie_runtime/{connection,lifecycle}.py`, `mqtt/moxie_sdk/roster.py`, `mqtt/moxie_sdk/conn_telemetry.py` and `sim/tools/soak.py`. Tested by `sim/tests/test_store_concurrency.py`, `test_connection_resilience.py`, `test_connect_readiness.py`, `test_roster.py`, `test_conn_telemetry.py`, `test_soak_accounting.py` and the deep-tier soak `sim/run_soak.sh`. P2 (a SQLite backend) is deliberately unscheduled.
+**Status:** shipped (P0 + P1, plus per-robot settings that survive a restart). Implemented in `mqtt/moxie_sdk/store.py`, `mqtt/supervisor/moxie_runtime/{connection,lifecycle,fleet}.py`, `mqtt/moxie_sdk/roster.py`, `mqtt/moxie_sdk/conn_telemetry.py` and `sim/tools/soak.py`. Tested by `sim/tests/test_store_concurrency.py`, `test_connection_resilience.py`, `test_connect_readiness.py`, `test_roster.py`, `test_conn_telemetry.py`, `test_soak_accounting.py`, `test_fleet_config.py` and the deep-tier soak `sim/run_soak.sh`. P2 (a SQLite backend) is deliberately unscheduled.
 
 This work fixed two problems:
 
@@ -34,6 +34,7 @@ still open.
 | Connection resilience C1–C6: async first connect, a 1→60 s reconnect ladder, keepalive 30, the CONNACK check, the `_publish()` helper, registering a device on its first event | [`connection.py`](../../../mqtt/supervisor/moxie_runtime/connection.py), [`lifecycle.py`](../../../mqtt/supervisor/moxie_runtime/lifecycle.py), [`constants.py`](../../../mqtt/supervisor/moxie_runtime/constants.py) | §4 |
 | Readiness that means *subscribed*: `on_subscribe` prints `[runtime] subscriptions acknowledged by the broker`, and `/status` exposes `broker_subscribed` | `connection.py` | §4.4 |
 | Durable robot roster (`fleet/roster.json`), re-pushed config on every connect | [`roster.py`](../../../mqtt/moxie_sdk/roster.py) | §8 P1 |
+| Durable per-robot settings (`robots/<id>/config.json`), read back when the supervisor starts, so the re-push after a restart carries each robot's own settings | [`fleet.py`](../../../mqtt/supervisor/moxie_runtime/fleet.py) | §8 |
 | Connection telemetry stream (`fleet/conn_events.json`), served on `GET /conn` and as `/status.connection_health` | [`conn_telemetry.py`](../../../mqtt/moxie_sdk/conn_telemetry.py) | §8 P1 |
 | Clean shutdown on SIGTERM/SIGINT (`request_stop()` → `disconnect()`) | `lifecycle.py` | §8 P1 |
 | The soak: `smoke` / `quick` / `week` profiles, twelve graded bars | [`run_soak.sh`](../../../sim/run_soak.sh), [`soak.py`](../../../sim/tools/soak.py) | §5 |
@@ -170,7 +171,7 @@ error for an `event_id` it has abandoned.
 |---|---|---|
 | Supervisor drops, broker stays up | nothing; its turn goes unanswered and it re-prompts | C1 reconnects, the roster resume and C6 re-push config, C4 and C5 record the gap |
 | Broker restarts | its own session drops; whether and how fast it reconnects is **unverified (A5)** | as above, and every robot is re-onboarded on its next packet (§8 P1) |
-| Supervisor restarts | nothing, if the broker stayed up | the roster resume re-pushes config within seconds of CONNACK |
+| Supervisor restarts | nothing, if the broker stayed up | the roster resume re-pushes config within seconds of CONNACK, with each robot's saved settings (§8) |
 | Broker absent at boot | nothing | C1 turns this into a retry loop instead of a dead process |
 
 **Readiness.** `[runtime] broker connected` means only that CONNACK said yes. `subscribe()` merely
@@ -268,6 +269,7 @@ idle box and a few under load. That is why the harness reports a *rate* and asse
 | S6 | A supervisor started with no broker retries instead of dying | same |
 | S7 (a–c) | An event from an unregistered but permitted device registers it; a stranger is still refused | same |
 | — | Roster resume, the ghost fix, per-run `MOXIE_DATA_DIR` in every SIL script | `test_roster.py` |
+| — | Per-robot settings (volume, bedtime, brain, `NO_DATA`, a cleared value) survive a restart; a damaged record, a value the whitelist now refuses and a pinned-away brain are dropped at load and never pushed; a refused save is reported | `test_fleet_config.py` |
 | — | The telemetry stream, its cap and summary | `test_conn_telemetry.py` |
 | — | The soak's own A1/A2 accounting | `test_soak_accounting.py` |
 | K1 | `run_soak.sh` meets every §5.3 bar | deep tier (`sim/ci/ci-deep.yml`) |
@@ -282,6 +284,16 @@ idle box and a few under load. That is why the harness reports a *rate* and asse
   writer's scratch file would be a worse bug.
 - **No hardware.** A4–A7, A17 and A20 remain open (§9).
 - **P2 is not scheduled** (§8).
+- **Saved per-robot settings are read once, at start.** Another process's edit to
+  `robots/<id>/config.json` takes effect at the next restart, not on the next push (the fleet layer,
+  by contrast, is re-read on every push).
+- **Two owner questions are open** about the per-robot record and a factory reset. Neither is built:
+  1. Should a factory reset clear the robot's saved settings and its roster entry? That is robot-level
+     state, not the child's data, which the reset keeps
+     ([robot lifecycle](../../features/robot-lifecycle.md#built-here-unpair-and-factory-reset)).
+  2. Should the reset sheet's optional erase gain safety-journal and transcript checkboxes? That would
+     close the lifecycle page's "no erase control" gap by the parent's choice rather than
+     automatically.
 
 ## 8. Phases and risks
 
@@ -313,6 +325,32 @@ idle box and a few under load. That is why the harness reports a *rate* and asse
   labelled, not deleted. `run_broker_outage.sh` phase 5c asserts exactly that field, fatally.
 - **Hermetic SIL scripts.** Each SIL script now uses a per-run `MOXIE_DATA_DIR`, so one run's throwaway
   ids never reach the next run's roster resume.
+
+**Per-robot settings survive a restart** (shipped after P1). The per-robot config layer (volume,
+brightness, bedtime, wake settings, timezone, look, scheduled activities, brain pick and the
+data-sharing `logging_policy`) used to live only in the supervisor's memory. A restart dropped it, and
+the roster resume then re-pushed the fleet-only document: the robot's settings went back to the house
+rules or the defaults, and a per-robot `NO_DATA` lapsed, so the server began keeping that child's
+transcript, long-term memory, activity record and safety-journal excerpts again. Now:
+
+- **Written on every edit.** `update_config` saves the robot's layer to `robots/<id>/config.json`
+  through the store's locked, atomic write, before the `NO_DATA` purge and before the push. A write the
+  store refuses still applies to the running supervisor and puts a "NOT saved" line in the activity
+  feed.
+- **Read once, at construction**, before the transcript sweep in `_load_memory()`. The brain picker,
+  the safety journal, the status snapshot and the console's `GET /config` read the per-robot dict
+  directly, so a lazy read would leave them blind until something else touched the config.
+- **Only what the console could have set.** Each stored key is re-checked on its own by
+  `sanitize_config_overrides`, the `POST /config` whitelist. A key it now refuses, or a brain pick the
+  current `MOXIE_APP` pin refuses, is dropped at load with one log line and never pushed. A damaged or
+  non-object record reads as no settings, with one log line. Loading writes nothing: the next save for
+  that robot rewrites its record.
+- **Not the telehealth mode.** `moxie_mode` is not in the whitelist, so "Be Moxie" is not kept. Its
+  session lives in RAM, and a restart still hands the robot back to its own brain.
+- **Not cleared by an unpair or a factory reset**, as before (§7 records the owner questions).
+
+Whether a physical Moxie applies the re-pushed settings is the open A6/A7 question below, not
+something this change can show.
 
 **P2** (unscheduled, size L): a `MOXIE_STORE=sqlite` backend behind the unchanged API, only if a caller
 needs a transaction or a query (§3.2). It would keep the JSON tree as the export format.
@@ -352,6 +390,7 @@ needs a transaction or a query (§3.2). It would keep the JSON tree as the expor
 | A23 | Our vision/STT subscription latch stays true while the robot holds it | was **false**; fixed in P1 |
 | A24 | A killed writer's `.tmp` gets cleaned up | **false; not fixed** (§7) |
 | A25 | The backoff is safe at any timeout | was **false** (`OverflowError` above about 2.05 s); fixed by the exponent clamp |
+| A26 | A supervisor restart keeps each robot's parent settings | was **false** (memory only; the roster resume re-pushed the fleet-only document); fixed by `robots/<id>/config.json` (§8) |
 
 ---
 📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) ·

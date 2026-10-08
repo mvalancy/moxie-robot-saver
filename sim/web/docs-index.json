@@ -497,7 +497,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening: a supervisor that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 26473,
+   "bytes": 30095,
    "mermaid": 0,
    "headings": [
     "0. The ceiling",
@@ -1064,7 +1064,7 @@
    "path": "features/robot-lifecycle.md",
    "title": "Map 11 — Robot Lifecycle (pairing / unpair / FACTORY RESET / restore / reboot / OTA / state model)",
    "section": "features",
-   "bytes": 29507,
+   "bytes": 29974,
    "mermaid": 0,
    "headings": [
     "Built here: unpair and factory reset",
