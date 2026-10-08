@@ -3,8 +3,11 @@
  * runs, and publishes nothing (mqtt/supervisor/moxie_runtime/tryit.py). The session lives
  * here, in `tryHistory`, and travels with every send. The brain is reached from exactly
  * one place, `trySend`, bound to the Send button and the Enter key — never a timer and
- * never a keystroke in progress — because every send asks the brain once. */
-let tryOpts=null, tryDevice='', tryHistory=[], tryBusy=false, tryPick='';
+ * never a keystroke in progress — because every send asks the brain once.
+ * `trySession` names the session: Start over, a change of who answers and another robot
+ * each begin a new one, and an answer that comes back for an older one is set aside. */
+let tryOpts=null, tryDevice='', tryHistory=[], tryBusy=false, tryPick='', trySession=0;
+const TRY_LATE=' The answer still on its way will be set aside.';
 
 async function refreshTryit(deviceId){
   const card=$('#tryit-card'); if(!card) return;
@@ -15,12 +18,20 @@ async function refreshTryit(deviceId){
   // No supervisor, or a robot this appliance will not serve: there is no brain to try.
   if(!v || !v.ok){ card.classList.add('hidden'); return; }
   card.classList.remove('hidden');
-  if((deviceId||'')!==tryDevice){ tryDevice=deviceId||''; tryReset(); }
+  const fresh=!tryOpts || (deviceId||'')!==tryDevice;
+  if((deviceId||'')!==tryDevice){
+    const late=tryBusy;
+    tryDevice=deviceId||''; tryReset();
+    const st=$('#try-status'); if(st && late) st.textContent='New session: another robot.'+TRY_LATE;
+  }
   tryOpts=v;
-  renderTryOptions(v);
+  renderTryOptions(v, fresh);
 }
 
-function renderTryOptions(v){
+//: `fresh`: the first fill, or another robot. Only then may the robot's current activity
+//: fill an empty pick; any other refresh (a save, a permit) keeps what the parent picked,
+//: "no particular activity" included.
+function renderTryOptions(v, fresh){
   const sel=$('#try-brain'), mod=$('#try-module'), name=$('#try-name');
   if(!sel||!mod) return;
   const own=v.brain||{}, keep=sel.value, mkeep=mod.value;
@@ -32,11 +43,11 @@ function renderTryOptions(v){
   mod.innerHTML='<option value="">— no particular activity —</option>'
     + (v.modules||[]).map(m=>`<option value="${escapeHtml(m.key)}">`
         + `${escapeHtml(m.name)} (${escapeHtml(m.key)})</option>`).join('');
-  if(Array.from(mod.options).some(o=>o.value===mkeep) && mkeep) mod.value=mkeep;
+  if(Array.from(mod.options).some(o=>o.value===mkeep) && (mkeep || !fresh)) mod.value=mkeep;
   else if(v.current_module) mod.value=v.current_module;
   if(name) name.placeholder=(v.child||{}).nickname||'';
-  tryPick=trySelection();
-  renderTryNote();
+  // A refresh that could not keep a pick (that brain or activity is gone) is a change too.
+  tryChanged();
 }
 
 function tryBrainId(){
@@ -63,20 +74,24 @@ function renderTryNote(){
 }
 
 function tryReset(){
+  trySession++;              // an answer still on its way now answers an older session
   tryHistory=[];
   const log=$('#try-log'); if(log) log.innerHTML='';
   const st=$('#try-status'); if(st) st.textContent='';
 }
 
-//: A different brain, activity or name is a different conversation: start a new one.
+//: A different brain, activity or name is a different conversation: start a new one,
+//: even on the first line, when the only trace of the old one is an answer on its way.
 function tryChanged(){
   renderTryNote();
   const now=trySelection();
   if(now===tryPick) return;
   tryPick=now;
-  if(tryHistory.length){
+  if(tryHistory.length || tryBusy){
+    const late=tryBusy;
     tryReset();
-    const st=$('#try-status'); if(st) st.textContent='New session: who answers changed.';
+    const st=$('#try-status');
+    if(st) st.textContent='New session: who answers changed.'+(late?TRY_LATE:'');
   }
 }
 
@@ -169,21 +184,29 @@ async function trySend(){
               brain:($('#try-brain')||{}).value||'',
               module:(mod&&!mod.disabled)?mod.value:'',
               nickname:(($('#try-name')||{}).value||'').trim()};
+  const session=trySession;
   tryBusy=true; if(btn) btn.disabled=true;
   if(st) st.textContent='Asking Moxie’s brain…';
   let r;
   try{ r=await postJson('/local/tryit', body); }
   catch(e){ r={ok:false, kind:'unreachable', error:'The console could not reach the supervisor.'}; }
   tryBusy=false; if(btn) btn.disabled=false;
+  if(r && r.budget && r.budget.per_hour && tryOpts){ tryOpts.budget=r.budget; renderTryNote(); }
+  // Started over, or who answers changed, while this was on its way: it answers a session
+  // that is gone, so it is neither shown nor carried into the new one.
+  if(session!==trySession) return;
   renderTryTurn(speech, r);
   // Only a real answer moves the session on; a failed line stays in the box to resend.
-  if(r && r.ok){ tryHistory=r.history||[]; box.value=''; }
+  // A line typed while she was answering is the parent's next one: it stays.
+  if(r && r.ok){ tryHistory=r.history||[]; if(box.value.trim()===speech) box.value=''; }
   if(st) st.textContent=tryReceipt(r);
-  if(r && r.budget && r.budget.per_hour && tryOpts){ tryOpts.budget=r.budget; renderTryNote(); }
 }
 
 { const b=$('#btn-try-send'); if(b) b.onclick=trySend; }
-{ const t=$('#try-text'); if(t) t.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); trySend(); } }; }
+// The Enter that commits an IME composition picks characters; it is not a send.
+{ const t=$('#try-text'); if(t) t.onkeydown=e=>{
+    if(e.key==='Enter' && !e.isComposing && e.keyCode!==229){ e.preventDefault(); trySend(); } }; }
 { const b=$('#btn-try-reset'); if(b) b.onclick=()=>{
-    tryReset(); const st=$('#try-status'); if(st) st.textContent='Started over.'; }; }
+    const late=tryBusy;
+    tryReset(); const st=$('#try-status'); if(st) st.textContent='Started over.'+(late?TRY_LATE:''); }; }
 ['try-brain','try-module','try-name'].forEach(id=>{ const e=$('#'+id); if(e) e.onchange=tryChanged; });

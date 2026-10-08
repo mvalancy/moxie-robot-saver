@@ -3,21 +3,31 @@
  * about WHEN it calls and WHAT it carries, read off intercepted requests and the DOM:
  *
  *   1 it shows with NO robot connected (the point of the card), labelled a preview
- *   2 typing alone never calls the brain; a real click (and Enter) calls it exactly once
+ *   2 typing alone never calls the brain, nor does the Enter that commits an IME
+ *     composition; a real click (and Enter) calls it exactly once
  *   3 each send carries the session the previous answer returned (history threading)
  *   4 a reply renders her words, her face and moves read from the markup, and her actions
  *   5 a refused brain renders its sentence and "she would have said", keeps the line in the
  *     box, and does NOT advance the session
  *   6 "Start over" and a change of who answers start an empty session; a brain that does
  *     not read activities disables the activity picker
+ *   7 the same holds while an answer is still on its way: Start over, another brain,
+ *     another activity (on the very first line) or another robot wins, and the late answer
+ *     is neither shown nor carried — the next send carries an empty session
+ *   8 a refresh (a save, a permit) keeps the parent's activity pick and the session, and a
+ *     line typed while she was answering stays in the box
  *
  * No FastAPI and no supervisor: assets come from the harness's static server, and every
  * `/local/*` call is answered at the browser with payloads built by the REAL console views
  * (`server/moxie_server/fleet/tryit.py`, dependency-free) in a python3 subprocess, so the
- * card cannot pass against a shape the route stopped sending. The supervisor side is
- * `sim/tests/test_console_tryit.py`.
- * TEETH: two mutated copies of js/tryit.js must redden the sweep — one that sends on every
- * keystroke (a debounced "try as you type"), one that forgets to carry the session.
+ * card cannot pass against a shape the route stopped sending. An answer can be HELD at the
+ * interceptor until the sweep releases it, which is how 7 puts a click between a send and
+ * its answer without a timing guess. The supervisor side is `sim/tests/test_console_tryit.py`.
+ * TEETH: mutated copies of js/tryit.js must each redden the sweep — one that sends on every
+ * keystroke (a debounced "try as you type"), one that forgets to carry the session, one
+ * that lets a late answer back in, one that forgets a first line on its way, one that sends
+ * on an IME Enter, one whose refresh moves the activity, and one that clears a line typed
+ * meanwhile.
  *
  *   node sim/test_console_tryit.mjs
  */
@@ -108,7 +118,9 @@ refused = {"ok": False, "kind": "brain_refused", "preview": True, "published": F
            "history": t2["history"], "model_calls": 2, "elapsed_ms": 300,
            "budget": {"per_hour": 40, "remaining": 37}}
 print(json.dumps({
-    "opts": m.normalize_tryit_options(opts), "t1": m.normalize_tryit(t1),
+    "opts": m.normalize_tryit_options(opts),
+    "opts_bedtime": m.normalize_tryit_options(dict(opts, current_module="BEDTIME/default")),
+    "t1": m.normalize_tryit(t1),
     "t2": m.normalize_tryit(t2), "refused": m.normalize_tryit(refused),
     "t3": m.normalize_tryit(turn("again", "Again!", [], [chunk(0, "Again!", True, [], [])])),
     "fleet_none": m.normalize_fleet({"ok": True, "app": "moxie-supervisor", "robots": []}),
@@ -126,6 +138,8 @@ ok(FIX.t1.ok === true && FIX.t1.reply.chunks.length === 2 && FIX.t1.history.leng
    "fixture: the real normalize_tryit produced a two-piece answer");
 ok(FIX.refused.ok === false && FIX.refused.kind === "brain_refused",
    "fixture: the real normalize_tryit kept the refusal's kind");
+ok(FIX.opts_bedtime.current_module === "BEDTIME/default",
+   "fixture: the real normalize_tryit_options kept the robot's current activity");
 
 const STATE = { robots: [] };
 const site = await serveStatic(STATIC, { extIsHtml: false });
@@ -144,9 +158,12 @@ async function clickReal(page, sel) {
 }
 
 /** The console with no robot, the Moxie tab open, and the 💬 card answered from `queue`.
- *  A `viewport` is set BEFORE navigation: changing `isMobile` later reloads the page. */
+ *  A `viewport` is set BEFORE navigation: changing `isMobile` later reloads the page.
+ *  `ctl.opts` is what `GET /local/tryit` answers; while `ctl.hold` is a promise, a try's
+ *  answer waits at the interceptor until it settles (`sendHeld`). */
 async function open(mutate, viewport = null) {
   const posts = [];
+  const ctl = { opts: FIX.opts, hold: null };
   const queue = [FIX.t1, FIX.t2, FIX.refused, FIX.t3, FIX.t3, FIX.t3];
   const page = await browser.newPage();
   if (viewport) await page.setViewport(viewport);
@@ -165,13 +182,16 @@ async function open(mutate, viewport = null) {
     if (p === "/local/quicklogin") return J({ token: "t-fixture", email: "parent@home.lan" });
     if (p === "/local/state") return J(STATE);
     if (p === "/local/fleet") return J(FIX.fleet_none);
-    if (p === "/local/tryit" && r.method() === "GET") return J(FIX.opts);
+    if (p === "/local/tryit" && r.method() === "GET") return J(ctl.opts);
     if (p === "/local/tryit" && r.method() === "POST") {
       posts.push(JSON.parse(r.postData() || "{}"));
       const next = queue.shift() || FIX.t3;
       /* A refusal travels as its real status; the card reads the body either way. */
-      if (!next.ok) { aborted.refused++; return J(next, 502); }
-      return J(next);
+      const answer = () => {
+        if (!next.ok) { aborted.refused++; return J(next, 502); }
+        return J(next);
+      };
+      return ctl.hold ? ctl.hold.then(answer) : answer();
     }
     /* Every other card answers {ok:false}: honest, inert, and outside this suite's claims. */
     if (p.startsWith("/local/") || p.startsWith("/api/"))
@@ -191,7 +211,7 @@ async function open(mutate, viewport = null) {
   await page.waitForFunction(
     "!document.querySelector('#tryit-card').classList.contains('hidden') && " +
     "document.querySelector('#try-brain').options.length > 0", { timeout: 10000 });
-  return { page, posts, errs, aborted };
+  return { page, posts, errs, aborted, ctl };
 }
 
 const readCard = (page) => page.evaluate(() => {
@@ -204,23 +224,52 @@ const readCard = (page) => page.evaluate(() => {
     moduleDisabled: q("#try-module").disabled,
     brains: [...q("#try-brain").options].map((o) => o.value),
     modules: [...q("#try-module").options].map((o) => o.value),
+    brain: q("#try-brain").value,
+    module: q("#try-module").value,
   };
 });
 
+const shownTurns = (page) =>
+  page.evaluate(() => document.querySelectorAll("#try-log .try-turn").length);
+
 /** Type `text` into the box and send it with a real click; wait for the turn to render. */
 async function send(page, posts, text, { enter = false } = {}) {
-  const before = posts.length;
+  const before = posts.length, shown = await shownTurns(page);
   await page.click("#try-text", { clickCount: 3 });
   await page.keyboard.type(text);
   if (enter) await page.keyboard.press("Enter");
   else await clickReal(page, "#btn-try-send");
   await page.waitForFunction((n) => document.querySelectorAll("#try-log .try-turn").length >= n,
-                             { timeout: 8000 }, before + 1).catch(() => {});
+                             { timeout: 8000 }, shown + 1).catch(() => {});
   return posts.length - before;
 }
 
+/** Send `text` with its answer HELD at the interceptor. Resolves once the request has left
+ *  the page and the card shows it in flight (Send disabled), so the caller's next click
+ *  lands mid-try. Returns `land()`: let the answer through and wait until the card has
+ *  taken it (Send enabled again). Never throws: a card that misbehaves fails the checks. */
+async function sendHeld(page, posts, ctl, text) {
+  let release;
+  ctl.hold = new Promise((resolve) => { release = resolve; });
+  const before = posts.length;
+  await page.click("#try-text", { clickCount: 3 });
+  await page.keyboard.type(text);
+  await clickReal(page, "#btn-try-send");
+  await page.waitForFunction(() => document.querySelector("#btn-try-send").disabled,
+                             { timeout: 8000 }).catch(() => {});
+  for (let i = 0; i < 400 && posts.length === before; i++) await sleep(10);
+  return async () => {
+    ctl.hold = null;
+    release();
+    await page.waitForFunction(() => !document.querySelector("#btn-try-send").disabled,
+                               { timeout: 8000 }).catch(() => {});
+  };
+}
+
+const lastPost = (posts) => posts[posts.length - 1] || {};
+
 async function sweep(C, mutate) {
-  const { page, posts, errs, aborted } = await open(mutate);
+  const { page, posts, errs, aborted, ctl } = await open(mutate);
   try {
     /* 1 — no robot, and still a card; labelled a preview */
     let card = await readCard(page);
@@ -232,9 +281,16 @@ async function sweep(C, mutate) {
          "1: the activities are the installed conversations");
     C.eq(card.moduleDisabled, false, "1: the content brain reads activities");
 
-    /* 2 — typing alone never reaches the brain */
+    /* 2 — typing alone never reaches the brain, nor does the Enter that commits an IME
+     *     composition (a send starts in the keydown handler itself: Send goes disabled) */
     await page.click("#try-text");
     await page.keyboard.type("can we draw?");
+    const composing = await page.$eval("#try-text", (el) => {
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true,
+                                                      bubbles: true, cancelable: true }));
+      return document.querySelector("#btn-try-send").disabled;
+    });
+    C.eq(composing, false, "2: the Enter that commits an IME composition must not send");
     await sleep(900);                         // longer than any debounce worth having
     C.eq(posts.length, 0, "2: typing alone must never call the brain");
 
@@ -290,7 +346,81 @@ async function sweep(C, mutate) {
     C.ok(last.brain === "llm" && last.module === "" && JSON.stringify(last.history) === "[]",
          "6: it names the picked brain, no activity, and an empty session");
 
-    C.eq(posts.length, 6, "every call came from a click or Enter: six sends, six calls");
+    /* 7 — while an answer is still on its way, a new session wins: the late answer is
+     *     neither shown nor carried, and the next send carries an empty session */
+    // (a) Start over, with a session behind it (the "hi" exchange of 6)
+    let land = await sendHeld(page, posts, ctl, "one more");
+    C.eq((lastPost(posts).history || []).length, 2, "7a: the held send carried a session");
+    await clickReal(page, "#btn-try-reset");
+    await land();
+    card = await readCard(page);
+    C.eq(card.turns.length, 0, "7a: an answer that lands after Start over is not shown");
+    C.ok(/^Started over\./.test(card.status) && /set aside/.test(card.status),
+         `7a: the card says the answer on its way is set aside — "${card.status}"`);
+    C.eq(await send(page, posts, "fresh start"), 1, "7a: the next send is one call");
+    C.eq(JSON.stringify(lastPost(posts).history), "[]",
+         "7a: after Start over mid-try, the next send carries an empty session");
+
+    // (b) another brain, with a session behind it ("fresh start")
+    land = await sendHeld(page, posts, ctl, "and another");
+    C.eq((lastPost(posts).history || []).length, 2, "7b: the held send carried a session");
+    await page.select("#try-brain", "");
+    await land();
+    card = await readCard(page);
+    C.eq(card.turns.length, 0, "7b: an answer for the old brain is not shown");
+    C.ok(/who answers changed/.test(card.status) && /set aside/.test(card.status),
+         `7b: the card says the answer on its way is set aside — "${card.status}"`);
+    C.eq(await send(page, posts, "hello again"), 1, "7b: the next send is one call");
+    C.ok(lastPost(posts).brain === "" && JSON.stringify(lastPost(posts).history) === "[]",
+         "7b: the next send names the new brain and carries an empty session");
+
+    // (c) another activity on the very FIRST line: the answer on its way is all there is
+    await clickReal(page, "#btn-try-reset");
+    land = await sendHeld(page, posts, ctl, "first line");
+    C.eq(JSON.stringify(lastPost(posts).history), "[]", "7c: the held send opened a session");
+    await page.select("#try-module", "BEDTIME/default");
+    await land();
+    C.eq((await readCard(page)).turns.length, 0, "7c: an answer for the old activity is not shown");
+    C.eq(await send(page, posts, "bedtime?"), 1, "7c: the next send is one call");
+    C.ok(lastPost(posts).module === "BEDTIME/default"
+         && JSON.stringify(lastPost(posts).history) === "[]",
+         "7c: the next send names the new activity and carries an empty session");
+
+    // (d) another robot (a refresh with a new device id), with a session behind it
+    land = await sendHeld(page, posts, ctl, "robot time");
+    await page.evaluate(() => refreshTryit("d_robot"));
+    await land();
+    card = await readCard(page);
+    C.eq(card.turns.length, 0, "7d: an answer for the old robot is not shown");
+    C.ok(/another robot/.test(card.status) && /set aside/.test(card.status),
+         `7d: the card says the answer on its way is set aside — "${card.status}"`);
+    C.eq(await send(page, posts, "are you my robot?"), 1, "7d: the next send is one call");
+    C.ok(lastPost(posts).device_id === "d_robot"
+         && JSON.stringify(lastPost(posts).history) === "[]",
+         "7d: the next send names the new robot and carries an empty session");
+    await page.evaluate(() => refreshTryit(""));      // back to no robot: a new session
+
+    /* 8 — a refresh keeps the parent's pick and the session; a line typed meanwhile stays */
+    await page.select("#try-module", "");             // the parent's pick: no activity
+    land = await sendHeld(page, posts, ctl, "a session");
+    await page.click("#try-text", { clickCount: 3 });
+    await page.keyboard.type("my next line");
+    await land();
+    card = await readCard(page);
+    C.eq(card.turns.length, 1, "8: an answer for this session is shown");
+    C.eq(card.box, "my next line", "8: a line typed while she was answering stays in the box");
+    C.eq(card.module, "", "8: the parent's pick is no particular activity");
+    ctl.opts = FIX.opts_bedtime;                       // the robot moved on to Bedtime
+    await page.evaluate(() => refreshTryit(""));
+    card = await readCard(page);
+    C.eq(card.module, "", "8: a refresh must not move the parent's activity pick");
+    C.eq(card.turns.length, 1, "8: a refresh that changes nothing keeps the session");
+    C.eq(await send(page, posts, ""), 1, "8: sending the typed line is one call");
+    C.ok(lastPost(posts).speech === "my next line" && lastPost(posts).module === ""
+         && (lastPost(posts).history || []).length === 2,
+         "8: it carries the kept line, the parent's pick and the session");
+
+    C.eq(posts.length, 16, "every call came from a click or Enter: sixteen sends, sixteen calls");
     const left = notable(errs, aborted);
     C.eq(left.length, 0, `the page raised no unexplained errors — ${left.slice(0, 3).join(" | ")}`);
   } finally {
@@ -325,11 +455,24 @@ const TEETH = {
     "{ const t=$('#try-text'); if(t) t.onkeydown=",
     "{ const t=$('#try-text'); if(t) t.oninput=()=>trySend(); if(t) t.onkeydown="),
   "forgets the session": (src) => src.replace("tryHistory=r.history||[];", "void 0;"),
+  "lets a late answer back in": (src) => src.replace("if(session!==trySession) return;", ""),
+  "forgets a first line on its way": (src) => src.replace(
+    "if(tryHistory.length || tryBusy){", "if(tryHistory.length){"),
+  "sends on an IME Enter": (src) => src.replace(
+    "e.key==='Enter' && !e.isComposing && e.keyCode!==229", "e.key==='Enter'"),
+  "moves the activity on a refresh": (src) => src
+    .replace("some(o=>o.value===mkeep) && (mkeep || !fresh)) mod.value=mkeep;",
+             "some(o=>o.value===mkeep) && mkeep) mod.value=mkeep;")
+    .replace("is a change too.\n  tryChanged();",
+             "is a change too.\n  tryPick=trySelection(); renderTryNote();"),
+  "clears a line typed meanwhile": (src) => src.replace(
+    "if(box.value.trim()===speech) box.value='';", "box.value='';"),
 };
 for (const [name, mutate] of Object.entries(TEETH)) {
   ok(mutate(APPJS) !== APPJS, `teeth: "${name}" must actually change js/tryit.js`);
   const C = makeChecks();
-  await sweep(C, mutate);
+  try { await sweep(C, mutate); }
+  catch (e) { C.fails.push(`the sweep threw: ${e.message}`); }
   ok(C.fails.length > 0, `teeth: a card that ${name} must redden the sweep`);
 }
 await browser.close();
