@@ -267,6 +267,40 @@ def test_wake_unpair_and_factory_reset_work_on_a_claimed_robot(client, superviso
     assert supervisor.permit_posts[posts:] == [REVOKE]
 
 
+def test_the_state_read_is_bounded_shared_and_rides_out_a_busy_supervisor(client,
+                                                                          monkeypatch):
+    """`/local/state` is polled, so its supervisor read has a short timeout (a black-holed
+    supervisor address used to cost every poll 2 s) and one answer serves every call for
+    STATE_TTL_S. The status server answers one request at a time, so a read that fails
+    soon after a good one keeps that answer; one that has failed for longer than
+    STATE_GRACE_S lists nothing. The route's clock is pinned here; no real clock is read."""
+    from moxie_server import supervisor as sv
+    from moxie_server.routes import pairing
+    now, reads, busy, real = [5000.0], [], [False], sv.call
+
+    def call(method, path, data=None, timeout=3, device_id=None):
+        if path == "/permits":
+            reads.append(timeout)
+            if busy[0]:
+                return {"ok": False, "error": sv.UNREACHABLE, "detail": "timed out"}, 503
+        return real(method, path, data, timeout, device_id)
+
+    monkeypatch.setattr(sv, "call", call)
+    monkeypatch.setattr(pairing, "_clock", lambda: now[0])
+    monkeypatch.setattr(pairing, "_state_read", {})
+    auth = quicklogin(client, "bounded@claim.lan")
+    assert _state(client, auth)["unclaimed"] == [DEVICE]
+    assert reads == [pairing.STATE_TIMEOUT_S] and pairing.STATE_TIMEOUT_S <= 0.5
+    now[0] += pairing.STATE_TTL_S / 2
+    assert _state(client, auth)["unclaimed"] == [DEVICE] and len(reads) == 1   # shared
+    busy[0] = True
+    now[0] += pairing.STATE_TTL_S
+    assert _state(client, auth)["unclaimed"] == [DEVICE] and len(reads) == 2   # kept
+    now[0] += pairing.STATE_GRACE_S
+    assert _state(client, auth)["unclaimed"] == [] and len(reads) == 3         # given up
+    assert all(t == pairing.STATE_TIMEOUT_S for t in reads)
+
+
 def test_unclaimed_lists_the_connected_robots_no_account_has_added(client, monkeypatch):
     first, second = quicklogin(client, "a@unclaimed.lan"), quicklogin(client, "b@unclaimed.lan")
     assert _state(client, first)["unclaimed"] == [DEVICE]

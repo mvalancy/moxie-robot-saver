@@ -15,6 +15,8 @@ import json
 import os
 import socket
 import sys
+import threading
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -227,11 +229,11 @@ async def simulate_robot_scan(request: Request):
     return out
 
 
-def _supervisor_devices():
+def _supervisor_devices(timeout: float = 2):
     """What the supervisor's permit view says about robots, or `None` when it cannot be
     asked: `connected` (on the broker now, served or pending), `listed` (that, plus every
     id on the permit list) and `permitted` (served if it connects)."""
-    out, code = supervisor.call("GET", "/permits", timeout=2)
+    out, code = supervisor.call("GET", "/permits", timeout=timeout)
     if code != 200 or not out.get("ok"):
         return None
     def ids(values):
@@ -240,6 +242,36 @@ def _supervisor_devices():
     on_list = ids(p.get("device_id") for p in out.get("permits") or [] if isinstance(p, dict))
     return {"connected": connected, "listed": connected | on_list,
             "permitted": on_list, "open": bool(out.get("allow_unverified_bots"))}
+
+
+#: `/local/state` reads the supervisor's robots on every call, and the web app polls it (the
+#: Wi-Fi tab every 2 s, the Moxie tab while it waits for a robot), so that read is bounded:
+#: a short timeout, and one answer serves every caller for STATE_TTL_S. The supervisor's
+#: status server answers one request at a time, so a long Try it turn can hold it past the
+#: timeout: a read that fails within STATE_GRACE_S of a good answer keeps that answer
+#: instead of reporting the supervisor gone. The claim never uses this; it asks afresh.
+STATE_TIMEOUT_S, STATE_TTL_S, STATE_GRACE_S = 0.5, 1.0, 10.0
+_clock = time.monotonic
+_state_lock = threading.Lock()
+_state_read: dict = {}
+
+
+def _devices_for_state():
+    """`_supervisor_devices()` for `/local/state`: bounded and briefly shared (above)."""
+    with _state_lock:
+        c, now, url = _state_read, _clock(), supervisor.url("/permits")
+        if c.get("url") != url:                  # another supervisor: nothing carries over
+            c.clear()
+            c["url"] = url
+        if "seen" in c and now - c["at"] < STATE_TTL_S:
+            return c["seen"]
+        seen = _supervisor_devices(STATE_TIMEOUT_S)
+        if seen is not None:
+            c["good"], c["good_at"] = seen, now
+        elif "good" in c and now - c["good_at"] < STATE_GRACE_S:
+            seen = c["good"]
+        c["seen"], c["at"] = seen, now
+        return seen
 
 
 def _claim_refusal(status: int, error: str, reason: str, device_id: str, **extra):
@@ -324,7 +356,7 @@ def local_state(u=Depends(current_user)):
               for r in db.robots_of(u["id"])]
     # Robots on the broker that no account's record names: what "Add to my account"
     # offers. Empty when the supervisor cannot be asked.
-    seen = _supervisor_devices()
+    seen = _devices_for_state()
     unclaimed = sorted(seen["connected"] - db.bound_device_ids()) if seen else []
     return {"user": {"id": u["id"], **json.loads(u["attributes"])},
             "children": rows(db.children_of(u["id"])), "robots": robots,
