@@ -33,6 +33,10 @@ async function bootLive() {
 const ears = (h, reason, retry) => h.m.note({ route: "ears", reason, retry_after_s: retry || 0 });
 const chat = (h, reason, retry) => h.m.note({ reason, retry_after_s: retry || 0 });
 const brain = (h) => [h.m.state(), h.m.reason(), h.m.badge(), h.m.canSpendLiveTurn()];
+/** The ears' members; null on a base without them (a counted red, not a crash). */
+const earsOf = (h) => [typeof h.m.canUseEars === "function" ? h.m.canUseEars() : null,
+                       typeof h.m.earsRetryAfterS === "function" ? h.m.earsRetryAfterS() : null,
+                       typeof h.m.earsReason === "function" ? h.m.earsReason() : null];
 
 // 9a. An STT 429 with Retry-After 60 (the route's answer for the gateway's STT cooldown):
 //     the ears' window, not the brain's.
@@ -40,14 +44,14 @@ const brain = (h) => [h.m.state(), h.m.reason(), h.m.badge(), h.m.canSpendLiveTu
   const h = await bootLive();
   ears(h, "rate_limited", 60);
   deep(brain(h), ["live", null, "MOXIE ONLINE", true], "9a: an ears 429 leaves typed turns SPENDABLE, with no chip (it paused chat for 60 s)");
-  deep([h.m.canUseEars(), h.m.earsRetryAfterS(), h.m.earsReason()], [false, 60, "rate_limited"], "9a: …and opens the ears' own 60 s window");
+  deep(earsOf(h), [false, 60, "rate_limited"], "9a: …and opens the ears' own 60 s window");
   deep([h.m.snapshot().earsRetryAfterS, h.m.snapshot().earsReason, h.m.snapshot().liveTurns], [60, "rate_limited", true], "9a: the snapshot carries the ears' wait beside the brain's");
   h.advance(30_000);
-  deep([h.m.canUseEars(), h.m.earsRetryAfterS()], [false, 30], "9a: the ears' wait counts down");
+  deep(earsOf(h).slice(0, 2), [false, 30], "9a: the ears' wait counts down");
   h.advance(30_001);
-  deep([h.m.canUseEars(), h.m.earsRetryAfterS()], [true, 0], "9a: …and lifts on time");
+  deep(earsOf(h).slice(0, 2), [true, 0], "9a: …and lifts on time");
   ears(h, null, 0);
-  eq(h.m.earsReason(), null, "9a: a clean transcript clears the ears' reason");
+  eq(earsOf(h)[2], null, "9a: a clean transcript clears the ears' reason");
 }
 
 // 9b. A CHAT 429 keeps §4f/§8e's rule — and leaves the ears alone.
@@ -56,10 +60,10 @@ const brain = (h) => [h.m.state(), h.m.reason(), h.m.badge(), h.m.canSpendLiveTu
   chat(h, "rate_limited", 60);
   deep([h.m.state(), h.m.canSpendLiveTurn(), h.m.retryAfterS(), h.m.message()], ["live", false, 60, "One at a time! Give Moxie a few seconds."],
        "9b: a chat 429 within the minute window still suppresses chat with the chip, unchanged");
-  deep([h.m.canUseEars(), h.m.earsRetryAfterS()], [true, 0], "9b: …and the ears may still take a clip");
+  deep(earsOf(h).slice(0, 2), [true, 0], "9b: …and the ears may still take a clip");
   const r = await bootLive();
   chat(r, "rate_limited", 2390);
-  deep([r.m.state(), r.m.badge(), r.m.canUseEars()], ["degraded", "HOSTED DEMO · RESTING", true], "9b: the chat hour cap RESTS the brain, as §8d pins, and does not hold the ears");
+  deep([r.m.state(), r.m.badge(), earsOf(r)[0]], ["degraded", "HOSTED DEMO · RESTING", true], "9b: the chat hour cap RESTS the brain, as §8d pins, and does not hold the ears");
 }
 
 // 9c. Every reason that degrades the brain when `/api/chat` says it is only the ears' when
@@ -69,9 +73,9 @@ for (const reason of ["upstream_down", "timeout", "gateway_unreachable_or_gated"
   const h = await bootLive();
   const polls = h.timers.length;
   ears(h, reason, reason === "at_capacity" ? 15 : 0);
-  deep([brain(h), h.m.stats().transitions, h.timers.length, h.m.earsReason()], [["live", null, "MOXIE ONLINE", true], ["boot->live"], polls, reason],
+  deep([brain(h), h.m.stats().transitions, h.timers.length, earsOf(h)[2]], [["live", null, "MOXIE ONLINE", true], ["boot->live"], polls, reason],
        `9c (${reason}): from the ears it is the ears' own: live, no transition, the poll untouched, the reason kept apart`);
-  if (reason === "at_capacity") deep([h.m.load().level, h.m.earsRetryAfterS()], ["ok", 15], "9c (at_capacity): the ears wait 15 s; the brain's load is not painted BUSY");
+  if (reason === "at_capacity") deep([h.m.load().level, earsOf(h)[1]], ["ok", 15], "9c (at_capacity): the ears wait 15 s; the brain's load is not painted BUSY");
   // …and from the brain, exactly what it did before.
   const b = await bootLive();
   chat(b, reason, reason === "at_capacity" ? 15 : 0);

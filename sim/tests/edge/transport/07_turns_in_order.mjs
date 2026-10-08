@@ -123,7 +123,9 @@ const soundName = (t0) => (s) => {
   globalThis.window.moxieTypedTurn.send("typed first");
   await advance(500);
   let started = null;
-  const p = globalThis.window.moxieBridge.queueUserTurn("spoken second").then(() => { started = now() - t0; });
+  const bridge = globalThis.window.moxieBridge;
+  // On a base without the seam the transcript takes `sendUserTurn`, as mic.js did: a counted red.
+  const p = (bridge.queueUserTurn || bridge.sendUserTurn).call(bridge, "spoken second").then(() => { started = now() - t0; });
   await advance(10);
   deep(chats(world).map((c) => c.text), ["typed first"], "11b: the transcript waits behind the typed line in flight");
   deep(world.spy.transcript, ["typed first", "spoken second"], "11b: …though it is in the log at once, as a child's words always were");

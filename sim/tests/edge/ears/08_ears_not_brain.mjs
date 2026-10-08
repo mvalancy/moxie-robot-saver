@@ -16,6 +16,10 @@ const { advance, envelope, now } = page;
 const M = () => globalThis.window.moxieMode;
 const T = () => globalThis.window.moxieBridge.transportStats();
 const chats = (w) => w.spy.fetches.filter(([p]) => p === "/api/chat").map(([, b]) => b.text);
+/** The ears' members of mode.js; null where a base has none (a counted red, not a crash). */
+const earsReason = () => (typeof M().earsReason === "function" ? M().earsReason() : null);
+const canUseEars = () => (typeof M().canUseEars === "function" ? M().canUseEars() : null);
+const earsWait = () => (typeof M().earsRetryAfterS === "function" ? M().earsRetryAfterS() : null);
 const foldTransportFails = () => { for (const f of page.fails.splice(0)) fails.push("transport harness: " + f); };
 /** mode.js and voice/ read the wall clock; here it is the virtual one. */
 const T0 = 1_700_000_000_000;
@@ -50,7 +54,7 @@ for (const gapS of [45, 90]) {
        `B14 (${gapS} s): FOUR REFUSED UPLOADS LEAVE THE BRAIN LIVE (the third tap used to read HOSTED DEMO · SCRIPTED, "brain unreachable")`);
   deep([M().stats().transportErrors, M().stats().earsErrors, M().stats().transitions], [0, 4, ["boot->live"]],
        `B14 (${gapS} s): recorded as four ears errors, no strike, no transition`);
-  eq(M().earsReason(), "transport_error", `B14 (${gapS} s): the ears' own status says what happened`);
+  eq(earsReason(), "transport_error", `B14 (${gapS} s): the ears' own status says what happened`);
 
   // B14b. The brain really unreachable, on the same page: #318's three strikes, unchanged.
   for (const line of ["one", "two", "three"]) {
@@ -91,7 +95,7 @@ for (const [label, answer] of [
   globalThis.window.moxieTypedTurn.send("still typing");
   await advance(500);
   deep(chats(w), ["still typing"], `B15 (${label}): …and the next typed line goes to the brain`);
-  ok(M().earsReason() !== null, `B15 (${label}): the ears recorded their own reason (${M().earsReason()})`);
+  ok(earsReason() !== null, `B15 (${label}): the ears recorded their own reason (${earsReason()})`);
   foldTransportFails();
 }
 
@@ -117,7 +121,7 @@ for (const [label, answer] of [
   await advance(100);
   ok(/^Moxie’s ears need a rest — back in about a minute/.test(p.micStatus()),
      `B16: the status says how long the ears rest (got "${p.micStatus()}")`);
-  deep([M().state(), M().canSpendLiveTurn(), M().message(), M().canUseEars(), M().earsRetryAfterS()], ["live", true, "", false, 60],
+  deep([M().state(), M().canSpendLiveTurn(), M().message(), canUseEars(), earsWait()], ["live", true, "", false, 60],
        "B16: TYPED TURNS ARE NOT PAUSED by the ears' 429 (no chip either); the ears' own window is 60 s");
   globalThis.window.moxieTypedTurn.send("typed while the ears rest");
   await advance(500);
@@ -139,7 +143,7 @@ for (const [label, answer] of [
   p.mic.toggle();
   await advance(100);
   ok(/back in about 40 minutes/.test(p.micStatus()), `B16: the hour cap says its minutes (got "${p.micStatus()}")`);
-  eq(M().earsRetryAfterS(), 2390, "B16: …and the ears' window is that long");
+  eq(earsWait(), 2390, "B16: …and the ears' window is that long");
   await advance(2391_000);
   wait = 7;
   await p.speak();
@@ -151,7 +155,7 @@ for (const [label, answer] of [
   await advance(10_000);
   globalThis.window.moxieTypedTurn.send("chat capped");
   await advance(1000);
-  deep([M().state(), M().canSpendLiveTurn(), M().message(), M().canUseEars()],
+  deep([M().state(), M().canSpendLiveTurn(), M().message(), canUseEars()],
        ["live", false, "One at a time! Give Moxie a few seconds.", true],
        "B16b: a chat 429 pauses typed turns with the chip, as before — and the ears are not held by it");
   foldTransportFails();
