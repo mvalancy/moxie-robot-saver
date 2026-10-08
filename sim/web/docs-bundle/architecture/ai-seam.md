@@ -99,13 +99,16 @@ a key resolve, else local whisper, else none. The gateway engine wraps the PCM i
 rate it was handed (a wrong header pitch-shifts the audio), skips clips under 120 ms, and shares the LLM
 path's `call_with_backoff` + `Pacer` for 429/5xx. Every gateway request is bounded by
 `MOXIE_STT_TIMEOUT_S` (12 s: the transcript is produced on the broker thread, so the bound sits inside the
-broker's keepalive drop) and a timeout is never retried within one utterance — the SDK's own default was
-600 s per request, and the backoff retried it. `FallbackTranscriber` puts the local engine (or a
-`NullTranscriber` returning `""`) behind the gateway and latches on the first failure, reporting it once;
-after `MOXIE_ENGINE_RETRY_S` (60 s) the next utterance tries the gateway again, and an answer clears the
-latch with one recovery line (meanwhile `describe()` says `standby since HH:MM … retrying the primary at
-HH:MM`). Before that window existed one outage latched the standby for the rest of the run, and with no
-local whisper installed that standby hears nothing. Both numbers are hang bounds, chosen not measured
+broker's keepalive drop — and during an ears outage each retry spends it there, stalling the MQTT loop for
+up to 12 s while there is speech) and a timeout is never retried within one utterance — the SDK's own
+default was 600 s per request, and the backoff retried it. `FallbackTranscriber` puts the local engine (or
+a `NullTranscriber` returning `""`) behind the gateway and latches on the first failure, reporting it once;
+after `MOXIE_ENGINE_RETRY_S` (60 s) the next utterance tries the gateway again — one utterance; another
+racing it stays on the standby — and an answer clears the latch with one recovery line (meanwhile
+`describe()` says `standby since HH:MM … retrying the primary at HH:MM`, in the supervisor's local zone, or
+`on the next utterance` once the window has passed). Before that window existed one outage latched the
+standby for the rest of the run, and with no local whisper installed that standby hears nothing. Both
+numbers are hang bounds, chosen not measured; 0 or less is refused at startup, never read as "no bound"
 ([production-hardening.md](backlog/production-hardening.md) §4.4, §9).
 
 The console's **Listening** picker chooses the engine at runtime; see [Choosing an
@@ -325,15 +328,18 @@ which it cannot skip the way it skips an unknown field. OpenMoxie sends `result:
 
 **Bounded calls.** Every request to the brain is bounded by `MOXIE_BRAIN_TIMEOUT_S` (60 s by default: a
 hang bound above the filler budget and a slow local model's whole non-streamed completion, chosen not
-measured), the backoff retries only inside that same bound and never after a timeout, and a streamed turn's
-open and its single-reply fallback share one bound. So a gateway that accepts connections and never answers
-costs one `ERROR_OFFLINE` reply after one bound — not a turn worker for 5 x 600 s, the SDK's default read
-timeout times the backoff's attempts, which is what it cost before. Two more things the turn path promises:
-a turn that waited on the worker pool behind a newer one is never sent to the brain (the robot has already
-re-prompted; a saturated pool costs one call per answered turn, not per prompt), and a worker that dies
-after the brain answered — an app's unreadable `mood_intensity`, a `result_code` the wire cannot encode —
-logs it once and still closes the turn with the stock line, as chunk 1 with `is_completed` when the filler
-already went out, so the robot never waits on a sequence nobody will finish.
+measured; 0 or less is refused at startup, never read as "no bound"), the backoff starts a retry only
+inside that same bound and never after a timeout — so a wedged gateway costs exactly one bound, and a fast
+429/5xx retried just inside it at most just under two, since the retry runs its own request bound — and a
+streamed turn's open and its single-reply fallback share one bound. So a gateway that accepts connections
+and never answers costs one `ERROR_OFFLINE` reply after one bound — not a turn worker for 5 x 600 s, the
+SDK's default read timeout times the backoff's attempts, which is what it cost before. Two more things the
+turn path promises: a prompt that waited on the worker pool behind a newer one is never sent to the brain
+(the robot has already re-prompted; measured on a one-worker pool, three prompts cost two calls — a
+re-prompt that finds a free worker, as it does on the eight-worker pool, goes to the brain at once), and a
+worker that dies after the brain answered — an app's unreadable `mood_intensity`, a `result_code` the wire
+cannot encode — logs it once and still closes the turn with the stock line, as chunk 1 with `is_completed`
+when the filler already went out, so the robot never waits on a sequence nobody will finish.
 
 #### The wire a robot can read
 
@@ -459,8 +465,9 @@ tone). A 400, an outage past the SDK's backoff, or a body that is JSON rather th
 **once** and then latched: the turn *downgrades* to a working voice instead of handing a child
 silence. Each request is bounded by `MOXIE_TTS_TIMEOUT_S` (15 s; the SDK's own default was 600 s) and
 a timeout is not retried; the latch holds for `MOXIE_ENGINE_RETRY_S` (60 s), after which the next line
-tries the gateway again and an answer clears it with one recovery line. `synth.voice_name` says which
-one is talking, and `describe()` since when and when the gateway is tried next.
+tries the gateway again (one line; a filler racing it on another thread stays on the standby) and an
+answer clears it with one recovery line. `synth.voice_name` says which one is talking, and `describe()`
+since when and when the gateway is tried next (`on the next line` once the window has passed).
 
 ### Choosing an engine
 
