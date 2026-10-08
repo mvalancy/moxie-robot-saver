@@ -46,7 +46,7 @@ C9 and C5 together make a triage table for a robot that never connects:
 | Locally hosted AI and speech (discussion #23; the maintainer said it should be a separate project) | This project: [`ai-seam.md`](../ai-seam.md), local Piper/whisper as first-class engines |
 | Alternative TTS voices, other LLMs (issues #38, #40) | [`voice-picker.md`](voice-picker.md), [`brain-picker.md`](brain-picker.md) |
 | Eye and face colour customisation (discussion #21) | Face catalog and customizer |
-| Unpairing a robot to join another server (discussions #20, #27; upstream has no unpair logic) | **Half:** `UNPAIRED_PAIRING_STATUS` / `build_unpaired_cloud_config()` in [`cloud_config.py`](../../../mqtt/moxie_sdk/cloud_config.py) are used for unpermitted robots, but there is no console unpair toggle |
+| Unpairing a robot to join another server (discussions #20, #27; upstream has no unpair logic) | **Built, unproven on a robot:** the console's Unpair (and Revoke in Robot access) revokes the robot's permit, which pushes `build_unpaired_cloud_config()` from [`cloud_config.py`](../../../mqtt/moxie_sdk/cloud_config.py); a factory reset adds the `restore_factory` setup code ([what is built](../../features/robot-lifecycle.md#built-here-unpair-and-factory-reset)). No physical robot has been seen to act on either |
 | "Is my robot's build new enough?" (discussion #51) | Ported into `live-hardware-debug.md`, credited |
 | The LAN-IP-not-hostname trap | C3's first-run half |
 

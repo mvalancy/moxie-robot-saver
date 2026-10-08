@@ -8,6 +8,81 @@
 > protocol is reproducible*, and are **not** files in this repo. Our actual implementation lives in
 > [`server/`](../../server/), [`tools/`](../../tools/), and [`mqtt/`](../../mqtt/).
 
+## Built here: unpair and factory reset
+
+What our server and web app do with the study below. It is tested hermetically
+([`test_robot_lifecycle.py`](../../sim/tests/test_robot_lifecycle.py) for the server,
+[`test_robot_lifecycle.mjs`](../../sim/test_robot_lifecycle.mjs) for the confirmation sheet).
+**No physical robot has been unpaired or reset this way by this project yet.**
+
+| | Unpair | Factory reset |
+|---|---|---|
+| In the web app | Moxie tab, robot card: **Unpair this robot**. Type `UNPAIR` or the robot's name to confirm. | Same card: **Factory reset**. Type `RESET` and tick "cannot be undone". |
+| Call | `DELETE /api/robots/{id}` | `DELETE /api/robots/{id}?rfs=1` |
+| Account record | Deleted, so `users/me` lists no robot: the app's `UNPAIRED` (§1, §8.5). | Same. |
+| Pairing codes | Every code the account made and never used is voided in the same transaction, so a stale QR cannot pair the robot back (scanning one is a `410`; a used code stays a `409`). | Same. |
+| The robot on this server | Its permit is revoked with the same `POST /permits` that Revoke in Robot access sends, and the supervisor re-pushes the not-paired config (`pairing_status: "unpairing"`, no child data). Only the identity the record names (`mqtt-device-id`) is revoked, never a guess. | Same. |
+| The child | Kept (§2). The sheet offers the console's existing erases instead: what Moxie remembers and the activity history (before the unpair, while those cards still exist) and the child's profile (`DELETE /api/children/{id}`, after it, the doc's order). | Same. |
+| Reaching the robot | Nothing to send. | The `restore_factory` setup code (below). No MQTT command is published. |
+| Answer | `200` with what was done (the original app treats any 2xx as success). A repeat, or another account's robot id, changes nothing and says `unpaired: false`. | Same, plus the code and its instructions. |
+
+Server-side a reset is the same as an unpair because §2 says the cleanup is identical and the
+child stays; the difference is the wipe reaching the robot. Code:
+[`routes/robots.py`](../../server/moxie_server/routes/robots.py) (`delete_robot`),
+[`db.py`](../../server/moxie_server/db.py) (`unpair_robot`),
+[`lifecycle.py`](../../server/moxie_server/lifecycle.py) (the answer's wording and the reset code),
+[`routes/pairing.py`](../../server/moxie_server/routes/pairing.py)
+(`GET /local/factory-reset/payload`, `/local/factory-reset/qr.png`) and
+[`static/js/robot.js`](../../server/static/js/robot.js) (the sheet).
+
+### Why the reset is a QR code, not an MQTT command
+
+The original reset was relayed by Embodied's cloud (§0, §1.4), but how that cloud told the robot is
+not in anything we have studied:
+
+- The cloud-to-robot commands we know ([MQTT and conversation](../architecture/mqtt-and-conversation.md),
+  §3.5) include no reset.
+- `restore_factory` is one of exactly four setup-QR `debug` commands, and the setup app handles it
+  itself when it scans the code ([QR commands](../reverse-engineering/protocol/qr-commands.md)). Of the
+  bus consumers of the forwarded `QRCommand`, the cloud module acts on exactly `report`,
+  `endpoint_update` and `om`, and the system monitor's codes are not documented
+  ([native boundary](../reverse-engineering/runtime/native-boundary.md)). Injecting
+  `QRCommand{restore_factory}` over `commands/zmq` is therefore unproven, and we do not send it.
+- `CloudStatus.UserState` `UNPAIR_WITH_RFS` (6) and `UnpairUserRequest` are the robot's own state and
+  bus message ([device config](../reverse-engineering/protocol/device-config-and-telemetry.md)); which
+  party starts them is not recovered.
+
+So the web app shows `{"debug":{"command":"restore_factory"}}` as a server-rendered QR (the same
+renderer as the pairing code, which a real Moxie has scanned) with these instructions, each labelled
+in the app with where it comes from:
+
+| Step | Basis |
+|---|---|
+| Put Moxie on the screen where it asks for a code | Seen on a real Moxie by this project ([live hardware debug](../debugging/live-hardware-debug.md)) |
+| A Moxie that cannot reach the internet goes back to that screen by itself | Inferred from Moxie's software ([boot and launcher](../reverse-engineering/firmware/boot-and-launcher.md)) |
+| Hold the code steady until Moxie beeps | Seen |
+| Moxie starts its own factory-restore flow (`State.UserRestoreRequest`); its screens are not documented and it may ask to confirm | Inferred |
+| "Reset Moxie Back to New": all of the child's progress with Moxie is erased and Moxie is reset as new | The original app's own wording (§0, §3.4) |
+
+The code is also reachable with no robot record ("Factory reset a robot", under "No Moxie paired
+yet"), for a Moxie still paired somewhere else; showing it changes nothing on the server.
+
+### Not done yet
+
+- A robot paired by scanning the QR gets no account record (only the console's simulated scan creates
+  one), so its robot card, and the Unpair button with it, does not appear. For that robot, unpair is
+  Revoke in Robot access and the reset is the code alone.
+- Per-robot settings the supervisor keeps under the robot's id (volume, bedtime, look, brain) are not
+  cleared. A reset robot that rejoins with a new id starts clean; one that kept its id would get them
+  back once permitted again.
+- The safety journal and conversation transcripts have no erase control of their own (switching data
+  sharing to `NO_DATA` purges transcripts), so the erase choice cannot cover them.
+- Restore from backup (§3) is not built: `POST /api/robots/{id}/restores` still answers `204`.
+- What a physical Moxie shows when it gets the not-paired settings, or scans the reset code, has not
+  been observed.
+
+---
+
 App: `com.embo.embodied.parent` v2.2.2 (decompiled). Cross-refs: map 01 (REST/auth), 02 (crypto/sealed keys), 03 (pairing).
 All robot endpoints are relative to the API base URL (see map 01). All take `Authorization: Bearer <token>` via `@Header("Authorization")`.
 `{id}` everywhere = the **robot id** (JSON:API robot resource id), NOT the serial number. The app takes it from `Robot.INSTANCE.getData().getId()` or `User…getRelationships().getRobots().getData().get(0).getId()`.
