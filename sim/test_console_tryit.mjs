@@ -232,11 +232,19 @@ const readCard = (page) => page.evaluate(() => {
 const shownTurns = (page) =>
   page.evaluate(() => document.querySelectorAll("#try-log .try-turn").length);
 
+/** Replace whatever is in the box with `text`, typed as real keystrokes (`""` keeps it).
+ *  The box is selected in the page, not by a triple-click: puppeteer 25 ignores
+ *  `clickCount`, so `click({clickCount: 3})` there is a single click that selects
+ *  nothing and the typing lands after the old line. */
+async function typeOver(page, text) {
+  await page.$eval("#try-text", (el) => { el.focus(); el.select(); });
+  await page.keyboard.type(text);
+}
+
 /** Type `text` into the box and send it with a real click; wait for the turn to render. */
 async function send(page, posts, text, { enter = false } = {}) {
   const before = posts.length, shown = await shownTurns(page);
-  await page.click("#try-text", { clickCount: 3 });
-  await page.keyboard.type(text);
+  await typeOver(page, text);
   if (enter) await page.keyboard.press("Enter");
   else await clickReal(page, "#btn-try-send");
   await page.waitForFunction((n) => document.querySelectorAll("#try-log .try-turn").length >= n,
@@ -252,8 +260,7 @@ async function sendHeld(page, posts, ctl, text) {
   let release;
   ctl.hold = new Promise((resolve) => { release = resolve; });
   const before = posts.length;
-  await page.click("#try-text", { clickCount: 3 });
-  await page.keyboard.type(text);
+  await typeOver(page, text);
   await clickReal(page, "#btn-try-send");
   await page.waitForFunction(() => document.querySelector("#btn-try-send").disabled,
                              { timeout: 8000 }).catch(() => {});
@@ -358,6 +365,8 @@ async function sweep(C, mutate) {
     C.ok(/^Started over\./.test(card.status) && /set aside/.test(card.status),
          `7a: the card says the answer on its way is set aside — "${card.status}"`);
     C.eq(await send(page, posts, "fresh start"), 1, "7a: the next send is one call");
+    C.eq(lastPost(posts).speech, "fresh start",
+         "7a: it carries the line typed over the set-aside one, and only that");
     C.eq(JSON.stringify(lastPost(posts).history), "[]",
          "7a: after Start over mid-try, the next send carries an empty session");
 
@@ -403,8 +412,7 @@ async function sweep(C, mutate) {
     /* 8 — a refresh keeps the parent's pick and the session; a line typed meanwhile stays */
     await page.select("#try-module", "");             // the parent's pick: no activity
     land = await sendHeld(page, posts, ctl, "a session");
-    await page.click("#try-text", { clickCount: 3 });
-    await page.keyboard.type("my next line");
+    await typeOver(page, "my next line");
     await land();
     card = await readCard(page);
     C.eq(card.turns.length, 1, "8: an answer for this session is shown");
