@@ -94,6 +94,15 @@
         // A named on-robot function: RECORDED and shown, never guessed at — nothing is
         // called and no `execute_returns[]` is invented.
         status(`action: execute ${fn || "(unnamed)"}`);
+        // …except the one whose effect this SIM can honestly show: `execute eb_enable_qr
+        // ["true"]` is how the server arms the QR reader since 2026-10 (qr-launch-cards.md
+        // §P0-a), so it raises the same camera badge the older `enable_qr` did.
+        if (fn === "eb_enable_qr" && Array.isArray(args) && String(args[0]).toLowerCase() === "true") {
+          actionState.qr_enabled = true;
+          if (m && m.showIcons) m.showIcons(["QR"]);
+          if (m && m.setFace) m.setFace("curious");
+          status("action: QR scanning on");
+        }
         break;
       default: break;
     }

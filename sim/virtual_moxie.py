@@ -346,6 +346,13 @@ class VirtualMoxie:
             self.log("🎬 QR scanning on")
         elif kind == "execute":
             self.log(f"🎬 execute {function or '(unnamed)'}")
+            # `execute eb_enable_qr ["true"]` is how the server arms the QR reader since
+            # 2026-10 (qr-launch-cards.md §P0-a): recorded like the older `enable_qr`,
+            # mirror of `bridge/actions.js`. Still nothing is run.
+            if (function == "eb_enable_qr" and isinstance(args, list) and args
+                    and str(args[0]).lower() == "true"):
+                self.actions["qr_enabled"] = True
+                self.log("🎬 QR scanning on")
         self.actions["last"] = kind
         self.actions["applied"].append({"action": kind, "module_id": module_id,
                                         "content_id": content_id, "function": function,

@@ -105,6 +105,15 @@ mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
                        { output_type: "GLOBAL_RESPONSE", action: "exit" }] })));
 const legacyExit = window.moxieBridge.actionStats();
 
+// The server's QR arm since 2026-10 (`ActionType.ENABLE_QR` -> `execute eb_enable_qr ["true"]`,
+// qr-launch-cards.md §P0-a) must raise the camera badge as the older `enable_qr` did.
+mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
+  Buffer.from(JSON.stringify({ command: "remote_chat", result: 0, event_id: "act-6",
+    output: { text: "Show me a card!", markup: "Show me a card!" },
+    response_actions: [{ output_type: "GLOBAL_RESPONSE", action: "execute",
+                         function_id: "eb_enable_qr", function_args: ["true"] }] })));
+const qrArmed = window.moxieBridge.actionStats();
+
 // ---- robot -> cloud: the activity log, byte-compared with the SIL robot's ----
 window.moxieBridge.reportMentorBehavior({ module_id: "DRAW", content_id: "default",
                                           action: "completed", timestamp: 1788360800925 });
@@ -207,6 +216,10 @@ ok(act.applied.every((a) => a.action !== "teleport_to_mars"),
 ok(legacyExit.exits === 2 && legacyExit.module_id === "" && legacyExit.last === "exit" &&
    legacyExit.unknown === act.unknown,
    `the older 'exit' spelling still leaves the module and is not unknown; got ${JSON.stringify(legacyExit)}`);
+ok(legacyExit.qr_enabled === false && qrArmed.qr_enabled === true && qrArmed.last === "execute" &&
+   qrArmed.applied[qrArmed.applied.length - 1].function === "eb_enable_qr" &&
+   JSON.stringify(calls.showIcons).includes("QR"),
+   `execute eb_enable_qr ["true"] arms QR scanning and shows the badge; got ${JSON.stringify(qrArmed)} icons ${JSON.stringify(calls.showIcons)}`);
 
 ok(log.topic === "/devices/d_sim/events/client-service-activity-log",
    `activity log rides the recovered topic; got ${log.topic}`);

@@ -268,6 +268,28 @@ def test_an_execute_is_recorded_by_name_and_never_run():
     assert sent == [], f"an execute must not make this client publish anything: {sent}"
 
 
+def test_the_p0a_arm_turns_the_qr_badge_on_like_the_older_enable_qr():
+    """`ActionType.ENABLE_QR` goes out as `execute eb_enable_qr ["true"]` (qr-launch-cards.md
+    §P0-a), so the older `enable_qr` verb no longer arrives and neither Sim client set
+    `qr_enabled`. Both now read the P0-a shape as the arm (`bridge/actions.js` is held to
+    the same by `sim/test_bridge.mjs`); an execute with any other name or argument is not."""
+    from moxie_sdk.types import Action, ActionType
+    from moxie_sdk.wire import build_chat_response
+    vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_arm", verbose=False)
+    vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
+                       "response_actions": [
+                           {"output_type": "GLOBAL_RESPONSE", "action": "execute",
+                            "function_id": "eb_enable_qr", "function_args": ["false"]},
+                           {"output_type": "GLOBAL_RESPONSE", "action": "execute",
+                            "function_id": "eb_wake", "function_args": ["true"]}]})
+    assert vm.action_stats()["qr_enabled"] is False, vm.action_stats()
+    vm._on_chat_reply(build_chat_response("e2", "Show me a card!",
+                                          actions=[Action(type=ActionType.ENABLE_QR)]))
+    stats = vm.action_stats()
+    assert stats["qr_enabled"] is True and stats["last"] == "execute", stats
+    assert stats["applied"][-1]["function"] == "eb_enable_qr", stats
+
+
 def test_execute_reads_the_sims_spelling_too():
     """`RemoteChat.proto`:255-281 names the field `function_id`, and that is what our own
     `build_chat_response` now emits; `sim/web/bridge/actions.js::applyAction` read `entry.function`. Both
