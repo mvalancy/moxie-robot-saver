@@ -181,3 +181,31 @@ const soundName = (t0) => (s) => {
        "11d: sendUserTurn sends at once: both lines are on the wire 300 ms apart (the §4i–4k backstop's path)");
   eq(T().queued, 0, "11d: …and nothing waited");
 }
+
+/* =========================================================================== *
+ * 11e. A TURN CANNOT STAY IN FLIGHT FOR EVER: a page script throwing on the reply path (here
+ *      the body's `settled()`) leaves the turn's pipeline never closed, which would have held
+ *      every later control line for good. `TURN_MAX_MS` (190 s: the chat deadline, the ears'
+ *      hold and eight sentences each at the speech deadline) settles it regardless, and the
+ *      next line goes out — §4i–4k's rule the backstop from there, as for `sendUserTurn`.
+ * =========================================================================== */
+{
+  const world = await boot({ realVoice: true, answer: live(answerLines) });
+  const typed = globalThis.window.moxieTypedTurn;
+  globalThis.window.moxieAlive = { thinking() {}, listening() {}, settled() { throw new Error("a page script threw"); } };
+  // On a base without the queue the throw escapes `sendTyped` as an unhandled rejection (a
+  // browser logs it; Node would exit): swallowed here, so a base prints a counted red.
+  const swallow = () => {};
+  process.on("unhandledRejection", swallow);
+  typed.send("what is your favorite color?");
+  await advance(300);
+  typed.send("and your favorite food?");
+  await advance(60_000);
+  deep(chats(world).map((c) => c.text), ["what is your favorite color?"],
+       "11e: the first reply's path threw and its turn never settled on its own: a minute on, the second line still waits");
+  await advance(130_000);                             // 190.3 s after the first POST
+  deep(chats(world).map((c) => c.text), ["what is your favorite color?", "and your favorite food?"],
+       "11e: THE VALVE: 190 s after its POST the turn is settled regardless, and the waiting line goes out (it waited for good)");
+  eq(T().turnsValved, 1, "11e: recorded as one turn settled by the valve");
+  process.off("unhandledRejection", swallow);
+}

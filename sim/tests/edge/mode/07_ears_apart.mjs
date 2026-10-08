@@ -106,4 +106,22 @@ for (const reason of ["upstream_down", "timeout", "gateway_unreachable_or_gated"
   chat(h, null, 0);
   deep([h.m.state(), h.m.badge()], ["live", "MOXIE ONLINE"], "9e: a clean chat turn does");
 }
+
+// 9f. The ears' windows when the route names no wait: a 429 with no Retry-After holds the
+//     mic 10 s, `at_capacity` 15 s, any other reason not at all; a clean transcript lifts a
+//     running window early. None of it touches the brain.
+{
+  const h = await bootLive();
+  ears(h, "rate_limited", 0);
+  deep(earsOf(h), [false, 10, "rate_limited"], "9f: an ears 429 with no Retry-After opens a 10 s window");
+  ears(h, null, 0);
+  deep(earsOf(h), [true, 0, null], "9f: a clean transcript lifts it (the ears are taking clips again)");
+  ears(h, "at_capacity", 0);
+  deep(earsOf(h), [false, 15, "at_capacity"], "9f: at_capacity with no wait holds the ears 15 s");
+  h.advance(15_001);
+  deep(earsOf(h).slice(0, 2), [true, 0], "9f: …and lifts on time");
+  ears(h, "upstream_down", 0);
+  deep(earsOf(h), [true, 0, "upstream_down"], "9f: a reason carrying no wait opens no window: the next tap may try");
+  deep(brain(h), ["live", null, "MOXIE ONLINE", true], "9f: …and none of it touched the brain");
+}
 ok(true, "9: the ears' seams hold");

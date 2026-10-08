@@ -20,6 +20,7 @@ await runSections(new URL("./tests/edge/ears/", import.meta.url), [
   "06_no_speech.mjs",
   "07_barge_in.mjs",
   "08_ears_not_brain.mjs",
+  "09_hold_bounds.mjs",
 ]);
 
 if (fails.length) {

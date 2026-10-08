@@ -1,9 +1,10 @@
-/* Part C §B11–B13: DELIBERATE BARGE-IN. Opening the microphone stops her speech on purpose —
- * the playing clip AND every queued sentence of #317's pipelined tickets — within 50 ms, no
+/* Part C §B11–B13: DELIBERATE BARGE-IN. The Listen tap stops her speech on purpose — the
+ * playing clip AND every queued sentence of #317's pipelined tickets — within 50 ms, no
  * further ticket of that reply is redeemed, the recording never holds her own voice, and
- * nothing of hers starts (a reply landing meanwhile, a stub line) until the ears are done
- * with the clip. The interrupted reply's text stays in the log. On the real `mic.js`,
- * `cloud-transport.js`, `bridge/` and `voice/` (harness Part C), on a virtual clock.
+ * from the microphone opening nothing of hers starts (a reply landing meanwhile, a stub line)
+ * until the ears are done with the clip. The interrupted reply's text stays in the log. On
+ * the real `mic.js`, `cloud-transport.js`, `bridge/` and `voice/` (harness Part C), on a
+ * virtual clock. (What the tap does NOT hold, and what bounds the hold: 09_hold_bounds.mjs.)
  *
  * Before: `mic.start()` opened the capture under whatever she was saying; a three-sentence
  * reply kept redeeming and playing its sentences into the open microphone.
@@ -138,7 +139,7 @@ const foldTransportFails = () => { for (const f of page.fails.splice(0)) fails.p
     ? { status: 200, json: { transcript: "hello" }, delayMs: 1500 } : { status: 404, text: "" })) });
   const w = p.world, t0 = now();
   const b = globalThis.window.moxieBridge;
-  delete b.earsOpen; delete b.earsIdle; delete b.queueUserTurn;    // a page without the transport's seams
+  delete b.interruptVoice; delete b.earsOpen; delete b.earsIdle; delete b.queueUserTurn;    // a page without the transport's seams
   globalThis.window.moxieAudio.speak("Hi there! It's so good to see you.");
   await advance(100);
   deep(w.spy.sounds.map((s) => [s.kind, s.t - t0]), [["clip", 0]], "B13b: a shipped clip of hers is playing");

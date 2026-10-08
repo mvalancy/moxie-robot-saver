@@ -21,11 +21,13 @@
  * TIME: a Listen tap is ignored while a clip or its turn is in flight, and just after an
  * auto-stop that already sent the clip.
  *
- * OPENING THE MIC IS DELIBERATE: it stops her speech on purpose — the playing clip and every
- * queued sentence — before the capture opens, so the recording never holds her own voice,
- * and nothing of hers starts until the ears are done with the clip (`earsOpen` / `earsIdle`
- * on the bridge, the transport's seam; `body[data-mic]` stays set through the upload, which
- * is what ambient.js reads). THE EARS ARE NOT THE BRAIN: what the ears report to the mode
+ * THE TAP IS DELIBERATE: it stops her speech on purpose — the playing clip and every queued
+ * sentence (`interruptVoice` on the bridge, the transport's seam) — and from the microphone
+ * OPENING until the ears are done with the clip nothing of hers starts (`earsOpen` /
+ * `earsIdle`; `body[data-mic]` stays set through the upload, which is what ambient.js
+ * reads). A permission prompt left unanswered holds nothing (see `hush`), so the recording
+ * never holds her own voice and a tap can never hold the conversation for good. THE EARS
+ * ARE NOT THE BRAIN: what the ears report to the mode
  * machine (`route: "ears"`) stays the ears' own status, and a transcribe 429 holds this
  * button for as long as it said, while typed turns go on.
  *
@@ -111,11 +113,25 @@
     return p;
   }
 
-  /* THE EARS COME FIRST. From the tap until the clip is dropped or its upload has settled,
-   * the ears are working: `body[data-mic]` says so (ambient.js holds its mutters on it —
-   * before this it was cleared at stop, and a quip could start during the 2-3 s upload) and
-   * the bridge is told, so the transport stops her and holds everything of hers until
-   * `earsDone`. Without the transport, her voice is still stopped. */
+  /* THE TAP IS THE INTERRUPTION; THE OPEN MICROPHONE IS THE HOLD. The tap stops her at once
+   * (`hush`: the bridge's `interruptVoice`, #317's end-the-pipeline path — the playing clip,
+   * every queued sentence, no further ticket; without the transport, `moxieAudio.stop()`)
+   * and HOLDS NOTHING: the browser may now be asking for the microphone, and a permission
+   * prompt left unanswered need never settle (`getUserMedia` neither resolves nor rejects),
+   * so a hold taken at the tap kept a typed line, and a grown-up redirect already on its
+   * way, from ever reaching the child (measured 2026-10-08: nothing sent in five minutes).
+   * From the capture OPENING until the clip is dropped or its upload has settled the ears
+   * are working (`earsOpen` … `earsDone`): `body[data-mic]` says so (ambient.js holds its
+   * mutters on it — before this it was cleared at stop, and a quip could start during the
+   * 2-3 s upload) and the bridge is told, so the transport stops her again (a reply may have
+   * begun while the browser asked) and holds everything of hers. */
+  function hush() {
+    var b = window.moxieBridge;
+    if (b && typeof b.interruptVoice === "function") { try { b.interruptVoice(); } catch (e) {} return; }
+    var a = window.moxieAudio;
+    try { if (a && a.stop) a.stop(); } catch (e) {}
+  }
+
   function earsOpen() {
     try { document.body.setAttribute("data-mic", "on"); } catch (e) {}
     var b = window.moxieBridge;
@@ -126,8 +142,8 @@
 
   function earsDone() {
     // An earlier clip settling while a NEW recording is open does not make the ears idle:
-    // that recording's own end will.
-    if (recording || opening) return;
+    // that recording's own end will. (A capture still opening holds nothing: see above.)
+    if (recording) return;
     try { document.body.removeAttribute("data-mic"); } catch (e) {}
     var b = window.moxieBridge;
     if (b && typeof b.earsIdle === "function") { try { b.earsIdle(); } catch (e) {} }
@@ -352,8 +368,8 @@
     if (typeof asked === "string") return upload(blob, target, asked);
     return asked.then(function (tok) {
       if (tok === null) {
-        // No token, no upload: a free scripted line plus a transport strike, as
-        // `cloud-transport.js::botUnavailable` does for typed turns.
+        // No token, no upload: a free scripted line, and the ears' own error — never a
+        // strike against the brain (unlike `cloud-transport.js::botUnavailable`'s typed turn).
         stats.botUnavailable++;
         noteTransportError();
         return fallback("Moxie couldn’t finish her visitor check — using a scripted line");
@@ -574,20 +590,23 @@
   }
 
   /** The browser is still asking for the microphone (the permission prompt): a second tap
-   *  must not open a second capture, whose stream nothing would ever release. */
+   *  must not open a second capture, whose stream nothing would ever release. It says so,
+   *  and what else the visitor can do, since the prompt may be sitting unanswered. */
   var opening = false;
+  var STILL_ASKING = "waiting for the microphone — allow it in the browser, or type a message and tap Ask";
 
   function start() {
-    if (recording || opening) return Promise.resolve();
-    // The tap itself is the interruption: her voice stops NOW, before the capture opens.
-    earsOpen();
+    if (recording) return Promise.resolve();
+    if (opening) { status(STILL_ASKING); return Promise.resolve(); }
+    // The tap itself is the interruption: her voice stops NOW. Nothing is held yet.
+    hush();
     var asked = captureFor(sttTarget().kind);
     opening = true;
     return asked.then(function (got) {
       opening = false;
       rec = got && got.recorder;
       stream = (got && got.stream) || null;
-      if (!rec) { status("mic unsupported in this browser"); earsDone(); return; }
+      if (!rec) { status("mic unsupported in this browser"); return; }
       chunks = [];
       rec.ondataavailable = function (e) { if (e && e.data && e.data.size) chunks.push(e.data); };
       rec.onstop = function () {
@@ -606,6 +625,9 @@
         if (blob.size > maxBytes()) { stats.tooLong++; hold(earsUntil(fallback(REASON_COPY.too_long))); return; }
         hold(earsUntil(transcribe(blob)));
       };
+      // The microphone is OPEN: the ears are working from here until the clip is dropped or
+      // its upload settles, and she is stopped again before the recorder starts.
+      earsOpen();
       rec.start();
       recording = true;
       speechSeen = false;
@@ -634,10 +656,10 @@
         stop();
       }, cap);
     }).catch(function (e) {
+      // The capture never opened, so nothing was held.
       opening = false;
       clearCap();
       releaseStream();
-      earsDone();
       status(captureFailure(e) + " — type a message and tap Ask instead");
     });
   }

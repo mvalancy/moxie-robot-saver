@@ -31,9 +31,11 @@
  * or its voice still being assembled), then goes out carrying that reply's context, so both
  * replies are heard whole, in order, and both exchanges reach the next turn. Rule 6 stays as
  * the backstop for `sendUserTurn` itself, which still sends at once. THE EARS COME FIRST
- * (`earsOpen` / `earsIdle`, driven by mic.js): opening the mic is a deliberate interruption —
- * every open pipeline ends through rule 6's path and voice/ is stopped — and nothing of hers
- * (a reply landing, a stub line, a queued line) starts until the ears are done with the clip.
+ * (`interruptVoice`, `earsOpen` / `earsIdle`, driven by mic.js): the Listen tap is a
+ * deliberate interruption — every open pipeline ends through rule 6's path and voice/ is
+ * stopped — and from the microphone OPENING until the ears are done with the clip nothing of
+ * hers (a reply landing, a stub line, a queued line) starts. A turn in flight is settled by
+ * `TURN_MAX_MS` at the latest, so the queue can never be held for good.
  *
  * No secret and no hostname here: the base is `moxieMode.apiBase()` (= location.origin).
  * `ticket` and `context` are opaque, signed server-side, and die with the tab (§2.6).
@@ -81,7 +83,8 @@
     chunksSuperseded: 0,     // chunks of an older reply given up because a newer reply's voice started
     queued: 0,               // control lines that waited for the turn in flight (or the ears) before going out
     heldForEars: 0,          // replies and page-composed lines that waited for the ears to finish a clip
-    interrupted: 0,          // the mic opened on a reply: its voice stopped and its pipeline ended on purpose
+    interrupted: 0,          // the Listen tap landed on a reply: its voice stopped and its pipeline ended on purpose
+    turnsValved: 0,          // live turns settled by TURN_MAX_MS, their pipeline never having closed on its own
     blocked: 0,
     botTokens: 0,            // sends that carried a fresh Turnstile token
     botUnavailable: 0,       // sends REFUSED locally because no token could be minted
@@ -207,13 +210,17 @@
    * to change). `sendUserTurn` itself still sends at once (rule 6 above is its backstop; the
    * transport §4i-4k pins stay as they are).
    *
-   * THE EARS COME FIRST. mic.js calls `earsOpen()` when the microphone opens: that is the
-   * child saying "stop, listen to me", so every open pipeline ends through `supersedeVoices`
-   * (nothing more of any reply is redeemed; a chunk in flight is dropped when it lands) and
-   * voice/ is stopped (the playing clip and every queued chunk) — before the capture opens,
-   * so the recording never holds her voice. Until `earsIdle()` (the clip dropped, or its
-   * upload settled) nothing of hers starts: a reply that lands meanwhile, a stub line and
-   * the next queued line all wait. ambient.js reads the same fact from body[data-mic]. */
+   * THE EARS COME FIRST. The Listen tap is the child saying "stop, listen to me": mic.js
+   * calls `interruptVoice()`, every open pipeline ends through `supersedeVoices` (nothing
+   * more of any reply is redeemed; a chunk in flight is dropped when it lands) and voice/ is
+   * stopped (the playing clip and every queued chunk). The HOLD starts only once the
+   * microphone is OPEN (`earsOpen()`, as the capture starts — she is stopped again then, so
+   * the recording never holds her voice) and lasts until `earsIdle()` (the clip dropped, or
+   * its upload settled): a reply that lands meanwhile, a stub line and the next queued line
+   * all wait. Never from the tap: the browser may be asking for the microphone, and a prompt
+   * left unanswered never settles — a hold taken at the tap kept a typed line, and a safety
+   * redirect already on its way, from ever reaching the child (measured 2026-10-08).
+   * ambient.js reads the same fact from body[data-mic]. */
   var waiting = [];        // {text, resolve}: control lines waiting for the turn in flight
   var inflight = 0;        // live turns POSTed and not yet settled
   var earsBusy = false;    // mic.js: recording, or still transcribing the clip
@@ -231,14 +238,29 @@
     return new Promise(function (resolve) { earsWaiters.push(resolve); });
   }
 
-  /** The microphone is opening: stop her, end every pipeline, and hold what follows. */
-  function earsOpen() {
-    earsBusy = true;
+  /** The child interrupts her (Listen tapped): the playing clip and every queued chunk stop,
+   *  every open pipeline ends through rule 6's path, and nothing more of any reply is paid
+   *  for. Nothing is held. */
+  function interruptVoice() {
     var a = window.moxieAudio, speaking = false;
     try { speaking = !!(a && a.isMoxieSpeaking && a.isMoxieSpeaking()); } catch (e) {}
     if (pipelines.length || speaking) stats.interrupted++;
+    stopVoice();
+  }
+
+  /** #317's path, then voice/: nothing more of any reply is paid for, routed or heard. */
+  function stopVoice() {
     supersedeVoices(null);               // #317's path: nothing more of any reply is paid for
+    var a = window.moxieAudio;
     try { if (a && a.stop) a.stop(); } catch (e) {}   // the playing clip and every queued chunk
+  }
+
+  /** The microphone is OPEN: she is stopped again (a reply may have begun while the browser
+   *  asked; the tap already counted the interruption) and what follows is held until
+   *  `earsIdle`. */
+  function earsOpen() {
+    earsBusy = true;
+    stopVoice();
   }
 
   /** The ears are done with the clip: what waited for them may go, in order. */
@@ -259,16 +281,22 @@
 
   /** Send the next waiting line, if nothing is in flight and the ears are idle. The mode is
    *  asked again NOW: the earlier reply may have been a refusal that paused live turns, and
-   *  a line already in the log is then answered from `stub.js` (never echoed twice). */
+   *  a line already in the log is then answered from `stub.js` (never echoed twice). With
+   *  nothing live to answer it the line is echoed and answered from `stub.js` HERE, as
+   *  bridge/'s own path would, so that the stub line waits for the ears like any voice of
+   *  hers: bridge/'s own 450 ms beat cannot be held, and spoke into a microphone opened
+   *  just after the line (a broker connected meanwhile still gets the turn itself). */
   function drain() {
     while (waiting.length && !inflight && !earsBusy) {
       var w = waiting.shift(), p;
       if (inner.isLive()) p = delegate(w.text);               // a broker connected meanwhile
       else if (canSpendLiveTurn()) p = liveTurn(w.text, w.echoed);
-      else if (!w.echoed) p = delegate(w.text);
       else {
-        var m = mode();
-        status((m && m.message && m.message()) || "answering from her recorded lines.");
+        if (!w.echoed) echoUser(w.text);
+        else {
+          var m = mode();
+          status((m && m.message && m.message()) || "answering from her recorded lines.");
+        }
         p = fallbackReply(w.text);
       }
       p.then(w.resolve, w.resolve);
@@ -345,6 +373,15 @@
   /** More tickets than any reply is worth. A server that minted them is misconfigured, and
    *  nothing past this many is redeemed: each costs the visitor's speech window. */
   var MAX_TICKETS = 8;
+  /** The longest the ears can hold a landed reply: mic.js's default record cap (15 s) plus
+   *  its own 30 s valve on an upload that never answers. */
+  var EARS_HOLD_MAX_MS = 45000;
+  /** The longest a turn can honestly be in flight: the chat deadline, the ears' hold, then
+   *  up to MAX_TICKETS sentences each at the speech deadline, one at a time. Past it the
+   *  turn is SETTLED regardless (`liveTurn`), so a pipeline that never closes — an exception
+   *  on the reply path — cannot hold the queue for good; rule 6 is then the backstop, as it
+   *  always is for `sendUserTurn`. */
+  var TURN_MAX_MS = CHAT_FETCH_MS + EARS_HOLD_MAX_MS + MAX_TICKETS * SPEECH_FETCH_MS;   // 190 s
 
   /** The tickets of a reply in chunk order, chunk 0 first — or none, which is "no voice":
    *  the words then speak locally, as on a deployment without a TTS model. */
@@ -575,7 +612,10 @@
   function liveTurn(text, echoed) {
     stats.live++;
     inflight++;
-    var settle = once(function () { inflight--; drain(); });
+    var valve = null;
+    var settle = once(function () { clearTimeout(valve); inflight--; drain(); });
+    // However it goes, the turn is in flight for TURN_MAX_MS at most (see there).
+    valve = setTimeout(function () { stats.turnsValved++; settle(); }, TURN_MAX_MS);
     status("thinking…");
     // …and with her face and arms (a child won't read the status line); a fast turn
     // never flashes a pose.
@@ -735,8 +775,10 @@
      *  in order, behind the turn in flight and the ears (additive; see above). */
     queueUserTurn: queueUserTurn,
 
-    /** The ears' two moments, told by mic.js (additive): the microphone is opening — stop
-     *  her, on purpose — and the ears are done with the clip. */
+    /** The ears' three moments, told by mic.js (additive): Listen was tapped — stop her, on
+     *  purpose, holding nothing — the microphone is open (hold what follows), and the ears
+     *  are done with the clip. */
+    interruptVoice: interruptVoice,
     earsOpen: earsOpen,
     earsIdle: earsIdle,
 

@@ -432,7 +432,8 @@
     }
     // A clean turn: healthy, and the one thing that ends a degrade a turn reported. It also
     // clears a lingering turnstile_failed note now (that note has no suppression window to
-    // expire). Not a running rest: a transcript can come back clean while chat is capped.
+    // expire). Not a running rest: a reply to a turn already in flight when a 429 landed can
+    // come back clean inside that window, and says nothing about it.
     strikes = 0;
     delay = POLL_MIN_MS;
     if (state === "live" && reason === "turnstile_failed") { reason = null; emit(); }
