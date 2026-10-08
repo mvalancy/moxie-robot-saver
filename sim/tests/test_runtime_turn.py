@@ -18,7 +18,8 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from moxie_sdk.app import MoxieApp                       # noqa: E402
 from moxie_sdk.store import JsonStore                    # noqa: E402
-from moxie_sdk.types import Reply, Action, ActionType, RobotContext, ChildProfile  # noqa: E402
+from moxie_sdk.types import (Reply, Action, ActionType, RobotContext, ChildProfile,  # noqa: E402
+                             ResultCode)
 import moxie_runtime                                     # noqa: E402
 from helpers_runtime import FakeClient, free_port        # noqa: E402
 
@@ -98,7 +99,7 @@ def _http_404(port, path):
 def test_turn_roundtrips_text_actions_and_success():
     resp = _chat(_drive(_ActionApp(), speech="let's draw"))
     assert resp["command"] == "remote_chat"
-    assert resp["result"] == "SUCCESS"
+    assert resp["result"] == ResultCode.SUCCESS
     assert resp["output"]["text"] == "You said: let's draw"
     assert resp["output"]["markup"]                       # markup auto-generated
     ra = resp["response_actions"]
@@ -121,7 +122,7 @@ def test_turn_publishes_decodable_tts_only_when_synth_set(device_id="d_test"):
 
 
 def test_offline_brain_signals_error_offline_over_the_wire():
-    assert _chat(_drive(_OfflineApp()))["result"] == "ERROR_OFFLINE"   # local fallback
+    assert _chat(_drive(_OfflineApp()))["result"] == ResultCode.ERROR_OFFLINE   # local fallback
 
 
 def test_content_module_runs_through_the_runtime():
@@ -136,7 +137,7 @@ def test_content_module_runs_through_the_runtime():
     rt.robots[did] = RobotContext(device_id=did, child=rt.child,
                                   module_id="FREE_CHAT", content_id="default")
     resp = _chat(_turn(rt, did, "tell me about dinosaurs"), did)
-    assert resp["result"] == "SUCCESS"
+    assert resp["result"] == ResultCode.SUCCESS
     assert resp["output"]["text"] == "Dinosaurs are amazing!"
 
 
