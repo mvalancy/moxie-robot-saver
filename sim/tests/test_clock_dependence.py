@@ -87,6 +87,8 @@ REVIEWED: dict = {
         "wide margins (>= 120 ms deadline, << 20 s timeout); mutation row D3e."),
     "sim/tests/edge/mode/03_mode_machine.mjs": (
         ("Date.now",), "DETERMINISTIC — overrides `Date.now = () => clock` and steps it."),
+    "sim/tests/edge/mode/06_outage_honesty.mjs": (
+        ("Date.now",), "DETERMINISTIC — overrides `Date.now = () => clock` and steps it."),
     "sim/tests/helpers_stack.py::Broker.wait_ready": (
         ("time.time",), "DETERMINISTIC — a bounded deadline wait."),
     "sim/tests/helpers_stack.py::Supervisor.wait_for": (
