@@ -24,7 +24,7 @@ import { budgetState, loadOf } from "./_lib/limits.js";
 
 /** Only GET is exported, so Pages answers 405 for every other method by itself. */
 export function onRequestGet(context) {
-  const cfg = readConfig(context && context.env);
+  const cfg = readConfig(context && context.env, context && context.request);
   const budget = budgetState(cfg); // a peek: charges nothing
   const { mode, reason } = modeOf(cfg, budget);
 

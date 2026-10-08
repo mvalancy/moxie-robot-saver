@@ -66,7 +66,7 @@ import {
     ["maxConcurrentSpeech", 8, "DEMO_MAX_CONCURRENT_SPEECH default"],
     ["unitBudgetHour", 600, "DEMO_UNIT_BUDGET_HOUR default"],
     ["unitBudgetDay", 4000, "DEMO_UNIT_BUDGET_DAY default"],
-    ["chatTimeoutMs", 20000, "DEMO_CHAT_TIMEOUT_MS default"],
+    ["chatTimeoutMs", 10000, "DEMO_CHAT_TIMEOUT_MS default"],
     ["speechTimeoutMs", 12000, "DEMO_SPEECH_TIMEOUT_MS default"],
     ["sttTimeoutMs", 12000, "DEMO_STT_TIMEOUT_MS default"],
     ["ticketTtlS", 60, "DEMO_TICKET_TTL_S default"],

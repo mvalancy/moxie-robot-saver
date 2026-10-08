@@ -23,6 +23,7 @@ await runSections(new URL("./tests/edge/demo_proxy/", import.meta.url), [
   "09_reroll_shape.mjs",
   "10_goodbye_close.mjs",
   "11_persona_v2.mjs",
+  "12_spend_ops.mjs",
 ]);
 
 if (fails.length) {
