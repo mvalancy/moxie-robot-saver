@@ -272,8 +272,15 @@ const ticketText = async (r) => {
     ["a reasoning block the template opened (only its closing tag arrives), then the envelope",
      'The child said hi, I should greet. </think> {"say": "Hi there, friend!", "mood": "happy", "gesture": "talk"}', "Hi there, friend!", { mood: "1", gesture: "Gesture_Talk" }],
     ["a bare closing think tag, then prose", "The child said hi, I should greet. </think> Hi there, friend!", "Hi there, friend!", null],
+    // Served live on the production model during the review-round measurement (2026-10-08),
+    // on the real code path: both reached the voice.
+    ["a `}` inside a VALID say (served live)", '{"say": "That must have made you feel sad. How did that make you feel?}", "mood": "sad", "gesture": "think"}',
+     "That must have made you feel sad. How did that make you feel?", { mood: "2", gesture: "Gesture_Think" }],
+    ["a second `say:` key with no comma (served live: the whole ramble was spoken)",
+     '{"say": "I remember your name is Sam! That\'s great to hear your name again." say: "Let\'s try a fun game together." say: "self", "mood": "sad", "gesture": "think"}',
+     "I remember your name is Sam! That's great to hear your name again.", { mood: "2", gesture: "Gesture_Think" }],
   ];
-  const LEAK = /[{}]|"say"|'say'|"mood"|<think>|<\/think>|```/;
+  const LEAK = /[{}]|"say"|'say'|["']\s*say\s*:|"mood"|<think>|<\/think>|```/;
   for (const [label, content, want, mark] of SHAPES) {
     fresh();
     P.plan = { chat: { content } };

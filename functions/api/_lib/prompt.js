@@ -18,6 +18,12 @@
  * ending in "Okay bye Moxie!"): with the persona repeated after the child's line, 1,050 of
  * 1,889 prompt tokens FOLLOWED her 15-char line and 0/5 replies answered it (she answered
  * turn 3 or 4 instead); with a short trailing message 4/5 did, and with the close cue 5/5.
+ * The anchor is sized to a budget: at 2,164 chars on a goodbye turn that conversation's
+ * fifth turn cost 1,350 prompt tokens against a ceiling of 1,300; at 1,837 chars (the format
+ * rule's rhetoric gone, the mapping kept) it cost 1,282 and 1,304 in two runs — the second
+ * carrying a 220-char broken reply in its history that `reply.js` now cuts to 66 — and the
+ * goodbye turn of the four-turn `goodbye` scenario 1,192-1,216 (was 1,264-1,279).
+ * `sim/test_demo_proxy.mjs` §21 pins the sizes.
  * Some chat templates (the Qwen3 family under llama.cpp, for one) reject a system message
  * that is not first with HTTP 500 or silently drop it: the `single` layout exists for them.
  */

@@ -65,11 +65,12 @@ function unescapeJson(raw) {
 /**
  * One string field read out of BROKEN JSON. The value runs to the quote that is followed by
  * a comma, a closing brace, a stray `&`, a colon (a dropped key: `"say": "Bye!":"wave"` was
+ * served live), another key (`"…again." say: "Let's…"` — a second `say` with no comma,
  * served live) or the end — so an unescaped quote INSIDE `say` ("My friend said "hi" to
  * me!") survives. Single quotes are accepted as the delimiter.
  */
 function fieldOf(text, name) {
-  const re = new RegExp("[\"']" + name + "[\"']\\s*:\\s*([\"'])([\\s\\S]*?)\\1\\s*(?=,|\\}|&|:|$)");
+  const re = new RegExp("[\"']" + name + "[\"']\\s*:\\s*([\"'])([\\s\\S]*?)\\1\\s*(?=,|\\}|&|:|$|[\"']?\\w+[\"']?\\s*:)");
   const m = re.exec(text);
   return m ? unescapeJson(m[2]) : undefined;
 }
@@ -152,9 +153,10 @@ export function parseExpressive(raw) {
       .join("").trim();
     return { text, chosen: null, diagram: "" };
   }
-  if (say.includes("{")) {
-    // The last pass. One level of nesting is read (the inner fields fill gaps, never
-    // overrule); whatever brace is left outside a fence is not for a child to hear.
+  if (/[{}]/.test(say)) {
+    // The last pass, on EITHER brace (`"…feel?}"` inside a valid say was served live). One
+    // level of nesting is read (the inner fields fill gaps, never overrule); whatever brace
+    // is left outside a fence is not for a child to hear.
     const inner = scanObjects(say);
     const nested = {};
     for (const o of inner.objects) Object.assign(nested, readEnvelope(o, false));

@@ -209,7 +209,11 @@ the prompt. The blob is re-minted each turn and expires after `CONTEXT_TTL_S` = 
   persona was repeated after the child's line. Measured, that put 94 % of the prompt behind a 15-char
   "Okay bye Moxie!" and she answered an earlier turn instead: 0/4 goodbyes acknowledged on production,
   0/5 in replay on the same model, 4/5 with the repeat removed, 5/5 with the goodbye cue. The security
-  intent is unchanged (owner-approved wording change); `sim/test_demo_proxy.mjs` §21 pins it.
+  intent is unchanged (owner-approved wording change); `sim/test_demo_proxy.mjs` §21 pins it. The
+  anchor is sized to a token budget: 1,837 chars on a goodbye turn and at most 2,000 on any other
+  (§21 pins 1,900 and 2,050), which put turn 5 of the five-turn conversation ending "Okay bye Moxie!"
+  at 1,282 and 1,304 prompt tokens on the production model (1,889 with the repeated persona; 1,350
+  with the first, 2,164-char anchor). Growing the anchor means measuring that again.
 - **`single`** sends exactly **one** system message, first, carrying — in this order — the persona, the
   anchor's restatement, the cue, the reference passage, the diagram cue, the format rule and the re-roll
   line; the child's line is the **last** message. It exists because some chat templates (Qwen3-family

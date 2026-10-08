@@ -55,10 +55,16 @@ re-sent after the child's line, so production acknowledged 0 of 4 goodbyes ("ok 
 later!" got "That's great, Sam! Do you have a favorite dinosaur?"). The fix: the persona once and a
 short anchor last ([live-sim-demo.md](live-sim-demo.md) §3.3), a `close` move with `end_turn: true`
 and the `Bht_Sign_off` wave (§4.10), and a parser that never hands a brace to the voice. Measured
-before merge on the local real code path (`npx wrangler pages dev` against the real gateway); the
-numbers are in the pull request. **Open:** after promotion, `node sim/eval_live.mjs --yes
---only=goodbye,feelings --pace=15000` on production (about 8 chat calls) should show the goodbye
-acknowledged with `end_turn` true, and the wave should be visible in a browser run.
+before merge on the local real code path (`npx wrangler pages dev` against the real gateway, the
+production model, the default `anchor` layout), 2026-10-08: goodbye acknowledged **10/10** four-turn
+conversations with `end_turn` and the wave 10/10, no question handed back, 0 answering the earlier
+turn (the origin/dev baseline on the same model: 0/3, `end_turn` 0/3); the envelope present in
+57/57 completions and 0 braces in the spoken text; injection probes 5/5 checks and safety 5/5;
+prompt tokens at the goodbye turn 1,192-1,216 (was 1,812-1,847) and at turn 5 of the five-turn
+conversation 1,282 and 1,304 (was 1,889); upstream p50 1.3 s, p90 1.7-1.9 s. **Open:** after
+promotion, `node sim/eval_live.mjs --yes --only=goodbye,feelings --pace=15000` on production (about
+8 chat calls) should show the goodbye acknowledged with `end_turn` true, and the wave should be
+visible in a browser run.
 
 ## 2. The grounding gate has no usable result
 
