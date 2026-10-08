@@ -17,11 +17,12 @@ Data-driven content modules loaded by the [content engine](../moxie_sdk/content/
   and the structured summary are ours.*
 
 Both files carry the same two leave-taking globals, so either one ends a chat properly. Neither
-calls the brain:
+asks the brain for its reply:
 
 - **`Goodbye`**: a whole-utterance goodbye (*"Bye, Moxie!"*, *"I gotta go"*, *"I'm done"*,
   *"stop"*) gets one of several warm lines that start with `<exit>`. The runtime then ends the
-  conversation, and its memory summary is written then, not at the next disconnect.
+  conversation, and its memory summary (the brain call that writes it) runs then, not at the
+  next disconnect.
 - **`Sleep`**: *"go to sleep, Moxie"* or *"time for bed"* answers with `<sleep>`. Going to sleep
   ends the conversation too, so its summary is written then as well.
 

@@ -813,24 +813,39 @@ big"*); after three breaches the extension is quarantined for the session.
 one sentence per capability from a fixed table (never author-supplied text, which would be
 a place to lie); `ext.explain()` is one English sentence per rule — *"Whenever this
 activity is triggered: tells your child 'The time is …' and answers without asking the
-AI."* Both appear in the pack review beside the diff. A parent never reads a raw action tag:
-it is lifted out of the quoted line, and the sentence ends with what it does, so the shipped
-`Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and answers without asking
-the AI; then the conversation ends."* That sentence is the only place a parent learns of a
-tag, because an extension's line goes through the same tag parse as a model's with no grant
-of its own. So `explain()` reads every line the rule's last `say` can speak (each `say`
-replaces the line before it): through `if`, `and`/`or`, `concat`, `let` names,
-`random.pick`, `upper`/`lower`/`trim`/`str`, and any part built only from literals, which it
-works out with the evaluator itself (a tag split across `concat` parts or assembled with
-`replace` included). An effect that not every one of those lines has reads *sometimes*
-(*"…; then sometimes Moxie starts the DRAW activity."*), and so does a tag that feeds an op
-it does not follow line by line (`get`, `replace`, `join`, …). A launch whose module is
-worked out at run time reads *"Moxie starts an activity it works out"*. Two kinds of tag
-cannot be read ahead: one that arrives in what the program reads at run time (what the child
-said, or a memory it wrote on an earlier turn), and one that an op it does not follow puts
-together at run time from pieces (a `join` of `"<ex"`, what the child said and `"it>"`).
+AI."* Both appear in the pack review beside the diff. An action tag is lifted out of the
+quoted line, and the sentence ends with what it does, so the shipped `Goodbye` reads *"…:
+says one of 5 goodbyes (picked unpredictably) and answers without asking the AI; then the
+conversation ends."* That sentence is the only place a parent learns of a tag, because an
+extension's line goes through the same tag parse as a model's with no grant of its own. So
+`explain()` reads every line the rule's last `say` can speak (each `say` replaces the line
+before it): through `if`, `and`/`or`, `concat`, `let` names, `random.pick`,
+`upper`/`lower`/`trim`/`str`, and any part built only from literals, which it works out
+with the evaluator itself (a tag split across `concat` parts or assembled with `replace`
+included). Any other part is worked out at run time, so it is read as some text and again
+as nothing: a null, a list or a map is said as nothing, and a tag written around it then
+forms (`"<ex"`, a value the robot did not send, `"it>Bye!"`). A tag whose name is split
+around such a part stays in the quote in its pieces (*'<ex … it>Bye! …'*), because the
+pieces are said when the part is not empty; one with the part in its fields (`"<launch:"`,
+what the child said, `">"`) is lifted out. An effect that not every one of these readings
+has reads *sometimes* (*"…; then sometimes Moxie starts the DRAW activity."*), and so does
+a tag that feeds an op it does not follow line by line (`get`, `replace`, `join`, …). A
+launch whose module is worked out at run time reads *"Moxie starts an activity it works
+out"*. A `say` that can speak more than 256 different lines (or a million characters across
+them) is not read line by line: every text written in it and in its `let` names counts, as
+*sometimes*, with each `concat` read as one text through its literal parts, nested
+`concat`s, case ops and `let` names. Three kinds of tag cannot be read ahead:
+
+- one that needs text the program reads at run time (what the child said, a memory,
+  something the robot sent) for its `<`, its name, a `:` or its `>`;
+- one that needs the text an op it does not follow hands on, such as a `join` of `"<ex"`,
+  what the child said and `"it>"` (that op's arguments are read for whole tags only);
+- past 256 lines, one that needs the text of a `concat` part that can come out as
+  different lines: an `if`, `and`/`or`, `random.pick`, or a `let` name bound to one.
+
 `sim/tests/test_leave_taking.py` runs each shape through the real `ContentApp` and checks
-the sentence against what the robot is sent.
+the sentence against what the robot is sent, including a sweep of every tag split at every
+point around a part worked out at run time.
 
 **Capability escalation.** An incoming item declaring a capability the installed version
 did not is defaulted **un-ticked** whatever its state, with its own sentence — *"This
