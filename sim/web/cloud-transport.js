@@ -564,18 +564,34 @@
     },
 
     /** A line the PAGE chose (mic.js's scripted consolation), not a visitor's words, so it
-     *  must cost nothing: same routing as `sendUserTurn` except a LIVE page answers with a
-     *  local echo + stub reply and NOT ONE REQUEST. */
+     *  must cost nothing and is never shown as theirs: NOT ONE REQUEST, and no "You" row
+     *  (one read "YOU: Guess what, it's my birthday today!" on production). It is logged as
+     *  a "Pretend line", played from its child clip as a child turn is, and answered from
+     *  `stub.js` after the same beat, live page or not. A connected MQTT broker is a
+     *  self-hoster's own backend and still gets it through `inner.sendUserTurn`. */
     sendScriptedTurn: function (text) {
       var t = String(text == null ? "" : text).trim();
       if (!t) return Promise.resolve();
       stats.scripted++;
-      if (inner.isLive() || !canSpendLiveTurn()) {
+      if (inner.isLive()) {
         inner.sendUserTurn(t);
         return Promise.resolve();
       }
-      stats.scriptedFree++;
-      echoUser(t);
+      if (canSpendLiveTurn()) stats.scriptedFree++;
+      var log = document.getElementById("transcript");
+      if (log) {
+        // `.turn` (the openers step aside, ambient.js holds its mutters), never `.user`.
+        var row = document.createElement("div");
+        row.className = "turn pretend";
+        row.innerHTML = '<span class="who">Pretend line</span><span class="msg"></span>';
+        row.querySelector(".msg").textContent = t;     // textContent = XSS-safe
+        log.appendChild(row);
+        log.scrollTop = log.scrollHeight;
+      }
+      if (window.moxieAudio) {
+        window.moxieAudio.sfx("listen");
+        if (window.moxieAudio.speakClipOnly) window.moxieAudio.speakClipOnly(t, "child");
+      }
       return fallbackReply(t);
     },
 
