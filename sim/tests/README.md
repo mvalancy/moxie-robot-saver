@@ -81,6 +81,7 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 | `test_csp_hashes`, `test_no_offsite_images`, `test_shared_ceilings`, `test_sim_client_parity`, `test_safety`, `test_sdk` | Static-site CSP, images, shared rate-limit tier, SDK and safety floor |
 | `test_live_*.py`, `test_smoke_live_brain` | Real gateway completions, TTS, STT, hosted ears, voice round trip; skip without credentials |
 | `test_robot_lifecycle` | Unpair and factory reset: account record, permit revoke, voided pairing codes, the `restore_factory` code (need `fastapi` + `httpx`) |
+| `test_robot_claim`, `test_wifi_first_qr` | Bench-day pairing: the Wi-Fi-only first code, Add to my account (the claim), `/local/state`'s lists of robots, and one robot per account on Simulate robot scan too (need `fastapi` + `httpx`); `test_sil_robot_claim` (SIL group) runs the claim against real mosquitto and the real supervisor |
 
 Every file's docstring states what it proves and, where relevant, its mutation-check companion
 in [`../tools/`](../tools/README.md).

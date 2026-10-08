@@ -35,6 +35,18 @@ RESTORE_FACTORY = '{"debug":{"command":"restore_factory"}}'
 REVOKE = {"device_id": DEVICE, "permitted": False, "label": ""}
 
 
+@pytest.fixture(autouse=True)
+def the_robot_is_on_no_account(client):
+    """Each test pairs `DEVICE` to an account of its own, and a robot is on one account
+    (Simulate robot scan refuses one that another account's record names), so every test
+    starts with no record naming it. Read straight from the table."""
+    from moxie_server import db
+    for row in db.q("SELECT id, attributes FROM robots"):
+        if json.loads(row["attributes"]).get("mqtt-device-id") == DEVICE:
+            db.ex("DELETE FROM robots WHERE id=?", (row["id"],))
+    yield
+
+
 def _prepare(client, auth):
     r = client.post("/local/pairing/prepare", headers=auth,
                     json={"ssid": "Home", "password": "pw"})

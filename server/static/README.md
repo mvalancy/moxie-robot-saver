@@ -3,8 +3,10 @@
 The parent-app UI your phone loads over the LAN. Vanilla HTML/CSS/JS — **no build step, no external
 dependencies** (works fully offline). Served at `/` by the FastAPI server.
 
-- `index.html` — the setup flow (login → child + Wi-Fi → QR → paired), then the Moxie tab: 🔐 Robot
-  access (permit a pending robot), live state, ⚙️ Settings, 📈 Insights, 🛡️ Safety,
+- `index.html` — the setup flow (login → the Wi-Fi-only code → the server code → ➕ Add to my
+  account on the 🤖 Moxie tab; see the [bench runbook](../../docs/guides/bench-runbook.md)), then the
+  Moxie tab: 🔐 Robot access (permit a pending robot, or add it to your account), live state,
+  ⚙️ Settings, 📈 Insights, 🛡️ Safety,
   🎨 Moxie's look (pick the face layers — see the [guide](../../docs/guides/moxies-look.md)),
   🎭 Be Moxie (drive the robot as a remote grown-up),
   📅 Today's plan (the day the robot is served, with the recommender's *"why this activity today"*
@@ -36,11 +38,23 @@ card shows with no robot, typing alone never calls the brain, one click (or Ente
 carrying the session, a refusal is shown without advancing it, and Start over or another brain wins
 over an answer still on its way; its teeth mutate [`js/tryit.js`](js/tryit.js).
 
+[`sim/test_robot_claim.mjs`](../../sim/test_robot_claim.mjs) covers the bench-day flow: the Wi-Fi
+tab's code is Wi-Fi only unless the pairing-key box is ticked; a robot on no account is offered ➕ Add
+to my account on *No Moxie paired yet* and beside Permit on its pending row in 🔐 Robot access (one
+click, one claim, never automatic); the page says why when it cannot be offered (this account
+already has a robot, or another account has this one) or when the supervisor cannot be asked; each
+refusal stays on screen in the server's words, also when the redraw after it hides the card that
+was clicked; the answer to a click that added the robot stays through the 📶 Wi-Fi tab's poll and a
+re-opened tab; and the tab notices a robot that arrives while it is open. Its teeth mutate
+[`js/core.js`](js/core.js), plus one mutation each of [`index.html`](index.html) and
+[`js/settings.js`](js/settings.js).
+
 Every other card is asserted by Python route tests and source pins
 ([`test_console_roundtrip.py`](../../sim/tests/test_console_roundtrip.py)), which prove what the
 server answers but not that a button wires itself up. Still uncovered by any browser suite: 🔐
-Robot access, ⚙️ Settings, 🛡️ Safety, 🎨 Moxie's look, 🎭 Be Moxie, 📅 Today's plan, 🧠 memory,
-🎚️ Voice, 📦 Content, 🧠 Brain, and the returning-parent entry path.
+Robot access's Permit, Revoke and let-any-robot switch, ⚙️ Settings, 🛡️ Safety, 🎨 Moxie's look,
+🎭 Be Moxie, 📅 Today's plan, 🧠 memory, 🎚️ Voice, 📦 Content, 🧠 Brain, and the returning-parent
+entry path.
 
 ---
 📖 [Back to top](../../README.md) · [Server README →](../README.md)
