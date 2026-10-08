@@ -193,7 +193,7 @@ import {
     eq((await keyOf("203.0.113.99", 3000)).key, key, "the same visitor in the same minute keys the same entry");
     ok((await keyOf("203.0.113.98", 3000)).key !== key, "a DIFFERENT visitor keys a different entry");
     ok((await keyOf("203.0.113.99", 3060)).key !== key, "…and the next MINUTE keys a different entry, so the hot key rotates");
-    ok(!(await keyOf("2001:db8:1:2:3:4:5:6", 3000)).key.includes("2001"), "an IPv6 /64 is not in the key either");
+    ok(!(await keyOf("2001:db8:1:2:3:4:5:6", 3000)).key.includes("2001"), "an IPv6 /56 is not in the key either");
   }
 
   // 15h. THE WHOLE ROUTE through the global `caches.default` (production's branch).
