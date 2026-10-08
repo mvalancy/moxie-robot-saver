@@ -527,7 +527,8 @@ export function readConfig(env, request) {
     // the upstream key's `max_parallel_requests` (it protects a service sharing the
     // gateway), so a short bounded wait absorbs momentary collisions instead.
     // `DEMO_QUEUE_MAX_WAIT_MS` 2500: small, because it is added to a turn a visitor is
-    //   already waiting on; clamped at 10 000 so it never rivals the upstream timeout.
+    //   already waiting on; clamped at 10 000 so it never exceeds a default upstream
+    //   timeout (it equals chat's 10 000; speech's and STT's are 12 000).
     // `DEMO_QUEUE_MAX_DEPTH` 8: a queue with no depth cap is just a slower way to fall
     //   over; 4 slots × 2.5 s / ~1.2 s per turn ≈ 8 serviceable waiters.
     // Either at 0 disables the queue: at capacity, refuse instantly.
