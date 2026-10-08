@@ -256,8 +256,8 @@ def _echo():
 
 
 def test_a_per_robot_override_survives_a_restart(tmp_path, monkeypatch):
-    """Back before anything asks: brain, safety, lifecycle and /status read the per-robot
-    dict directly, so a lazy read would leave them blind after a restart."""
+    """The settings are back before anything asks for them: brain, safety, lifecycle and
+    /status read the per-robot dict directly, so a lazy read would leave them blind."""
     from helpers_runtime import http_json, status_server
     monkeypatch.delenv("MOXIE_APP", raising=False)          # no pin, so the pick stands
     rt = _runtime(tmp_path, devices=("d_one",))
