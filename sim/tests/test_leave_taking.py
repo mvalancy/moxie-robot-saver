@@ -8,7 +8,8 @@ message of `''` and the opener was never heard.
 
 Hermetic: fake brains that count their OWN calls (a `ChatFn` handed to `ContentApp` never
 reaches `chat.model_calls()`), tmp storage, the real `MoxieRuntime` over a fake transport.
-Actions are compared through `ActionType` and `wire.encode_action`, never as wire strings.
+What goes on the wire (actions, the result code, signals) is compared through `ActionType`
+and the wire encoders (`encode_action`, `build_chat_response`), never as wire literals.
 """
 import hashlib
 import json
@@ -344,7 +345,11 @@ def test_an_empty_prompt_speaks_the_module_opener(tmp_path):
     text = reply["output"]["text"]
     assert brain.turns == [], "the opener must not cost a model call"
     assert text == _openers()[0], "a robot hears the first opener first"
-    assert reply["result"] == "SUCCESS" and not reply.get("chunk_num")
+    # one plain closing reply, in the envelope the wire encoder spells for any line: no
+    # chunk, no action, only the runtime's vision subscription
+    plain = build_chat_response("evt", text, subscribe_events=list(presence_seam.VISION_EVENTS))
+    assert ({k: v for k, v in reply.items() if k != "output"}
+            == {k: v for k, v in plain.items() if k != "output"})
     # the same staging as a model line: performed markup and scored fields
     assert reply["output"]["markup"] != text and "<mark" in reply["output"]["markup"]
     assert {"mood", "dialog_act"} <= set(reply["output"])
@@ -364,8 +369,11 @@ def test_twenty_empty_prompts_rotate_the_openers(tmp_path):
 
 
 #: The spoken half of every reply below, measured on origin/dev (4c409b6) before this
-#: change: the fake brain's line, staged by the runtime. The opener path must not move it.
-GOLDEN_OUTPUT = {
+#: change: the fake brain's line as the runtime staged it, i.e. its performed markup and the
+#: scored fields `_publish_chat` hands the encoder. The opener path must not move it.
+#: `_golden_reply` wraps it with `wire.build_chat_response`, so a wire-spelling change (the
+#: `result` code, the `signals` shape) moves the expectation with the encoder.
+GOLDEN_STAGED = {
     "dialog_act": "statement_non_opinion",
     "emotion": "surprise",
     "markup": (
@@ -379,9 +387,21 @@ GOLDEN_OUTPUT = {
         '+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}"/>'),
     "mood": "surprised",
     "mood_intensity": 1,
-    "signals": ["no_signal"],
+    "signal": "no_signal",
     "text": "Ooh, tell me more about that!",
 }
+
+
+def _golden_reply(event_id):
+    """What origin/dev published for `GOLDEN_STAGED`: one plain reply with no action, only
+    the runtime's vision subscription, as the wire encoder spells it."""
+    g = GOLDEN_STAGED
+    return build_chat_response(event_id, g["text"], g["markup"], mood=g["mood"],
+                               mood_intensity=g["mood_intensity"], dialog_act=g["dialog_act"],
+                               emotion=g["emotion"], signals=g["signal"],
+                               subscribe_events=list(presence_seam.VISION_EVENTS))
+
+
 NO_OPENER = {"conversations": [{
     "name": "Chat", "module_id": "CHAT", "content_id": "default",
     "prompt": "You are Moxie talking to {{ volley.config.child_pii.nickname }}."}]}
@@ -404,7 +424,7 @@ def test_every_other_turn_publishes_what_origin_dev_published(
     what the brain was sent (its system message gains the tags by design)."""
     extra = dict(extra)
     module = extra.pop("module", None)
-    brain = Brain(answer=GOLDEN_OUTPUT["text"])
+    brain = Brain(answer=GOLDEN_STAGED["text"])
     if module is None:
         app, module_id = ContentApp(load_modules(_raw("memory_chat.json")), brain,
                                     persona="P", memory=False), "MEMORY_CHAT"
@@ -418,17 +438,10 @@ def test_every_other_turn_publishes_what_origin_dev_published(
     rt._pool.shutdown(wait=True)
 
     assert len(rt.client.chat_replies(did)) == 1
-    rest = {k: v for k, v in reply.items() if k not in ("response_action", "response_actions")}
-    assert rest == {"backend": "router", "command": "remote_chat", "end_turn": False,
-                    "event_id": "evt-gold", "output": GOLDEN_OUTPUT, "result": "SUCCESS"}
-    # no action, only the runtime's vision subscription, as the wire encoder spells it
-    wire = build_chat_response("evt-gold", "", subscribe_events=list(
-        presence_seam.VISION_EVENTS))
-    assert reply.get("response_actions") == wire["response_actions"]
-    assert reply.get("response_action") == wire["response_action"]
-    assert synth.spoken == [GOLDEN_OUTPUT["text"]]
+    assert reply == _golden_reply("evt-gold")
+    assert synth.spoken == [GOLDEN_STAGED["text"]]
     said = [{"role": "user", "content": heard}] if heard else []
-    assert rt.history[did] == said + [{"role": "assistant", "content": GOLDEN_OUTPUT["text"]}]
+    assert rt.history[did] == said + [{"role": "assistant", "content": GOLDEN_STAGED["text"]}]
     assert [m[1:] for m in brain.turns] == [[{"role": "user", "content": heard}]]
 
 
