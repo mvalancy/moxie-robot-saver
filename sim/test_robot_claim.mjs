@@ -11,14 +11,22 @@
  *      server permits as part of the claim), it does not also send Permit
  *   C3 a refusal is shown to the parent in its own words, and no robot card appears
  *   C4 an account that already has a robot is offered no second one
+ *   W1 the Wi-Fi tab's code is Wi-Fi ONLY by default: one POST /local/wifi/payload, its
+ *      payload shown, no recovery phrase; once the robot is on the broker the tab says to
+ *      add it, and claims nothing itself
+ *   W2 the pairing-key code (the original app's, for Simulate robot scan) is made only
+ *      when its option is ticked
  *
  * No FastAPI: `serveStatic` serves server/static and every `/local/*` and `/api/*` call is
  * answered at the browser. The fleet views and the unpair answer come out of the REAL server
  * modules (`moxie_server.fleet`, `moxie_server.lifecycle`, both dependency-free) in a python3
- * subprocess; the claim answer's keys are the ones sim/tests/test_robot_claim.py pins on the
- * real route. TEETH: mutated copies of js/core.js (an automatic claim; no button on the card;
- * no button on the pending row; the answer not rendered; a second robot offered; a refusal
- * swallowed) must each redden the scenario that guards it.
+ * subprocess, and both Wi-Fi codes from the REAL `tools/pairing/moxie_qr.py`; the claim
+ * answer's keys are the ones sim/tests/test_robot_claim.py pins on the real route, and
+ * sim/tests/test_wifi_first_qr.py pins what /local/wifi/payload really answers. TEETH:
+ * mutated copies of js/core.js (an automatic claim; no button on the card; no button on the
+ * pending row; the answer not rendered; a second robot offered; a refusal swallowed; the
+ * pairing-key code by default; a claim from the Wi-Fi tab's poll) must each redden the
+ * scenario that guards it.
  *
  *   node sim/test_robot_claim.mjs
  */
@@ -41,7 +49,11 @@ const PY = `
 import json, sys
 repo, dev, rid, cid = sys.argv[1:5]
 sys.path.insert(0, repo + "/server")
+sys.path.insert(0, repo + "/tools/pairing")
 from moxie_server import fleet, lifecycle as L
+import moxie_qr
+
+wifi = moxie_qr.WifiInfo("BenchNet", "s3cret", band=moxie_qr.Band.ONLY_24G)
 
 def snap(pending):
     return {"ok": True, "app": "content", "uptime_s": 5, "allow_unverified_bots": False,
@@ -57,6 +69,10 @@ print(json.dumps({
     "unpair": L.unpair_result(rid, unpaired=True, factory_reset=False,
                               child={"id": cid, "name": "Moxie Kid"}, codes_voided=0,
                               access=L.access_view(dev, revoked=True)),
+    "wifi": moxie_qr.encode_wifi_only(wifi),
+    "wifi_decoded": {k: v for k, v in moxie_qr.decode_proto(moxie_qr.encode_wifi_only(wifi)).items()
+                     if k in ("secret_key", "hide_pair")},
+    "keyed": moxie_qr.encode_proto(wifi, bytes(range(32))),
 }))
 `;
 let FIX;
@@ -70,6 +86,8 @@ ok(FIX.pending.pending_count === 1 && FIX.pending.robots[0].pending === true,
 ok(FIX.served.pending_count === 0 && FIX.served.robots.length === 1,
    "fixture: once claimed it is served");
 ok(FIX.unpair.unpaired === true, "fixture: the real unpair_result produced an unpair answer");
+ok(FIX.wifi_decoded.secret_key === null && FIX.wifi_decoded.hide_pair === true,
+   "fixture: the real encode_wifi_only carries no key and the wifi-only flag");
 
 /* What /local/state lists once the claim made the record (test_robot_claim.py pins these
  * attributes on the real route), and what the real claim route answers. */
@@ -82,6 +100,12 @@ const REFUSED = { ok: false, error: "account already has a robot", device_id: DE
                   reason: "This account already has a robot (Moxie (simulated)). Unpair the "
                           + "current robot first, then add this one." };
 const CLAIM = `POST /local/robots/${DEV}/claim`, PERMIT = `POST /local/robots/${DEV}/permit`;
+const WIFI = "POST /local/wifi/payload", KEYED = "POST /local/pairing/prepare";
+const PHRASE = "apple banana cherry dune";
+/* 1x1 transparent PNG: every QR image the console asks for. */
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64");
 
 const site = await serveStatic(STATIC, { extIsHtml: false });
 const browser = await puppeteer.launch({
@@ -93,8 +117,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A fresh first visit, logged in, on the Moxie tab. Until a claim succeeds the account has
  *  `robots` and the broker one pending robot; every POST and DELETE lands in `st.calls`. */
-async function drive({ mutate = null, robots = [], unclaimed = [DEV], refuse = false } = {}) {
-  const st = { calls: [], auth: [], claimed: false, unpaired: false };
+async function drive({ mutate = null, robots = [], unclaimed = [DEV], refuse = false, tab = "moxie" } = {}) {
+  const st = { calls: [], auth: [], bodies: {}, claimed: false, unpaired: false };
   const page = await browser.newPage();
   await page.evaluateOnNewDocument(() => { try { localStorage.clear(); } catch (e) {} });
   const { errs, aborted } = watchPage(page);
@@ -108,7 +132,13 @@ async function drive({ mutate = null, robots = [], unclaimed = [DEV], refuse = f
       return r.respond({ status: 200, contentType: "text/javascript; charset=utf-8",
                          body: mutate(SRC) });
     if (p === "/local/quicklogin") return J({ token: TOKEN, email: "parent@home.lan" });
-    if (m === "POST" || m === "DELETE") { st.calls.push(call); st.auth.push(r.headers().authorization || ""); }
+    if (m === "POST" || m === "DELETE") {
+      st.calls.push(call); st.auth.push(r.headers().authorization || ""); st.bodies[call] = r.postData();
+    }
+    if (/\.png$/.test(p)) return r.respond({ status: 200, contentType: "image/png", body: PNG });
+    if (call === WIFI) return J({ qr_payload: FIX.wifi, wifi_only: true });
+    if (call === KEYED) return J({ qr_payload: FIX.keyed, recovery_phrase: PHRASE,
+                                   secret_hash: "h", child_id: CID, public_key: "k" });
     if (p === "/local/state") {
       const mine = st.unpaired ? [] : st.claimed ? [CLAIMED] : robots;
       return J({ user: { id: "u1", email: "parent@home.lan" },
@@ -138,7 +168,11 @@ async function drive({ mutate = null, robots = [], unclaimed = [DEV], refuse = f
   await page.click("#btn-login");
   await page.waitForFunction(
     "!document.querySelector('#tabs').classList.contains('hidden')", { timeout: 10000 });
-  await page.click('.tab[data-tab="moxie"]');
+  await page.click(`.tab[data-tab="${tab}"]`);
+  if (tab !== "moxie") {
+    await page.waitForSelector(`#tab-${tab}.active`, { timeout: 10000 });
+    return { page, st, errs, aborted };
+  }
   /* Wait for the tab's RECORDED state, never a live sample: /local/state decides which card
    * shows, and /local/fleet fills Robot access and the live box. */
   await page.waitForFunction(
@@ -162,6 +196,10 @@ const view = (page) => page.evaluate(() => {
     cardButtons: texts("#moxie-none .claim-btn"), rowButtons: texts("#permits-box .claim-btn"),
     allButtons: texts(".claim-btn"), permitButtons: texts("#permits-box .permit-btn"),
     claimStatus: text("#claim-status"), devStatus: text("#dev-status"),
+    qrCard: shown("#wifi-qr-card"), recovery: shown("#recovery-box"), phrase: text("#phrase"),
+    qrKind: text("#qr-kind"), pairStatus: text("#pair-status"),
+    qrPayload: decodeURIComponent((($("#qr-img") || {}).getAttribute
+      ? $("#qr-img").getAttribute("src") || "" : "").split("payload=")[1] || ""),
   };
 });
 const claims = (st) => st.calls.filter((c) => c === CLAIM).length;
@@ -259,6 +297,51 @@ const SCENARIOS = {
       C.eq(notable(errs, aborted).length, 0, `C4: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
     } finally { await page.close(); }
   },
+
+  async W1(C, o) {
+    const { page, st, errs, aborted } = await drive({ ...o, tab: "wifi" });
+    try {
+      await page.type("#ssid", "BenchNet");
+      await page.type("#wifipass", "s3cret");
+      await page.click("#btn-qr");
+      await page.waitForFunction(() => !document.querySelector("#wifi-qr-card").classList.contains("hidden"),
+                                 { timeout: 8000 }).catch(() => {});
+      const v = await view(page);
+      C.eq(JSON.stringify(st.calls), JSON.stringify([WIFI]),
+           "W1: by default the Wi-Fi tab asks for the Wi-Fi-only code, and only that");
+      C.eq(st.bodies[WIFI], JSON.stringify({ ssid: "BenchNet", password: "s3cret", band: "24g", hidden: false }),
+           "W1: it sends the network the parent typed");
+      C.eq(v.qrPayload, FIX.wifi, "W1: the QR shown is the Wi-Fi-only payload");
+      C.ok(v.qrCard && !v.recovery, "W1: no recovery phrase for a code that pairs nothing");
+      C.ok(/only your Wi-Fi name and password/.test(v.qrKind), "W1: the card says what the code carries");
+      /* The tab polls /local/state; with the robot on the broker it says what to do next. */
+      await page.waitForFunction(() => /Add to my account/.test(
+        document.querySelector("#pair-status").textContent), { timeout: 6000 }).catch(() => {});
+      C.ok(/reached this server/.test((await view(page)).pairStatus),
+           "W1: once the robot is on the broker the tab says to add it");
+      C.eq(claims(st), 0, "W1: the tab never claims by itself");
+      C.eq(notable(errs, aborted).length, 0, `W1: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+    } finally { await page.close(); }
+  },
+
+  async W2(C, o) {
+    const { page, st, errs, aborted } = await drive({ ...o, tab: "wifi" });
+    try {
+      await page.type("#ssid", "BenchNet");
+      await page.type("#wifipass", "s3cret");
+      await page.click("#pairing-key-opt summary");
+      await page.click("#pairing-key");
+      await page.click("#btn-qr");
+      await page.waitForFunction(() => !document.querySelector("#wifi-qr-card").classList.contains("hidden"),
+                                 { timeout: 8000 }).catch(() => {});
+      const v = await view(page);
+      C.eq(JSON.stringify(st.calls), JSON.stringify([KEYED]),
+           "W2: with the option ticked the tab asks for the pairing-key code");
+      C.eq(v.qrPayload, FIX.keyed, "W2: the QR shown is the pairing-key payload");
+      C.ok(v.recovery && v.phrase === PHRASE, "W2: the recovery phrase is shown with it");
+      C.eq(notable(errs, aborted).length, 0, `W2: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+    } finally { await page.close(); }
+  },
 };
 
 /** One scenario into collector `C`; an interaction that throws (a control that never
@@ -287,6 +370,12 @@ const TEETH = [
   ["a second robot offered", "C4",
    (s) => s.replace("function claimable(deviceId){ return !ACCOUNT.robots.length && ",
                     "function claimable(deviceId){ return ")],
+  ["the pairing-key code by default", "W1",
+   (s) => s.replace("const withKey=!!($('#pairing-key') && $('#pairing-key').checked);",
+                    "const withKey=true;")],
+  ["a claim from the Wi-Fi tab's poll", "W1",
+   (s) => s.replace("    } else if((st.unclaimed||[]).length){\n",
+                    "    } else if((st.unclaimed||[]).length){\n      claimRobot(st.unclaimed[0], '#pair-status');\n")],
 ];
 for (const [what, scenario, mutate] of TEETH) {
   ok(mutate(SRC) !== SRC, `teeth: the "${what}" mutation must actually change js/core.js`);

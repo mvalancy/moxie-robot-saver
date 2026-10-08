@@ -19,26 +19,39 @@ yes. One click, and it is your Moxie.
 
 ## Will I ever see this?
 
-**Usually not.** Pairing through the parent console *is* you saying "this robot is mine",
-so the console permits the robot as part of finishing the pairing. You see the pending
-list when something arrives *without* going through that flow:
+**Yes, once, for a real robot.** A robot coming to your server scans two codes, the Wi-Fi
+code and then the server (endpoint) code, and reaches the broker on its own. Nothing in
+those codes tells the server whose robot it is, so it arrives **pending**. Only the
+console's *Simulate robot scan* test permits a robot as part of pairing, because there the
+console is told the robot's id.
 
 | Situation | What you see |
 |---|---|
-| You paired through the console's Wi-Fi/QR flow, console knew the robot's id | Nothing — already permitted |
-| A robot re-homed to your server by scanning an endpoint QR | It appears as **pending**; click **Permit** |
-| Your robot rejoined after a factory reset with a new id | **Pending** again — permit it |
+| A robot re-homed to your server by scanning the Wi-Fi code and the endpoint QR | It appears as **pending**; click **Add to my account** (it is let in and gets its robot card) |
+| You tested with *Simulate robot scan*, and the console knew the robot's id | Nothing — already permitted |
+| Your robot rejoined after a factory reset with a new id | **Pending** again — add it to your account (unpair the old record first if it is still there) |
 | A second robot, a friend's robot, or a stray device on your Wi-Fi | **Pending**, and it stays that way until you permit it |
+
+The [bench runbook](bench-runbook.md) walks the whole real-robot path, codes first.
 
 ## Permitting a robot
 
 1. Open the parent console (`http://localhost:8080` by default) and go to **Moxie**.
 2. Find the **🔐 Robot access** card. A robot waiting for you is listed under
    *"Waiting for you"* with its device id (`d_` followed by a long code).
-3. Click **Permit**.
+3. For **your** robot, click **Add to my account** (it is also on the *No Moxie paired yet*
+   card). That permits it and puts it on your account, so its robot card appears: settings,
+   insights, safety, what Moxie remembers, Wake up, Unpair and Factory reset. For a robot that
+   is not yours to manage, click **Permit**: it is let in, with no robot card.
 
 That is it — no restart, no unplugging the robot. The server immediately sends that robot
 its real configuration, and Moxie starts behaving normally within a few seconds.
+
+**What these buttons prove.** Neither one proves which Moxie a `d_…` id is: nothing the
+robot sends carries the code it scanned. **Add to my account** is your word that the robot
+is yours, the same trust as **Permit**, and anyone who can open this console on your network
+can press either (the console has no password). Add only the robot you just showed the
+codes to. An account holds one robot; to add another, unpair the current one first.
 
 Under *"Allowed"* you can **Revoke** any robot you no longer want served. The next
 configuration it receives has your child's details stripped out of it.
@@ -80,11 +93,13 @@ damaged or missing file means "nobody is permitted" — it fails safe, never ope
 
 ## If something is not working
 
-- **Moxie says "I'm not connected to a family yet"** → it is pending. Permit it (above).
+- **Moxie says "I'm not connected to a family yet"** → it is pending. Add it to your
+  account, or permit it (above).
 - **The 🔐 Robot access card is missing** → the supervisor is not running; check the
   server, then reload the console.
 - **The robot is not in either list** → it has not reached the broker at all. That is a
-  network/pairing problem, not a permission one — see
+  network/pairing problem, not a permission one — see the
+  [bench runbook](bench-runbook.md#3-read-the-connection-monitor),
   [`find-moxie-on-lan.md`](find-moxie-on-lan.md) and
   [`first-time-setup.md`](first-time-setup.md).
 - **You permitted it and nothing happened** → give it a few seconds; the server re-sends

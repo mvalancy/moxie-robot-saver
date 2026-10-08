@@ -1,10 +1,11 @@
 """`/local/*` setup helpers for our own web client — not part of the original API.
 
-Login without an email round trip, the whole pre-QR crypto dance server-side, the QR
-images (EC level L by default: the original app used ZXing L because Moxie's camera
-struggles with dense codes), the factory-reset code, Moxie Direct,
-`simulate-robot-scan`, which completes a pairing with no hardware, and the claim that adds
-a robot which paired by QR to the parent's account.
+Login without an email round trip, the Wi-Fi-only first code, the whole pre-QR crypto
+dance server-side (for the original app's pairing-key code), the QR images (EC level L by
+default: the original app used ZXing L because Moxie's camera struggles with dense codes),
+the factory-reset code, Moxie Direct, `simulate-robot-scan`, which completes a pairing
+with no hardware, and the claim that adds a robot which paired by QR to the parent's
+account.
 """
 from __future__ import annotations
 import base64
@@ -96,6 +97,24 @@ async def pairing_prepare(request: Request, u=Depends(current_user)):
     return {"qr_payload": moxie_qr.encode_proto(wifi, keys.seed, iot_endpoint=iot),
             "recovery_phrase": phrase, "secret_hash": keys.secret_hash_hex,
             "child_id": child_id, "public_key": x_pub_b64}
+
+
+@router.post("/local/wifi/payload")
+async def wifi_payload(request: Request):
+    """The Wi-Fi tab's code: Wi-Fi ONLY (`StartPairingQR.wifi_only`, field 5, and no
+    pairing key), the first code of the re-home flow. A pairing key in that code sends
+    the robot looking for the original cloud (`docs/debugging/live-hardware-debug.md`);
+    `encode_wifi_only` is byte-identical to OpenMoxie's Wi-Fi code. Nothing is registered:
+    once the robot reaches the broker it is added with Add to my account (the claim).
+    Body: `{ssid, password, band(any|5g|24g), hidden}`."""
+    body = await read_json(request)
+    ssid = str(body.get("ssid") or "").strip()
+    if not ssid:
+        raise HTTPException(400, "ssid required")
+    wifi = moxie_qr.WifiInfo(ssid, str(body.get("password") or ""),
+                             is_hidden=bool(body.get("hidden")),
+                             band=BANDS.get(body.get("band", "any"), moxie_qr.Band.ANY))
+    return {"qr_payload": moxie_qr.encode_wifi_only(wifi), "wifi_only": True}
 
 
 @router.get("/local/pairing/qr.png")

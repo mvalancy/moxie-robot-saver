@@ -76,18 +76,29 @@ function enterApp(){
 }
 
 // ---- Wi-Fi pairing ----
+// The code is Wi-Fi ONLY unless the parent ticks the pairing-key box: the first code of the
+// re-home flow must carry no pairing key, or the robot goes looking for the original cloud
+// (docs/debugging/live-hardware-debug.md). The pairing-key code is the original app's, the
+// one Simulate robot scan completes; it also makes the recovery phrase.
 $('#btn-qr').onclick = async () => {
   const name=$('#child-name').value.trim();
   if(name){ await api('/api/children',{method:'POST',body:{child:{'child-first-name':name}}}); }
   const body={ ssid:$('#ssid').value.trim(), password:$('#wifipass').value,
                band:$('#band').value, hidden:$('#hidden').checked };
   if(!body.ssid){ alert('Enter your Wi-Fi network name'); return; }
-  LAST = await api('/local/pairing/prepare',{method:'POST',body});
+  const withKey=!!($('#pairing-key') && $('#pairing-key').checked);
+  LAST = withKey ? await api('/local/pairing/prepare',{method:'POST',body})
+                 : await api('/local/wifi/payload',{method:'POST',auth:false,body});
   $('#qr-img').src = '/local/pairing/qr.png?payload='+encodeURIComponent(LAST.qr_payload);
-  $('#phrase').textContent = LAST.recovery_phrase;
+  $('#phrase').textContent = LAST.recovery_phrase||'';
+  $('#recovery-box').classList.toggle('hidden', !withKey);
+  $('#qr-kind').textContent = withKey
+    ? 'This code carries a pairing key: it is for the original Moxie app, or Simulate robot scan.'
+    : 'This code carries only your Wi-Fi name and password.';
   $('#wifi-qr-card').classList.remove('hidden');
   $('#pair-status').classList.remove('ok');
-  $('#pair-status').textContent = 'Waiting for Moxie to join Wi-Fi…';
+  $('#pair-status').textContent = withKey ? 'Waiting for Moxie to join Wi-Fi…'
+    : 'Next: show Moxie the server code. Moxie is listed in the 🤖 Moxie tab once it reaches this server.';
   loadEndpointQR();
   $('#wifi-qr-card').scrollIntoView({behavior:'smooth'});
   startPolling();
@@ -102,6 +113,9 @@ function startPolling(){
       $('#pair-status').classList.add('ok');
       $('#pair-status').textContent='Moxie connected! See the 🤖 Moxie tab.';
       refreshMoxie();
+    } else if((st.unclaimed||[]).length){
+      // Reached the broker, on no account yet: the claim is the parent's click, never ours.
+      $('#pair-status').textContent='Moxie reached this server. In the 🤖 Moxie tab, press Add to my account.';
     }
   },2000);
 }
@@ -325,7 +339,11 @@ async function setPermit(deviceId, permitted){
 
 // ---- dev: simulate ----
 $('#btn-sim').onclick = async () => {
-  if(!LAST.qr_payload){ alert('Generate a Wi-Fi pairing QR first (Wi-Fi tab).'); return; }
+  if(!LAST.qr_payload || LAST.wifi_only){
+    alert('Make a pairing-key code first: Wi-Fi tab, under "For the original Moxie app or '
+          + 'Simulate robot scan". A Wi-Fi-only code pairs nothing to simulate.');
+    return;
+  }
   // Pairing IS the parent saying "this robot is mine", so hand the pairing call the
   // robot's MQTT id when it is unambiguous (exactly one robot pending) — the server then
   // permits it as part of completing the pairing and no second click is needed.

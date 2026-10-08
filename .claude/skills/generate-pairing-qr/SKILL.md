@@ -23,13 +23,17 @@ python tools/pairing/moxie_pair.py \
 ```bash
 python server/run.py          # or `docker compose up` for the full stack; then open http://<ip>:8080 on a phone
 ```
-In the web app: enter Wi-Fi → **Generate pairing QR**. The server registers the pairing and shows a
-recovery phrase to save.
+In the web app's **📶 Wi-Fi** tab: enter Wi-Fi → **Make the Wi-Fi code**. By default that is the
+**Wi-Fi-only** code (no pairing key), the right first code for a robot coming to your server: a pairing
+key sends the robot looking for the dead cloud (`docs/debugging/live-hardware-debug.md`). Ticking *Put a
+pairing key in the code* makes the original app's pairing-key code instead; the server registers the
+pairing and shows a recovery phrase to save.
 
 ## Then
 Hold the QR to Moxie's camera while it is on its setup/QR screen. It acknowledges the scan and joins Wi-Fi.
 Find it with the `find-moxie-on-lan` skill. On firmware 801+, a second QR re-homes it to your broker:
-`python tools/pairing/moxie_endpoint_qr.py <broker-host>`.
+`python tools/pairing/moxie_endpoint_qr.py <broker-host>`. Once it reaches the broker, add it in the
+console: **🤖 Moxie → Add to my account** (`docs/guides/bench-runbook.md`).
 
 ## Reference
 - Wire format: `docs/reverse-engineering/phone/qr-format.md`

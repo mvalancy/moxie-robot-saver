@@ -23,7 +23,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap",
    "section": "_root",
-   "bytes": 6894,
+   "bytes": 7053,
    "mermaid": 0,
    "headings": [
     "Definition of done",
@@ -1064,7 +1064,7 @@
    "path": "features/robot-lifecycle.md",
    "title": "Map 11 — Robot Lifecycle (pairing / unpair / FACTORY RESET / restore / reboot / OTA / state model)",
    "section": "features",
-   "bytes": 29507,
+   "bytes": 29901,
    "mermaid": 0,
    "headings": [
     "Built here: unpair and factory reset",
@@ -1114,7 +1114,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 1367,
+   "bytes": 1558,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -1123,7 +1123,7 @@
    "path": "guides/revive-your-moxie.md",
    "title": "Revive your Moxie",
    "section": "guides",
-   "bytes": 5978,
+   "bytes": 6682,
    "mermaid": 1,
    "headings": [
     "Which path are you on?",
@@ -1162,15 +1162,32 @@
    "path": "guides/first-time-setup.md",
    "title": "First-time setup",
    "section": "guides",
-   "bytes": 2016,
+   "bytes": 2891,
    "mermaid": 0,
    "headings": [
     "1. Start the server",
     "2. Open the web app from your phone",
     "3. Set up the child + Wi-Fi",
-    "4. Pair Moxie",
+    "4. Show Moxie the code",
     "No robot handy?",
     "What happens next"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/bench-runbook.md",
+   "title": "Bench runbook: bring a real Moxie onto your server",
+   "section": "guides",
+   "bytes": 8246,
+   "mermaid": 0,
+   "headings": [
+    "Before you start",
+    "1. The Wi-Fi code (Wi-Fi only)",
+    "2. The server code",
+    "3. Read the Connection monitor",
+    "4. Add it to your account",
+    "Afterwards",
+    "Code reference"
    ],
    "kind": "md"
   },
@@ -1222,7 +1239,7 @@
    "path": "guides/permitting-a-robot.md",
    "title": "Letting a robot in — \"pending\" and how to permit it",
    "section": "guides",
-   "bytes": 5145,
+   "bytes": 6391,
    "mermaid": 0,
    "headings": [
     "The one-paragraph version",
