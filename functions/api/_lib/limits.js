@@ -1,5 +1,6 @@
-/* functions/api/_lib/limits.js — request admission: the origin pin, the per-IP windows,
- * the unit budget and the concurrency ceiling, in that order, in one function (`admit`).
+/* functions/api/_lib/limits.js — request admission: the served host, the origin pin, the
+ * per-IP windows, the unit budget and the concurrency ceiling, in that order, in one
+ * function (`admit`).
  *
  * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 (caps), §4.3 (origin pin), §4.5
  * (status + `Retry-After`), §4.6 ('Counters, honestly'), §7 (the capacity signal).
@@ -38,6 +39,7 @@ import {
 } from "./counters.js";
 import { clientIp, checkOrigin } from "./clientip.js";
 import { sharedStore, sharedWindowVerdict, sharedBudgetVerdict } from "./sharedtier.js";
+import { servesHost } from "./env.js";
 
 export { UNITS } from "./counters.js";
 export { ipKey, clientIp, checkOrigin } from "./clientip.js";
@@ -80,6 +82,17 @@ export function __state() {
  *  ZERO upstream calls on every refusal path without stubbing anything. */
 export function noteUpstreamCall() {
   state.stats.upstreamCalls += 1;
+}
+
+/** The colo each admission was answered in, keyed by that request's own config object
+ *  (`readConfig` makes one per request), for the refusal log line (`upstream.js::refusal`).
+ *  A WeakMap: it lives exactly as long as the config and never rides `JSON.stringify(cfg)`. */
+const colos = new WeakMap();
+
+/** The colo `admit()` saw for this config, or `""`: refused before admission, or no
+ *  `request.cf` (bare node). */
+export function coloOf(cfg) {
+  return (cfg && typeof cfg === "object" && colos.get(cfg)) || "";
 }
 
 /* ---------------------------------------------------------------------------- *
@@ -472,12 +485,17 @@ async function sharedThenGrant(store, o, ctx) {
 }
 
 /**
- * Origin -> per-IP windows -> unit budget -> concurrency (-> shared tier), once.
+ * Served host -> origin -> per-IP windows -> unit budget -> concurrency (-> shared tier), once.
  *
  * `async` only for the queue wait and the shared tier; everything that decides runs
  * synchronously first. The caller must `release()` in a `finally`. `/api/health` never
  * calls this and stays synchronous. Refusals after the charges (full queue, expired wait,
  * shared-tier refusal) refund what was charged — see `refundCharges`.
+ *
+ * A host `DEMO_SERVE_HOSTS` does not list (`env.js::servesHost`) is refused FIRST, as
+ * `gateway_not_configured`, before the origin pin and before anything is charged: to a
+ * caller it is a deployment with no gateway, which is what the routes answer when the
+ * variables are missing.
  *
  * @param {{request: Request, cfg: object, route: "chat"|"speech"|"transcribe", nowS?: number,
  *          cache?: {match: Function, put: Function}|null}} o `cache` is a TEST seam only.
@@ -489,6 +507,10 @@ export async function admit(o) {
   const { request, cfg, route } = o;
   const nowS = nowOr(o.nowS);
   const load = loadOf(cfg, route);
+  const cf = request && request.cf;
+  if (cfg && typeof cfg === "object") colos.set(cfg, cf && typeof cf.colo === "string" ? cf.colo : "");
+
+  if (!servesHost(cfg, request)) return { ...refuse("gateway_not_configured"), load };
 
   const origin = checkOrigin(request, cfg);
   if (!origin.ok) return { ...refuse("forbidden_origin"), load };

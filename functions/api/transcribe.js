@@ -278,7 +278,7 @@ async function callGateway(cfg, bytes, kind) {
 
   // 429 and 3xx before `reasonForUpstreamStatus`, whose catch-all would call a redirect
   // `upstream_down`.
-  const early = limitedOrRedirected(res);
+  const early = limitedOrRedirected(res, 60); // a 429 with no Retry-After: the STT cooldown (upstream.js)
   if (early) return early;
 
   let text;

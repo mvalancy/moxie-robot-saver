@@ -57,8 +57,16 @@ export const DEFAULTS = Object.freeze({
   DEMO_CHAT_PER_DAY: 150,
   DEMO_SPEECH_PER_MIN: 10,
   DEMO_SPEECH_PER_HOUR: 80,
+  // The voice's and the ears' per-IP DAY: chat's day (150 turns) at each hour cap's own
+  // ratio to chat's hour (speech 80/40 = 2 a reply, against 1.6 measured with one ticket per
+  // sentence; ears 60/40 = 1.5 uploads a spoken turn), so a visitor meets chat's day first.
+  // One address then spends at most 150x3 + 300x2 + 225x2 = 1 500 units a day, under half
+  // of DEMO_UNIT_BUDGET_DAY; with no day window it alone could spend the colo's whole day.
+  // 0 = no day window for that route (the behaviour before 2026-10-08).
+  DEMO_SPEECH_PER_DAY: 300,
   DEMO_STT_PER_MIN: 10,
   DEMO_STT_PER_HOUR: 60,
+  DEMO_STT_PER_DAY: 225,
   DEMO_MAX_CONCURRENT_CHAT: 4,
   DEMO_MAX_CONCURRENT_SPEECH: 8,
   DEMO_QUEUE_MAX_WAIT_MS: 2500,
@@ -70,7 +78,12 @@ export const DEFAULTS = Object.freeze({
   DEMO_TTS_CACHE_TIMEOUT_MS: 1000,
   DEMO_UNIT_BUDGET_HOUR: 600,
   DEMO_UNIT_BUDGET_DAY: 4000,
-  DEMO_CHAT_TIMEOUT_MS: 20000,
+  // Measured 2026-10-08 on `moxie-brain-dense` + `single` (169 turns: the pre-flip A/B, the
+  // production eval_live run, the voice-latency browser turns): p50 1.7 s, p99 3.4 s, max
+  // 4.7 s. 10 s is about 3x that p99, and still holds the gateway's fallback (a first model
+  // that fails at its own worst, then `moxie-brain`'s p99 of 4.1 s). 20 s made a hung
+  // gateway cost a visitor 20 s a turn. The re-roll gets what is left (`reply.js`).
+  DEMO_CHAT_TIMEOUT_MS: 10000,
   DEMO_SPEECH_TIMEOUT_MS: 12000,
   DEMO_STT_TIMEOUT_MS: 12000,
   DEMO_TICKET_TTL_S: 60,
@@ -308,13 +321,67 @@ function turnstileHosts(env) {
   return out;
 }
 
+/** A bare, lower-cased hostname from a hostname, a `host:port` or a pasted URL, without a
+ *  trailing dot (`example.com.` is the same host); `""` when it does not parse. */
+function hostOf(raw) {
+  const v = String(raw || "").trim().toLowerCase();
+  if (!v) return "";
+  try {
+    return new URL(v.includes("://") ? v : "https://" + v).hostname.replace(/\.$/, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * `DEMO_SERVE_HOSTS` — the hostnames this deployment may SPEND on, comma separated, matched
+ * EXACTLY (no wildcards, no suffixes). `null` when unset: every host, as before, so a fork or
+ * a preview needs no configuration (C3). Set, a request for any other host is answered as
+ * if no gateway were configured (`servesHost`) — which is what keeps the platform alias and
+ * every superseded deployment's own URL from spending with the production key.
+ *
+ * Set but with no usable hostname, it serves NO host and says so in `notes`: a typo must
+ * not quietly lift the restriction it was written to impose.
+ */
+function serveHosts(env, notes) {
+  const raw = str(env, "DEMO_SERVE_HOSTS", "");
+  if (!raw) return null;
+  const out = [];
+  for (const part of String(raw).split(",")) {
+    const host = hostOf(part);
+    if (host && !out.includes(host)) out.push(host);
+  }
+  if (!out.length) notes.push("DEMO_SERVE_HOSTS: no usable hostname in it, so no host is served");
+  return out;
+}
+
+/**
+ * Whether this deployment spends for `request`'s host (`DEMO_SERVE_HOSTS`); always true when
+ * the list is unset. `readConfig(env, request)` folds the answer into `configured`, so
+ * `/api/health` says `gateway_not_configured` honestly; the spending routes read their
+ * config without the request, so `limits.js::admit` asks this first, before any charge.
+ */
+export function servesHost(cfg, request) {
+  const list = cfg && cfg.serveHosts;
+  if (!Array.isArray(list)) return true;
+  let host = "";
+  try {
+    host = new URL(request.url).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return false;
+  }
+  return list.includes(host);
+}
+
 /**
  * Read the whole DEMO_* surface off a Pages `context.env`.
  * @param {Record<string,unknown>} env
+ * @param {Request} [request] when given, a host `DEMO_SERVE_HOSTS` does not list reads as
+ *   unconfigured (`servesHost`). Optional: without it nothing about the host is decided here.
  * @returns {object} the validated config. `baseUrl`/`apiKey`/`ticketSecret` are
  *   non-enumerable (see the header): readable as properties, invisible to JSON.
  */
-export function readConfig(env) {
+export function readConfig(env, request) {
   const notes = [];
   const e = env || {};
 
@@ -368,9 +435,15 @@ export function readConfig(env) {
                "appearance only. The deployment is treated as unconfigured until both are set.");
   }
 
+  // A host `DEMO_SERVE_HOSTS` does not list is answered as unconfigured. Not a `missing`
+  // variable — nothing is absent — so the note says why instead.
+  const hosts = serveHosts(e, notes);
+  const served = !request || servesHost({ serveHosts: hosts }, request);
+  if (!served) notes.push("DEMO_SERVE_HOSTS does not list this request's host, so it reads as unconfigured");
+
   const cfg = {
     enabled,
-    configured: enabled && missing.length === 0,
+    configured: enabled && missing.length === 0 && served,
     missing,
     notes,
     chatModel,
@@ -390,6 +463,8 @@ export function readConfig(env) {
     // it an absent `CF-Connecting-IP` keys as one shared `unknown` bucket
     // (`clientip.js::clientIp`). For local `wrangler pages dev` only.
     trustXff: bool(e, "DEMO_TRUST_XFF", false),
+    // `null` = every host (see `serveHosts`).
+    serveHosts: hosts,
     maxTokens: int(e, "DEMO_MAX_TOKENS", 1, 4096, notes),
     maxInputChars: int(e, "DEMO_MAX_INPUT_CHARS", 1, 20000, notes),
     maxTtsChars: int(e, "DEMO_MAX_TTS_CHARS", 1, 20000, notes),
@@ -412,8 +487,11 @@ export function readConfig(env) {
     chatPerDay: int(e, "DEMO_CHAT_PER_DAY", 1, 10000000, notes),
     speechPerMin: int(e, "DEMO_SPEECH_PER_MIN", 1, 100000, notes),
     speechPerHour: int(e, "DEMO_SPEECH_PER_HOUR", 1, 1000000, notes),
+    // 0 is allowed here, unlike chat's day: it restores "no day window" for that route.
+    speechPerDay: int(e, "DEMO_SPEECH_PER_DAY", 0, 10000000, notes),
     sttPerMin: int(e, "DEMO_STT_PER_MIN", 1, 100000, notes),
     sttPerHour: int(e, "DEMO_STT_PER_HOUR", 1, 1000000, notes),
+    sttPerDay: int(e, "DEMO_STT_PER_DAY", 0, 10000000, notes),
     maxConcurrentChat: int(e, "DEMO_MAX_CONCURRENT_CHAT", 1, 10000, notes),
     maxConcurrentSpeech: int(e, "DEMO_MAX_CONCURRENT_SPEECH", 1, 10000, notes),
     // The admission queue behind those ceilings (`limits.js::admit`). The ceiling matches
