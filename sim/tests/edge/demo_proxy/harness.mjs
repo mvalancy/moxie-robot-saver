@@ -25,6 +25,7 @@ export const ttscache = await api("_lib", "ttscache.js");
 export const wire2 = await api("_lib", "env.js");
 export const env0 = await api("_lib", "envelope.js");
 export const turnshape = await api("_lib", "turnshape.js");
+export const prompt = await api("_lib", "prompt.js");
 
 export const FULL = {
   DEMO_GATEWAY_BASE_URL: BASE,

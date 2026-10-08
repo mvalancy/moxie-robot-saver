@@ -15,6 +15,8 @@ const CONTENT_STATE_TEXT={
   invalid:'Cannot install'};
 
 async function refreshContent(deviceId){
+  // 💬 Try it (tryit.js) sits beside this card and needs no robot: refresh it either way.
+  if(typeof refreshTryit==='function') refreshTryit(deviceId);
   const card=$('#content-card'); if(!card) return;
   if(!deviceId){ card.classList.add('hidden'); return; }
   card.classList.remove('hidden');
@@ -439,8 +441,8 @@ function edRenderRaw(){
 
 //: Rung 1 — free, and the only feedback in P0 that is not a save. It never fires on a
 //: keystroke *by itself*: the debounce below is 400 ms and the route it calls costs
-//: nothing. The paid rung (a *Try it* that spends a brain call) is P1 and is deliberately
-//: absent from this file, so no timer here can ever reach a model.
+//: nothing. The paid rung (💬 Try it, one brain call per Send) lives in tryit.js, bound to
+//: a click, and is deliberately absent from this file, so no timer here can reach a model.
 function edQueueRender(){
   if(edRenderTimer) clearTimeout(edRenderTimer);
   edRenderTimer=setTimeout(renderDraftPrompt, 400);

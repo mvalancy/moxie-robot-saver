@@ -14,6 +14,8 @@ this order** by [`../index.html`](../index.html). No build step, no dependencies
 - [`content.js`](content.js) — 📦 content packs and the ✍️ editor.
 - [`robot.js`](robot.js) — Unpair and Factory reset: the typed-confirmation sheet, the erase
   choice (the existing calls) and the reset code. `sim/test_robot_lifecycle.mjs` mutates this file.
+- [`tryit.js`](tryit.js) — 💬 Try it: a preview conversation with the real brain, no robot;
+  `trySend` is its one brain call, click-bound. `sim/test_console_tryit.mjs` mutates this file.
 
 ---
 📖 [static](../README.md) · [Back to top](../../../README.md)

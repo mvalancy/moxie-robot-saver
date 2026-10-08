@@ -9,3 +9,4 @@ from .cards import *  # noqa: F401,F403
 from .content import *  # noqa: F401,F403
 from .memory import *  # noqa: F401,F403
 from .robots import *  # noqa: F401,F403
+from .tryit import *  # noqa: F401,F403

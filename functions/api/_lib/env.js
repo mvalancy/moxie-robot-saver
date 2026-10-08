@@ -43,6 +43,11 @@ export const DEFAULTS = Object.freeze({
   // conversation is asked for once more (`chat.js` step 8b). 0 disables it for a
   // deployment on a tight unit budget.
   DEMO_REROLL: "1",
+  // Where our instructions sit in the message array (`_lib/prompt.js`, §3.3): `anchor`
+  // (persona first, a short anchor system message after the child's line) or `single` (ONE
+  // leading system message, for chat templates that reject or silently drop a system
+  // message that is not first). Measured per model before any switch (§4.10).
+  DEMO_PROMPT_LAYOUT: "anchor",
   DEMO_MAX_AUDIO_BYTES: 500000,
   DEMO_MIN_AUDIO_BYTES: 2000,
   DEMO_MAX_RECORD_MS: 15000,
@@ -145,6 +150,19 @@ function sttFormats(env) {
   }
   // An unusable value falls back to the default, not to "nothing" (a silent ears-off).
   return out.length ? out : [DEFAULTS.DEMO_STT_FORMATS];
+}
+
+/** The message layouts `_lib/prompt.js::buildUpstreamBody` can build (§3.3). A closed set:
+ *  an unknown `DEMO_PROMPT_LAYOUT` falls back to the default with a note, never to a layout
+ *  nobody measured. */
+export const PROMPT_LAYOUTS = Object.freeze(["anchor", "single"]);
+
+function promptLayout(env, notes) {
+  const v = String(str(env, "DEMO_PROMPT_LAYOUT", DEFAULTS.DEMO_PROMPT_LAYOUT)).toLowerCase();
+  if (PROMPT_LAYOUTS.includes(v)) return v;
+  notes.push("DEMO_PROMPT_LAYOUT: not one of " + PROMPT_LAYOUTS.join("/") + ", using " +
+             DEFAULTS.DEMO_PROMPT_LAYOUT);
+  return DEFAULTS.DEMO_PROMPT_LAYOUT;
 }
 
 /** Exactly the cap names the browser may be told (§4.2). Model ids and URLs are absent
@@ -382,6 +400,7 @@ export function readConfig(env) {
     presencePenalty: num(e, "DEMO_PRESENCE_PENALTY", -2, 2, notes),
     turnShape: bool(e, "DEMO_TURN_SHAPE", true),
     reroll: bool(e, "DEMO_REROLL", true),
+    promptLayout: promptLayout(e, notes),
     maxAudioBytes: int(e, "DEMO_MAX_AUDIO_BYTES", 1, 50000000, notes),
     minAudioBytes: int(e, "DEMO_MIN_AUDIO_BYTES", 0, 50000000, notes),
     // Enforced by `sim/web/mic.js` (a Function only sees the finished upload); read here

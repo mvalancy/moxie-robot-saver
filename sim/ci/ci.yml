@@ -97,6 +97,15 @@ jobs:
           node sim/test_turnstile.mjs
           node sim/test_cloud_transport.mjs
           node sim/test_fallback_coverage.mjs
+      - name: Live-turn canary — its own teeth, hermetically
+        # `sim/check_live_turn.mjs` spends ONE real chat turn a day on the deployed brain
+        # (sim/ci/deployed.yml's `canary` job), because no free check can see a dead brain.
+        # Here it runs `--selftest`: the REAL chat route on loopback with the gateway stubbed,
+        # the canary run as a child against it. Two controls must exit 0; a dead brain, lost
+        # secrets, the kill switch, no Functions, an empty reply, no ticket, a slow turn and two
+        # rate-limit shapes must each exit non-zero on their own clause, inside the ledger.
+        # Node only: no browser, no network. Guarded by sim/tests/test_ci_deployed_monitor.py.
+        run: node sim/check_live_turn.mjs --selftest
       - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
         run: bash sim/run_smoke.sh
       - name: Bridge markup→avatar unit test (incl. presence events)
@@ -380,3 +389,5 @@ jobs:
         run: node sim/test_console_insights.mjs
       - name: Parent console — Unpair and Factory reset (typed confirmation, erase order, reset code)
         run: node sim/test_robot_lifecycle.mjs
+      - name: Parent console — 💬 Try it (a preview turn, published nowhere)
+        run: node sim/test_console_tryit.mjs
