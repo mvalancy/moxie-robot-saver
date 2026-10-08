@@ -36,7 +36,9 @@ def test_fleet_normalizes_the_supervisors_snapshot(client):
     f = r.json()
     assert f["ok"] is True and f["app"] == "content" and f["robot_count"] == 1
     robot = f["robots"][0]
-    assert robot["device_id"] == DEVICE and robot["child"] == "Sam"
+    # The child's name is personal: this caller is not signed in to the account that has
+    # the robot, so the view does not name the child (test_console_child_name.py).
+    assert robot["device_id"] == DEVICE and robot["child"] is None
     assert robot["online"] is True and robot["firmware"] == "3.6.4"
     assert robot["battery_level"] == 91 and robot["wifi_ssid"] == "Home"
     assert robot["telemetry_count"] == 2 and robot["summary"]

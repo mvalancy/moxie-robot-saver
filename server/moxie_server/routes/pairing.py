@@ -21,7 +21,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
-from .. import crypto, db, diceware, lifecycle, supervisor
+from .. import child_profile, crypto, db, diceware, lifecycle, supervisor
 from ..auth import current_user, mint_tokens, read_json
 from .account import create_child_row, user_id_for
 from .robots import register_pairing
@@ -237,6 +237,9 @@ async def simulate_robot_scan(request: Request):
         out["permitted"] = bool(code == 200 and res.get("ok"))
         if not out["permitted"]:
             out["permit_error"] = res.get("error") or f"supervisor returned {code}"
+    # Then the child's name, from the account the code was made on (never another's).
+    out.update(child_profile.push_child(
+        device_id, child_profile.child_row(pairing["user_id"], pairing["child_id"])))
     return out
 
 
@@ -380,6 +383,11 @@ def claim_robot(device_id: str, u=Depends(current_user)):
         out["permitted"] = bool(code == 200 and res.get("ok"))
         if not out["permitted"]:
             out["permit_error"] = res.get("error") or f"supervisor returned {code}"
+        # Then the child's name, so Moxie says it from the first word (never "Moxie Kid").
+        out.update(child_profile.push_for_robot(u["id"], row))
+    else:
+        out.update(child_pushed=False, reason="This robot was already on your account: "
+                                              "nothing was sent.")
     return out
 
 

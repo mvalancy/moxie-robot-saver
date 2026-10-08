@@ -7,7 +7,8 @@ safety review, memory, Wake, Unpair or Factory reset. `POST /local/robots/{id}/c
 makes the record. What each test below pins:
 
 * a claim binds the device id the supervisor lists to this account and its child, and
-  permits it with the console's own Permit body, once;
+  permits it with the console's own Permit body, once; then it sends that child's name
+  (never the "Moxie Kid" placeholder), once, and says whether it went;
 * it fails closed and changes nothing when it cannot be sure: no bearer (401), an id the
   supervisor never listed or a blank one (404), a supervisor it cannot ask (503), a robot
   on another account or an account that already has a robot (409); a repeat is a no-op;
@@ -123,11 +124,64 @@ def test_a_robot_that_paired_by_qr_can_be_added_to_the_account(client, superviso
 def test_a_claim_binds_the_accounts_own_child(client):
     auth = quicklogin(client, "has-a-child@claim.lan")
     cid = client.post("/api/children", headers=auth,
-                      json={"child": {"child-first-name": "Ada"}}).json()["data"]["id"]
+                      json={"child": {"child-first-name": "Sam"}}).json()["data"]["id"]
     assert _claim(client, auth).json()["child_id"] == cid
     state = _state(client, auth)
     assert [k["id"] for k in state["children"]] == [cid]           # no second child
     assert state["robots"][0]["child_id"] == cid
+
+
+def _named_posts(supervisor, since):
+    """The `/config` bodies carrying a child the console sent since `since`."""
+    return [(d, json.loads(b)) for d, b in supervisor.config_posts[since:]
+            if "child" in json.loads(b)]
+
+
+def test_a_claim_sends_the_childs_name_to_the_robot(client, supervisor, monkeypatch):
+    """The parent typed the child's name in the Wi-Fi tab; the claim lets the robot in,
+    then sends that name (the supervisor saves it for the robot and says it from then on:
+    `test_child_name.py`). Once, after the permit; a repeat sends nothing."""
+    from moxie_server import supervisor as sv
+    auth = quicklogin(client, "named@claim.lan")
+    client.post("/api/children", headers=auth, json={"child": {"child-first-name": "Sam"}})
+    order, real = [], sv.post_json
+
+    def post_json(path, payload, timeout=3):
+        order.append(path.split("?")[0])
+        return real(path, payload, timeout)
+
+    monkeypatch.setattr(sv, "post_json", post_json)
+    posts = len(supervisor.config_posts)
+    body = _claim(client, auth).json()
+    assert _named_posts(supervisor, posts) == [(DEVICE, {"child": {"nickname": "Sam"}})]
+    assert order == ["/permits", "/config"]
+    assert (body["permitted"], body["child_pushed"], body["reason"]) == (True, True, None)
+    again = _claim(client, auth).json()
+    assert again["created"] is False and again["child_pushed"] is False
+    assert len(supervisor.config_posts) == posts + 1
+
+
+def test_a_claim_whose_name_cannot_be_sent_still_adds_the_robot_and_says_why(
+        client, supervisor, monkeypatch):
+    """The supervisor goes down between the permit and the name: the claim still answers
+    200 with the robot on the account and let in, `child_pushed: false` and the reason."""
+    from moxie_server import supervisor as sv
+    auth = quicklogin(client, "name-lost@claim.lan")
+    client.post("/api/children", headers=auth, json={"child": {"child-first-name": "Zoë"}})
+    real = sv.post_json
+
+    def post_json(path, payload, timeout=3):
+        if path.startswith("/config"):                 # what `call` answers when down
+            return {"ok": False, "error": sv.UNREACHABLE, "detail": "refused"}, 503
+        return real(path, payload, timeout)
+
+    monkeypatch.setattr(sv, "post_json", post_json)
+    r = _claim(client, auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["created"] is True and body["permitted"] is True
+    assert body["child_pushed"] is False and "could not reach" in body["reason"]
+    assert [x["attributes"]["mqtt-device-id"] for x in _me_robots(client, auth)] == [DEVICE]
 
 
 def test_the_claim_permits_the_robot_once_and_a_repeat_changes_nothing(client, supervisor):

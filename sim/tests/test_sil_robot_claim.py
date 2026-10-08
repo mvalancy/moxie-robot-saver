@@ -5,7 +5,8 @@ same path with `mqtt/run.py` behind it, its allowlist closed as on a parent's ap
 (`MOXIE_ALLOW_UNVERIFIED_BOTS=0`), and a paho client wearing a `d_<uuid>` id standing in
 for the robot: it is pending and gets the child-free config; the claim lists it as
 unclaimed, puts it on the account and permits it, and the next config carries the child;
-Wake reaches it; Unpair sends it back to pending and the child-free config.
+Wake reaches it; Unpair clears the robot's copy of the child's name, then sends it back to
+pending and the child-free config.
 
 A paho client is not a Moxie. What a physical robot does with these messages is still
 unmeasured (`docs/guides/bench-runbook.md`).
@@ -143,8 +144,12 @@ def test_a_pending_robot_is_added_served_woken_and_unpaired_through_the_real_sup
         pushed = len(robot.configs())
         gone = console.delete(f"/api/robots/{rid}", headers=auth).json()
         assert gone["unpaired"] is True and gone["access"]["revoked"] is True
-        back = _wait(lambda: robot.configs()[pushed:], what="a config push after the unpair")
-        assert back[-1]["pairing_status"] == "unpairing" and "child_pii" not in back[-1]
+        # The unpair clears the robot's copy of the child's name first (one paired push),
+        # then the revoke sends the child-free document: wait for that one.
+        back = _wait(lambda: [c for c in robot.configs()[pushed:]
+                              if c.get("pairing_status") == "unpairing"],
+                     what="the child-free config after the unpair")
+        assert "child_pii" not in back[-1]
         assert http_json(f"{status}/permits")["pending"] == [DEVICE]
     finally:
         robot.stop()

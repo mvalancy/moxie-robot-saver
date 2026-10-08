@@ -7,11 +7,12 @@ a parent what to do instead of silently doing nothing.
 """
 from __future__ import annotations
 import json
+from typing import Optional
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, Header, Request
 from fastapi.responses import JSONResponse
 
-from .. import fleet, supervisor as sv
+from .. import child_profile, db, fleet, supervisor as sv
 from ..auth import read_json
 from ..supervisor import device_query as dq, proxy, reply
 
@@ -23,20 +24,27 @@ async def _raw(request: Request) -> bytes:
 
 
 # --- fleet, config, access -------------------------------------------------------------
+# A robot's child name (and the feed lines that carry it) reach only a caller signed in to
+# the account that has that robot: anyone on the home network can call these routes
+# (`child_profile.redact_status`).
 @router.get("/local/broker/status")
-def broker_status():
-    return sv.fetch_status()
+def broker_status(authorization: Optional[str] = Header(None)):
+    return child_profile.redact_status(sv.fetch_status(), child_profile.viewer(authorization))
 
 
 @router.get("/local/fleet")
-def fleet_view():
-    return fleet.normalize_fleet(sv.fetch_status())
+def fleet_view(authorization: Optional[str] = Header(None)):
+    return fleet.normalize_fleet(child_profile.redact_status(
+        sv.fetch_status(), child_profile.viewer(authorization)))
 
 
 @router.post("/local/robots/{device_id}/config")
-async def set_robot_config(device_id: str, request: Request):
+async def set_robot_config(device_id: str, request: Request,
+                           authorization: Optional[str] = Header(None)):
     """Whitelisted overrides; the supervisor validates and re-pushes RobotCloudConfig."""
-    return proxy("POST", dq("/config", device_id), data=await _raw(request))
+    out, code = sv.call("POST", dq("/config", device_id), await _raw(request))
+    return reply(child_profile.redact_config_answer(
+        out, device_id, child_profile.viewer(authorization)), code)
 
 
 @router.post("/local/fleet/config")
@@ -59,11 +67,18 @@ def get_permits():
 @router.post("/local/robots/{device_id}/permit")
 async def permit_robot(device_id: str, request: Request):
     """Permit (or `{"permitted": false}` revoke) one robot; the supervisor re-pushes its
-    config on the spot, so a pending robot becomes paired without a reconnect."""
+    config on the spot, so a pending robot becomes paired without a reconnect. A Permit
+    for a robot an account's record names also sends that child's name (the recovery path
+    when the claim could not): `child_pushed` and `reason` say how it went."""
     body = await read_json(request)
-    return reply(*sv.post_json("/permits", {
-        "device_id": device_id, "permitted": bool(body.get("permitted", True)),
-        "label": body.get("label") or ""}))
+    permitted = bool(body.get("permitted", True))
+    out, code = sv.post_json("/permits", {
+        "device_id": device_id, "permitted": permitted, "label": body.get("label") or ""})
+    record = next((r for r in db.q("SELECT * FROM robots")
+                   if db.device_id_of(r) == device_id.strip()), None)
+    if permitted and code == 200 and out.get("ok") and record is not None:
+        out = {**out, **child_profile.push_for_robot(record["user_id"], record)}
+    return reply(out, code)
 
 
 @router.post("/local/fleet/permits")
