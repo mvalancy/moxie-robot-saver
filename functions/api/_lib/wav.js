@@ -1,7 +1,9 @@
 /* functions/api/_lib/wav.js — whatever `/audio/speech` returned -> raw 16-bit PCM.
  *
  * Spec: docs/architecture/backlog/live-sim-demo.md §3.2 (`POST /api/speech`), §2.2.
- * The edge transcription of `mqtt/moxie_sdk/tts.py::pcm_from_audio`.
+ * The edge transcription of `mqtt/moxie_sdk/tts.py::pcm_from_audio`. The ears' header
+ * checks live here too: `wavDurationMs` (the duration cap) and `sttWavProblem` (is this a
+ * WAV the gateway's STT can decode at all).
  *
  *   1. SNIFF THE BYTES, NEVER THE CONTENT-TYPE. The gateway labels a valid Piper WAV
  *      `audio/mpeg` (a LiteLLM quirk); branching on the header would play noise.
@@ -272,4 +274,36 @@ export function wavDurationMs(raw) {
     dataBytes,
     formatTag: fmt.format,
   };
+}
+
+/** The WAVs `transcribe.js` forwards: integer PCM (format tag 1), 16-bit, mono or stereo,
+ *  8-48 kHz. `mic.js::encodeWav` writes 16 kHz mono; the rest is headroom for a real file. */
+export const STT_WAV = Object.freeze({ minRate: 8000, maxRate: 48000, maxChannels: 2 });
+
+/**
+ * Why a RIFF/WAVE body is NOT fit for speech-to-text, or `null` when it is.
+ *
+ * WHY: the gateway's STT answers a body it cannot decode with HTTP 500, and three 500s in a
+ * few seconds put the whole STT group into a ~60 s cooldown, so every visitor's microphone
+ * fails for a minute. `transcribe.js` therefore forwards only a WAV whose header it can read
+ * and whose `fmt ` is plain 16-bit PCM in a sane range (measured to transcribe: 16 and
+ * 22.05 kHz mono); anything else is refused for free, before the one upstream call.
+ *
+ * Reads the FIRST `fmt ` chunk, as `wavDurationMs` does, and its RAW channel count (the
+ * duration maths treats 0 as 1; a decoder does not).
+ *
+ * @param {Uint8Array|ArrayBuffer} raw
+ * @returns {string|null} `unreadable` · `format` · `bit_depth` · `channels` · `sample_rate` —
+ *   an internal word, never for the wire
+ */
+export function sttWavProblem(raw) {
+  const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw || 0);
+  // No RIFF/WAVE magic, no `fmt `, no audio, or a zero rate or width.
+  if (!wavDurationMs(bytes)) return "unreadable";
+  const { fmt } = walkRiff(bytes, true);
+  if (fmt.format !== 1) return "format";
+  if (fmt.bitsPerSample !== 16) return "bit_depth";
+  if (fmt.channels < 1 || fmt.channels > STT_WAV.maxChannels) return "channels";
+  if (fmt.sampleRate < STT_WAV.minRate || fmt.sampleRate > STT_WAV.maxRate) return "sample_rate";
+  return null;
 }
