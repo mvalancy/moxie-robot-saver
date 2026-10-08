@@ -377,13 +377,13 @@ The `/api/*` routes write nothing durable anywhere.
 
 | Status | `reason` | `Retry-After` | The Sim |
 |---|---|---|---|
-| 429 | `rate_limited` (per-IP window, or the gateway's own 429) | window reset / upstream value | Stays `live`, shows the *slow down* chip, answers this turn from `stub.js`, suppresses live turns until `Retry-After`. |
+| 429 | `rate_limited` (per-IP window, or the gateway's own 429) | window reset / upstream value | Answers this turn from `stub.js` and suppresses live turns until `Retry-After`. Up to 60 s (the minute window) it stays `live` with the *slow down* chip; longer (such as the hour or day cap) it **rests**: `degraded`, a `RESTING` badge and the minutes left, `live` again when the window lifts. |
 | 503 | `at_capacity` (ceiling reached and queue full or wait expired) | 15 | Busy pill, answers from the stub. |
 | 503 | `budget_exhausted` | seconds to the window reset | Full degrade. Next health poll at `Retry-After`. |
-| 503 | `upstream_down`, `gateway_unreachable_or_gated` | 60 | Full degrade. |
+| 503 | `upstream_down`, `gateway_unreachable_or_gated` | 60 | Full degrade, ended only by a clean turn (§6.3). |
 | 503 | `gateway_not_configured` | none | Full degrade for the session. |
 | 503 | `turnstile_misconfigured` | 60 | Degraded, scripted copy. |
-| 504 | `timeout` (our own `AbortSignal`) | 10 | Answers from the stub. Counts toward the 3-strike degrade. |
+| 504 | `timeout` (our own `AbortSignal`) | 10 | Answers from the stub. Full degrade on the **first**: every turn into a hung gateway waits the whole deadline. Ended only by a clean turn; its trial turns back off (§6.3). |
 | 400 | `bad_request`, `too_long`, `too_short`, `bad_ticket` | none | Plain reason inline. Mode does **not** change. |
 | 403 | `forbidden_origin` | none | Treated as offline. |
 | 403 | `turnstile_failed` | none | Stays live; "give that another try". |
@@ -395,7 +395,8 @@ the page can pace itself before it is refused. The Python SDK already parses `Re
 
 A spend refusal opens no client-side suppression window. `budget_exhausted` leaves `live` outright,
 which is stronger. Recovery is gated by the server's `Retry-After`, clamped by `mode.js`'s
-`POLL_MAX_MS` (5 min).
+`POLL_MAX_MS` (5 min). The page reads only the body's `retry_after_s`, which is `0` for
+`upstream_down` and `timeout` (their header values never reach it).
 
 ### 4.6 Counters, honestly
 
@@ -797,9 +798,9 @@ stateDiagram-v2
   boot --> offline: /api/health absent · non-200 · network error
   boot --> degraded: health ok · mode not live
   boot --> live: health ok · mode live
-  live --> degraded: 503 · 3 consecutive transport errors · budget_exhausted · upstream_down
-  live --> live: 429 rate_limited · turns suppressed for Retry-After
-  degraded --> live: a health poll returns mode live
+  live --> degraded: 503 · first 504 timeout · 3 consecutive transport errors · 429 hour or day cap
+  live --> live: 429 within the minute window · turns suppressed for Retry-After
+  degraded --> live: a clean turn · or a poll, for what a poll can see
   offline --> offline: never polls again this session
 ```
 
@@ -808,9 +809,29 @@ stateDiagram-v2
 - **`degraded`**: the route answered honestly. Stub plus clips, with the pill and the reason.
 - **`live`**: the HTTP transport is used.
 
+**Who may say she is back.** `/api/health` never calls the gateway, so it answers `live` all through
+an outage. A degrade a turn's envelope reported (`upstream_down`, `timeout`,
+`gateway_unreachable_or_gated`, `turnstile_misconfigured`, `budget_exhausted`) therefore ends only
+with a clean turn. A poll that answers `live` lets the next visitor turn try (a trial turn: an
+ordinary turn, no extra call) while the badge keeps saying `SCRIPTED`. A degrade the poll can see
+ends with the poll: a spent budget it reported itself, and three transport errors with no envelope
+(the missing answer is the evidence). A turn's transport errors are counted apart from the poll's,
+and a poll never resets them, so at a human pace the polls between failed turns cannot hide them;
+they clear only when a turn gets a healthy answer, so after a poll's recovery the next failed turn
+degrades again at once.
+
 Polls follow `Retry-After` when sent. Otherwise they start at 30 s (`POLL_MIN_MS`) and double to 5 min
-(`POLL_MAX_MS`), resetting on success. There is **no polling while `document.hidden`**. Recovery flips
-the badge back to `MOXIE ONLINE`. The spoken "I'm back" line is not built (§9).
+(`POLL_MAX_MS`), resetting on success, except while a turn's outage is unproven. After a `timeout`
+trial turns back off from 60 s to 5 min, because each one into a hung gateway costs its visitor the
+whole deadline; after a fast `upstream_down` every poll allows one. There is **no polling while
+`document.hidden`**. Recovery flips the badge back to `MOXIE ONLINE`. The spoken "I'm back" line is
+not built (§9).
+
+Measured hermetically (the real `mode.js` and `/api/health`, production envelopes, a virtual clock)
+before this rule: one `upstream_down` turn flipped back to `MOXIE ONLINE` at the next poll (30 s), so a
+visitor typing every 45 s saw `MOXIE ONLINE` for 195 of a 600 s outage; a hung gateway never degraded
+at that pace, and six lines waited 120 s on timeouts. After: 0 s, and 60 s.
+`sim/tests/edge/mode/06_outage_honesty.mjs` replays these scenarios.
 
 ## 7. Capacity signalling
 
@@ -826,7 +847,8 @@ Copy lives in `mode.js`:
 | `upstream_down` / `gateway_unreachable_or_gated` / `timeout` | `HOSTED DEMO · SCRIPTED` | "…brain is unreachable…" |
 | `turnstile_misconfigured` | `HOSTED DEMO · SCRIPTED` | "…visitor check isn't set up right…" |
 | `turnstile_failed` | `MOXIE ONLINE` | "Moxie needs to check you're a real person…" |
-| `rate_limited` | `MOXIE ONLINE` + chip | "One at a time! Give Moxie a few seconds." |
+| `rate_limited`, up to 60 s | `MOXIE ONLINE` + chip | "One at a time! Give Moxie a few seconds." |
+| `rate_limited`, over 60 s (the hour or day cap) | `HOSTED DEMO · RESTING` | "Moxie needs a rest — her live brain is back in about 40 minutes…" |
 | `gateway_not_configured` | `HOSTED DEMO` | the static-demo copy |
 
 `env.js` paints the badge, banner and `needs-backend` marks from the mode, not the hostname.
@@ -878,7 +900,8 @@ exercises the real route (assumption 29).
 6. A spent budget gets 503 `budget_exhausted` and a degraded page within one turn.
 7. A hand-made or expired ticket gets 400.
 8. A keyless preview is the scripted demo.
-9. A killed gateway degrades honestly, and the page recovers within one poll.
+9. A killed gateway degrades honestly and stays degraded while it is down, and the page recovers on
+   the first turn after a poll once it is back.
 10. Real spoken words come back as those words through `/api/transcribe`: overlap ≥ 0.7, with a decoy
     control below 0.35. Proven at 1.00 / 0.07. **No human has yet spoken into the hosted microphone.**
 

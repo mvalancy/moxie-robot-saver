@@ -400,7 +400,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 62603,
+   "bytes": 69289,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -850,7 +850,7 @@
    "path": "architecture/backlog/live-brain-open-issues.md",
    "title": "Live brain: open issues",
    "section": "architecture",
-   "bytes": 10134,
+   "bytes": 10189,
    "mermaid": 0,
    "headings": [
     "1. Goodbyes that omit `<exit>`",
@@ -1291,7 +1291,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 9286,
+   "bytes": 9753,
    "mermaid": 0,
    "headings": [
     "1. Deploy",

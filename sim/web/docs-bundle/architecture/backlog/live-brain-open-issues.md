@@ -1,10 +1,11 @@
 # Live brain: open issues
 
 **Status:** open. The guard rails around each measurement are built and tested hermetically, but
-none of the three questions below has a current answer from the live gateway. This note merges the
-former `action-tag-drift`, `grounding-gate-unrun` and `one-brain-no-failover` briefs.
+none of the first three questions below has a current answer from the live gateway, and the fourth
+is a decision not yet taken. This note merges the former `action-tag-drift`, `grounding-gate-unrun` and
+`one-brain-no-failover` briefs.
 
-All three depend on the same thing: a working model gateway (`DEMO_GATEWAY_BASE_URL` for the hosted
+The first three depend on the same thing: a working model gateway (`DEMO_GATEWAY_BASE_URL` for the hosted
 demo, `MOXIE_LLM_*` for the Python runtime). On 2026-09-08 `gateway.graphlings.net` returned
 `503 no_db_connection` for hours. That outage blocked the first two measurements and prompted the third.
 
@@ -124,9 +125,6 @@ Any retry must fit inside the existing wait budget. `DEMO_CHAT_TIMEOUT_MS` defau
 `env.js` already clamps the admission queue so it never rivals the upstream timeout. Two attempts in
 series must not double what a visitor waits.
 
----
-📖 [Backlog index](README.md) · [Architecture index](../README.md) · [Live-Sim spec](live-sim-demo.md) · [Deploy guide](../../guides/deploy-cloudflare.md)
-
 ## 4. The hosted persona is v2; the robot persona is still v1 (follow-up)
 
 **What changed (2026-10-08).** `functions/api/_lib/env.js::DEFAULT_PERSONA` is a new text
@@ -146,3 +144,5 @@ equal: the robot persona needs its own senses paragraph and its own measurement 
 adopts v2's identity, character sheet and ordered rules with robot senses, and measure it there before
 changing it. Until then the two personas differ on purpose, and nothing asserts they are equal.
 
+---
+📖 [Backlog index](README.md) · [Architecture index](../README.md) · [Live-Sim spec](live-sim-demo.md) · [Deploy guide](../../guides/deploy-cloudflare.md)

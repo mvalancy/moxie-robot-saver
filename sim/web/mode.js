@@ -11,10 +11,18 @@
  *   degraded — the route answered honestly: scripted Moxie plus the reason.
  *              `gateway_not_configured` is sticky, so an unconfigured deployment fires
  *              exactly ONE request (no poll storm).
- *   live     — a live brain is reachable. A 429 does not leave `live` (soft degrade).
+ *   live     — a live brain is reachable. A 429 for the per-minute window does not leave
+ *              `live` (soft degrade); the hour or day cap RESTS the page until it lifts.
  *
  * HONESTY GUARD: `live` only DISPLAYS as live when cloud-transport.js has loaded
  * (`window.moxieCloudTransport`); otherwise it reads SCRIPTED with a line saying why.
+ *
+ * WHO MAY SAY SHE IS BACK. `/api/health` never calls the gateway (health.js), so a poll can
+ * see neither a dead brain nor one coming back. A degrade a TURN's envelope reported
+ * (`upstream_down`, `timeout`, `budget_exhausted`, …) therefore ends only with a clean turn:
+ * a poll that answers lets the NEXT visitor turn try (`canSpendLiveTurn`: a trial turn, an
+ * ordinary turn and no extra call) while the badge keeps saying SCRIPTED. A degrade with no
+ * verdict at all (three transport errors) is the poll's to clear: an answer is what was missing.
  *
  * No secret and no hostname (base = `location.origin`). The one public value returned is
  * the Turnstile SITEKEY ("" = not enforced), delivered at runtime so forks and previews
@@ -28,6 +36,9 @@
   var POLL_MAX_MS = 300000;     // the 5-minute ceiling the backoff doubles up to
   var PROBE_TIMEOUT_MS = 6000;  // a probe that costs nothing may still hang
   var STRIKES_TO_DEGRADE = 3;   // consecutive transport errors before live -> degraded
+  // A 429 whose Retry-After outlasts the per-minute window is the hour or day cap: this
+  // visitor's live brain is out for that long, which is not "a few seconds".
+  var REST_AFTER_S = 60;
 
   // ---- the closed reason set (§3.2). Anything else is treated as unknown. ----
   // EVERY reason the server can send MUST be listed: an unknown one is coerced to null,
@@ -46,6 +57,7 @@
   var BADGE_LIVE = "MOXIE ONLINE";
   var BADGE_BUSY = "HOSTED DEMO · BUSY";
   var BADGE_SCRIPTED = "HOSTED DEMO · SCRIPTED";
+  var BADGE_RESTING = "HOSTED DEMO · RESTING";
   var COPY = {
     busy: "Moxie is talking with a few other people right now — answers may take a moment.",
     full: "Moxie has her hands full right now. She’s answering from her scripted repertoire until a slot opens.",
@@ -60,6 +72,15 @@
     turnstile_misconfigured: "Moxie’s visitor check isn’t set up right on this deployment, so she’s answering from her recorded lines.",
   };
 
+  /** The hour/day cap's line, with the wait in words (env.js's banner says "resting" too). */
+  function restingCopy() {
+    var s = retryAfterS();
+    var m = Math.max(1, Math.ceil(s / 60)), h = Math.round(s / 3600);
+    var when = s >= 7200 ? h + " hours" : m === 1 ? "a minute" : m + " minutes";
+    return "Moxie needs a rest — her live brain is back in about " + when +
+           ". Until then she’s answering from her recorded lines.";
+  }
+
   // ---- state ---------------------------------------------------------------
   var state = "boot";
   var reason = null;
@@ -70,7 +91,10 @@
   var turnstile = "";
   var sticky = false;            // offline, and gateway_not_configured: never poll again
   var suppressUntil = 0;         // a 429/503 Retry-After window: no live turns until then
-  var strikes = 0;               // consecutive transport errors (§6.3)
+  var strikes = 0;               // consecutive failed live TURNS (§6.3); only a turn clears them
+  var pollStrikes = 0;           // consecutive unreadable polls; a poll that answers clears them
+  var turnOut = false;           // a turn's envelope said the brain is out: a turn must say back
+  var trial = false;             // ...and a poll has answered since: the next turn may try
   var delay = POLL_MIN_MS;
   var timer = null;
   var hiddenSkip = false;        // a poll fell due while the tab was hidden
@@ -94,15 +118,20 @@
     } catch (e) { return null; }
   }
 
-  /** Are live turns spendable right now? The transport asks before every turn. */
+  /** Are live turns spendable right now? The transport asks before every turn. A degraded
+   *  page may spend a trial turn too: that turn is how she shows she is back. */
   function canSpendLiveTurn() {
-    return state === "live" && hasTransport() && now() >= suppressUntil;
+    if (!hasTransport() || now() < suppressUntil) return false;
+    return state === "live" || (state === "degraded" && trial);
   }
 
   function retryAfterS() {
     var left = Math.ceil((suppressUntil - now()) / 1000);
     return left > 0 ? left : 0;
   }
+
+  /** A 429's window is still running: what it said (the chip, or RESTING) stands. */
+  function limited() { return reason === "rate_limited" && now() < suppressUntil; }
 
   /** §7's table, as one pure function of the state. */
   function surface() {
@@ -118,6 +147,8 @@
       return { badge: BADGE_LIVE, message: "" };
     }
     if (state === "degraded") {
+      // The hour or day cap: out for THIS visitor until the window resets, and it says how long.
+      if (reason === "rate_limited") return { badge: BADGE_RESTING, message: restingCopy() };
       if (reason === "budget_exhausted")
         return { badge: BADGE_SCRIPTED, message: COPY.budget_exhausted };
       if (reason === "upstream_down" || reason === "timeout" ||
@@ -151,12 +182,17 @@
                snap.voice, snap.ears, snap.turnstile, snap.liveTurns].join("|");
     if (key === lastKey) return;
     lastKey = key;
-    for (var i = 0; i < listeners.length; i++) {
-      try { listeners[i](snap); } catch (e) {}
+    // A copy: a listener may unsubscribe itself while it is told (ambient.js does, once its
+    // line is said), and splicing the array being walked skipped the NEXT listener: env.js
+    // missed that change, and the badge stayed SCRIPTED on a page that was live again.
+    var ls = listeners.slice();
+    for (var i = 0; i < ls.length; i++) {
+      try { ls[i](snap); } catch (e) {}
     }
   }
 
   function setState(next, why) {
+    if (next === "live") { turnOut = false; trial = false; }   // nothing left to prove
     if (next === state && why === reason) return;
     stats.transitions.push(state + "->" + next + (why ? ":" + why : ""));
     state = next;
@@ -219,7 +255,11 @@
     ears = !!body.ears;
     turnstile = typeof body.turnstile === "string" ? body.turnstile : "";
     var retry = Number(body.retry_after_s);
-    setState(body.mode === "live" ? "live" : "degraded", r);
+    if (body.mode !== "live") { trial = false; setState("degraded", r); }
+    // "live" here means only "configured": it cannot undo what a TURN saw, so it lets the
+    // next turn try instead, and the badge says SCRIPTED until one comes back clean.
+    else if (state === "degraded" && turnOut) trial = true;
+    else if (!limited()) setState("live", null);
     emit();                                   // load/limits can change with no state change
     return isFinite(retry) && retry > 0 ? retry * 1000 : 0;
   }
@@ -244,8 +284,10 @@
         var body = parseEnvelope(text);
         if (!body) { stats.unusable++; unusable(); return snapshot(); }
         stats.usable++;
-        strikes = 0;
-        delay = POLL_MIN_MS;                  // any success resets the backoff (§6.3)
+        pollStrikes = 0;                      // the ROUTE answered; a turn's strikes stand
+        // Any success resets the backoff (§6.3), except while a turn's outage is unproven:
+        // there the ladder spaces out the trial turns a hung gateway makes wait.
+        if (!turnOut) delay = POLL_MIN_MS;
         var retryMs = applyEnvelope(body);
         schedule(retryMs || delay);           // Retry-After when the server sent one
         return snapshot();
@@ -261,14 +303,27 @@
   /** The route is not there: the plain page, forever, no more requests. */
   function absent() { clear(); setState("offline", null); }
 
-  /** A reply we cannot read, or a network failure. */
+  /** A reply we cannot read, or a network failure, from the PROBE. */
   function unusable() {
     if (state === "boot") { absent(); return; }        // never claim a route we can't read
+    if (state === "live") {
+      pollStrikes++;
+      stats.transportErrors++;
+      if (pollStrikes >= STRIKES_TO_DEGRADE) setState("degraded", "upstream_down");
+    }
+    schedule(backoff());
+  }
+
+  /** A live TURN that got no envelope at all. Counted apart from the poll's errors, and a
+   *  poll never clears the count: an answering poll says nothing about the gateway, and at a
+   *  human pace the polls between failed turns used to keep it from ever reaching three. */
+  function turnFailed() {
+    if (state === "boot") { absent(); return; }
     if (state === "live") {
       strikes++;
       stats.transportErrors++;
       if (strikes >= STRIKES_TO_DEGRADE) setState("degraded", "upstream_down");
-    }
+    } else trial = false;                     // a trial that failed waits for the next poll
     schedule(backoff());
   }
 
@@ -284,20 +339,32 @@
 
     if (r === "forbidden_origin") { absent(); return snapshot(); }   // §4.5: treated as offline
     if (r === "gateway_not_configured") { setState("degraded", r); clear(); return snapshot(); }
-    // A misconfigured bot control degrades like a dead gateway, polled off Retry-After.
-    if (r === "budget_exhausted" || r === "upstream_down" ||
+    // A misconfigured bot control degrades like a dead gateway, polled off Retry-After. So
+    // does the FIRST timeout: a hung gateway makes every turn wait out the server's whole
+    // deadline, and no poll can see it. Only a clean turn ends any of these (applyEnvelope).
+    if (r === "budget_exhausted" || r === "upstream_down" || r === "timeout" ||
         r === "gateway_unreachable_or_gated" || r === "turnstile_misconfigured") {
+      turnOut = true;
+      trial = false;
       setState("degraded", r);
-      schedule(retryMs || POLL_MIN_MS);
+      // A trial turn into a HUNG gateway costs its visitor that whole wait, so after a
+      // timeout the trials back off (60 s doubling to 5 min); a fast refusal is cheap to retry.
+      schedule(r === "timeout" ? Math.max(retryMs, backoff()) : (retryMs || POLL_MIN_MS));
       return snapshot();
     }
     if (r === "rate_limited") {
-      // SOFT degrade (§6.3): stay live, answer this turn from the stub, resume after
-      // Retry-After. A 429 is a healthy server saying "not so fast", so strikes reset.
+      // A 429 is a healthy server saying "not so fast", so strikes reset, and nothing is
+      // spent until Retry-After. The per-minute window is a SOFT degrade (§6.3): stay live,
+      // answer this turn from the stub, show the chip. The hour or day cap is not "a few
+      // seconds": the page RESTS and says how long, until the window lifts (applyEnvelope),
+      // when the next turn may go live again without waiting for a poll (`trial`).
       strikes = 0;
       suppressUntil = now() + (retryMs || 10000);
-      reason = "rate_limited";
-      emit();
+      if (state !== "live") emit();           // already out: the window just holds turns back
+      else if (retryMs > REST_AFTER_S * 1000 && hasTransport()) {
+        trial = true;                         // spendable again the moment the window lifts
+        setState("degraded", "rate_limited");
+      } else { reason = "rate_limited"; emit(); }
       return snapshot();
     }
     if (r === "at_capacity") {
@@ -311,33 +378,30 @@
       schedule(retryMs || 15000);
       return snapshot();
     }
-    if (r === "timeout") {                    // §4.5: counts toward the 3-strike degrade
-      unusable();
-      return snapshot();
-    }
     if (r === "bad_request" || r === "too_long" || r === "too_short" ||
         r === "bad_ticket" || r === "blocked") {
       return snapshot();                      // input/safety outcome: never a mode change
     }
     if (r === "turnstile_failed") {
       // SOFT like rate_limited, but NO suppression window: the next send mints a fresh
-      // token immediately. `reason` lets the LIVE badge carry the "try again" line.
+      // token immediately. `reason` lets the LIVE badge carry the "try again" line. On a
+      // degraded page this turn was a trial that proved nothing: it keeps saying why.
       strikes = 0;
-      reason = "turnstile_failed";
-      emit();
+      if (state === "live") { reason = "turnstile_failed"; emit(); }
       return snapshot();
     }
-    // A clean turn: healthy. It also clears a lingering turnstile_failed note now (that
-    // note has no suppression window to expire).
+    // A clean turn: healthy, and the one thing that ends a degrade a turn reported. It also
+    // clears a lingering turnstile_failed note now (that note has no suppression window to
+    // expire). Not a running rest: a transcript can come back clean while chat is capped.
     strikes = 0;
     delay = POLL_MIN_MS;
     if (state === "live" && reason === "turnstile_failed") { reason = null; emit(); }
-    if (state === "degraded" && !sticky) { setState("live", null); schedule(delay); }
+    if (state === "degraded" && !sticky && !limited()) { setState("live", null); schedule(delay); }
     return snapshot();
   }
 
   /** A transport error with no envelope at all (§6.3: 3 consecutive -> degraded). */
-  function noteTransportError() { stats.notes++; unusable(); return snapshot(); }
+  function noteTransportError() { stats.notes++; turnFailed(); return snapshot(); }
 
   // ---- wiring --------------------------------------------------------------
   try {
