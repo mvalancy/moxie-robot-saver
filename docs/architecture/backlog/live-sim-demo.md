@@ -168,9 +168,8 @@ with empty text.
 `DEMO_MAX_TTS_CHARS`, a chunk under 24 characters merged with its neighbour (a tiny chunk starts the
 voice no sooner: synthesis time is mostly overhead), a sentence longer than the cap cut at a space, never
 inside a word, and nothing splits inside a number, after an abbreviation or an initial, or inside a
-```mermaid fence. Joined with one space the chunks are the reply up to the cap. Until 2026-10-08 the
-one ticket was the reply cut at 300 characters, mid-word ("…it rains, lo" was spoken for a 311-char
-reply). Redemption checks the signature first, before parsing the
+mermaid fence. Joined with one space the chunks are the reply up to the cap. Until 2026-10-08 the one
+ticket was the reply cut at 300 characters, mid-word ("…it rains, lo" was spoken for a 311-char reply). Redemption checks the signature first, before parsing the
 payload, using a constant-time compare. It then checks expiry and re-checks the char cap. An over-cap
 ticket answers `too_long`; forged, malformed or expired answers `bad_ticket`. A per-isolate spent-set
 (2000 entries) refuses a replayed ticket as `bad_ticket`. As a result `/api/speech` can only
