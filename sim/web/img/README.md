@@ -7,7 +7,7 @@ Real frames rendered from the 3D simulator (`../moxie.js`) in headless Chrome, n
   [`hero-moxie-cute.avif`](hero-moxie-cute.avif) (54 KB, preloaded), then
   [`hero-moxie-cute.webp`](hero-moxie-cute.webp) (111 KB) for a browser without AVIF; only a
   browser with neither downloads the PNG. `sim/test_hub_weight.mjs` holds the hub's first load
-  under 400 KB with the beacon production adds.
+  under 400 KB with the beacon production adds, the WebP a browser without AVIF gets included.
 - [`hero-moxie-think.png`](hero-moxie-think.png) — thinking pose; the docs explorer overview.
 - [`sim-hero.png`](sim-hero.png) — a full SIL page (`../sim.html`) frame in hosted-demo mode; the
   top-level README hero (1424x1251, RGB). Vendored because `img-src 'self' data: blob:` refused the
