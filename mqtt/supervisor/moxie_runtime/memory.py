@@ -17,6 +17,9 @@ class MemoryMixin:
     #     no opaque media payload to withhold, so the choice is binary.
     #  2. Flipping to NO_DATA deletes the existing file (at boot, on config edits, and on
     #     the write path): `_load_memory` would otherwise feed it into the next prompt.
+    #     Not for a robot that failed closed (fleet.py `failed_closed`): its NO_DATA is a
+    #     settings file that could not be read, not a parent's choice, so it writes nothing
+    #     and its stored transcript stays as found.
     #  3. In-RAM history is not gated — without it Moxie forgets the last sentence.
 
     def _memory_path(self, device_id: str) -> str:
@@ -53,7 +56,8 @@ class MemoryMixin:
 
     def purge_transcripts(self) -> int:
         """Remove every stored transcript whose robot is now under NO_DATA (at startup
-        and after config edits — for connected and offline robots alike)."""
+        and after config edits — for connected and offline robots alike), except a robot
+        that failed closed (`failed_closed`), whose transcript stays as found."""
         if not self._memory_dir or not os.path.isdir(self._memory_dir):
             return 0
         removed = 0
@@ -63,7 +67,8 @@ class MemoryMixin:
             print(f"[runtime] transcript sweep failed: {e}", flush=True)
             return 0
         for name in names:
-            if not name.endswith(".json") or self.transcript_persists(name[:-5]):
+            if (not name.endswith(".json") or self.transcript_persists(name[:-5])
+                    or self.failed_closed(name[:-5])):
                 continue
             self.history.pop(name[:-5], None)     # do not keep serving what we just erased
             if self._unlink(os.path.join(self._memory_dir, name)):
@@ -93,11 +98,13 @@ class MemoryMixin:
 
     def _save_memory(self, device_id: str):
         """Persist one robot's (trimmed) history, or under NO_DATA write nothing and
-        remove what exists. `self.history` is untouched either way."""
+        remove what exists (a robot that failed closed removes nothing). `self.history`
+        is untouched either way."""
         if not self._memory_dir:
             return
         if not self.transcript_persists(device_id):
-            self._forget_transcript(device_id)
+            if not self.failed_closed(device_id):
+                self._forget_transcript(device_id)
             return
         h = self.history.get(device_id) or []
         if len(h) > self._max_memory:

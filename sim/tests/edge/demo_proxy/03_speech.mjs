@@ -171,6 +171,71 @@ const withMagic = (magic, n) => {
   eq(upstreamCalls(), 0, "a ticketless /api/speech makes ZERO upstream calls");
 }
 
+/* 10f. ONE TICKET PER SENTENCE (§3.2). A 311-char reply used to get ONE ticket cut at 300
+ * chars — "…it rains, lo" (measured on the shipped code) — and only that was ever spoken.
+ * Now the tickets are the reply's sentences, chunk 0 first, each under the cap and each
+ * redeemable, and joined they ARE the reply; at most MAX_SPEECH_CHUNKS of them. */
+{
+  const claimsOf = (t) => hmac.jsonFromB64url(t.split(".")[1]);
+  const RAINBOW = "Rainbows happen when sunlight shines through tiny drops of water in the air. " +
+    "Each drop bends the light and splits it into colors, like red, orange, yellow, green, blue and purple. " +
+    "That is why you often see a rainbow right after it rains, when the sun comes back out behind you. " +
+    "Next time it rains, look for one!";
+  eq(RAINBOW.length, 311, "the fixture is the measured 311-char reply");
+  fresh();
+  P.plan = { chat: { content: RAINBOW } };
+  const c = await call(chat, "/api/chat", { text: "why are there rainbows?" });
+  const reply = JSON.parse(c.body.messages[0].payload);
+  eq(reply.output.text, RAINBOW, "the reply is served whole");
+  const texts = c.body.speech.map((s) => claimsOf(s.ticket).t);
+  ok(c.body.speech.length >= 2 && c.body.speech.length <= hmac.MAX_SPEECH_CHUNKS,
+     `A 311-CHAR REPLY YIELDS 2..${hmac.MAX_SPEECH_CHUNKS} TICKETS, got ${c.body.speech.length}`);
+  eq(texts.join(" "), RAINBOW, "THE TICKETS' TEXTS JOIN BACK TO THE WHOLE REPLY — nothing stops at 300 chars any more");
+  deep(c.body.speech.map((s) => s.chunk_num), texts.map((_, i) => i), "chunk_num 0..n-1, ascending");
+  ok(c.body.speech.every((s) => s.event_id === reply.event_id), "every ticket carries the reply's event_id");
+  ok(texts.every((t) => t.length > 0 && t.length <= 300), `every chunk is under DEMO_MAX_TTS_CHARS: ${texts.map((t) => t.length)}`);
+  ok(texts.every((t) => /[.!?]["')\]]*$/.test(t)), "every chunk ends at a sentence end — never mid-word");
+  deep(c.body.speech.map((s) => Object.keys(s).sort()), texts.map(() => ["chunk_num", "event_id", "ticket"]),
+       "each entry is exactly {ticket, event_id, chunk_num}");
+
+  // Every ticket redeems — in any order — for its own chunk, with its chunk_num on the wire.
+  for (const s of [...c.body.speech].reverse()) {
+    const r = await call(speech, "/api/speech", { ticket: s.ticket });
+    eq(`${r.res.status} ${r.body.reason}`, "200 null", `chunk ${s.chunk_num} redeems`);
+    const p = JSON.parse(r.body.messages[0].payload);
+    deep([p.event_id, p.chunk_num], [reply.event_id, s.chunk_num], `chunk ${s.chunk_num}'s CloudTTSResponse carries its event_id and chunk_num`);
+    eq(JSON.parse(sent[sent.length - 1].opt.body).input, texts[s.chunk_num], `…and the gateway was asked for exactly chunk ${s.chunk_num}'s text`);
+  }
+  eq(upstreamCalls(), 1 + texts.length, "one chat call plus one TTS call per chunk");
+
+  // The cap: a five-sentence reply is three tickets, the last taking the rest — still whole.
+  fresh();
+  const FIVE = "Sentence number one is here. Sentence number two is here. Sentence number three is here. " +
+    "Sentence number four is here. Sentence number five is here.";
+  P.plan = { chat: { content: FIVE } };
+  const c5 = await call(chat, "/api/chat", { text: "say five things" });
+  const t5 = c5.body.speech.map((s) => claimsOf(s.ticket).t);
+  deep([t5.length, t5.join(" ")], [hmac.MAX_SPEECH_CHUNKS, FIVE], `a five-sentence reply is ${hmac.MAX_SPEECH_CHUNKS} tickets that join back to the whole reply`);
+
+  // One sentence longer than the cap: cut at spaces, never inside a word; what three full
+  // chunks leave out is not spoken (it was not before either).
+  fresh();
+  const LONG = Array.from({ length: 200 }, (_, i) => "word" + i).join(" ");
+  P.plan = { chat: { content: LONG } };
+  const cl = await call(chat, "/api/chat", { text: "say a very long thing" });
+  const tl = cl.body.speech.map((s) => claimsOf(s.ticket).t);
+  eq(tl.length, hmac.MAX_SPEECH_CHUNKS, `an unbroken ${LONG.length}-char sentence is ${hmac.MAX_SPEECH_CHUNKS} tickets`);
+  ok(tl.every((t) => t.length <= 300), `…each under the cap: ${tl.map((t) => t.length)}`);
+  const joined = tl.join(" ");
+  ok(LONG.startsWith(joined) && LONG[joined.length] === " ", "…joined, a prefix of the reply that ends AT A WORD BOUNDARY");
+  for (const s of cl.body.speech) eq((await call(speech, "/api/speech", { ticket: s.ticket })).res.status, 200, `long chunk ${s.chunk_num} redeems under the 300-char cap`);
+
+  // The short reply keeps its one ticket (block 10 pins it): a tiny first sentence is merged.
+  fresh();
+  const short = await call(chat, "/api/chat", { text: "hi" });
+  deep(short.body.speech.map((s) => claimsOf(s.ticket).t), ["Hi there! Want to hear a joke?"], "a 30-char two-sentence reply is still ONE ticket");
+}
+
 /* 10b. Cloudflare Tunnel / Access. An Access-gated tunnel answers an unauthenticated fetch
  * with an HTML LOGIN PAGE at 200, so a service token can be configured, half a token is a
  * refusal, and a login page has its own diagnosable reason. */
