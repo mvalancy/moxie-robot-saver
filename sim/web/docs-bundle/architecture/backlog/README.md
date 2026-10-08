@@ -21,7 +21,7 @@ in its first lines. When the page and the code disagree, the code wins; fix the 
 | [`production-hardening.md`](production-hardening.md) | shipped (P0, P1) | The cross-process store (advisory `flock` per record), MQTT reconnection, and a week-long soak that runs without hardware. |
 | [`security-broker-auth.md`](security-broker-auth.md) | partial | Broker ACL shipped; device credentials and spoof-proofing need a physical robot. |
 | [`content-packs.md`](content-packs.md) | shipped | Versioned, digest-checked content pack files: export from a field allowlist, import with review that never clobbers local edits. |
-| [`content-authoring.md`](content-authoring.md) | partial | Composing a conversation in the console without editing JSON; P0 shipped, the paid "try it" loop and P2 are open. |
+| [`content-authoring.md`](content-authoring.md) | partial | Composing a conversation in the console without editing JSON, and trying it against the real brain; P0 and the 💬 Try it card (installed items) shipped, trying an unsaved draft and P2 are open. |
 | [`sandboxed-extensions.md`](sandboxed-extensions.md) | partial | A pack can carry a small JSON program (53 operators, no `exec`, every op total), metered and permission-checked both ways. P0 plus `act` and `subscribe` shipped; the rest of P1 is open. |
 | [`voice-picker.md`](voice-picker.md) | shipped | Speech and Listening dropdowns in the console: defaults, env-var pinning, hot swap. |
 | [`brain-picker.md`](brain-picker.md) | partial | A closed list of brains, chosen per child through the config layers; `MOXIE_APP` pins. P0 shipped, P1 not started. |

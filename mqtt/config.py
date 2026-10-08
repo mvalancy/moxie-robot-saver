@@ -224,8 +224,9 @@ EXT_MAX_TOTAL_BYTES = _env_int("MOXIE_EXT_MAX_TOTAL_BYTES", 262144)
 EXT_MAX_BREACHES = _env_int("MOXIE_EXT_MAX_BREACHES", 3)
 
 # ---- ✍️ content authoring (backlog/content-authoring.md §5.2) ----
-# For the P1 *Try it* rung (not read yet). Counts calls, not tokens — nothing here does
-# token accounting, so this is not cost control.
+# The console's 💬 *Try it* (moxie_runtime/tryit.py reads MOXIE_AUTHOR_TRY_BUDGET per call,
+# with this same default). Counts tries, not tokens — nothing here does token accounting, so
+# this is not cost control. The max-tokens cap is for trying a DRAFT, which is not built yet.
 AUTHOR_TRY_BUDGET = _env_int("MOXIE_AUTHOR_TRY_BUDGET", 40)        # tries per rolling hour
 AUTHOR_TRY_MAX_TOKENS = _env_int("MOXIE_AUTHOR_TRY_MAX_TOKENS", 300)  # cap on a draft's own
 
