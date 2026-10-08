@@ -53,8 +53,12 @@
      aria-label="Live 3-D view of Moxie, a small teal robot with a round screen face. Her pose and expression change as she moves; anything she says is written as text in the comms log, just above the message box at the bottom of the page.">
 </div>
 
-<!-- HUD overlay: topbar / notice / stage+rail laid out as a grid over the canvas -->
-<div id="hud">
+<!-- HUD overlay: topbar / notice / stage+rail laid out as a grid over the canvas.
+     The rail starts CLOSED in the markup (`rail-closed` here, aria-expanded="false" on its
+     toggle): rail.js opens it only where it belongs (a local page at >= 900 px, or a
+     visitor who opened it before), so a slow or missing script leaves the toy, not the
+     console. -->
+<div id="hud" class="rail-closed">
 
   <!-- title bar -->
   <header id="topbar">
@@ -97,9 +101,10 @@
       <span class="corner bl"></span><span class="corner br"></span>
     </div>
 
-    <!-- speech callout -->
+    <!-- speech callout. The engineering half of the label is its own span so a hosted page
+         (body[data-env="hosted"], style.css) can say just MOXIE. -->
     <div id="bubble" class="hidden">
-      <span class="callout-label">MOXIE &middot; TTS OUT</span>
+      <span class="callout-label">MOXIE<span class="lbl-eng"> &middot; TTS OUT</span></span>
       <span id="bubble-text"></span>
     </div>
 
@@ -111,13 +116,14 @@
       <span id="presence-state">UNKNOWN</span>
     </div>
 
-    <!-- stage hint -->
-    <div id="scene-hint" aria-hidden="true">DRAG&thinsp;&middot;&thinsp;ORBIT&ensp;&#47;&#47;&ensp;SCROLL&thinsp;&middot;&thinsp;ZOOM&ensp;&#47;&#47;&ensp;<code>window.moxie</code> API</div>
+    <!-- stage hint. The API half is its own span, like the bubble's: a hosted page keeps how
+         to orbit and zoom and drops only `window.moxie` (style.css). -->
+    <div id="scene-hint" aria-hidden="true">DRAG&thinsp;&middot;&thinsp;ORBIT&ensp;&#47;&#47;&ensp;SCROLL&thinsp;&middot;&thinsp;ZOOM<span class="lbl-eng">&ensp;&#47;&#47;&ensp;<code>window.moxie</code> API</span></div>
   </main>
 
   <!-- HUD rail -->
   <aside id="panel">
-    <button id="rail-toggle" type="button" aria-expanded="true" aria-controls="rail-scroll">
+    <button id="rail-toggle" type="button" aria-expanded="false" aria-controls="rail-scroll">
       <span class="tick" aria-hidden="true"></span>Tinker<span class="caret" aria-hidden="true"></span>
     </button>
 
@@ -315,10 +321,10 @@
 
        WHAT DID NOT CHANGE. The rail is untouched apart from the four controls that moved
        out of it: it is still a full-height column at >=900 px and still a drawer that
-       starts CLOSED below that (`rail.js`, unchanged). This is a phone-first fix, not a
-       desktop teardown — the 3-D stage is still the hero on a wide viewport, and
-       `moxie.js::applyStageOffset` now frames her ABOVE this dock so she never sits
-       behind it.
+       starts CLOSED below that (`rail.js`; since 2026-10 the column, too, starts closed on
+       a HOSTED page). This is a phone-first fix, not a desktop teardown — the 3-D stage is
+       still the hero on a wide viewport, and `moxie.js::applyStageOffset` now frames her
+       ABOVE this dock so she never sits behind it.
        ======================================================================== -->
   <div id="chat-dock">
 
@@ -431,7 +437,7 @@
            are bounded in CSS so a two-line hosted-demo warning can never push the box
            itself off the bottom of the screen — which would recreate this whole bug in
            miniature. -->
-      <p id="mic-status" class="hint">Tap Listen, say something, then tap it again to send.</p>
+      <p id="mic-status" class="hint">Tap Listen and talk &mdash; I'll know when you're done.</p>
     </section>
   </div>
 
@@ -460,7 +466,8 @@
 <script src="life.js?v=cute7"></script>
 <script src="mic.js?v=cute7"></script>
 <script src="hud.js?v=cute7"></script>
-<script src="rail.js?v=cute7"></script>
+<!-- env.js before rail.js: the rail's resting state reads env.js's body[data-env]. -->
 <script src="env.js?v=cute7"></script>
+<script src="rail.js?v=cute7"></script>
 </body>
 </html>

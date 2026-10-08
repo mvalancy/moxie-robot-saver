@@ -1,15 +1,18 @@
 # The Turnstile challenge and the bottom controls
 
 **Status:** fixed — [`sim/web/turnstile.js`](../../../sim/web/turnstile.js) (`controlsTop()`, `place()`),
-tested by [`sim/test_mobile_layout.mjs`](../../../sim/test_mobile_layout.mjs) blocks 4, 5 and 9.
+tested by [`sim/test_mobile_layout.mjs`](../../../sim/test_mobile_layout.mjs) blocks 2 and 4.
 
 ## The defect
 
-`#chat-dock` is the bottom row of the page's HUD grid, and the `#transcript` inside it grows as
-Moxie's ambient self-talk writes lines to the log, up to its `min(26vh, 168px)` cap. Every pixel of
-that growth comes out of the stage row above, so everything above the dock, including the drawer
-handle `#rail-toggle`, rides up. A Turnstile challenge centred in the *viewport* does not move, so on
-ordinary modern phones the handle climbed into it and the challenge covered part of a control.
+`#chat-dock` is the bottom row of the page's HUD grid, and the `#transcript` inside it grows as lines
+are written to the log, up to its `min(26vh, 168px)` cap. When this was found, Moxie's ambient
+self-talk alone grew it: one row per quip. Since the toy-mode first screen, `ambient.js` keeps her
+self-talk to one row, re-worded in place, until the first real turn, so now it is a conversation
+that grows the log. Every pixel of that growth comes out of the stage row above, so everything above
+the dock, including the drawer handle `#rail-toggle`, rides up. A Turnstile challenge centred in the
+*viewport* does not move, so on ordinary modern phones the handle climbed into it and the challenge
+covered part of a control.
 
 With the dock at its cap, the handle and a viewport-centred 65 px challenge overlap only for
 **683 < viewport height < 909** — measured at 390×844 (32 px of overlap) and 393×851 (29 px). A
@@ -19,7 +22,8 @@ never a short-viewport bug; it was the common-phone case.
 ## Why no test saw it
 
 The layout suites sampled within about a second of load, while the log was empty and the dock at its
-minimum height. The collision needs roughly 30 s of ambient lines to develop. A centre-point hit test
+minimum height. The collision needed roughly 30 s of ambient lines to develop (today, a
+conversation of a few turns). A centre-point hit test
 was not enough either: at some heights the challenge covered the top of the 48 px handle while
 `elementFromPoint()` at its centre still answered `#rail-toggle`.
 
@@ -49,19 +53,26 @@ Cost: zero pixels of transcript.
   the lower half of the viewport; once the dock is at its cap on a short phone, `#panel` can drop out
   of that sum. `turnstile.js` computes its own bottom-stack top for that reason.
 
-## Known gap
+## The banner, in the same state (closed)
 
 The same driven state showed `#env-banner` landing on `#rail-toggle` at 375×667 with no Turnstile on
-the page, because of the lower-half filter above. That filter is unchanged in `env.js`, and no guard
-exercises the banner with the dock at its cap. Treat it as open until re-measured.
+the page, because of the lower-half filter above. The filter is still in `env.js`, but on a phone
+(≤ 640 px) the banner no longer hangs above the dock: it sits under the header, in her headroom
+(`style.css`, `--eb-top`). Re-measured with the log at its cap on four phones (360×640, 375×667,
+390×844, 393×851), the banner and the handle never touch. The old placement still lands on the
+handle at 360×640 and 375×667 (34–35 px of the 48 px handle, measured with the no-brain banner),
+which is what the guard's teeth restore.
 
 ## Tests
 
-`sim/test_mobile_layout.mjs` block 9 reaches the failing state **without sleeping**: it drives
-`window.__ambient.say()` (ambient.js's test seam) until four appends in a row leave the dock height
-unchanged, checks that the log is at its computed `max-height` and overflowing (`atCap`), and gates
-every assertion on that. It asserts **rect intersection** as well as the hit test. Its teeth restore
-the whole-viewport layer and require the collision to come back at 844 and 851, and **not** at 667.
+`sim/test_mobile_layout.mjs` block 4 reaches the failing state **without sleeping**: it appends log
+rows until four appends in a row leave the dock height unchanged (by hand, because her self-talk no
+longer grows the log before a turn), checks that the log is at its computed `max-height` and
+overflowing (`atCap`), and gates every assertion on that. It asserts **rect intersection** as well
+as the hit test. Its teeth restore the whole-viewport layer and require the collision to come back
+at 844 and 851, and **not** at 667. In the same state it checks that the banner is clear of the
+handle, and its teeth put the banner back above the dock and require it to land on the handle at
+667.
 The `turnstilejs-inert` mutation in [`sim/tools/page_teeth_check.py`](../../../sim/tools/page_teeth_check.py)
 guts `turnstile.js` and must redden these blocks.
 

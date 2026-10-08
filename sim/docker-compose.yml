@@ -3,7 +3,8 @@
 #   docker compose -f sim/docker-compose.yml --profile voice up    # + Piper TTS + whisper STT
 #   docker compose -f sim/docker-compose.yml --profile demo up     # + a looping virtual robot
 #   ... --profile voice --profile demo up                          # everything
-# Then open http://localhost:8080 and click "Connect" (broker WS on :9001).
+# Then open http://localhost:8080 (the hub; the simulator is /sim) and click "Connect"
+# (broker WS on :9001).
 name: moxie-sil
 services:
   broker:
@@ -31,7 +32,9 @@ services:
   web:                                           # the WebGL 3D Moxie UI, served static
     image: nginx:alpine
     ports: ["8080:80"]
-    volumes: ["./web:/usr/share/nginx/html:ro"]
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro   # /sim -> sim.html, as on Cloudflare Pages
     depends_on: [broker]
     restart: unless-stopped
 

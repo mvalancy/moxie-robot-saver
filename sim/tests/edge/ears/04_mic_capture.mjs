@@ -29,11 +29,15 @@ import {
   eq(w.mic.isRecording(), false, "1.1 s of silence AFTER speech ends the recording");
   eq(w.mic.stats().silenceStops, 1, "…recorded as a silence stop, not a cap stop");
   eq(w.mic.stats().speechDetected, 1, "…having actually heard speech first");
-  eq(pendingTimers(), 0, "…leaving no timer behind");
+  eq(w.posts.length, 1, "…and the clip WAS sent: speech, then silence, is a turn");
+  // The one timer an auto-stop that sent a clip leaves: the 2 s re-tap guard (06_no_speech.mjs).
+  eq(pendingTimers(), 1, "…leaving no timer behind but the 2 s re-tap guard");
+  await advance(2000);
+  eq(pendingTimers(), 0, "…which runs out on its own");
 }
 {
   // A tap with NOTHING said: 15 s of a listening indicator that will transcribe nothing is unkind.
-  const w = bootMic();
+  const w = bootMic({ answer: () => ({ status: 200, json: { transcript: "(machine whirring)" } }) });
   await w.mic.start();
   await flush();
   w.level(0.001);
@@ -44,6 +48,15 @@ import {
   eq(w.mic.stats().emptyStops, 1, "…recorded as an EMPTY stop, distinct from a silence stop");
   eq(w.mic.stats().silenceStops, 0, "…and never as a silence stop: nothing was ever heard");
   eq(w.mic.stats().speechDetected, 0, "…with no speech detected");
+  // …and NOTHING SAID IS NOTHING SENT: the gateway answers room tone with "(machine whirring)",
+  // which went out as the child's turn and Moxie answered it (review lane l4, 6/6 clips).
+  eq(w.posts.length, 0, "AN EMPTY STOP UPLOADS NOTHING — no /api/transcribe for a silent room");
+  deep(w.published, [], "…so no phantom words reach sendUserTurn");
+  eq(w.mic.stats().fallbacks, 0, "…and no scripted line stands in for words nobody said");
+  eq(w.mic.stats().noSpeech, 1, "…recorded as a clip dropped unsent");
+  eq(w.statusText(), "I did not hear anything — tap Listen and try again",
+     "…and the visitor is told, with the way back");
+  eq(pendingTimers(), 0, "…arming no re-tap guard: trying again is what the status asks for");
 }
 {
   // THE AUTO-STOP CAN ONLY EVER SHORTEN A RECORDING: continuous speech meets the 15 s cap.
@@ -73,7 +86,9 @@ import {
   eq(w.mic.isRecording(), false, "…and the page knows it stopped");
   eq(w.mic.stats().autoStops, 1, "…recorded as an autoStop, not a user stop");
   eq(w.bodyAttrs["data-mic"], undefined, "…and the recording indicator is cleared");
-  eq(pendingTimers(), 0, "the cap timer is not left behind");
+  eq(pendingTimers(), 1, "the cap timer is not left behind — only the 2 s re-tap guard is");
+  await advance(2000);
+  eq(pendingTimers(), 0, "…and that runs out on its own");
 }
 
 /* B2. The cap is the SERVER's number, is overridable, and survives a silly one. */

@@ -47,6 +47,13 @@
   var LOCAL_TITLE = "Served from localhost — voice, mic and the live-robot link work when their servers are running.";
   var HOSTED_TITLE = "Served as a static site — no backend. Voice, mic and the live-robot link need a locally-run server (see the banner).";
   var LIVE_TITLE = "Served as a static site with a live brain on the same origin. Connecting a REAL robot still needs your own broker.";
+  var OUT_TITLE = "Served as a static site with a live brain on the same origin, which is not answering right now — she is using her recorded lines. Connecting a REAL robot still needs your own broker.";
+
+  /** This deployment HAS a brain and it is out (any degraded reason but "none configured"):
+   *  the badge and the banner say so, never "no backend" / "need a locally-run backend". */
+  function brainOut(snap) {
+    return !!(snap && snap.state === "degraded" && snap.reason !== "gateway_not_configured");
+  }
 
   function paintBadge(snap) {
     if (!badgeEl) return;
@@ -55,7 +62,8 @@
       badgeEl.title = LOCAL_TITLE;
     } else {
       badgeEl.textContent = (snap && snap.badge) || "HOSTED DEMO";
-      badgeEl.title = (snap && snap.state === "live" && snap.liveTurns) ? LIVE_TITLE : HOSTED_TITLE;
+      badgeEl.title = (snap && snap.state === "live" && snap.liveTurns) ? LIVE_TITLE
+                    : brainOut(snap) ? OUT_TITLE : HOSTED_TITLE;
     }
     // Online reads mint; every fallback keeps the caution amber (style.css).
     badgeEl.classList.toggle("online", !isLocal && badgeEl.textContent === "MOXIE ONLINE");
@@ -122,6 +130,18 @@
              : live  ? VOICE_NOTE_LIVE
                      : VOICE_NOTE_SCRIPTED;
     if (el.innerHTML !== want) el.innerHTML = want;
+  }
+
+  /** Will a Listen tap stop by itself? Asked of mic.js, which decides where a clip goes: the
+   *  site's own ears ("cloud") stop after a breath of silence; a local sidecar — or any page
+   *  with `moxie.sttBase` set, which always wins — records with MediaRecorder until the second
+   *  tap. Without mic.js, the deployment's own answer about its ears. */
+  function earsStopThemselves(snap) {
+    try {
+      var m = window.moxieMic;
+      if (m && m.sttTarget) return m.sttTarget().kind === "cloud";
+    } catch (e) {}
+    return !!(snap && snap.ears);
   }
 
   // A server voice counts as a voice: then "no TTS server" would be untrue.
@@ -201,7 +221,16 @@
     // Mic / STT
     var micSt = $("mic-status");
     if (stt) {
-      if (micSt) { micSt.textContent = "Tap Listen, say something, then tap it again to send."; micSt.classList.remove("warn"); }
+      /* Name what THIS capture does. The site's own ears (mic.js's "cloud" capture) stop by
+       * themselves after a breath of silence, so a second tap re-opened the mic and uploaded
+       * a second clip; a local sidecar records with MediaRecorder, which has no silence stop,
+       * so there the second tap is still how a line is sent. */
+      if (micSt) {
+        micSt.textContent = earsStopThemselves(snap)
+          ? "Tap Listen and talk — I'll know when you're done."
+          : "Tap Listen, say something, then tap it again to send.";
+        micSt.classList.remove("warn");
+      }
       needsBackend($("mic-btn"), isLocal
         ? "Records and transcribes through the local STT server."
         : "Records and transcribes on this page — speech-to-text runs on the site's own origin.", false);
@@ -241,10 +270,16 @@
   // The bottom stack is #chat-dock at EVERY width, plus #panel in drawer mode. The lift
   // is from the top of the highest box whose bottom is in the lower half of the viewport,
   // which keeps the desktop side column out of the sum.
+  // `--eb-top` is the header's measured bottom (the top of #stage): on a phone the banner
+  // hangs there instead (style.css), because lifted above the dock a phone-width card sat
+  // on her torso, and climbed higher as the conversation grew the dock.
   function liftBanner() {
     var root = document.documentElement;
     if (!root || !root.style || !root.style.setProperty) return;
     var lift = 0;
+    var st = $("stage");
+    if (st && st.getBoundingClientRect)
+      root.style.setProperty("--eb-top", Math.max(0, Math.round(st.getBoundingClientRect().top)) + "px");
     if (bannerEl) {
       var H = window.innerHeight || 0;
       var top = H;
@@ -269,7 +304,7 @@
     // These boxes also resize without a window resize (drawer, <details>, a new log row):
     // watch them, or fall back to the toggle click.
     try {
-      var watched = 0, ids = ["panel", "chat-dock"];
+      var watched = 0, ids = ["panel", "chat-dock", "topbar"];
       for (var i = 0; i < ids.length; i++) {
         var el = $(ids[i]);
         if (el && window.ResizeObserver) { new window.ResizeObserver(liftBanner).observe(el); watched++; }
@@ -282,13 +317,30 @@
   }
 
   // ---- one-time banner on the hosted demo ----
+  // SCRIPTED is true of a deployment with no brain at all: no Functions (`offline`), or
+  // Functions with no gateway (`gateway_not_configured`, sticky). It was also painted for
+  // every OTHER degraded state, where it is false: that deployment HAS a live brain, which
+  // is out for a minute (or out of today's budget), and "need a locally-run backend" plus
+  // "Run it locally" told a stranger mid-chat that the site cannot talk at all.
+  // `eb-more` is the part a phone drops (style.css): there the card hangs in her headroom.
   var BANNER_SCRIPTED =
-    '<b>3D Moxie, gestures, expressions, Play&nbsp;demo and the QR tools work here.</b> ' +
+    '<b class="eb-more">3D Moxie, gestures, expressions, Play&nbsp;demo and the QR tools work here.</b> ' +
     'Live voice, the mic and connecting a real robot need a locally&#8209;run backend.';
   var BANNER_LIVE =
-    '<b>3D Moxie, gestures, expressions, Play&nbsp;demo and the QR tools work here.</b> ' +
+    '<b class="eb-more">3D Moxie, gestures, expressions, Play&nbsp;demo and the QR tools work here.</b> ' +
     'Moxie&#39;s live brain answers on this page; connecting a real robot still needs a ' +
     'locally&#8209;run backend. She forgets this conversation when you close the tab.';
+  // A transient outage: mode.js polls again within ~30 s, so "a minute" is the truth.
+  var BANNER_NAPPING =
+    '<b>Moxie&#39;s brain is napping</b> &mdash; she&#39;s using her recorded lines; ' +
+    'try again in a minute.';
+  // Out for longer than that: the hour/day budget, a bot check or a gateway gate the owner
+  // must fix (`gateway_unreachable_or_gated` is Cloudflare Access answering), or a reason
+  // this page does not know (mode.js nulls it). When in doubt, the line that promises less.
+  var BANNER_RESTING =
+    '<b>Moxie&#39;s brain is resting</b> &mdash; she&#39;s using her recorded lines for ' +
+    'now; try again later.';
+  var NAPPING = { upstream_down: true, timeout: true };
   var bannerEl = null;
 
   function paintBanner(snap) {
@@ -296,8 +348,14 @@
     var t = bannerEl.querySelector(".eb-text");
     if (!t) return;
     var live = !!(snap && snap.state === "live" && snap.liveTurns);
-    var want = live ? BANNER_LIVE : BANNER_SCRIPTED;
+    var out = !live && brainOut(snap);
+    var want = live ? BANNER_LIVE
+             : !out ? BANNER_SCRIPTED
+             : NAPPING[snap.reason] ? BANNER_NAPPING : BANNER_RESTING;
     if (t.innerHTML !== want) t.innerHTML = want;
+    // "Run it locally" is advice for a deployment with no brain, never for one that is out.
+    var link = bannerEl.querySelector(".eb-link");
+    if (link) link.hidden = out;
   }
 
   // Subscribe BEFORE the first render and before the dismissed-banner early-out, or a

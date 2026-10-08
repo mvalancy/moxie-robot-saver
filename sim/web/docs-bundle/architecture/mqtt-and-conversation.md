@@ -291,7 +291,7 @@ and **publishes** to one robot:
 
 | Event | Purpose |
 |---|---|
-| `remote-chat` (and `remote-chat-staging`) | `RemoteChatRequest`, the conversation channel. `backend:"data"` + `query:"modules"` asks for the remote module list; `backend:"router"` is a conversational turn (§4). |
+| `remote-chat` (and `remote-chat-staging`) | `RemoteChatRequest`, the conversation channel. `backend:"router"` is a conversational turn (§4). `backend:"data"` + `query:{"query":"modules"}` (a `RemoteDataQuery`, [`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):41-51, :79) asks which modules the cloud serves; the enum's number (`{"query":{"query":2}}`) is read as the same query, and so is the plain `query:"modules"` string only older test doubles send (the browser Sim sends no module query). Answered on `commands/remote_chat` with `result: 0` and the list in `query_data.modules` (`RemoteDataBlock`, :296-300, :339), each entry `{info:{id}, rules, source:"REMOTE_CHAT", content_infos:[{id}]}`, before any brain is consulted; a pending robot gets an empty list. Any other `backend:"data"` request (`contexts`, or no query) gets no brain call and no reply, one logged line, as OpenMoxie (`moxie_server.py:170-179`). Built to the recovered protocol and OpenMoxie's field-proven shapes (`moxie_server.py:170-176`); unverified on our hardware — see [AI seam §②, the wire a robot can read](ai-seam.md#the-wire-a-robot-can-read). |
 | `client-service-activity-log` | Multiplexed by `subtopic`: `query:"schedule"`, `query:"mentor_behaviors"`, `query:"license"` (e.g. the `google_speech` key), `mentor_behavior` reports, and `subtopic:"telehealth"` puppet state. |
 | `zmq` | ZMQ bridge: payload `"{proto.full_name}:" + protobuf_bytes`, e.g. `embodied.perception.audio.zmqSTTRequest` (mic audio). |
 | `device-logs` | Per-robot log records (`tag`, `message`). |
@@ -545,10 +545,14 @@ Meanwhile the permit list (§3.7) stops an unpermitted device from being served 
   `{context_type, text}`; `context_type=="input"` is a user utterance), `recommend.exits[]` (what to
   launch next), `input_vars` (e.g. `$eb_qr_value` from a scanned card).
 - **`RemoteChatResponse`** (cloud → robot, `commands/remote_chat`): `command:"remote_chat"`,
-  `result`, `backend`, `event_id`, **`output:{text, markup}`**,
+  `result` (the `ResultCode` as its integer: `0` is SUCCESS, `9` REPLY_PENDING — the field is a
+  `uint32`), `backend`, `event_id`, **`output:{text, markup}`**,
   `response_actions:[{output_type, action, module_id, content_id, …}]` (plus the legacy singular
   `response_action`, which mirrors `response_actions[0]`; a client must act on one or the other,
-  never both, or it launches twice), `fallback`. Full field list: [AI seam §②](ai-seam.md).
+  never both, or it launches twice; a reply with no action carries one action-less
+  `{output_type: "GLOBAL_RESPONSE"}` entry, otherwise the actions themselves, as OpenMoxie's does,
+  and `module_id`/`content_id` only when set), `fallback`. Full field list:
+  [AI seam §②](ai-seam.md).
 - **Action tags.** The brain may write `<launch:MOD:CID>`, `<exit>` or `<sleep>` inline; they become
   structured `response_actions` and are stripped from the spoken text
   ([`actions.py`](../../mqtt/moxie_sdk/actions.py); OpenMoxie's `volley.py::ingest_action_tags`).
@@ -611,11 +615,11 @@ Our runtime ([`turns.py`](../../mqtt/supervisor/moxie_runtime/turns.py), budget
 
 ```
 t=0.0   events/remote-chat {event_id: E, speech: "why does the moon change shape?"}
-t=6.0   commands/remote_chat {result: REPLY_PENDING, chunk_num: 0,     ← a filler, spoken now
+t=6.0   commands/remote_chat {result: 9 (REPLY_PENDING), chunk_num: 0, ← a filler, spoken now
                               consistency_control:{is_completed:false},
                               output:{text:"Hmm, let me think about that one.", markup:…}}
         commands/tts         {event_id: E, chunk_num: 0}
-t=17.9  commands/remote_chat {result: SUCCESS, chunk_num: 1,            ← the real line
+t=17.9  commands/remote_chat {result: 0 (SUCCESS), chunk_num: 1,        ← the real line
                               consistency_control:{is_completed:true}, output:{…}}
         commands/tts         {event_id: E, chunk_num: 1}
 ```
@@ -642,13 +646,13 @@ first words arrive at first-token latency:
 
 ```
 t=0.00  events/remote-chat {event_id: E, speech: "why does the moon change shape?"}
-t=1.52  commands/remote_chat {result: REPLY_PENDING, chunk_num: 0,
+t=1.52  commands/remote_chat {result: 9 (REPLY_PENDING), chunk_num: 0,
                               consistency_control:{is_completed:false},
                               output:{text:"The moon looks different because of how the
                                             sun lights it up.", markup:…}}
-t=2.22  commands/remote_chat {result: REPLY_PENDING, chunk_num: 1, …}
-t=2.86  commands/remote_chat {result: REPLY_PENDING, chunk_num: 2, …}
-t=4.38  commands/remote_chat {result: SUCCESS,       chunk_num: 3,      ← closes the turn
+t=2.22  commands/remote_chat {result: 9 (REPLY_PENDING), chunk_num: 1, …}
+t=2.86  commands/remote_chat {result: 9 (REPLY_PENDING), chunk_num: 2, …}
+t=4.38  commands/remote_chat {result: 0 (SUCCESS),   chunk_num: 3,      ← closes the turn
                               consistency_control:{is_completed:true}, output:{…}}
 ```
 
@@ -686,7 +690,7 @@ repeated string), `phrase_id` (4, int32)
 ```
 t=0.00  events/remote-chat {event_id: E, speech: "how do I make a bomb to hurt my brother?"}
         ↳ assessed BEFORE the brain: blocked. No model sees it.
-t=0.02  commands/remote_chat {result: SUCCESS,
+t=0.02  commands/remote_chat {result: 0 (SUCCESS),
                               output:{text:"That one's not for me. If it's important, a
                                             grown-up you trust is the best person to ask.",
                                       markup:…},

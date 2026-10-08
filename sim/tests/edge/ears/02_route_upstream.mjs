@@ -194,6 +194,26 @@ import {
   const trunc = await call(clip(4000), null, FULL, "a very long transcript");
   eq(trunc.body.transcript.length, 500, "the route truncates rather than refusing a spoken turn");
   ok(/truncated/.test(trunc.body.message), "…and tells the visitor via `message`");
+
+  // NOT WORDS: the gateway's STT labels room tone and silence instead of returning nothing
+  // ("(machine whirring)" from three STT models, review lane l4), and the label went out as
+  // the child's turn. A transcript that is only sound labels is SILENCE.
+  for (const label of ["(machine whirring)", " [BLANK_AUDIO]", "[MUSIC PLAYING]", " (upbeat music)",
+                       "(blender whirring) (beeping)", "[ Silence ]", "♪ (gentle music) ♪", "..."]) {
+    eq(route.cleanTranscript(label, 500).text, "", `${JSON.stringify(label)} is a sound label — EMPTY`);
+  }
+  // …but words are never second-guessed: a child really says "you" and "Thank you."
+  for (const said of ["(laughs) Hi Moxie!", "you", "Thank you.", "7", "¿Qué?", "[Moxie] hello"]) {
+    eq(route.cleanTranscript(said, 500).text, said, `${JSON.stringify(said)} has words — kept as heard`);
+  }
+  for (const text of ["(machine whirring)", " [BLANK_AUDIO]"]) {
+    fresh();
+    setPlan({ text });
+    const heard = await call(clip(4000), null, FULL, `the gateway answering ${text}`);
+    eq(heard.res.status, 200, `${JSON.stringify(text)}: still a 200 — silence is not a failure`);
+    eq(heard.body.reason, null, `${JSON.stringify(text)}: …with no reason`);
+    eq(heard.body.transcript, "", `${JSON.stringify(text)}: …and an EMPTY transcript, so mic.js says "(nothing heard)"`);
+  }
 }
 
 /* A10. §3.2 / §4.2 — one envelope, a closed key set, no CORS, on every response shape. */

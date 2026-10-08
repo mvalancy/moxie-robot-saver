@@ -17,10 +17,10 @@ def test_resultcode_values_match_recovered_proto():
     assert ResultCode.REPLY_PENDING == 9
 
 
-def test_default_response_is_success_by_name():
+def test_default_response_is_success_as_the_integer():
     resp = build_chat_response("evt-1", "Hi there!")
     assert resp["command"] == "remote_chat"
-    assert resp["result"] == "SUCCESS"          # wire value is the enum NAME, not "OK"
+    assert resp["result"] == ResultCode.SUCCESS == 0     # the uint32 VALUE, never the name
     assert resp["output"]["text"] == "Hi there!"
     assert resp["output"]["markup"] == "Hi there!"   # defaults to text
     assert resp["event_id"] == "evt-1"
@@ -30,7 +30,7 @@ def test_offline_reply_signals_error_offline():
     r = Reply.offline()
     assert r.result_code is ResultCode.ERROR_OFFLINE
     resp = build_chat_response("evt-2", r.text, result=r.result_code)
-    assert resp["result"] == "ERROR_OFFLINE"    # robot uses its local fallback
+    assert resp["result"] == ResultCode.ERROR_OFFLINE    # robot uses its local fallback
 
 def test_scored_output_fields_optional():
     bare = build_chat_response("e", "hi")
@@ -51,10 +51,21 @@ def test_action_passthrough():
     assert ra[0]["content_id"] == "memory"
 
 
-def test_int_result_is_coerced_to_name():
-    # a caller passing the raw proto int still serializes to the enum name
+def test_the_older_exit_spelling_is_still_read_and_goes_out_as_exit_module():
+    """`"exit"` is what this SDK spelled until 2026-10 (the pre-K1 value), so apps and
+    webhooks written against it may still send it; neither webhook_app.py nor
+    moxie-as-a-platform.md documents it. `ActionType._missing_` keeps reading it as
+    back-compat; the wire carries the ActionID name (RemoteChat.proto:260)."""
+    assert ActionType("exit") is ActionType.EXIT is ActionType("exit_module")
+    assert ActionType.EXIT.value == "exit_module"
+    resp = build_chat_response("e", "Bye!", actions=[Action(type=ActionType("exit"))])
+    assert [a["action"] for a in resp["response_actions"]] == ["exit_module"]
+
+
+def test_a_raw_proto_int_result_is_accepted_and_serialises_as_the_integer():
+    # a caller passing the raw proto int is read as that ResultCode and goes out as the int
     resp = build_chat_response("e", "hi", result=4)
-    assert resp["result"] == "ERROR_OFFLINE"
+    assert resp["result"] == ResultCode.ERROR_OFFLINE == 4 and type(resp["result"]) is int
 
 
 # ---- build_activity_response (the `query_result` / CloudQueryResponse encoder) ----

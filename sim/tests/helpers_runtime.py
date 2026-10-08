@@ -389,8 +389,9 @@ def assert_spec_response(resp: dict, *, device_id: str = None, event_id: str = N
     """Assert a published payload really is a spec-conformant RemoteChatResponse
     (embodied/robotbrain/RemoteChat.proto — see moxie_sdk/wire.py::build_chat_response).
     Returns the response so callers can chain."""
+    from moxie_sdk.types import ResultCode
     assert resp.get("command") == "remote_chat", resp
-    assert resp.get("result") == "SUCCESS", resp
+    assert resp.get("result") == ResultCode.SUCCESS, resp   # the uint32 value, 0
     assert resp.get("backend") == "router", resp
     if event_id is not None:
         assert resp.get("event_id") == event_id, resp
@@ -398,7 +399,10 @@ def assert_spec_response(resp: dict, *, device_id: str = None, event_id: str = N
     assert isinstance(out, dict), resp
     assert out.get("text", "").strip(), f"empty spoken text: {resp!r}"
     assert out.get("markup", "").strip(), f"empty markup: {resp!r}"
-    assert isinstance(resp.get("end_turn"), bool), resp
+    # A spec response is the whole turn: no open chunk (REPLY_PENDING / is_completed:false
+    # say "more is coming"; `end_turn` has no proto field and is not on the wire).
+    assert (resp.get("consistency_control") or {}).get("is_completed") is not False, resp
+    assert "end_turn" not in resp, resp
     return resp
 
 
