@@ -9,8 +9,8 @@ makes the record. What each test below pins:
 * a claim binds the device id the supervisor lists to this account and its child, and
   permits it with the console's own Permit body, once;
 * it fails closed and changes nothing when it cannot be sure: no bearer (401), an id the
-  supervisor never listed (404), a supervisor it cannot ask (503), a robot on another
-  account or an account that already has a robot (409); a repeat is a no-op;
+  supervisor never listed or a blank one (404), a supervisor it cannot ask (503), a robot
+  on another account or an account that already has a robot (409); a repeat is a no-op;
 * it is the parent's word, not a proof: no pairing code is used, no public key is written;
 * the whole lifecycle (Wake, Unpair, Factory reset) then works on that record;
 * `/local/state.unclaimed` lists the connected robots no account has added, and
@@ -225,6 +225,26 @@ def test_refusals_create_no_record_and_post_nothing(client, supervisor, monkeypa
     assert snapshot() == before
     state = _state(client, stranger)
     assert state["robots"] == [] and state["children"] == []
+
+
+def test_a_blank_id_names_no_robot(client, supervisor):
+    """An id that is blank once stripped is no robot: 404 in the route's own words, and
+    nothing changes. A simulated scan's record names no robot on this server (it has no
+    `mqtt-device-id`); matched on that blank, it used to answer 200 "already on your
+    account" with that record's id."""
+    from moxie_server import db
+    auth = quicklogin(client, "blank-id@claim.lan")
+    prep = client.post("/local/pairing/prepare", headers=auth,
+                       json={"ssid": "Home", "password": "pw"}).json()
+    assert client.post("/local/simulate-robot-scan",
+                       json={"qr_payload": prep["qr_payload"]}).status_code == 200
+    rows, posts = db.q1("SELECT COUNT(*) n FROM robots")["n"], len(supervisor.permit_posts)
+    for blank in ("%20", "%20%20", "%09"):
+        r = _claim(client, auth, blank)
+        assert r.status_code == 404, (blank, r.text)
+        assert r.json()["error"] == "unknown robot" and "connected" in r.json()["reason"]
+    assert db.q1("SELECT COUNT(*) n FROM robots")["n"] == rows
+    assert len(supervisor.permit_posts) == posts
 
 
 def test_a_simulated_scan_refuses_a_robot_on_another_account(client, supervisor):

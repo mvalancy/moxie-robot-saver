@@ -344,6 +344,10 @@ def claim_robot(device_id: str, u=Depends(current_user)):
     supervisor read becomes `/local/state`'s shared one, so the page's redraw after the
     claim agrees with it."""
     device_id = device_id.strip()
+    # A blank id is no robot, and a record that names none (a simulated scan's) must not
+    # match it as "already on your account".
+    if not device_id:
+        return _claim_refusal(404, "unknown robot", UNKNOWN_ROBOT, device_id)
     seen = _supervisor_devices()
     _share_with_state(seen)
     mine = next((r for r in db.robots_of(u["id"]) if db.device_id_of(r) == device_id), None)
