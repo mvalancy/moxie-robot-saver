@@ -3,8 +3,8 @@
  *
  * Part A calls the real `functions/api/transcribe.js` with a stubbed `fetch`; Part B runs the
  * real `sim/web/mic.js` on a virtual clock with a FAKE recorder. Proven: the key and gateway
- * URL never appear in a response, a refusal makes zero upstream calls, and the page never
- * goes dead. Sections live in `sim/tests/edge/ears/`.
+ * URL never appear in a response, a refusal makes zero upstream calls, the page never goes
+ * dead, and a tap with nothing said sends nothing. Sections live in `sim/tests/edge/ears/`.
  *
  *   node sim/test_demo_ears.mjs
  */
@@ -17,6 +17,7 @@ await runSections(new URL("./tests/edge/ears/", import.meta.url), [
   "03_route_duration.mjs",
   "04_mic_capture.mjs",
   "05_mic_degraded.mjs",
+  "06_no_speech.mjs",
 ]);
 
 if (fails.length) {
