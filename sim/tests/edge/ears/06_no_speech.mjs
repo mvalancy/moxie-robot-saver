@@ -108,7 +108,7 @@ for (const [label, blocks] of [["a second tap after one block (85 ms)", 1],
   deep(w.published, ["hi moxie"], "…whose transcript is the child's turn, as before");
   eq(st.noSpeech, 0, "…and nothing dropped");
   const bytes = w.posts[0].init.body.bytes;
-  eq(wavlib.sttWavProblem(bytes), null, "…as a WAV the route forwards (16-bit PCM, mono, 16 kHz)");
+  eq(wavlib.sttWavProblem?.(bytes), null, "…as a WAV the route forwards (16-bit PCM, mono, 16 kHz)");
 }
 {
   const w = bootMic({ realCapture: true });

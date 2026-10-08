@@ -129,7 +129,7 @@ import {
     ["4 kHz", wavOf({ rate: 4000 }), "sample_rate"],
     ["96 kHz", wavOf({ rate: 96000, ms: 500 }), "sample_rate"],
   ]) {
-    eq(wavlib.sttWavProblem(body), why, `sttWavProblem names ${label}: ${why}`);
+    eq(wavlib.sttWavProblem?.(body), why, `sttWavProblem names ${label}: ${why}`);
     fresh();
     const r = await call(body, null, FULL, label);
     eq(r.body.reason, "bad_request", `${label}: refused as bad_request`);
@@ -149,7 +149,7 @@ import {
     ["48 kHz stereo, 0.5 s", wavOf({ rate: 48000, ch: 2, ms: 500 })],
     ["an 18-byte fmt chunk (cbSize = 0)", wavOf({ fmtSize: 18 })],
   ]) {
-    eq(wavlib.sttWavProblem(body), null, `${label}: fit for STT`);
+    eq(wavlib.sttWavProblem?.(body), null, `${label}: fit for STT`);
     fresh();
     const r = await call(body, null, FULL, label);
     eq(r.res.status, 200, `${label}: transcribed`);

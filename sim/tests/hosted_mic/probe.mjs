@@ -244,18 +244,24 @@ export async function probeTurn(browser, url, opts) {
   if (opened) {
     await new Promise((r) => setTimeout(r, opts.recordMs));
     if (clicked) await page.click("#mic-btn").catch(() => {});
-    // The OUTCOME: a transcript or any recorded way the ears can fail ends the wait.
+    // The OUTCOME: a transcript or any recorded way the ears can fail ends the wait — and so
+    // does a clip `mic.js` dropped unsent because none of it was speech (`noSpeech`).
     await page.waitForFunction(() => {
       const s = window.moxieMic && window.moxieMic.stats ? window.moxieMic.stats() : null;
-      return !!s && (s.transcripts > 0 || s.fallbacks > 0 || s.tooShort > 0);
+      return !!s && (s.transcripts > 0 || s.fallbacks > 0 || s.tooShort > 0 || s.noSpeech > 0);
     }, { timeout: 45000 }).catch(() => {});
+    // Nothing uploaded, nothing to answer: no 90 s of waiting for a reply that cannot come.
+    const posted = await page.evaluate(
+      () => !(window.moxieMic && window.moxieMic.stats) || window.moxieMic.stats().posts > 0);
     /* Then the ANSWER: every watched request has answered, and a buffer built from gateway
      * PCM (`bytes == null` — no pre-rendered clip can be) was scheduled. A plays-count once
      * let an ambient quip stand in for her answer, and an unanswered request read as 0 B. */
-    await page.waitForFunction(
-      () => window.__mic.calls.length > 0 && window.__mic.calls.every((c) => c.status !== 0),
-      { timeout: 45000 }).catch(() => {});
-    if (!opts.dry) {
+    if (posted) {
+      await page.waitForFunction(
+        () => window.__mic.calls.length > 0 && window.__mic.calls.every((c) => c.status !== 0),
+        { timeout: 45000 }).catch(() => {});
+    }
+    if (posted && !opts.dry) {
       await page.waitForFunction(
         () => (window.__audio.plays || []).some((p) => p.bytes == null && p.frames > 1000),
         { timeout: 45000 }).catch(() => {});
