@@ -819,7 +819,7 @@ These numbers are stable, and code cites them.
 | 15 | The gateway accepts webm/Opus for STT | **settled false**: it returns 500 to webm/ogg/mp4 and transcribes 16 kHz mono WAV. So `DEMO_STT_FORMATS=wav`, and `mic.js` encodes WAV in the browser. |
 | 16 | `MediaRecorder` defaults and mic sample rate | moot for the hosted path, which no longer uses `MediaRecorder`; the encoder writes the true rate |
 | 17 | An `https://` page cannot open `ws://` | inferred; irrelevant to the HTTP path |
-| 18 | A robot plays chunk 1+ of an event | unverified on a robot. The SIM does: the hosted turn is up to three chunks and `voice/cloud.js` plays them in order (test_cloud_transport §4b–4g; measured live 2026-10-08 over 20 chunked turns, the longest gap between chunks 139 ms). |
+| 18 | A robot plays chunk 1+ of an event | unverified on a robot. The SIM does: the hosted turn is up to three chunks and `voice/cloud.js` plays them in order (test_cloud_transport §4b–4g; measured live 2026-10-08 over 20 turns, 12 of them chunked: the longest gap between chunks 139 ms). |
 | 19 | Gateway cost per token or second | unknown: no price sheet, so budgets are in request units |
 | 20 | `emotion` is not in the chat contract | proven |
 | 21–23 | Clip rendering is reproducible; child clips are not played; the account id is public in check-run URLs | proven |
