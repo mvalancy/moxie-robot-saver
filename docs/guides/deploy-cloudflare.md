@@ -107,14 +107,15 @@ A public demo that proxies a paid gateway needs limits. Each is a `DEMO_*` varia
 | `DEMO_MAX_RECORD_MS` | 15000 | Recording length ceiling |
 | `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500000 / 2000 | Below the floor, no upstream call |
 | `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | Per visitor IP |
-| `DEMO_SPEECH_PER_MIN` / `_HOUR` | 10 / 80 | Per visitor IP |
-| `DEMO_STT_PER_MIN` / `_HOUR` | 10 / 60 | Per visitor IP |
+| `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY` | 10 / 80 / 300 | Per visitor IP; a `_DAY` of `0` removes that day window |
+| `DEMO_STT_PER_MIN` / `_HOUR` / `_DAY` | 10 / 60 / 225 | Per visitor IP; a `_DAY` of `0` removes that day window |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | Matched to the upstream key's parallel limit; raise the queue, not these |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | 2500 / 8 | At the ceiling a request waits briefly instead of being refused; `0` disables |
 | `DEMO_CACHE_COUNTER` | on | Counts the per-minute limits per colo (Cache API) instead of per isolate; fails open |
 | `DEMO_TTS_CACHE` / `_TTL_S` | on / 86400 | Caches synthesized speech per colo; a hit costs no upstream call |
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | 600 / 4000 | Request units (chat 3, speech 2, transcribe 2) |
-| `DEMO_CHAT_TIMEOUT_MS` | 20000 | A fast degrade beats a slow success |
+| `DEMO_CHAT_TIMEOUT_MS` | 10000 | A fast degrade beats a slow success; about 3x the brain's measured p99 |
+| `DEMO_SERVE_HOSTS` | unset | Hostnames that may spend, comma separated, exact match; any other host answers `gateway_not_configured`. On Production set it to the canonical host only (for the reference deployment, `moxie.mattvalancy.com`), so the `pages.dev` alias and old deployment URLs cannot spend |
 | `DEMO_TICKET_TTL_S` | 60 | Lifetime of a speech ticket |
 
 These counters are **best effort**: most live in one isolate's memory and the per-minute window is per
