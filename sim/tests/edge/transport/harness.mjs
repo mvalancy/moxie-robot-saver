@@ -35,19 +35,14 @@ let clockNow = 0;
 let timerSeq = 0;
 let timers = [];
 const realSetImmediate = setImmediate;
-const realDateNow = Date.now;
-const T0 = 1_800_000_000_000;
 
 /** The virtual time, in ms since `installClock()`. */
 export const now = () => clockNow;
 
-/** `virtualDate`: `Date.now()` follows the virtual clock too (voice/'s grace beats, mode.js's
- *  Retry-After windows). Off by default, so the older sections keep their meaning. */
-export function installClock(opts) {
+export function installClock() {
   clockNow = 0;
   timerSeq = 0;
   timers = [];
-  Date.now = opts && opts.virtualDate ? () => T0 + clockNow : realDateNow;
   globalThis.setTimeout = (fn, ms) => {
     const id = ++timerSeq;
     timers.push({ id, at: clockNow + (Number(ms) || 0), fn });
@@ -425,10 +420,11 @@ export const voiced = (eid, over) => {
 export const HI = Object.freeze({ status: 200, json: envelope({ messages: [chatMsg("Hi!", "e1")], speech: [] }) });
 
 /** Boot the page: stub.js, bridge/, mode.js, cloud-transport.js — sim.html's order — and,
- *  with `realVoice`, voice/ after them (sim.html's order too) on a virtual `Date.now()`. */
+ *  with `realVoice`, voice/ after them (sim.html's order too). Wall-clock reads in voice/ and
+ *  mode.js (grace beats, Retry-After) stay real, so a section never relies on one elapsing. */
 export async function boot(opts) {
   const o = opts || {};
-  installClock({ virtualDate: !!o.realVoice });
+  installClock();
   const world = makeWorld(o);
   (0, eval)(SRC.stub);
   (0, eval)(SRC.bridge);

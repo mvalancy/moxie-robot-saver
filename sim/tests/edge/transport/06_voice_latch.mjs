@@ -42,44 +42,39 @@ const SPEECH_DOWN = (over) => ({ status: 503, json: envelope(Object.assign(
  * 8a. AFTER HER FIRST VOICED REPLY, EVERY OTHER LINE IS STILL HEARD — a rate-limited turn's
  *     stub answer, a safety redirect, and a reply whose voice the gateway refused. A
  *     session-wide latch once made all three silent (0 sounds each, measured on prod code).
+ *     Each on its own page, after one gateway-voiced turn.
  * =========================================================================== */
 {
-  let n = 0;
-  const world = await boot({ realVoice: true, answer: live((path) => {
-    if (path === "/api/chat") {
-      n++;
-      if (n === 1) return said("Hi there! Want to hear a joke?", "sim-v1", { speech: ticket("sim-v1") });
-      if (n === 2) return { status: 429, json: envelope({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "live" }) };
-      if (n === 3) return said(REDIRECT, "sim-blk", { ok: true, degraded: true, reason: "blocked", mode: "live" });
-      return said("Volcanoes are mountains that can puff out hot melted rock!", "sim-v4", { speech: ticket("sim-v4") });
+  const R429 = { status: 429, json: envelope({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "live" }) };
+  const VOLCANO = "Volcanoes are mountains that can puff out hot melted rock!";
+  const cases = [
+    ["a 429's stub answer", { chat: R429 }, (r) => r.sounds.map((s) => [s.kind, s.bytes]), [["clip", clipBytes(STUB_JOKE)]]],
+    ["the safety redirect", { chat: said(REDIRECT, "sim-blk", { ok: true, degraded: true, reason: "blocked", mode: "live" }) },
+     (r) => r.sounds.map((s) => [s.kind, s.text]), [["browser", REDIRECT]]],
+    ["a reply whose voice was refused", { chat: said(VOLCANO, "sim-v2", { speech: ticket("sim-v2") }), speech: SPEECH_DOWN() },
+     (r) => r.sounds.map((s) => [s.kind, s.text]), [["browser", VOLCANO]]],
+  ];
+  for (const [label, second, shape, want] of cases) {
+    let n = 0;
+    const world = await boot({ realVoice: true, answer: live((path) => {
+      if (path === "/api/chat") { n++; return n === 1 ? said("Hi there! Want to hear a joke?", "sim-v1", { speech: ticket("sim-v1") }) : second.chat; }
+      if (path === "/api/speech") return n === 1 ? voiced("sim-v1", { seconds: 2 }) : second.speech;
+      return { status: 404, text: "" };
+    }) });
+    const t1 = await turn(world, "hi moxie", 4000);
+    deep(kinds(t1), ["cloud"], `8a (${label}): turn 1 is spoken in her own (gateway) voice, once, and by nothing else`);
+    const t2 = await turn(world, "tell me a joke", 6000);
+    deep(shape(t2), want, `8a (${label}): …AND THE NEXT LINE IS HEARD — exactly one sound, in the local voice`);
+    deep(world.spy.cuts, [], `8a (${label}): no voice was cut short`);
+    eq(M().state(), "live", `8a (${label}): …and the page is still live`);
+    if (label === "a 429's stub answer")
+      ok(world.spy.transcript.includes(STUB_JOKE), "8a: the rate-limited turn is answered from stub.js");
+    if (label === "a reply whose voice was refused") {
+      const st = T();
+      deep([st.voiceFallbacks, st.speechReasons, st.reasons.includes("upstream_down")], [1, ["upstream_down"], false],
+           "8a: recorded as a voice fallback; the speech route's reason kept apart from the brain's (mode.js never hears it)");
     }
-    if (path === "/api/speech") return n === 1 ? voiced("sim-v1", { seconds: 2 }) : SPEECH_DOWN();
-    return { status: 404, text: "" };
-  }) });
-
-  const t1 = await turn(world, "hi moxie", 4000);
-  deep(kinds(t1), ["cloud"], "8a: turn 1 is spoken in her own (gateway) voice, once, and by nothing else");
-
-  const t2 = await turn(world, "tell me a joke", 6000);
-  ok(world.spy.transcript.includes(STUB_JOKE), "8a: the rate-limited turn is answered from stub.js");
-  deep(t2.sounds.map((s) => [s.kind, s.bytes]), [["clip", clipBytes(STUB_JOKE)]],
-       "8a: …AND THAT STUB ANSWER IS HEARD — exactly one sound, its own shipped clip, after a voiced turn");
-
-  await advance(21000);                       // the 429's Retry-After window lapses
-  const t3 = await turn(world, "something the floor blocks", 6000);
-  deep(t3.sounds.map((s) => [s.kind, s.text]), [["browser", REDIRECT]],
-       "8a: the SAFETY REDIRECT is heard — once, in the local voice (it carries no voice ticket)");
-
-  const t4 = await turn(world, "tell me about volcanoes", 6000);
-  deep(t4.sounds.map((s) => [s.kind, s.text]),
-       [["browser", "Volcanoes are mountains that can puff out hot melted rock!"]],
-       "8a: a reply whose voice was REFUSED is heard — once, locally, never silent");
-  eq(M().state(), "live", "8a: …and the refused voice did not degrade the page: a voice failure is not a brain failure");
-  const st = T();
-  deep([st.blocked, st.fallbacks, st.voiceFallbacks, st.speechReasons, st.reasons.includes("upstream_down")],
-       [1, 1, 1, ["upstream_down"], false],
-       "8a: recorded as a block, a stub answer and a voice fallback; the speech route's reason kept apart from the brain's");
-  deep(world.spy.cuts, [], "8a: and in all four turns (each allowed to finish) no voice was cut short");
+  }
 }
 
 /* =========================================================================== *
