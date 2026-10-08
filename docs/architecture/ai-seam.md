@@ -103,6 +103,56 @@ path's `call_with_backoff` + `Pacer` for 429/5xx. `FallbackTranscriber` puts the
 The console's **Listening** picker chooses the engine at runtime; see [Choosing an
 engine](#choosing-an-engine) under ③.
 
+#### What the ears refuse to hear
+
+Whisper does not answer silence with silence. On room tone, a breath or a door it writes words,
+most often "Bye.", "Thank you." or "you", or it names the sound: "(machine whirring)",
+"[BLANK_AUDIO]". The hosted ears measured it: the gateway answered every one of six no-speech clips
+with text, "(machine whirring)" for room tone and "you" for silence
+([`sim/tests/edge/ears/06_no_speech.mjs`](../../sim/tests/edge/ears/06_no_speech.mjs)). On the robot
+path that text was the child's `FINAL` and the robot sent it back as the child's turn, so a child who
+only paused could lose the activity to a phantom "Bye." (the llm brain is taught to answer a goodbye
+with `<exit>`, and a goodbye rule has to accept a lone "By." because that is how Whisper spells a real
+"bye"). OpenMoxie publishes `whisper-1`'s text verbatim with no level check
+(`site/hive/mqtt/zmq_stt_handler.py:57-69`), so the field-proven server does not guard this either.
+`SttSession` ([`stt.py`](../../mqtt/moxie_sdk/stt.py)) therefore:
+
+1. asks no engine about a clip at digital silence (RMS below 0.001 of full scale) or shorter than
+   120 ms (the gateway engine's own floor, now applied to every engine): no gateway spend, no latency;
+2. removes control characters and Whisper's parenthesised or bracketed sound labels ("(laughs) hi
+   Moxie" becomes "hi Moxie"); a transcript with no letter or digit left is no speech, at any level;
+3. drops a transcript that is, word for word, one of Whisper's known silence phrases
+   (`PHANTOM_CANON`: bye, by, bye bye, goodbye, you, thank you, thanks, thanks for watching, the end,
+   and the "Subtitles by the Amara.org community" credit) when the clip is not loud (RMS below 0.05)
+   and is either quieter than room tone or shorter than a real word (the two knobs below).
+
+A loud clip is never dropped on its text, and neither is a sentence that only contains one of those
+words ("I don't want to play anymore, bye"); a child's real short answers (okay, yes, no, hmm, uh)
+are not on the list. Local whisper also runs faster-whisper's own voice detector
+(`vad_filter=True`, as the SIL STT service does) and drops a segment it rates as more likely silence
+than speech (`no_speech_prob` above 0.6).
+
+| Knob | Default | What it does |
+|---|---|---|
+| `MOXIE_STT_PHANTOM_GATE` | on | `off` (or `0`/`false`/`no`) is the kill switch: every clip goes to the engine and its text comes back verbatim, exactly as before. Empty means on |
+| `MOXIE_STT_ROOM_TONE_RMS` | `0.01` | RMS level, as a fraction of full scale, below which a clip is room tone |
+| `MOXIE_STT_MIN_SPEECH_MS` | `250` | Milliseconds below which a clip that is not loud is too short for that phrase to be a word |
+
+A drop is still a `FINAL` with no `speech` and the utterance's `uuid`, like any empty
+transcription, so the robot's turn closes; what a real Moxie does next after an empty `FINAL` is
+unverified. The console's activity feed gets one line per drop with the fixed reason, the canon
+phrase and the numbers, never the audio and never the transcript ("heard nothing: dropped a phantom
+'bye' (0.60 s, level 0.004)"), and `/status` counts drops per robot as `stt_dropped` (since the
+robot last connected).
+
+The defaults lean one way on purpose: a missed whispered goodbye costs the child one repeat, while a
+phantom goodbye ends the child's activity. The levels come from the hosted page's browser
+microphones, which apply automatic gain (`sim/web/mic.js`: room tone about 0.005, speech 0.05 and
+up). Moxie's far-field, echo-cancelled level has not been measured, so **the thresholds are
+unverified on a robot**: tune them on bench day from the feed's "heard nothing" lines. Tests:
+[`sim/tests/test_honest_ears.py`](../../sim/tests/test_honest_ears.py) and the goodbye loopback in
+[`sim/tests/test_stt_wire.py`](../../sim/tests/test_stt_wire.py).
+
 ---
 
 ## ② Brain — the RemoteChat contract (where the AI lives)
