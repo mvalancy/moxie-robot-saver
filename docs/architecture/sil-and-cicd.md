@@ -179,8 +179,9 @@ gh workflow run deployed.yml              # the same in CI (with the free check)
 
 `deployed.yml` runs it once a day on its own cron, a judgement made for that one turn only: without it
 every monitor stays green with the brain dead. The selftest runs it as a child process against the real
-chat route on loopback: two controls must pass, and nine broken deployments must each fail their own
-clause.
+chat route on loopback: two controls must pass, and nine bad answers (a dead brain, lost secrets, the kill
+switch, no Functions, an empty reply, no ticket, a slow turn, two kinds of rate limit) must each fail
+their own clause.
 
 ### The paid microphone check
 
