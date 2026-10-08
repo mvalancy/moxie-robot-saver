@@ -73,7 +73,10 @@ Related gates, all shipped:
 drops the in-RAM buffer, and is **never policy-gated** — a parent can always delete. It is idempotent.
 Routes: supervisor `DELETE /telemetry`, console `DELETE /local/robots/{device_id}/telemetry`
 ([`server/moxie_server/routes/console.py`](../../../server/moxie_server/routes/console.py)). `purge_telemetry`
-erases every robot now under `NO_DATA` at startup and after config edits. Erasing `mentor_behaviors`
+erases every robot now under `NO_DATA` at startup and after config edits, except a robot whose saved
+settings could not be read: it runs under `NO_DATA` without that being a parent's choice, so its
+record is kept until a parent saves its settings
+([production hardening §8](production-hardening.md#8-phases-and-risks)). Erasing `mentor_behaviors`
 costs the schedule planner its completion history, so finished activities may be offered again.
 
 ### 1.4 The card
@@ -82,7 +85,10 @@ The console's 📈 Insights card ([`insights.js`](../../../server/static/js/insi
 `GET /local/robots/{device_id}/telemetry` and `fleet.normalize_telemetry`) shows a zero-filled week
 (`weekBars`), per-event counts, the newest envelopes, the real retention window and lifetime totals, and
 a two-click erase. Under `NO_DATA` it says nothing is being saved and that the list shows only what
-arrived since the supervisor started — it never draws an empty week as if it were a quiet one. The
+arrived since the supervisor started — it never draws an empty week as if it were a quiet one. When
+the store still holds history (a lifetime total above zero, as for a robot whose saved settings could
+not be read), it says instead that nothing new is saved and the history stored before is kept until
+it is erased (`noDataNote`). The
 connection strip (from [`conn_telemetry.py`](../../../mqtt/moxie_sdk/conn_telemetry.py)) is shown under
 every policy, because it carries only topics, reason codes and durations — nothing about the child.
 
