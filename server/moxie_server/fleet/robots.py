@@ -35,7 +35,7 @@ def robot_summary(r: dict) -> str:
     if r.get("ota_reboot_required"):
         bits.append("OTA reboot pending")
     asked = r.get("stt_subscribed_at")
-    if isinstance(asked, (int, float)) and asked > 0:
+    if isinstance(asked, (int, float)) and not isinstance(asked, bool) and asked > 0:
         # The supervisor asked for the robot's microphone (a request; the robot sends no
         # acknowledgement, so this is never "listening").
         bits.append(f"mic asked {time.strftime('%H:%M', time.localtime(asked))}")
