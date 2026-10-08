@@ -57,7 +57,7 @@ The runtime reader is not always scanning; content turns it on for a moment. The
 lines 255–281) is `ActionID.execute = 6` with `function_id` (field 7) and `repeated function_args` (field 8):
 
 ```json
-{"output_type": "GLOBAL", "action": "execute",
+{"output_type": "GLOBAL_RESPONSE", "action": "execute",
  "function_id": "eb_enable_qr", "function_args": ["true"]}
 ```
 

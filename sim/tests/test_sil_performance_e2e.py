@@ -248,7 +248,7 @@ def test_a_single_reply_turn_carries_every_scored_field_on_the_wire(plain):
     assert isinstance(got["mood_intensity"], int), got
     assert (reply["output"]["markup"] or "").startswith("<mark "), reply["output"]["markup"]
     # `echo` sets no mood or act of its own, so every value was minted by the planner
-    assert got["signals"] and all(s in vocab.SIGNALS for s in got["signals"]), got
+    assert got["signals"] and all(s in vocab.SIGNALS for s in got["signals"].values()), got
     assert got["dialog_act"] in vocab.DIALOG_ACTS and got["emotion"] in vocab.EMOTION_STATES
     assert got["mood"] in vocab.MOODS, got
 
