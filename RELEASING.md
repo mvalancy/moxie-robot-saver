@@ -41,7 +41,7 @@ still behind `main` more than 30 minutes after a promotion.
 | Deep, live | `ci-deep.yml` by hand | `gh workflow run ci-deep.yml --ref dev` | Adds the live gateway suites (`test_live_gateway`, `test_live_action_tags`, `test_live_content_e2e`). Spends about 12–13 real completions; fails if the secret is missing. |
 | Deep, live voice | same, with `-f voice=true` | manual | Adds `test_live_talk_e2e`: real Piper speech into real Whisper. |
 | Release | `release.yml` | tag `v*` | Builds and publishes the package and images (below) |
-| Deployed | `deployed.yml` | schedule | Checks the hosted site in a real phone-sized browser; not a merge gate. |
+| Deployed | `deployed.yml` | schedule | Checks the hosted site in a real phone-sized browser 4× a day and spends one chat turn a day on a canary; not a merge gate. |
 | Cleanup | `cleanup.yml` | PR closed | Deletes that PR's build cache. |
 
 CI keeps no durable artifacts (the repository's retention window is 7 days). The only durable outputs are a

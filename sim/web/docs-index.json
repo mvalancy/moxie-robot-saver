@@ -348,7 +348,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator and CI",
    "section": "architecture",
-   "bytes": 15644,
+   "bytes": 17754,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -357,6 +357,7 @@
     "CI tiers",
     "Live suites (manual, they spend)",
     "The deployed check",
+    "The daily canary",
     "The paid microphone check",
     "Browser-suite teeth",
     "promotion.yml`: was the last promotion finished?",
@@ -1288,7 +1289,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 6863,
+   "bytes": 6985,
    "mermaid": 0,
    "headings": [
     "1. Deploy",
