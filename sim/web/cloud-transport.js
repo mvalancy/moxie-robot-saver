@@ -9,12 +9,16 @@
  * passes through except `sendUserTurn` and `isLive` (plus additive members). A CONNECTED
  * MQTT BROKER ALWAYS WINS: a self-hoster's supervisor gets the turn.
  *
- * ONE VOICE (§3.4): with no MQTT client, `bridge/index.js::speakLocally` speaks immediately
- * unless `cloudVoice` is already latched (by `handleTts`). So the fix is ORDERING:
+ * ONE VOICE (§3.4): with no MQTT client, `bridge/index.js::speakLocally` speaks a line at
+ * once unless its EVENT expects a server voice. So a turn holding a speech ticket:
  *   1. POST /api/chat  -> the chat message plus a speech ticket;
- *   2. POST /api/speech immediately;
+ *   2. tell the bridge to expect that event's voice, and POST /api/speech immediately;
  *   3. route the chat message when EITHER the speech reply lands (TTS routed FIRST) or
- *      `SPEECH_WAIT_MS` elapses. Late TTS is dropped if a local voice is already speaking.
+ *      `SPEECH_WAIT_MS` elapses — still expecting the voice, which plays when it lands;
+ *   4. if the voice fails (refused, unreachable, or no answer by `SPEECH_FETCH_MS`), release
+ *      the expectation: the words speak locally, ONCE, and a voice turning up later is dropped.
+ * A voice failure is not a brain failure: speech-route reasons are recorded in the stats and
+ * never reported to the mode machine.
  *
  * No secret and no hostname here: the base is `moxieMode.apiBase()` (= location.origin).
  * `ticket` and `context` are opaque, signed server-side, and die with the tab (§2.6).
@@ -25,7 +29,8 @@
   // §3.4's client-side ceiling on how long the words wait for the voice.
   var SPEECH_WAIT_MS = 2500;
   // Client ceilings ABOVE the server's own (20 s / 12 s), so its honest 504 `timeout`
-  // envelope wins the race and the page learns WHY.
+  // envelope wins the race and the page learns WHY. SPEECH_FETCH_MS is also the deadline
+  // after which a voice is given up for the local one (kept even without AbortSignal.timeout).
   var CHAT_FETCH_MS = 25000;
   var SPEECH_FETCH_MS = 15000;
   // The pause before a fallback reply, matching the bridge's own 450 ms beat.
@@ -49,13 +54,15 @@
     chatOk: 0, diagrams: 0, cited: 0, chatRefused: 0, chatErrors: 0,
     speechOk: 0, speechRefused: 0, speechErrors: 0,
     voiceFirst: 0,           // the TTS message was routed BEFORE the chat message
-    chatFirst: 0,            // the 2.5 s wait elapsed, so the words went out alone
-    lateSpeechDropped: 0,    // TTS arrived after the local voice had already started
-    lateSpeechPlayed: 0,     // TTS arrived late but nothing was speaking, so it played
+    chatFirst: 0,            // the 2.5 s wait elapsed: the words went out, their voice still expected
+    lateSpeechPlayed: 0,     // …and that voice landed later and played
+    voiceFallbacks: 0,       // the voice failed: the words were spoken locally, once
+    lateSpeechDropped: 0,    // a voice that landed after its words were already spoken locally
     blocked: 0,
     botTokens: 0,            // sends that carried a fresh Turnstile token
     botUnavailable: 0,       // sends REFUSED locally because no token could be minted
-    reasons: [],             // every reason the server gave, in order
+    reasons: [],             // every reason the server gave the BRAIN, in order (mode.js hears these)
+    speechReasons: [],       // every reason the speech route gave (recorded only — see voiceFirst)
     order: [],               // "tts" / "chat" / "stub", in the order they were routed
   };
 
@@ -158,52 +165,87 @@
     });
   }
 
-  /* ---- §3.4: the voice, then the words ----------------------------------- */
-  function voiceFirst(chatMessages, ticket) {
-    var tts = null;
+  /* ---- §3.4: one voice per reply ----------------------------------------- */
+  /** The event a reply's words belong to — the key the bridge holds them under. */
+  function eventOf(messages, speech) {
+    for (var i = 0; i < (messages || []).length; i++) {
+      try {
+        var id = JSON.parse(messages[i].payload).event_id;
+        if (id) return String(id);
+      } catch (e) {}
+    }
+    return speech && speech[0] && speech[0].event_id ? String(speech[0].event_id) : "";
+  }
+
+  function expectVoice(eid) {
+    try { if (eid && inner.expectCloudVoice) inner.expectCloudVoice(eid); } catch (e) {}
+  }
+
+  function releaseVoice(eid) {
+    try { if (eid && inner.releaseCloudVoice) inner.releaseCloudVoice(eid); } catch (e) {}
+  }
+
+  /* A turn holding a speech ticket never starts a local voice while its own is on the way:
+   * a stand-in that the late voice then cut and restarted was the double voice measured on
+   * prod (the browser voice at +6,008 ms, hers at +6,166 ms). */
+  function voiceFirst(chatMessages, ticket, eid) {
+    var tts = null;          // her voice, once /api/speech delivers it
+    var settled = false;     // /api/speech has answered, with or without a voice
+    expectVoice(eid);
     var speech = post("/api/speech", { ticket: ticket }, SPEECH_FETCH_MS).then(function (res) {
-      if (res.body) {
-        note(res.body.reason, res.body.retry_after_s);
-        if (res.ok && res.body.messages && res.body.messages.length) {
-          stats.speechOk++;
-          tts = res.body.messages;
-        } else {
-          stats.speechRefused++;
-        }
+      settled = true;
+      var body = res.body;
+      // Recorded, NEVER noted: a voice failure is not a brain failure (one speech 503 used to
+      // read the whole page as degraded for ~30 s), so mode.js hears only /api/chat.
+      if (body && body.reason) stats.speechReasons.push(body.reason);
+      if (res.ok && body.messages && body.messages.length) {
+        stats.speechOk++;
+        tts = body.messages;
+      } else if (body) {
+        stats.speechRefused++;
       } else {
         stats.speechErrors++;
-        noteTransportError();
       }
     });
-    var waited = false;
-    var wait = new Promise(function (resolve) {
-      setTimeout(function () { waited = true; resolve(); }, SPEECH_WAIT_MS);
-    });
+    var wait = new Promise(function (resolve) { setTimeout(resolve, SPEECH_WAIT_MS); });
+    // The client's own deadline: where `AbortSignal.timeout` is missing the request has none.
+    var deadline = new Promise(function (resolve) { setTimeout(resolve, SPEECH_FETCH_MS); });
+
+    /** The voice is not coming: its words speak locally, once. */
+    function fallBack() {
+      stats.voiceFallbacks++;
+      releaseVoice(eid);     // speaks the held words, if they are already out
+    }
 
     return Promise.race([speech, wait]).then(function () {
       if (tts) {
-        // Voice first: `handleTts` latches `cloudVoice`, so `speakLocally` stays silent and
-        // bubble and audio land together.
+        // Voice first: bubble and audio land together.
         routeAll(tts, "tts");
         routeAll(chatMessages, "chat");
         stats.voiceFirst++;
         return;
       }
-      // No voice in time: the words go out alone and speak from the clip/browser voice.
+      if (settled) {
+        // Refused or unreachable before the wait was up: words and local voice together.
+        fallBack();
+        routeAll(chatMessages, "chat");
+        return;
+      }
+      // No voice yet: the words go out now, silently, still expecting their own voice.
       routeAll(chatMessages, "chat");
       stats.chatFirst++;
-      if (!waited) return;      // the speech promise settled without producing audio
-      return speech.then(function () {
-        if (!tts) return;
-        // Late audio: drop it if a local voice is already speaking (the double voice).
-        // From the second turn `cloudVoice` is latched and nothing is speaking, so play it.
-        var speaking = false;
-        try {
-          speaking = !!(window.moxieAudio && window.moxieAudio.isSpeaking && window.moxieAudio.isSpeaking());
-        } catch (e) {}
-        if (speaking) { stats.lateSpeechDropped++; return; }
-        routeAll(tts, "tts");
-        stats.lateSpeechPlayed++;
+      return Promise.race([speech, deadline]).then(function () {
+        if (tts && eid) {
+          // However late it is, nothing local has said this line: play it.
+          routeAll(tts, "tts");
+          stats.lateSpeechPlayed++;
+          return;
+        }
+        if (tts) { stats.lateSpeechDropped++; return; }   // no event to hold: the words spoke locally
+        fallBack();
+        // A voice turning up after all is dropped: the line has been said. Not returned, so
+        // the turn ends now even if the request never settles.
+        speech.then(function () { if (tts) stats.lateSpeechDropped++; });
       });
     });
   }
@@ -343,7 +385,7 @@
         routeAll(body.messages, "chat");
         return;
       }
-      return voiceFirst(body.messages, ticket);
+      return voiceFirst(body.messages, ticket, eventOf(body.messages, body.speech));
     });
   }
 
