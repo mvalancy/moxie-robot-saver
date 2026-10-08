@@ -834,15 +834,19 @@ by construction rather than by reading the program cleverly:
   memory, a note from this turn or `input_vars` — is taken out of the line before the line
   is kept (`actions.drop_action_tags`, repeated until nothing more comes out, since taking
   a tag out can make the pieces around it meet), so it is never said aloud and never acted
-  on. The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
+  on. A tag that forms only once the robot's own parse has lifted the tags that stay
+  (`<ex<sleep>it>` with its sleep written whole would be spoken as `<exit>`, which that
+  one-pass parse never acts on) is cut out with the pieces it is made of, so the child
+  never hears a tag of ours. The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
   answers without asking the AI; then the conversation ends."* and sends its `<exit>` as
   before, because its rule writes it. A taken-out tag is counted, and the parent is told
   once per robot, program and reason through the same `ext_events` ring a breach uses
   (*"it tried to make Moxie do something its review did not name"*). It is not a breach: as
   with a markup tag the catalogue drops, the line is said without it and the turn goes on,
   so it never counts towards quarantine. The tags a program writes are read once per
-  program, by its digest, so a turn pays a set lookup (3.5 µs on the shipped `Goodbye`,
-  measured).
+  program, by its digest, so a turn pays a set lookup and one more pass over its line: on
+  the shipped `Goodbye` the difference is within the noise of a turn that takes about
+  0.4 ms in all, and reading the set costs about 0.06 ms once, measured.
 - **The sentence names every tag written whole in the rule's text,** at least as
   *"sometimes"* (*"…; then sometimes Moxie starts the DRAW activity."*). So for every
   program and every run-time input, the actions the robot is sent from a rule's line are
@@ -868,7 +872,8 @@ its parts, and past the budget from the program's own text in one pass. Either w
 sentence still names every tag written whole, with nothing certain. Programs built to
 multiply what the reading builds (a thousand `let` names that each copy a million-character
 line, 400 that alternate `upper` and `lower` over one, a quoted line with 200,000 spaces
-after `<exit:`) read in 0.03 s, 0.02 s and 0.005 s, measured. The quotes are not under the
+after `<exit:`) read in 0.03 s, 0.02 s and 0.01 s (0.3 s, 0.1 s and 0.01 s with tracemalloc
+on), measured. The quotes are not under the
 budget: a `let` name is quoted again wherever it is read, so a 125 KB program that reads one
 name from 1,024 places makes a 25-million-character sentence.
 

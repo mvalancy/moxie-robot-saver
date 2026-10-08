@@ -281,7 +281,7 @@ effect is applied. A breach anywhere discards the list whole (X11), so nothing i
 
 | Statement | What the host does |
 |---|---|
-| `say` | Acts only on the action tags written whole in the rule's own text (`literal_actions`, read with the robot's own parse): any other `<exit>`, `<sleep>` or `<launch:…>` the line carries is taken out first (`actions.drop_action_tags`), counted and reported (§6.4), never said or acted on. Then `volley.set_output`, after the output-side safety classifier (a blocked line becomes a redirect) and after `annotate` if no markup was authored |
+| `say` | Acts only on the action tags written whole in the rule's own text (`literal_actions`, read with the robot's own parse): any other `<exit>`, `<sleep>` or `<launch:…>` the line carries is taken out first (`actions.drop_action_tags`), counted and reported (§6.4), never said or acted on; so is a tag that would only form once the tags that stay are lifted (`<ex<sleep>it>` with its sleep kept would be spoken as `<exit>`). Then `volley.set_output`, after the output-side safety classifier (a blocked line becomes a redirect) and after `annotate` if no markup was authored |
 | `markup` | Checked tag by tag against `vocab.py`. Unknown ids and malformed tags are dropped and counted, never passed through |
 | `remember` / `forget` | `MemoryStore.merge` on `(device_id, namespace)`, both supplied by the host. Dropped at the store under `NO_DATA` |
 | `scratch` | `volley.local_data`, per turn, never persisted |
