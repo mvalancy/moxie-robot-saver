@@ -16,7 +16,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 from moxie_sdk.actions import LAUNCH_IF_CONFIRMED_AS, parse_action_tags  # noqa: E402
 from moxie_sdk.content import ContentApp, load_module            # noqa: E402
 from moxie_sdk.content.volley import Volley, Session             # noqa: E402
-from moxie_sdk.types import (ActionType, ChildProfile, RobotContext,  # noqa: E402
+from moxie_sdk.types import (ActionType, ChildProfile, ResultCode, RobotContext,  # noqa: E402
                              Turn)
 
 
@@ -230,14 +230,14 @@ def _drive(app, device_id="d_tags", speech="can we draw"):
 @pytest.mark.parametrize("line,text,action", [
     ("Sure! Let's draw. <launch:DRAW:default>", "Sure! Let's draw.",
      {"action": "launch", "module_id": "DRAW", "content_id": "default"}),
-    ("Bye Sam! <exit>", "Bye Sam!", {"action": "exit"}),
+    ("Bye Sam! <exit>", "Bye Sam!", {"action": "exit_module"}),
 ])
 def test_a_tag_in_model_text_reaches_the_wire_as_response_actions(line, text, action):
     """End to end: the brain writes a tag → RemoteChatResponse carries the action and the
     spoken text is clean."""
     pytest.importorskip("paho.mqtt.client")
     resp = _drive(ContentApp(load_module(MODULE), lambda m: line))
-    assert resp["command"] == "remote_chat" and resp["result"] == "SUCCESS"
+    assert resp["command"] == "remote_chat" and resp["result"] == ResultCode.SUCCESS
     assert resp["output"]["text"] == text
     assert "<" not in resp["output"]["text"] and "<launch" not in resp["output"]["markup"]
     (ra,) = resp["response_actions"]

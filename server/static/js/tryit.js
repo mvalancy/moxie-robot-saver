@@ -99,7 +99,7 @@ function tryActionText(a){
   if(a.type==='launch') return 'start '+(a.module_id||'an activity')
     + (a.content_id?'/'+a.content_id:'');
   if(a.type==='execute') return 'run '+(a.function||'a robot function');
-  return {exit:'end this activity', sleep:'go to sleep',
+  return {exit:'end this activity', exit_module:'end this activity', sleep:'go to sleep',
           enable_qr:'turn on QR scanning'}[a.type] || ('do '+a.type);
 }
 

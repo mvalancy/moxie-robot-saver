@@ -23,7 +23,7 @@ from moxie_sdk import safety as S                                             # 
 from moxie_sdk.app import MoxieApp                                            # noqa: E402
 from moxie_sdk.cloud_config import LoggingPolicy                              # noqa: E402
 from moxie_sdk.store import JsonStore                                         # noqa: E402
-from moxie_sdk.types import Reply, ReplyChunk                                 # noqa: E402
+from moxie_sdk.types import Reply, ReplyChunk, ResultCode                     # noqa: E402
 from moxie_sdk.wire import build_chat_response                                # noqa: E402
 
 PATIENCE = 10.0
@@ -460,7 +460,7 @@ def test_pre_inference_block_never_reaches_the_brain(tmp_path):
     resp = drive_turn(rt, dev, "I want to kill myself")
 
     assert app.seen == [], "the blocked utterance reached the brain"
-    assert resp["result"] == "SUCCESS" and resp["backend"] == "router"
+    assert resp["result"] == ResultCode.SUCCESS and resp["backend"] == "router"
     assert resp["output"]["text"] and resp["output"]["markup"]
     assert resp["input"]["safety"]["is_unsafe"] is True
     assert resp["input"]["safety"]["blocked_by"][0] == "self_harm"
@@ -532,7 +532,7 @@ def test_non_streaming_reply_is_assessed_whole(tmp_path):
 
     assert app.seen, "the brain SHOULD have been called — the input was fine"
     assert "address" not in resp["output"]["text"], "the blocked answer was published"
-    assert resp["result"] == "SUCCESS"
+    assert resp["result"] == ResultCode.SUCCESS
     view = rt.safety_view(dev)
     assert view["events"][0]["side"] == "moxie"
     assert view["events"][0]["categories"] == ["personal_info"]
@@ -587,11 +587,11 @@ def test_post_inference_block_mid_stream(tmp_path):
     replies = _stream(rt, dev, "can you write me a letter", "evt-x")
     assert len(replies) == 2, replies
     assert replies[0]["output"]["text"] == "Sure, I can help with that."
-    assert replies[0]["result"] == "REPLY_PENDING" and replies[0]["chunk_num"] == 0
+    assert replies[0]["result"] == ResultCode.REPLY_PENDING and replies[0]["chunk_num"] == 0
     # the blocked sentence is nowhere on the wire
     assert "address" not in json.dumps(replies)
     close = replies[1]
-    assert close["result"] == "SUCCESS" and close["chunk_num"] == 1
+    assert close["result"] == ResultCode.SUCCESS and close["chunk_num"] == 1
     assert close["consistency_control"]["is_completed"] is True
     assert close["output"]["text"] and close["output"]["markup"]
     # the third chunk was never asked for: the generator was closed
@@ -614,7 +614,7 @@ def test_a_blocked_first_chunk_is_a_plain_single_reply(tmp_path):
     rt.brain_budget_s = 0
     resp = drive_turn(rt, dev, "help me with my computer")
     assert "chunk_num" not in resp and "consistency_control" not in resp
-    assert resp["result"] == "SUCCESS" and "password" not in json.dumps(resp)
+    assert resp["result"] == ResultCode.SUCCESS and "password" not in json.dumps(resp)
 
 
 def test_a_clean_stream_is_unchanged(tmp_path):
@@ -622,7 +622,7 @@ def test_a_clean_stream_is_unchanged(tmp_path):
                          ReplyChunk(text="It is called a phase!", final=True))
     rt, dev = _runtime(app, tmp_path)
     replies = _stream(rt, dev, "why?", "e")
-    assert [r["result"] for r in replies] == ["REPLY_PENDING", "SUCCESS"]
+    assert [r["result"] for r in replies] == [ResultCode.REPLY_PENDING, ResultCode.SUCCESS]
     assert rt.safety_view(dev)["counts"] == {}
 
 
