@@ -279,7 +279,7 @@ rule rules out model substitution, `n`/`tools` amplification and system-prompt o
 | Unit budget | 600/hour · 4 000/day | **Request units**, not dollars, because no price sheet exists (assumption 19). chat = 3, speech = 2, transcribe = 2 (`_lib/counters.js::UNITS`). A full turn is 5 units, so about 120 turns an hour. |
 | `DEMO_TICKET_TTL_S` | 60 | long enough for a slow client, short enough that a leaked ticket is useless |
 | `DEMO_ENABLED` | on | kill switch: `0` forces `gateway_not_configured` without deleting the secret |
-| `DEMO_SERVE_HOSTS` | unset (every host) | the hostnames that may spend, comma separated, matched exactly. Any other host answers `gateway_not_configured` before anything is charged, and `/api/health` says so. Production lists only its canonical host, so the platform alias and every superseded deployment's own URL cannot spend with the key. Set but unusable, it serves no host. |
+| `DEMO_SERVE_HOSTS` | unset (every host) | the hostnames that may spend, comma separated, matched exactly. Any other host answers `gateway_not_configured` before anything is charged, and `/api/health` says so. On production, list only the canonical host, so the platform alias and every superseded deployment's own URL cannot spend with the key. Set but unusable, it serves no host. |
 
 **What "per-IP" keys on** (`_lib/clientip.js`). The key is `CF-Connecting-IP`, with IPv6 truncated to
 its **/56**, the prefix a residential line is commonly delegated, so one subscriber is one bucket. Keyed
