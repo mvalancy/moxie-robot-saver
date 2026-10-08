@@ -57,7 +57,10 @@ response                        ←  { "text":"…", "markup":"…?", "end_turn"
 
 A game engine, an agent framework, or any AI service in any language can implement that one endpoint
 and drive the robot — no coupling to this codebase, no shared source. Your world's characters get a
-body in the real room.
+body in the real room. `end_turn` is read only by the console's Try-it card ("and stop listening");
+the runtime accepts it and drops it, because the robot's `RemoteChatResponse` has no field for it,
+so it never travels to the robot (the wire says "more is coming" with `REPLY_PENDING` instead —
+[AI seam §②](ai-seam.md#the-wire-a-robot-can-read)).
 
 ## Why this shape
 - **Separation of concerns.** The *runtime* owns the robot protocol; the *app* owns behavior. Either

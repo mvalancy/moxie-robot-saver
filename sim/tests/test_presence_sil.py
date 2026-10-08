@@ -16,7 +16,7 @@ from virtual_moxie import VirtualMoxie              # noqa: E402
 from helpers_runtime import seed_absent  # noqa: E402
 from helpers_runtime import make_runtime            # noqa: E402
 from moxie_sdk.app import MoxieApp                  # noqa: E402
-from moxie_sdk.types import Reply                   # noqa: E402
+from moxie_sdk.types import Reply, ResultCode       # noqa: E402
 
 
 class _Msg:
@@ -96,7 +96,7 @@ def test_lost_then_found_round_trips_through_the_real_runtime():
     # both were answered — the contract requires a response to a subscribed event
     replies = [p for (t, p) in rt.client.published if t.endswith("/commands/remote_chat")]
     assert len(replies) == 2
-    assert all(r["result"] in ("NOREPLY_ACK", "SUCCESS") for r in replies)
+    assert all(r["result"] in (ResultCode.NOREPLY_ACK, ResultCode.SUCCESS) for r in replies)
 
 
 def test_walking_back_in_after_a_long_absence_reaches_the_sil_robot_as_a_spoken_line():
@@ -104,7 +104,7 @@ def test_walking_back_in_after_a_long_absence_reaches_the_sil_robot_as_a_spoken_
     seed_absent(rt, dev, away_s=900.0)
     vm.send_face_event("found")
     assert vm.got_reply.is_set(), "the SIL robot never saw a response"
-    assert vm.reply_payload["result"] == "SUCCESS", vm.reply_payload
+    assert vm.reply_payload["result"] == ResultCode.SUCCESS, vm.reply_payload
     assert "Sam" in vm.reply_text, vm.reply_text
     assert vm.reply_payload["output"]["markup"], "the hello arrives performed"
 
@@ -115,5 +115,5 @@ def test_a_silent_acknowledgement_still_wakes_the_sil_robot():
     rt, vm, dev = _loopback()
     vm.send_face_event("found")
     assert vm.got_reply.is_set()
-    assert vm.reply_payload["result"] == "NOREPLY_ACK"
+    assert vm.reply_payload["result"] == ResultCode.NOREPLY_ACK
     assert vm.reply_text == ""

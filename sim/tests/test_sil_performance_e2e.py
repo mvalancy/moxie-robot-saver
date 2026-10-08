@@ -33,6 +33,7 @@ import paho.mqtt.client as mqtt                                      # noqa: E40
 import helpers_stack as S                                            # noqa: E402
 import first_audio_ab as AB                                          # noqa: E402
 from moxie_sdk import vocab                                          # noqa: E402
+from moxie_sdk.types import ResultCode                               # noqa: E402
 
 #: The five fields `RemoteChatOutput` carries for a scored line (ai-seam.md §2). `signals`
 #: is plural on the wire and singular in the planner's `scored` dict — a rename this file
@@ -103,7 +104,7 @@ class WireRobot:
             with self._lock:
                 self.chats.append(p)
             cc = p.get("consistency_control") or {}
-            if p.get("result") == "SUCCESS" or cc.get("is_completed"):
+            if p.get("result") == ResultCode.SUCCESS or cc.get("is_completed"):
                 self.closed.set()
             return
         with self._lock:
@@ -239,7 +240,7 @@ def test_a_single_reply_turn_carries_every_scored_field_on_the_wire(plain):
     chats = plain.ask("hello Moxie")
     assert len(chats) == 1, [c.get("result") for c in chats]
     reply = chats[0]
-    assert reply["result"] == "SUCCESS" and reply["command"] == "remote_chat", reply
+    assert reply["result"] == ResultCode.SUCCESS and reply["command"] == "remote_chat", reply
     assert "chunk_num" not in reply, "a non-streaming reply must stay byte-shaped as before"
     got = _scored(reply)
     missing = [f for f in SCORED_FIELDS if f not in got]
@@ -247,7 +248,7 @@ def test_a_single_reply_turn_carries_every_scored_field_on_the_wire(plain):
     assert isinstance(got["mood_intensity"], int), got
     assert (reply["output"]["markup"] or "").startswith("<mark "), reply["output"]["markup"]
     # `echo` sets no mood or act of its own, so every value was minted by the planner
-    assert got["signals"] and all(s in vocab.SIGNALS for s in got["signals"]), got
+    assert got["signals"] and all(s in vocab.SIGNALS for s in got["signals"].values()), got
     assert got["dialog_act"] in vocab.DIALOG_ACTS and got["emotion"] in vocab.EMOTION_STATES
     assert got["mood"] in vocab.MOODS, got
 
@@ -271,8 +272,8 @@ def streamed(chatty):
 def test_the_answer_really_did_stream(streamed):
     """The control. Without more than one publish, everything below is a restatement of
     the single-reply test with extra words."""
-    assert [c["result"] for c in streamed[:-1]] == ["REPLY_PENDING"] * (len(streamed) - 1)
-    assert streamed[-1]["result"] == "SUCCESS", streamed[-1]
+    assert [c["result"] for c in streamed[:-1]] == [ResultCode.REPLY_PENDING] * (len(streamed) - 1)
+    assert streamed[-1]["result"] == ResultCode.SUCCESS, streamed[-1]
     assert (streamed[-1].get("consistency_control") or {}).get("is_completed") is True
     assert [c["chunk_num"] for c in streamed] == list(range(len(streamed)))
     assert len({c["event_id"] for c in streamed}) == 1, "chunks belonged to different turns"
@@ -378,7 +379,7 @@ def test_preview_publishes_an_ordinary_remote_chat_the_robot_receives(rehearsed)
     for r in rehearsed:
         assert len(r["received"]) == 1, [c["result"] for c in r["received"]]
         msg = r["received"][0]
-        assert msg["command"] == "remote_chat" and msg["result"] == "SUCCESS", msg
+        assert msg["command"] == "remote_chat" and msg["result"] == ResultCode.SUCCESS, msg
         assert msg["backend"] == "router", msg
         assert "chunk_num" not in msg and "consistency_control" not in msg, msg
         assert msg["event_id"].startswith("preview-"), msg
