@@ -155,7 +155,11 @@ try {
     const g = await gestureFree(page);
     ok(await g.until("!!window.moxie && !!window.moxieMode && document.readyState === 'complete' && " +
                      "window.moxieMode.canSpendLiveTurn() === true"), "A: the hosted page booted live");
-    await g.read("(() => { try { window.moxieAmbient.stop(); } catch (e) {} return 1; })()");   // her idle mutters
+    /* Her idle mutters off, and kept off: an unlock announced too early restarts them, and
+     * their first line (5–9 s on) resumes audio by itself once the page has been activated —
+     * which would make "the tap unlocked it" pass or fail at random on code that does not. */
+    await g.read("(() => { const c = document.getElementById('idle-on'); if (c) c.checked = false; " +
+                 "try { window.moxieAmbient.stop(); } catch (e) {} return 1; })()");
 
     // A. The unlock, by a finger: down, then up.
     const audio = async () => JSON.parse(await g.read("JSON.stringify({ unlocked: window.moxieAudio.isUnlocked(), " +
