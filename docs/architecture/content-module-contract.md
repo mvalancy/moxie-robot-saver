@@ -46,8 +46,11 @@ A module is JSON with three optional sections:
   *empty* `prompt` does, so a typed or spoken first line still reaches the brain, as do `continue`
   and `reprompt`. A robot hears the first alternative first, and after that never the same line
   twice in a row. `<opener>` is stripped; `<exit>`, `<sleep>` and `<launch:XX>` become actions, as
-  in a model's line. A conversation with no opener asks the brain, as before. *Built to this
-  contract and the OpenMoxie reference; no physical robot has sent us an empty `prompt` yet.*
+  in a model's line. A conversation with no opener asks the brain, as before. Only a `|` outside
+  `{{ }}` and `{% %}` separates alternatives; inside them it is a Jinja filter
+  (`{{ volley.config.child_pii.nickname | upper }}`). OpenMoxie splits on every `|`, but it never
+  templates an opener; the console's content preview here still splits on every `|` too. *Built to
+  this contract and the OpenMoxie reference; no physical robot has sent us an empty `prompt` yet.*
 - **`code`** is OpenMoxie's slot for Python hooks (`pre_process`, `post_process`,
   `complete_handler`, `notify_handler`, and `handle_volley` for globals). This appliance **carries it as
   data and never executes it**; runnable behavior uses [`extension`](#extensions-a-pack-that-can-do-something).
@@ -178,12 +181,13 @@ bye"*). After the module's prompt, the content brain's single system message car
 `<sleep>` rules (`actions.LEAVE_TAG_PROMPT`) and never `<launch>`. This brain is never told a module
 id, and a launch id it invented would reach the robot unchecked.
 
-*Not yet shown on a robot:* the goodbye's EXIT goes out as `RemoteChatAction` `exit`. The recovered
-`ActionID` is `exit_module`
-([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):260),
-so whether a physical robot leaves the module depends on the wire-conformance work. The server-side
-end of the conversation and the memory write do not depend on it. (`sleep` already matches the
-proto's spelling, line 264.)
+*Not yet shown on a robot:* a physical robot leaves the module only if the goodbye's EXIT reaches it
+as the recovered `ActionID` `exit_module`
+([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):260);
+a lenient protobuf parse reads a name it does not know as `UNSET_ACTION_ID`. The SDK spells every
+action in one place, `wire.encode_action`, to the `RemoteChatAction` contract in the
+[AI seam](ai-seam.md) §2. The server-side end of the conversation and the memory write do not depend
+on that spelling. (`sleep` is the proto's own name, line 264.)
 
 > **Over-matching is the silent failure.** A global short-circuits before the brain, so a pattern one
 > word too loose quietly answers a real sentence with a canned line (a bare "something else" pattern

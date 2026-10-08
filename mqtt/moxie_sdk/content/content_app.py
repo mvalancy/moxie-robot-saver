@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
 import time
 from typing import Callable, Optional
 
@@ -51,6 +52,21 @@ def _presence_vars(robot) -> dict:
     """The presence render variable for a call that has a `RobotContext` but no `Turn`
     (the opener). Same shape `Turn.presence` carries."""
     return _presence.snapshot(getattr(robot, "extra", {}).get("presence") or {})
+
+
+#: One template construct (`{{ … }}`, `{% … %}`, `{# … #}`; render.py's grammar).
+_TEMPLATE_CONSTRUCT = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", re.S)
+
+
+def opener_alternatives(opener: str) -> list:
+    """`opener`'s `|`-separated alternatives, unrendered. A `|` inside a template construct
+    is a Jinja filter (`{{ name | upper }}`), not a separator, so the alternatives are
+    exactly `str.split("|")`'s unless a filter is present."""
+    inside = [m.span() for m in _TEMPLATE_CONSTRUCT.finditer(opener)]
+    cuts = [i for i, ch in enumerate(opener)
+            if ch == "|" and not any(a <= i < b for a, b in inside)]
+    bounds = [-1] + cuts + [len(opener)]
+    return [opener[a + 1:b] for a, b in zip(bounds, bounds[1:])]
 
 ChatFn = Callable[[list], str]          # messages [{role,content}] -> assistant text
 GlobalHandler = Callable[[Volley, Session], None]   # sets volley.output / actions
@@ -289,7 +305,7 @@ class ContentApp(MoxieApp):
         context = {"volley": volley or self._volley(Turn(robot=robot, speech="")),
                    "session": Session(), "presence": presence or _presence_vars(robot)}
         lines = []
-        for alt in conv.opener.split("|"):
+        for alt in opener_alternatives(conv.opener):
             line = render_prompt(alt, context).replace("<opener>", "").strip()
             if line and line not in lines:
                 lines.append(line)

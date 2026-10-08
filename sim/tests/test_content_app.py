@@ -159,6 +159,19 @@ def test_a_tag_in_an_opener_is_an_action_never_spoken():
     assert [(a.type, a.module_id) for a in reply.actions] == [(ActionType.LAUNCH, "DRAW")]
 
 
+def test_a_template_filter_in_an_opener_is_not_an_alternative():
+    """Only a `|` outside `{{ }}` / `{% %}` separates alternatives. Inside one it is a Jinja
+    filter, and splitting there would have the child hear the template's insides."""
+    chat, calls = _counting()
+    opener = ("Hi {{ volley.config.child_pii.nickname | upper }}! Ready?"
+              "|Hey {{ volley.config.child_pii.nickname|default('pal') }}!")
+    app = ContentApp(load_module(_with_opener(opener)), chat)
+    said = [app.respond(Turn(robot=_robot(), speech="", command="prompt")).text
+            for _ in range(3)]
+    assert calls == [], "an opener must not cost a model call"
+    assert said == ["Hi SAM! Ready?", "Hey Sam!", "Hi SAM! Ready?"]
+
+
 def test_what_a_starting_extension_asks_for_rides_out_with_the_opener():
     """A `turn.before` program that acts and subscribes without taking the turn: both go
     out with the opener, as they would with a model's line."""
