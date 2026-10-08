@@ -143,6 +143,30 @@ def test_a_robot_on_the_permit_list_can_be_added_while_it_is_offline(client, sup
     assert [x["attributes"]["mqtt-device-id"] for x in _me_robots(client, auth)] == [OFFLINE]
 
 
+def test_a_repeat_is_answered_from_the_record_once_the_robot_is_off_every_list(
+        client, supervisor, monkeypatch):
+    """A robot on this account that is now switched off and was revoked in Robot access is
+    on no list the supervisor keeps, and a supervisor that is down lists nothing: a repeat
+    still finds it on this account (200, `created: false`, which the page words as "already
+    on your account"), posts nothing, and says honestly whether it is let in."""
+    auth = quicklogin(client, "repeat-offline@claim.lan")
+    supervisor.permits["devices"][OFFLINE] = {"permitted_at": 1, "label": "permitted earlier"}
+    first = _claim(client, auth, OFFLINE).json()
+    supervisor.permits["devices"].pop(OFFLINE)                 # Revoke; it is not connected
+    posts = len(supervisor.permit_posts)
+
+    again = _claim(client, auth, OFFLINE)
+    assert again.status_code == 200, again.text
+    assert again.json()["robot_id"] == first["robot_id"] and again.json()["created"] is False
+    assert again.json()["permitted"] is False and again.json()["permit_error"] is None
+    set_status_url(DEAD, monkeypatch)
+    down = _claim(client, auth, OFFLINE)
+    assert down.status_code == 200, down.text
+    assert down.json()["robot_id"] == first["robot_id"] and down.json()["created"] is False
+    assert down.json()["permitted"] is False and "not reachable" in down.json()["permit_error"]
+    assert len(supervisor.permit_posts) == posts and len(_rows_naming(OFFLINE)) == 1
+
+
 def test_refusals_create_no_record_and_post_nothing(client, supervisor, monkeypatch):
     """Each refusal says why in a sentence (`reason`, what the web app shows) and leaves
     the account, its children and the permit list exactly as they were."""

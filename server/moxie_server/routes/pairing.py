@@ -260,25 +260,31 @@ def claim_robot(device_id: str, u=Depends(current_user)):
     robots it has seen, 404 for an id it has never listed, 409 for a robot on another
     account or an account that already has a different robot. On success it posts the
     console's Permit body once (best-effort: `permitted: false` and the reason if that
-    fails). A repeat returns the same record and posts nothing."""
+    fails). A repeat returns the same record and posts nothing: it is found on this
+    account before the supervisor is asked, so also once the robot is off every list
+    (switched off and revoked) or the supervisor is down."""
     device_id = device_id.strip()
     seen = _supervisor_devices()
-    if seen is None:
+    mine = next((r for r in db.robots_of(u["id"]) if db.device_id_of(r) == device_id), None)
+    if mine is None and seen is None:
         return _claim_refusal(
             503, supervisor.UNREACHABLE,
             "This server cannot reach its robot side, so it cannot check which robots "
             "have connected. Nothing was changed: start the supervisor and try again.",
             device_id)
-    if device_id not in seen["listed"]:
+    if mine is None and device_id not in seen["listed"]:
         return _claim_refusal(
             404, "unknown robot",
             "No robot with that id has connected to this server. Show Moxie the Wi-Fi "
             "code and then the server code; it is listed in Robot access once it arrives.",
             device_id)
-    outcome, row = db.claim_robot(
-        u["id"], device_id,
-        {"serial": device_id, "name": "Moxie", "state": "paired", "pairing-status": "paired"},
-        {"volume": 0.7, "screen-brightness": 0.8}, {"child-first-name": "Moxie Kid"})
+    if mine is not None:
+        outcome, row = "exists", mine
+    else:
+        outcome, row = db.claim_robot(
+            u["id"], device_id,
+            {"serial": device_id, "name": "Moxie", "state": "paired", "pairing-status": "paired"},
+            {"volume": 0.7, "screen-brightness": 0.8}, {"child-first-name": "Moxie Kid"})
     if outcome == "taken":
         return _claim_refusal(
             409, "on another account",
@@ -292,7 +298,8 @@ def claim_robot(device_id: str, u=Depends(current_user)):
             "then add this one.", device_id, robot_id=row["id"])
     out = {"ok": True, "robot_id": row["id"], "device_id": device_id,
            "child_id": row["child_id"], "created": outcome == "created",
-           "permitted": seen["open"] or device_id in seen["permitted"], "permit_error": None}
+           "permitted": bool(seen) and (seen["open"] or device_id in seen["permitted"]),
+           "permit_error": None if seen else supervisor.UNREACHABLE}
     if outcome == "created":
         res, code = supervisor.post_json("/permits", {
             "device_id": device_id, "permitted": True, "label": CLAIM_LABEL})
