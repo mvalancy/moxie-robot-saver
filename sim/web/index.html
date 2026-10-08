@@ -14,6 +14,10 @@
 <meta property="og:image" content="https://moxie.mattvalancy.com/img/hero-moxie-cute.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a0a0f'/><path d='M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z' fill='%2312b5b0'/><ellipse cx='50' cy='49' rx='20' ry='18' fill='%23f4feff'/><circle cx='43' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='57' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='44.4' cy='46.4' r='1.3' fill='%2300f0ff'/><circle cx='58.4' cy='46.4' r='1.3' fill='%2300f0ff'/></svg>">
+<!-- Her picture is the largest thing on the first screen, so it is asked for before the
+     parser reaches it. `type` makes a browser without AVIF skip this and take the <picture>'s
+     WebP instead, rather than download a format it cannot show (sim/test_hub_weight.mjs). -->
+<link rel="preload" as="image" href="img/hero-moxie-cute.avif" type="image/avif" fetchpriority="high">
 <link rel="stylesheet" href="./vendor/fonts/fonts.css">
 <style>
   :root{
@@ -97,7 +101,7 @@
     background:radial-gradient(circle,#00f0ff44,#12b5b022 40%,transparent 68%);filter:blur(24px);z-index:0;animation:floaty 9s ease-in-out infinite}
   .stage .frame{position:relative;z-index:1;border-radius:22px;overflow:hidden;border:1px solid var(--hairline);
     background:linear-gradient(180deg,#0c1016,#080810);box-shadow:0 30px 80px #000000aa, inset 0 1px 0 #ffffff0f}
-  .stage .frame img{display:block;width:100%;height:auto}
+  .stage .frame picture,.stage .frame img{display:block;width:100%;height:auto}
   .stage .frame .glassline{position:absolute;top:0;left:0;right:0;height:34px;
     background:linear-gradient(180deg,#ffffff0e,transparent);pointer-events:none}
   .stage .cap{position:absolute;left:14px;bottom:12px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:1px;
@@ -236,7 +240,13 @@
         <span class="brk tl"></span><span class="brk br"></span>
         <div class="glassline"></div>
         <span class="live"><i></i>SIM · LIVE</span>
-        <img src="img/hero-moxie-cute.png" alt="The 3D Moxie simulator — a friendly teal robot with a glowing projector face" width="1200" height="1470">
+        <!-- One frame, three files: AVIF (54 KB); WebP (111 KB) for a browser without AVIF;
+             and the 1.08 MB PNG, which only a browser with neither ever downloads. -->
+        <picture>
+          <source type="image/avif" srcset="img/hero-moxie-cute.avif">
+          <source type="image/webp" srcset="img/hero-moxie-cute.webp">
+          <img src="img/hero-moxie-cute.png" alt="The 3D Moxie simulator — a friendly teal robot with a glowing projector face" width="1200" height="1470" fetchpriority="high">
+        </picture>
         <span class="cap">window.moxie · WebGL · runs offline</span>
         <span class="tap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.7A8 8 0 1 1 21 12z"/></svg>Tap to talk to Moxie</span>
       </a>
