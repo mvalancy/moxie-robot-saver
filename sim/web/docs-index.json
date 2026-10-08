@@ -134,7 +134,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT and conversation contract (the robot cloud)",
    "section": "architecture",
-   "bytes": 48872,
+   "bytes": 49274,
    "mermaid": 0,
    "headings": [
     "0. The mechanism in five lines",
@@ -180,7 +180,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM, STT and TTS interface contract",
    "section": "architecture",
-   "bytes": 32973,
+   "bytes": 33440,
    "mermaid": 1,
    "headings": [
     "The three seams",
@@ -1343,7 +1343,7 @@
    "path": "reverse-engineering/protocol/remote-chat-protocol.md",
    "title": "RemoteChat — the robot ↔ brain conversation protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 8358,
+   "bytes": 8410,
    "mermaid": 1,
    "headings": [
     "The request — `RemoteChatRequest` (delta over cloud-protocol)",

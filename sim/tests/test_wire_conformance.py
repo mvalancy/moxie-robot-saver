@@ -369,7 +369,9 @@ def test_a_permitted_robots_module_query_gets_the_shipped_modules_without_a_brai
     assert msg.query_data.version
 
 
-def test_the_plain_string_query_is_still_answered_for_the_browser_sim():
+def test_the_plain_string_query_older_doubles_send_is_still_answered():
+    """Only test doubles ever sent `query: "modules"` as a bare string; the browser Sim
+    sends no module query at all (no `backend: "data"` anywhere in sim/web)."""
     app, calls = _shipped_content_app()
     rt, dev = make_runtime(app)
     resp = drive_turn(rt, dev, "", backend="data", query="modules")

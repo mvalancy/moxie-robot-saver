@@ -336,9 +336,13 @@ brain is consulted, in `query_data` (field 21, a `RemoteDataBlock`, :296-300):
 Each entry is a `ModuleDetail` ([`ContentModule.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/ContentModule.proto):24-73):
 the conversations of every loaded content module plus the day plan's default chat
 (`FREE_CHAT/default`), each `source: REMOTE_CHAT` — the schedule already hands that module to the
-cloud, and the robot can only run it once told it is remote. The plain `query: "modules"` string
-(the browser Sim, older doubles) is accepted too; a pending robot gets an empty list; `version` is a
-digest of the ids. **One recorded discrepancy with OpenMoxie:** it nests each content id as
+cloud, and the robot can only run it once told it is remote. The enum's number is read as the same
+query (`{"query": {"query": 2}}`, `RemoteDataQuery.Query.modules = 2`, the other spelling protobuf
+JSON allows), and so is the plain `query: "modules"` string — only older test doubles send that; the
+browser Sim sends no module query. Any other `backend: "data"` request (`contexts`, or no query at
+all) is never a turn: no brain call and no reply, one logged line — as OpenMoxie, which answers only
+the module query and `router` turns (`moxie_server.py:170-179`); nothing in the proto makes a reply
+mandatory. A pending robot gets an empty list; `version` is a digest of the ids. **One recorded discrepancy with OpenMoxie:** it nests each content id as
 `content_infos[].info.id` (`moxie_remote_chat.py:75`), but `ModuleDetail.content_infos` is
 `repeated ContentDetail` (:66) and `ContentDetail.id` is field 1 (:10). Measured through the pb2,
 a strict parse rejects the nested form and a lenient one yields an **empty** content id, so this
