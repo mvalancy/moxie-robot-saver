@@ -3,6 +3,8 @@ STT seam tests (M3) — the VAD accumulator + transcriber interface + the bus-fr
 encoders (checked byte for byte against the committed pb2 oracles). Pure (no audio
 libs); the Whisper backend is exercised only for availability/skip.
 """
+import pytest
+
 from moxie_sdk import stt  # noqa: E402
 from moxie_sdk.stt import (  # noqa: E402
     VADState, Transcriber, SttSession, encode_proto_subscribe, encode_zmq_stt_response,
@@ -83,6 +85,38 @@ def test_response_encoder_writes_what_protoc_writes(monkeypatch):
     # the default timestamp is the SDK's millisecond clock
     monkeypatch.setattr(stt, "now_ms", lambda: 4242)
     assert parse_zmq_frame(encode_zmq_stt_response("u", "x"), pb.zmqSTTResponse).timestamp == 4242
+
+
+def test_response_encoder_writes_the_error_fields_protoc_writes():
+    """A failed transcription is still a FINAL, carrying the failure in zmqSTT.proto's
+    `error_code=8` and `error_message=9`; byte-identical to the compiled serializer.
+    Without an error neither field is written (proto3: an unset field is absent)."""
+    pb = toolkit_pb2("embodied.perception.audio.zmqSTT_pb2")
+    r = pb.zmqSTTResponse()
+    r.timestamp, r.type, r.speech, r.confidence, r.uuid = 4242, r.FINAL, "", 0.0, "u-err"
+    r.error_code, r.error_message = stt.STT_ERROR_CODE, "RuntimeError: model not loaded"
+    got = encode_zmq_stt_response("u-err", "", confidence=0.0, timestamp_ms=4242,
+                                  error_code=stt.STT_ERROR_CODE,
+                                  error_message="RuntimeError: model not loaded")
+    assert got == ZMQ_STT_RESPONSE.encode() + b":" + r.SerializeToString()
+    parsed = parse_zmq_frame(got, pb.zmqSTTResponse)
+    assert (parsed.error_code, parsed.error_message) == (66, "RuntimeError: model not loaded")
+    # the same frame without an error has no field 8 or 9
+    ok = parse_zmq_frame(encode_zmq_stt_response("u", "hi", timestamp_ms=1), pb.zmqSTTResponse)
+    assert not ok.HasField("error_code") and not ok.HasField("error_message")
+
+
+def test_a_negative_varint_is_refused_not_looped():
+    """`_write_varint` shifts until nothing is left, and a negative int never runs out
+    (`-1 >> 7 == -1`). `timestamp_ms` is a public keyword of both encoders, so a bad
+    clock must fail loudly instead of hanging the network thread."""
+    with pytest.raises(ValueError):
+        stt._write_varint(-1)
+    with pytest.raises(ValueError):
+        encode_proto_subscribe([ZMQ_STT_REQUEST], timestamp_ms=-1)
+    with pytest.raises(ValueError):
+        encode_zmq_stt_response("u", "x", timestamp_ms=-(2 ** 40))
+    assert stt._write_varint(0) == b"\x00" and stt._write_varint(300) == b"\xac\x02"
 
 
 def test_proto_subscribe_encoder_writes_what_protoc_writes(monkeypatch):

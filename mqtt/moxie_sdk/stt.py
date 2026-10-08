@@ -342,6 +342,9 @@ def decode_zmq_stt_frame(payload):
 # wire type protoc uses, so the bytes are the ones the committed pb2 files produce.
 
 def _write_varint(n: int) -> bytes:
+    if n < 0:
+        # `n >>= 7` never reaches 0 from below (-1 >> 7 == -1): refuse, do not spin.
+        raise ValueError(f"a protobuf varint is unsigned here, got {n}")
     out = bytearray()
     while True:
         byte = n & 0x7F
@@ -388,16 +391,30 @@ def encode_proto_subscribe(protos: Iterable[str], *,
     return zmq_frame(PROTO_SUBSCRIBE, body)
 
 
+#: `error_code` of a FINAL whose transcription failed. The recovered zmqSTT.proto defines
+#: the field (uint32 `error_code = 8`, beside `error_message = 9`) but no enum for its
+#: values; this is the value the field-proven community server sends with the exception
+#: text (OpenMoxie site/hive/mqtt/zmq_stt_handler.py:70-73).
+STT_ERROR_CODE = 66
+
+
 def encode_zmq_stt_response(uuid: str, speech: str, *, final: bool = True,
                             confidence: float = 1.0,
-                            timestamp_ms: Optional[int] = None) -> bytes:
+                            timestamp_ms: Optional[int] = None,
+                            error_code: int = 0, error_message: str = "") -> bytes:
     """The `commands/zmq` frame carrying one transcript back to the robot. zmqSTT.proto:
     timestamp=1 (uint64), type=2 (PARTIAL=0 / FINAL=1), speech=3 (string), confidence=4
-    (float), uuid=7 (string). An empty transcript is still a FINAL with `speech == ""`:
-    the robot's turn ends on FINAL, not on text."""
+    (float), uuid=7 (string), and on a failed transcription error_code=8 (uint32) and
+    error_message=9 (string), written only when set (proto3: an unset field is absent).
+    An empty transcript is still a FINAL with `speech == ""`: the robot's turn ends on
+    FINAL, not on text; so is a failure, with the error fields filled in."""
     body = (_varint_field(1, now_ms() if timestamp_ms is None else timestamp_ms)
             + _varint_field(2, 1 if final else 0)
             + _bytes_field(3, speech or "")
             + _float_field(4, confidence)
             + _bytes_field(7, uuid or ""))
+    if error_code:
+        body += _varint_field(8, error_code)
+    if error_message:
+        body += _bytes_field(9, error_message)
     return zmq_frame(ZMQ_STT_RESPONSE, body)

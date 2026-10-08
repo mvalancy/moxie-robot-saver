@@ -272,13 +272,27 @@ class VoiceMixin:
         """Feed one VAD-tagged audio frame; on END_OF_SPEECH transcribe and publish the
         FINAL `zmqSTTResponse` on `/devices/{id}/commands/zmq` in the bus framing the
         robot reads (`b'<full_name>:' + protobuf`; an empty transcript is still a FINAL).
-        Returns the final transcript, else None. No transcriber -> no-op."""
+        Returns the final transcript, else None. No transcriber -> no-op. An engine that
+        raises still gets the robot its FINAL (no speech, the failure in the recovered
+        `error_code`/`error_message` fields, as the field-proven server answers: OpenMoxie
+        `zmq_stt_handler.py:70-73`): a robot is never left waiting on a turn that ended."""
         if self._transcriber is None:
             return None
-        from moxie_sdk.stt import encode_zmq_stt_response
+        from moxie_sdk.stt import STT_ERROR_CODE, encode_zmq_stt_response
         if uuid:
             self._stt_uuid[device_id] = uuid          # frames of one utterance share it
-        transcript = self._stt_session(device_id).feed(vad, audio)
+        try:
+            transcript = self._stt_session(device_id).feed(vad, audio)
+        except Exception as e:                        # noqa: BLE001 — any engine failure
+            why = f"{type(e).__name__}: {e}"
+            frame = encode_zmq_stt_response(self._stt_uuid.pop(device_id, device_id), "",
+                                            error_code=STT_ERROR_CODE, error_message=why)
+            self._publish(f"/devices/{device_id}/commands/zmq", frame,
+                          device_id=device_id, what="stt_result")
+            self._note("error", f"👂 could not transcribe for {device_id}: {why[:80]}")
+            print(f"[runtime] ⚠️  STT failed for {device_id} ({why}); sent the robot a "
+                  f"FINAL with error_code={STT_ERROR_CODE}", flush=True)
+            return None
         if transcript is None:
             return None
         frame = encode_zmq_stt_response(self._stt_uuid.pop(device_id, device_id), transcript)

@@ -265,6 +265,48 @@ def test_an_empty_transcription_is_still_a_final(tmp_path):
     assert resp.type == resp.FINAL and resp.speech == "" and resp.uuid == "utt-quiet"
 
 
+class FlakyEars(Transcriber):
+    """A bare local engine that raises on its first utterance (a model that failed to
+    load, a CUDA error) and hears the next one."""
+    name = "flaky-ears"
+
+    def __init__(self):
+        self.calls = 0
+
+    def transcribe(self, pcm, sample_rate=16000):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("model not loaded")
+        return "ok now"
+
+
+def test_a_transcriber_that_fails_still_sends_the_robot_its_final(tmp_path):
+    """The robot is waiting on a FINAL; without one its turn never closes. An engine
+    that raises gets it a FINAL with no speech and the failure in the recovered error
+    fields (zmqSTT.proto `error_code=8`, `error_message=9`), the way the field-proven
+    server answers a failed transcription (OpenMoxie `zmq_stt_handler.py:70-73`,
+    `error_code=66` + the exception text). The next utterance is heard normally."""
+    rt, dev = make_runtime(EchoApp(), device_id=DEV, store=JsonStore(str(tmp_path)))
+    ears = FlakyEars()
+    rt.set_transcriber(ears)
+    _speak(rt, dev, "utt-err")
+    frames = _zmq(rt, dev)
+    assert [split_zmq_frame(f)[0] for f in frames] == [PROTO_SUBSCRIBE, ZMQ_STT_RESPONSE], \
+        "the robot got no FINAL after its engine failed"
+    resp = parse_zmq_frame(frames[-1], zmqSTT_pb2.zmqSTTResponse)
+    assert resp.type == resp.FINAL and resp.uuid == "utt-err" and resp.speech == ""
+    assert resp.error_code == stt.STT_ERROR_CODE == 66
+    assert "RuntimeError" in resp.error_message and "model not loaded" in resp.error_message
+    assert resp.timestamp > EPOCH_2024_MS
+    assert any(r["kind"] == "error" for r in rt.recent), "the console feed is told"
+
+    _speak(rt, dev, "utt-next")                # the session was reset: heard normally
+    resp = parse_zmq_frame(_zmq(rt, dev)[-1], zmqSTT_pb2.zmqSTTResponse)
+    assert (resp.speech, resp.uuid, resp.error_code, resp.error_message) == \
+        ("ok now", "utt-next", 0, "")
+    assert ears.calls == 2
+
+
 def test_nothing_on_the_zmq_topic_is_ever_json(timers, tmp_path):
     """The robot injects `commands/zmq` straight onto its bus as `name:bytes`; a JSON
     body there is a frame it cannot route. One session end to end: not one."""
