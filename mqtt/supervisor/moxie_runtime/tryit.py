@@ -407,64 +407,16 @@ class TryItMixin:
                                                         "content": red.text}])
 
         # -- the brain, on a worker of its own, against a deadline --
-        with self._try_lock:
-            busy = self._try_inflight >= self.TRY_MAX_INFLIGHT
-            if not busy:
-                self._try_inflight += 1
-        if busy:
-            return _refuse("busy", "Moxie's brain is still working on an earlier try. "
-                                   "Wait for it to finish, then send again.",
-                           budget=self._try_budget_view())
-        handed_off = False
-        try:
-            costs = bool(brain_seam.brain_needs(name))
-            if costs and self._try_spend() is None:
-                return _refuse("budget",
-                               f"That is all {self.try_budget()} tries for this hour "
-                               f"(MOXIE_AUTHOR_TRY_BUDGET). Each one asks the brain once.",
-                               budget=self._try_budget_view())
-            box = {}
-            worker = threading.Thread(target=self._try_brain, args=(app, turn, box),
-                                      name="tryit", daemon=True)
-            worker.start()
-            handed_off = True
-        finally:
-            if not handed_off:
-                with self._try_lock:
-                    self._try_inflight -= 1
-        worker.join(self.TRY_TIMEOUT_S)
-        if worker.is_alive():
-            box["late"] = True
-            self._note("tryit", f"💬 try-it gave up after {self.TRY_TIMEOUT_S:g} s ({name})")
-            return _refuse("timeout",
-                           f"Moxie's brain did not finish within {self.TRY_TIMEOUT_S:g} s. "
-                           f"A slow or unreachable endpoint is retried with backoff; the "
-                           f"supervisor log shows each retry.",
-                           **{k: v for k, v in answer.items() if k != "history_trimmed"},
-                           history=history, budget=self._try_budget_view(),
+        box, refusal = self._try_run(name, app, turn)
+        if refusal is not None:
+            # The session as it was travels back, so the card can simply send again.
+            refusal.update({k: v for k, v in answer.items() if k != "history_trimmed"},
+                           history=history,
                            elapsed_ms=int((time.monotonic() - started) * 1000))
-        if costs and not box.get("calls"):
-            self._try_refund()                 # answered by a command: no model call
+            return refusal
 
         # -- stage what came back, exactly as a published turn is staged --
-        chunks, said = [], []
-        pieces = box.get("pieces") or []
-        for i, (piece, out_verdict) in enumerate(pieces):
-            final = i == len(pieces) - 1
-            if out_verdict:
-                safety.append(self._try_verdict(out_verdict, "output"))
-            if out_verdict and out_verdict.action == safety_seam.BLOCK:
-                red = safety_seam.redirect_for(out_verdict, last=said_before,
-                                               classifier=self.safety)
-                piece = (ReplyChunk(text=red.text, markup=red.markup, final=True)
-                         if box.get("delivery") == "stream"
-                         else Reply(text=red.text, markup=red.markup,
-                                    result_code=getattr(piece, "result_code",
-                                                        ResultCode.SUCCESS)))
-            chunks.append(self._try_chunk(piece, event_id, i, final=final,
-                                          solo=len(pieces) == 1))
-            if piece.text:
-                said.append(piece.text)
+        chunks, said = self._try_stage(box, event_id, said_before, safety)
         result = chunks[-1]["result"] if chunks else ResultCode.SUCCESS.name
         kind, sentence, detail = "", "", None
         if box.get("crash") is not None:
@@ -491,6 +443,70 @@ class TryItMixin:
             out.update({"kind": kind, "error": sentence, "reason": sentence,
                         "detail": detail})
         return out
+
+    def _try_run(self, name, app, turn) -> tuple:
+        """`(box, None)` once the brain answered on a worker of its own (`_try_brain`), or
+        `(None, refusal)`: busy, out of budget, or past `TRY_TIMEOUT_S` (a late worker keeps
+        its in-flight slot until it ends). A brain needing an endpoint is charged up front
+        and refunded when the try made no model request (a command, a webhook)."""
+        with self._try_lock:
+            busy = self._try_inflight >= self.TRY_MAX_INFLIGHT
+            if not busy:
+                self._try_inflight += 1
+        if busy:
+            return None, _refuse("busy", "Moxie's brain is still working on an earlier try. "
+                                         "Wait for it to finish, then send again.",
+                                 budget=self._try_budget_view())
+        costs, handed_off, box = bool(brain_seam.brain_needs(name)), False, {}
+        try:
+            if costs and self._try_spend() is None:
+                return None, _refuse(
+                    "budget", f"That is all {self.try_budget()} tries for this hour "
+                              f"(MOXIE_AUTHOR_TRY_BUDGET). Each one asks the brain once.",
+                    budget=self._try_budget_view())
+            worker = threading.Thread(target=self._try_brain, args=(app, turn, box),
+                                      name="tryit", daemon=True)
+            worker.start()
+            handed_off = True
+        finally:
+            if not handed_off:
+                with self._try_lock:
+                    self._try_inflight -= 1
+        worker.join(self.TRY_TIMEOUT_S)
+        if worker.is_alive():
+            box["late"] = True
+            self._note("tryit", f"💬 try-it gave up after {self.TRY_TIMEOUT_S:g} s ({name})")
+            return None, _refuse(
+                "timeout", f"Moxie's brain did not finish within {self.TRY_TIMEOUT_S:g} s. "
+                           f"A slow or unreachable endpoint is retried with backoff; the "
+                           f"supervisor log shows each retry.",
+                budget=self._try_budget_view())
+        if costs and not box.get("calls"):
+            self._try_refund()
+        return box, None
+
+    def _try_stage(self, box: dict, event_id: str, said_before: str, safety: list) -> tuple:
+        """`(chunks, said)`: every piece that came back, staged as a published turn stages
+        it — an unsafe piece first replaced by its redirect, as `_handle_turn` and
+        `_handle_stream_turn` replace it. Appends each output verdict to `safety`."""
+        chunks, said = [], []
+        pieces = box.get("pieces") or []
+        for i, (piece, verdict) in enumerate(pieces):
+            if verdict:
+                safety.append(self._try_verdict(verdict, "output"))
+            if verdict and verdict.action == safety_seam.BLOCK:
+                red = safety_seam.redirect_for(verdict, last=said_before,
+                                               classifier=self.safety)
+                piece = (ReplyChunk(text=red.text, markup=red.markup, final=True)
+                         if box.get("delivery") == "stream"
+                         else Reply(text=red.text, markup=red.markup,
+                                    result_code=getattr(piece, "result_code",
+                                                        ResultCode.SUCCESS)))
+            chunks.append(self._try_chunk(piece, event_id, i, final=i == len(pieces) - 1,
+                                          solo=len(pieces) == 1))
+            if piece.text:
+                said.append(piece.text)
+        return chunks, said
 
     def _try_brain(self, app, turn, box: dict) -> None:
         """The brain half of `_handle_turn` on a fresh thread (so `chat.thread_model_calls`
