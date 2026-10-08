@@ -5,7 +5,8 @@
  * `sim/web/audio/index.json`, keyed by the EXACT line text: re-punctuate a line and its clip
  * is silently orphaned. This builds one inventory of every line the degraded page can utter
  * and requires a clip for each, and drives the real `ambient.js`/`voice/`/`bridge/` for
- * the behaviour a grep cannot prove. Sections live in `sim/tests/edge/fallback/`.
+ * the behaviour a grep cannot prove: what the stub answers, and that a scripted line is
+ * never logged as the visitor's. Sections live in `sim/tests/edge/fallback/`.
  *
  *   node sim/test_fallback_coverage.mjs
  */
@@ -17,6 +18,8 @@ await runSections(new URL("./tests/edge/fallback/", import.meta.url), [
   "02_inventory.mjs",
   "03_ambient_probe.mjs",
   "04_child_voice.mjs",
+  "05_stub_matchers.mjs",
+  "06_pretend_line.mjs",
 ]);
 
 if (fails.length) {
