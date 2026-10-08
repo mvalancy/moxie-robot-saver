@@ -49,6 +49,17 @@ as-is and once with the three edits, then compare.
 tests) in its live-gateway step, which the bounded runner was built to avoid. DRAW-launch adherence
 has no bounded runner yet.
 
+**The hosted path had no goodbye at all (fixed 2026-10-08; production re-measure pending).** The
+Pages Functions knew tell/ask/offer only, `chat.js` never set `end_turn`, and the whole persona was
+re-sent after the child's line, so production acknowledged 0 of 4 goodbyes ("ok bye moxie, see you
+later!" got "That's great, Sam! Do you have a favorite dinosaur?"). The fix: the persona once and a
+short anchor last ([live-sim-demo.md](live-sim-demo.md) §3.3), a `close` move with `end_turn: true`
+and the `Bht_Sign_off` wave (§4.10), and a parser that never hands a brace to the voice. Measured
+before merge on the local real code path (`npx wrangler pages dev` against the real gateway); the
+numbers are in the pull request. **Open:** after promotion, `node sim/eval_live.mjs --yes
+--only=goodbye,feelings --pace=15000` on production (about 8 chat calls) should show the goodbye
+acknowledged with `end_turn` true, and the wave should be visible in a browser run.
+
 ## 2. The grounding gate has no usable result
 
 **Problem.** [`functions/api/_lib/docsearch.js`](../../../functions/api/_lib/docsearch.js)

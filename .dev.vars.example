@@ -36,6 +36,25 @@ DEMO_GATEWAY_API_KEY=replace-me-with-a-budget-scoped-key
 # The chat model. No default: a wrong id costs a failed PAID request.
 DEMO_CHAT_MODEL=your-chat-model
 
+# Where our instructions sit in the message array (functions/api/_lib/prompt.js; spec §3.3).
+# `anchor` (the default): the persona ONCE, first; after the child's line a short anchor
+#   (a restatement of the safety rules, the move for this turn, the format rule), so the
+#   last instruction the model reads is ours. Measured 2026-10-08: repeating the whole
+#   persona after the child's line put 94 % of the prompt behind her 15-char "Okay bye
+#   Moxie!" and she answered an earlier turn 0/5 times; the short anchor answered 4/5 and
+#   with the goodbye cue 5/5.
+# `single`: exactly ONE system message, first, carrying everything (persona, anchor, cue,
+#   reference passage, diagram cue, re-roll line); the child's line is the LAST message.
+#   For chat templates that reject a system message that is not first (HTTP 500 "System
+#   message must be at the beginning") or silently drop it — some Qwen3-family templates
+#   under llama.cpp do. The persona's rules are the last word only through the anchor's
+#   wording, so MEASURE a model on this layout (sim/eval_live.mjs --only=safety,injection)
+#   before pointing production at it.
+# `user-anchor`: one leading system message, and the anchor appended to the end of the
+#   child's own turn behind a header naming whose words they are. Keeps "ours is last" on
+#   a single-system-message template; measured as an experiment, not a production default.
+# DEMO_PROMPT_LAYOUT=anchor
+
 # The voice. Unset => `voice: false`, and text still works — spoken from the shipped
 # clips or the browser voice, which is what the site does today.
 DEMO_TTS_MODEL=your-tts-model

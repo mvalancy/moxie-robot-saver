@@ -399,7 +399,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 51262,
+   "bytes": 55368,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -848,7 +848,7 @@
    "path": "architecture/backlog/live-brain-open-issues.md",
    "title": "Live brain: open issues",
    "section": "architecture",
-   "bytes": 7201,
+   "bytes": 8167,
    "mermaid": 0,
    "headings": [
     "1. Goodbyes that omit `<exit>`",

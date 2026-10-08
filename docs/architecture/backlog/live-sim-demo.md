@@ -46,6 +46,8 @@ of that. `window.moxieBridge` exposes seven members, which tests pin.
   `{command:"remote_chat", result:<ResultCode NAME>, backend, event_id, output:{text, markup}, end_turn}`.
   `chunk_num` and `consistency_control` are **omitted** on a single-chunk turn. **No `emotion` field**
   is ever emitted, because the mood mark in `markup` carries the face. The Sim ignores `result`.
+  `end_turn` is `true` on a goodbye turn (§4.10) and `false` otherwise; the goodbye's markup also
+  carries the `Bht_Sign_off` tree mark, byte-identical to `vocab.tree_mark("Gesture_None", "Bht_Sign_off")`.
 - **TTS reply** = `build_cloud_tts_response`:
   `{request_source:"ROBOT_TTS_REQUEST", audio:{buffer:<base64 raw LE s16 PCM>, channels, sample_rate}, marks:[], event_id, chunk_num}`.
   The buffer is raw PCM, not a container. An empty `marks` still lip-syncs, because the mouth follows
@@ -200,7 +202,29 @@ the prompt. The blob is re-minted each turn and expires after `CONTEXT_TTL_S` = 
   forge Moxie's side of the history.
 - An **expired** blob is served with the history dropped. It is not refused, because refusing wedged a
   tab left open for an hour.
-- The persona system prompt is placed **first and last**, so the last instruction the model reads is ours.
+- **The persona is sent once, first; our anchor is last** (`DEMO_PROMPT_LAYOUT=anchor`, the default).
+  The anchor after the child's line is short: a restatement of the rules a visitor's text could try to
+  talk her out of, the move for this turn (§4.10) and the format rule, so the last instruction the model
+  reads is still ours. Until 2026-10-08 this rule read "first **and** last" and the whole 2,889-char
+  persona was repeated after the child's line. Measured, that put 94 % of the prompt behind a 15-char
+  "Okay bye Moxie!" and she answered an earlier turn instead: 0/4 goodbyes acknowledged on production,
+  0/5 in replay on the same model, 4/5 with the repeat removed, 5/5 with the goodbye cue. The security
+  intent is unchanged (owner-approved wording change); `sim/test_demo_proxy.mjs` §21 pins it.
+- **`single`** sends exactly **one** system message, first, carrying the persona, the anchor, the cue,
+  the reference passage, the diagram cue and the re-roll line; the child's line is the **last** message.
+  It exists because some chat templates (Qwen3-family templates under llama.cpp, for one) answer
+  HTTP 500 "System message must be at the beginning" to a system message that is not first, or drop it
+  silently: on the gateway's strongest alias the trailing message was dropped on every turn (prompt
+  tokens 682 against 1,744; 0 of 39 envelopes). **What `single` gives up:** the last text the model
+  reads is the visitor's. **What defends it instead:** the pre-inference safety floor, which runs before
+  any call and is unchanged; the server-built body, so a visitor can add words but never a message or a
+  role; the anchor's restatement at the end of the one system message; and the measurement gate: a
+  model is pointed at this layout only after `sim/eval_live.mjs --only=safety,injection` passes on it.
+- **`user-anchor`** keeps one leading system message and appends the anchor to the end of the child's
+  own turn, behind a header that names whose words they are. It keeps "ours is last" on a template that
+  honours only a leading system message. An experiment arm, measured beside `single`; not a default.
+- No layout except `anchor` emits a system message that is not first. An unknown `DEMO_PROMPT_LAYOUT`
+  falls back to `anchor` with a note, never to an unmeasured layout.
 - Nothing reaches disk.
 
 ### 3.4 Voice-first ordering
@@ -498,7 +522,7 @@ costs money. It scores `repeatOpening`, `maxOverlap`, `exactDupes`, `questionRat
 |---|---|---|---|
 | 1 | Persona rules: keep the conversation moving, never repeat a sentence, do not end every turn with a question | `DEFAULT_PERSONA` / `DEMO_PERSONA` | free |
 | 2 | `frequency_penalty` 0.4 / `presence_penalty` 0.3. A value of 0 is not sent. A gateway that 400s on them has them dropped for the life of the isolate, and the call is retried once. | `DEMO_FREQUENCY_PENALTY`, `DEMO_PRESENCE_PENALTY` | free |
-| 3 | **Re-roll:** a reply that exactly matches (ignoring case and whitespace) any assistant turn in the signed window is asked again **once**, with a server-built system message forbidding that line | `DEMO_REROLL`, `chat.js` step 8b, `_lib/reply.js::echoOf` | **one extra completion** |
+| 3 | **Re-roll:** a reply that exactly matches (ignoring case, whitespace and punctuation: "That's okay." and "That's okay!" were served live as two turns of one conversation) any assistant turn in the signed window is asked again **once**, with a server-built system message forbidding that line. The second body carries the same reference passage as the first, and the diagram served is the one drawn for the served line. | `DEMO_REROLL`, `chat.js` step 8b, `_lib/reply.js::echoOf` | **one extra completion** |
 
 Re-roll accounting:
 
@@ -519,9 +543,21 @@ are invisible. **Read the transcripts, not just the numbers.**
 The deeper defect was a repeated **move**, not a repeated sentence: six "Let's …!" proposals in a row
 scored well on every lexical metric. Each assistant turn in the signed history is classified as one of
 three moves: **`ask`** (ends with `?`), **`offer`** (a proposal marker such as "let's", not a question)
-or **`tell`** (anything else). One sentence naming the first move that is not one of the last two is appended to the trailing persona
-copy. This costs no extra call. It is a closed loop: the next cue follows what she *actually* said.
+or **`tell`** (anything else). One sentence naming the first move that is not one of the last two is placed in the trailing
+anchor (§3.3), in the same block as the anchor's restatement and before the format rule. This costs no
+extra call. It is a closed loop: the next cue follows what she *actually* said.
 With `DEMO_TURN_SHAPE=0`, the upstream body is byte-identical to one without the cue.
+
+**The close move (2026-10-08).** A fourth move sits outside the rotation. When the child's whole line is
+a leave-taking (`_lib/turnshape.js::isGoodbye`: anchored and whole-utterance, so "okay bye moxie!",
+"i have to go to bed" and "night night" count, while "my dog died and I had to say goodbye", "good night
+story please!" and "I don't want to say bye" do not), the cue is `close` (say goodbye; no question, no
+new topic, no offer), the wire's `end_turn` is `true`, and the markup carries the `Bht_Sign_off` wave,
+which the model may also name itself as the `wave` gesture. A miss falls back to the rotation; a false
+hit would hang up on a child mid-talk, so the grammar errs towards missing. `DEMO_TURN_SHAPE=0` removes
+the cue but not `end_turn` or the wave. Measured before the fix: production acknowledged 0 of 4
+goodbyes; in replay on the same model an explicit close cue restored it 5/5, 5/5 and 3/3 across three
+harnesses. `sim/eval_live.mjs --only=goodbye --repeat=N` is the instrument.
 
 **Measured**: 6 conversations of 7 turns per arm, against the same gateway and model.
 
@@ -534,7 +570,8 @@ What remains wrong:
 
 - Near-duplicate offers survive.
 - Perfect obedience can still braid three templates, and `runMax` would score that as perfect.
-- The cue must stay inside the persona message. As a separate system message, the wording collapsed.
+- The cue must stay in the same block as the anchor's restatement. As a separate system message, the
+  wording collapsed.
 - After any edit to the cue strings, check `repeatOpening` and `maxOverlap` on `feelings`.
 
 ## 5. Configuration
@@ -574,6 +611,7 @@ clamped. `_lib/env.js::DEFAULTS` is the source of truth.
 | `DEMO_MAX_CONTEXT_CHARS` / `DEMO_MAX_HISTORY_TURNS` | 4000 / 12 | 0..100000 / 0..64 |
 | `DEMO_FREQUENCY_PENALTY` / `DEMO_PRESENCE_PENALTY` | 0.4 / 0.3 | −2..2; 0 is not sent |
 | `DEMO_TURN_SHAPE` / `DEMO_REROLL` | on / on | §4.10 / §4.9 |
+| `DEMO_PROMPT_LAYOUT` | `anchor` | `anchor` · `single` · `user-anchor` (§3.3); an unknown value falls back to `anchor` with a note; measure a model on `single` before switching production to it |
 | `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | ≥ 1 |
 | `DEMO_SPEECH_PER_MIN` / `_HOUR` | 10 / 80 | ≥ 1 |
 | `DEMO_STT_PER_MIN` / `_HOUR` | 10 / 60 | ≥ 1 |
@@ -671,7 +709,7 @@ suite is split into modules under `sim/tests/edge/<suite>/`.
 
 | # | Test | Pins |
 |--:|---|---|
-| 1 | `sim/test_demo_proxy.mjs` | Unknown keys dropped; the upstream body uses the configured model and `max_tokens`; `too_long`; origin refusal with zero upstream calls; upstream 429/500 sanitized (no model or key text in any response); `budget_exhausted`; `X-RateLimit-*` on success; the §2.2 field set with no `chunk_num`, `consistency_control` or `emotion`. Also the queue (block 13), shared tier (§15), TTS cache (§16), re-roll and turn shape, API headers, and a fail on any `.json` import under `functions/`. |
+| 1 | `sim/test_demo_proxy.mjs` | Unknown keys dropped; the upstream body uses the configured model and `max_tokens`; `too_long`; origin refusal with zero upstream calls; upstream 429/500 sanitized (no model or key text in any response); `budget_exhausted`; `X-RateLimit-*` on success; the §2.2 field set with no `chunk_num`, `consistency_control` or `emotion`. Also the queue (block 13), shared tier (§15), TTS cache (§16), re-roll and turn shape, the goodbye close and the prompt layouts (§19–22: persona once, anchor last, no non-first system message outside `anchor`, no brace ever in the spoken text or the ticket), API headers, and a fail on any `.json` import under `functions/`. |
 | 2 | `sim/test_demo_tickets.mjs` | Forged, expired, over-length, replayed or tampered ticket or context; round-trip; constant-time compare. |
 | 3 | `sim/test_wav_decode.mjs` | The RIFF walker uses the header's own rate and channels, refuses 8- and 24-bit and JSON, and agrees sample-for-sample with `audio.js`'s decoder; `wavDurationMs`. |
 | 4 | `sim/test_mode.mjs` | The state machine, backoff, hidden-tab rule, `offline` never polls; env defaults and envelope. |
