@@ -10,7 +10,8 @@
  *   C2 a pending row in Robot access offers the same button beside Permit; it claims (the
  *      server permits as part of the claim), it does not also send Permit
  *   C3 a refusal is shown to the parent in its own words, and no robot card appears
- *   C4 an account that already has a robot is offered no second one
+ *   C4 an account that already has a robot is offered no second one, and is told why beside
+ *      the waiting robot in Robot access and on its own robot card (unpair it first)
  *   C5 when the supervisor could not be asked (`unclaimed_known: false`) the card says the
  *      robot service cannot be reached, instead of looking as if no robot arrived
  *   W1 the Wi-Fi tab's code is Wi-Fi ONLY by default: one POST /local/wifi/payload, its
@@ -18,6 +19,9 @@
  *      add it, and claims nothing itself
  *   W2 the pairing-key code (the original app's, for Simulate robot scan) is made only
  *      when its option is ticked
+ *   W3 a robot record the account had before the code was made (an earlier Simulate robot
+ *      scan) is never reported as "Moxie connected!"; the tab says to unpair it first, and
+ *      reports a connection once a new record appears
  *
  * No FastAPI: `serveStatic` serves server/static and every `/local/*` and `/api/*` call is
  * answered at the browser. The fleet views and the unpair answer come out of the REAL server
@@ -26,9 +30,11 @@
  * answer's keys are the ones sim/tests/test_robot_claim.py pins on the real route, and
  * sim/tests/test_wifi_first_qr.py pins what /local/wifi/payload really answers. TEETH:
  * mutated copies of js/core.js (an automatic claim; no button on the card; no button on the
- * pending row; the answer not rendered; a second robot offered; a refusal swallowed; the
- * pairing-key code by default; a claim from the Wi-Fi tab's poll) must each redden the
- * scenario that guards it.
+ * pending row; the answer not rendered; a second robot offered; no reason beside a robot that
+ * cannot be added; a refusal swallowed; the unreachable state never said, or said of a
+ * supervisor that answered; the pairing-key code by default; a claim from the Wi-Fi tab's
+ * poll; an earlier record reported as the robot on the bench) must each redden the scenario
+ * that guards it.
  *
  *   node sim/test_robot_claim.mjs
  */
@@ -205,6 +211,7 @@ const view = (page) => page.evaluate(() => {
     allButtons: texts(".claim-btn"), permitButtons: texts("#permits-box .permit-btn"),
     claimStatus: text("#claim-status"), devStatus: text("#dev-status"),
     unknown: shown("#claim-unknown"), unknownText: text("#claim-unknown").replace(/\s+/g, " ").trim(),
+    rowWhy: texts("#permits-box .claim-why"), cardWhy: text("#claim-why"), cardWhyShown: shown("#claim-why"),
     qrCard: shown("#wifi-qr-card"), recovery: shown("#recovery-box"), phrase: text("#phrase"),
     qrKind: text("#qr-kind"), pairStatus: text("#pair-status"),
     qrPayload: decodeURIComponent((($("#qr-img") || {}).getAttribute
@@ -303,6 +310,12 @@ const SCENARIOS = {
       C.eq(JSON.stringify(v.permitButtons), JSON.stringify(["Permit"]),
            "C4: the other robot still waits in Robot access");
       C.eq(v.allButtons.length, 0, "C4: no Add to my account while the account has a robot");
+      C.eq(JSON.stringify(v.rowWhy),
+           JSON.stringify(["This account already has a robot (Moxie (simulated)): unpair it first."]),
+           "C4: the pending row says why it offers no Add to my account");
+      C.ok(v.cardWhyShown && v.cardWhy.includes(DEV)
+           && v.cardWhy.includes("This account already has a robot (Moxie (simulated)): unpair it first."),
+           `C4: the robot card names the waiting robot and the same reason — got "${v.cardWhy}"`);
       C.eq(claims(st), 0, "C4: nothing is claimed");
       C.eq(notable(errs, aborted).length, 0, `C4: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
     } finally { await page.close(); }
@@ -365,6 +378,31 @@ const SCENARIOS = {
       C.eq(notable(errs, aborted).length, 0, `W2: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
     } finally { await page.close(); }
   },
+
+  async W3(C, o) {
+    const { page, st, errs, aborted } = await drive({ ...o, robots: [SIMULATED], tab: "wifi" });
+    try {
+      await page.type("#ssid", "BenchNet");
+      await page.type("#wifipass", "s3cret");
+      await page.click("#btn-qr");
+      /* The poll's first answers: the account's earlier record is not the robot on the bench. */
+      await page.waitForFunction(() => /already has a robot|connected/.test(
+        document.querySelector("#pair-status").textContent), { timeout: 8000 }).catch(() => {});
+      let v = await view(page);
+      C.ok(!/connected/i.test(v.pairStatus),
+           `W3: a record the account already had is not reported as this robot — got "${v.pairStatus}"`);
+      C.ok(v.pairStatus.includes("this account already has a robot (Moxie (simulated)): unpair it first"),
+           `W3: the tab says why this robot cannot be added yet — got "${v.pairStatus}"`);
+      st.claimed = true;                      // the old one unpaired, this robot added elsewhere
+      await page.waitForFunction(() => /Moxie connected!/.test(
+        document.querySelector("#pair-status").textContent), { timeout: 8000 }).catch(() => {});
+      v = await view(page);
+      C.ok(/Moxie connected!/.test(v.pairStatus),
+           `W3: a robot record that appears after the code is reported — got "${v.pairStatus}"`);
+      C.eq(claims(st), 0, "W3: the tab never claims by itself");
+      C.eq(notable(errs, aborted).length, 0, `W3: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+    } finally { await page.close(); }
+  },
 };
 
 /** One scenario into collector `C`; an interaction that throws (a control that never
@@ -393,6 +431,11 @@ const TEETH = [
   ["a second robot offered", "C4",
    (s) => s.replace("function claimable(deviceId){ return !ACCOUNT.robots.length && ",
                     "function claimable(deviceId){ return ")],
+  ["no reason beside a robot that cannot be added", "C4",
+   (s) => s.replace("  if(!ACCOUNT.robots.length || !ACCOUNT.unclaimed.includes(deviceId)) return '';\n",
+                    "  return '';\n")],
+  ["an earlier record reported as the robot on the bench", "W3",
+   (s) => s.replace("if(mine.some(r=>!known.has(r.id))){", "if(mine.length){")],
   ["a supervisor that cannot be asked never said", "C5",
    (s) => s.replace("u.classList.toggle('hidden', ACCOUNT.known);", "u.classList.toggle('hidden', true);")],
   ["a supervisor that answered reported unreachable", "C1",

@@ -88,14 +88,22 @@ another: nothing a robot sends carries the code it scanned. **Add to my account*
 the robot is yours, the same trust as Permit, which anyone who can open this console on your network
 can press. Add only the robot you just showed the codes to.
 
-If it says no, nothing was changed:
+**No Add to my account button?** The page says why, where the button would be:
+
+| What you see | Next |
+|---|---|
+| Beside the robot in Robot access, and on your robot card: "This account already has a robot (…): unpair it first." The 📶 Wi-Fi tab says the same. | One robot per account. An earlier test leaves exactly this (**Simulate robot scan** makes a record). Press **Unpair this robot** on the robot card; **Add to my account** then appears. |
+| Under **No Moxie paired yet**: "The robot service cannot be reached right now". | The supervisor is down or not answering, so the page cannot check. Start the stack again. |
+
+If a click is refused, nothing was changed. The page shows the server's own words, and each one
+means something changed after the page last looked:
 
 | The message | Next |
 |---|---|
-| "That robot is already on another account on this server" | Unpair it from that account first. |
-| "This account already has a robot" | One robot per account: unpair the current one first. |
-| "No robot with that id has connected to this server" | It is not on the broker: back to step 3. |
-| "This server cannot reach its robot side" | The supervisor is down. Start it and try again. |
+| "That robot is already on another account on this server" | It was added from another account first. Unpair it there. |
+| "This account already has a robot (…). Unpair the current robot first" | A robot was added to this account from another page. Unpair one first. |
+| "No robot with that id has connected to this server" | It left the broker: back to step 3. |
+| "This server cannot reach its robot side" | The supervisor went down. Start it and try again. |
 
 ## Afterwards
 

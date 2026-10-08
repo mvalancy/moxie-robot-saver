@@ -104,18 +104,26 @@ $('#btn-qr').onclick = async () => {
   startPolling();
 };
 
-function startPolling(){
+// Only a robot record that appears after the code was made counts as connected: one the
+// account already had (an earlier Simulate robot scan, say) is not the robot on the bench.
+async function startPolling(){
+  let known=new Set();
+  try{ known=new Set(((await api('/local/state')).robots||[]).map(r=>r.id)); }catch(e){}
   clearInterval(poll);
   poll=setInterval(async()=>{
     const st=await api('/local/state');
-    if(st.robots && st.robots.length){
+    const mine=st.robots||[];
+    if(mine.some(r=>!known.has(r.id))){
       clearInterval(poll);
       $('#pair-status').classList.add('ok');
       $('#pair-status').textContent='Moxie connected! See the 🤖 Moxie tab.';
       refreshMoxie();
     } else if((st.unclaimed||[]).length){
       // Reached the broker, on no account yet: the claim is the parent's click, never ours.
-      $('#pair-status').textContent='Moxie reached this server. In the 🤖 Moxie tab, press Add to my account.';
+      $('#pair-status').textContent = mine.length
+        ? `Moxie reached this server, but this account already has a robot (${mine[0].name||'Moxie'}): `
+          + 'unpair it first in the 🤖 Moxie tab, then press Add to my account.'
+        : 'Moxie reached this server. In the 🤖 Moxie tab, press Add to my account.';
     }
   },2000);
 }
@@ -183,7 +191,14 @@ async function refreshMoxie(){
 // A robot that paired by scanning the codes reaches the broker with no account record, so
 // it has no robot card. One click claims it (the server permits it too); nothing is ever
 // claimed without that click. Offered only where it can work: an account has one robot.
+// Where that rule hides it, the page says so beside the robot (claimBlocked) rather than
+// offer a button that can only be refused.
 function claimable(deviceId){ return !ACCOUNT.robots.length && ACCOUNT.unclaimed.includes(deviceId); }
+/** Why a robot on no account is not offered here, or ''. The server's 409 says the same. */
+function claimBlocked(deviceId){
+  if(!ACCOUNT.robots.length || !ACCOUNT.unclaimed.includes(deviceId)) return '';
+  return `This account already has a robot (${ACCOUNT.robots[0].name||'Moxie'}): unpair it first.`;
+}
 function claimButton(deviceId){
   return `<button class="primary claim-btn" data-id="${escapeHtml(deviceId)}">Add to my account</button>`;
 }
@@ -198,6 +213,11 @@ function renderClaims(){
   wireClaims(list, '#claim-status');
   // Nobody could ask the supervisor: say so, rather than look as if no robot arrived.
   { const u=$('#claim-unknown'); if(u) u.classList.toggle('hidden', ACCOUNT.known); }
+  // On the account's own robot card: a robot on no account is waiting, and why it is not offered.
+  { const w=$('#claim-why'), waiting=ACCOUNT.unclaimed.filter(id=>claimBlocked(id));
+    if(w){ w.textContent=waiting.length ? `Waiting on this server, on no account: ${waiting.join(', ')}. `
+                                          + claimBlocked(waiting[0]) : '';
+           w.classList.toggle('hidden', !waiting.length); } }
 }
 let claiming=false;
 async function claimRobot(deviceId, statusSel){
@@ -305,7 +325,9 @@ function renderPermits(f){
               + 'Permit only lets it in.</div>' : '')
     + pending.map(r=>row(r,
         `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="1">Permit</button>`
-        + (claimable(r.device_id) ? ' '+claimButton(r.device_id) : ''))).join(''));
+        + (claimable(r.device_id) ? ' '+claimButton(r.device_id) : '')
+        + (claimBlocked(r.device_id)
+           ? ` <span class="muted claim-why">${escapeHtml(claimBlocked(r.device_id))}</span>` : ''))).join(''));
   if(permitted.length) parts.push('<div class="insights-hd">Allowed</div>'
     + permitted.map(r=>row(r,
         `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="0">Revoke</button>`)).join(''));

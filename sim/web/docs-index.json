@@ -1179,7 +1179,7 @@
    "path": "guides/bench-runbook.md",
    "title": "Bench runbook: bring a real Moxie onto your server",
    "section": "guides",
-   "bytes": 8689,
+   "bytes": 9509,
    "mermaid": 0,
    "headings": [
     "Before you start",
@@ -1240,7 +1240,7 @@
    "path": "guides/permitting-a-robot.md",
    "title": "Letting a robot in — \"pending\" and how to permit it",
    "section": "guides",
-   "bytes": 6391,
+   "bytes": 6598,
    "mermaid": 0,
    "headings": [
     "The one-paragraph version",

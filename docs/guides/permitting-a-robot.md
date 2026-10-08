@@ -95,6 +95,9 @@ damaged or missing file means "nobody is permitted" — it fails safe, never ope
 
 - **Moxie says "I'm not connected to a family yet"** → it is pending. Add it to your
   account, or permit it (above).
+- **No Add to my account, and the row says this account already has a robot** → an account
+  holds one robot, and an earlier test (*Simulate robot scan*) leaves one. Unpair it from its
+  robot card first.
 - **The 🔐 Robot access card is missing** → the supervisor is not running; check the
   server, then reload the console.
 - **The robot is not in either list** → it has not reached the broker at all. That is a
