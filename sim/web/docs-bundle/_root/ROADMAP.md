@@ -89,12 +89,13 @@ Ordered by priority.
    - **Stub and degraded states:** when the brain is away the scripted stub answers in character,
      with clips, and never shows a scripted line as the child's words; the page says honestly
      whether the brain is down, busy or resting.
-   - **Ambient:** creepy-cute self-talk between turns, one row at a time on a toy-first screen.
+   - **First screen:** a tappable Moxie and "Talk to Moxie" on a hub that loads about a quarter
+     of its old weight on a phone; the Sim opens as a toy, not a console.
+   - **Ambient:** creepy-cute self-talk between turns, one row at a time.
 
    Still open: two turns in flight and talking over her (barge-in); a check on what she says as
    well as on what she is told; growing the creature (seasonal lines, a rare glitch, an aside
-   after goodbye); a lighter hub page on a phone; and, on the robot path, a goodbye that ends a
-   content module's chat.
+   after goodbye); and, on the robot path, a goodbye that ends a content module's chat.
 2. **Spending protection.** The rate limits and the unit budget are counted per isolate and per
    colo and fail open, so they are not a global ceiling. Confirm a hard budget on the gateway key
    before claiming one. Also open: a per-visitor day for the voice and the ears (they have only a
