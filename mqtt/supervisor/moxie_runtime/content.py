@@ -2,8 +2,10 @@
 from __future__ import annotations
 import os, time
 
+from moxie_sdk.actions import parse_action_tags
 from moxie_sdk.content import packs as content_packs
 from moxie_sdk.content import render
+from moxie_sdk.content.content_app import opener_alternatives, pick_opener
 
 
 class ContentMixin:
@@ -386,12 +388,15 @@ class ContentMixin:
         prompt = render.render_prompt(data.get("prompt") or "", context, counts=counts)
         portable = render._minimal_render(data.get("prompt") or "", context,
                                           counts=portable_counts)
-        opener = render.render_prompt((data.get("opener") or "").split("|")[0], context)
+        # The robot's own split and first pick, its tags lifted: the line a robot hears
+        # first (a `|` inside `{{ }}`/`{% %}`/`{# #}` is not a separator).
+        openers = data.get("opener") or ""
+        opener = parse_action_tags(pick_opener(openers, context) or "")[0]
         return {
             "ok": True,
             "prompt": prompt,
-            "opener": opener.replace("<opener>", "").strip(),
-            "openers": [o for o in (data.get("opener") or "").split("|") if o.strip()],
+            "opener": opener,
+            "openers": [o for o in opener_alternatives(openers) if o.strip()],
             "portable": portable,
             "portable_identical": portable == prompt,
             "counts": {"blocked": counts.get("blocked", 0) + portable_counts.get("blocked", 0),

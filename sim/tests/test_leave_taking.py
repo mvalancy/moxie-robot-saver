@@ -24,6 +24,7 @@ from moxie_sdk.actions import ACTION_TAG_PROMPT
 from moxie_sdk.apps.llm_app import DEFAULT_PERSONA, LLMApp
 from moxie_sdk.content import ContentApp, load_modules
 from moxie_sdk.content import packs as P
+from moxie_sdk.content.content_app import opener_alternatives
 from moxie_sdk.memory_items import item_text
 from moxie_sdk.memory_store import MemoryStore
 from moxie_sdk.store import JsonStore
@@ -448,18 +449,39 @@ def test_every_other_turn_publishes_what_origin_dev_published(
     assert [m[1:] for m in brain.turns] == [[{"role": "user", "content": heard}]]
 
 
-def test_the_console_preview_still_shows_the_first_opener(tmp_path):
-    """The console's content preview renders the opener itself; rotation is per robot and
-    never leaks into it."""
-    app = shipped_app("memory_chat.json", Brain())
-    rt, did = _runtime(app, tmp_path)
-    conv = next(c for c in _raw("memory_chat.json")["conversations"]
-                if c["content_id"] == "default")
-    before = rt.content_render({"kind": "conversation", "data": conv,
-                                "context": {"nickname": "Sam"}})
-    _say(rt, did, "", event_id="e1")
-    _say(rt, did, "", event_id="e2")
+#: Openers the console's content preview used to show differently from what the robot
+#: says: it split on every `|` and left the tags in.
+PREVIEW_OPENERS = [
+    "Hi {{ volley.config.child_pii.nickname | upper }}! Ready?|Hey!",
+    "{% if volley.config.child_pii.nickname | length > 2 %}Hi "
+    "{{ volley.config.child_pii.nickname }}!{% endif %}|Hi!",
+    "{# shown | to the parent #}Let's draw!<launch:DRAW>|Or not.",
+    "<exit>Bye for now!<opener>|See you!",
+    "Okay, sleepy time.<sleep>",
+    "{{ '' }}|The second one is the first heard.",
+    # and a shipped one, which both always agreed on
+    next(c for c in _raw("memory_chat.json")["conversations"]
+         if c["content_id"] == "default")["opener"],
+]
+
+
+@pytest.mark.parametrize("opener", PREVIEW_OPENERS, ids=[
+    "filter", "if-filter", "comment-launch", "exit", "sleep", "empty-first", "shipped"])
+def test_the_console_preview_shows_the_line_a_robot_hears_first(tmp_path, opener):
+    """The preview splits and lifts tags as the robot path does (`pick_opener`), and a
+    robot's rotation never leaks into it."""
+    conv = {"name": "Chat", "module_id": "CHAT", "content_id": "default",
+            "prompt": "You are Moxie.", "opener": opener}
+    app = ContentApp(load_modules({"conversations": [conv]}), Brain(), memory=False)
+    rt, did = _runtime(app, tmp_path, module_id="CHAT")
+
+    def preview():
+        return rt.content_render({"kind": "conversation", "data": conv,
+                                  "context": {"nickname": "Sam"}})
+
+    before = preview()
+    heard = [_say(rt, did, "", event_id=f"e{i}")["output"]["text"] for i in range(2)]
     rt._pool.shutdown(wait=True)
-    after = rt.content_render({"kind": "conversation", "data": conv,
-                               "context": {"nickname": "Sam"}})
-    assert before == after and after["opener"] == _openers()[0]
+    assert before["opener"] == heard[0] and "<" not in heard[0], (before, heard)
+    assert before["openers"] == [a for a in opener_alternatives(opener) if a.strip()]
+    assert preview() == before
