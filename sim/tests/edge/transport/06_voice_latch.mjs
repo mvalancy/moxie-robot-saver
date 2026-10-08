@@ -9,7 +9,7 @@
  *   §10 the audio unlock follows the browser's real autoplay rule.
  */
 import {
-  MANIFEST, advance, boot, chatMsg, chatWire, clipBytes, deep, envelope, eq, live, now, ok, readFileSync,
+  MANIFEST, advance, boot, chatWire, clipBytes, deep, envelope, eq, live, now, ok, readFileSync,
   join, repo, said, serve, ticket, ttsWire, voiced,
 } from "./harness.mjs";
 
