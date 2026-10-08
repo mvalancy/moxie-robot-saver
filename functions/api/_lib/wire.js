@@ -141,6 +141,18 @@ export const MK = Object.freeze({
       '+highlight+:0}"/>'
     );
   },
+  /** A whole-body behaviour tree (`Bht_*`), byte-for-byte `vocab.tree_mark("Gesture_None",
+   *  name)`: the tree rides `behaviour` and the gesture slot holds the null gesture, which is
+   *  what `bridge.js::applyMarkup` reads it from. */
+  tree(name) {
+    return (
+      '<mark name="cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,' +
+      "+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+," +
+      "+behaviour+:+" +
+      String(name) +
+      '+,+Track+:++}"/>'
+    );
+  },
 });
 
 /** `ePlaybackMood`, the authoritative eleven (recovered from Assembly-CSharp;
@@ -164,11 +176,21 @@ const GESTURE_BY_NAME = Object.freeze({
   down: "Gesture_Lower", celebrate: "Gesture_Celebrate",
 });
 
+/** The goodbye wave: `bridge/body.js::behaviourTree` plays it, `actions.js` plays it on an
+ *  `exit`, and the Python performance layer names it for a closing beat. */
+export const SIGN_OFF = "Bht_Sign_off";
+
+/** Whole-body trees the MODEL may name, by the short name it writes. She asked for `wave`
+ *  unprompted on 3 of 6 goodbyes before it was offered (measured), and the table above
+ *  dropped it. A closed set like the gestures. */
+const TREE_BY_NAME = Object.freeze({ wave: SIGN_OFF });
+
 /** The vocabulary `chat.js` hands the model, built from the tables above. */
 export function expressiveVocab() {
   return {
     moods: Object.keys(MOOD_BY_NAME),
-    gestures: ["none", "talk", "think", "question", "point", "self", "big", "up", "down", "celebrate"],
+    gestures: ["none", "talk", "think", "question", "point", "self", "big", "up", "down", "celebrate",
+               ...Object.keys(TREE_BY_NAME)],
   };
 }
 
@@ -200,8 +222,11 @@ const ICONS = [
 /**
  * Text -> markup: mood + one gesture + an optional icon pair around the text (as
  * `stub.js::build` does), the floor §2.6 specifies. PURE, so tests assert exact markup.
+ *
+ * @param {string} [tree] a whole-body tree the ROUTE asks for (the sign-off wave on a
+ *   goodbye turn); one of `TREE_BY_NAME`'s values or it is ignored.
  */
-export function markupFloor(text, chosen) {
+export function markupFloor(text, chosen, tree) {
   const s = String(text || "");
   if (!s) return "";
   /* The model's own choice (`chosen = {mood, gesture}`, short names; absent for plain
@@ -215,6 +240,11 @@ export function markupFloor(text, chosen) {
     ? MOOD_BY_NAME[moodName] : null;
   const gestWire = Object.prototype.hasOwnProperty.call(GESTURE_BY_NAME, gestName)
     ? GESTURE_BY_NAME[gestName] : null;
+  /* A whole-body tree outranks a gesture: the route's (`tree`) or the model's (`wave`). It
+   * takes the gesture's slot, as the Python performance layer emits it, so the arms are not
+   * asked for two things at once. */
+  const treeName = Object.values(TREE_BY_NAME).includes(tree) ? tree
+    : (Object.prototype.hasOwnProperty.call(TREE_BY_NAME, gestName) ? TREE_BY_NAME[gestName] : "");
 
   const matched = FLOOR.find((r) => r.re.test(s));
   const floor = matched || FLOOR_DEFAULT;
@@ -229,7 +259,7 @@ export function markupFloor(text, chosen) {
     gesture: gestWire === null ? floor.gesture : gestWire,
   };
   const hit = ICONS.find((r) => r.re.test(s));
-  let mk = MK.mood(rule.mood) + MK.gesture(rule.gesture);
+  let mk = MK.mood(rule.mood) + (treeName ? MK.tree(treeName) : MK.gesture(rule.gesture));
   if (hit) mk += MK.icons(hit.icon, 0);
   mk += s;
   if (hit) mk += MK.icons(hit.icon, 2);

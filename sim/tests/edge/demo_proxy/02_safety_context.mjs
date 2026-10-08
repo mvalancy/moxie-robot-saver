@@ -111,7 +111,7 @@ const safety = await import(join(repo, "functions", "api", "_lib", "safety.js"))
   const up = JSON.parse(sent[1].opt.body);
   deep(up.messages.map((m) => m.role + ":" + (m.role === "system" ? "" : m.content)),
        ["system:", "user:hi moxie", "assistant:Hi there! Want to hear a joke?", "user:tell me more", "system:"],
-       "turn 2 carries turn 1's history to the gateway, in order, persona last");
+       "turn 2 carries turn 1's history to the gateway, in order, our anchor last");
   ok(t2.body.context !== t1.body.context, "the blob is re-minted every turn");
 
   // A tampered blob is refused and spends nothing — the anti-injection property.
