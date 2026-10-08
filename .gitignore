@@ -65,3 +65,9 @@ mqtt/data/*
 # Cloudflare Pages Functions local config (the hosted-demo secrets).
 # `.dev.vars.example` is the committed template; `.dev.vars` itself holds a real key.
 .dev.vars
+
+# Wrangler's local state (`wrangler pages dev`, `wrangler login`, ...). Its cache holds the
+# Cloudflare account id and name, which this public repo must never carry (rule C1 in
+# functions/api/_lib/env.js). No trailing slash on purpose: `git check-ignore .wrangler`
+# then answers yes even before wrangler has created the directory.
+.wrangler
