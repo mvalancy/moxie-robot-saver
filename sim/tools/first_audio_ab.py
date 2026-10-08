@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 import paho.mqtt.client as mqtt                                     # noqa: E402
 import helpers_stack as S                                           # noqa: E402
+from moxie_sdk.types import ResultCode                              # noqa: E402
 
 #: What the stub brain streams. Four sentences on purpose: the segmenter splits on
 #: `. ! ?` followed by real text, and a one-chunk answer would never exercise
@@ -138,6 +139,16 @@ def start_stub(ttft: float, pace: float):
 # --------------------------------------------------------------------------- #
 # The robot — a stopwatch with an MQTT client attached
 # --------------------------------------------------------------------------- #
+def result_code(payload: dict):
+    """`RemoteChatResponse.result` as a `ResultCode`: the integer the proto declares
+    (`uint32`, RemoteChat.proto:320) or the enum NAME an older server sent; None when it
+    is neither, so a stray value can never raise inside a paho callback."""
+    try:
+        return ResultCode(payload.get("result"))
+    except ValueError:
+        return None
+
+
 class TimedRobot:
     """The SIL handshake of `virtual_moxie.py`, instrumented.
 
@@ -198,7 +209,7 @@ class TimedRobot:
             if out.get("text", "").strip() and not self.words:
                 self.words = now - self.t0
             cc = p.get("consistency_control") or {}
-            if p.get("result") == "SUCCESS" or cc.get("is_completed"):
+            if result_code(p) is ResultCode.SUCCESS or cc.get("is_completed"):
                 self.finished = now - self.t0
                 self.done.set()
             return

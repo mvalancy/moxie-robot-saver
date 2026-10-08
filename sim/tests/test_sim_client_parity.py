@@ -130,14 +130,21 @@ def test_both_clients_decode_query_result_with_the_same_proto_field_table():
 
 
 def test_all_three_action_vocabularies_are_the_same_list():
-    """What the server can send (`ActionType`), what the browser implements and what the
-    SIL robot implements. Two clients that implement different verbs are not peers."""
-    from moxie_sdk.types import ActionType
+    """What the server sends (the recovered `ActionID` names, `types.ACTION_IDS`) plus the
+    two older spellings both clients keep accepting (`LEGACY_ACTION_NAMES`), what the
+    browser implements and what the SIL robot implements. Two clients that implement
+    different verbs are not peers; a server verb neither client knows is a dropped turn."""
+    from moxie_sdk.types import (ACTION_IDS, LEGACY_ACTION_NAMES, Action, ActionType)
+    from moxie_sdk.wire import encode_action
     at = BRIDGE.index("[", BRIDGE.index("const ACTION_KINDS = ["))
     browser = set(re.findall(r'"([a-z_]+)"', BRIDGE[at:BRIDGE.index("]", at)]))
     import virtual_moxie
-    assert browser == {a.value for a in ActionType} == set(virtual_moxie.ACTION_KINDS) \
+    accepted = set(ACTION_IDS) | set(LEGACY_ACTION_NAMES)
+    assert browser == accepted == set(virtual_moxie.ACTION_KINDS) \
         == set(ACTIONS_GOLDEN["action_kinds"])
+    # …and every `ActionType` really does go out under one of the recovered names.
+    sent = {encode_action(Action(type=t))["action"] for t in ActionType}
+    assert sent == set(ACTION_IDS), sent
 
 
 def test_both_clients_report_what_an_action_did_under_the_same_names():
@@ -156,7 +163,7 @@ def test_both_clients_record_an_applied_action_under_the_same_keys_in_the_same_o
     assert browser == shared + extra["sim/web/bridge/actions.js"], browser
     vm = _vm()
     vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
-                       "response_actions": [{"output_type": "GLOBAL", "action": "execute",
+                       "response_actions": [{"output_type": "GLOBAL_RESPONSE", "action": "execute",
                                              "function_id": "f", "function_args": ["a"]}]})
     assert list(vm.action_stats()["applied"][0]) == shared + extra["sim/virtual_moxie.py"]
 

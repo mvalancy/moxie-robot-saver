@@ -57,7 +57,7 @@ The runtime reader is not always scanning; content turns it on for a moment. The
 lines 255–281) is `ActionID.execute = 6` with `function_id` (field 7) and `repeated function_args` (field 8):
 
 ```json
-{"output_type": "GLOBAL", "action": "execute",
+{"output_type": "GLOBAL_RESPONSE", "action": "execute",
  "function_id": "eb_enable_qr", "function_args": ["true"]}
 ```
 
@@ -69,14 +69,15 @@ which currently names `eb_timer_request`, `eb_enable_qr` and `eb_wake`. Both cli
 `sim/virtual_moxie.py` and the browser bridge's `applyAction` read `function_id` and both arg spellings,
 record the action, and run nothing.
 
-**Still open — a wire-spelling defect, pinned not fixed.** `ActionType.ENABLE_QR` still serializes as the
-string `enable_qr` ([`types.py`](../../../mqtt/moxie_sdk/types.py)), which is not a name in the recovered
+**Fixed 2026-10-08 — the wire spelling.** `ActionType.ENABLE_QR` used to serialize as the string
+`enable_qr` ([`types.py`](../../../mqtt/moxie_sdk/types.py)), which is not a name in the recovered
 `ActionID` enum (`launch`, `launch_if_confirmed`, `exit_module`, `request_next`, `abort_module`, `execute`,
-`sleep`, `tangent`). It should serialize as the `execute` above, or be deleted in favour of `EXECUTE`.
-`test_the_naming_defects_p0a_still_owns_are_pinned_here_not_fixed` in
-[`test_actions_reach_the_robot.py`](../../../sim/tests/test_actions_reach_the_robot.py) pins today's
-spelling so the fix must turn it red. `EXIT = "exit"` has the same problem (the enum says `exit_module`);
-see §7 R3.
+`sleep`, `tangent`). It now goes out as the `execute` above (`function_id: "eb_enable_qr"`,
+`function_args: ["true"]`), `EXIT` goes out as `exit_module`, and `output_type` is `GLOBAL_RESPONSE`;
+`test_the_two_naming_defects_p0a_owned_are_fixed_on_the_wire` in
+[`test_actions_reach_the_robot.py`](../../../sim/tests/test_actions_reach_the_robot.py) holds the new
+shape and [`test_wire_conformance.py`](../../../sim/tests/test_wire_conformance.py) parses it through the
+committed pb2. Both Sim clients still accept the older `exit` / `enable_qr` spellings. See §7 R3.
 
 ### P0-b — the route (`$eb_qr_value` → a launch action) · shipped
 
@@ -223,7 +224,7 @@ it at a child's distance and lighting, is armed by our `execute`, or accepts our
 | Q4 | **A card is unauthenticated input in a child's room.** The allowlist bounds the damage to "a stranger's card can start one of 24 on-board activities". Whether that is acceptable (e.g. a console toggle, default off) is a parent-facing decision not made here | ask parents |
 | Q5 | **Print fidelity.** Level, version and module size are chosen, not measured against a held card | print the sheet and scan it with any phone |
 | R1 | **Closed allowlists are safety bounds.** Both the launchable-module list and the `function_id`s a content pack may emit (`ext.ACTION_WORDS`, `ext_host.robot_functions()`) are positive lists, re-checked where the wire is built | — (invariant; mutation-tested) |
-| R3 | **Wire spellings `exit` and `enable_qr`** are not recovered `ActionID` names (`exit_module`; `execute` + `function_id`). Both our clients (`virtual_moxie.ACTION_KINDS`, `bridge/actions.js`) agree with our server rather than the proto, held equal by `test_sim_client_parity.py`. Renaming is a contract change for the wire, not this feature | a robot capture, then one coordinated rename |
+| R3 | **Closed 2026-10-08.** The wire spellings `exit` and `enable_qr` were not recovered `ActionID` names; the server now sends `exit_module` and `execute` + `function_id: "eb_enable_qr"` (with `output_type: GLOBAL_RESPONSE` and an integer `result`), both clients accept the new names and the old (`virtual_moxie.ACTION_KINDS`, `bridge/actions.js`, held equal by `test_sim_client_parity.py`), and every reply parses strictly through the committed pb2 (`test_wire_conformance.py`). Built to the recovered protocol and OpenMoxie's field-proven shapes; unverified on our hardware | a robot capture (what remains: Q3) |
 
 ---
 📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Vision](../vision.md) · [QR command grammar](../../reverse-engineering/protocol/qr-commands.md)

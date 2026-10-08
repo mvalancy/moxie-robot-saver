@@ -4,7 +4,9 @@ The **per-turn RPC** between the robot and its conversational brain (cloud LLM/C
 *the* contract a self-hosted brain server answers. Recovered from `embodied/robotbrain/RemoteChat.proto`
 (`package embodied.robotbrain`) in the **v24.10.803** image. The response carries far more than text:
 affect scoring, **action commands** that drive activity navigation, a **safety verdict** on the child's
-input, and conversation metrics. Minimum viable answer: `RemoteChatResponse{result: SUCCESS, output:{text, markup}}`.
+input, and conversation metrics. Minimum viable answer:
+`RemoteChatResponse{result: 0, output:{text, markup}}` (`0` is SUCCESS; `result` is a `uint32`, so
+the JSON carries the number).
 Transport (MQTT `remote-chat` event / `commands/remote_chat`) is in [cloud-protocol](cloud-protocol.md#the-chat-requestresponse-envelope).
 
 ```mermaid
@@ -106,7 +108,7 @@ reports](../runtime/content-and-conversation.md#the-recommender), overlapping th
 
 ## For the three goals
 
-- **Server revival:** minimum `{result: SUCCESS, output:{text, markup}}`; fuller servers set `mood`/`dialog_act`, drive activities with `response_action`, moderate via `input.safety`, and stream with `chunk_num` + `consistency_control`. Implemented in [`mqtt/moxie_sdk/`](../../../mqtt/moxie_sdk/) (`wire.py`, `vocab.py`, `safety.py`).
+- **Server revival:** minimum `{result: 0 (SUCCESS), output:{text, markup}}`; fuller servers set `mood`/`dialog_act`, drive activities with `response_action`, moderate via `input.safety`, and stream with `chunk_num` + `consistency_control`. Implemented in [`mqtt/moxie_sdk/`](../../../mqtt/moxie_sdk/) (`wire.py`, `vocab.py`, `safety.py`).
 - **Custom firmware:** send `RemoteChatRequest`, speak `output`, run `response_action`, feed `execute_returns` back; the `ResultCode` set (`ERROR_OFFLINE` → local fallback, `NOREPLY_*`, `REPLY_FORCE_*`) is the dialog manager's contract.
 - **Pre-801:** no new lever ([network-trust](network-trust.md)).
 
