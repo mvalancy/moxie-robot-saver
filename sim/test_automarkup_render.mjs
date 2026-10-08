@@ -33,6 +33,14 @@ for (const c of cases) {
 }
 ok(facesSeen.size >= 6, `the goldens must look different; only saw ${[...facesSeen]}`);
 
+/* The mood mark IS the line's face (behavior-markup.md): its arm gestures must not re-set it
+ * (G2's question once ended 'thinking'). Replayed with the whole-body trees blanked, since a
+ * Bht_* tree may carry its own face (G3's thinking), each golden wears its mood's face alone. */
+for (const c of cases) {
+  play(c.markup.replace(/\+behaviour\+:\+Bht_[A-Za-z0-9_]+\+/g, "+behaviour+:++"), c.text);
+  ok(calls.setFace.length === 1, `${c.id}: a gesture re-set the mood's face; got ${JSON.stringify(calls.setFace)}`);
+}
+
 // The pre-floor passthrough (MOXIE_AUTOMARKUP=0) stays inert, or every check above is moot.
 play("Just words, no markup.", "Just words, no markup.");
 ok(calls.setFace.length === 0 && calls.setMotor.length === 0,

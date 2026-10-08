@@ -2,7 +2,7 @@
  * diagrams, doc lookup. Run via the entry file. */
 import {
   FULL, ORIGIN, P, call, chat, deep, eq, fresh,
-  hmac, join, ok, readFileSync, repo, sent,
+  hmac, join, ok, prompt, readFileSync, repo, sent,
   upstreamCalls, web0, wire, wire2,
 } from "./harness.mjs";
 
@@ -24,7 +24,7 @@ async function turnWith(content, text = "hello") {
  * regex floor (happy + Gesture_Talk for almost everything) is only the FALLBACK. */
 {
   const vocab = wire.expressiveVocab();
-  deep([vocab.moods.length, vocab.gestures.length], [11, 10], "the prompt offers all 11 ePlaybackMood faces and the 10 bridge/ gestures");
+  deep([vocab.moods.length, vocab.gestures.length], [11, 11], "the prompt offers all 11 ePlaybackMood faces, the 10 bridge/ gestures and the wave");
 
   // The model's choice reaches the face — including moods the floor can never pick. "Okay
   // then." is plain, so the floor alone would make every row happy + Gesture_Talk (CONTROL).
@@ -38,15 +38,14 @@ async function turnWith(content, text = "hello") {
          `a ${mood}/${gesture} envelope speaks only its \`say\` (never JSON) and drives mood ${num} + ${wireName}`);
   }
 
-  // A model that ignores the envelope is unharmed: it still SPEAKS, never JSON, with a floor face.
+  // A model that ignores or mangles the envelope is unharmed: it still SPEAKS, never JSON,
+  // with a floor face. (The brace-proof shapes are §22; an object with no `say` is §22 too.)
   for (const [label, content, wantText] of [
     ["plain prose", "Hi there, friend!", "Hi there, friend!"],
     ["a fenced envelope", '```json {"say":"Fenced but fine.","mood":"happy"} ```', "Fenced but fine."],
-    ["an envelope with no say", '{"mood":"happy","gesture":"celebrate"}', '{"mood":"happy","gesture":"celebrate"}'],
     ["a JSON array", "[1,2,3]", "[1,2,3]"],
-    ["a truncated brace", "{not json at all", "{not json at all"],
     ["an envelope split in two", '{"say": "Snuggly rainy days!"} {"mood": "happy", "gesture": "celebrate"}', "Snuggly rainy days!"],
-    ["two objects then prose", '{"say":"Hi."} {"mood":"happy"} and more', '{"say":"Hi."} {"mood":"happy"} and more'],
+    ["two objects then prose", '{"say":"Hi."} {"mood":"happy"} and more', "Hi."],
   ]) {
     const t = await turnWith(content);
     deep([t.status, t.text], [200, wantText], `${label} still answers 200 with the right line`);
@@ -142,7 +141,8 @@ async function turnWith(content, text = "hello") {
   ok(!/```|graph TD|-->/.test(t.text + t.markup), "…no fence or diagram syntax in the spoken line or the markup");
   eq(t.body.diagram, DIAGRAM, "the diagram rides the envelope as source, newlines intact (mermaid is newline-delimited)");
   const ticketed = await hmac.verifyTicket(wire2.readConfig(FULL), t.body.speech[0].ticket);
-  ok(ticketed.ok && !/```|graph TD|-->/.test(ticketed.claims.t || ""),
+  // (`claims.text`, not `.t`: the field as `verifyTicket` names it — read as `.t` this pin was vacuous.)
+  ok(ticketed.ok && ticketed.claims.text === t.text && !/```|graph TD|-->/.test(ticketed.claims.text),
      "the TTS ticket's authorised TEXT carries no diagram: nothing pays to synthesise syntax");
 
   // THE GATE: a diagram in a conversation about feelings is noise, and the instruction rides
@@ -247,7 +247,7 @@ async function turnWith(content, text = "hello") {
   const cfg = wire2.readConfig(FULL);
   const body = chat.buildUpstreamBody(cfg, [], hostile, undefined, hit);
   const last = body.messages[body.messages.length - 1];
-  ok(last.role === "system" && last.content.startsWith(cfg.persona), "the LAST message is still the persona, after the lookup");
+  ok(last.role === "system" && last.content.startsWith(prompt.anchorInstruction("anchor")), "the LAST message is still ours — the anchor — after the lookup");
   const docMsg = body.messages.find((m) => m.role === "system" && m.content.includes("Firmware image"));
   ok(docMsg && docMsg.content.length < 700, "the excerpt rides its own bounded system message…");
   ok(body.messages.indexOf(docMsg) < body.messages.findIndex((m) => m.role === "user"), "…placed BEFORE the child's turn");

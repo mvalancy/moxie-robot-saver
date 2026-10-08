@@ -3,8 +3,9 @@
  * While ALIVE it plays coordinated idle "beats" (look around, weight-shift, listen, tilt,
  * fidget, mood shifts…) mirroring the robot's NodeCanvas idle states
  * (behavior-tree-engine.md), through the REAL motor targets so the sliders animate too.
- * It never touches a joint you grabbed in the last few seconds (moxie.isUserHeld). ALIVE
- * off = the loop stops and joints stay where they are.
+ * It never touches a joint you grabbed in the last few seconds (moxie.isUserHeld), and
+ * never her face while she is saying a line (lineOwnsFace). ALIVE off = the loop stops and
+ * joints stay where they are.
  */
 (function () {
   "use strict";
@@ -14,9 +15,22 @@
                "curious", "thinking", "shy", "surprised", "confused"];
   var nextAt = 0, running = true, pending = [];
 
+  /* The face is the LINE's while she says it (bridge/body.js sets it from the reply's mood
+   * mark): no mood shift while her voice is live or a beat after (voice/'s broad
+   * isMoxieBusy), nor for LINE_HOLD_MS after a reply lands, since its face is set before
+   * its audio starts. The body keeps moving. */
+  var LINE_HOLD_MS = 4000, SPEAK_GRACE_MS = 1600;
+  function lineOwnsFace() {
+    try {
+      var a = window.moxieAudio, b = window.moxieBridge;
+      if (a && a.isMoxieBusy && a.isMoxieBusy(SPEAK_GRACE_MS)) return true;
+      return !!(b && b.msSinceLine && b.msSinceLine() < LINE_HOLD_MS);
+    } catch (e) { return false; }
+  }
+
   function m() { return window.moxie; }
   function drive(i, v) { var M = m(); if (M && !M.isUserHeld(i)) M.setMotor(i, Math.round(v)); }
-  function face(n) { var M = m(); if (M) M.setFace(n); }
+  function face(n) { var M = m(); if (M && !lineOwnsFace()) M.setFace(n); }
   // schedule a "return toward rest" that only fires if still alive (so toggling ALIVE
   // off mid-gesture freezes the pose for manual control instead of yanking it back)
   function later(ms, fn) { pending.push(setTimeout(function () { if (m() && m().isAlive()) fn(); }, ms)); }

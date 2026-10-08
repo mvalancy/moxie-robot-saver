@@ -93,7 +93,7 @@ Workflows are edited as templates in [`sim/ci/`](../../sim/ci/) and installed as
 |---|---|---|
 | `ci.yml` (fast) | push to `dev`, PR into `dev` | doc and protocol guards, the hermetic Python suite, the SIL smoke, node and headless-browser suites, and the `--selftest` of both deployed checks |
 | `ci-deep.yml` (deep) | PR into `main`, nightly 03:17 UTC, manual | the full suite, HIL scenarios, compose stack, package and multi-arch image builds (not pushed), the soak test; manual dispatch adds the **live** suites |
-| `deployed.yml` | 4× daily, manual | `check_deployed.mjs` against the real deployment; manual `mic=spend` runs the paid microphone check |
+| `deployed.yml` | 4× daily, daily canary, manual | `check_deployed.mjs` against the real deployment; once a day `check_live_turn.mjs` spends one chat turn; manual `mic=spend` runs the paid microphone check |
 | `promotion.yml` | hourly at :37, manual | is `dev` reconciled after the last `dev → main` squash? |
 | `release.yml` | tag `v*` | package and GHCR images |
 | `cleanup.yml` | PR closed | deletes that PR's build cache |
@@ -139,7 +139,11 @@ a phone-sized browser (390×844, iOS user agent) and asserts:
 3. no page asset failed on the wire;
 4. each key script **ran**, by a mark only that script leaves (e.g. `moxie.js` fills `#motors`,
    `hud.js` labels the motor sliders, `env.js` creates `.env-badge`, `qr.js` draws ink on
-   `#qr-canvas`). An inert 200 OK script produces no console output, so only an effect can reveal it.
+   `#qr-canvas`). An inert 200 OK script produces no console output, so only an effect can reveal it;
+5. on the site's own canonical origin, the deployment is **live**: `data-mode` is `live` and the badge
+   reads MOXIE ONLINE. Clause 4 only proves `mode.js` answered, and `degraded` (lost secrets, the kill
+   switch) or `offline` (no Functions) are answers too. Previews are keyless and are not held to it;
+   `MOXIE_EXPECT_LIVE=1|0` overrides.
 
 ```sh
 node sim/check_deployed.mjs                     # the canonical origin sim/web/index.html declares
@@ -150,9 +154,34 @@ gh workflow run deployed.yml                    # on demand in CI
 
 It is a **monitor, not a merge gate**: Pages previews have no GitHub Deployment to wait on, a branch
 alias serves the previous build until the new one lands, forks get no preview, and `*.pages.dev`
-hosts do not get the beacon. `--selftest` checks the checker: four loopback copies of `sim/web` under
-the real `_headers`, where the healthy one must pass and each mutated one must fail a *different*
-clause.
+hosts do not get the beacon. `--selftest` checks the checker: loopback copies of `sim/web` under the
+real `_headers`, where the healthy ones must pass and each mutated one must fail a *different* clause.
+
+It cannot see a **dead brain**: `/api/health` reads configuration only, so it answers `live` while every
+turn fails `upstream_down`, and the checker aborts every spending route. Measured on 2026-10-07 with
+fixtures built from the real Functions, a dead brain, lost secrets, the kill switch and missing
+Functions all passed the four clauses above (24/24); clause 5 now catches all but the dead brain.
+
+### The daily canary
+
+[`sim/check_live_turn.mjs`](../../sim/check_live_turn.mjs) asks the deployed brain one question: one
+`POST /api/chat` (`"hi moxie"`, a browser user agent, the site's own `Origin`) that must come back 200
+with `reason` null, a non-empty reply and a voice ticket for that line, in under 10 s. It never redeems
+the ticket, so a run costs one chat completion (3 of the 4,000-unit daily budget). It makes at most two
+POSTs, the second only after a `rate_limited` refusal (which spends nothing upstream), and logs at most
+40 characters of the reply.
+
+```sh
+node sim/check_live_turn.mjs --selftest   # hermetic; the fast tier runs this on every push
+node sim/check_live_turn.mjs              # the canonical origin: spends one chat turn
+gh workflow run deployed.yml              # the same in CI (with the free check); -f canary=false skips it
+```
+
+`deployed.yml` runs it once a day on its own cron, a judgement made for that one turn only: without it
+every monitor stays green with the brain dead. The selftest runs it as a child process against the real
+chat route on loopback: two controls must pass, and nine bad answers (a dead brain, lost secrets, the kill
+switch, no Functions, an empty reply, no ticket, a slow turn, two kinds of rate limit) must each fail
+their own clause.
 
 ### The paid microphone check
 

@@ -123,7 +123,9 @@ The field is `text` (an OpenAI `messages` array is ignored and gives `too_short`
 header is required (otherwise `forbidden_origin`).
 
 `node sim/check_deployed.mjs <url>` checks a deployment in a phone-sized browser without spending
-anything; `node sim/check_hosted_mic.mjs` exercises the microphone path and does spend.
+anything; `node sim/check_live_turn.mjs <url>` is the request above as a check (one chat turn, the
+daily canary in `deployed.yml`); `node sim/check_hosted_mic.mjs` exercises the microphone path and does
+spend.
 
 ## Known gaps
 
