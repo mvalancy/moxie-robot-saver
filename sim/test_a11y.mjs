@@ -24,7 +24,8 @@ const HEALTH_LIVE = JSON.stringify({
   limits: { max_input_chars: 500, max_tts_chars: 300 },
 });
 
-const browser = await launchBrowser(puppeteer, chrome, { autoplay: true });
+// `moxie.hosted.test` plays the public hostname (env.js reads hosted) for block 4b.
+const browser = await launchBrowser(puppeteer, chrome, { autoplay: true, hosts: { "moxie.hosted.test": srv.port } });
 
 /** A settled /sim.html under the shipped CSP; spendy /api routes are aborted into `spent`. */
 async function open(o = {}) {
@@ -90,6 +91,17 @@ const looping = (page) => page.evaluate(() => document.getAnimations()
                  a.effect.getComputedTiming().iterations === Infinity)
   .map((a) => (a.effect.target && (a.effect.target.id || a.effect.target.className)) + ":" + a.animationName));
 let scriptedNote = null;
+
+/** Every element a Tab press can land on (visible, or fixed), by id or tag.class. */
+const tabbablesOf = (page) => page.evaluate(() => {
+  const sel = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), " +
+              "textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])";
+  return [...document.querySelectorAll(sel)]
+    .filter((e) => e.offsetParent !== null || getComputedStyle(e).position === "fixed")
+    .map((e) => e.id || e.tagName.toLowerCase() + "." + (e.className || "").split(" ")[0]);
+});
+// Controls that are genuinely INSIDE the rail, one from each of its four groups.
+const RAIL_ONLY = ["center-btn", "tts-base", "stt-base", "bus-host", "rec-toggle"];
 
 /* ==========================================================================
  * ONE PAGE, scripted mode (no /api/health): 1 names, 3a the scripted voice note, the
@@ -306,20 +318,12 @@ let scriptedNote = null;
   const view = await open({ width: 390, height: 780 });
   const { page } = view;
 
-  const tabbables = () => page.evaluate(() => {
-    const sel = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), " +
-                "textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])";
-    return [...document.querySelectorAll(sel)]
-      .filter((e) => e.offsetParent !== null || getComputedStyle(e).position === "fixed")
-      .map((e) => e.id || e.tagName.toLowerCase() + "." + (e.className || "").split(" ")[0]);
-  });
+  const tabbables = () => tabbablesOf(page);
 
   const closed = await page.$eval("#rail-toggle", (e) => e.getAttribute("aria-expanded"));
   eq(closed, "false", "the drawer starts collapsed on a phone, and SAYS so");
   eq(await page.$eval("#rail-scroll", (e) => getComputedStyle(e).display), "none",
      "a collapsed rail is display:none — anything else leaves invisible tab stops");
-  // Controls that are genuinely INSIDE the rail, one from each of its four groups.
-  const RAIL_ONLY = ["center-btn", "tts-base", "stt-base", "bus-host", "rec-toggle"];
   const shut = await tabbables();
   const leaked = RAIL_ONLY.filter((id) => shut.includes(id));
   eq(JSON.stringify(leaked), "[]",
@@ -355,6 +359,45 @@ let scriptedNote = null;
      "aria-controls names the disclosed region");
 
   eyes("keyboard/phone", view);
+  await page.close();
+}
+
+/* ==========================================================================
+ * 4b. HOSTED DESKTOP — the rail's new default under the same keyboard contract. On a hosted
+ * page the >= 900 px column starts COLLAPSED (rail.js: a stranger meets a toy, not servo
+ * sliders), so it must SAY so, leave no tab stops behind it, keep the whole conversation
+ * reachable, and still disclose its controls. (Block 4 is the phone drawer; the local
+ * desktop column still starts open, which block 1 above relies on.)
+ * ======================================================================= */
+{
+  const view = await openSim(browser, `http://moxie.hosted.test:${srv.port}/sim.html`,
+                             { viewport: { width: 1440, height: 900 }, health: HEALTH_LIVE });
+  const { page, spent } = view;
+  eq(await page.evaluate(() => document.body.getAttribute("data-env")), "hosted",
+     "precondition: the mapped hostname reads as a hosted page");
+  eq(await page.$eval("#rail-toggle", (e) => e.getAttribute("aria-expanded")), "false",
+     "hosted desktop: the rail starts collapsed, and SAYS so");
+  eq(await page.$eval("#rail-scroll", (e) => getComputedStyle(e).display), "none",
+     "hosted desktop: the collapsed rail is display:none — no invisible tab stops");
+  const shut = await tabbablesOf(page);
+  eq(JSON.stringify(RAIL_ONLY.filter((id) => shut.includes(id))), "[]",
+     `hosted desktop: nothing inside the collapsed rail is tabbable (${JSON.stringify(shut)})`);
+  for (const id of ["rail-toggle", "transcript", "speech-input", "mic-btn", "speech-btn"])
+    ok(shut.includes(id), `hosted desktop: #${id} is reachable with the rail shut (${JSON.stringify(shut)})`);
+  await page.click("#rail-toggle");
+  await page.waitForFunction(() => getComputedStyle(document.getElementById("rail-scroll")).display !== "none",
+                             { timeout: 5000 }).catch(() => {});
+  eq(await page.$eval("#rail-toggle", (e) => e.getAttribute("aria-expanded")), "true",
+     "hosted desktop: aria-expanded flips when the visitor opens it");
+  // The localhost-only inputs (Piper / STT / broker addresses) are DISABLED on a hosted page by
+  // design (env.js: CSP refuses their only job), so the tab stops are the rail's live controls.
+  const open = await tabbablesOf(page);
+  const LIVE_HERE = ["center-btn", "rec-toggle"];
+  eq(JSON.stringify(LIVE_HERE.filter((id) => open.includes(id))), JSON.stringify(LIVE_HERE),
+     `hosted desktop: …and its controls are reachable again (${JSON.stringify(open.slice(0, 14))})`);
+  await page.evaluate(() => { try { localStorage.removeItem("moxie.railOpen"); } catch (e) {} });
+  eq(spent.length, 0, "the hosted desktop page spends nothing");
+  eyes("hosted desktop", view);
   await page.close();
 }
 

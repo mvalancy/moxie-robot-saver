@@ -185,6 +185,11 @@ try {
     const t = await page.evaluate(() => (document.getElementById("transcript") || {}).textContent || "");
     ok(/hello moxie/.test(t) && /Moxie/.test(t),
        `sim.html: a typed turn reaches the transcript AND is answered (got ${JSON.stringify(t.slice(0, 90))})`);
+    // A hosted desktop page opens with the tools rail CLOSED (rail.js): open it as a visitor
+    // would, then forget that choice so no later page in this suite inherits it.
+    if (await page.$eval("#rail-toggle", (e) => e.getAttribute("aria-expanded")) === "false")
+      await page.click("#rail-toggle");
+    await page.evaluate(() => { try { localStorage.removeItem("moxie.railOpen"); } catch (e) {} });
     await page.click("#qr-make");
     await untilPage(page, () => /\{/.test((document.getElementById("qr-status") || {}).textContent || "") || null);
     ok(await inkOf(page, "qr-canvas") > 500, "sim.html: the QR card actually drew a code");
