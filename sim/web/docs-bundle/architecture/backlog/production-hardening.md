@@ -334,9 +334,11 @@ rules or the defaults, and a per-robot `NO_DATA` lapsed, so the server began kee
 transcript, long-term memory, activity record and safety-journal excerpts again. Now:
 
 - **Written on every edit.** `update_config` saves the robot's layer to `robots/<id>/config.json`
-  through the store's locked, atomic write, before the `NO_DATA` purge and before the push. A write the
-  store refuses still applies to the running supervisor and puts a "NOT saved" line in the activity
-  feed.
+  through the store's locked, atomic write, before the `NO_DATA` purge and before the push. The merge
+  into memory, the snapshot and the write run inside the record's `transaction()` (§3), so two edits
+  of one robot at once reach the disk in the order they changed memory and the file never ends up
+  holding the older one. A write the store refuses still applies to the running supervisor and puts a
+  "NOT saved" line in the activity feed.
 - **Read once, at construction**, before the transcript sweep in `_load_memory()`. The brain picker,
   the safety journal, the status snapshot and the console's `GET /config` read the per-robot dict
   directly, so a lazy read would leave them blind until something else touched the config.

@@ -498,7 +498,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening: a supervisor that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 30095,
+   "bytes": 30328,
    "mermaid": 0,
    "headings": [
     "0. The ceiling",

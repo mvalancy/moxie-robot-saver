@@ -421,6 +421,50 @@ def test_a_save_the_store_refuses_still_applies_now_and_says_it_was_not_saved(tm
     assert any("d_one" in n["text"] and "NOT saved" in n["text"] for n in rt.recent)
 
 
+def test_two_edits_of_one_robot_reach_the_disk_in_the_order_they_changed_ram(tmp_path):
+    """Two edits of one robot at once (a threaded status server, an operator's script):
+    each changes RAM, snapshots it and writes the snapshot. Unless the record is held
+    across all three, the first edit can write its OLDER snapshot after the second, and
+    the next restart brings back a volume the parent already changed. Edit A is paused
+    between its snapshot and its write; edit B runs in that gap; the file must end up
+    equal to RAM. Deterministic: no sleeps, every wait is on an event."""
+    import threading
+    rt = _runtime(tmp_path, devices=("d_one",))
+    a_paused, release_a, b_progress = (threading.Event() for _ in range(3))
+    real_write, real_tx = rt.store.write, rt.store.transaction
+
+    def write(device_id, collection, value):
+        if threading.current_thread().name == "edit-A" and collection == "config":
+            a_paused.set()                       # A has its snapshot and has not written
+            assert release_a.wait(10), "edit A was never released"
+        return real_write(device_id, collection, value)
+
+    def transaction(device_id, collection):
+        if threading.current_thread().name == "edit-B":
+            b_progress.set()                     # B is at the record, which A holds
+        return real_tx(device_id, collection)
+
+    def edit_b():
+        rt.update_config("d_one", audio_volume=0.5)
+        b_progress.set()                         # B is done (nothing made it wait)
+
+    rt.store.write, rt.store.transaction = write, transaction
+    a = threading.Thread(target=rt.update_config, args=("d_one",),
+                         kwargs={"audio_volume": 0.3}, name="edit-A", daemon=True)
+    b = threading.Thread(target=edit_b, name="edit-B", daemon=True)
+    a.start()
+    assert a_paused.wait(10), "edit A never reached its write"
+    b.start()
+    assert b_progress.wait(10), "edit B neither finished nor reached the record"
+    release_a.set()
+    a.join(10)
+    b.join(10)
+    assert not a.is_alive() and not b.is_alive()
+    assert rt._config_overrides["d_one"] == {"audio_volume": 0.5}
+    assert json.loads(_record(tmp_path).read_text()) == {"audio_volume": 0.5}, \
+        "the file holds the older edit: a restart would undo the newer one"
+
+
 def test_a_default_store_runtime_keeps_its_records_in_this_tests_own_data_dir(
         isolated_data_dir):
     """`make_runtime(store=None)` builds on `JsonStore()`, that is `MOXIE_DATA_DIR`, and a

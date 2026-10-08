@@ -1,6 +1,6 @@
 """Fleet/per-robot config, the device permit list, config push, wake and rehearsal preview."""
 from __future__ import annotations
-import json, os, time
+import contextlib, json, os, time
 
 from moxie_sdk.types import ResultCode
 from moxie_sdk.wire import build_activity_response
@@ -328,11 +328,15 @@ class FleetMixin:
         """Per-robot config edit: merge overrides into this device's RobotCloudConfig,
         save the parent's settings so they survive a restart (`_save_config_overrides`)
         and re-publish it. Overrides persist across re-pushes."""
-        self._config_overrides.setdefault(device_id, {}).update(overrides)
         self._note("config", f"⚙️  config updated: {', '.join(overrides)}")
-        # Saved before the purge and the push: a crash after this line still boots with
-        # the parent's choice, so a NO_DATA that was set is swept at the next start.
-        self._save_config_overrides(device_id)
+        # One transaction on the robot's record across the merge, the snapshot and the
+        # write: two edits at once reach the disk in the order they changed RAM, so the
+        # file never ends up holding the older one (`_settings_record`).
+        with self._settings_record(device_id) as held:
+            self._config_overrides.setdefault(device_id, {}).update(overrides)
+            # Saved before the purge and the push: a crash after this line still boots
+            # with the parent's choice, so a NO_DATA that was set is swept at the next start.
+            self._save_config_overrides(device_id, held)
         if "logging_policy" in overrides:
             # The privacy switch moved: under NO_DATA erase transcript + activity record now.
             self.purge_transcripts()
@@ -371,15 +375,36 @@ class FleetMixin:
                 dropped.append(str(key))
         return kept, dropped
 
-    def _save_config_overrides(self, device_id) -> bool:
-        """Write this robot's saved settings (the store's locked, atomic write). A write
-        that fails is said aloud: the edit still applies now, but not after a restart."""
-        kept, _ = self._storable_settings(dict(self._config_overrides.get(device_id) or {}))
+    @contextlib.contextmanager
+    def _settings_record(self, device_id):
+        """Hold this robot's record (`store.transaction`) for one edit. Yields False when
+        it cannot be held (another process kept the lock past the store's timeout, which
+        the store records): the edit still applies, and `_save_config_overrides` says it
+        was not saved instead of waiting on the same lock a second time."""
+        from moxie_sdk.store import StoreLockTimeout
+        held = contextlib.ExitStack()
         try:
-            saved = self.store.write(device_id, self.ROBOT_CONFIG_COLLECTION, kept)
+            held.enter_context(self.store.transaction(device_id, self.ROBOT_CONFIG_COLLECTION))
         except Exception as e:                   # persistence must never cost the edit
-            print(f"[runtime] settings write failed for {device_id}: {e}", flush=True)
-            saved = False
+            if not isinstance(e, StoreLockTimeout):
+                print(f"[runtime] settings write failed for {device_id}: {e}", flush=True)
+            yield False
+            return
+        with held:
+            yield True
+
+    def _save_config_overrides(self, device_id, held: bool = True) -> bool:
+        """Write this robot's saved settings (the store's locked, atomic write), inside
+        `_settings_record`. A write that fails, or a record that could not be held, is said
+        aloud: the edit still applies now, but not after a restart."""
+        saved = False
+        if held:
+            kept, _ = self._storable_settings(
+                dict(self._config_overrides.get(device_id) or {}))
+            try:
+                saved = self.store.write(device_id, self.ROBOT_CONFIG_COLLECTION, kept)
+            except Exception as e:               # persistence must never cost the edit
+                print(f"[runtime] settings write failed for {device_id}: {e}", flush=True)
         if not saved:
             line = (f"⚠️  settings for {device_id} applied but NOT saved — they will not "
                     f"survive a restart")
