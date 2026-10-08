@@ -168,13 +168,16 @@ def test_both_shipped_modules_carry_the_same_goodbye_and_sleep():
 
 def test_a_looping_transcript_cannot_stall_the_patterns():
     """Speech-to-text can loop ("bye bye bye ..."). Every word of these patterns reads one
-    way only; an ambiguous one backtracks exponentially and would take minutes at 25."""
+    way only. An ambiguous one backtracks exponentially: a Goodbye mutated to
+    `(?:bye\\W*)+` took 0.56 s at 20 repeats and 17 s at 25. The count ramps up one repeat
+    at a time, so such a pattern fails at the first count past the ceiling (1.2 s for that
+    mutation, against 17 s when the first count tried was 25)."""
     module = load_modules(_raw("starter.json"))
     patterns = [g for g in module.globals if g.name in ("Goodbye", "Sleep")]
     assert len(patterns) == 2
     for unit in ("bye ", "bye moxie ", "ok bye ", "bye-", "byebye ", "now ", "moxie ",
                  "good night ", "i'm done ", "go to sleep ", "stop "):
-        for n in (25, 2000):
+        for n in (*range(1, 26), 100, 400, 2000):
             for tail in ("x", "!"):
                 text = unit * n + tail
                 for g in patterns:
