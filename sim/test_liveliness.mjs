@@ -1,7 +1,8 @@
 /* test_liveliness.mjs — liveliness behaviours, in a real browser on the real page:
  *   1. Moxie stops muttering while you talk to her, and resumes once you stop
  *      (`ambient.js`'s conversation hold).
- *   2. Her self-talk appears in the comms log.
+ *   2. Her self-talk appears in the comms log — before anyone has spoken as ONE row,
+ *      re-worded in place at one height (2b), and never while the visitor is writing (2c).
  *   3. The chat dock fills the width available to it, rail open or closed, desktop and phone.
  *   4. The speech bubble hangs on her HEAD in the 3-D scene and follows her.
  *   6. The presence badge stays hidden until a face event (§5 is her diagrams).
@@ -311,6 +312,105 @@ async function presenceBadge(label, page) {
 
   await presenceBadge("desktop", page);
   eyes("the 1280x900 page", page);
+  await page.close();
+}
+
+/* ======================================================================== *
+ * 2b. BEFORE ANYONE HAS SPOKEN: ONE SELF-TALK ROW, ONE HEIGHT
+ * ======================================================================== *
+ * A row per quip grew the dock 211 -> 431 px in 90 s of idle on a 1440x900 desktop and over
+ * her torso on a phone (moxie/stage.js frames her once and never re-frames on dock growth).
+ * Until the first `.turn` the row is re-worded in place and holds one height, so the dock
+ * grows at most once, by at most 40 px. Driven through the page's own seam
+ * (`__ambient.say` = the quip's log row), with three quips of different lengths.
+ */
+for (const [label, w, h, mobile] of [["desktop 1440x900", 1440, 900, false], ["phone 390x844", 390, 844, true]]) {
+  const page = await open(w, h, mobile);
+  const solo = await page.evaluate(async () => {
+    const dock = document.getElementById("chat-dock"), log = document.getElementById("transcript");
+    const H = () => dock.getBoundingClientRect().height;
+    const h0 = H();
+    const after = [];
+    for (const q of ["Beep boop.",
+                     "I calculated seven hundred ways to take over the living room. This one is the cutest.",
+                     "I keep a list."]) {
+      window.__ambient.say(q);
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      after.push({ h: H(), rows: log.querySelectorAll(".mutter").length,
+                   text: (log.querySelector(".mutter .msg") || {}).textContent || "" });
+    }
+    const turnsBefore = log.querySelectorAll(".turn").length;
+    // …and once a real turn exists, her self-talk is part of the conversation again.
+    const row = document.createElement("div");
+    row.className = "turn user";
+    row.innerHTML = '<span class="who">You</span><span class="msg">hello moxie</span>';
+    log.appendChild(row);                                  // exactly what addTranscript() builds
+    window.__ambient.say("Back to my world domination homework.");
+    return { h0, after, turnsBefore, rowsAfterTurn: log.querySelectorAll(".mutter").length };
+  });
+  eq(solo.turnsBefore, 0, `${label}: precondition — nobody has spoken yet`);
+  eq(solo.after.map((a) => a.rows).join(","), "1,1,1",
+     `${label}: before the first turn her self-talk keeps ONE row, re-worded in place, not one per quip`);
+  eq(solo.after[2].text, "I keep a list.", `${label}: …showing her latest quip`);
+  const heights = solo.after.map((a) => Math.round(a.h));
+  ok(Math.max(...heights) - Math.round(solo.h0) <= 40,
+     `${label}: her mutters grow the dock by at most 40 px (${Math.round(solo.h0)} -> ${heights.join(" / ")})`);
+  eq(new Set(heights).size, 1,
+     `${label}: …and a new quip, short or long, does not move it at all (${heights.join(" / ")})`);
+  eq(solo.rowsAfterTurn, 2, `${label}: once a real turn exists, a new quip is appended as before`);
+  eyes(`${label} self-talk row`, page);
+  await page.close();
+}
+
+/* ======================================================================== *
+ * 2c. NO QUIP WHILE THE VISITOR IS MAKING A LINE
+ * ======================================================================== *
+ * Before their first line there is no `.turn` for the hold to count, so her first quip landed
+ * while they typed (5.4-5.7 s before the first send, measured on the live site). Each case
+ * drives `moxieAmbient.say()` — the exact `tick()` the timer runs — with her audio recorded
+ * instead of played and the busy-guard pinned open, so the visitor's state is the ONLY thing
+ * that can hold a quip back; a control on either side proves a quip does fire.
+ */
+{
+  const page = await open(1280, 900);
+  const r = await page.evaluate(async () => {
+    const A = window.moxieAudio, box = document.getElementById("speech-input");
+    const spoke = [];
+    A.speak = (t, group) => { spoke.push(group); return Promise.resolve(true); };
+    A.isMoxieBusy = () => false;
+    const settle = () => new Promise((res) => setTimeout(res, 0));
+    const tick = async () => {
+      const n = spoke.length;
+      window.moxieAmbient.say();
+      // The first call fetches ambient.json; after that tick() runs in a microtask.
+      for (let i = 0; i < 200 && spoke.length === n; i++) await new Promise((res) => setTimeout(res, 25));
+      return spoke.length > n;
+    };
+    const quick = async () => { const n = spoke.length; window.moxieAmbient.say(); await settle(); await settle(); return spoke.length > n; };
+    const out = {};
+    out.control = await tick();
+    box.focus();
+    out.focused = { quipped: await quick(), state: window.__ambient.state(), active: document.activeElement === box };
+    box.blur();
+    box.value = "do you like cats";
+    out.text = { quipped: await quick(), composing: window.__ambient.state().composing };
+    box.value = "";
+    document.body.setAttribute("data-mic", "on");
+    out.mic = { quipped: await quick(), composing: window.__ambient.state().composing };
+    document.body.removeAttribute("data-mic");
+    out.after = await quick();
+    window.moxieAmbient.stop();
+    return out;
+  });
+  eq(r.control, true, "CONTROL: with the message box idle a tick really does make a quip");
+  eq(r.focused.active, true, "precondition: the message box really has focus");
+  eq(r.focused.quipped, false, "no quip while the message box has FOCUS (the visitor is about to type)");
+  eq(r.focused.state.composing, true, "…which ambient records as composing…");
+  eq(r.focused.state.conversing, true, "…and as a conversation hold");
+  eq(r.text.quipped, false, "no quip while the message box HOLDS TEXT, focused or not");
+  eq(r.mic.quipped, false, "no quip while the mic is open (it would land in the visitor's own clip)");
+  eq(r.after, true, "CONTROL: box empty, unfocused, mic shut — she quips again");
+  eyes("the composing hold", page);
   await page.close();
 }
 

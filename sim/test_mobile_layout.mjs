@@ -5,8 +5,12 @@
  * Turnstile challenge once did too). Only `document.elementFromPoint()` catches that, so that
  * is the assertion here — plus TEETH that restore each pre-fix geometry and require the
  * collision to REAPPEAR, so a selector matching nothing cannot read as green.
- *   1 per phone, cold: the composer is reachable on first paint; the banner does not cover
- *     the drawer handle; the drawer really opens (teeth: --eb-lift back at 0).
+ *   0 the HUB: "Talk to Moxie" and the linked picture of her are in the first screen
+ *     (teeth: the pre-fix order puts the button below the fold again).
+ *   1 per phone, cold: the composer is reachable on first paint; the banner hangs under the
+ *     header, clear of her torso and of the drawer handle; the drawer really opens (teeth:
+ *     the pre-fix placement covers her torso and, unlifted, the message box).
+ *   1b the degraded banner of a deployment WITH a brain (napping/resting) at 390x844.
  *   2 the Turnstile challenge on screen, both directions (teeth: the bottom:16px holder).
  *   3 the rail is optional: an opener and a typed line are whole turns with it shut; it still
  *     opens and works (teeth: the composer back inside the collapsed rail).
@@ -90,6 +94,41 @@ const railState = (page) => page.evaluate(() => ({
   groups: document.querySelectorAll("#rail-scroll .group").length,
 }));
 
+/** Her head and torso on screen, from the frame the bubble placed itself from (one instant):
+ *  `torso` runs from just under her chin (`chest`) down one head-height. Saying a word is
+ *  how a frame gets placed; a hidden bubble freezes the stash. */
+const herBody = (page) => page.evaluate(() => new Promise((resolve) => {
+  window.moxie.setSpeech("Hi.");
+  const t0 = performance.now();
+  const poll = () => {
+    const a = window.__bubbleAnchor();
+    if (a && a.exact && !a.frozen) {
+      const crown = a.exact.crown.y, chest = a.exact.chest.y;
+      return resolve({ crown: Math.round(crown), chest: Math.round(chest),
+                       torso: [Math.round(chest), Math.round(chest + (chest - crown))] });
+    }
+    if (performance.now() - t0 > 8000) return resolve(null);
+    requestAnimationFrame(poll);
+  };
+  poll();
+}));
+/** The banner's box, and the header's bottom (the top of #stage) it should hang under. */
+const bannerBox = (page) => page.evaluate(() => {
+  const b = document.getElementById("env-banner");
+  if (!b) return null;
+  const r = b.getBoundingClientRect(), cs = getComputedStyle(b);
+  return { top: Math.round(r.top), bottom: Math.round(r.bottom), shown: r.height > 0 && cs.visibility !== "hidden",
+           header: Math.round(document.getElementById("stage").getBoundingClientRect().top),
+           text: (b.querySelector(".eb-text") || {}).textContent || "",
+           link: !!b.querySelector(".eb-link") && !b.querySelector(".eb-link").hidden };
+});
+const overlap = (a, lo, hi) => Math.max(0, Math.min(a.bottom, hi) - Math.max(a.top, lo));
+/** The placement the banner had before it moved under the header: bottom-anchored, lifted
+ *  above the dock (or, with `lift` false, the original unlifted 14 px). */
+const PRE_FIX = (lift) => `() => { const b = document.getElementById("env-banner");
+  b.style.top = "auto"; b.style.zIndex = "30";
+  b.style.bottom = ${lift ? '"calc(var(--eb-lift) + 14px)"' : '"14px"'}; }`;
+
 /** Reachable on a cold load: a real box, INSIDE the first viewport, owning its centre, unscrolled.
  *  The production defect measured #speech-input 262x40 at y=2095 of 844, inside a shut drawer. */
 function reachable(label, m, what) {
@@ -111,6 +150,48 @@ const typedTurn = async (page, fire, words) => {
 };
 
 try {
+  /* =====================================================================
+   * 0. THE HUB ON A PHONE: THE WAY IN IS IN THE FIRST SCREEN. Measured on the live site at
+   * 390x844: the picture of her was not a link and "Open the simulator" sat at y=962, under
+   * a 70-word pitch. Now the picture links to her and says so, and "Talk to Moxie" comes
+   * before the pitch — on the two short phones too (the picture yields to 40svh).
+   * =================================================================== */
+  for (const [label, w, h] of [PHONES[0], PHONES[2], PHONES[1]]) {
+    const page = await browser.newPage();
+    await page.setViewport(phone(w, h));
+    const errs = [];
+    page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
+    page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
+    await page.goto(`http://moxie.hosted.test:${site.port}/`, { waitUntil: "load", timeout: 30000 });
+    await page.evaluate(() => document.fonts.ready.then(() => new Promise((r) => requestAnimationFrame(() => r()))));
+    const cta = await hit(page, "a.btn.primary");
+    reachable(`${label} hub`, cta, "the primary button");
+    ok(/^Talk to Moxie$/.test(cta.text || ""), `${label} hub: …and it says what you will do there — ${JSON.stringify(cta.text)}`);
+    const hero = await hit(page, "#stage a.frame");
+    reachable(`${label} hub`, hero, "the picture of her, as a link");
+    const hrefs = await page.evaluate(() => ({
+      cta: document.querySelector("a.btn.primary").getAttribute("href"),
+      hero: (document.querySelector("#stage a.frame") || { getAttribute: () => null }).getAttribute("href"),
+      tap: (() => { const t = document.querySelector("#stage a.frame .tap");
+        return t ? { text: t.textContent.trim(), shown: getComputedStyle(t).display !== "none" && t.getBoundingClientRect().height > 0 } : null; })(),
+    }));
+    eq(JSON.stringify([hrefs.cta, hrefs.hero]), '["sim","sim"]',
+       `${label} hub: both go straight to /sim (sim.html is a 308 on Cloudflare Pages)`);
+    ok(hrefs.tap && hrefs.tap.shown && /^Tap to talk to Moxie$/.test(hrefs.tap.text),
+       `${label} hub: the picture SAYS it is the way in (${JSON.stringify(hrefs.tap)})`);
+    eq(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1),
+       false, `${label} hub: no horizontal page scroll`);
+    if (w === 390) {
+      /* TEETH: the pre-fix order (the button after the pitch) and it is below the fold again. */
+      const broken = await hitAfter(page, `() => document.querySelector(".hero-copy .sub")
+        .after(document.querySelector(".hero-copy .cta"))`, "a.btn.primary");
+      ok(broken.found && !broken.inFold,
+         `teeth — with the button back under the pitch it leaves the first screen again (y=${broken.top} of ${broken.vh})`);
+    }
+    eq(errs.length, 0, `${label} hub: console errors — ${errs.slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+
   /* =====================================================================
    * 1. EVERY PHONE, COLD — nothing tapped, nothing scrolled, the drawer shut.
    * =================================================================== */
@@ -147,15 +228,40 @@ try {
       const m = await hit(page, sel);
       ok(m.sized && m.self, `${label}: a tap at the centre of ${what} reaches it, not ${m.hit}`);
     }
+    /* …and it hangs UNDER THE HEADER, clear of her torso. Lifted above the dock (the old
+     * placement) the card covered her from the chin down: at 390x844, 366..527 over a torso
+     * of 350..463, and higher still once the log grew. */
+    const body = await herBody(page);
+    const ban = await bannerBox(page);
+    ok(!!body, `${label}: her body was placed on screen (the bubble anchor stamped a frame)`);
+    ok(ban && ban.top >= ban.header - 1 && ban.top <= ban.header + 24,
+       `${label}: the banner hangs just under the header (banner top ${ban && ban.top}, header ${ban && ban.header})`);
+    if (body && ban) {
+      eq(overlap(ban, body.torso[0], body.torso[1]), 0,
+         `${label}: the banner does not cover her torso (banner ${ban.top}..${ban.bottom}, torso ${body.torso.join("..")})`);
+      ok(ban.bottom < body.crown,
+         `${label}: …nor her head — it fits in her headroom (banner bottom ${ban.bottom}, crown ${body.crown})`);
+    }
+    /* Her speech bubble shares that headroom on a short phone: her words draw OVER the note. */
+    // Said again in the same task as the hit test: a hidden bubble is pointer-events:none.
+    const bub = await hitAfter(page, `() => window.moxie.setSpeech("Hi.")`, "#bubble");
+    ok(bub.self, `${label}: a tap at the centre of her speech bubble reaches the bubble, not ${bub.hit}`);
     if (w === 375) {
-      /* TEETH: put the pre-fix `--eb-lift: 0` back and require the banner to swallow the tap
-       * again (at the message box, now the bottom row), then restore it. */
+      /* TEETH: the pre-fix placement (bottom-anchored, lifted above the dock) lands on her
+       * torso — so the check above can see a covered robot. */
+      await page.evaluate(`(${PRE_FIX(true)})()`);
+      const lifted = await bannerBox(page);
+      ok(body && lifted && overlap(lifted, body.torso[0], body.torso[1]) > 0,
+         `teeth: lifted above the dock the banner covers her torso again (banner ${lifted && lifted.top}..${lifted && lifted.bottom}, torso ${body && body.torso.join("..")})`);
+      /* TEETH: env.js still measures a real lift (the wider layouts use it), and without one
+       * the bottom-anchored banner swallows the message box. */
       const lift = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--eb-lift").trim());
       ok(/^\d+px$/.test(lift) && parseInt(lift, 10) > 0, `teeth: env.js measured a real lift, not a constant (${lift})`);
-      const broken = await hitAfter(page, `() => document.documentElement.style.setProperty("--eb-lift", "0px")`, "#speech-input");
+      const broken = await hitAfter(page, PRE_FIX(false), "#speech-input");
       ok(!broken.self && /env-banner|\beb-/.test(broken.hit),
-         `teeth: with --eb-lift back at 0 the banner LAYER swallows the tap again (hit ${broken.hit})`);
-      await page.evaluate((l) => document.documentElement.style.setProperty("--eb-lift", l), lift);
+         `teeth: at the bottom with no lift the banner LAYER swallows the tap again (hit ${broken.hit})`);
+      await page.evaluate(() => { const b = document.getElementById("env-banner");
+                                  b.style.top = ""; b.style.bottom = ""; b.style.zIndex = ""; });
     }
 
     /* Open the drawer FOR REAL and drive what is inside it. */
@@ -170,6 +276,45 @@ try {
     eq(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1),
        false, `${label}: no horizontal page scroll`);
     eyes(`${label}: the phone page`, page);
+    await page.close();
+  }
+
+  /* =====================================================================
+   * 1b. A DEPLOYMENT WITH A BRAIN, DEGRADED, at 390x844: the banner says she is napping or
+   * resting — never "need a locally-run backend" or "Run it locally" (that is true only of a
+   * deployment with no brain, block 1's fixture) — and it covers no part of her. Both ways
+   * in: the budget answered by /api/health, and a turn the brain fails mid-conversation.
+   * =================================================================== */
+  for (const [kind, fixture] of [
+    ["budget spent", { health: JSON.stringify({ ok: true, degraded: true, reason: "budget_exhausted", retry_after_s: 1800,
+                                                mode: "degraded", voice: true, ears: true }) }],
+    ["brain down mid-chat", { health: JSON.stringify({ ok: true, reason: null, mode: "live", voice: true, ears: true }),
+                              chat: JSON.stringify({ ok: false, reason: "upstream_down", retry_after_s: 0, mode: "degraded",
+                                                     messages: [], speech: [], context: "" }) }],
+  ]) {
+    const L = `iPhone 12  390x844, ${kind}`;
+    const failed = { n: 0 };            // the 503s answered on purpose, forgiven by `eyes`
+    const v = await openSim(browser, HOSTED, { viewport: phone(390, 844), health: fixture.health,
+      route: (r, u) => fixture.chat && /\/api\/chat\b/.test(u)
+        ? (failed.n++, r.respond({ status: 503, contentType: "application/json", body: fixture.chat }), true) : false });
+    const page = v.page;
+    views.set(page, v);
+    if (fixture.chat) {
+      await page.evaluate(() => { document.getElementById("speech-input").value = "hello moxie";
+                                  document.getElementById("speech-btn").click(); });
+      await page.waitForFunction(() => window.moxieMode.state() === "degraded", { timeout: 15000 }).catch(() => {});
+    }
+    await page.waitForFunction(() => { const b = document.getElementById("env-banner");
+      return !!b && getComputedStyle(b).visibility !== "hidden"; }, { timeout: 10000 }).catch(() => {});
+    const ban = await bannerBox(page);
+    const body = await herBody(page);
+    ok(ban && ban.shown, `${L}: the degraded banner is showing (${JSON.stringify(ban)})`);
+    ok(ban && /napping|resting/.test(ban.text) && !/locally/i.test(ban.text) && !ban.link,
+       `${L}: it says she is napping or resting, with no "locally-run backend" and no "Run it locally" (${JSON.stringify(ban && ban.text)})`);
+    ok(ban && body && ban.bottom < body.crown,
+       `${L}: …and it covers NO part of her, head included (banner ${ban && ban.top}..${ban && ban.bottom}, crown ${body && body.crown})`);
+    v.aborted.refused += failed.n;
+    eyes(L, page);
     await page.close();
   }
 
@@ -288,24 +433,31 @@ try {
   }
 
   /* =====================================================================
-   * 4. THE CHALLENGE, MEASURED WHEN IT CAN ACTUALLY BE IN THE WAY. Ambient self-talk grows
-   * #chat-dock to its cap and lifts everything above it (~128 px at 390x844). The page's own
-   * `window.__ambient.say()` drives the dock until its height stops changing (a measurement,
-   * not a sleep); assertions are gated on `atCap` and use RECT INTERSECTION — a centre hit
-   * test stayed green while the challenge covered a third of the handle. At cap the handle and
-   * a viewport-centred challenge overlap only for 683 < vh < 909: 844 and 851 are inside;
-   * 375x667 is below and pins that nothing already clear was moved.
+   * 4. THE CHALLENGE, MEASURED WHEN IT CAN ACTUALLY BE IN THE WAY: #chat-dock at its tallest,
+   * which lifts everything above it (~128 px at 390x844). Self-talk rows are appended until the
+   * dock's height stops changing (a measurement, not a sleep); assertions are gated on `atCap`
+   * and use RECT INTERSECTION — a centre hit test stayed green while the challenge covered a
+   * third of the handle. At cap the handle and a viewport-centred challenge overlap only for
+   * 683 < vh < 909: 844 and 851 are inside; 375x667 is below and pins that nothing already
+   * clear was moved.
+   * The rows are appended BY HAND: ambient.js no longer grows the log before a turn (one row,
+   * re-worded in place), and a turn hides the cue and the openers, so a full log WITH both is
+   * an envelope taller than any state the page now reaches — clear of it is clear of all.
    * =================================================================== */
   {
     const fillLog = (page) => page.evaluate(() => {
       const dock = document.getElementById("chat-dock"), log = document.getElementById("transcript");
-      if (!dock || !log || !window.__ambient || typeof window.__ambient.say !== "function") return { drove: false };
+      if (!dock || !log) return { drove: false };
       const H = () => Math.round(dock.getBoundingClientRect().height);
       const before = H();
       let said = 0, stable = 0;
       while (said < 60 && stable < 4) {
         const was = H();
-        window.__ambient.say("I counted the ceiling tiles. Twice. Same answer both times. · " + said++);
+        const row = document.createElement("div");
+        row.className = "mutter";
+        row.innerHTML = '<span class="who">Moxie · to herself</span><span class="msg">' +
+          "I counted the ceiling tiles. Twice. Same answer both times. · " + said++ + "</span>";
+        log.appendChild(row);
         if (H() === was) stable++; else stable = 0;
       }
       const r = log.getBoundingClientRect(), max = parseFloat(getComputedStyle(log).maxHeight);
