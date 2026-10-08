@@ -8,7 +8,8 @@ makes the record. What each test below pins:
 
 * a claim binds the device id the supervisor lists to this account and its child, and
   permits it with the console's own Permit body, once; then it sends that child's name
-  (never the "Moxie Kid" placeholder), once, and says whether it went;
+  once and says whether it went (for the "Moxie Kid" placeholder it sends a clear, never
+  the placeholder: `test_console_child_name.py`);
 * it fails closed and changes nothing when it cannot be sure: no bearer (401), an id the
   supervisor never listed or a blank one (404), a supervisor it cannot ask (503), a robot
   on another account or an account that already has a robot (409); a repeat is a no-op;
@@ -87,9 +88,14 @@ def _state(client, auth):
 
 
 def _calls(supervisor):
-    """Every supervisor call a claim must never make, as one comparable snapshot."""
+    """Every supervisor call a claim must never make, as one comparable snapshot: an
+    erase, a wake-up, or a config post that touches any setting. The one config post a
+    claim does make carries the child alone: the account's name for the child, or a clear
+    when it names none (`test_a_claim_sends_the_childs_name_to_the_robot` below,
+    `test_console_child_name.py`)."""
+    settings = [b for _, b in supervisor.config_posts if set(json.loads(b)) != {"child"}]
     return (len(supervisor.memory_erases), len(supervisor.telemetry_erases),
-            len(supervisor.config_posts), len(supervisor.wakeups))
+            len(settings), len(supervisor.wakeups))
 
 
 def _rows_naming(device_id):
@@ -193,7 +199,7 @@ def test_the_claim_permits_the_robot_once_and_a_repeat_changes_nothing(client, s
     assert set(sent[0]) == {"device_id", "permitted", "label"}     # the Permit button's body
     assert sent[0]["label"].strip()                               # says where it came from
     assert DEVICE in supervisor.permits["devices"]
-    assert _calls(supervisor) == calls          # no erase, no config push, no wake-up
+    assert _calls(supervisor) == calls          # no erase, no settings push, no wake-up
 
     again = _claim(client, auth)
     assert again.status_code == 200, again.text

@@ -24,9 +24,9 @@ async def _raw(request: Request) -> bytes:
 
 
 # --- fleet, config, access -------------------------------------------------------------
-# A robot's child name (and the feed lines that carry it) reach only a caller signed in to
-# the account that has that robot: anyone on the home network can call these routes
-# (`child_profile.redact_status`).
+# A robot's child name (and the feed lines that carry it) reach only a caller with a token
+# for the account that has that robot: anyone on the home network can call these routes
+# (`child_profile.redact_status`; a filter, not a lock: OQ3).
 @router.get("/local/broker/status")
 def broker_status(authorization: Optional[str] = Header(None)):
     return child_profile.redact_status(sv.fetch_status(), child_profile.viewer(authorization))
@@ -77,7 +77,8 @@ async def permit_robot(device_id: str, request: Request):
     record = next((r for r in db.q("SELECT * FROM robots")
                    if db.device_id_of(r) == device_id.strip()), None)
     if permitted and code == 200 and out.get("ok") and record is not None:
-        out = {**out, **child_profile.push_for_robot(record["user_id"], record)}
+        out = {**out, **child_profile.push_for_robot(record["user_id"], record,
+                                                     joining=True)}
     return reply(out, code)
 
 

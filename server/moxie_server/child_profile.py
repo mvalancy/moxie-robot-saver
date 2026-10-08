@@ -9,10 +9,15 @@ module is the one place the console sends or clears it. Like the permit post it 
 best-effort: a supervisor that is down never fails the parent's call, and the answer says
 whether the name went (`child_pushed`) and why not (`reason`). The supervisor is the one
 judge of a name (`moxie_sdk.cloud_config.NAME_RULE`; this process has no `moxie_sdk`), so
-here only the pairing placeholder and a blank are held back.
+here only the pairing placeholder and a blank are held back, and both CLEAR the robot's
+copy instead (`child: null`): the robot then says the appliance's default, never a name
+an earlier record left on it (an unpair whose clear could not reach the supervisor, a
+console database that was reset under a kept supervisor).
 
 The name is a child's, so nothing here logs it, and the console's two `/status` views hand
-it only to a caller signed in to the account that has the robot (`redact_status`).
+it only to a caller with a token for the account that has the robot (`redact_status`). That
+keeps it off what a device on the network polls without asking; it is not a lock, since
+`/local/quicklogin` gives any caller a token for any email (owner question OQ3).
 """
 from __future__ import annotations
 
@@ -23,7 +28,7 @@ from typing import Optional
 from . import db, supervisor
 
 #: What pairing and Add to my account name the child of an account that has none yet.
-#: A placeholder, never a name: Moxie keeps its default instead of saying it.
+#: A placeholder, never a name: Moxie says its default instead.
 PLACEHOLDER = "Moxie Kid"
 
 NO_NAME = ("Your account has no name for your child yet, so Moxie uses its default. Type "
@@ -66,6 +71,7 @@ def _birthday(value) -> str:
 
 def _outcome(out: dict, code: int) -> Optional[str]:
     """`None` when the supervisor took the change, else the parent's reason."""
+    out = out if isinstance(out, dict) else {}
     if code == 200 and out.get("ok"):
         return None
     if code == 503:
@@ -73,15 +79,22 @@ def _outcome(out: dict, code: int) -> Optional[str]:
     return str(out.get("reason") or out.get("error") or f"supervisor returned {code}")
 
 
-def push_child(device_id: str, child_row) -> dict:
+def push_child(device_id: str, child_row, *, joining: bool = False) -> dict:
     """Send one child's name to the robot behind `device_id`: the supervisor saves it for
     that robot and pushes it now if the robot is connected, else on its next connect.
+
+    With no name to send (no row, a blank, the pairing placeholder) the robot's copy is
+    cleared instead, so it says the appliance's default and never a name an earlier record
+    left there. `joining` is a robot coming onto this account (a claim, a scan, a Permit):
+    then a name the supervisor refuses clears it too, for the same reason; a rename that is
+    refused leaves the family's previous name, and the reason says why.
     `{"child_pushed": bool, "reason": str | None}`; never raises."""
     device_id = str(device_id or "").strip()
     if not device_id:
         return {"child_pushed": False, "reason": NO_DEVICE}
     name = name_for(child_row)
     if not name:
+        clear_child(device_id)
         return {"child_pushed": False, "reason": NO_NAME}
     child = {"nickname": name}
     birthday = _birthday((json.loads(child_row["attributes"]) or {}).get("birthday"))
@@ -90,6 +103,8 @@ def push_child(device_id: str, child_row) -> dict:
     out, code = supervisor.post_json(supervisor.device_query("/config", device_id),
                                      {"child": child})
     reason = _outcome(out, code)
+    if joining and reason is not None and code != 503:
+        clear_child(device_id)
     return {"child_pushed": reason is None, "reason": reason}
 
 
@@ -114,10 +129,11 @@ def child_row(user_id: str, child_id) -> Optional[object]:
     return db.q1("SELECT * FROM children WHERE id=? AND user_id=?", (child_id, user_id))
 
 
-def push_for_robot(user_id: str, robot_row) -> dict:
+def push_for_robot(user_id: str, robot_row, *, joining: bool = False) -> dict:
     """`push_child` for one of this account's robot records (its own child, its own
     `mqtt-device-id`)."""
-    return push_child(db.device_id_of(robot_row), child_row(user_id, robot_row["child_id"]))
+    return push_child(db.device_id_of(robot_row), child_row(user_id, robot_row["child_id"]),
+                      joining=joining)
 
 
 def push_to_robots_of_child(user_id: str, child_id: str) -> dict:
@@ -142,7 +158,8 @@ def clear_from_robots_of_child(user_id: str, child_id: str) -> None:
 # Any device on the home network can call the console's `/local/*` routes without signing
 # in (owner question OQ3), and the supervisor's `/status` carries each connected robot's
 # name. So the two console views of it name a robot's child only to a caller whose bearer
-# token is the account that has that robot.
+# token is the account that has that robot: a filter on what is polled without asking, not
+# a lock (`/local/quicklogin` mints a token for any email).
 
 def viewer(authorization: Optional[str]):
     """The account behind an optional `Authorization: Bearer …`, or None (no token, or
@@ -159,9 +176,11 @@ def _names(rows) -> set:
 
 def redact_status(snapshot, user) -> dict:
     """A copy of a supervisor `/status` snapshot that names no child the caller may not
-    read: a robot not on `user`'s account gets `child: None` and loses the `child` key from
-    its config layers, and in the activity feed (`recent`, where a line Moxie spoke can
-    carry a name) every child name this server knows of but the caller's own is masked."""
+    read: a robot not on `user`'s account gets `child: None`, loses the `child` key from
+    its config layers and its `face_cache_id` (a UUIDv5 of the name and the face, both
+    otherwise in view, so a list of first names would recover the name), and in the
+    activity feed (`recent`, where a line Moxie spoke can carry a name) every child name
+    this server knows of but the caller's own is masked."""
     if not isinstance(snapshot, dict):
         return snapshot
     snap = dict(snapshot)
@@ -180,6 +199,7 @@ def redact_status(snapshot, user) -> dict:
             if len(name) >= 2:
                 hidden.add(name)
             r = {**r, "child": None,
+                 **({"face_cache_id": ""} if "face_cache_id" in r else {}),
                  **{k: {kk: vv for kk, vv in r[k].items() if kk != "child"}
                     for k in ("config_overrides", "config_effective")
                     if isinstance(r.get(k), dict)}}

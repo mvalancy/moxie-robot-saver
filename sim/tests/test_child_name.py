@@ -261,8 +261,9 @@ def test_the_name_survives_a_restart_and_a_clear_goes_back_to_the_default(tmp_pa
 def test_a_write_for_a_sleeping_robot_lands_when_it_connects(tmp_path):
     """A robot that is switched off is not in `robots`, and the console's write for it
     used to be refused ('unknown device_id'). One this appliance knows (permitted, or in
-    the roster) now has the setting saved, nothing published, and the settle's first
-    `/config` carries it when it connects. An id it has never known is still a 400."""
+    the roster) now has the setting saved (its config is published as for any edit, at
+    QoS 0 and never retained, so no one hears it) and the settle's first `/config`
+    carries it when it connects. An id it has never known is still a 400."""
     from helpers_runtime import LatchClient, deliver, http_call, status_server
     rt = _runtime(tmp_path, devices=("d_awake",), allow_unverified_bots=False)
     rt.client = LatchClient(rt)

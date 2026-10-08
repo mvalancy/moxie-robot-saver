@@ -9,12 +9,15 @@ permit still stand. What each test pins:
 
 * a rename reaches every robot bound to that child, once; the record is saved even when
   the supervisor cannot be reached, and the answer says why the name did not go;
-* the pairing placeholder "Moxie Kid" and a blank name are never sent, on any path;
+* the pairing placeholder "Moxie Kid" and a blank name are never sent, on any path: a
+  clear (`child: null`) goes instead, so a robot joining an account never says a name an
+  earlier record left on it (also when the account's name is one the rule refuses);
 * another account's child is never sent;
 * unpair and reset clear the robot's copy first (post order), and through a REAL runtime
   the robot's saved settings then hold no name;
 * the console's two `/status` views, and a config answer, name a robot's child only to
-  the account that has the robot; the activity feed masks the rest.
+  the account that has the robot (nor give away the face cache id, from which a list of
+  first names recovers it); the activity feed masks the rest.
 
 The supervisor is `helpers_console_supervisor.FakeSupervisor` (the REAL sanitizer behind
 `/config`); one test points the console at a real `MoxieRuntime`'s status server instead.
@@ -81,7 +84,13 @@ def _sent(supervisor, since):
 
 
 def _named(supervisor, since):
-    return [(d, b) for d, b in _sent(supervisor, since) if "child" in b]
+    """The posts since `since` that carry a name (a clear, `child: null`, carries none)."""
+    return [(d, b) for d, b in _sent(supervisor, since) if b.get("child") is not None]
+
+
+def _cleared(supervisor, since):
+    """How many clears (`{"child": null}`) the console sent since `since`."""
+    return sum(b == {"child": None} for _, b in _sent(supervisor, since))
 
 
 def test_a_rename_reaches_every_robot_bound_to_that_child_once(client, supervisor):
@@ -118,12 +127,14 @@ def test_a_rename_is_saved_when_it_cannot_reach_a_robot_and_says_why(client, sup
 
 def test_the_pairing_placeholder_and_a_blank_name_are_never_sent(client, supervisor):
     """The claim and pairing name a child "Moxie Kid" when the account has none: a
-    placeholder, so Moxie keeps its default. Nothing carrying a child is ever sent for it
-    or for a blank name, on any path; the answers say why."""
+    placeholder, so Moxie says its default. No name is ever sent for it or for a blank
+    one, on any path: each sends a clear instead (`child: null`), so the robot says the
+    default even if an earlier record left a name on it; the answers say why."""
     from moxie_server import db
     posts = len(supervisor.config_posts)
     auth, claim, _ = _claimed(client, "placeholder@child.lan")
     assert claim["child_pushed"] is False and "no name" in claim["reason"]
+    assert _cleared(supervisor, posts) == 1
     kid = client.get("/local/state", headers=auth).json()["children"][0]
     assert kid["child-first-name"] == "Moxie Kid"
     for name in ("Moxie Kid", "   ", "moxie  kid"):
@@ -131,6 +142,7 @@ def test_the_pairing_placeholder_and_a_blank_name_are_never_sent(client, supervi
                        json={"child": {"child-first-name": name}})
         assert r.status_code == 200 and r.json()["child_pushed"] is False, name
     assert client.post(f"/local/robots/{DEVICE}/permit", json={}).status_code == 200
+    assert _cleared(supervisor, posts) == 5         # the claim, three renames, the Permit
     for row in db.q("SELECT id, attributes FROM robots"):           # free DEVICE again
         if json.loads(row["attributes"]).get("mqtt-device-id") == DEVICE:
             db.ex("DELETE FROM robots WHERE id=?", (row["id"],))
@@ -140,7 +152,9 @@ def test_the_pairing_placeholder_and_a_blank_name_are_never_sent(client, supervi
     scan = client.post("/local/simulate-robot-scan",
                        json={"qr_payload": prep["qr_payload"], "device_id": DEVICE})
     assert scan.status_code == 200 and scan.json()["child_pushed"] is False
-    assert _named(supervisor, posts) == []
+    assert _named(supervisor, posts) == [] and _cleared(supervisor, posts) == 6
+    assert not [raw for _, raw in supervisor.config_posts[posts:]
+                if "moxie kid" in " ".join(raw.lower().split())]
 
 
 def test_another_accounts_child_is_never_sent(client, supervisor):
@@ -166,7 +180,23 @@ def test_another_accounts_child_is_never_sent(client, supervisor):
                        json={"qr_payload": qr, "device_id": DEVICE})
     assert scan.status_code == 200, scan.text
     assert scan.json()["child_pushed"] is False
-    assert _named(supervisor, posts) == []
+    assert _named(supervisor, posts) == [] and _cleared(supervisor, posts) == 1
+
+
+def test_a_scan_sends_the_name_of_the_account_the_code_was_made_on(client, supervisor):
+    """Simulate robot scan completes a pairing code: the robot joins the account that made
+    the code, and that account's child's name follows the permit, once."""
+    auth = quicklogin(client, "scan-named@child.lan")
+    _child(client, auth, "José")
+    prep = client.post("/local/pairing/prepare", headers=auth,
+                       json={"ssid": "Home", "password": "pw"}).json()
+    posts, permits = len(supervisor.config_posts), len(supervisor.permit_posts)
+    scan = client.post("/local/simulate-robot-scan",
+                       json={"qr_payload": prep["qr_payload"], "device_id": DEVICE})
+    assert scan.status_code == 200, scan.text
+    assert (scan.json()["permitted"], scan.json()["child_pushed"]) == (True, True)
+    assert len(supervisor.permit_posts) == permits + 1
+    assert _sent(supervisor, posts) == [(DEVICE, {"child": {"nickname": "José"}})]
 
 
 def test_permit_sends_a_bound_robots_name_once_and_nothing_else(client, supervisor):
@@ -227,19 +257,30 @@ def test_the_status_views_name_a_robots_child_only_to_its_account(client, superv
     the console's two views of it, and a config answer, name a robot's child only to a
     caller signed in to the account that has that robot. The activity feed, where a line
     Moxie spoke can carry a name, masks every other name this server knows."""
+    from moxie_sdk.faces import face_child_id, face_options_list, validate_face
     from moxie_server import supervisor as sv
     owner, _, _ = _claimed(client, "owner-view@child.lan", "Sam")
     stranger = quicklogin(client, "stranger-view@child.lan")
     _child(client, stranger, "José")
     # another account's child spelled another way: the owner's own name still shows
     _child(client, quicklogin(client, "shouty-view@child.lan"), "SAM")
+    face = {"eye_color": "teal"}
+
+    def cache_id(effective, name):
+        """`face_child_id` as the supervisor computes it, from what a view shows."""
+        return face_child_id(face_options_list(validate_face(effective["face"])),
+                             child_key=name)
+
     snap = {"ok": True, "app": "content", "robots": [
         {"device_id": DEVICE, "child": "Sam", "config_overrides": {
             "child": {"nickname": "Sam"}, "audio_volume": 0.4},
-         "config_effective": {"child": {"nickname": "Sam"}, "audio_volume": 0.4}},
+         "config_effective": {"child": {"nickname": "Sam"}, "audio_volume": 0.4,
+                              "face": face},
+         "face_cache_id": cache_id({"face": face}, "Sam")},
         {"device_id": "d_neighbour", "child": "Zoë",
          "config_overrides": {"child": {"nickname": "Zoë"}},
-         "config_effective": {"child": {"nickname": "Zoë"}}}],
+         "config_effective": {"child": {"nickname": "Zoë"}, "face": face},
+         "face_cache_id": cache_id({"face": face}, "Zoë")}],
         "recent": [{"t": 1, "kind": "chat", "text": "hello (unprompted): 'Welcome back, Sam!'"},
                    {"t": 2, "kind": "chat", "text": "💬 'hi' → 'Hi Zoë! Is José there?'"},
                    {"t": 3, "kind": "config", "text": "⚙️  config updated: child"}]}
@@ -249,17 +290,27 @@ def test_the_status_views_name_a_robots_child_only_to_its_account(client, superv
         return [client.get(p, headers=headers).json()
                 for p in ("/local/fleet", "/local/broker/status")]
 
+    def guessed(view):
+        """The names a list of first names recovers from a view's face cache ids."""
+        return sorted(n for r in view["robots"] if r.get("face_cache_id")
+                      for n in ("Sam", "Zoë", "José")
+                      if cache_id(r["config_effective"], n) == r["face_cache_id"])
+
+    assert guessed(snap) == ["Sam", "Zoë"]       # the attack works on the raw snapshot
     for headers in ({}, {"Authorization": "Bearer nope"}):        # not signed in
         for v in views(headers):
             text = json.dumps(v, ensure_ascii=False)
             assert not any(n in text for n in ("Sam", "Zoë", "José")), text
             assert [r["child"] for r in v["robots"]] == [None, None]
             assert v["robots"][0]["config_overrides"] == {"audio_volume": 0.4}
+            assert [r["face_cache_id"] for r in v["robots"]] == ["", ""]
+            assert guessed(v) == []
             assert [e["text"] for e in v["recent"]] == [
                 "hello (unprompted): 'Welcome back, [name]!'",
                 "💬 'hi' → 'Hi [name]! Is [name] there?'", "⚙️  config updated: child"]
     for v in views(stranger):             # signed in, no robot: only their own child's name
         assert [r["child"] for r in v["robots"]] == [None, None]
+        assert guessed(v) == []
         assert [e["text"] for e in v["recent"]][:2] == [
             "hello (unprompted): 'Welcome back, [name]!'",
             "💬 'hi' → 'Hi [name]! Is José there?'"]
@@ -267,6 +318,7 @@ def test_the_status_views_name_a_robots_child_only_to_its_account(client, superv
         assert [r["child"] for r in v["robots"]] == ["Sam", None]
         assert v["robots"][0]["config_overrides"]["child"] == {"nickname": "Sam"}
         assert "child" not in v["robots"][1]["config_effective"]
+        assert guessed(v) == ["Sam"]             # the owner's own texture key is kept
         assert [e["text"] for e in v["recent"]][:2] == [
             "hello (unprompted): 'Welcome back, Sam!'",
             "💬 'hi' → 'Hi [name]! Is [name] there?'"]
@@ -317,3 +369,51 @@ def test_a_claim_and_an_unpair_round_trip_through_the_real_runtime(client, tmp_p
     assert rt.client.on(topic)[-1]["child_pii"]["nickname"] == "friend"
     status = client.get("/local/fleet", headers=auth).json()["robots"][0]
     assert status["child"] == "friend"
+
+
+@pytest.mark.parametrize("name", [None, "Sam!"], ids=["placeholder", "refused"])
+def test_a_robot_that_joins_an_account_never_says_a_name_an_earlier_record_left(
+        client, tmp_path, monkeypatch, name):
+    """An unpair whose clear the supervisor never got leaves the child's name in the
+    robot's saved settings (the unpair's answer says so). When that robot joins another
+    account, the account's name replaces it, or, when the account names none (the "Moxie
+    Kid" placeholder) or one the rule refuses, the claim clears it: Moxie says the
+    appliance's default, never the earlier family's child's name. (Between the permit and
+    the clear, a few milliseconds, the robot's config still carries the old name.)"""
+    pytest.importorskip("paho.mqtt.client", reason="the runtime imports paho")
+    from helpers_runtime import make_runtime, status_server
+    from moxie_sdk.app import MoxieApp
+    from moxie_sdk.store import JsonStore
+    from moxie_server import supervisor as sv
+
+    class _App(MoxieApp):
+        name = "content"
+
+    rt, _ = make_runtime(_App(), device_id=DEVICE, nickname="friend",
+                         allow_unverified_bots=False, store=JsonStore(root=str(tmp_path)))
+    set_status_url(status_server(rt) + "/status", monkeypatch)
+    topic, record = f"/devices/{DEVICE}/config", tmp_path / "robots" / DEVICE / "config.json"
+    tag = "placeholder" if name is None else "refused"
+
+    earlier, claim, _ = _claimed(client, f"earlier-{tag}@child.lan", "Zoë")
+    assert rt.robots[DEVICE].child.nickname == "Zoë"
+    real = sv.post_json
+
+    def clear_lost(path, payload, timeout=3):
+        if payload == {"child": None}:            # what `call` answers when it is down
+            return {"ok": False, "error": sv.UNREACHABLE, "detail": "refused"}, 503
+        return real(path, payload, timeout)
+
+    monkeypatch.setattr(sv, "post_json", clear_lost)
+    gone = client.delete(f"/api/robots/{claim['robot_id']}", headers=earlier).json()
+    assert gone["unpaired"] is True and gone["child_cleared"] is False
+    assert json.loads(record.read_text())["child"] == {"nickname": "Zoë"}     # left behind
+    monkeypatch.setattr(sv, "post_json", real)
+
+    later, again, _ = _claimed(client, f"later-{tag}@child.lan", name)
+    assert again["permitted"] is True and again["child_pushed"] is False
+    assert ("no name" if name is None else "40 letters") in again["reason"]
+    assert rt.robots[DEVICE].child.nickname == "friend"
+    assert rt.client.on(topic)[-1]["child_pii"]["nickname"] == "friend"
+    assert "child" not in json.loads(record.read_text())
+    assert client.get("/local/fleet", headers=later).json()["robots"][0]["child"] == "friend"
