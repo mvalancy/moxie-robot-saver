@@ -21,6 +21,7 @@ await runSections(new URL("./tests/edge/demo_proxy/", import.meta.url), [
   "07_turn_features.mjs",
   "08_tts_cache.mjs",
   "09_reroll_shape.mjs",
+  "10_goodbye_close.mjs",
 ]);
 
 if (fails.length) {
