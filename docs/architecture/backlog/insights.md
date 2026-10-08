@@ -97,6 +97,8 @@ Tests: [`test_telemetry.py`](../../../sim/tests/test_telemetry.py),
 [`test_sil_durable_telemetry.py`](../../../sim/tests/test_sil_durable_telemetry.py),
 [`test_telemetry_rollup_repair.py`](../../../sim/tests/test_telemetry_rollup_repair.py),
 [`test_telemetry_erase_policy.py`](../../../sim/tests/test_telemetry_erase_policy.py),
+[`test_fleet_config.py`](../../../sim/tests/test_fleet_config.py) (a robot that failed closed keeps
+its record; the card's `NO_DATA` note),
 [`test_console_roundtrip.py`](../../../sim/tests/test_console_roundtrip.py),
 [`sim/test_console_insights.mjs`](../../../sim/test_console_insights.mjs) (real browser, with mutation
 teeth), and [`sim/tools/telemetry_rollup_mutation_check.py`](../../../sim/tools/telemetry_rollup_mutation_check.py).

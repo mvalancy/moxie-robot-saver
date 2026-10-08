@@ -5,7 +5,9 @@
  * card re-renders empty.
  *
  *   path 1 no permitted robot · 2 GET /telemetry 503 · 3 {ok:false} · 4 NO_DATA with count>0
- *   (button SHOWN) · 5 nothing recorded · 6 a normal history (button SHOWN)
+ *   (button SHOWN) · 5 nothing recorded · 6 a normal history (button SHOWN) · 7 path 4's
+ *   branch with history still stored, as for a robot whose saved settings could not be read
+ *   (`noDataNote` says it is kept, not that a restart clears it; button SHOWN)
  *
  * No FastAPI: the console's assets come from the harness's static server and every `/local/*`
  * XHR is answered at the browser with payloads built by the REAL server normalizers
@@ -68,13 +70,20 @@ full = {
     "retention": {"packets": 200, "days": 30},
 }
 # path 4: recording is OFF, but two packets arrived since the supervisor started. The card
-# must still offer the erase — that is the whole point of the privacy contract.
+# must still offer the erase — that is the whole point of the privacy contract. Those two
+# live in RAM only, so the lifetime total stays 0: what the supervisor's telemetry_view
+# sends under a parent's NO_DATA (measured: count 2, totals.total 0).
 nodata = {
     "ok": True, "device_id": dev, "connected": True, "persisted": False, "policy": "NO_DATA",
     "summary": {"count": 2, "by_event": {"wakeword": 2}},
     "events": EVENTS[:2], "history": [],
-    "totals": {"total": 2}, "retention": {"packets": 200, "days": 30},
+    "totals": {"total": 0}, "retention": {"packets": 200, "days": 30},
 }
+# path 7: NO_DATA, yet the store still holds history: a robot whose saved settings could
+# not be read keeps what was stored (fleet.py failed_closed), one stored packet plus one
+# since the start (measured: count 2, totals.total 1). "A restart clears it" would be false.
+kept = dict(nodata, totals={"total": 1, "days_kept": 1, "first_day": DAYS[0],
+                            "last_day": DAYS[0]})
 empty = {"ok": True, "device_id": dev, "connected": True, "persisted": True,
          "policy": "NO_MEDIA", "summary": {"count": 0, "by_event": {}}, "events": [],
          "history": [], "totals": {"total": 0}, "retention": {"packets": 200, "days": 30}}
@@ -97,6 +106,7 @@ snap = {"ok": True, "app": "moxie-supervisor", "uptime_s": 1234,
 print(json.dumps({
     "full":         m.normalize_telemetry(full),
     "nodata":       m.normalize_telemetry(nodata),
+    "kept":         m.normalize_telemetry(kept),
     "empty":        m.normalize_telemetry(empty),
     "empty_nodata": m.normalize_telemetry(empty_nodata),
     "notok":        m.normalize_telemetry({"ok": False, "device_id": dev,
@@ -120,6 +130,8 @@ ok(FIX.notok.ok === false && FIX.notok.error === "unknown device",
 ok(FIX.fleet_served.robots.length === 1 && FIX.fleet_served.robots[0].device_id === DEV,
    "fixture: the real normalize_fleet produced one permitted robot");
 ok(FIX.fleet_none.robots.length === 0, "fixture: the real normalize_fleet produced an empty fleet");
+ok(FIX.nodata.totals.total === 0 && FIX.kept.totals.total === 1,
+   "fixture: path 4 has nothing stored and path 7 still has stored history (lifetime totals)");
 
 /* `/local/state` is the parent-app REST shape (children/robots), not a fleet snapshot. */
 const STATE = { robots: [{ id: "r1", name: "Moxie", serial: "SN-FIXTURE",
@@ -142,7 +154,7 @@ async function clickReal(page, sel) {
   return true;
 }
 
-/* ---- the six render paths ------------------------------------------------------- */
+/* ---- the six render paths, and path 4's second note ----------------------------- */
 const PATHS = {
   norobot: { n: 1, marker: "no robot connected",  button: false },
   offline: { n: 2, marker: "supervisor offline",  button: false },
@@ -152,7 +164,11 @@ const PATHS = {
   empty:   { n: 5, marker: "No events yet",       button: false },
   full:    { n: 6, marker: "History since",       button: true,
              emptyAfter: "No events yet" },
+  kept:    { n: 7, marker: "kept until it is erased", button: true,
+             emptyAfter: "nothing is being saved" },
 };
+/* After an erase the supervisor still runs these two under NO_DATA, now with nothing stored. */
+const NO_DATA_MODES = new Set(["nodata", "kept"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function drive(mode, mutate) {
@@ -181,17 +197,18 @@ async function drive(mode, mutate) {
       if (r.method() === "DELETE") {
         state.deletes.push({ path: p, method: r.method(), at: Date.now() });
         state.erased = true;
-        const body = mode === "nodata" ? FIX.empty_nodata : FIX.empty;
+        const body = NO_DATA_MODES.has(mode) ? FIX.empty_nodata : FIX.empty;
         return J({ ...body, erased: true, records: ["packets", "daily", "mentor"] });
       }
       state.gets++;
-      if (state.erased) return J(mode === "nodata" ? FIX.empty_nodata : FIX.empty);
+      if (state.erased) return J(NO_DATA_MODES.has(mode) ? FIX.empty_nodata : FIX.empty);
       /* A REAL 503 — the only way to reach `refreshInsights`'s "telemetry threw" branch,
        * and something the browser reports as a console error. Counted so `notable()`
        * forgives exactly the refusals this fixture issued. */
       if (mode === "offline") { aborted.refused++; return J(FIX.notok, 503); }
       if (mode === "notok") return J(FIX.notok);
       if (mode === "nodata") return J(FIX.nodata);
+      if (mode === "kept") return J(FIX.kept);
       if (mode === "empty") return J(FIX.empty);
       return J(FIX.full);
     }
