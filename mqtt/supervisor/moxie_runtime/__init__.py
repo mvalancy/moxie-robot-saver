@@ -38,6 +38,7 @@ from .voice import VoiceMixin
 from .content import ContentMixin
 from .schedule import ScheduleMixin
 from .telehealth import TelehealthMixin
+from .tryit import TryItMixin
 
 
 _OFF = ("0", "off", "false", "no")
@@ -58,7 +59,7 @@ def _env_on(env: str) -> bool:
 
 class MoxieRuntime(LifecycleMixin, StatusServerMixin, ConnectionMixin, FleetMixin, BrainMixin,
                    MemoryMixin, SafetyMixin, TelemetryMixin, PresenceMixin, TurnsMixin,
-                   VoiceMixin, ContentMixin, ScheduleMixin, TelehealthMixin):
+                   VoiceMixin, ContentMixin, ScheduleMixin, TelehealthMixin, TryItMixin):
     """The supervisor: one instance serves every robot on the broker (see module doc)."""
     def __init__(self, app, host="127.0.0.1", port=1883, child: ChildProfile | None = None,
                  store: JsonStore | None = None, brain_budget_s=None, streaming=None,
@@ -138,6 +139,10 @@ class MoxieRuntime(LifecycleMixin, StatusServerMixin, ConnectionMixin, FleetMixi
         self._brain_failed: dict[str, str] = {}  # a brain that would not build, said once
         # One content import/undo at a time; never held inside a turn.
         self._content_lock = threading.Lock()
+        # 💬 Try it (tryit.py): the rolling hour's spends and the tries still running.
+        self._try_lock = threading.Lock()
+        self._try_spent = deque()
+        self._try_inflight = 0
         # Child safety (ai-seam §2) on both sides of a turn. Ctor arg wins; MOXIE_SAFETY=0
         # turns the stage off.
         if safety is None and _env_on("MOXIE_SAFETY"):

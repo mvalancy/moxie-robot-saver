@@ -54,13 +54,42 @@
 # NO HOSTNAME IS WRITTEN HERE. With no `url` input the checker reads the site's own
 # `<link rel="canonical">` out of `sim/web/index.html` — the artifact names its own home, and
 # `sim/tests/test_no_deployment_defaults.py`'s rule is honoured rather than dodged.
+#
+# ── WHAT THE FREE CHECK COULD NOT SEE, AND THE ONE TURN A DAY THAT CAN (2026-10-07) ───────
+#
+# Measured with the real checker on five fixtures built from the real Pages Functions —
+# healthy, a dead brain, lost secrets, the kill switch, no Functions — every one passed all
+# 24 checks, and `GET /api/health` was the only request any of them saw. The checker aborts
+# every spending route by design, and /api/health reads configuration only, so it answers
+# `live` while every turn fails `upstream_down`. Two changes:
+#
+#   · `check_deployed.mjs` holds the CANONICAL origin to live (data-mode "live", badge MOXIE
+#     ONLINE), so lost secrets, the kill switch and missing Functions redden this tier for
+#     free. A preview URL is not held to it (previews are keyless by design); the
+#     `expect_live` input overrides either way.
+#   · the `canary` job spends ONE chat turn a day (`sim/check_live_turn.mjs`: one gateway
+#     completion, 3 of the 4,000-unit daily budget, its voice ticket never redeemed). It is
+#     the only instrument here that can see a dead brain.
+#
+# The canary SUPERSEDES, for that one turn, the 2026-09-05 judgement written at the mic input
+# below ("a monitor that eats the thing it monitors is not a monitor"): without it every
+# monitor stays green with the brain dead, and one turn a day is 0.075% of the daily budget.
+# The owner approved exactly that, one paid turn a day. The mic job's own reasoning stands,
+# and it stays off the schedule.
 name: Deployed site
 on:
   # 4× a day at an odd minute, for the same reason the deep tier uses 03:17: GitHub queues
   # the top of the hour. This tier is a monitor — it is meant to notice a regression that
   # reached production between promotions, not to be part of anyone's inner loop.
+  #
+  # The SECOND line is the canary's, once a day, and nothing else runs on it. Each job keys
+  # on the cron that fired it (`github.event.schedule` is that exact string), so the strings
+  # in the jobs' `if:` must match these; sim/tests/test_ci_deployed_monitor.py fails if they
+  # drift. GitHub delays and sometimes drops scheduled runs under load (the 4×-a-day line
+  # fired 2-4 times a day in the month to 2026-10-07), so "daily" means "when GitHub fires it".
   schedule:
     - cron: "23 2,8,14,20 * * *"
+    - cron: "41 15 * * *"
   workflow_dispatch:
     inputs:
       url:
@@ -72,6 +101,19 @@ on:
         type: choice
         options: [auto, "yes", "no"]
         default: auto
+      expect_live:
+        description: "Require mode live + badge MOXIE ONLINE (auto = yes on the canonical origin only)"
+        type: choice
+        options: [auto, "yes", "no"]
+        default: auto
+      # ── THE CANARY: ON BY DEFAULT ON A DISPATCH, ONCE A DAY ON THE SCHEDULE ─────────────
+      # One real turn (`sim/check_live_turn.mjs`): one gateway completion, 3 units. Against a
+      # keyless preview it spends nothing (the route refuses before any upstream call) and
+      # reads red, truthfully: that deployment has no brain.
+      canary:
+        description: "Spend ONE real chat turn on the deployment (the daily canary; 3 of the 4,000 daily units)"
+        type: boolean
+        default: true
       # ── THE SPENDING JOB, OFF BY DEFAULT ──────────────────────────────────────────────
       # `sim/check_hosted_mic.mjs` plays a real voice into Chrome's fake microphone and lets
       # the page do what a visitor's press does: one `POST /api/transcribe`, one
@@ -86,7 +128,8 @@ on:
       # runs a day is ~4,400 transcriptions, chats and syntheses a year, and the failure it
       # would catch — the gateway's ears stopped answering — is already caught, at no cost to
       # this budget, by `sim/tests/test_live_hosted_ears.py` wherever a gateway is
-      # configured. A monitor that eats the thing it monitors is not a monitor.
+      # configured. A monitor that eats the thing it monitors is not a monitor. (Superseded
+      # for ONE chat turn a day by the `canary` job — see the header — and for nothing else.)
       mic:
         description: "Microphone check against the deployment: off / dry (free) / spend (real gateway calls)"
         type: choice
@@ -106,6 +149,8 @@ permissions:
 jobs:
   deployed:
     name: Deployed composer + beacon (real browser, real deployment)
+    # Not on the canary's cron: that run is the canary's alone, so its colour means the brain.
+    if: ${{ github.event.schedule != '41 15 * * *' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -117,7 +162,7 @@ jobs:
         # GitHub sets `CI` — so this step failing reddens the job loudly rather than quietly
         # deleting it.
         run: npm install --no-save --no-audit --no-fund puppeteer
-      - name: The composer is reachable, and the injected beacon loads clean
+      - name: The composer is reachable, the injected beacon loads clean, the canonical origin is live
         env:
           # Empty on a schedule (the `inputs` context is empty for a non-dispatch event), and
           # the checker treats an empty string as "not set" — so the schedule resolves the
@@ -125,6 +170,8 @@ jobs:
           MOXIE_DEPLOYED_URL: ${{ inputs.url }}
           # auto → "", which is what the checker's own derivation reads as "decide for me".
           MOXIE_EXPECT_BEACON: ${{ inputs.expect_beacon == 'yes' && '1' || (inputs.expect_beacon == 'no' && '0' || '') }}
+          # The same: auto → "", which requires LIVE on the canonical origin and nowhere else.
+          MOXIE_EXPECT_LIVE: ${{ inputs.expect_live == 'yes' && '1' || (inputs.expect_live == 'no' && '0' || '') }}
         run: node sim/check_deployed.mjs
 
   # ── A REAL VOICE THROUGH THE DEPLOYED MICROPHONE ────────────────────────────────────────
@@ -159,3 +206,26 @@ jobs:
         # sentence, plus a decoy sentence scored against the same transcript so the floor
         # cannot be met by a route that returns anything at all).
         run: node sim/check_hosted_mic.mjs ${{ inputs.mic == 'dry' && '--dry-run' || '' }}
+
+  # ── ONE REAL TURN WITH THE DEPLOYED BRAIN, ONCE A DAY ─────────────────────────────────────
+  # `sim/check_live_turn.mjs`: one `POST /api/chat` ("hi moxie", a browser user agent, the
+  # site's own Origin), asserting a LIVE answer — reason null, a non-empty reply, a voice
+  # ticket for that line (never redeemed: no TTS is spent) — inside 10 s. At most two POSTs,
+  # the second only after a `rate_limited` refusal, which spends nothing upstream.
+  #
+  # Its own cron and its own job, so a red run in that slot means the BRAIN and the free check
+  # is never blamed for it. It needs no browser and holds no secret: the deployment's own key
+  # pays for the turn, exactly as for a visitor. Like everything in this file it gates
+  # nothing — a red here means "go and look at the live brain", not "do not merge".
+  canary:
+    name: One real turn with the deployed brain (spends one chat turn)
+    if: ${{ github.event.schedule == '41 15 * * *' || (github.event_name == 'workflow_dispatch' && inputs.canary) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ask the deployed brain one question
+        env:
+          # Empty on the schedule, so the canary asks the canonical origin.
+          MOXIE_DEPLOYED_URL: ${{ inputs.url }}
+        run: node sim/check_live_turn.mjs

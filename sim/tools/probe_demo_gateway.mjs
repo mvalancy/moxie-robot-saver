@@ -297,7 +297,7 @@ console.log(DRY ? "\n[dry run — building bodies, calling nothing]"
                        : "\n[4 real gateway calls]");
 
 if (want("chat")) {
-  await chatCall("chat 1 of 2 · a first turn (persona first AND last, one user turn)", [], "hi moxie, tell me a joke");
+  await chatCall("chat 1 of 2 · a first turn (persona first, our anchor last; one user turn)", [], "hi moxie, tell me a joke");
   await chatCall("chat 2 of 2 · a fourth turn (4 history turns from a signed context blob)",
                  HISTORY, "what should i teach them first?");
 }
