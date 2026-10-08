@@ -214,8 +214,11 @@ class VoiceMixin:
     def set_transcriber(self, transcriber):
         """Install an STT engine (`moxie_sdk.stt.Transcriber`); without one audio frames are
         ignored. Live VAD sessions are dropped: they captured the old engine. Every
-        connected, permitted robot not yet asked for its microphone this session is asked
-        now: the Listening picker may turn the ears on after the robots connected."""
+        permitted robot we know of that is not yet asked for its microphone this session
+        is asked now: the Listening picker may turn the ears on after the robots
+        connected. Ghosts included (served before our socket dropped, silent since): a
+        robot that sat connected through our blip never announces itself again (the
+        broker log is live-only), so leaving it out would leave it deaf."""
         self._transcriber = transcriber
         self._stt_sessions.clear()
         for device_id in list(self.robots):
@@ -226,10 +229,15 @@ class VoiceMixin:
     # order the field-proven community server uses (OpenMoxie
     # site/hive/mqtt/moxie_server.py `on_device_connect`, framed by `send_zmq_to_bot`;
     # mqtt-and-conversation.md §3.4). Latched per robot session on the RobotContext
-    # (`extra["stt_subscribed_at"]`, shown by `/status`); a wake or a re-permit asks again
-    # because a sleeping robot drops its subscriptions (community signal C4), and
-    # `_forget_robot_state` clears the latch with the rest of our beliefs. Built to the
-    # contract and OpenMoxie's behaviour; not yet verified on our own hardware.
+    # (`extra["stt_subscribed_at"]`, shown by `/status`) — but only for a robot confirmed
+    # on this broker connection. An ask to a ghost (the roster resume, the picker, a wake
+    # or a Permit while the robot is away after a broker restart) may have reached nobody,
+    # so it is sent but not recorded; otherwise the robot's return would find the latch
+    # set and never be asked (crossed ears, community signal C4, in the ordinary
+    # broker-restart order: the supervisor reconnects first). A wake or a re-permit asks
+    # again because a sleeping robot drops its subscriptions, and `_forget_robot_state`
+    # clears the latch with the rest of our beliefs. Built to the contract and
+    # OpenMoxie's behaviour; not yet verified on our own hardware.
     def _subscribe_stt(self, device_id, *, again: bool = False) -> bool:
         """Ask one robot to stream its microphone, once per robot session (`again=True`
         asks regardless). Nothing without a transcriber — nobody would hear the audio —
@@ -244,7 +252,8 @@ class VoiceMixin:
                               encode_proto_subscribe([ZMQ_STT_REQUEST]),
                               device_id=device_id, what="stt_subscribe")
         if ok:
-            if robot is not None:
+            # Recorded only with live evidence of the session it was sent into.
+            if robot is not None and device_id in self._seen_since_connect:
                 robot.extra["stt_subscribed_at"] = time.time()
             self._note("stt", f"👂 asked {device_id} to stream its microphone")
             print(f"[runtime] 👂 → asked {device_id} to stream its microphone "

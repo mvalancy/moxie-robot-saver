@@ -315,9 +315,12 @@ packet logs `disconnected.`, a socket that just went away (a TCP reset included)
 a keepalive expiry `has exceeded timeout, disconnecting.`, and a robot whose new socket displaces its old
 session `already connected, closing old connection.` (that one at level `E`, which is why the
 subscription is `log/#`); plus mosquitto 1.6's `Socket error on client …, disconnecting.` for a
-distro-packaged broker. OpenMoxie matches only the first two (`moxie_server.py:80-81`); that is its C4
-mechanism: a robot that slept through its keepalive was never forgotten, so its return was never a fresh
-onboarding.
+distro-packaged broker. OpenMoxie matches only the first two, and only on level-`N` lines
+(`moxie_server.py:80-81`, `:149-158`), and initialises a robot once per entry in its online map
+(`robot_data.py:94-99`). Read from that code, a plausible C4 mechanism is a robot that left with a line
+it does not match (or one logged at level `E`) and so was never released: its return got no config and
+no subscribe. Upstream's own diagnosis (PR #59) blamed mosquitto 2.x no longer publishing the `$SYS`
+connect notices it read; the two readings are not exclusive, and neither is verified here.
 
 On connect: register the robot, wait about 1 s, push config, then send a ZMQ `ProtoSubscribe`
 asking the robot to stream STT audio (`embodied.perception.audio.zmqSTTRequest`), the order OpenMoxie
@@ -326,11 +329,18 @@ session**: a second one for a robot already onboarded, with no disconnect line i
 and came back inside the keepalive, or a line no pattern knows), forgets what the supervisor believed
 about that robot and onboards it again, config and subscribe included. A `/state` or an event is not
 such evidence; it repeats. The subscribe is also re-sent on `wakeup`, on Permit, when the Listening
-picker installs an engine (to every connected permitted robot not yet asked), after a broker outage (the
-latch is dropped with the socket) and by the roster resume after a supervisor restart; `/status` shows
-`stt_subscribed_at` per robot. Built to this contract and OpenMoxie's field-proven behaviour;
-**unverified on our hardware**. [`sim/tests/test_stt_wire.py`](../../sim/tests/test_stt_wire.py) covers
-every trigger and every line.
+picker installs an engine (to every permitted robot the supervisor knows of that is not yet asked,
+ghosts included: a robot that sat connected through our socket blip never announces itself again),
+after a broker outage in whichever order the supervisor and the robot come back (the latch is dropped
+with the socket, and an ask that goes out while the robot is still away, from the roster resume, the
+picker, a wake or a Permit, is not recorded as its session, so its own connect line is still answered
+with config and the ask), and by the roster resume after a supervisor restart; `/status` shows
+`stt_subscribed_at` per robot, set only for a robot confirmed on this connection. Nothing withdraws the
+subscription: a revoke or Listening `off` leaves the robot streaming to the LAN broker, where the permit
+gate or the missing engine drops the audio (the recovered `Log.proto` has no unsubscribe message).
+Built to this contract and OpenMoxie's field-proven behaviour; **unverified on our hardware**.
+[`sim/tests/test_stt_wire.py`](../../sim/tests/test_stt_wire.py) covers every trigger, both
+broker-restart orders and every leave line.
 
 **The log is live-only.** mosquitto does not replay log lines on re-subscribe, so a supervisor that
 restarts while a robot stays connected never sees its connect line, and the robot has no reason to

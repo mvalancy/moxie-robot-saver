@@ -37,8 +37,9 @@ def robot_summary(r: dict) -> str:
     asked = r.get("stt_subscribed_at")
     if isinstance(asked, (int, float)) and not isinstance(asked, bool) and asked > 0:
         # The supervisor asked for the robot's microphone (a request; the robot sends no
-        # acknowledgement, so this is never "listening").
-        bits.append(f"mic asked {time.strftime('%H:%M', time.localtime(asked))}")
+        # acknowledgement, so this is never "listening"). The zone is named: the server's
+        # clock, not the parent's (the appliance container runs on UTC).
+        bits.append(f"mic asked {time.strftime('%H:%M %Z', time.localtime(asked)).strip()}")
     return " · ".join(bits) or "connected"
 
 

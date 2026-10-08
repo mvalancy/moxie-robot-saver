@@ -28,7 +28,9 @@ class LifecycleMixin:
                 # because our socket dying says nothing about the robot).
                 "seen_since_connect": r.device_id in self._seen_since_connect,
                 # When we last asked this robot to stream its microphone (the STT
-                # `ProtoSubscribe`); None = not asked this session. An ask, not an ack.
+                # `ProtoSubscribe`) with live evidence of its session; None = not asked
+                # since it was last confirmed on this connection (an ask to a ghost may
+                # have reached nobody, so it is not recorded). An ask, not an ack.
                 "stt_subscribed_at": r.extra.get("stt_subscribed_at"),
                 "firmware": r.firmware or st.get("robot_firmware_version"),
                 "battery_level": st.get("battery_level"),

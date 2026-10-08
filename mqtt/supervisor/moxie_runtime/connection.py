@@ -269,7 +269,9 @@ class ConnectionMixin:
             try:
                 self._push_config(device_id)
                 # A robot that sat connected through our restart was asked for its mic
-                # by a supervisor that is gone; one more ask costs one QoS 0 message.
+                # by a supervisor that is gone; one more ask costs one QoS 0 message. Not
+                # recorded as the robot's session (no live evidence of one): its return
+                # after a broker restart is asked again.
                 self._subscribe_stt(device_id)
                 pushed.append(device_id)
             except Exception as e:
@@ -461,7 +463,9 @@ class ConnectionMixin:
     # one extra invalidator (module exit), hence `vision_only`. Robot *data* (history,
     # memory, telemetry, presence, the RobotContext) is never forgotten here; the STT ask
     # lives on the RobotContext (`extra["stt_subscribed_at"]`, read by `/status`) but is
-    # a belief about the robot's session, so it goes with the onboarding latch.
+    # a belief about the robot's session, so it goes with the onboarding latch — and is
+    # only ever set for a robot in `_seen_since_connect` (`_subscribe_stt`), so a ghost
+    # never carries one and its re-onboarding always asks.
     def _forget_robot_state(self, device_id: str | None = None, *, vision_only=False):
         """Drop our cached beliefs about one robot (or all of them, `device_id=None`)."""
         with self._presence_lock:

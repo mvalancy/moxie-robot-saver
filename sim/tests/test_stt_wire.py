@@ -7,8 +7,8 @@ The robot's STT dialect on the wire (ai-seam.md §①, mqtt-and-conversation.md 
    `b'<full_name>:' + protobuf`, never JSON;
 3. the ask is repeated whenever the robot's session may have lost it: a second broker
    connect line with no disconnect in between (community signal C4, "crossed ears"), a
-   wake, a re-permit, the Listening picker turning the ears on, a broker outage, a
-   supervisor restart;
+   wake, a re-permit, the Listening picker turning the ears on, a broker outage (in
+   whichever order the supervisor and the robot come back), a supervisor restart;
 4. every way mosquitto 2.0.20 (and 1.6) says a robot left is recognised, so the robot's
    return is a fresh onboarding.
 
@@ -391,6 +391,59 @@ def test_a_broker_outage_clears_the_latch_so_the_next_onboarding_asks_again(time
     assert _order(rt)[-2:] == ["config", PROTO_SUBSCRIBE]
 
 
+def _resume_fires(rt, timers):
+    assert timers.fire("_resume") == 1, "no roster resume was pending after the CONNACK"
+
+
+def _listening_picked(rt, timers):
+    rt.set_transcriber(Ears("swapped"))        # any voice save rebinds the Listening engine
+
+
+def _woken(rt, timers):
+    assert rt.wake_robot(DEV)["published"]
+
+
+def _permitted_again(rt, timers):
+    rt.set_permit(DEV, True)
+
+
+@pytest.mark.parametrize("during_the_gap", [
+    pytest.param(_resume_fires, id="roster-resume"),
+    pytest.param(_listening_picked, id="listening-pick"),
+    pytest.param(_woken, id="wake"),
+    pytest.param(_permitted_again, id="permit"),
+])
+def test_an_ask_sent_while_the_robot_was_away_does_not_silence_its_return(
+        timers, tmp_path, during_the_gap):
+    """The ordinary broker-restart order: the supervisor (on the broker's host) reconnects
+    first, the robot is still on its Wi-Fi backoff. The roster resume fires 1 s after our
+    CONNACK (on by default), or a parent picks Listening, wakes or re-permits the robot,
+    and an ask goes out to nobody. That ask must not count as the robot's session: when
+    its own connect line arrives it gets its config and exactly one ask, and `/status`
+    says `stt_subscribed_at` only then."""
+    rt = _runtime(tmp_path)
+    rt.client.up()
+    timers.fire("_resume")                     # the first CONNACK's resume: nothing rostered
+    _connect(rt)
+    timers.fire("_settle")
+    assert len(_asks(rt)) == 1
+
+    rt.client.drop()                           # the broker restarts: both sockets die
+    rt.client.up()                             # ours is back first; the robot is a ghost
+    during_the_gap(rt, timers)
+    robot = rt.status_snapshot()["robots"][0]
+    assert robot["seen_since_connect"] is False
+    assert robot["stt_subscribed_at"] is None, "an ask to a ghost is not its session"
+    mark = len(rt.client.published)
+
+    _connect(rt)                               # the robot's own new session, later
+    assert timers.fire("_settle") == 1
+    since = [split_zmq_frame(p)[0] if t == ZMQ.format(d=DEV) else t.rsplit("/", 1)[-1]
+             for t, p in rt.client.published[mark:] if t.startswith(f"/devices/{DEV}/")]
+    assert since == ["config", PROTO_SUBSCRIBE], since
+    assert rt.status_snapshot()["robots"][0]["stt_subscribed_at"], "asked, and recorded"
+
+
 def test_a_supervisor_restart_asks_the_robots_in_the_roster(timers, tmp_path):
     """A robot that sat connected through our restart was asked by a process that is
     gone. The roster resume re-pushes config to it with no robot action; the ask rides
@@ -522,8 +575,10 @@ def test_status_carries_when_the_robot_was_asked_and_the_console_says_so(timers,
     asked = robot["stt_subscribed_at"]
     assert isinstance(asked, float) and asked > EPOCH_2024_MS / 1000, "epoch seconds"
     line = robot_summary(robot)
-    assert re.search(r"mic asked \d\d:\d\d", line), line
-    assert re.search(r"mic asked \d\d:\d\d", normalize_robot(robot)["summary"])
+    # The zone is named (the server's clock, UTC in the appliance container): a bare
+    # `HH:MM` would read as the parent's local time.
+    assert re.search(r"mic asked \d\d:\d\d \S+", line), line
+    assert re.search(r"mic asked \d\d:\d\d \S+", normalize_robot(robot)["summary"])
     assert "listening" not in line, "an ask is not an acknowledgement"
     assert robot_summary({}) == "connected"
     assert "mic asked" not in robot_summary({"stt_subscribed_at": None})

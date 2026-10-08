@@ -74,8 +74,10 @@ type: FINAL, speech, confidence, uuid}` on the same topic, both as the bus frame
 `tools/robot-toolkit` pb2 files). An empty transcript is still a `FINAL`; the robot's turn ends on the
 type, not the text. The ask is repeated whenever the robot's session may have lost it (a second broker
 connect line with no disconnect in between, a wake, a Permit, the Listening picker turning the ears on, a
-broker outage, the roster resume after a supervisor restart), and `/status` shows `stt_subscribed_at` per
-robot; see [mqtt-and-conversation.md §3.4](mqtt-and-conversation.md#34-connect-and-disconnect-detection).
+broker outage in whichever order the supervisor and the robot come back, the roster resume after a
+supervisor restart), and `/status` shows `stt_subscribed_at` per robot, recorded only for a robot
+confirmed on this connection (an ask sent while it is away is not its session); see
+[mqtt-and-conversation.md §3.4](mqtt-and-conversation.md#34-connect-and-disconnect-detection).
 Built to the contract and to OpenMoxie's field-proven behaviour (MIT: `site/hive/mqtt/moxie_server.py`
 `on_device_connect` sends config then this subscribe, framed by `send_zmq_to_bot`; `zmq_stt_handler.py`
 answers with a protobuf `zmqSTTResponse`). **Unverified on our hardware**: no physical Moxie has streamed
