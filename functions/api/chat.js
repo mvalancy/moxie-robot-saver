@@ -23,10 +23,15 @@
  *  - A GOODBYE ENDS THE TURN. When the child's whole line is a leave-taking
  *    (`_lib/turnshape.js::isGoodbye`) the model is cued to say goodbye, `end_turn` is true
  *    and the markup carries the sign-off wave — the one place a client is told to stop.
+ *  - THE REPLY IS CHECKED BEFORE ANY TICKET IS MINTED (`_lib/safety.js`, §4.12). A
+ *    completion that trips a Moxie-side block never reaches `output.text`, a ticket or the
+ *    context blob: the rule's redirect line is served in its place, marked like an input
+ *    block, with no extra upstream call. A hurt child's reply that names no trusted
+ *    grown-up gets ONE referral sentence appended, spoken as its own last ticket.
  */
 import { readConfig, modeOf, publicLimits, publicTurnstile, upstreamHeaders } from "./_lib/env.js";
 import { respond } from "./_lib/envelope.js";
-import { assess } from "./_lib/safety.js";
+import { assess, disclosesHurt, MOXIE, withReferral } from "./_lib/safety.js";
 import { admit, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
 import { mintContext, mintTickets, verifyContext } from "./_lib/hmac.js";
 import { TOKEN_FIELD, verify as verifyTurnstile } from "./_lib/turnstile.js";
@@ -108,10 +113,12 @@ export async function onRequestPost(context) {
     if (!history.ok) stats_expiredContext++;
 
     // 6. Pre-inference safety. A hard block never calls the gateway and spends nothing.
+    //    The verdict is kept: a `hurt_disclosure` flag decides at step 9 whether the reply
+    //    must point the child to a grown-up.
     const verdict = assess(text);
     if (verdict.blocked) {
       slot.refundBudget();
-      return blocked(cfg, slot, verdict);
+      return await blocked(cfg, slot, verdict);
     }
 
     // 7. The bot control, and its POSITION is the design: after every free refusal
@@ -144,11 +151,24 @@ export async function onRequestPost(context) {
     // 8b. The re-roll.
     const served = await rerollOnce(cfg, slot, { turns, text, first: upstream, startedAt, docs });
 
+    // 8c. The output floor (§4.12): her own words, assessed on the Moxie side of the table
+    //     BEFORE a ticket is minted or the context is signed. A hard block swaps in the
+    //     rule's redirect line, spoken from tickets of its own, and marks the turn the way
+    //     an input block is marked. The upstream call was really made, so the units stay
+    //     charged. A soft flag changes nothing.
+    const own = assess(served.text, MOXIE);
+    if (own.blocked) {
+      return await blocked(cfg, slot, own, { speak: true });
+    }
+
     // 9. The reply. `served.chosen`, `served.diagram` and `served.text` travel together, so
     //    a re-rolled line never wears the face, or shows the picture, the model chose for
     //    the other one. `markupFloor` validates each field against its closed table; on a
     //    goodbye it is asked for the sign-off wave and the wire says the turn is over.
-    const reply = served.text;
+    //    A hurt child's reply (step 6's flag) that names no trusted grown-up gets ONE
+    //    referral sentence appended here, before the markup, the tickets and the blob,
+    //    so it is shown, spoken as its own last ticket, and remembered as hers.
+    const reply = disclosesHurt(verdict) ? withReferral(served.text, text).text : served.text;
     const eid = eventId();
     const wire = buildChatResponse({
       eventId: eid, text: reply, endTurn: closing,
@@ -284,17 +304,25 @@ async function callGateway(cfg, body, timeoutMs) {
 }
 
 /**
- * A hard-blocked utterance: `ok: true` (the floor did its job), `degraded: true` (not the
- * live brain), status 200, no ticket — the redirect line is spoken from a clip or the
- * browser voice like any scripted line. `mode.js` never changes mode for it.
+ * A hard-blocked turn: `ok: true` (the floor did its job), `degraded: true` (not the live
+ * brain), status 200, the redirect line in `messages`, no context (the turn is not
+ * remembered). `mode.js` never changes mode for it.
+ *
+ * An INPUT block (`verdict` from the child's line) mints no ticket: nothing was spent and
+ * the redirect is spoken from a clip or the browser voice like any scripted line. An
+ * OUTPUT swap (`speak: true`, `verdict` from Moxie's own reply) mints tickets for the
+ * redirect line only — the completion it replaces never reaches a ticket — so the line
+ * can be spoken in her voice; the unsafe completion is in no field of the response.
  */
-function blocked(cfg, slot, verdict) {
+async function blocked(cfg, slot, verdict, o) {
   const messages = [];
+  let speech = [];
   const r = verdict.redirect;
   if (r) {
     const eid = eventId();
     const markup = MK.mood(r.mood) + MK.gesture(r.gesture) + r.text;
     messages.push(chatMessage(cfg.deviceId, buildChatResponse({ eventId: eid, text: r.text, markup })));
+    if (o && o.speak && cfg.voice) speech = await mintTickets(cfg, { text: r.text, eventId: eid });
   }
   return respond(
     {
@@ -307,7 +335,7 @@ function blocked(cfg, slot, verdict) {
       limits: publicLimits(cfg),
       turnstile: publicTurnstile(cfg),
       messages,
-      speech: [],
+      speech,
       context: "",
       voice: cfg.voice,
       ears: cfg.ears,

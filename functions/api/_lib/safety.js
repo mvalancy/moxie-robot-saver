@@ -1,17 +1,28 @@
-/* functions/api/_lib/safety.js — the pre-inference floor. Compiles ./safety.rules.js,
- * applies it to the child's utterance, and hands the route a verdict.
+/* functions/api/_lib/safety.js — the safety floor, both sides of a turn. Compiles
+ * ./safety.rules.js, applies it to the child's utterance (before the call) and to Moxie's
+ * own reply (after it), and hands the route a verdict.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 ('Pre-inference safety'), §2.6.
+ * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 ('Pre-inference safety'), §4.12
+ * ('The output floor'), §2.6.
  *
  * BEFORE THE CALL, like `mqtt/moxie_sdk/safety.py`: a hard-blocked turn never reaches a
  * model and spends ZERO gateway units — one rule, a safety control and a cost control.
  *
+ * AFTER THE CALL, like the core supervisor's `role="moxie"` check: the completion is
+ * assessed with each category's `action.moxie` BEFORE a voice ticket is minted, so an
+ * unsafe reply is never spoken, shown or paid for; the route swaps in the rule's redirect
+ * line (`redirectFor`) with no extra upstream call.
+ *
  * IT IS A FLOOR, NOT A FILTER. A rule engine misses context, sarcasm, novel phrasings and
  * other languages, and occasionally catches something innocent. It is one layer under the
  * model's alignment and the persona prompt, never a replacement for either or a parent.
+ * On Moxie's side a false positive costs a good line, so the gate for every Moxie-side
+ * rule is the false-positive corpus of real replies (`sim/tests/fixtures/safety-floor/`).
  *
- * No journal, review queue or post-inference stage: the hosted demo persists nothing, so a
- * `flag` verdict is computed and allowed through (§2.6).
+ * No journal or review queue: the hosted demo persists nothing, so a `flag` verdict is
+ * computed and allowed through (§2.6) — except `hurt_disclosure`, which the route acts
+ * on: a reply to a hurt child that names no trusted grown-up gets ONE referral sentence
+ * appended (`withReferral`), deterministically, where the model misses about one in ten.
  *
  * `assess()` is PURE (no network, no clock), so tests assert the exact verdict. The table
  * is a `.js` data module because the Pages bundler rejects JSON import attributes (see
@@ -116,19 +127,34 @@ function phraseRes(list, flags) {
 
 let badPatterns = 0;
 
+/** Which side of the turn a piece of text came from (`safety.py::CHILD`/`MOXIE`). */
+export const CHILD = "child";
+export const MOXIE = "moxie";
+
+/** What a category may do on one side. An unknown or missing child action is `flag`
+ *  (the table's historical default); a missing Moxie action is `allow`, as in Python's
+ *  `cat.action.get(role, ALLOW)`, so a category that says nothing about her own words
+ *  never swaps a reply. */
+function actionOf(action, side) {
+  const v = action && action[side];
+  if (v === "block" || v === "flag" || v === "allow") return v;
+  return side === CHILD ? "flag" : "allow";
+}
+
 function compile(rules) {
   const cats = [];
   for (const c of (rules && rules.categories) || []) {
     cats.push({
       id: String(c.id || ""),
       label: String(c.label || ""),
-      // P0 enforces the child side only; there is no Moxie-side (post-inference) stage.
-      action: (c.action && c.action.child) === "block" ? "block" : "flag",
+      action: { child: actionOf(c.action, CHILD), moxie: actionOf(c.action, MOXIE) },
       intents: Array.isArray(c.intents) ? c.intents.map(String) : [],
       phraseSet: String(c.phrase_set || "generic"),
       words: wordRe(c.words),
       phrases: phraseRes(c.phrases),
       allow: phraseRes(c.allow, "gi"), // applied by REMOVAL, so global
+      // Her side only: a refusal that quotes the request is the right reply, not a swap.
+      allowMoxie: phraseRes(c.allow_moxie, "gi"),
     });
   }
   return { version: Number(rules && rules.version) || 0, categories: cats, phrases: (rules && rules.phrases) || {} };
@@ -143,17 +169,22 @@ Object.defineProperty(TABLE, "badPatterns", { value: badPatterns, enumerable: tr
  * ---------------------------------------------------------------------------- */
 
 /**
- * Assess one child utterance.
+ * Assess one piece of text: the child's line (`role` `"child"`, the default) or what
+ * Moxie is about to say (`"moxie"`). The policy differs by side, as in `safety.py`: a
+ * child swearing is flagged, Moxie swearing is blocked and her line swapped.
  *
  * @param {string} text
+ * @param {string} [role] `"child"` | `"moxie"`; anything else is `"child"`.
  * @returns {{blocked: boolean, flagged: boolean, blockedBy: string[], intents: string[],
  *            phraseSet: string, redirect: {text: string, mood: number, gesture: string,
  *            phraseId: number}|null}}
  *
  * `blockedBy` is in TABLE ORDER and the FIRST blocking category picks the redirect, so
- * self-harm outranks profanity when a sentence trips both.
+ * self-harm outranks profanity when a sentence trips both. A category whose action on
+ * this side is `allow` is not consulted at all.
  */
-export function assess(text) {
+export function assess(text, role) {
+  const side = role === MOXIE ? MOXIE : CHILD;
   const forms = variants(text);
   const blockedBy = [];
   const flaggedBy = [];
@@ -161,8 +192,10 @@ export function assess(text) {
   let phraseSet = "";
 
   for (const cat of TABLE.categories) {
-    if (!matches(cat, forms)) continue;
-    if (cat.action === "block") {
+    const action = cat.action[side];
+    if (action === "allow") continue;
+    if (!matches(cat, forms, side)) continue;
+    if (action === "block") {
       blockedBy.push(cat.id);
       if (!phraseSet) phraseSet = cat.phraseSet;
     } else {
@@ -182,12 +215,13 @@ export function assess(text) {
   };
 }
 
-function matches(cat, forms) {
+function matches(cat, forms, side) {
   for (const form of forms) {
     // The false-positive guards are applied FIRST and by REMOVAL, so `killing myself
     // laughing` never counts as self-harm and `flag football` never counts as a slur.
     let t = form;
     for (const g of cat.allow) t = t.replace(g, " ");
+    if (side === MOXIE) for (const g of cat.allowMoxie) t = t.replace(g, " ");
     if (cat.words && cat.words.test(t)) return true;
     for (const p of cat.phrases) if (p.test(t)) return true;
   }
@@ -216,4 +250,67 @@ export function redirectFor(phraseSet, text) {
     gesture: String(pick.gesture || "Gesture_Think"),
     phraseId: Number(pick.id) || 0,
   };
+}
+
+/* ---------------------------------------------------------------------------- *
+ * The referral floor (§4.12)
+ * ---------------------------------------------------------------------------- */
+
+/** The flag-only category whose verdict the route acts on. */
+export const HURT = "hurt_disclosure";
+
+/** Whether a child-side verdict discloses a person hurting, frightening or endangering
+ *  the child — the one `flag` that changes what is said back. */
+export function disclosesHurt(verdict) {
+  return !!(verdict && Array.isArray(verdict.flaggedBy) && verdict.flaggedBy.includes(HURT));
+}
+
+/* A referral is ONE SENTENCE that names a grown-up AND points the child to them: an ask
+ * ("tell a grown-up"), a check ("does a grown-up know?") or their nearness ("a grown-up
+ * near you"). Transcribed from the bake-off's `refersToAdult` (`sim/tools/model_bakeoff.mjs`)
+ * so the floor and the instrument that measured the model's 40 of 44 agree on what counts;
+ * the two must change together. */
+const ADULT_RE = /\b(grown[- ]?ups?|adults?|teachers?|parents?|mom|mum|mommy|mummy|dad|daddy|nurse|doctor|someone you trust)\b/i;
+const REFER_RE = /\b(tell|told|talk(?:ing)? (?:to|with)|show|ask|find|get|go (?:to|find|get|see|show|tell)|know|knows|call|help|nearby|near you|close by|with you|right away|right now)\b/i;
+
+/** Sentences, split the way the bake-off splits them. */
+function sentencesOf(text) {
+  return String(text || "").split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+}
+
+/** Whether some sentence of `reply` points the child to a trusted grown-up. */
+export function hasReferral(reply) {
+  return sentencesOf(reply).some((s) => ADULT_RE.test(s) && REFER_RE.test(s));
+}
+
+/**
+ * The referral sentence for this child's line. DETERMINISTIC like `redirectFor`: picked by
+ * the child's line length modulo the set size, so a test can assert it.
+ *
+ * @returns {{text: string, phraseId: number}|null}
+ */
+export function referralFor(childText) {
+  const set = TABLE.phrases.referral || [];
+  if (!set.length) return null;
+  const pick = set[String(childText || "").length % set.length];
+  return { text: String(pick.text || ""), phraseId: Number(pick.id) || 0 };
+}
+
+/**
+ * `reply` with ONE referral sentence appended when it has none, as its own last sentence
+ * (so `hmac.js::mintTickets` makes it its own ticket). A reply that already points to a
+ * grown-up is returned untouched — the appended sentence is itself a referral, so a
+ * second pass changes nothing. Never called for an ordinary line: the route calls it only
+ * when `disclosesHurt(assess(childText))`.
+ *
+ * @returns {{text: string, appended: boolean, phraseId: number}}
+ */
+export function withReferral(reply, childText) {
+  const line = String(reply || "").trim();
+  if (!line || hasReferral(line)) return { text: line, appended: false, phraseId: 0 };
+  const r = referralFor(childText);
+  if (!r || !r.text) return { text: line, appended: false, phraseId: 0 };
+  // A line that ends mid-thought still gets a sentence boundary before the referral.
+  const sep = /[.!?]["')\]]?$/.test(line) ? " " : ". ";
+  return { text: line + sep + r.text, appended: true, phraseId: r.phraseId };
 }

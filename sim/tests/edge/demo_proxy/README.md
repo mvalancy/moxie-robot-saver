@@ -15,6 +15,7 @@ one [`harness.mjs`](harness.mjs) (stubbed gateway, `fresh()`, `call()`, the `ass
 - [`09_reroll_shape.mjs`](09_reroll_shape.mjs) — §17–18: the re-roll and the per-turn shape cue.
 - [`10_goodbye_close.mjs`](10_goodbye_close.mjs) — §19–22: the goodbye close (detector, cue, `end_turn`, the sign-off wave), the prompt layouts (`DEMO_PROMPT_LAYOUT`), the brace-proof envelope parser, the punctuation-folding echo.
 - [`11_persona_v2.mjs`](11_persona_v2.mjs) — §23: the persona v2 (identity and mission first, the child as mentor, her idle habits, honest senses, ordered rules each stated once, rule 2 deferring to the safety block for a hurt child, the safety block last and verbatim against a frozen copy) and the system messages every layout emits around it.
+- [`13_safety_floor.mjs`](13_safety_floor.mjs) — §24: the output floor (an unsafe completion never reaches `output.text`, a ticket or the blob; the rule's redirect is served and ticketed instead; a knight's sword passes untouched; the Moxie side of the table is the authority table's; the false-positive corpus pins 0 swaps) and the referral floor (a hurt child's reply with no trusted-grown-up referral gets exactly one appended, as its own last ticket and in the blob; one with a referral gets none; an accident gets none; every hurt replay on disk).
 
 ---
 📖 [Edge modules](../README.md) · [Back to top](../../../../README.md)

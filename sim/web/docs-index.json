@@ -400,7 +400,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 74037,
+   "bytes": 81593,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -429,6 +429,7 @@
     "4.9 Repetition levers",
     "4.10 Turn shape (`_lib/turnshape.js`)",
     "4.11 The persona (`DEFAULT_PERSONA`, v2)",
+    "4.12 The output floor",
     "5. Configuration",
     "6. The fallback experience",
     "6.1 Reused as-is",
@@ -1209,7 +1210,7 @@
    "path": "guides/child-safety.md",
    "title": "Child safety — what Moxie checks, and where you review it",
    "section": "guides",
-   "bytes": 6067,
+   "bytes": 7423,
    "mermaid": 0,
    "headings": [
     "What actually happens in a turn",
@@ -1217,6 +1218,7 @@
     "What a flag means (and what it does not)",
     "Where to review it",
     "Privacy",
+    "On the public demo",
     "Changing what is checked"
    ],
    "kind": "md"

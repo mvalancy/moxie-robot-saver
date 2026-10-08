@@ -91,6 +91,27 @@ The robot card also says "*N* safety flags to review" so you do not have to go l
 - Stored under your data directory (`MOXIE_DATA_DIR`, default `mqtt/data/`), most recent
   200 events per robot, in plain JSON you can read or delete yourself.
 
+## On the public demo
+
+The hosted Sim at moxie.mattvalancy.com runs the same kind of check inside its own server
+code (`functions/api/_lib/safety.js`), with the same categories and the same two columns:
+
+1. **Your child's line is read before anything is sent to the AI.** A clearly harmful line
+   never reaches it, and Moxie says a short, kind line instead. This is also how a question
+   about making a weapon is handled: a sword, an axe, a spear or a bow and arrow as well as a
+   gun or a knife is turned aside before any AI is asked. A knight's sword in a story, a toy
+   sword, a Minecraft sword, a rainbow or a bow tie are not.
+2. **The AI's reply is read before Moxie's voice is made.** A reply that trips the "Moxie is
+   about to say it" column is never shown or spoken; she says the short safe line instead.
+3. **A hurt child is pointed to a grown-up, every time.** If your child says a person is
+   hurting, frightening or endangering them (hit, pushed, bullied, touched in a way that
+   scares them, told to keep a secret from you) and the AI's reply does not point them to a
+   grown-up they trust, one sentence is added at the end, in Moxie's voice, that does. A
+   scraped knee or a sad film is left to the AI: the added sentence is for a person, not an
+   accident.
+
+There is no review list on the demo: nothing a visitor says is stored.
+
 ## Changing what is checked
 
 The whole rule table is one readable file: [`mqtt/moxie_sdk/safety_rules.json`](../../mqtt/moxie_sdk/safety_rules.json).
