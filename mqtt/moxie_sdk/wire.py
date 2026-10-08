@@ -9,8 +9,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import hashlib, json
 
-from .types import (ActionType, ResultCode, ACTION_IDS, ENABLE_QR_ARGS,
-                    ENABLE_QR_FUNCTION, OUTPUT_TYPE_RESPONSE)
+from .types import (ActionType, ResultCode, ENABLE_QR_ARGS, ENABLE_QR_FUNCTION,
+                    OUTPUT_TYPE_RESPONSE)
 
 
 def _arg_str(value) -> str:
@@ -34,15 +34,24 @@ def encode_action(a) -> dict:
     `GLOBAL_RESPONSE`, both enum names the robot's protobuf-JSON parser knows; an
     `ENABLE_QR` has no ActionID and goes out as `execute eb_enable_qr("true")` — its own
     `function`/`args` are not consulted.
+
+    An `Action` whose `type` is a name the enum does not know (a raw string an app built
+    it with) has no ActionID to go out under: returns None after one logged line, and
+    `build_chat_response` drops that entry alone, never the reply. The older `"exit"`
+    spelling is a known name (`ActionType._missing_`).
     """
-    entry = {"output_type": OUTPUT_TYPE_RESPONSE, "action": a.type.value,
+    try:
+        kind = ActionType(a.type)
+    except ValueError:
+        print(f"[wire] dropped an action with no ActionID: {a.type!r}", flush=True)
+        return None
+    entry = {"output_type": OUTPUT_TYPE_RESPONSE, "action": kind.value,
              "module_id": a.module_id, "content_id": a.content_id}
     function = getattr(a, "function", None)
     args = getattr(a, "args", None)
-    if a.type is ActionType.ENABLE_QR:
+    if kind is ActionType.ENABLE_QR:
         entry["action"] = ActionType.EXECUTE.value
         function, args = ENABLE_QR_FUNCTION, list(ENABLE_QR_ARGS)
-    assert entry["action"] in ACTION_IDS, entry["action"]
     if function:
         entry["function_id"] = function
     if args:
@@ -124,7 +133,7 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
         output["signals"] = encode_signals(signals)
     resp = {"command": "remote_chat", "result": int(rc), "backend": backend,
             "event_id": event_id, "output": output, "end_turn": bool(end_turn)}
-    ra = [encode_action(a) for a in (actions or [])]
+    ra = [e for e in map(encode_action, actions or []) if e is not None]
     if subscribe_events:
         if not ra:
             ra.append({"output_type": OUTPUT_TYPE_RESPONSE})

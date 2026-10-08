@@ -195,6 +195,24 @@ def test_every_action_goes_out_under_a_recovered_action_id():
     assert {a["output_type"] for a in resp["response_actions"]} == {"GLOBAL_RESPONSE"}
 
 
+def test_an_action_with_no_action_id_is_dropped_alone_and_the_reply_still_goes_out(capsys):
+    """An `Action` built with a name the enum does not know used to raise inside
+    `_publish_chat` — an `assert` (stripped under -O) behind an attribute error — and the
+    whole spoken reply was lost. That one entry is dropped with a logged line; the line
+    and the actions the robot can read still go out, and the older `"exit"` spelling is
+    not a stranger."""
+    rt, dev = make_runtime(_Say("Let's go!", actions=[
+        Action(type="teleport_to_mars"),
+        Action(type=ActionType.LAUNCH, module_id="DRAW", content_id="default"),
+        Action(type="exit")]))
+    resp = drive_turn(rt, dev, "go?")
+    assert resp["output"]["text"] == "Let's go!"
+    assert action_names(strict(resp)) == ["launch", "exit_module"]
+    assert "teleport_to_mars" in capsys.readouterr().out, "the drop must be logged"
+    assert build_chat_response("e", "hi", actions=[Action(type=None)]).get(
+        "response_actions", []) == []
+
+
 def test_an_execute_with_mapped_args_parses_as_action_args_entries():
     resp = build_chat_response("e", "", actions=[
         Action(type=ActionType.EXECUTE, function="eb_set_volume", args={"level": 3})])
