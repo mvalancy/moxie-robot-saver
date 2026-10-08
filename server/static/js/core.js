@@ -41,7 +41,7 @@ function activateTab(name){
   clearInterval(monTimer);
   if(name==='direct'){ loadDirect(); pollMonitor(); monTimer=setInterval(pollMonitor,2500); }
   if(name==='server'){ loadEndpointQR(); pollMonitor(); monTimer=setInterval(pollMonitor,2500); }
-  if(name==='moxie') refreshMoxie();
+  if(name==='moxie'){ refreshMoxie(); monTimer=setInterval(watchForRobot,WATCH_MS); }
 }
 
 // ---- Moxie Direct ----
@@ -175,16 +175,30 @@ function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;',
 // broker that no account has added (`unclaimed`), and whether that list could be checked
 // at all (`known`). 🔐 Robot access reads it too.
 let ACCOUNT={robots:[], unclaimed:[], known:true};
+const accountOf=st=>({robots:st.robots||[], unclaimed:st.unclaimed||[], known:st.unclaimed_known!==false});
 async function refreshMoxie(){
   try{
     const st=await api('/local/state');
-    ACCOUNT={robots:st.robots||[], unclaimed:st.unclaimed||[], known:st.unclaimed_known!==false};
+    ACCOUNT=accountOf(st);
     if(st.robots && st.robots.length){ renderRobot(st.robots[0]); }
     else { $('#moxie-none').classList.remove('hidden'); $('#moxie-card').classList.add('hidden');
            $('#memory-card').classList.add('hidden'); }
     renderClaims();
   }catch(e){}
   refreshLive();
+}
+
+// While No Moxie paired yet is showing, the tab looks for a robot arriving (or one added
+// from another page) every WATCH_MS, so its Add to my account appears without re-opening
+// the tab. Light: one GET /local/state, and the cards redraw only when that answer changed
+// (a redraw would interrupt 💬 Try it, which a parent with no robot may be using). Nothing
+// is sent while a robot card is up or the page is hidden; leaving the tab stops it.
+const WATCH_MS=5000;
+const accountKey=a=>JSON.stringify([a.robots.map(r=>r.id), a.unclaimed, a.known]);
+async function watchForRobot(){
+  if(document.hidden || $('#moxie-none').classList.contains('hidden')) return;
+  let st; try{ st=await api('/local/state'); }catch(e){ return; }
+  if(accountKey(accountOf(st))!==accountKey(ACCOUNT)) refreshMoxie();
 }
 
 // ---- ➕ Add to my account ----

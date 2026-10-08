@@ -14,6 +14,9 @@
  *      the waiting robot in Robot access and on its own robot card (unpair it first)
  *   C5 when the supervisor could not be asked (`unclaimed_known: false`) the card says the
  *      robot service cannot be reached, instead of looking as if no robot arrived
+ *   C6 a robot that arrives while the tab is open gets its Add to my account without
+ *      re-opening the tab (the tab's watch reads /local/state), and the watch asks nothing
+ *      while another tab is open or once a robot is added
  *   W1 the Wi-Fi tab's code is Wi-Fi ONLY by default: one POST /local/wifi/payload, its
  *      payload shown, no recovery phrase; once the robot is on the broker the tab says to
  *      add it, and claims nothing itself
@@ -32,7 +35,8 @@
  * mutated copies of js/core.js (an automatic claim; no button on the card; no button on the
  * pending row; the answer not rendered; a second robot offered; no reason beside a robot that
  * cannot be added; a refusal swallowed; the unreachable state never said, or said of a
- * supervisor that answered; the pairing-key code by default; a claim from the Wi-Fi tab's
+ * supervisor that answered; no watch on the Moxie tab, or one still asking with a robot card
+ * up or from another tab; the pairing-key code by default; a claim from the Wi-Fi tab's
  * poll; an earlier record reported as the robot on the bench) must each redden the scenario
  * that guards it.
  *
@@ -52,6 +56,10 @@ const DEV = "d_bench_01", RID = "r-claimed", CID = "c-kid", TOKEN = "t-fixture";
 const STATIC = join(repo, "server", "static");
 const CORE_JS = "/js/core.js";
 const SRC = readFileSync(join(STATIC, CORE_JS), "utf8");
+/* The Moxie tab's watch interval, read from js/core.js so a change there moves the windows
+ * (5 s when it is missing, so a run against a page without the watch still ends). */
+const WATCH_FOUND = Number((SRC.match(/const WATCH_MS=(\d+);/) || [])[1]);
+const WATCH_MS = WATCH_FOUND || 5000;
 
 const PY = `
 import json, sys
@@ -75,6 +83,7 @@ print(json.dumps({
     "pending": fleet.normalize_fleet(snap(True)),
     "served": fleet.normalize_fleet(snap(False)),
     "down": fleet.normalize_fleet({"ok": False, "error": "supervisor not reachable"}),
+    "empty": fleet.normalize_fleet({**snap(True), "robots": []}),
     "unpair": L.unpair_result(rid, unpaired=True, factory_reset=False,
                               child={"id": cid, "name": "Moxie Kid"}, codes_voided=0,
                               access=L.access_view(dev, revoked=True)),
@@ -96,6 +105,9 @@ ok(FIX.served.pending_count === 0 && FIX.served.robots.length === 1,
    "fixture: once claimed it is served");
 ok(FIX.down.ok === false && FIX.down.robots.length === 0,
    "fixture: the real normalize_fleet of a supervisor that cannot be asked");
+ok(FIX.empty.ok === true && FIX.empty.robots.length === 0, "fixture: a broker with no robot yet");
+ok(WATCH_FOUND > 0 && WATCH_FOUND <= 10000,
+   `js/core.js names the Moxie tab's watch interval — got ${WATCH_FOUND}`);
 ok(FIX.unpair.unpaired === true, "fixture: the real unpair_result produced an unpair answer");
 ok(FIX.wifi_decoded.secret_key === null && FIX.wifi_decoded.hide_pair === true,
    "fixture: the real encode_wifi_only carries no key and the wifi-only flag");
@@ -128,10 +140,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A fresh first visit, logged in, on the Moxie tab. Until a claim succeeds the account has
  *  `robots` and the broker one pending robot; every POST and DELETE lands in `st.calls`.
- *  `known: false` is a supervisor that could not be asked (/local/state and /local/fleet). */
+ *  `known: false` is a supervisor that could not be asked (/local/state and /local/fleet);
+ *  `arriveLater` keeps the broker empty until the test sets `st.arrived`. Every GET of
+ *  /local/state is counted in `st.stateGets`. */
 async function drive({ mutate = null, robots = [], unclaimed = [DEV], refuse = false, tab = "moxie",
-                       known = true } = {}) {
-  const st = { calls: [], auth: [], bodies: {}, claimed: false, unpaired: false };
+                       known = true, arriveLater = false } = {}) {
+  const st = { calls: [], auth: [], bodies: {}, claimed: false, unpaired: false,
+               arrived: !arriveLater, stateGets: 0 };
   const page = await browser.newPage();
   await page.evaluateOnNewDocument(() => { try { localStorage.clear(); } catch (e) {} });
   const { errs, aborted } = watchPage(page);
@@ -153,13 +168,15 @@ async function drive({ mutate = null, robots = [], unclaimed = [DEV], refuse = f
     if (call === KEYED) return J({ qr_payload: FIX.keyed, recovery_phrase: PHRASE,
                                    secret_hash: "h", child_id: CID, public_key: "k" });
     if (p === "/local/state") {
+      st.stateGets++;
       const mine = st.unpaired ? [] : st.claimed ? [CLAIMED] : robots;
       return J({ user: { id: "u1", email: "parent@home.lan" },
                  children: [{ id: CID, "child-first-name": "Moxie Kid" }],
-                 robots: mine, unclaimed: st.claimed || !known ? [] : unclaimed,
+                 robots: mine, unclaimed: st.claimed || !known || !st.arrived ? [] : unclaimed,
                  unclaimed_known: known });
     }
-    if (p === "/local/fleet") return J(!known ? FIX.down : st.claimed ? FIX.served : FIX.pending);
+    if (p === "/local/fleet")
+      return J(!known ? FIX.down : st.claimed ? FIX.served : st.arrived ? FIX.pending : FIX.empty);
     if (call === CLAIM) {
       if (refuse) { aborted.refused++; return J(REFUSED, 409); }
       st.claimed = true;
@@ -334,6 +351,47 @@ const SCENARIOS = {
     } finally { await page.close(); }
   },
 
+  async C6(C, o) {
+    const { page, st, errs, aborted } = await drive({ ...o, arriveLater: true });
+    const buttons = (sel) => page.waitForFunction((s) => document.querySelectorAll(s).length > 0,
+                                                  { timeout: 3 * WATCH_MS }, sel).catch(() => {});
+    try {
+      let v = await view(page);
+      C.ok(v.none && v.allButtons.length === 0, "C6: before the robot arrives there is nothing to add");
+      st.arrived = true;                                        // it reaches the broker now
+      await buttons("#moxie-none .claim-btn");
+      v = await view(page);
+      C.eq(JSON.stringify(v.cardButtons), JSON.stringify(["Add to my account"]),
+           "C6: a robot that arrives while the tab is open is offered without re-opening it");
+      if (!v.cardButtons.length) return;                        // nothing below can run
+      await buttons("#permits-box .claim-btn");
+      v = await view(page);
+      C.eq(JSON.stringify(v.rowButtons), JSON.stringify(["Add to my account"]),
+           "C6: and on its pending row in Robot access");
+      C.eq(claims(st), 0, "C6: the watch never claims");
+
+      await page.click('.tab[data-tab="wifi"]');
+      await sleep(300);
+      let asked = st.stateGets;
+      await sleep(WATCH_MS + 1500);
+      C.eq(st.stateGets - asked, 0, "C6: the watch asks nothing while another tab is open");
+
+      /* Re-opening the tab redraws the card: click the redrawn button, never the old one. */
+      await page.evaluate(() => document.querySelectorAll("#moxie-none .claim-btn")
+        .forEach((b) => { b.dataset.old = "1"; }));
+      await page.click('.tab[data-tab="moxie"]');
+      await buttons("#moxie-none .claim-btn:not([data-old])");
+      await page.click("#moxie-none .claim-btn");
+      await cardShown(page);
+      await sleep(300);
+      asked = st.stateGets;
+      await sleep(WATCH_MS + 1500);
+      C.ok((await view(page)).card, "C6: the robot card is up");
+      C.eq(st.stateGets - asked, 0, "C6: once a robot is added the watch asks nothing");
+      C.eq(notable(errs, aborted).length, 0, `C6: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+    } finally { await page.close(); }
+  },
+
   async W1(C, o) {
     const { page, st, errs, aborted } = await drive({ ...o, tab: "wifi" });
     try {
@@ -436,6 +494,14 @@ const TEETH = [
                     "  return '';\n")],
   ["an earlier record reported as the robot on the bench", "W3",
    (s) => s.replace("if(mine.some(r=>!known.has(r.id))){", "if(mine.length){")],
+  ["no watch on the Moxie tab", "C6",
+   (s) => s.replace("if(name==='moxie'){ refreshMoxie(); monTimer=setInterval(watchForRobot,WATCH_MS); }",
+                    "if(name==='moxie'){ refreshMoxie(); }")],
+  ["the watch still asking with a robot card up", "C6",
+   (s) => s.replace("if(document.hidden || $('#moxie-none').classList.contains('hidden')) return;",
+                    "if(document.hidden) return;")],
+  ["the watch still asking from another tab", "C6",
+   (s) => s.replace("  clearInterval(monTimer);\n  if(name==='direct')", "  if(name==='direct')")],
   ["a supervisor that cannot be asked never said", "C5",
    (s) => s.replace("u.classList.toggle('hidden', ACCOUNT.known);", "u.classList.toggle('hidden', true);")],
   ["a supervisor that answered reported unreachable", "C1",

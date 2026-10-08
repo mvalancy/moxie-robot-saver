@@ -68,8 +68,10 @@ the broker during the live session; it has not yet been seen in this monitor wit
 ## 4. Add it to your account
 
 Console → **🤖 Moxie**. A connected robot that is on no account is listed in two places: under
-**No Moxie paired yet** and in **🔐 Robot access → Waiting for you**. Press **Add to my account**
-in either one. That one click:
+**No Moxie paired yet** and in **🔐 Robot access → Waiting for you**. You can open the tab before
+the robot arrives: while **No Moxie paired yet** is showing, the tab checks every few seconds and
+the robot appears on its own, with no need to re-open the tab. Press **Add to my account** in
+either place. That one click:
 
 - puts the robot (its `d_…` id) on your account, bound to your child; a child named "Moxie Kid" is
   made if the account has none;
