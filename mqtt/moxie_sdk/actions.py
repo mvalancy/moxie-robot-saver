@@ -121,6 +121,23 @@ def parse_action_tags(text: str) -> Tuple[str, List[Action]]:
     return tidy_spoken_text(_TAG_RE.sub(_sub, text)), actions
 
 
+def _lift_known(text: str) -> Tuple[str, List[int]]:
+    """`text` as `parse_action_tags` would speak it, every tag with one of our names lifted
+    in one pass (malformed ones too), and for each character kept its index in `text`."""
+    out: List[str] = []
+    origin: List[int] = []
+    pos = 0
+    for m in _TAG_RE.finditer(text):
+        if m.group(1).lower() not in KNOWN_TAGS:
+            continue
+        out.append(text[pos:m.start()])
+        origin.extend(range(pos, m.start()))
+        pos = m.end()
+    out.append(text[pos:])
+    origin.extend(range(pos, len(text)))
+    return "".join(out), origin
+
+
 def drop_action_tags(text: str, keep) -> Tuple[str, List[Action]]:
     """`text` with every action tag whose action `keep(action)` refuses taken out, and
     those actions in the order they appeared.
@@ -128,10 +145,16 @@ def drop_action_tags(text: str, keep) -> Tuple[str, List[Action]]:
     A kept tag, a malformed one and a tag that is not ours stay in the text exactly as
     written, so `parse_action_tags` reads what is left as it always did. Taking a tag out
     can make the pieces around it meet (`<ex<sleep>it>` loses its sleep and reads `<exit>`),
-    so the pass repeats until nothing more comes out: whatever the text then parses to,
-    `keep` allowed. Each pass takes at least one tag out, so there are at most as many
-    passes as tags. The sandboxed-extension host uses it to let a pack's line act only on
-    the tags written whole in the pack's own text (`ext_host.apply_ext_effects`).
+    and so can the parse itself, which lifts every tag of ours in one pass (`<ex<sleep>it>`
+    with its sleep kept would be *spoken* as `<exit>`, and never acted on): so the pass
+    repeats until nothing more comes out and nothing of ours is left in what would be
+    spoken. A tag that forms only once the parse has lifted the tags around it is cut out
+    with the pieces it was made of, whatever `keep` says of it (the robot path would never
+    act on it), and is in the result only when `keep` refuses it. Whatever the text then
+    parses to, `keep` allowed, and what is spoken holds no tag of ours. Each pass takes at
+    least one character out, so the passes are bounded by the text. The sandboxed-extension
+    host uses it to let a pack's line act only on the tags written whole in the pack's own
+    text (`ext_host.apply_ext_effects`).
     """
     dropped: List[Action] = []
     while text:
@@ -148,9 +171,26 @@ def drop_action_tags(text: str, keep) -> Tuple[str, List[Action]]:
             return ""
 
         text = _TAG_RE.sub(_sub, text)
-        if not found:
+        if found:
+            dropped += found
+            continue
+        # What the robot would speak once the tags that stay are lifted: a tag of ours that
+        # only forms there would be said aloud, so it goes, with the characters it is made
+        # of (the tags inside it stay).
+        spoken, origin = _lift_known(text)
+        cut: set = set()
+        for m in _TAG_RE.finditer(spoken):
+            name = m.group(1).lower()
+            if name not in KNOWN_TAGS:
+                continue
+            cut.update(origin[m.start():m.end()])
+            action = _action_for(name, _fields(m.group(2)))
+            if action is not None and not keep(action):
+                found.append(action)
+        if not cut:
             break
         dropped += found
+        text = "".join(c for i, c in enumerate(text) if i not in cut)
     return text, dropped
 
 

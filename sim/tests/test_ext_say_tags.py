@@ -271,6 +271,42 @@ def test_taking_a_tag_out_cannot_let_the_pieces_around_it_meet():
     assert "sometimes the conversation ends" in _named_in(E.explain(program)[0])
 
 
+def test_a_tag_that_forms_only_once_the_kept_tags_are_lifted_is_never_spoken():
+    """The robot's parse lifts every tag of ours in one pass, so a line like `<ex<sleep>it>`
+    whose sleep the rule writes whole would keep its sleep, and the child would then hear
+    `<exit>` said aloud (never acted on: one pass). The host cuts such a tag out with the
+    pieces it is made of: the kept tag still acts, the child hears no tag, and the cut tag
+    is counted only when the rule does not write it whole. Found by a second generator in
+    round 6, where the suite's own shapes never put a kept tag inside another's pieces."""
+    sleep_only = (lambda a: a.type is ActionType.SLEEP)
+    sleep, exit_ = Action(type=ActionType.SLEEP), Action(type=ActionType.EXIT)
+    draw = Action(type=ActionType.LAUNCH, module_id="DRAW")
+    assert drop_action_tags("<ex<sleep>it>Bye", sleep_only) == ("<sleep>Bye", [exit_])
+    assert drop_action_tags("<ex<sleep>it>Bye", lambda a: True) == ("<sleep>Bye", [])
+    assert drop_action_tags("<la<exit>unch:DRAW>Go", lambda a: a.type is ActionType.EXIT) == (
+        "<exit>Go", [draw])
+    assert drop_action_tags("<ex<sleep>it:now>Bye", sleep_only) == ("<sleep>Bye", [])
+    assert drop_action_tags("<e<ex<sleep>it>xit>Bye", sleep_only) == ("<sleep>Bye", [exit_, exit_])
+    assert drop_action_tags("<sleep> <ex it>", sleep_only) == ("<sleep> <ex it>", [])
+    for text, kept in (("<ex<sleep>it>Bye", sleep_only), ("<e<ex<sleep>it>xit>Bye", sleep_only),
+                       ("<la<exit>unch:DRAW>Go", lambda a: a.type is ActionType.EXIT)):
+        spoken, acts = parse_action_tags(drop_action_tags(text, kept)[0])
+        assert tag_names(spoken) == [] and len(acts) == 1, (text, spoken, acts)
+    # Through the host: the rule writes its sleep whole, so Moxie sleeps; the exit that
+    # would have been spoken is cut and counted (the rule does not write it).
+    reply, app, _ = _run(_says("<ex<sleep>it>Bye"), "hi")
+    assert reply.text == "Bye" and [a.type for a in reply.actions] == [ActionType.SLEEP]
+    assert tag_names(reply.text) == [] and _refused(app) == 1
+    assert E.explain(_says("<ex<sleep>it>Bye"))[0].endswith("; then Moxie goes to sleep.")
+    # When the rule writes an exit whole too, the cut exit is one its review names (as
+    # "sometimes"), so nothing is counted; the robot path never acted on it either way.
+    program = _says("<ex<sleep>it>Bye", let={"t": "<exit>"})
+    reply, app, _ = _run(program, "hi")
+    assert reply.text == "Bye" and [a.type for a in reply.actions] == [ActionType.SLEEP]
+    assert _refused(app) == 0
+    assert _named_in(E.explain(program)[0]) == ["Moxie goes to sleep", "sometimes the conversation ends"]
+
+
 def test_no_other_path_lets_a_built_tag_act():
     """A tag in a line's markup or a `markup` statement never acts (the robot path keeps
     markup's text only), a `scratch` value is never spoken, an earlier `say`'s written exit
