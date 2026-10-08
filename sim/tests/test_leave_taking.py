@@ -89,7 +89,14 @@ GOODBYES = ["bye", "Bye.", "bye bye Moxie", "Bye, Moxie!", "ok bye", "goodbye",
             "Good night, Moxie.", "see you later", "gotta go", "I have to go", "I'm done",
             "stop", "stop Moxie", "Okay, bye bye Moxie!", "um, goodbye", "Bye-bye!",
             "Moxy bye", "I’m done.", "Yeah, I gotta go. Bye!", "please stop",
-            "Goodbye Moxie, see you tomorrow!", "night night", "I have to go to bed"]
+            "Goodbye Moxie, see you tomorrow!", "night night", "I have to go to bed",
+            # the name's mishearings OpenMoxie's own globals allow (MoxieTimers.json:1)
+            "Bye, Foxy!", "bye boxy", "Oxy, goodbye!",
+            # Whisper's spelling of a lone "bye", as the last word only
+            "By.", "Ok, by.", "Good by.", "bye bye by",
+            # a trailing "I love you"
+            "Goodbye Moxie, I love you", "bye, I love you", "Bye Moxie, love you so much!",
+            "see you later alligator", "See ya later, alligator!"]
 
 #: Ordinary sentences with the same words inside them. A global answers BEFORE the brain,
 #: so each of these would be silently hijacked by a pattern one word too loose.
@@ -107,11 +114,15 @@ ORDINARY = ["my dog said bye to the mailman", "can you stop the music in the sto
             "is it time to stop", "I'm not done", "my cat likes to sleep",
             "I don't want to go to bed", "time to sleep is my least favorite time",
             # a bare word can be a plain answer to Moxie ("When do stars come out?")
-            "done", "night"]
+            "done", "night",
+            # near misses of the words a goodbye may carry: "I love you" only after one,
+            # "by" only as the last word, and a name alone is not a goodbye
+            "I love you Moxie", "I love you", "buy it", "by the way", "stand by me",
+            "By then.", "Foxy"]
 
 SLEEPS = ["go to sleep Moxie", "time to sleep", "Moxie, go to sleep.",
           "you can go to sleep now", "time for bed", "it's bedtime",
-          "Good night Moxie, go to sleep."]
+          "Good night Moxie, go to sleep.", "Foxy, go to sleep", "go to sleep boxy"]
 
 
 @pytest.mark.parametrize("name", sorted(SHIPPED))
@@ -177,7 +188,8 @@ def test_a_looping_transcript_cannot_stall_the_patterns():
     patterns = [g for g in module.globals if g.name in ("Goodbye", "Sleep")]
     assert len(patterns) == 2
     for unit in ("bye ", "bye moxie ", "ok bye ", "bye-", "byebye ", "now ", "moxie ",
-                 "good night ", "i'm done ", "go to sleep ", "stop "):
+                 "good night ", "i'm done ", "go to sleep ", "stop ", "by ", "foxy ",
+                 "bye i love you ", "love you ", "see you later alligator "):
         for n in (*range(1, 26), 100, 400, 2000):
             for tail in ("x", "!"):
                 text = unit * n + tail

@@ -173,11 +173,15 @@ gets a good-night line. `memory_chat.json` carries the same `Goodbye` and `Sleep
 Both patterns match the **whole utterance**, because a global answers before the brain. Inside a
 sentence the words are ordinary speech: *"my dog said bye to the mailman"* must still reach the brain.
 Around the goodbye, the patterns allow what speech-to-text writes: punctuation, a leading
-*ok*/*um*/*yeah*, *Moxie* or *Moxy* at either end, and two goodbyes in a row (*"I gotta go, bye!"*). A
-bare *"done"* or *"night"* is not a goodbye, because either can be a plain answer to Moxie. Every word
-in the pattern can be read only one way, so a transcript that loops (*"bye bye bye …"*) cannot make
-the regex backtrack exponentially. `random` is a shipped grant, so an edited `Goodbye` stops running
-and the brain answers in its place.
+*ok*/*um*/*yeah*, the name at either end, a trailing *"I love you"*, and two goodbyes in a row
+(*"I gotta go, bye!"*). The name may come out as *Moxy*, *Foxy*, *Boxy* or *Oxy*, the mishearings
+OpenMoxie's own command patterns accept (`content_modules/MoxieTimers.json`, `MoxieTime.json` and
+`MoxieGo.json`). *"By."* is how Whisper spells a lone *bye*, so *by* counts only as the last word:
+*"by the way"* and *"By then."* still reach the brain, as does *"I love you Moxie"* with no goodbye in
+it. *"See you later, alligator!"* is a goodbye. A bare *"done"* or *"night"* is not, because either can
+be a plain answer to Moxie. Every word in the pattern can be read only one way, so a transcript that
+loops (*"bye bye bye …"*) cannot make the regex backtrack exponentially. `random` is a shipped grant,
+so an edited `Goodbye` stops running and the brain answers in its place.
 
 The brain is the backstop for goodbyes the pattern does not cover (*"okay I need to eat dinner now,
 bye"*). After the module's prompt, the content brain's single system message carries the `<exit>` and
