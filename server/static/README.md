@@ -33,8 +33,8 @@ intercepted `DELETE`; its teeth mutate [`js/insights.js`](js/insights.js).
 
 [`sim/test_console_tryit.mjs`](../../sim/test_console_tryit.mjs) does the same for 💬 Try it: the
 card shows with no robot, typing alone never calls the brain, one click (or Enter) is one call
-carrying the session, and a refusal is shown without advancing it; its teeth mutate
-[`js/tryit.js`](js/tryit.js).
+carrying the session, a refusal is shown without advancing it, and Start over or another brain wins
+over an answer still on its way; its teeth mutate [`js/tryit.js`](js/tryit.js).
 
 Every other card is asserted by Python route tests and source pins
 ([`test_console_roundtrip.py`](../../sim/tests/test_console_roundtrip.py)), which prove what the

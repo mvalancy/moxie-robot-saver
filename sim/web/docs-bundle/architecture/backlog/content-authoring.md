@@ -168,8 +168,8 @@ move with concurrent turns. **Do not add a lock around the renderer**: the turn 
 What shipped, item by item:
 
 1. **One call site.** `trySend` in [`tryit.js`](../../../server/static/js/tryit.js) is the only place
-   the console calls the brain, bound to the *Send* button and the Enter key, never a debounce,
-   `oninput` or timer. Pinned twice: `test_the_card_is_labelled_a_preview_and_its_one_brain_call_is_click_bound`
+   the console calls the brain, bound to the *Send* button and the Enter key (not the Enter that
+   commits an IME composition), never a debounce, `oninput` or timer. Pinned twice: `test_the_card_is_labelled_a_preview_and_its_one_brain_call_is_click_bound`
    (one `postJson('/local/tryit'` and no timer in the file) and the browser suite
    [`sim/test_console_tryit.mjs`](../../../sim/test_console_tryit.mjs) (typing alone makes no call; a
    send-as-you-type copy of the file must redden it). The editor's own guard,
@@ -206,11 +206,32 @@ the 🧠 card (`normalize_brain_patch`) and built and cached by the same `app_na
 `module_id`/`content_id` the content brain reads, from the live module, so a pick resolves exactly as
 `_active_conversation` would. The `Turn` is assembled as `_on_remote_chat` assembles one; the brain
 streams when the runtime streams (`MOXIE_STREAMING`) and the app can; each piece passes the same
-output classifier and redirect; and each piece is staged by the same `_stage`, with the same turn key
-and chunk index, so its markup and scored fields are what the robot would be sent
-(`test_a_try_stages_exactly_what_a_robot_is_sent`, `test_a_streamed_try_is_chunked_like_the_published_stream`).
-The child's line passes the input classifier first; a blocked line is answered with the redirect and
-never reaches the brain, and only Moxie's line joins the session, as on a robot.
+output classifier and redirect (a blocked sentence of a streamed answer is replaced and ends it, as on
+a robot); a brain that raises is answered by the robot's own fallback, `_safe_respond`; and each piece
+is staged by the same `_stage` at the same chunk index as the published stream. Under one turn key,
+each piece is byte-identical to what that robot is sent (`test_a_try_stages_exactly_what_a_robot_is_sent`,
+`test_each_streamed_piece_is_staged_at_its_own_chunk_index`,
+`test_an_unsafe_sentence_in_a_streamed_answer_is_replaced_and_ends_it`), except the markup the free
+brain writes itself, which it seeds with the device id (below); for that brain the scored fields match
+piece by piece (`test_a_streamed_try_is_chunked_like_the_published_stream`). The tests pin the turn
+key; in use a try has its own. The child's line passes the input classifier first; a blocked line is
+answered with the redirect and never reaches the brain, and only Moxie's line joins the session, as on
+a robot.
+
+**Where a try is not that robot's turn.** Four inputs differ, so a try shows what the brain says, not a
+replay of what the robot would do:
+
+- **No device id.** It is what keeps every store path closed (below), and it is also a seed: the free
+  brain spaces its talking gestures by device id and line (`LLMApp._turn_key`), and a content extension
+  seeds its random choices with it. Where her gestures fall, and an extension's random pick, can
+  differ from that robot's.
+- **Its own turn key**, `tryit-<ms>` where a robot has its event id. It seeds where `_stage` places
+  talking gestures in the markup it builds.
+- **Empty presence.** The `Turn` carries the presence of a robot never heard from (nothing known, no
+  face in view), not that robot's live one, so a prompt or an extension that reads `presence` sees
+  nobody there.
+- **The redirect line** is a random pick from the same phrase set, avoiding the session's last line
+  rather than the robot's last redirect.
 
 **What never runs:** no MQTT publish, no filler, no transcript (`self.history`), no long-term memory,
 no `persist_data`, no telemetry, no safety journal (a verdict is reported to the parent, not filed as
@@ -227,15 +248,27 @@ and any id outside the recovered catalog); the actions; the safety verdicts; the
 `model_calls` (exact for this try: the turn runs on its own thread, and `moxie_sdk/chat.py` keeps a
 per-thread count); `elapsed_ms`; the budget.
 
+**The session lives in the card.** Every send carries it, and only a real answer moves it on: a failed
+line stays in the box to send again. Start over, a change of who answers (the brain, the activity or
+the child's name) and another robot each start a new session, and an answer still on its way when that
+happens is set aside: it is neither shown nor carried, and the card says so. A refresh (after a save,
+say) keeps the parent's activity pick, "no particular activity" included; the robot's current activity
+fills an empty pick only when the card is first filled or another robot connects. A line typed while
+she was answering stays in the box. The browser suite pins each of these with an answer held in flight
+(steps 6–8, with teeth).
+
 **Errors, each with a sentence:** 400 (`empty`, `too_long`, `bad_request`, `bad_brain`,
-`unknown_module`), 404 (`unknown_device`), 409 (`pending`), 413 (`too_large`), 429 (`budget`, `busy`:
+`unknown_module`), 404 (`unknown_device`), 409 (`pending`), 413 (`too_large`: the session has
+outgrown 64 KiB, so the sentence says to Start over; the console forwards it as UTF-8, not `\u`
+escapes), 429 (`budget`, `busy`:
 at most two tries in flight), 503 (`brain_unavailable`: the brain cannot be built here; `unreachable`:
 no supervisor), 502 (`brain_unreachable`, `brain_refused`, `brain_error`), 504 (`timeout`, after
 30 s) and 500 (`internal`: a fault in the try itself, answered rather than dropped, so the card never
 mistakes it for a missing supervisor). A brain failure is told apart from a real answer by how the try's last model request ended
 (`chat.last_call_error`, per thread): the app has already turned it into a line for the child, so the
 answer carries both that line and the reason (status, error type, and a message with endpoints and
-key-shaped runs scrubbed), and the session does not advance. A try holds the supervisor's console API
+key-shaped runs scrubbed), and the session does not advance. A brain that raises is shown the same way:
+the robot's stock line from `_safe_respond`, and what was raised. A try holds the supervisor's console API
 (a single-threaded server) for as long as the brain takes, as a voice test does.
 
 A try shows *what the brain says*, not *what the child experiences*, and the card says so: it is
@@ -323,9 +356,10 @@ numbers follow the original plan.
 | — | `test_a_second_tab_cannot_silently_discard_the_first`, `test_the_supervisor_route_owns_the_validation_not_the_proxy`, `test_the_chip_list_is_closed_to_the_two_portable_forms`, `test_no_timer_in_the_editor_can_reach_a_model`, the console proxy tests | 409, R6, AC10, the P0 half of T9, end-to-end proxying |
 | T6 | `test_a_try_writes_nothing_and_a_real_turn_through_the_same_runtime_does` | Zero bytes written, with a real turn as the negative control |
 | T8 | `test_a_busy_appliance_and_a_spent_budget_are_429s` | Budget 429 with `remaining`; a try with no model call is not charged |
-| T9 | `test_the_card_is_labelled_a_preview_and_its_one_brain_call_is_click_bound` + `sim/test_console_tryit.mjs` | One click-bound call site; typing alone never calls (teeth) |
-| T18 | `test_a_blocked_line_is_redirected_without_the_brain_or_the_journal`, `test_an_unsafe_answer_is_replaced_before_anyone_sees_it_as_hers` | Both classifiers run; nothing is journaled |
-| — | `test_a_try_stages_exactly_what_a_robot_is_sent`, `test_a_streamed_try_is_chunked_like_the_published_stream` and the rest of `test_console_tryit.py` | Same brain, prompt and staging as a published turn; history threading; module and brain choice; actions; every error kind |
+| T9 | `test_the_card_is_labelled_a_preview_and_its_one_brain_call_is_click_bound` + `sim/test_console_tryit.mjs` | One click-bound call site; typing alone, or an IME Enter, never calls (teeth) |
+| T18 | `test_a_blocked_line_is_redirected_without_the_brain_or_the_journal`, `test_an_unsafe_answer_is_replaced_before_anyone_sees_it_as_hers`, `test_an_unsafe_sentence_in_a_streamed_answer_is_replaced_and_ends_it` | Both classifiers run, streamed or not; nothing is journaled |
+| — | `test_a_try_stages_exactly_what_a_robot_is_sent`, `test_a_streamed_try_is_chunked_like_the_published_stream`, `test_each_streamed_piece_is_staged_at_its_own_chunk_index`, `test_a_brain_that_raises_shows_the_robots_own_stock_line_and_why` and the rest of `test_console_tryit.py` | Same brain, prompt, fallback and staging as a published turn; history threading; module and brain choice; actions; every error kind |
+| — | `sim/test_console_tryit.mjs` steps 6–8 | A new session (Start over, another brain, activity or robot) wins over an answer still on its way; a refresh keeps the pick (teeth) |
 | P1 | T7 a draft try never runs `code` | not yet (a draft cannot be tried) |
 
 The mutation check deletes each guard in turn (the `validate_item` call, the schedule refusal, the
