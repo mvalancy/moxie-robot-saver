@@ -243,6 +243,8 @@ import {
   const onWire = wavlib.pcmFromAudio(blob.bytes, { sampleRate: 22050, channels: 1 });
   eq(onWire.container, "wav", "THE BYTES ON THE WIRE PARSE AS A WAV on the server side");
   eq(onWire.sampleRate, 16000, "…at 16 000 Hz");
+  eq(wavlib.sttWavProblem?.(blob.bytes), null,
+     "…and pass the route's STT header check (16-bit PCM, 1-2 ch, 8-48 kHz), so they are forwarded");
 
   // ---- while the local sidecar still gets a MediaRecorder (the harness's throws on construction)
   const home = bootMic({ realCapture: true, mode: { ears: () => false } });

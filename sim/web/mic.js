@@ -15,6 +15,12 @@
  * `sendScriptedTurn`, so a line nobody spoke never spends a live turn. A denied mic, a
  * too-short clip and an empty transcript get no consolation line at all.
  *
+ * NOTHING SAID, NOTHING SENT. When the capture measured the clip and none of it was speech,
+ * the clip is dropped unsent: the gateway's STT answers room tone and silence with words
+ * ("(machine whirring)", "you") that would otherwise become the child's turn. ONE TURN AT A
+ * TIME: a Listen tap is ignored while a clip or its turn is in flight, and just after an
+ * auto-stop that already sent the clip.
+ *
  * THE 15-SECOND HARD STOP lives here because the server's byte cap is not a duration cap
  * and a Function only sees a finished upload (live-sim-demo.md §4.1); `DEMO_MAX_RECORD_MS`
  * arrives in `/api/health`'s `limits`.
@@ -50,11 +56,52 @@
   /* SILENCE AUTO-STOP, which must never cut somebody off: SILENCE_END_MS applies only after
    * speech was heard (well past a breath or a thinking pause); NO_SPEECH_MS is an accidental
    * press or a muted mic. SPEECH_RMS is generous (room tone ~0.005, speech 0.05+): erring to
-   * "speech" only lengthens a recording, and the hard cap stays the outer bound. */
+   * "speech" only lengthens a recording, and the hard cap stays the outer bound. It also
+   * decides what is SENT: a measured clip with no block over it is dropped (`onstop`). */
   var SPEECH_RMS = 0.02;
   var SILENCE_END_MS = 1100;
   var NO_SPEECH_MS = 5000;
   var silenceTimer = null, speechSeen = false, startedAt = 0;
+  /** RMS blocks this recording reported. Zero means the capture cannot say whether anything
+   *  was spoken (MediaRecorder, a test recorder), so its clip is judged by size alone. */
+  var levelBlocks = 0;
+  /** Set by the silence and cap timers, so `onstop` knows the page, not the visitor, ended it. */
+  var autoStopped = false;
+
+  /** The visitor-facing line for a clip dropped unsent: the way back is one tap. */
+  var NOTHING_HEARD = "I did not hear anything — tap Listen and try again";
+
+  /* ONE TURN AT A TIME. A tap that would START a recording is ignored while a clip is being
+   * transcribed or its turn answered (`hold`), and for TAP_GUARD_MS after an auto-stop that
+   * SENT a clip: the idle hint says "tap it again to send", and a child who obeys it after
+   * the auto-stop already sent would re-open the mic and upload a second clip. A dropped
+   * clip arms no guard — "tap Listen and try again" means now. BUSY_MAX_MS releases a turn
+   * that never settles (no `AbortSignal.timeout`), so nothing can kill the button for good. */
+  var TAP_GUARD_MS = 2000;
+  var BUSY_MAX_MS = 30000;
+  var tapGuard = null, busy = 0;
+  var ONE_AT_A_TIME = "one at a time — tap Listen again once Moxie has answered";
+
+  function armTapGuard() {
+    if (tapGuard !== null) clearTimeout(tapGuard);
+    tapGuard = setTimeout(function () { tapGuard = null; }, TAP_GUARD_MS);
+  }
+
+  /** Count `p` as work in flight until it settles (or BUSY_MAX_MS passes). */
+  function hold(p) {
+    if (!p || typeof p.then !== "function") return p;
+    busy++;
+    var held = true;
+    var valve = setTimeout(release, BUSY_MAX_MS);
+    function release() {
+      if (!held) return;
+      held = false;
+      clearTimeout(valve);
+      busy--;
+    }
+    p.then(release, release);
+    return p;
+  }
 
   function clearSilence() {
     if (silenceTimer !== null) { clearTimeout(silenceTimer); silenceTimer = null; }
@@ -63,6 +110,7 @@
   /** One RMS block from the capture. Arms, disarms and re-arms the auto-stop. */
   function onLevel(rms) {
     if (!recording) return;
+    levelBlocks++;
     var loud = rms >= SPEECH_RMS;
     if (loud) {
       if (!speechSeen) { speechSeen = true; stats.speechDetected++; }
@@ -79,15 +127,18 @@
         status("● got it — transcribing…");
       } else {
         stats.emptyStops++;
-        status("I did not hear anything");
+        status(NOTHING_HEARD);
       }
+      autoStopped = true;
       stop();
     }, wait);
   }
 
-  /** Recorded, never sampled: tests assert WHY a recording ended from these. */
+  /** Recorded, never sampled: tests assert WHY a recording ended from these. `noSpeech`
+   *  counts clips dropped unsent; `ignoredTaps` counts Listen taps refused mid-turn. */
   var stats = { starts: 0, stops: 0, autoStops: 0, speechDetected: 0, silenceStops: 0,
-                emptyStops: 0, posts: 0, transcripts: 0, fallbacks: 0, tooShort: 0, tooLong: 0,
+                emptyStops: 0, noSpeech: 0, ignoredTaps: 0, posts: 0, transcripts: 0,
+                fallbacks: 0, tooShort: 0, tooLong: 0,
                 botUnavailable: 0, botTokens: 0, reasons: [], lastUrl: "", lastBytes: 0,
                 lastMime: "", lastCapMs: 0, lastKind: "" };
 
@@ -142,9 +193,10 @@
 
   /** Words the visitor actually said — the paid path on a live deployment, by design. */
   function publishUtterance(text) {
-    // the bridge's live turn if it has one, else route locally so the loop stays visible
+    // the bridge's live turn if it has one, else route locally so the loop stays visible;
+    // a live turn's promise (cloud-transport.js) counts as in flight until she answers
     if (window.moxieBridge && window.moxieBridge.sendUserTurn) {
-      window.moxieBridge.sendUserTurn(text);
+      hold(window.moxieBridge.sendUserTurn(text));
     } else if (window.moxieBridge && window.moxieBridge.route) {
       window.moxieBridge.route(USER_TOPIC, JSON.stringify({ command: "prompt", speech: text }));
     }
@@ -155,7 +207,7 @@
    *  own turn is already free, and `canSpendLiveTurn` guards a transport lacking the seam. */
   function publishScripted(text) {
     var b = window.moxieBridge;
-    if (b && typeof b.sendScriptedTurn === "function") { b.sendScriptedTurn(text); return; }
+    if (b && typeof b.sendScriptedTurn === "function") { hold(b.sendScriptedTurn(text)); return; }
     var m = mode();
     if (m && m.canSpendLiveTurn && m.canSpendLiveTurn() && b && typeof b.route === "function") {
       b.route(USER_TOPIC, JSON.stringify({ command: "prompt", speech: text }));
@@ -459,9 +511,16 @@
     stream = null;
   }
 
+  /** The browser is still asking for the microphone (the permission prompt): a second tap
+   *  must not open a second capture, whose stream nothing would ever release. */
+  var opening = false;
+
   function start() {
-    if (recording) return Promise.resolve();
-    return captureFor(sttTarget().kind).then(function (got) {
+    if (recording || opening) return Promise.resolve();
+    var asked = captureFor(sttTarget().kind);
+    opening = true;
+    return asked.then(function (got) {
+      opening = false;
       rec = got && got.recorder;
       stream = (got && got.stream) || null;
       if (!rec) { status("mic unsupported in this browser"); return; }
@@ -470,16 +529,24 @@
       rec.onstop = function () {
         clearCap();
         var blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+        var auto = autoStopped;
+        autoStopped = false;
         chunks = [];
         releaseStream();
+        // Measured, and never loud enough to be speech (the auto-stop or a second tap): drop
+        // it unsent, whatever its size. No upload, no scripted line, no turn.
+        if (levelBlocks > 0 && !speechSeen) { stats.noSpeech++; status(NOTHING_HEARD); return; }
         // Both gates are FREE refusals of clips the route would refuse anyway.
         if (blob.size < minBytes()) { stats.tooShort++; status("(too short)"); return; }
-        if (blob.size > maxBytes()) { stats.tooLong++; fallback(REASON_COPY.too_long); return; }
-        transcribe(blob);
+        if (auto) armTapGuard();
+        if (blob.size > maxBytes()) { stats.tooLong++; hold(fallback(REASON_COPY.too_long)); return; }
+        hold(transcribe(blob));
       };
       rec.start();
       recording = true;
       speechSeen = false;
+      levelBlocks = 0;
+      autoStopped = false;
       startedAt = Date.now();
       clearSilence();
       // Only the hosted (WAV) capture hands us levels; MediaRecorder never sees samples.
@@ -500,15 +567,27 @@
         if (!recording) return;
         stats.autoStops++;
         status("● that's plenty — transcribing…");
+        autoStopped = true;
         stop();
       }, cap);
-    }).catch(function () {
+    }).catch(function (e) {
+      opening = false;
       clearCap();
       releaseStream();
-      status(navigator.mediaDevices && window.MediaRecorder
-        ? "mic permission denied — type a message and tap Ask instead"
-        : "mic unsupported in this browser — type a message and tap Ask instead");
+      status(captureFailure(e) + " — type a message and tap Ask instead");
     });
+  }
+
+  /** Why the microphone did not open. `getUserMedia` rejects with a DOMException NAME; our
+   *  own captures reject with Error("unsupported"), and a bare Error carries the name as its
+   *  message. A machine with no microphone is not a refused permission. */
+  function captureFailure(e) {
+    var name = String((e && e.name && e.name !== "Error" ? e.name : e && e.message) || "");
+    if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError")
+      return "mic permission denied";
+    if (name === "NotFoundError" || name === "DevicesNotFoundError") return "no microphone found";
+    if (name === "unsupported" || !navigator.mediaDevices) return "mic unsupported in this browser";
+    return "the microphone did not start";
   }
 
   function stop() {
@@ -523,9 +602,20 @@
     try { rec && rec.state !== "inactive" && rec.stop(); } catch (e) {}
   }
 
+  /** The Listen button. Stopping is never refused; starting waits for the last turn. */
+  function toggle() {
+    if (recording) return stop();
+    if (tapGuard !== null || busy > 0) {
+      stats.ignoredTaps++;
+      status(ONE_AT_A_TIME);
+      return Promise.resolve();
+    }
+    return start();
+  }
+
   window.moxieMic = {
     start: start, stop: stop,
-    toggle: function () { return recording ? stop() : start(); },
+    toggle: toggle,
     isRecording: function () { return recording; },
     setSttBase: function (u) {
       STT_BASE = u; explicitBase = u;
