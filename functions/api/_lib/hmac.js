@@ -6,7 +6,8 @@
  *   * A **ticket** is the only thing `/api/speech` accepts — there is no text field. The
  *     text is inside the signed payload, so the deployment only ever synthesizes text it
  *     wrote itself in the last `DEMO_TICKET_TTL_S` seconds: `/api/speech` cannot become a
- *     free TTS API, structurally.
+ *     free TTS API, structurally. A reply is spoken as up to `MAX_SPEECH_CHUNKS` tickets,
+ *     one per sentence (`mintTickets`), so her first words need only a short synthesis.
  *   * A **context blob** carries prior turns through the untrusted browser; signing it
  *     means a visitor cannot forge Moxie's side of the history (§3.3).
  *
@@ -245,6 +246,137 @@ export async function verifyTicket(cfg, ticket, nowS) {
   const c = res.claims;
   if (typeof c.t !== "string" || !c.t) return { ok: false, why: "malformed", claims: null };
   return { ok: true, why: "", claims: { text: c.t, eventId: String(c.e || ""), chunkNum: Number(c.c) || 0, exp: Number(c.x) } };
+}
+
+// --------------------------------------------------------------------------- //
+// One ticket per sentence
+// --------------------------------------------------------------------------- //
+/** At most this many tickets per reply. Each costs `UNITS.speech` (2, `./counters.js`):
+ *  a three-chunk turn is 3 + 3·2 = 9 units against 5 before, so the 600/hour budget serves
+ *  66 such turns instead of 120 and the 4 000/day one 444 instead of 800 (§4.1). */
+export const MAX_SPEECH_CHUNKS = 3;
+
+/** A chunk this short is not worth a round trip. The gateway's synthesis time is mostly
+ *  overhead (measured 2026-10-08: 64 chars 1.56 s, 87 chars 1.60 s at the median), so a
+ *  tiny chunk starts the voice no sooner and leaves a gap before the next; it is merged
+ *  with its neighbour instead. */
+export const MIN_CHUNK_CHARS = 24;
+
+/** Words that end in a dot without ending a sentence. Lower-case, with their inner dots
+ *  (`e.g`). A single letter, or letters joined by dots (`J. K.`, `U.S`, `a.m`), is an
+ *  initial or an acronym by shape and needs no entry. */
+const ABBREVIATIONS = new Set([
+  "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "mt", "ft", "vs", "etc", "inc", "ltd",
+  "co", "e.g", "i.e", "ph.d", "approx", "dept", "fig", "vol",
+  "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+]);
+
+const SENTENCE_END = ".!?";
+const CLOSERS = "\"'”’)]";
+
+/**
+ * `text` as sentences, in order, whitespace-normalised; joined with one space they are
+ * the normalised text again.
+ *
+ * A boundary is a run of `.`, `!` or `?` (plus any closing quote or bracket) followed by
+ * a space — EXCEPT a lone dot after an abbreviation or an initial (`Dr. Smith`, `J. K.
+ * Rowling`), or an ellipsis (`Well... maybe`). A number never splits: `3.14` has no space
+ * after its dot. Inside a ```mermaid fence nothing splits: a node's `.` is drawing.
+ */
+export function splitSentences(text) {
+  const s = String(text || "").replace(/\s+/g, " ").trim();
+  const out = [];
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s.startsWith("```mermaid", i)) {
+      const end = s.indexOf("```", i + 10);
+      i = end < 0 ? s.length : end + 2;
+      continue;
+    }
+    if (!SENTENCE_END.includes(s[i])) continue;
+    let j = i;
+    while (j + 1 < s.length && SENTENCE_END.includes(s[j + 1])) j++;
+    let k = j + 1;
+    while (k < s.length && CLOSERS.includes(s[k])) k++;
+    const run = s.slice(i, j + 1);
+    let boundary = k < s.length && s[k] === " ";
+    if (boundary && run.length > 1 && !/[!?]/.test(run)) boundary = false; // an ellipsis
+    if (boundary && run === ".") {
+      const m = /([\p{L}\p{N}][\p{L}\p{N}.'’-]*)$/u.exec(s.slice(start, i));
+      const word = m ? m[1] : "";
+      if (ABBREVIATIONS.has(word.toLowerCase()) || /^(?:\p{L}\.)*\p{L}$/u.test(word)) boundary = false;
+    }
+    if (boundary) {
+      out.push(s.slice(start, k));
+      start = k + 1; // the one space at `k` belongs to neither sentence
+    }
+    i = k - 1;
+  }
+  if (start < s.length) out.push(s.slice(start));
+  return out;
+}
+
+/**
+ * The speech chunks of a reply: whole sentences, at most `maxChunks` chunks of at most
+ * `maxChars` each, which joined with one space are the reply — up to the cap.
+ *
+ * Chunk 0 is the first sentence, so her voice starts after one short synthesis while the
+ * rest is synthesised beside it. A chunk shorter than `MIN_CHUNK_CHARS` is merged with its
+ * neighbour (see there), and the last chunk takes whatever is left. A sentence longer than
+ * `maxChars` is cut at a space, never inside a word — one 300-char ticket cut a 311-char
+ * reply at "lo" (measured) — and what the cap leaves out is not spoken, as before.
+ */
+export function splitForSpeech(text, o) {
+  const maxChars = Math.max(1, Number(o && o.maxChars) || 300);
+  const maxChunks = Math.max(1, Number(o && o.maxChunks) || MAX_SPEECH_CHUNKS);
+  // Sentences, any over-long one cut into word-bounded pieces first.
+  const pieces = [];
+  for (const sentence of splitSentences(text)) {
+    let rest = sentence;
+    while (rest.length > maxChars) {
+      let cut = rest.lastIndexOf(" ", maxChars);
+      if (cut <= 0) cut = maxChars; // one unbroken word longer than the cap: nothing better exists
+      pieces.push(rest.slice(0, cut));
+      rest = rest.slice(cut).trim();
+    }
+    if (rest) pieces.push(rest);
+  }
+  const chunks = [];
+  let cur = "";
+  for (const p of pieces) {
+    if (!cur) { cur = p; continue; }
+    const last = chunks.length === maxChunks - 1; // `cur` is the last chunk there can be
+    const small = cur.length < MIN_CHUNK_CHARS || p.length < MIN_CHUNK_CHARS;
+    if ((last || small) && cur.length + 1 + p.length <= maxChars) { cur += " " + p; continue; }
+    if (last) {
+      // The cap: fill what room is left at a word boundary, and the rest is not spoken.
+      const cut = p.lastIndexOf(" ", maxChars - cur.length - 1);
+      if (cut > 0) cur += " " + p.slice(0, cut);
+      break;
+    }
+    chunks.push(cur);
+    cur = p;
+  }
+  if (cur) chunks.push(cur);
+  return chunks;
+}
+
+/**
+ * Mint the speech tickets of a reply: one per chunk of `splitForSpeech`, `chunk_num`
+ * 0..n-1 under one event id — the `speech` array of §3.2, ready for the envelope. Each
+ * ticket is minted under the same cap `/api/speech` re-checks at redemption.
+ */
+export async function mintTickets(cfg, { text, eventId, nowS }) {
+  const chunks = splitForSpeech(text, { maxChars: cfg.maxTtsChars, maxChunks: MAX_SPEECH_CHUNKS });
+  const out = [];
+  for (let i = 0; i < chunks.length; i++) {
+    out.push({
+      ticket: await mintTicket(cfg, { text: chunks[i], eventId, chunkNum: i, nowS }),
+      event_id: String(eventId || ""),
+      chunk_num: i,
+    });
+  }
+  return out;
 }
 
 /**
