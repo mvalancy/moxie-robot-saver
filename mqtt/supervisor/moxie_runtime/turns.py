@@ -3,7 +3,9 @@ from __future__ import annotations
 import json, threading
 
 from moxie_sdk.types import Turn, Reply, ReplyChunk, RobotContext, ResultCode
-from moxie_sdk.wire import build_chat_response, build_activity_response
+from moxie_sdk.wire import (build_chat_response, build_activity_response,
+                            build_remote_modules, is_data_query, is_module_query,
+                            query_name)
 from moxie_sdk.filler import pick_filler
 from moxie_sdk import safety as safety_seam
 from moxie_sdk import presence as presence_seam
@@ -76,10 +78,23 @@ class TurnsMixin:
         robot.module_id = rcr.get("module_id") or robot.module_id
         robot.content_id = rcr.get("content_id") or robot.content_id
 
-        # module list query (backend:data / query:modules) → empty list for v1
-        if backend == "data" and rcr.get("query") == "modules":
-            return self._publish_chat(device_id, event_id, backend, "", markup="",
-                                      result=ResultCode.SUCCESS, modules=[])
+        # A data request (backend:data) is never a conversational turn. The module query
+        # (RemoteDataQuery{query: modules}) gets the remote-chat modules this appliance
+        # serves, before any brain is consulted. Any other data query — `contexts`, or no
+        # query at all — gets no brain and no reply: nothing in the recovered proto makes
+        # one mandatory (every field is optional, RemoteChat.proto:41-51, :296-300),
+        # OpenMoxie answers only the module query and `router` turns
+        # (moxie_server.py:170-179), and a brain line here would be words the child never
+        # asked for.
+        if is_data_query(rcr):
+            if is_module_query(rcr):
+                return self._publish_chat(device_id, event_id, backend, "", markup="",
+                                          result=ResultCode.SUCCESS,
+                                          query_data=build_remote_modules(self.remote_modules()))
+            self._note("chat", f"ignored a data query ({query_name(rcr)!r}) from {device_id}")
+            print(f"[runtime] ignored a data query ({query_name(rcr)!r}) from {device_id}: "
+                  "only the module list is served", flush=True)
+            return None
 
         # rebuild history from notify events (Moxie is authoritative about what it said)
         if command == "notify":
@@ -429,6 +444,30 @@ class TurnsMixin:
         self._arm_filler(device_id, event_id, seq, state)   # another stall? one more line
         return text
 
+    def remote_modules(self) -> list:
+        """`[(module_id, [content_id, …]), …]` this appliance answers over remote chat —
+        the `RemoteDataBlock.modules` a module query gets (`wire.build_remote_modules`).
+
+        The conversations of every loaded content module, plus the day plan's default
+        chat (`FREE_CHAT/default`, schedule/catalog.py:131,:135): the schedule already
+        hands that module to the cloud, and the robot can only run it once it has been
+        told the module is `REMOTE_CHAT`. An LLM-only appliance therefore lists just the
+        default chat. Built from what is loaded, never from a brain call.
+        """
+        from moxie_sdk.schedule.catalog import DEFAULT_TEMPLATE
+        out: dict = {}
+        for app in self._content_apps():
+            module = getattr(app, "module", None)
+            for conv in getattr(module, "conversations", None) or []:
+                mid = getattr(conv, "module_id", "") or ""
+                cid = getattr(conv, "content_id", "") or ""
+                if mid and cid and cid not in out.setdefault(mid, []):
+                    out[mid].append(cid)
+        chat = DEFAULT_TEMPLATE["chat_request"]
+        if chat["content_id"] not in out.setdefault(chat["module_id"], []):
+            out[chat["module_id"]].append(chat["content_id"])
+        return [(mid, list(cids)) for mid, cids in out.items()]
+
     def _query_payload(self, device_id, query):
         """The value for a CloudQuery — None means "send this field's empty value"."""
         if query == "schedule":
@@ -467,14 +506,14 @@ class TurnsMixin:
     # ---- publish a chat response ----
     def _publish_chat(self, device_id, event_id, backend, text, markup="",
                       actions=None, end_turn=False, result=ResultCode.SUCCESS,
-                      modules=None, mood=None, dialog_act=None,
+                      query_data=None, mood=None, dialog_act=None,
                       chunk_num=None, is_completed=None, safety=None, scored=None,
                       subscribe=None):
         # The runtime's vision subscription rides the first plain, action-free closing
         # reply per module — the only cloud->robot message that can carry
         # `EventSubscription` — so replies carrying a launch/exit keep their shape.
         mine = None
-        if (self.vision and modules is None and backend == "router" and not actions
+        if (self.vision and query_data is None and backend == "router" and not actions
                 and result == ResultCode.SUCCESS and chunk_num in (None, 0)
                 and self._vision_subscribed.get(device_id) !=
                     (getattr(self.robots.get(device_id), "module_id", None) or "")):
@@ -488,7 +527,7 @@ class TurnsMixin:
                                    result=result, actions=actions, end_turn=end_turn,
                                    mood=mood or sc.get("mood"),
                                    dialog_act=dialog_act or sc.get("dialog_act"),
-                                   modules=modules,
+                                   query_data=query_data,
                                    chunk_num=chunk_num, is_completed=is_completed,
                                    safety=safety, subscribe_events=subscribe,
                                    mood_intensity=sc.get("mood_intensity"),

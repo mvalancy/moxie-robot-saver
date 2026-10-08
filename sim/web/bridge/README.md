@@ -10,7 +10,8 @@ share state through `window.__moxieBridge`, which `core.js` creates fresh on eve
   record/replay state, and the namespace itself.
 - **`body.js`** — behavior markup → face, gestures, `Bht_*` trees, icon badges. A line's
   mood mark owns its face (arm gestures keep it); `msSinceLine()` lets `life.js` hold it.
-- **`actions.js`** — `response_actions` (launch/exit/sleep/enable_qr/execute +
+- **`actions.js`** — `response_actions` (the recovered `launch`/`exit_module`/`sleep`/`execute`,
+  the older `exit`/`enable_qr` still accepted, `execute eb_enable_qr ["true"]` arms the QR badge, +
   `event_subscription`), mirrored by `sim/virtual_moxie.py`; `actionStats()`.
 - **`presence.js`** — the robot's eyes: vision events, the presence badge (hidden until
   one arrives), `faceEvent()` / `presenceStats()`.
