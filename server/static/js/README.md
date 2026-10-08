@@ -4,7 +4,9 @@ The parent console's scripts: plain classic scripts sharing one global scope, lo
 this order** by [`../index.html`](../index.html). No build step, no dependencies.
 
 - [`core.js`](core.js) — `api()`, `escapeHtml`, tabs, login, the pairing QRs, the connection
-  monitor, `refreshLive()` (the poll that drives every card), 🔐 robot access, and boot.
+  monitor, `refreshLive()` (the poll that drives every card), 🔐 robot access, ➕ Add to my account
+  (and the 🤖 Moxie tab's watch for a robot that arrives while it is open), and boot.
+  `sim/test_robot_claim.mjs` mutates this file.
 - [`insights.js`](insights.js) — 📈 insights + the 🔌 connection strip, 🛡️ safety, and
   `armErase` (the two-click erase). `sim/test_console_insights.mjs` mutates this file.
 - [`memory.js`](memory.js) — 🧠 what Moxie remembers (read, erase, correct).
