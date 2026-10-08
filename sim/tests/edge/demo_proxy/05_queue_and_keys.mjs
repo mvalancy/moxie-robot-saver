@@ -167,7 +167,7 @@ import {
     ["fe80::1%eth0", "fe80:0:0:0::/56", "a zone index names OUR interface, not the sender"],
     ["fe80::1%25eth0", "fe80:0:0:0::/56", "…including the percent-encoded spelling"],
     ["[2001:db8::1]:443", "2001:db8:0:0::/56", "the bracketed authority form loses brackets and port"],
-    ["::ffff:1.2.3.4", "1.2.3.4", "IPv4-MAPPED unmaps to the v4 address, NOT to a /64"],
+    ["::ffff:1.2.3.4", "1.2.3.4", "IPv4-MAPPED unmaps to the v4 address, NOT to a /56"],
     ["::ffff:5.6.7.8", "5.6.7.8", "…so two mapped v4 clients stay two buckets"],
     ["::ffff:102:304", "1.2.3.4", "…the hex spelling too"],
     ["[::ffff:1.2.3.4]:80", "1.2.3.4", "…and the bracketed form"],
@@ -193,7 +193,7 @@ import {
   eq((await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "2001:db8:cafe:100::1" })).res.status, 200,
      "a DIFFERENT /56 is a different visitor");
 
-  // 14c. The refund credits the bucket the charge took: a timed-out /64 keeps its whole minute.
+  // 14c. The refund credits the bucket the charge took: a timed-out /56 keeps its whole minute.
   fresh();
   const QQ = { ...FULL, DEMO_QUEUE_MAX_WAIT_MS: "40", DEMO_QUEUE_MAX_DEPTH: "4" };
   const cfgQ = wire2.readConfig(QQ);
@@ -208,7 +208,7 @@ import {
   for (const h of holdQ) h.release();
   for (let i = 1; i <= cfgQ.chatPerMin; i++) {
     eq((await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "2001:db8:beef:7::" + i }, QQ)).res.status, 200,
-       `…and the refunded /64 still has its minute, from any address in it: turn ${i}`);
+       `…and the refunded /56 still has its minute, from any address in it: turn ${i}`);
   }
 
   // 14d. X-Forwarded-For is not an identity. Without CF-Connecting-IP every caller shares
