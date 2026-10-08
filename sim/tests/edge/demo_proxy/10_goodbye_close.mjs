@@ -219,6 +219,9 @@ const ticketText = async (r) => {
     ["an unescaped quote inside say", '{"say": "My friend said "hi" to me today!", "mood": "happy", "gesture": "talk"}', 'My friend said "hi" to me today!', { mood: "1", gesture: "Gesture_Talk" }],
     ["single quotes", "{'say': 'Hi there! I love games.', 'mood': 'happy', 'gesture': 'talk'}", "Hi there! I love games.", { mood: "1", gesture: "Gesture_Talk" }],
     ["say as an array", '{"say": ["Hi there!", "Let\'s play."], "mood": "happy"}', "Hi there! Let's play.", { mood: "1" }],
+    // (mood 5: the model's `happy` is parsed, then the floor's "awesome" rule overrules it, as §15j pins.)
+    ["a dropped key (served live: `\":\"wave` reached the voice)", '{"say": "Bye for now! Remember, you\'re awesome!":"wave", "mood": "happy"}',
+     "Bye for now! Remember, you're awesome!", { mood: "5" }],
     ["prose around an object with no say", 'Sure thing! {"mood":"happy"}', "Sure thing!", null],
     ["a clean envelope (byte-identical to before)", '{"say": "' + SAY + '", "mood": "shy", "gesture": "self"}', SAY, { mood: "4", gesture: "Gesture_Self" }],
   ];

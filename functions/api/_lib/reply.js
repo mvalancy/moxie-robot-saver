@@ -48,11 +48,12 @@ function unescapeJson(raw) {
 
 /**
  * One string field read out of BROKEN JSON. The value runs to the quote that is followed by
- * a comma, a closing brace, a stray `&` or the end — so an unescaped quote INSIDE `say`
- * ("My friend said "hi" to me!") survives. Single quotes are accepted as the delimiter.
+ * a comma, a closing brace, a stray `&`, a colon (a dropped key: `"say": "Bye!":"wave"` was
+ * served live) or the end — so an unescaped quote INSIDE `say` ("My friend said "hi" to
+ * me!") survives. Single quotes are accepted as the delimiter.
  */
 function fieldOf(text, name) {
-  const re = new RegExp("[\"']" + name + "[\"']\\s*:\\s*([\"'])([\\s\\S]*?)\\1\\s*(?=,|\\}|&|$)");
+  const re = new RegExp("[\"']" + name + "[\"']\\s*:\\s*([\"'])([\\s\\S]*?)\\1\\s*(?=,|\\}|&|:|$)");
   const m = re.exec(text);
   return m ? unescapeJson(m[2]) : undefined;
 }
