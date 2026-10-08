@@ -171,13 +171,21 @@ class OpenAITranscriber(Transcriber):
     #: Shortest utterance worth a request (VAD closes on breaths and door slams).
     MIN_MS = 120
 
+    #: Seconds one transcription request may take (config: MOXIE_STT_TIMEOUT_S). The
+    #: transcript is produced on the broker thread, so this sits well inside the broker's
+    #: keepalive drop; the SDK's own default was 600 s. Chosen, not measured.
+    TIMEOUT_S = 12.0
+
     def __init__(self, base_url: str, api_key: str, model: str = "stt-whisper", *,
                  client=None, max_retries: int = 4, pacer=None, sleep=time.sleep,
-                 min_ms: int = MIN_MS, language: Optional[str] = None):
+                 min_ms: int = MIN_MS, language: Optional[str] = None,
+                 timeout_s: Optional[float] = None):
+        self._timeout_s = self.TIMEOUT_S if timeout_s is None else float(timeout_s)
         if client is None:
             from openai import OpenAI      # lazy — the module imports without openai
+            from .chat import client_timeout
             client = OpenAI(base_url=base_url, api_key=api_key or "sk-local",
-                            max_retries=0)
+                            max_retries=0, timeout=client_timeout(self._timeout_s))
         from .chat import Pacer
         self._client = client
         #: Public: the console model picker reads it.
@@ -224,7 +232,8 @@ class OpenAITranscriber(Transcriber):
                 response_format="json", **kw)
 
         resp = call_with_backoff(_once, max_retries=self._max_retries,
-                                 pacer=self._pacer, sleep=self._sleep)
+                                 pacer=self._pacer, sleep=self._sleep,
+                                 deadline_s=self._timeout_s)
         return transcript_text(resp)
 
 
@@ -238,13 +247,26 @@ class NullTranscriber(Transcriber):
 
 class FallbackTranscriber(Transcriber):
     """Primary ears with a standby — the STT twin of `tts.py::FallbackSynthesizer`: the
-    first failure is reported once and latches the standby for the rest of the run."""
+    first failure is reported once and latches the standby, so a dead gateway does not
+    cost every utterance its timeout. The latch is not for the rest of the run: after
+    `retry_s` (config: MOXIE_ENGINE_RETRY_S) the next utterance tries the primary again,
+    and an answer clears the latch with one recovery line — in the default image the
+    standby is `NullTranscriber`, so a latch that never let go left Moxie deaf until
+    someone restarted the supervisor."""
     name = "fallback"
 
-    def __init__(self, primary: Transcriber, standby: Transcriber, *, log=None):
+    #: Seconds a latched standby holds before the next call tries the primary again.
+    #: 0 = try the primary on every call (no latch). Chosen, not measured.
+    RETRY_S = 60.0
+
+    def __init__(self, primary: Transcriber, standby: Transcriber, *, log=None,
+                 retry_s: Optional[float] = None, clock=time.time):
         self._primary, self._standby = primary, standby
         self._log = log if log is not None else _warn
+        self._retry_s = max(0.0, float(self.RETRY_S if retry_s is None else retry_s))
+        self._clock = clock                     # wall clock: `describe()` names the time
         self.failed = False
+        self.failed_at: Optional[float] = None  # when the latch (last) closed
 
     @property
     def engine(self) -> Transcriber:
@@ -255,22 +277,47 @@ class FallbackTranscriber(Transcriber):
     def engine_name(self) -> str:
         return self.engine.name
 
+    def retry_at(self) -> Optional[float]:
+        """When the primary is tried again (wall clock), or None while it is healthy."""
+        return None if not self.failed else self.failed_at + self._retry_s
+
+    def _retry_due(self) -> bool:
+        return self.failed and self._clock() >= self.retry_at()
+
     def describe(self) -> str:
         if self.failed:
-            return (f"{self._standby.describe()} (standby — "
-                    f"{self._primary.name} failed)")
+            return (f"{self._standby.describe()} (standby since {_hhmm(self.failed_at)} — "
+                    f"{self._primary.name} failed; retrying the primary at "
+                    f"{_hhmm(self.retry_at())})")
         return f"{self._primary.describe()} (standby: {self._standby.describe()})"
 
     def transcribe(self, pcm: bytes, sample_rate: int = 16000) -> str:
-        if not self.failed:
+        if not self.failed or self._retry_due():
             try:
-                return self._primary.transcribe(pcm, sample_rate)
+                text = self._primary.transcribe(pcm, sample_rate)
             except Exception as exc:            # noqa: BLE001 — any failure downgrades
-                self.failed = True
-                self._log(f"[stt] {self._primary.name} failed "
-                          f"({type(exc).__name__}: {exc}); hearing with "
-                          f"{self._standby.name} for the rest of this run")
+                first = not self.failed
+                self.failed, self.failed_at = True, self._clock()
+                if first:
+                    self._log(f"[stt] {self._primary.name} failed "
+                              f"({type(exc).__name__}: {exc}); hearing with "
+                              f"{self._standby.name} until it answers again (next try "
+                              f"in {self._retry_s:g}s)")
+                else:
+                    self._log(f"[stt] {self._primary.name} still failing "
+                              f"({type(exc).__name__}); hearing with "
+                              f"{self._standby.name}, next try in {self._retry_s:g}s")
+            else:
+                if self.failed:
+                    self.failed, self.failed_at = False, None
+                    self._log(f"[stt] {self._primary.name} is back; hearing with it again")
+                return text
         return self._standby.transcribe(pcm, sample_rate)
+
+
+def _hhmm(t: Optional[float]) -> str:
+    """A wall-clock instant as `HH:MM` for a startup/status line."""
+    return time.strftime("%H:%M", time.localtime(t or 0))
 
 
 def _warn(message: str) -> None:
