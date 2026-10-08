@@ -16,7 +16,7 @@
  */
 import { publicLimits } from "./env.js";
 import { logRefusal, respond } from "./envelope.js";
-import { budgetState, coloOf, loadOf } from "./limits.js";
+import { budgetState, coloOf, hostRefused, loadOf } from "./limits.js";
 
 /**
  * A bounded integer from an upstream 429's `Retry-After`, or `dflt` when it names none
@@ -64,6 +64,8 @@ export function limitedOrRedirected(res, retryDefaultS) {
  */
 export function refusal(cfg, route, reason, extra, fields) {
   const x = extra || {};
+  // A host `DEMO_SERVE_HOSTS` does not list is a deployment with no gateway: no voice, no ears.
+  const unserved = hostRefused(cfg);
   const res = respond(
     {
       ok: false,
@@ -77,8 +79,8 @@ export function refusal(cfg, route, reason, extra, fields) {
       messages: [],
       speech: [],
       context: "",
-      voice: cfg.voice,
-      ears: cfg.ears,
+      voice: cfg.voice && !unserved,
+      ears: cfg.ears && !unserved,
     },
     { rateLimit: x.rateLimit || null },
   );

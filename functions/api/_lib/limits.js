@@ -84,15 +84,26 @@ export function noteUpstreamCall() {
   state.stats.upstreamCalls += 1;
 }
 
-/** The colo each admission was answered in, keyed by that request's own config object
- *  (`readConfig` makes one per request), for the refusal log line (`upstream.js::refusal`).
- *  A WeakMap: it lives exactly as long as the config and never rides `JSON.stringify(cfg)`. */
-const colos = new WeakMap();
+/** What admission learned about each request, keyed by that request's own config object
+ *  (`readConfig` makes one per request), for `upstream.js::refusal`: the colo, for the
+ *  refusal log line, and whether its host was refused by `DEMO_SERVE_HOSTS`, so that refusal
+ *  says "no voice, no ears" as a deployment with no gateway does. A WeakMap: it lives exactly
+ *  as long as the config and never rides `JSON.stringify(cfg)`. */
+const admitted = new WeakMap();
+const factsOf = (cfg) => (cfg && typeof cfg === "object" && admitted.get(cfg)) || null;
 
 /** The colo `admit()` saw for this config, or `""`: refused before admission, or no
  *  `request.cf` (bare node). */
 export function coloOf(cfg) {
-  return (cfg && typeof cfg === "object" && colos.get(cfg)) || "";
+  const f = factsOf(cfg);
+  return (f && f.colo) || "";
+}
+
+/** Whether `admit()` refused this config's request because `DEMO_SERVE_HOSTS` does not list
+ *  its host. */
+export function hostRefused(cfg) {
+  const f = factsOf(cfg);
+  return !!(f && f.unserved);
 }
 
 /* ---------------------------------------------------------------------------- *
@@ -508,9 +519,12 @@ export async function admit(o) {
   const nowS = nowOr(o.nowS);
   const load = loadOf(cfg, route);
   const cf = request && request.cf;
-  if (cfg && typeof cfg === "object") colos.set(cfg, cf && typeof cf.colo === "string" ? cf.colo : "");
+  const served = servesHost(cfg, request);
+  if (cfg && typeof cfg === "object") {
+    admitted.set(cfg, { colo: cf && typeof cf.colo === "string" ? cf.colo : "", unserved: !served });
+  }
 
-  if (!servesHost(cfg, request)) return { ...refuse("gateway_not_configured"), load };
+  if (!served) return { ...refuse("gateway_not_configured"), load };
 
   const origin = checkOrigin(request, cfg);
   if (!origin.ok) return { ...refuse("forbidden_origin"), load };

@@ -281,12 +281,13 @@ const admitAt = (cfg, request, route, nowS) => limits.admit({ request, cfg, rout
   fresh();
   const shape = async (res) => {
     const b = await jsonOf(res);
-    return [res.status, b.reason, b.mode, res.headers.get("Retry-After"), res.headers.get("X-RateLimit-Limit")];
+    return [res.status, b.reason, b.mode, b.voice, b.ears, res.headers.get("Retry-After"), res.headers.get("X-RateLimit-Limit")];
   };
   const bare = await chat.onRequestPost({ request: at(ORIGIN, "/api/chat", { text: "hello" }), env: {} });
   await sweep(bare, "/api/chat with no gateway at all");
   const NONE = await shape(bare);
-  deep(NONE, [503, "gateway_not_configured", "degraded", null, null], "(the reference: a deployment with no gateway at all)");
+  deep(NONE, [503, "gateway_not_configured", "degraded", false, false, null, null],
+       "(the reference: a deployment with no gateway at all — 503, no voice, no ears, no Retry-After, no X-RateLimit)");
   fresh();
   for (const [path, run] of [
     ["/api/chat", () => chat.onRequestPost({ request: at(ORIGIN, "/api/chat", { text: "hello" }), env: SERVE })],
