@@ -5,9 +5,24 @@ connected robot plus the appliance-wide config, the pairing gate and the face ca
 """
 from __future__ import annotations
 import re
+from datetime import datetime, timezone
 from typing import Optional
 
 from ._coerce import _dict, _num
+
+
+def _asked_at(asked: float, timezone_id) -> str:
+    """`HH:MM ZONE` for the parent reading the card: in the robot's configured
+    `timezone_id` (the house's zone, from the config it was pushed) when there is one
+    the box can resolve, else labelled UTC. Never the server's unlabelled local time:
+    the appliance container sets no TZ, and a bare `HH:MM` reads as the parent's own."""
+    if isinstance(timezone_id, str) and timezone_id:
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime.fromtimestamp(asked, ZoneInfo(timezone_id)).strftime("%H:%M %Z")
+        except Exception:                       # unknown zone, or no tz database here
+            pass
+    return datetime.fromtimestamp(asked, timezone.utc).strftime("%H:%M UTC")
 
 
 def robot_summary(r: dict) -> str:
@@ -33,6 +48,12 @@ def robot_summary(r: dict) -> str:
         bits.append(f"{n} safety flag{'' if n == 1 else 's'} to review")
     if r.get("ota_reboot_required"):
         bits.append("OTA reboot pending")
+    asked = r.get("stt_subscribed_at")
+    if isinstance(asked, (int, float)) and not isinstance(asked, bool) and asked > 0:
+        # The supervisor asked for the robot's microphone (a request; the robot sends no
+        # acknowledgement, so this is never "listening"). Shown in the robot's own zone.
+        zone = _dict(r.get("config_effective")).get("timezone_id")
+        bits.append(f"mic asked {_asked_at(asked, zone)}")
     return " · ".join(bits) or "connected"
 
 
