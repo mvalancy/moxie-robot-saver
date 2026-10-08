@@ -144,7 +144,7 @@ import {
   deep([st().inflight.chat, st().waiting.chat], [0, 0], "no slot survives the failure and no waiter is stranded");
 }
 
-/* 14. WHO IS ASKING (§4.1, §4.6): an IPv6 visitor is one /64; a typed header is not an
+/* 14. WHO IS ASKING (§4.1, §4.6): an IPv6 visitor is one /56; a typed header is not an
  * identity; the credential never chases a `Location`. */
 {
   // 14a. The address table — every form that reaches a real edge. The IPv4-mapped rows are
@@ -153,18 +153,21 @@ import {
     ["203.0.113.9", "203.0.113.9", "plain IPv4 is untouched"],
     ["  203.0.113.9  ", "203.0.113.9", "whitespace is trimmed"],
     ["1.2.3.4:5678", "1.2.3.4", "IPv4 with a port loses the port"],
-    ["2001:db8:1:2:3:4:5:6", "2001:db8:1:2", "a full IPv6 is truncated to its /64"],
-    ["2001:db8:1:2:ffff:ffff:ffff:fff", "2001:db8:1:2", "…and so is another host in the SAME /64"],
-    ["2001:db8:1:3:3:4:5:6", "2001:db8:1:3", "a DIFFERENT /64 keeps its own key"],
-    ["2001:db8::1", "2001:db8:0:0", "a `::` elision expands before truncation"],
-    ["2001:0db8:0000:0000:0000:0000:0000:0001", "2001:db8:0:0", "leading zeros normalise"],
-    ["2001:DB8::1", "2001:db8:0:0", "case normalises"],
-    ["::1", "0:0:0:0", "loopback parses"],
-    ["::", "0:0:0:0", "the unspecified address parses"],
-    ["fe80::1%eth0", "fe80:0:0:0", "a zone index names OUR interface, not the sender"],
-    ["fe80::1%25eth0", "fe80:0:0:0", "…including the percent-encoded spelling"],
-    ["[2001:db8::1]:443", "2001:db8:0:0", "the bracketed authority form loses brackets and port"],
-    ["::ffff:1.2.3.4", "1.2.3.4", "IPv4-MAPPED unmaps to the v4 address, NOT to a /64"],
+    ["2001:db8:1:2:3:4:5:6", "2001:db8:1:0::/56", "a full IPv6 is truncated to its /56"],
+    ["2001:db8:1:2:ffff:ffff:ffff:fff", "2001:db8:1:0::/56", "…and so is another host in the SAME /64"],
+    ["2001:db8:1:3:3:4:5:6", "2001:db8:1:0::/56", "a DIFFERENT /64 of the same /56 shares the key: one delegation, one bucket"],
+    ["2001:db8:1:ff::9", "2001:db8:1:0::/56", "…up to the last of its 256 /64s"],
+    ["2001:db8:1:2ff:3:4:5:6", "2001:db8:1:200::/56", "the fourth hextet keeps its high byte"],
+    ["2001:db8:1:100::1", "2001:db8:1:100::/56", "a DIFFERENT /56 keeps its own key"],
+    ["2001:db8::1", "2001:db8:0:0::/56", "a `::` elision expands before truncation"],
+    ["2001:0db8:0000:0000:0000:0000:0000:0001", "2001:db8:0:0::/56", "leading zeros normalise"],
+    ["2001:DB8::1", "2001:db8:0:0::/56", "case normalises"],
+    ["::1", "0:0:0:0::/56", "loopback parses"],
+    ["::", "0:0:0:0::/56", "the unspecified address parses"],
+    ["fe80::1%eth0", "fe80:0:0:0::/56", "a zone index names OUR interface, not the sender"],
+    ["fe80::1%25eth0", "fe80:0:0:0::/56", "…including the percent-encoded spelling"],
+    ["[2001:db8::1]:443", "2001:db8:0:0::/56", "the bracketed authority form loses brackets and port"],
+    ["::ffff:1.2.3.4", "1.2.3.4", "IPv4-MAPPED unmaps to the v4 address, NOT to a /56"],
     ["::ffff:5.6.7.8", "5.6.7.8", "…so two mapped v4 clients stay two buckets"],
     ["::ffff:102:304", "1.2.3.4", "…the hex spelling too"],
     ["[::ffff:1.2.3.4]:80", "1.2.3.4", "…and the bracketed form"],
@@ -176,20 +179,21 @@ import {
     ["", "unknown", "nor is an empty string"],
   ]) eq(limits.ipKey(raw), want, `ipKey(${JSON.stringify(raw)}): ${why}`);
 
-  // 14b. …through the real windows: five turns from five addresses in ONE /64 spend its
-  // minute (before the fix each got its own bucket), and a different /64 is unaffected.
+  // 14b. …through the real windows: five turns from five /64s of ONE /56 spend its minute
+  // (keyed by the /64, each got its own bucket — 256 of them per delegation), and a
+  // different /56 is unaffected.
   fresh();
-  const V6 = (n) => "2001:db8:cafe:1::" + n.toString(16);
+  const V6 = (n) => "2001:db8:cafe:" + n.toString(16) + "::1";
   for (let i = 1; i <= 5; i++) {
     eq((await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": V6(i) })).res.status, 200,
-       `turn ${i} from a fresh address in one /64 is served`);
+       `turn ${i} from a fresh /64 of one /56 is served`);
   }
-  const sixth = await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": V6(99) });
-  eq(`${sixth.res.status} ${sixth.body.reason}`, "429 rate_limited", "THE BYPASS IS CLOSED: a 6th address in the SAME /64 is refused");
-  eq((await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "2001:db8:cafe:2::1" })).res.status, 200,
-     "a DIFFERENT /64 is a different visitor");
+  const sixth = await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": V6(0xff) });
+  eq(`${sixth.res.status} ${sixth.body.reason}`, "429 rate_limited", "THE BYPASS IS CLOSED: a 6th /64 in the SAME /56 is refused");
+  eq((await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "2001:db8:cafe:100::1" })).res.status, 200,
+     "a DIFFERENT /56 is a different visitor");
 
-  // 14c. The refund credits the bucket the charge took: a timed-out /64 keeps its whole minute.
+  // 14c. The refund credits the bucket the charge took: a timed-out /56 keeps its whole minute.
   fresh();
   const QQ = { ...FULL, DEMO_QUEUE_MAX_WAIT_MS: "40", DEMO_QUEUE_MAX_DEPTH: "4" };
   const cfgQ = wire2.readConfig(QQ);
@@ -204,7 +208,7 @@ import {
   for (const h of holdQ) h.release();
   for (let i = 1; i <= cfgQ.chatPerMin; i++) {
     eq((await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "2001:db8:beef:7::" + i }, QQ)).res.status, 200,
-       `…and the refunded /64 still has its minute, from any address in it: turn ${i}`);
+       `…and the refunded /56 still has its minute, from any address in it: turn ${i}`);
   }
 
   // 14d. X-Forwarded-For is not an identity. Without CF-Connecting-IP every caller shares
@@ -224,8 +228,8 @@ import {
   const trusting = wire2.readConfig({ ...FULL, DEMO_TRUST_XFF: "1" });
   deep([limits.clientIp(noCf("9.9.9.9, 8.8.8.8"), trusting), limits.clientIp(noCf("2001:db8:9:9:1:2:3:4"), trusting),
         limits.clientIp(req("/api/chat", {}, { "X-Forwarded-For": "9.9.9.9" }), trusting)],
-       ["9.9.9.9", "2001:db8:9:9", "203.0.113.9"],
-       "DEMO_TRUST_XFF=1 (local dev) reads the first hop, through the /64 rule, and CF-Connecting-IP still OUTRANKS it");
+       ["9.9.9.9", "2001:db8:9:0::/56", "203.0.113.9"],
+       "DEMO_TRUST_XFF=1 (local dev) reads the first hop, through the /56 rule, and CF-Connecting-IP still OUTRANKS it");
 
   // 14e. The credential does not follow a redirect, and an unfollowed 3xx is the DOOR
   // (tunnel, Access, http->https), not the brain.

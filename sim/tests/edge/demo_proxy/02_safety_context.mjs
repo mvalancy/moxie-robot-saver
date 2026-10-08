@@ -10,9 +10,22 @@ const safety = await import(join(repo, "functions", "api", "_lib", "safety.js"))
 /* 8. §4.1 — the pre-inference safety floor spends nothing. */
 {
   fresh();
-  const blocked = await call(chat, "/api/chat", { text: "i want to kill myself" });
+  // Every refusal writes one log line (§4.5), a blocked turn included (W3-S17): captured here.
+  const realLog = console.log;
+  const logged = [];
+  console.log = (...a) => { logged.push(a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ")); };
+  let blocked;
+  try {
+    blocked = await call(chat, "/api/chat", { text: "i want to kill myself" });
+  } finally {
+    console.log = realLog;
+  }
   deep([blocked.res.status, blocked.body.reason, blocked.body.ok, blocked.body.degraded], [200, "blocked", true, true],
        "a hard block is 200 blocked, ok and degraded — the floor did its job, nothing failed");
+  const lines = logged.filter((l) => l.includes('"evt":"refusal"')).map((l) => JSON.parse(l));
+  deep(lines.map((l) => [l.evt, l.route, l.reason, l.status]), [["refusal", "chat", "blocked", 200]],
+       "AN INPUT BLOCK WRITES EXACTLY ONE REFUSAL LINE — route, the closed reason, the status");
+  ok(!/myself|self_harm/.test(JSON.stringify(logged)), "…and the log never carries the utterance or the category");
   deep(blocked.body.speech, [], "a blocked turn mints NO ticket — the voice costs nothing either");
   eq(blocked.body.context, "", "a blocked turn does not extend the conversation");
   eq(sent.length, 0, "A HARD-BLOCKED UTTERANCE MAKES ZERO UPSTREAM CALLS");

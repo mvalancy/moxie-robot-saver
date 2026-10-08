@@ -35,9 +35,9 @@
  *    pointed the child to a grown-up. The self-harm lines already refer and keep precedence.
  */
 import { readConfig, modeOf, publicLimits, publicTurnstile, upstreamHeaders } from "./_lib/env.js";
-import { respond } from "./_lib/envelope.js";
+import { logRefusal, respond } from "./_lib/envelope.js";
 import { assess, disclosesHurt, hasReferral, hurtRedirectFor, MOXIE, withReferral } from "./_lib/safety.js";
-import { admit, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
+import { admit, coloOf, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
 import { mintContext, mintTickets, verifyContext } from "./_lib/hmac.js";
 import { TOKEN_FIELD, verify as verifyTurnstile } from "./_lib/turnstile.js";
 import { lookup as lookupDocs } from "./_lib/docsearch.js";
@@ -330,6 +330,11 @@ async function callGateway(cfg, body, timeoutMs) {
  * had itself pointed them to a grown-up, so the line spoken is the referral
  * (`hurtRedirectFor`), never a change of subject. The self-harm lines already refer and
  * keep precedence.
+ *
+ * ONE LOG LINE PER BLOCKED TURN (`envelope.js::logRefusal`, as every refusal writes one):
+ * route, the closed reason `blocked`, the status and the colo — never the child's line,
+ * the completion or which category fired. The floor's rate is then visible in the Pages
+ * logs like any other reason's.
  */
 async function blocked(cfg, slot, verdict, o) {
   const messages = [];
@@ -341,7 +346,7 @@ async function blocked(cfg, slot, verdict, o) {
     messages.push(chatMessage(cfg.deviceId, buildChatResponse({ eventId: eid, text: r.text, markup })));
     if (o && o.speak && cfg.voice) speech = await mintTickets(cfg, { text: r.text, eventId: eid });
   }
-  return respond(
+  const res = respond(
     {
       ok: true,
       degraded: true,
@@ -359,4 +364,6 @@ async function blocked(cfg, slot, verdict, o) {
     },
     { rateLimit: slot.rateLimit },
   );
+  logRefusal("chat", "blocked", res.status, coloOf(cfg));
+  return res;
 }

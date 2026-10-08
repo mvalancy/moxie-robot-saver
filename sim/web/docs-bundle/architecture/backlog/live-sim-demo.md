@@ -295,24 +295,28 @@ rule rules out model substitution, `n`/`tools` amplification and system-prompt o
 | `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500 000 / 2 000 | a **size** cap, not a duration cap. 500 KB is about 15 s at 16 kHz s16, but over 60 s at 8 kHz 8-bit. The floor answers `too_short` for free. |
 | `DEMO_MAX_RECORD_MS` | 15 000 | **The real ceiling on STT cost.** `mic.js` hard-stops the recorder. The server reads a WAV header's own `rate × channels × bits` against the data size (`_lib/wav.js::wavDurationMs`) and refuses `too_long` with zero upstream calls. Compressed containers cannot be measured without a decoder. The WAV-only default for `DEMO_STT_FORMATS` is what makes the cap total. Widening that list re-opens the gap. |
 | Per-IP chat | 5/min · 40/hour · 150/day | generous for a person, cheap for us |
-| Per-IP speech | 10/min · 80/hour | no day window (the unit budget's day covers it). Sized for **two** voice chunks per chat turn at full pace (5/min, 40/hour). With three-sentence replies the window fills at about **4 typed turns a minute, or about 27 in an hour**: earlier turns' later chunks spend it, so first a later chunk is refused `rate_limited` (that reply's voice ends there, the words stay on screen), and then the **next turn's chunk 0** is refused too, which makes that whole reply speak in the browser voice (the chunk-0 rule of §3.4). Unreachable before 2026-10-08 (one ticket a turn, so at most 5 speech a minute). Raising them is a `DEFAULTS` change in `env.js` — owner call. |
-| Per-IP transcribe | 10/min · 60/hour | no day window |
+| Per-IP speech | 10/min · 80/hour · 300/day | Sized for **two** voice chunks per chat turn at full pace (5/min, 40/hour). With three-sentence replies the window fills at about **4 typed turns a minute, or about 27 in an hour**: earlier turns' later chunks spend it, so first a later chunk is refused `rate_limited` (that reply's voice ends there, the words stay on screen), and then the **next turn's chunk 0** is refused too, which makes that whole reply speak in the browser voice (the chunk-0 rule of §3.4). Unreachable before 2026-10-08 (one ticket a turn, so at most 5 speech a minute). Raising them is a `DEFAULTS` change in `env.js` — owner call. The day is chat's day at the hour caps' ratio, 2 a reply (1.6 measured with one ticket per sentence), so a visitor at that pace meets chat's day first (every reply at the three-chunk maximum spends it by turn 100). Without it one address could spend a colo's whole day alone (§4.6). `DEMO_SPEECH_PER_DAY=0` removes it. |
+| Per-IP transcribe | 10/min · 60/hour · 225/day | 1.5 uploads a spoken turn over chat's day, the hour caps' ratio again. `DEMO_STT_PER_DAY=0` removes it. One address at every per-IP day maximum spends 150×3 + 300×2 + 225×2 = 1 500 units, under half the 4 000-unit day. |
 | Concurrency | chat 4 · speech 8 | `transcribe` **shares chat's ceiling**. Matched to the upstream key's parallel limit, which protects a neighbouring service. Deliberately not raised. |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_DEPTH` | 2 500 ms / 8 | At the ceiling a request waits in a bounded FIFO. Past the depth, or when the wait expires, it is refused `at_capacity`. **Either set to 0** gives instant refusal. |
-| Timeouts, chat / speech / STT | 20 000 / 12 000 / 12 000 ms | Chat is below the 45 s worst case on purpose: a fast honest degrade beats a slow success. |
+| Timeouts, chat / speech / STT | 10 000 / 12 000 / 12 000 ms | Chat measured 2026-10-08 on `moxie-brain-dense` + `single` (169 turns): p50 1.7 s, p99 3.4 s, max 4.7 s. 10 s is about 3× that p99 and still holds the gateway's fallback (a first model failing as late as its slowest turn, then `moxie-brain`'s p99 of 4.1 s). A fast honest degrade beats a slow success. |
 | Unit budget | 600/hour · 4 000/day | **Request units**, not dollars, because no price sheet exists (assumption 19). chat = 3, speech = 2, transcribe = 2 (`_lib/counters.js::UNITS`). A turn is 3 + 2 per voice chunk: 5 units with one chunk (120 turns an hour, 800 a day), 9 with the three-chunk maximum (66 an hour, 444 a day); measured 2026-10-08, ten typed turns made 16 chunks, 6.2 units a turn on average (about 96 turns an hour, 645 a day). |
 | `DEMO_TICKET_TTL_S` | 60 | long enough for a slow client, short enough that a leaked ticket is useless |
 | `DEMO_ENABLED` | on | kill switch: `0` forces `gateway_not_configured` without deleting the secret |
+| `DEMO_SERVE_HOSTS` | unset (every host) | the hostnames that may spend, comma separated, matched exactly. Any other host answers `gateway_not_configured` before anything is charged, and `/api/health` says so. On production, list only the canonical host, so the platform alias and every superseded deployment's own URL cannot spend with the key. Set but unusable, it serves no host. |
 | Safety floor, both sides | always on | `_lib/safety.js`: the child's line before the call (a block spends nothing), her own reply before any ticket is minted (an unsafe completion is swapped for the rule's redirect line, a diagram that trips it is dropped, §4.12), one appended referral sentence for a hurt child whose reply names no grown-up, and a referral line — never a change of subject — when a hurt child's turn is blocked or their reply swapped. No knob: a demo for strangers' children has no setting that turns it off. |
 
 **What "per-IP" keys on** (`_lib/clientip.js`). The key is `CF-Connecting-IP`, with IPv6 truncated to
-its **/64**, so one subscriber is one bucket. `::ffff:a.b.c.d` is unmapped to the v4 address. It is not
-truncated, which would collapse all of IPv4 into one bucket. `X-Forwarded-For` is honoured only with
+its **/56**, the prefix a residential line is commonly delegated, so one subscriber is one bucket. Keyed
+by the /64, one such line held 256 buckets, and two /64s of one /56 spent a colo's whole day in the
+hermetic grief simulation. Neighbours who share a /56 share a bucket, as IPv4 NAT already does.
+`::ffff:a.b.c.d` is unmapped to the v4 address. It is not truncated, which would collapse all of IPv4
+into one bucket. `X-Forwarded-For` is honoured only with
 `DEMO_TRUST_XFF`, which must stay **unset in production**. Callers who cannot be identified share one
 `unknown` bucket.
 
-**Admission order** (`_lib/limits.js::admit`) is origin pin, then per-IP windows, then unit budget, then
-concurrency (with the FIFO), then the shared tier. Every free refusal happens before any expensive one.
+**Admission order** (`_lib/limits.js::admit`) is the served host (`DEMO_SERVE_HOSTS`), then origin pin,
+then per-IP windows, then unit budget, then concurrency (with the FIFO), then the shared tier. Every free refusal happens before any expensive one.
 The concurrency slot, the only thing that must be given back, is taken last and released in a `finally`.
 Inside the FIFO, `release()` **hands the slot to the longest waiter** without decrementing, so a late
 arrival cannot overtake.
@@ -334,7 +338,9 @@ arrival cannot overtake.
 `CF-Access-*` pair when configured. An unfollowed 3xx answers `gateway_unreachable_or_gated`: a door
 problem such as an Access login, a moved endpoint or an `http://` base, rather than `upstream_down`.
 Write the `https://` URL. An Access login page served at 200 is recognised as the same reason. An
-upstream 429 becomes our 429, with `Retry-After` taken from the gateway, clamped to 300, default 10.
+upstream 429 becomes our 429, with `Retry-After` taken from the gateway, clamped to 300. When the
+gateway names none it is 10, except on `/api/transcribe`: 60, because the speech-to-text group answers
+429 with no header through a measured 60 s cooldown.
 
 **Pre-inference safety** (`_lib/safety.js` + `safety.rules.js`, a plain JS module because the Pages build
 rejects JSON import attributes, assumption 26). A hard block on the child's line returns
@@ -403,11 +409,11 @@ The `/api/*` routes write nothing durable anywhere.
 
 | Status | `reason` | `Retry-After` | The Sim |
 |---|---|---|---|
-| 429 | `rate_limited` (per-IP window, or the gateway's own 429) | window reset / upstream value | Answers this turn from `stub.js` and suppresses live turns until `Retry-After`. Up to 60 s (the minute window) it stays `live` with the *slow down* chip; longer (such as the hour or day cap) it **rests**: `degraded`, a `RESTING` badge and the minutes left, `live` again when the window lifts. |
+| 429 | `rate_limited` (per-IP window, or the gateway's own 429) | window reset / upstream value (none named: 10, or 60 on `/api/transcribe`) | Answers this turn from `stub.js` and suppresses live turns until `Retry-After`. Up to 60 s (the minute window) it stays `live` with the *slow down* chip; longer (such as the hour or day cap) it **rests**: `degraded`, a `RESTING` badge and the minutes left, `live` again when the window lifts. |
 | 503 | `at_capacity` (ceiling reached and queue full or wait expired) | 15 | Busy pill, answers from the stub. |
 | 503 | `budget_exhausted` | seconds to the window reset | Full degrade. Next health poll at `Retry-After`. |
 | 503 | `upstream_down`, `gateway_unreachable_or_gated` | 60 | Full degrade, ended only by a clean turn (§6.3). |
-| 503 | `gateway_not_configured` | none | Full degrade for the session. |
+| 503 | `gateway_not_configured` (also any host `DEMO_SERVE_HOSTS` does not list) | none | Full degrade for the session. |
 | 503 | `turnstile_misconfigured` | 60 | Degraded, scripted copy. |
 | 504 | `timeout` (our own `AbortSignal`) | 10 | Answers from the stub. Full degrade on the **first**: every turn into a hung gateway waits the whole deadline. Ended only by a clean turn; its trial turns back off (§6.3). |
 | 400 | `bad_request`, `too_long`, `too_short`, `bad_ticket` | none | Plain reason inline. Mode does **not** change. |
@@ -423,6 +429,17 @@ A spend refusal opens no client-side suppression window. `budget_exhausted` leav
 which is stronger. Recovery is gated by the server's `Retry-After`, clamped by `mode.js`'s
 `POLL_MAX_MS` (5 min). The page reads only the body's `retry_after_s`, which is `0` for
 `upstream_down` and `timeout` (their header values never reach it).
+
+**Every refusal writes one log line** (`_lib/envelope.js::logRefusal`, called once per refusal envelope
+by `_lib/upstream.js::refusal`, and once per `blocked` turn by `chat.js::blocked`), readable in the
+Pages real-time logs:
+`{"evt":"refusal","route":"chat","reason":"rate_limited","status":429,"colo":"SJC"}`. Four closed
+fields and nothing else: never the visitor's text, address or rate-limit key, a header, a ticket or a
+context blob. `colo` is `""` for a refusal made before admission saw the request. A `blocked` turn —
+an input block or an output swap (§4.12), both answered 200 with `reason: "blocked"` — writes one
+line with that reason, so the floor's rate is visible like any other; a served turn and `/api/health`
+write nothing. `sim/tests/edge/demo_proxy/12_spend_ops.mjs` §24f sends a canary as the chat text
+through every path and finds it in no console output.
 
 ### 4.6 Counters, honestly
 
@@ -752,7 +769,7 @@ uncle said don't tell your mom", "it's our little secret", "daddy hurts me") was
 — seen live on the production pair.
 
 **What runs now** (`_lib/safety.js`, `_lib/safety.rules.js`, `chat.js` steps 6, 8c and 9;
-`test_demo_proxy` §24 pins each):
+`test_demo_proxy` §25 pins each):
 
 1. **Her own words, assessed after the re-roll and before any ticket.** `assess(text, "moxie")` applies
    each category's `action.moxie`, copied category by category from the authority table
@@ -827,7 +844,7 @@ uncle said don't tell your mom", "it's our little secret", "daddy hurts me") was
    robot is more often a disclosure than a request, and the flag's phrases are a floor.
 
 **Measured (2026-10-08, every real reply and child line on disk, hermetic; the fixtures in
-`sim/tests/fixtures/safety-floor/` are the corpus and §24d-g pin them):**
+`sim/tests/fixtures/safety-floor/` are the corpus and §25d-g pin them):**
 
 | Stage | Corpus | Result |
 |---|---|---|

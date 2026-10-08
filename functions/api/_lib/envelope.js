@@ -311,3 +311,35 @@ export function respond(partial, opts) {
   for (const [k, v] of Object.entries(API_SECURITY_HEADERS)) headers.set(k, v);
   return new Response(JSON.stringify(body), { status, headers });
 }
+
+/** The routes a refusal line may name: closed, so no caller-chosen string reaches a log. */
+const LOG_ROUTES = Object.freeze(["chat", "speech", "transcribe"]);
+
+/**
+ * ONE STRUCTURED LINE PER REFUSAL, for the Pages real-time logs, so the operator can see
+ * refusal rates by reason without reading a single visitor's words:
+ *
+ *   {"evt":"refusal","route":"chat","reason":"rate_limited","status":429,"colo":"SJC"}
+ *
+ * FOUR CLOSED FIELDS AND NOTHING ELSE: never the visitor's text, an address or its
+ * rate-limit key, a header, a ticket or a context blob — a log line is a copy nobody agreed
+ * to. `reason` is coerced into `REASONS` exactly as `envelope()` coerces it, `colo` must look
+ * like a Cloudflare colo code, and a logging failure is swallowed (it may not cost the
+ * visitor their answer). Called once per refusal envelope by `upstream.js::refusal`, and
+ * once per `blocked` turn — an input block or an output swap, both `reason: "blocked"` at
+ * 200 — by `chat.js::blocked` (spec §4.12); a served turn and `/api/health` write nothing.
+ */
+export function logRefusal(route, reason, status, colo) {
+  const line = {
+    evt: "refusal",
+    route: LOG_ROUTES.includes(route) ? route : "other",
+    reason: REASONS.includes(reason) ? reason : "bad_request",
+    status: Number.isInteger(status) ? status : 0,
+    colo: typeof colo === "string" && /^[A-Z]{3}$/.test(colo) ? colo : "",
+  };
+  try {
+    console.log(JSON.stringify(line));
+  } catch {
+    // Nothing to do: the refusal itself is already built.
+  }
+}
