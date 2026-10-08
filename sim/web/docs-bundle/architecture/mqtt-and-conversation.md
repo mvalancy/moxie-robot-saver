@@ -316,7 +316,7 @@ a keepalive expiry `has exceeded timeout, disconnecting.`, and a robot whose new
 session `already connected, closing old connection.` (that one at level `E`, which is why the
 subscription is `log/#`); plus mosquitto 1.6's `Socket error on client …, disconnecting.` for a
 distro-packaged broker. OpenMoxie matches only the first two, and only on level-`N` lines
-(`moxie_server.py:80-81`, `:150-157`), and initialises a robot once per entry in its online map
+(`moxie_server.py:80-81`, `:149-158`), and initialises a robot once per entry in its online map
 (`robot_data.py:94-99`). Read from that code, a plausible C4 mechanism is a robot that left with a line
 it does not match (or one logged at level `E`) and so was never released: its return got no config and
 no subscribe. Upstream's own diagnosis (PR #59) blamed mosquitto 2.x no longer publishing the `$SYS`
