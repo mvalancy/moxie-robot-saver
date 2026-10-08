@@ -142,8 +142,8 @@ A drop is still a `FINAL` with no `speech` and the utterance's `uuid`, like any 
 transcription, so the robot's turn closes; what a real Moxie does next after an empty `FINAL` is
 unverified. The console's activity feed gets one line per drop with the fixed reason, the canon
 phrase and the numbers, never the audio and never the transcript ("heard nothing: dropped a phantom
-'bye' (0.60 s, level 0.004)"), and `/status` counts drops per robot as `stt_dropped` (since the
-robot last connected).
+'bye' (0.60 s, level 0.004)"), and `/status` counts drops per robot as `stt_dropped` (in memory: it
+starts again at 0 when the broker says the robot left, or when the supervisor restarts).
 
 The defaults lean one way on purpose: a missed whispered goodbye costs the child one repeat, while a
 phantom goodbye ends the child's activity. The levels come from the hosted page's browser

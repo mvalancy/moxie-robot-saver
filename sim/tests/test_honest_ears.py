@@ -39,7 +39,7 @@ import types
 import pytest
 
 from helpers_audio import silence_pcm, stt_frames, tone_pcm                 # noqa: E402
-from helpers_runtime import (http_json, loopback, make_runtime,               # noqa: E402
+from helpers_runtime import (deliver, http_json, loopback, make_runtime,      # noqa: E402
                              parse_zmq_frame, status_server, toolkit_pb2)
 from moxie_sdk import stt                                                     # noqa: E402
 from moxie_sdk.stt import SttSession, Transcriber, VADState                   # noqa: E402
@@ -391,6 +391,26 @@ def test_each_drop_is_one_note_with_the_numbers_and_counts_in_status(tmp_path):
     assert notes == ["👂 heard: 'I like dogs'"]
     assert rt.status_snapshot()["robots"][0]["stt_dropped"] == 4
     assert http_json(f"{status_server(rt)}/status")["robots"][0]["stt_dropped"] == 4
+
+
+def test_the_drop_count_lives_on_the_robots_record(timers, tmp_path):
+    """`stt_dropped` is in memory on the robot's record: a second connect line with no
+    leave in between keeps it (the record, like the conversation, survives the blip), and
+    the broker saying the robot left starts it again at 0."""
+    rt = _runtime(tmp_path)
+    rt.set_transcriber(Ears("Bye."))
+    _connect(rt)
+    timers.fire()
+    speak(rt, DEV, tone_pcm(600, **ROOM_TONE), "utt-1")
+    assert rt.status_snapshot()["robots"][0]["stt_dropped"] == 1
+    _connect(rt)
+    timers.fire()
+    assert rt.status_snapshot()["robots"][0]["stt_dropped"] == 1
+    deliver(rt, "$SYS/broker/log/N",
+            f"1759900030: Client {DEV} has exceeded timeout, disconnecting.")
+    _connect(rt)
+    timers.fire()
+    assert rt.status_snapshot()["robots"][0]["stt_dropped"] == 0
 
 
 def test_a_drop_never_breaks_the_utterance_that_follows(tmp_path):
