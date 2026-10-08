@@ -11,8 +11,9 @@ python3 sim/serve.py 8080    # from the repo root; then open http://localhost:80
 ```
 
 `sim/serve.py` serves `/sim` as `sim.html`, as Cloudflare Pages does (the hub links `/sim`,
-because Pages answers `sim.html` with a 308). Any other static server works too, fully offline,
-if you open `sim.html` by name: every library and font is vendored in [`vendor/`](vendor/README.md).
+because Pages answers `sim.html` with a 308), and so does the Docker stack's nginx
+([`../nginx.conf`](../nginx.conf)). Any other static server works too, fully offline, if you open
+`sim.html` by name: every library and font is vendored in [`vendor/`](vendor/README.md).
 
 ## Files
 

@@ -116,8 +116,9 @@
       <span id="presence-state">UNKNOWN</span>
     </div>
 
-    <!-- stage hint -->
-    <div id="scene-hint" aria-hidden="true">DRAG&thinsp;&middot;&thinsp;ORBIT&ensp;&#47;&#47;&ensp;SCROLL&thinsp;&middot;&thinsp;ZOOM&ensp;&#47;&#47;&ensp;<code>window.moxie</code> API</div>
+    <!-- stage hint. The API half is its own span, like the bubble's: a hosted page keeps how
+         to orbit and zoom and drops only `window.moxie` (style.css). -->
+    <div id="scene-hint" aria-hidden="true">DRAG&thinsp;&middot;&thinsp;ORBIT&ensp;&#47;&#47;&ensp;SCROLL&thinsp;&middot;&thinsp;ZOOM<span class="lbl-eng">&ensp;&#47;&#47;&ensp;<code>window.moxie</code> API</span></div>
   </main>
 
   <!-- HUD rail -->

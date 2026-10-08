@@ -108,7 +108,8 @@
   .brk{position:absolute;width:26px;height:26px;border:2px solid #00f0ff66;z-index:2}
   .brk.tl{top:8px;left:8px;border-right:0;border-bottom:0} .brk.br{bottom:8px;right:8px;border-left:0;border-top:0}
   /* The picture IS the way in: the whole frame is a link to her. On a phone it says so in
-     words ("Tap to talk to Moxie"); the developer caption is the desktop's. */
+     words ("Tap to talk to Moxie", which its aria-label starts with: a label spoken to a
+     voice-control user must contain the one they see); the developer caption is the desktop's. */
   a.frame{display:block;color:inherit;text-decoration:none;transition:transform .16s ease,border-color .16s,box-shadow .2s}
   @media(hover:hover){a.frame:hover{transform:translateY(-3px);border-color:var(--cyan-dim);box-shadow:0 34px 90px #000000aa,0 0 0 1px #00f0ff33}}
   a.frame:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
@@ -231,7 +232,7 @@
     </div>
     <div class="stage" id="stage">
       <div class="halo"></div>
-      <a class="frame" href="sim" aria-label="Talk to Moxie in the 3D simulator">
+      <a class="frame" href="sim" aria-label="Tap to talk to Moxie in the 3D simulator">
         <span class="brk tl"></span><span class="brk br"></span>
         <div class="glassline"></div>
         <span class="live"><i></i>SIM · LIVE</span>

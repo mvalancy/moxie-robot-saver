@@ -83,17 +83,24 @@
    * dead". #idle-on is never touched (the hold only ADDS silence); `#hud.chatting` lets the
    * UI say it is paused. */
   var CHAT_QUIET_MS = 45000;
+  var composeAt = 0;                        // when the visitor last focused or typed in the box
 
-  /** The visitor is making a line for her: the message box has focus or holds text, or the
+  /** The visitor is making a line for her: the message box holds text or has focus, or the
    *  mic is open (mic.js's body[data-mic]). Before their FIRST line there is no `.turn` for
    *  the hold to count, so her first quip landed 5-9 s after the unlock, while they typed
    *  (measured on the live site: 5.4-5.7 s before the first send) — and a quip into an open
-   *  mic is a quip in the visitor's own clip. */
+   *  mic is a quip in the visitor's own clip.
+   *  FOCUS ALONE holds her before the first line, and after it only for CHAT_QUIET_MS from
+   *  the visitor's last focus or keystroke: Enter sends a typed turn WITHOUT blurring the
+   *  box, so "focused" stayed true after the conversation and she never spoke again on a
+   *  desktop until they clicked somewhere else. */
   function composing() {
     if (document.body && document.body.getAttribute("data-mic") === "on") return true;
     var box = document.getElementById("speech-input");
     if (!box) return false;
-    return document.activeElement === box || !!(box.value && String(box.value).trim());
+    if (box.value && String(box.value).trim()) return true;
+    if (document.activeElement !== box) return false;
+    return lastTurnAt === 0 || (Date.now() - composeAt) < CHAT_QUIET_MS;
   }
 
   /** True while a conversation is live enough that a quip would be an interruption. */
@@ -120,6 +127,12 @@
     holdTimer = setTimeout(reflectHold, CHAT_QUIET_MS + 50);
   }
 
+  /** Inside one of her own `.mutter` rows? A text node is judged by its parent. */
+  function inMutter(node) {
+    var el = node && node.nodeType === 1 ? node : node && node.parentNode;
+    return !!(el && el.closest && el.closest(".mutter"));
+  }
+
   /** Watch the comms log for REAL turns — never our own `.mutter` rows. */
   function watchTranscript() {
     if (watching) return;                   // `start()` may be called more than once
@@ -128,6 +141,11 @@
     watching = true;
     new MutationObserver(function (records) {
       for (var i = 0; i < records.length; i++) {
+        // Her own row, re-worded in place before the first turn (logMutter), changes the
+        // children of a `.msg` exactly as a streamed reply does — and is NOT a turn: counted,
+        // her second quip put the hold on, so she went quiet with nobody talking and the page
+        // said "paused while you're chatting".
+        if (inMutter(records[i].target)) continue;
         var added = records[i].addedNodes;
         for (var j = 0; j < added.length; j++) {
           var n = added[j];
@@ -339,11 +357,20 @@
   };
 
   /** Repaint the hold as the visitor starts or stops writing — the next tick can be 24 s
-   *  away. Deferred a task, so a `blur` is read after focus has really moved. */
+   *  away. Deferred a task, so a `blur` is read after focus has really moved. A focus or a
+   *  keystroke also restarts the focus hold's quiet period, repainted when it lapses (one
+   *  timer with noteTurn's: whichever came last lapses last). */
   function watchComposer() {
     var box = document.getElementById("speech-input");
     if (!box || !box.addEventListener) return;
-    var soon = function () { setTimeout(reflectHold, 0); };
+    var soon = function (e) {
+      if (e && e.type !== "blur") {
+        composeAt = Date.now();
+        clearTimeout(holdTimer);
+        holdTimer = setTimeout(reflectHold, CHAT_QUIET_MS + 50);
+      }
+      setTimeout(reflectHold, 0);
+    };
     ["focus", "blur", "input"].forEach(function (ev) { box.addEventListener(ev, soon); });
   }
 

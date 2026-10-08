@@ -215,10 +215,11 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
 /* A HOSTED page is a toy, not a bench: a stranger meets Moxie, not "v24.10.803 ·
    SOFTWARE-IN-THE-LOOP · LINK IDLE", a "window.moxie API" hint and a bubble labelled
    "TTS OUT". Keyed on env.js's body[data-env], so a local page (the developer's bench) is
-   exactly as it was; the rail, which also starts closed here, is rail.js's. */
+   exactly as it was; the rail, which also starts closed here, is rail.js's. The scene hint
+   keeps "DRAG · ORBIT // SCROLL · ZOOM": that is how a visitor turns her around. */
 body[data-env="hosted"] #topbar .tag,
 body[data-env="hosted"] #topbar .linkstate,
-body[data-env="hosted"] #scene-hint,
+body[data-env="hosted"] #scene-hint .lbl-eng,
 body[data-env="hosted"] #bubble .callout-label .lbl-eng { display: none; }
 
 .env-badge {
