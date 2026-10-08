@@ -17,7 +17,10 @@
 # docs/architecture/backlog/live-sim-demo.md §5. Only the values below have no default.
 
 # The kill switch. `0` forces every route to `gateway_not_configured` WITHOUT deleting
-# the secret — the fastest incident response there is.
+# the secret. It is NOT the fastest incident response: like every variable it applies only
+# to the NEXT deployment, and an older deployment's own URL keeps the value it was built
+# with. Revoking the key at the gateway stops every deployment at once
+# (docs/guides/deploy-cloudflare.md, section 7, "Incident").
 DEMO_ENABLED=1
 
 # Any OpenAI-compatible base. NO DEFAULT EXISTS, on purpose: unset means degraded,

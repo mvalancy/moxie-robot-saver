@@ -23,7 +23,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap",
    "section": "_root",
-   "bytes": 6894,
+   "bytes": 8979,
    "mermaid": 0,
    "headings": [
     "Definition of done",
@@ -400,7 +400,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 74037,
+   "bytes": 75229,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -1291,16 +1291,18 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 9753,
+   "bytes": 15959,
    "mermaid": 0,
    "headings": [
     "1. Deploy",
     "2. What works with no configuration",
     "3. Make it live",
     "Which model, which layout, which persona",
+    "Her voice and her ears",
     "4. Caps",
     "5. Platform behavior worth knowing",
     "6. Which mode am I in?",
+    "7. Incident: stop the spending, then recover",
     "Known gaps"
    ],
    "kind": "md"
