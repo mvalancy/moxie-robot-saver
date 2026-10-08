@@ -2,7 +2,9 @@
  *   1. Moxie stops muttering while you talk to her, and resumes once you stop
  *      (`ambient.js`'s conversation hold).
  *   2. Her self-talk appears in the comms log — before anyone has spoken as ONE row,
- *      re-worded in place at one height (2b), and never while the visitor is writing (2c).
+ *      re-worded in place at one height, every quip whole, and never mistaken for a visitor
+ *      turn (2b); never while the visitor is writing (2c); and focus the visitor left in
+ *      the box after a typed turn does not silence her for good (2d).
  *   3. The chat dock fills the width available to it, rail open or closed, desktop and phone.
  *   4. The speech bubble hangs on her HEAD in the 3-D scene and follows her.
  *   6. The presence badge stays hidden until a face event (§5 is her diagrams).
@@ -12,7 +14,9 @@
  *
  *   node sim/test_liveliness.mjs
  */
-import { requireBrowser, serveWeb, makeChecks, finish, notable, launchBrowser, openSim }
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { requireBrowser, serveWeb, makeChecks, finish, notable, launchBrowser, openSim, web }
   from "./browser_harness.mjs";
 
 const LABEL = "liveliness + chat layout";
@@ -340,15 +344,26 @@ for (const [label, w, h, mobile] of [["desktop 1440x900", 1440, 900, false], ["p
                    text: (log.querySelector(".mutter .msg") || {}).textContent || "" });
     }
     const turnsBefore = log.querySelectorAll(".turn").length;
+    // Re-wording her own row changes a `.msg`'s children, as a streamed reply does: read what
+    // the transcript observer made of it (its callbacks ran during the frames awaited above).
+    const st = window.__ambient.state();
+    const self = { lastTurnAt: st.lastTurnAt, conversing: st.conversing,
+                   chatting: document.getElementById("hud").classList.contains("chatting"),
+                   hint: !document.getElementById("liveness-hold").hidden };
     // …and once a real turn exists, her self-talk is part of the conversation again.
     const row = document.createElement("div");
     row.className = "turn user";
     row.innerHTML = '<span class="who">You</span><span class="msg">hello moxie</span>';
     log.appendChild(row);                                  // exactly what addTranscript() builds
     window.__ambient.say("Back to my world domination homework.");
-    return { h0, after, turnsBefore, rowsAfterTurn: log.querySelectorAll(".mutter").length };
+    return { h0, after, turnsBefore, self, rowsAfterTurn: log.querySelectorAll(".mutter").length };
   });
   eq(solo.turnsBefore, 0, `${label}: precondition — nobody has spoken yet`);
+  eq(solo.self.lastTurnAt, 0,
+     `${label}: re-wording her OWN row is not a visitor turn — lastTurnAt stays 0 after three quips`);
+  eq(solo.self.conversing, false, `${label}: …so no conversation hold is on, with nobody talking`);
+  eq(solo.self.chatting || solo.self.hint, false,
+     `${label}: …and the page does not say she is paused while you chat (chatting ${solo.self.chatting}, hint ${solo.self.hint})`);
   eq(solo.after.map((a) => a.rows).join(","), "1,1,1",
      `${label}: before the first turn her self-talk keeps ONE row, re-worded in place, not one per quip`);
   eq(solo.after[2].text, "I keep a list.", `${label}: …showing her latest quip`);
@@ -360,6 +375,44 @@ for (const [label, w, h, mobile] of [["desktop 1440x900", 1440, 900, false], ["p
   eq(solo.rowsAfterTurn, 2, `${label}: once a real turn exists, a new quip is appended as before`);
   eyes(`${label} self-talk row`, page);
   await page.close();
+}
+
+/* ---- EVERY QUIP WHOLE, AT THE NARROWEST PHONES ---------------------------- *
+ * The row holds two lines (css/dock.css). At 92% of the log the two longest quips (83 and 85
+ * characters) needed a third at 360 and 375 px and the clamp cut them off; on a landscape
+ * phone, where the log is a column beside her, two lines cut off 55 of 56. Every line in
+ * ambient.json, at the narrowest portrait and landscape phone: a text line box below the
+ * row's own box is a line nobody can see. */
+{
+  const quips = JSON.parse(readFileSync(join(web, "ambient.json"), "utf8")).lines.map((l) => l.text);
+  for (const [label, w, h] of [["phone 360x640", 360, 640], ["landscape phone 640x360", 640, 360]]) {
+    const page = await open(w, h, true);
+    const r = await page.evaluate((quips) => {
+      const dock = document.getElementById("chat-dock");
+      const cut = [], heights = new Set();
+      let most = 0;
+      for (const q of quips) {
+        window.__ambient.say(q);
+        const msg = document.querySelector("#transcript .mutter .msg");
+        const box = msg.closest(".mutter").getBoundingClientRect();
+        const rg = document.createRange();
+        rg.selectNodeContents(msg);
+        const lines = [...rg.getClientRects()];
+        most = Math.max(most, new Set(lines.map((b) => Math.round(b.top))).size);
+        if (lines.some((b) => b.bottom > box.bottom + 0.5) || msg.scrollHeight > msg.clientHeight + 1)
+          cut.push(q.length + ": " + q.slice(0, 40));
+        heights.add(Math.round(dock.getBoundingClientRect().height));
+      }
+      return { n: quips.length, cut, heights: [...heights], most,
+               rows: document.querySelectorAll("#transcript .mutter").length };
+    }, quips);
+    ok(r.n >= 40 && r.rows === 1, `${label}: precondition — ${r.n} quips said into ONE row (${r.rows})`);
+    eq(r.cut.length, 0, `${label}: every quip is shown whole, none cut off by the row (up to ${r.most} lines) — ` +
+       `cut: ${JSON.stringify(r.cut.slice(0, 3))}${r.cut.length > 3 ? ` +${r.cut.length - 3} more` : ""}`);
+    eq(r.heights.length, 1, `${label}: …and not one of them moves the dock (${r.heights.join(" / ")})`);
+    eyes(`${label} every quip whole`, page);
+    await page.close();
+  }
 }
 
 /* ======================================================================== *
@@ -399,6 +452,14 @@ for (const [label, w, h, mobile] of [["desktop 1440x900", 1440, 900, false], ["p
     out.mic = { quipped: await quick(), composing: window.__ambient.state().composing };
     document.body.removeAttribute("data-mic");
     out.after = await quick();
+    // That was her SECOND quip: it re-worded her one row in place. Not a turn, so she is not
+    // held, and her next ticks quip too (reviewed on #308: the second quip held her).
+    const st = window.__ambient.state();
+    out.self = { rows: document.querySelectorAll("#transcript .mutter").length,
+                 turns: document.querySelectorAll("#transcript .turn").length,
+                 lastTurnAt: st.lastTurnAt, conversing: st.conversing,
+                 hint: !document.getElementById("liveness-hold").hidden };
+    out.more = [await quick(), await quick()];
     window.moxieAmbient.stop();
     return out;
   });
@@ -410,7 +471,77 @@ for (const [label, w, h, mobile] of [["desktop 1440x900", 1440, 900, false], ["p
   eq(r.text.quipped, false, "no quip while the message box HOLDS TEXT, focused or not");
   eq(r.mic.quipped, false, "no quip while the mic is open (it would land in the visitor's own clip)");
   eq(r.after, true, "CONTROL: box empty, unfocused, mic shut — she quips again");
+  eq(`${r.self.rows}/${r.self.turns}`, "1/0", "precondition: two quips re-worded ONE row, and nobody has spoken");
+  eq(r.self.lastTurnAt, 0, "her own re-worded row is NOT a turn: lastTurnAt stays 0…");
+  eq(r.self.conversing, false, "…so she is not held as if someone were talking to her…");
+  eq(r.self.hint, false, "…the page does not show 'paused while you're chatting'…");
+  eq(r.more.join(","), "true,true", "…and her next two ticks quip as well");
   eyes("the composing hold", page);
+  await page.close();
+}
+
+/* ======================================================================== *
+ * 2d. A TYPED TURN LEAVES FOCUS IN THE BOX — THAT IS NOT A VISITOR WRITING FOR EVER
+ * ======================================================================== *
+ * Enter sends a typed turn without blurring #speech-input. Held on focus alone, she stayed
+ * quiet for the rest of a desktop visit (reviewed on #308: composing=true long after the
+ * quiet period). Focus counts before the first line, and after it for the quiet period from
+ * the visitor's last focus or keystroke; text in the box and an open mic always count (2c).
+ * The real keyboard path, on the scripted page; the quiet period shortened through its seam.
+ */
+{
+  const page = await open(1280, 900);
+  await page.evaluate(() => window.__ambient.quietMs(1500));
+  await page.focus("#speech-input");
+  await page.keyboard.type("hello moxie");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.querySelectorAll("#transcript .turn.moxie").length >= 1 &&
+                                   window.__ambient.state().lastTurnAt > 0, { timeout: 15000 }).catch(() => {});
+  const sent = await page.evaluate(() => ({
+    turns: document.querySelectorAll("#transcript .turn").length,
+    focused: document.activeElement === document.getElementById("speech-input"),
+    value: document.getElementById("speech-input").value,
+  }));
+  ok(sent.turns >= 2 && sent.value === "", `precondition: the typed line went out and she answered (${JSON.stringify(sent)})`);
+  eq(sent.focused, true, "precondition: …and focus is still in the message box, as Enter leaves it");
+  // All three markers together, polled on a timer (as block 1's lapse): bounded, never a sleep.
+  let lapsed = true;
+  try {
+    await page.waitForFunction(() => window.__ambient.state().conversing === false &&
+      !document.getElementById("hud").classList.contains("chatting") &&
+      document.getElementById("liveness-hold").hidden === true, { timeout: 20000, polling: 50 });
+  } catch { lapsed = false; }
+  // Her audio recorded instead of played and the busy-guard pinned open (as 2c), so the hold
+  // is the only thing that can keep a tick from quipping.
+  const tickNow = () => page.evaluate(async () => {
+    const A = window.moxieAudio;
+    if (!window.__spoke) {
+      window.__spoke = [];
+      A.speak = (t, group) => { window.__spoke.push(group); return Promise.resolve(true); };
+      A.isMoxieBusy = () => false;
+    }
+    const settle = () => new Promise((res) => setTimeout(res, 0));
+    const n = window.__spoke.length;
+    window.moxieAmbient.say();
+    await settle(); await settle();
+    const s = window.__ambient.state();
+    return { quipped: window.__spoke.length > n, composing: s.composing, conversing: s.conversing,
+             focused: document.activeElement === document.getElementById("speech-input") };
+  });
+  const r = await tickNow();
+  const why = lapsed ? "" : " [the hold never lapsed within 20 s]";
+  eq(r.focused, true, "after the quiet period focus is STILL in the box" + why);
+  eq(r.composing, false, "…which no longer counts as composing once the quiet period has passed" + why);
+  eq(r.conversing, false, "…so the hold lifts, and the paused hint with it" + why);
+  eq(r.quipped, true, "…and her next tick quips again" + why);
+  // CONTROL: the visitor starts their next line (a real keystroke, then deleted): held again.
+  await page.keyboard.type("w");
+  await page.keyboard.press("Backspace");
+  const typing = await tickNow();
+  eq(typing.composing, true, "CONTROL: a fresh keystroke in the (empty, focused) box IS a visitor writing…");
+  eq(typing.quipped, false, "…and holds her quip");
+  await page.evaluate(() => window.moxieAmbient.stop());
+  eyes("focus left in the box after a typed turn", page);
   await page.close();
 }
 

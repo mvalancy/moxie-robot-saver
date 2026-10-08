@@ -69,10 +69,11 @@
    because moxie/stage.js frames her once and never re-frames on dock growth). This holds
    that row at two lines whatever the quip says, so a new quip never moves the dock either.
    Two lines hold every line in ambient.json (the longest is 85 characters) from a 360 px
-   phone up, because a phone gives the row the log's whole width (below): at 92% the two
-   longest needed a third line at 360 and 375 px, and the clamp cut them off. test_liveliness
-   2b says every line in the file at 360x640. `:has()` only, like #chat-cue: without it the
-   row just takes its own height. */
+   phone up, because a phone gives the row the log's whole width and slimmer sides (below): at
+   92% the two longest needed a third line at 360 and 375 px, and the clamp cut them off; the
+   worst-wrapping one needs 46 characters a line, 304 px of this 11 px mono, and the full width
+   alone left 302. test_liveliness 2b says every line in the file at 360x640. `:has()` only,
+   like #chat-cue: without it the row just takes its own height. */
 #chat-dock #transcript:not(:has(.turn)) .mutter {
   width: min(92%, 78ch);           /* the row's own bound, fixed: a new quip moves nothing */
 }
@@ -84,7 +85,12 @@
   min-height: 3em;                 /* two lines at the row's line-height of 1.5 */
 }
 @media (max-width: 640px) {
-  #chat-dock #transcript:not(:has(.turn)) .mutter { width: 100%; max-width: 100%; }
+  #chat-dock #transcript:not(:has(.turn)) .mutter {
+    width: 100%;
+    max-width: 100%;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
 }
 /* …except where the log is a column BESIDE her (a landscape phone, style.css's short-viewport
    block): its height moves nothing there, and two lines of a 180-240 px column cut off 22 to

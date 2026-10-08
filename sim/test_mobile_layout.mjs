@@ -5,8 +5,9 @@
  * Turnstile challenge once did too). Only `document.elementFromPoint()` catches that, so that
  * is the assertion here — plus TEETH that restore each pre-fix geometry and require the
  * collision to REAPPEAR, so a selector matching nothing cannot read as green.
- *   0 the HUB: "Talk to Moxie" and the linked picture of her are in the first screen
- *     (teeth: the pre-fix order puts the button below the fold again).
+ *   0 the HUB: "Talk to Moxie" and the linked picture of her are in the first screen, and
+ *     the picture's spoken name contains the words on it (teeth: the pre-fix order puts the
+ *     button below the fold again).
  *   1 per phone, cold: the composer is reachable on first paint; the banner hangs under the
  *     header, clear of her torso and of the drawer handle; the drawer really opens (teeth:
  *     the pre-fix placement covers her torso and, unlifted, the message box).
@@ -14,7 +15,8 @@
  *   2 the Turnstile challenge on screen, both directions (teeth: the bottom:16px holder).
  *   3 the rail is optional: an opener and a typed line are whole turns with it shut; it still
  *     opens and works (teeth: the composer back inside the collapsed rail).
- *   4 the challenge measured with the log at its cap, when it can actually be in the way.
+ *   4 the challenge measured with the log at its cap, when it can actually be in the way —
+ *     and the banner, which once landed on the handle there (teeth: its pre-fix placement).
  *
  *   node sim/test_mobile_layout.mjs
  */
@@ -179,6 +181,12 @@ try {
        `${label} hub: both go straight to /sim (sim.html is a 308 on Cloudflare Pages)`);
     ok(hrefs.tap && hrefs.tap.shown && /^Tap to talk to Moxie$/.test(hrefs.tap.text),
        `${label} hub: the picture SAYS it is the way in (${JSON.stringify(hrefs.tap)})`);
+    /* …and its accessible name CONTAINS those words (WCAG 2.5.3, label in name): a voice-control
+     * user says what they see. Read from Chrome's accessibility tree, not the attribute. */
+    const ax = await page.accessibility.snapshot({ root: await page.$("#stage a.frame") }).catch(() => null);
+    const spoken = (ax && ax.name) || "";
+    ok(ax && ax.role === "link" && hrefs.tap && spoken.toLowerCase().includes(hrefs.tap.text.toLowerCase()),
+       `${label} hub: the picture link's spoken name contains its visible label — "${spoken}" vs "${hrefs.tap && hrefs.tap.text}"`);
     eq(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1),
        false, `${label} hub: no horizontal page scroll`);
     if (w === 390) {
@@ -503,6 +511,44 @@ try {
       if (inWindow) ok(broken.overlap > 0, `${label}: teeth — centred in the whole viewport the challenge DOES land on the handle (${JSON.stringify(broken)})`);
       else eq(broken.overlap, 0, `${label}: teeth — …and at vh=${h}, below the window, the same mutation does NOT collide`);
       eyes(`${label}: the challenged page with a full log`, page);
+      await page.close();
+    }
+
+    /* THE BANNER, SAME STATE. A live page hides it (style.css), so this is the page that shows
+     * it: a deployment with no brain. Lifted above the dock it landed on the drawer handle at
+     * 375x667 once the log hit its cap (turnstile-layout-collision.md): env.js's lift counts
+     * only boxes in the lower half, and the handle had risen out of it. Under the header it is
+     * clear of the handle at every height. */
+    const banned = (page) => page.evaluate(() => {
+      const b = document.getElementById("env-banner"), t = document.getElementById("rail-toggle");
+      if (!b || !t) return { found: false };
+      const a = b.getBoundingClientRect(), c = t.getBoundingClientRect();
+      const ox = Math.max(0, Math.min(a.right, c.right) - Math.max(a.left, c.left));
+      const oy = Math.max(0, Math.min(a.bottom, c.bottom) - Math.max(a.top, c.top));
+      const h = document.elementFromPoint(Math.round(c.left + c.width / 2), Math.round(c.top + c.height / 2));
+      return { found: true, shown: a.height > 0 && getComputedStyle(b).visibility !== "hidden",
+               banner: [Math.round(a.top), Math.round(a.bottom)], handle: [Math.round(c.top), Math.round(c.bottom)],
+               overlap: Math.round(ox * oy), oy: Math.round(oy), owner: h ? (h.id ? "#" + h.id : h.tagName.toLowerCase()) : "null",
+               handleOwnsCentre: !!h && (h === t || t.contains(h)) };
+    });
+    for (const [label, w, h] of [PHONES[0], PHONES[3], PHONES[2], PHONES[1]]) {
+      const page = await load(w, h);
+      const filled = await fillLog(page);
+      ok(filled.drove && filled.atCap, `${label}, no brain: the log reached its cap (${JSON.stringify(filled)})`);
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const bn = await banned(page);
+      ok(bn.found && bn.shown && bn.overlap === 0 && bn.handleOwnsCentre,
+         `${label}, no brain, log at its cap: the banner (y=${bn.banner}) is clear of the drawer handle ` +
+         `(y=${bn.handle}), which owns its own centre (${bn.owner})`);
+      if (w <= 375) {
+        /* TEETH: the pre-fix placement, bottom-anchored and lifted above the dock. */
+        await page.evaluate(`(${PRE_FIX(true)})()`);
+        const was = await banned(page);
+        ok(was.found && was.shown && was.overlap > 0 && !was.handleOwnsCentre,
+           `teeth — at ${w}x${h} the pre-fix placement lands on the handle with the log at its cap ` +
+           `(banner y=${was.banner}, handle y=${was.handle}, ${was.oy}px of it, centre owned by ${was.owner})`);
+      }
+      eyes(`${label}: the no-brain page with a full log`, page);
       await page.close();
     }
   }

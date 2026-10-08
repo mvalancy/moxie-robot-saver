@@ -4,11 +4,13 @@
 // badge/marks with a clean console; a loopback load still probes both sidecars. The per-mode
 // COPY is pinned in node by sim/tests/edge/mode/04_indicator_lint.mjs; this is the wiring.
 // 7-9: a deployment WITH a brain that is out says so (napping/resting, never "Run it
-// locally"); a hosted desktop page is a toy (no engineering labels, the rail closed and
-// remembered) while a local one is unchanged; serve.py answers /sim like Pages does.
+// locally", in the banner or the badge's tooltip); a hosted desktop page is a toy (no
+// engineering labels, the rail closed and remembered, how to orbit kept) while a local one is
+// unchanged; serve.py and the Docker stack's nginx answer /sim like Pages does.
 //
 //   node sim/test_env_hosted.mjs
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import net from "node:net";
 import { requireBrowser, launchBrowser, makeChecks, finish, repo } from "./browser_harness.mjs";
@@ -63,7 +65,8 @@ const browser = await launchBrowser(puppeteer, chrome, { hosts: { "moxie.hosted.
 
 /** Load sim.html and report what a visitor sees. `health` stubs /api/health at the browser;
  *  `transport` presets window.moxieCloudTransport; `noTransport` 404s cloud-transport.js;
- *  `viewport` sizes the page (default 800x600); `after(page)` runs before the readout. */
+ *  `viewport` sizes the page (default 800x600); `init` runs in the page before its scripts;
+ *  `after(page)` runs before the readout. */
 async function load(url, opts = {}) {
   const page = await browser.newPage();
   if (opts.viewport) await page.setViewport(opts.viewport);
@@ -81,6 +84,7 @@ async function load(url, opts = {}) {
   });
   if (opts.transport)
     await page.evaluateOnNewDocument(() => { window.moxieCloudTransport = true; });
+  if (opts.init) await page.evaluateOnNewDocument(opts.init);
   await page.setRequestInterception(true);
   page.on("request", (r) => {
     if (r.isInterceptResolutionHandled()) return;
@@ -116,6 +120,7 @@ async function load(url, opts = {}) {
       env: document.body.getAttribute("data-env"),
       mode: document.body.getAttribute("data-mode"),
       badge: (q(".env-badge") || {}).textContent || "",
+      badgeTitle: (q(".env-badge") || {}).title || "",
       badgeColor: q(".env-badge") ? getComputedStyle(q(".env-badge")).color : "",
       pill: pill ? pill.textContent : null,
       pillShown: !!(pill && !pill.hidden),
@@ -126,6 +131,8 @@ async function load(url, opts = {}) {
       // What a visitor can SEE (innerText skips display:none), not what the markup holds.
       seen: ["SOFTWARE-IN-THE-LOOP", "v24.10.803", "LINK IDLE", "TTS OUT", "window.moxie"]
         .filter((t) => document.body.innerText.includes(t)),
+      // How a visitor turns her around (the scene hint, desktop widths only).
+      orbitHint: /DRAG\s*·\s*ORBIT/.test(document.body.innerText) && /SCROLL\s*·\s*ZOOM/.test(document.body.innerText),
       bubbleLabel: (q("#bubble .callout-label") || {}).innerText || "",
       rail: (document.getElementById("rail-toggle") || { getAttribute: () => null }).getAttribute("aria-expanded"),
       railClosed: document.getElementById("hud").classList.contains("rail-closed"),
@@ -274,6 +281,35 @@ try {
      `brain down: no "locally-run backend" and no "Run it locally" (got "${nap.banner}", link ${nap.bannerLink})`);
   ok(/need a locally/.test(deg.banner) && deg.bannerLink,
      `CONTROL: a deployment with NO brain keeps the honest advice and its link (got "${deg.banner}")`);
+  // The badge's tooltip tells the same story: "no backend … need a locally-run server" only
+  // where there is no brain.
+  for (const [what, r] of [["budget spent", spent], ["brain down", nap]])
+    ok(/not answering right now/.test(r.badgeTitle) && !/no backend|locally/i.test(r.badgeTitle),
+       `${what}: the badge's tooltip says her brain is not answering, not "no backend" (got "${r.badgeTitle}")`);
+  ok(/no backend/.test(deg.badgeTitle), `CONTROL: with NO brain the tooltip still says so (got "${deg.badgeTitle}")`);
+  /* Out for longer than a minute, or for a reason this page does not know: the copy that
+   * promises less. Cloudflare Access gating is the owner's to fix (a turn reports it), and a
+   * reason newer than this page is nulled by mode.js — neither is "back in a minute". */
+  const gated = await load(HOSTED, { health: { status: 200, body: HEALTH_LIVE }, transport: true,
+    after: (page) => page.evaluate(() => window.moxieMode.note({ reason: "gateway_unreachable_or_gated", retry_after_s: 0 })) });
+  const novel = await load(HOSTED, { transport: true, health: { status: 200, body: JSON.stringify({
+    ok: true, degraded: true, reason: "a_reason_from_a_newer_server", retry_after_s: 0, mode: "degraded", voice: true, ears: true }) } });
+  for (const [what, r] of [["Access-gated", gated], ["unknown reason", novel]]) {
+    eq(r.state, "degraded", `${what}: precondition — the page reads degraded`);
+    ok(/brain is resting/.test(r.banner) && /try again later/.test(r.banner) && !/in a minute/.test(r.banner),
+       `${what}: the banner says she is resting, try LATER — not "in a minute" (got "${r.banner}")`);
+    ok(!/locally/i.test(r.banner) && !r.bannerLink, `${what}: …and gives no "Run it locally" advice (link ${r.bannerLink})`);
+    eq(r.errs.length, 0, `${what} console errors: ${r.errs.slice(0, 3).join(" | ")}`);
+  }
+  /* The mic line follows the capture mic.js really uses. An explicit `moxie.sttBase` always
+   * wins (mic.js::sttTarget) and records with MediaRecorder — no silence stop — so there the
+   * second tap is still how a line is sent, even on a deployment with its own ears. */
+  const viaBase = await load(HOSTED, { health: { status: 200, body: HEALTH_LIVE }, transport: true,
+    init: () => { try { localStorage.setItem("moxie.sttBase", "http://127.0.0.1:8082"); } catch (e) {} },
+    after: (page) => page.evaluate(() => { try { localStorage.removeItem("moxie.sttBase"); } catch (e) {} }) });
+  ok(/tap it again to send/.test(viaBase.micStatus),
+     `moxie.sttBase set: the mic line keeps the second tap its MediaRecorder capture needs (got "${viaBase.micStatus}")`);
+  eq(viaBase.errs.length, 0, `sttBase console errors: ${viaBase.errs.slice(0, 3).join(" | ")}`);
 
   // --- 8. A HOSTED DESKTOP PAGE IS A TOY; A LOCAL ONE IS THE BENCH IT WAS.
   const DESK = { width: 1440, height: 900 };
@@ -281,6 +317,7 @@ try {
   eq(JSON.stringify(toy.seen), "[]",
      `hosted desktop: no engineering label is VISIBLE (version, SIL, LINK, TTS OUT, window.moxie) — saw ${JSON.stringify(toy.seen)}`);
   eq(toy.bubbleLabel, "MOXIE", "hosted desktop: her speech bubble is labelled just MOXIE");
+  eq(toy.orbitHint, true, "hosted desktop: …but how to turn her around (DRAG · ORBIT // SCROLL · ZOOM) stays");
   ok(toy.rail === "false" && toy.railClosed,
      `hosted desktop: the servo rail starts CLOSED and says so (aria-expanded=${toy.rail})`);
   eq(toy.errs.length, 0, `hosted desktop console errors: ${toy.errs.slice(0, 3).join(" | ")}`);
@@ -288,6 +325,7 @@ try {
   eq(JSON.stringify(bench.seen), JSON.stringify(["SOFTWARE-IN-THE-LOOP", "v24.10.803", "LINK IDLE", "TTS OUT", "window.moxie"]),
      "local desktop: UNCHANGED — every engineering label is still there");
   eq(bench.bubbleLabel, "MOXIE · TTS OUT", "local desktop: the bubble label is unchanged");
+  eq(bench.orbitHint, true, "local desktop: the scene hint is unchanged too");
   ok(bench.rail === "true" && !bench.railClosed, `local desktop: the rail is still open (aria-expanded=${bench.rail})`);
   eq(bench.errs.length, 0, `local desktop console errors: ${bench.errs.slice(0, 3).join(" | ")} ` +
      `(failed requests: ${JSON.stringify(bench.failed)})`);
@@ -316,6 +354,23 @@ try {
   const pretty = await fetch(`http://127.0.0.1:${port}/sim`).then(async (r) => ({ status: r.status, text: await r.text() }));
   ok(pretty.status === 200 && /id="chat-dock"/.test(pretty.text),
      `serve.py serves /sim as the sim page, like Pages (got ${pretty.status})`);
+  /* …and so does the documented Docker stack. Its web service is stock nginx:alpine, which
+   * answered /sim with a 404 (reviewed on #308), so it mounts sim/nginx.conf over the image's
+   * default server. Read from the files (no Docker here): the mount, the root it serves, the
+   * rule, and a page behind every extensionless link on the hub. */
+  const text = (p) => { try { return readFileSync(p, "utf8"); } catch { return ""; } };
+  const compose = text(join(repo, "sim", "docker-compose.yml")), conf = text(join(repo, "sim", "nginx.conf"));
+  const svc = (compose.match(/\n  web:[^\n]*\n((?: {4,}[^\n]*\n|\s*\n)+)/) || [])[1] || "";
+  ok(/\.\/web:\/usr\/share\/nginx\/html\b/.test(svc) &&
+     /\.\/nginx\.conf:\/etc\/nginx\/conf\.d\/default\.conf\b/.test(svc),
+     `docker compose (sim/): the web service mounts sim/web AND sim/nginx.conf over nginx's default server (${JSON.stringify(svc.trim().slice(0, 200))})`);
+  ok(/^\s*root\s+\/usr\/share\/nginx\/html;/m.test(conf),
+     "…sim/nginx.conf serves that mounted sim/web…");
+  ok(/^\s*try_files\s+\$uri\s+\$uri\.html\s[^;]*=404;/m.test(conf),
+     "…and answers an extensionless path with its .html page (try_files $uri $uri.html …), as Pages does");
+  const bare = [...text(join(repo, "sim", "web", "index.html")).matchAll(/href="([a-z][a-z0-9-]*)"/g)].map((m) => m[1]);
+  ok(bare.includes("sim") && bare.every((h) => existsSync(join(repo, "sim", "web", h + ".html"))),
+     `…and every extensionless link on the hub has a page behind it (${JSON.stringify(bare)})`);
 } finally {
   await browser.close();
   cleanup();
