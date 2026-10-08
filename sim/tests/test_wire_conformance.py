@@ -232,7 +232,9 @@ def test_a_silent_acknowledgement_parses():
 
 def test_scored_output_parses_with_signals_as_the_remote_signals_message():
     """`RemoteChatOutput.signals` (field 15) is a `RemoteSignals{single_signal,
-    volley_signal}` message (RemoteChat.proto:137-155, :176) — a list was a type error."""
+    volley_signal}` message (RemoteChat.proto:137-155, :176), not a list. Measured through
+    the pb2: the old `["closing"]` is read as field NAMES — a strict parse rejects it and
+    a lenient one yields an EMPTY message, so the signal was silently lost."""
     resp = build_chat_response("e", "Bye!", mood="happy", dialog_act="closing",
                                mood_intensity=1, emotion="joy", signals="closing")
     assert resp["output"]["signals"] == {"single_signal": "closing"}
@@ -241,9 +243,11 @@ def test_scored_output_parses_with_signals_as_the_remote_signals_message():
     assert (msg.output.mood, msg.output.dialog_act, msg.output.emotion) == \
         ("happy", "closing", "joy")
     assert msg.output.mood_intensity == 1.0
-    with pytest.raises(json_format.ParseError):     # the old list shape, measured
-        json_format.ParseDict({"output": {"signals": ["closing"]}}, RC.RemoteChatResponse(),
-                              ignore_unknown_fields=True)
+    old = {"output": {"signals": ["closing"]}}
+    with pytest.raises(json_format.ParseError, match='no field named "closing"'):
+        json_format.ParseDict(old, RC.RemoteChatResponse(), ignore_unknown_fields=False)
+    lost = json_format.ParseDict(old, RC.RemoteChatResponse(), ignore_unknown_fields=True)
+    assert lost.output.signals.single_signal == ""
 
 
 # --------------------------------------------------------------------------- #

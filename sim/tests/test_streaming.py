@@ -381,8 +381,7 @@ def test_config_exposes_the_knob(monkeypatch):
 # ------------------------------------------------------------- (vii) the SIL client
 def _rcr(event_id, text, chunk_num=None, result=ResultCode.SUCCESS, completed=None):
     from moxie_sdk.wire import build_chat_response
-    return build_chat_response(event_id, text, backend="router",
-                               result=getattr(ResultCode, result),
+    return build_chat_response(event_id, text, backend="router", result=result,
                                chunk_num=chunk_num, is_completed=completed)
 
 
