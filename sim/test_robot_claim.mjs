@@ -17,6 +17,8 @@
  *   C6 a robot that arrives while the tab is open gets its Add to my account without
  *      re-opening the tab (the tab's watch reads /local/state), and the watch asks nothing
  *      while another tab is open or once a robot is added
+ *   C7 a watch read that lands while a claim is unanswered never redraws over the claim's
+ *      own answer ("Added to your account")
  *   W1 the Wi-Fi tab's code is Wi-Fi ONLY by default: one POST /local/wifi/payload, its
  *      payload shown, no recovery phrase; once the robot is on the broker the tab says to
  *      add it, and claims nothing itself
@@ -36,7 +38,8 @@
  * pending row; the answer not rendered; a second robot offered; no reason beside a robot that
  * cannot be added; a refusal swallowed; the unreachable state never said, or said of a
  * supervisor that answered; no watch on the Moxie tab, or one still asking with a robot card
- * up or from another tab; the pairing-key code by default; a claim from the Wi-Fi tab's
+ * up or from another tab, or one redrawing over a claim's answer; the pairing-key code by
+ * default; a claim from the Wi-Fi tab's
  * poll; an earlier record reported as the robot on the bench) must each redden the scenario
  * that guards it.
  *
@@ -142,9 +145,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  *  `robots` and the broker one pending robot; every POST and DELETE lands in `st.calls`.
  *  `known: false` is a supervisor that could not be asked (/local/state and /local/fleet);
  *  `arriveLater` keeps the broker empty until the test sets `st.arrived`. Every GET of
- *  /local/state is counted in `st.stateGets`. */
+ *  /local/state is counted in `st.stateGets`. `holdClaim` answers the claim only when the
+ *  test calls `st.releaseClaim()`. */
 async function drive({ mutate = null, robots = [], unclaimed = [DEV], refuse = false, tab = "moxie",
-                       known = true, arriveLater = false } = {}) {
+                       known = true, arriveLater = false, holdClaim = false } = {}) {
   const st = { calls: [], auth: [], bodies: {}, claimed: false, unpaired: false,
                arrived: !arriveLater, stateGets: 0 };
   const page = await browser.newPage();
@@ -170,16 +174,27 @@ async function drive({ mutate = null, robots = [], unclaimed = [DEV], refuse = f
     if (p === "/local/state") {
       st.stateGets++;
       const mine = st.unpaired ? [] : st.claimed ? [CLAIMED] : robots;
-      return J({ user: { id: "u1", email: "parent@home.lan" },
-                 children: [{ id: CID, "child-first-name": "Moxie Kid" }],
-                 robots: mine, unclaimed: st.claimed || !known || !st.arrived ? [] : unclaimed,
-                 unclaimed_known: known });
+      const body = { user: { id: "u1", email: "parent@home.lan" },
+                     children: [{ id: CID, "child-first-name": "Moxie Kid" }],
+                     robots: mine, unclaimed: st.claimed || !known || !st.arrived ? [] : unclaimed,
+                     unclaimed_known: known };
+      /* holdClaim: the first /local/state read while the claim is unanswered sees the robot
+       * already added (the server commits before it answers), and the read after it is held
+       * until the test lets it go (st.releaseHeld). */
+      if (st.holdNext) { st.holdNext = false; st.releaseHeld = () => J(body); return; }
+      if (st.claimHeld && !st.readDuringClaim) { st.readDuringClaim = true; st.holdNext = true; }
+      return J(body);
     }
     if (p === "/local/fleet")
       return J(!known ? FIX.down : st.claimed ? FIX.served : st.arrived ? FIX.pending : FIX.empty);
     if (call === CLAIM) {
       if (refuse) { aborted.refused++; return J(REFUSED, 409); }
       st.claimed = true;
+      if (holdClaim) {
+        st.claimHeld = true;
+        st.releaseClaim = () => { st.claimHeld = false; return J(CLAIM_OK); };
+        return;
+      }
       return J(CLAIM_OK);
     }
     if (call === `POST /api/robots/${RID}/wakeup`)
@@ -392,6 +407,30 @@ const SCENARIOS = {
     } finally { await page.close(); }
   },
 
+  async C7(C, o) {
+    const { page, st, errs, aborted } = await drive({ ...o, holdClaim: true });
+    const until = async (done, ms) => { for (let t = 0; t < ms && !done(); t += 100) await sleep(100); };
+    try {
+      await page.click("#moxie-none .claim-btn");
+      await until(() => st.claimHeld, 5000);
+      /* A whole watch interval with the claim unanswered: a watch read now finds the robot
+       * already added, and the redraw it would start is held (st.releaseHeld). */
+      await until(() => st.readDuringClaim, WATCH_MS + 2000);
+      await sleep(500);
+      if (st.releaseClaim) st.releaseClaim();      // the claim answers and redraws itself
+      await sleep(500);
+      if (st.releaseHeld) st.releaseHeld();        // then any redraw the watch started lands
+      await cardShown(page);
+      await sleep(1000);
+      const v = await view(page);
+      C.eq(claims(st), 1, "C7: one click is one claim");
+      C.ok(v.card, "C7: the robot card is up");
+      C.ok(/Added to your account/.test(v.devStatus),
+           `C7: the claim's answer is not wiped by a redraw from the tab's watch — got "${v.devStatus}"`);
+      C.eq(notable(errs, aborted).length, 0, `C7: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+    } finally { await page.close(); }
+  },
+
   async W1(C, o) {
     const { page, st, errs, aborted } = await drive({ ...o, tab: "wifi" });
     try {
@@ -498,8 +537,11 @@ const TEETH = [
    (s) => s.replace("if(name==='moxie'){ refreshMoxie(); monTimer=setInterval(watchForRobot,WATCH_MS); }",
                     "if(name==='moxie'){ refreshMoxie(); }")],
   ["the watch still asking with a robot card up", "C6",
-   (s) => s.replace("if(document.hidden || $('#moxie-none').classList.contains('hidden')) return;",
-                    "if(document.hidden) return;")],
+   (s) => s.replace("document.hidden || $('#moxie-none').classList.contains('hidden')) return;",
+                    "document.hidden) return;")],
+  ["the watch redrawing over a claim's answer", "C7",
+   (s) => s.replace("  if(claiming || document.hidden || ", "  if(document.hidden || ")
+           .replace("  if(!claiming && accountKey(", "  if(accountKey(")],
   ["the watch still asking from another tab", "C6",
    (s) => s.replace("  clearInterval(monTimer);\n  if(name==='direct')", "  if(name==='direct')")],
   ["a supervisor that cannot be asked never said", "C5",

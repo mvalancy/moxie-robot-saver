@@ -192,13 +192,15 @@ async function refreshMoxie(){
 // from another page) every WATCH_MS, so its Add to my account appears without re-opening
 // the tab. Light: one GET /local/state, and the cards redraw only when that answer changed
 // (a redraw would interrupt 💬 Try it, which a parent with no robot may be using). Nothing
-// is sent while a robot card is up or the page is hidden; leaving the tab stops it.
+// is sent while a robot card is up or the page is hidden; leaving the tab stops it. A claim
+// redraws the cards itself and then says what happened, so the watch stands aside while
+// one is in flight: a redraw of its own would wipe that answer (renderRobot clears it).
 const WATCH_MS=5000;
 const accountKey=a=>JSON.stringify([a.robots.map(r=>r.id), a.unclaimed, a.known]);
 async function watchForRobot(){
-  if(document.hidden || $('#moxie-none').classList.contains('hidden')) return;
+  if(claiming || document.hidden || $('#moxie-none').classList.contains('hidden')) return;
   let st; try{ st=await api('/local/state'); }catch(e){ return; }
-  if(accountKey(accountOf(st))!==accountKey(ACCOUNT)) refreshMoxie();
+  if(!claiming && accountKey(accountOf(st))!==accountKey(ACCOUNT)) refreshMoxie();
 }
 
 // ---- ➕ Add to my account ----
@@ -244,13 +246,13 @@ async function claimRobot(deviceId, statusSel){
     r=await api(`/local/robots/${encodeURIComponent(deviceId)}/claim`,{method:'POST'});
     if(s) s.textContent='';
   }catch(e){ if(s) s.textContent=oops(e,'could not add it'); }
-  claiming=false;
   await refreshMoxie();
   const d=$('#dev-status');
   if(r && d) d.textContent = !r.created ? 'This robot is already on your account.'
     : r.permitted ? '✅ Added to your account. Moxie is let in and gets your settings.'
     : `⚠️ Added to your account, but this server could not let it in yet (${r.permit_error}). `
       + 'Press Permit in Robot access.';
+  claiming=false;          // only now: the tab's watch must not redraw over that answer
 }
 // live runtime state (battery/volume/Wi-Fi/mode/telemetry) from the MQTT supervisor
 let liveDevice=null;
