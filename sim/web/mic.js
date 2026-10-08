@@ -510,9 +510,16 @@
     stream = null;
   }
 
+  /** The browser is still asking for the microphone (the permission prompt): a second tap
+   *  must not open a second capture, whose stream nothing would ever release. */
+  var opening = false;
+
   function start() {
-    if (recording) return Promise.resolve();
-    return captureFor(sttTarget().kind).then(function (got) {
+    if (recording || opening) return Promise.resolve();
+    var asked = captureFor(sttTarget().kind);
+    opening = true;
+    return asked.then(function (got) {
+      opening = false;
       rec = got && got.recorder;
       stream = (got && got.stream) || null;
       if (!rec) { status("mic unsupported in this browser"); return; }
@@ -563,6 +570,7 @@
         stop();
       }, cap);
     }).catch(function (e) {
+      opening = false;
       clearCap();
       releaseStream();
       status(captureFailure(e) + " — type a message and tap Ask instead");

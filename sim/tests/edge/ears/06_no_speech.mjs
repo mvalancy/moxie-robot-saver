@@ -236,6 +236,27 @@ for (const [label, blocks] of [["a second tap after one block (85 ms)", 1],
   eq(w.posts.length, 2, "…and the stopped clip is sent like any other");
 }
 
+{
+  // Two taps while the browser is still ASKING for the microphone (the permission prompt):
+  // the second opened another capture, and the stop released only one stream — a mic left on.
+  const w = bootMic({ realCapture: true });
+  const asks = [];
+  let stops = 0;
+  globalThis.navigator.mediaDevices.getUserMedia = () => new Promise((r) => asks.push(r));
+  w.mic.toggle();
+  w.mic.toggle();
+  await flush();
+  eq(asks.length, 1, "TWO TAPS DURING THE PERMISSION PROMPT ASK FOR ONE MICROPHONE");
+  asks.forEach((r) => r({ getTracks: () => [{ stop() { stops++; } }] }));
+  await flush();
+  eq(w.mic.isRecording(), true, "…which then records");
+  eq(w.audioCtx.processors.length, 1, "…through exactly one capture");
+  eq(w.mic.stats().starts, 1, "…as one recording");
+  w.mic.toggle();
+  await flush();
+  eq(stops, asks.length, "…and one stop releases every microphone stream that was opened");
+}
+
 /* B10. WHY THE MIC DID NOT OPEN, honestly: a machine with no microphone was told "mic
  * permission denied" (lane l1, mic_nodevice). Through the real capture's getUserMedia. */
 for (const [label, err, want] of [
