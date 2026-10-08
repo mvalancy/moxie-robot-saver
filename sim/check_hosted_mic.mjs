@@ -20,7 +20,8 @@
  * tier runs `--selftest`, `deployed.yml` runs the paid run only on `workflow_dispatch`.
  *
  * `--selftest` proves the teeth without a gateway: the baseline clip must pass every clause
- * and digital silence must redden "AUDIBLE"; the overlap scorer, a negative control for
+ * and digital silence must never leave the page (`mic.js` drops a clip with no speech in it,
+ * so the upload clause reddens); the overlap scorer, a negative control for
  * clause 4, the scorer proof and the degradation gauntlet run over committed bytes. It does
  * NOT prove capture fidelity (a CI microphone saturates) or anything about the gateway.
  * The maths lives in `sim/tests/hosted_mic/score.mjs`, the browser half in `probe.mjs`.
@@ -108,20 +109,24 @@ async function selftest(puppeteer, chrome, fx) {
 
   /* Identity over a browser capture no longer gates a push (a runner's capture once voted
    * 71 % for the wrong clip); `scorerProof` does that on committed bytes. What needs a
-   * browser: the baseline must pass, and silence — a binary tooth — must redden. */
+   * browser: the baseline must pass, and silence — a binary tooth — must redden. Since
+   * `mic.js` drops a clip with no speech in it unsent, silence reddens at the upload itself
+   * (it used to be uploaded and redden AUDIBLE), and `also` pins WHY nothing was posted. */
   const CASES = [
-    ["baseline · the sentence clip", fx.spoken.path, null],
-    ["mutation A · digital silence", fx.silence.path, /AUDIBLE, not a silent buffer/],
+    ["baseline · the sentence clip", fx.spoken.path, null, null],
+    ["mutation A · digital silence", fx.silence.path, /POSTed the clip to \/api\/transcribe exactly once/,
+     (p) => !!p.stats && p.stats.noSpeech > 0 && p.stats.posts === 0],
   ];
 
   try {
-    for (const [name, wav, wanted] of CASES) {
+    for (const [name, wav, wanted, also] of CASES) {
       const browser = await launchWithMic(puppeteer, chrome, wav,
         [`--unsafely-treat-insecure-origin-as-secure=http://${HOST}:${site.port}`],
         { [HOST]: site.port });
       const mm = makeChecks();
+      let p = null;
       try {
-        const p = await probeTurn(browser, url, { recordMs: RECORD_MS, budget: BUDGET, stub });
+        p = await probeTurn(browser, url, { recordMs: RECORD_MS, budget: BUDGET, stub });
         /* `words: true` with no ASR: the transcript is held constant, so clause 4 proves the
          * plumbing (route answer scored, reaches the log) and clause 5 runs in full.
          * `fidelity: false`: a CI microphone saturates. */
@@ -146,6 +151,10 @@ async function selftest(puppeteer, chrome, fx) {
         c.ok(mm.fails.some((f) => wanted.test(f)),
              `${name} must fire the ${wanted} clause specifically — ` +
              JSON.stringify(mm.fails.map((f) => f.split("\n")[0])));
+      }
+      if (also) {
+        c.ok(!!p && also(p), `${name}: mic.js must DROP the silent clip unsent (noSpeech), ` +
+             `not fail to capture it — stats ${JSON.stringify(p && p.stats)}`);
       }
     }
   } finally {
