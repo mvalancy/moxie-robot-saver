@@ -18,6 +18,12 @@
  *   voice_ms            the whole voice, first start to last end
  *   reply_chars         the reply's length, so arms can be compared on like replies
  * and prints the medians. Audio is unlocked by Chrome's flag; nothing here taps the page.
+ *
+ * ONE TURN AT A TIME: each turn waits for the previous voice to end, so this never sees two
+ * replies overlap. The overlap rule (a newer reply's voice starting ends the older pipeline;
+ * `transportStats().chunksSuperseded`) is pinned hermetically in test_cloud_transport §4i–4k,
+ * and `chunksRouted` counts chunks handed to voice/, not chunks heard: `chunks`/`gaps_ms`
+ * here are measured where the sound is made.
  */
 import { writeFileSync } from "node:fs";
 import { requireBrowser, launchBrowser, instrumentWebAudio } from "../browser_harness.mjs";

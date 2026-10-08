@@ -259,9 +259,17 @@ lands, so it synthesises while chunk k plays (two at once were measured to slow 
 median 3.3 s, against medians of 2.0–2.5 s alone, 2026-10-08), and they are routed in order behind
 chunk 0 (`voice/cloud.js` starts chunks in `chunk_num` order and writes a missing one off after 1.2 s, so arrival order would lose a slow
 sentence). The first chunk that fails ends the voice: nothing later is redeemed, and no local voice ever
-stands in for a later chunk — the words are on screen and her first sentence was heard. The result is
-one voice per turn, her first words after one short synthesis; the bridge's per-event seam is its only
-change.
+stands in for a later chunk — the words are on screen and her first sentence was heard. **Overlapping
+turns**: a newer reply's voice starting — its chunk 0 routed, or a line spoken locally (a stub answer, a
+redirect, a failed chunk 0's fallback) — ends an older reply's pipeline, because `voice/cloud.js` gives the
+speakers to the newest reply (a chunk of a new event closes the old event; a local line stops the queue).
+Nothing more of the older reply is requested or routed, a chunk already in flight is dropped when it lands,
+and a chunk 0 not yet landed is dropped too, its words staying on screen with no local stand-in
+(`transportStats().chunksSuperseded`). Measured 2026-10-08 on the real `voice/` before this rule (two typed
+turns 200 ms apart, three chunks each): A1 was paid for and then flushed as `superseded` when B0 started,
+and A2 was heard after the whole of B, out of context. A chunk of the older reply routed before the newer
+voice plays out ahead of it. The result is one voice per turn, her first words after one short synthesis,
+and the newest reply always the one being heard; the bridge's per-event seam is its only change.
 
 ### 3.5 `cloud-transport.js` wraps, it does not replace
 
@@ -287,7 +295,7 @@ rule rules out model substitution, `n`/`tools` amplification and system-prompt o
 | `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500 000 / 2 000 | a **size** cap, not a duration cap. 500 KB is about 15 s at 16 kHz s16, but over 60 s at 8 kHz 8-bit. The floor answers `too_short` for free. |
 | `DEMO_MAX_RECORD_MS` | 15 000 | **The real ceiling on STT cost.** `mic.js` hard-stops the recorder. The server reads a WAV header's own `rate × channels × bits` against the data size (`_lib/wav.js::wavDurationMs`) and refuses `too_long` with zero upstream calls. Compressed containers cannot be measured without a decoder. The WAV-only default for `DEMO_STT_FORMATS` is what makes the cap total. Widening that list re-opens the gap. |
 | Per-IP chat | 5/min · 40/hour · 150/day | generous for a person, cheap for us |
-| Per-IP speech | 10/min · 80/hour | no day window (the unit budget's day covers it). Sized for **two** voice chunks per chat turn at full pace (5/min, 40/hour); a visitor whose every reply is three sentences at full pace has later chunks refused `rate_limited`, which ends that reply's voice (the words stay on screen). Raising them is a `DEFAULTS` change. |
+| Per-IP speech | 10/min · 80/hour | no day window (the unit budget's day covers it). Sized for **two** voice chunks per chat turn at full pace (5/min, 40/hour). With three-sentence replies the window fills at about **4 typed turns a minute, or about 27 in an hour**: earlier turns' later chunks spend it, so first a later chunk is refused `rate_limited` (that reply's voice ends there, the words stay on screen), and then the **next turn's chunk 0** is refused too, which makes that whole reply speak in the browser voice (the chunk-0 rule of §3.4). Unreachable before 2026-10-08 (one ticket a turn, so at most 5 speech a minute). Raising them is a `DEFAULTS` change in `env.js` — owner call. |
 | Per-IP transcribe | 10/min · 60/hour | no day window |
 | Concurrency | chat 4 · speech 8 | `transcribe` **shares chat's ceiling**. Matched to the upstream key's parallel limit, which protects a neighbouring service. Deliberately not raised. |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_DEPTH` | 2 500 ms / 8 | At the ceiling a request waits in a bounded FIFO. Past the depth, or when the wait expires, it is refused `at_capacity`. **Either set to 0** gives instant refusal. |
@@ -747,7 +755,7 @@ suite is split into modules under `sim/tests/edge/<suite>/`.
 | 2 | `sim/test_demo_tickets.mjs` | Forged, expired, over-length, replayed or tampered ticket or context; round-trip; constant-time compare; the sentence splitter (numbers, abbreviations, initials, ellipses and mermaid fences never split; chunks join back to the reply; the cap and the word-bounded cut) and `mintTickets`. |
 | 3 | `sim/test_wav_decode.mjs` | The RIFF walker uses the header's own rate and channels, refuses 8- and 24-bit and JSON, and agrees sample-for-sample with `audio.js`'s decoder; `wavDurationMs`. |
 | 4 | `sim/test_mode.mjs` | The state machine, backoff, hidden-tab rule, `offline` never polls; env defaults and envelope. |
-| 5 | `sim/test_cloud_transport.mjs` | Seven members intact; TTS routed before chat; chat lands by the 2.5 s wait; delegation when not live; the naive ordering proven to double-voice; one ticket per sentence (§4b–4h: chunks redeemed one at a time and routed in order behind chunk 0, a later chunk's failure ends the voice with no local stand-in, a hanging chunk given up at the deadline, three chunks heard in order on the real `voice/`). |
+| 5 | `sim/test_cloud_transport.mjs` | Seven members intact; TTS routed before chat; chat lands by the 2.5 s wait; delegation when not live; the naive ordering proven to double-voice; one ticket per sentence (§4b–4h: chunks redeemed one at a time and routed in order behind chunk 0, a later chunk's failure ends the voice with no local stand-in, a hanging chunk given up at the deadline, three chunks heard in order on the real `voice/`); overlapping turns (§4i–4k, on the real `voice/`: two typed turns 200 ms apart, three chunks each — once the newer chunk 0 is routed nothing more of the older reply is requested and no sentence of it is heard after the newer reply; an older chunk 0 still in flight is dropped with no local stand-in; a stub answer to the newer turn ends the older pipeline too). |
 | 6 | `sim/test_fallback_coverage.mjs` | Every line the degraded page can utter has a clip on disk; the prerender tool keeps every manifest group. |
 | 6b | `sim/test_demo_ears.mjs` | `/api/transcribe`: byte caps, windows, budget, timeout, format allowlist returning 400 with no call, the upstream status table, secret sweeps. Plus the real `mic.js`: 15 s hard stop, target selection, browser WAV encoder read back by the server walker. |
 | 7 | `sim/test_env_hosted.mjs` | Zero `:8081`/`:8082` probes on a hosted host; badge per mode in Chrome. |
