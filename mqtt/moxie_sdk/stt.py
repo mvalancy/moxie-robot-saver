@@ -14,11 +14,27 @@ Wire shapes verbatim from embodied/perception/audio/zmqSTT.proto:
       START_OF_SPEECH=1, SPEECH=2, END_OF_SPEECH=3
   zmqSTTResponse { ResponseType type (PARTIAL=0/FINAL=1); string speech; float
       confidence; string uuid; ... }
+and from embodied/logging/Log.proto:
+  ProtoSubscribe { uint64 timestamp = 1; repeated string protos = 2 }
+
+Both directions of `commands/zmq` / `events/zmq` are one ZMQ bus frame joined as
+`b'<proto.full_name>:' + protobuf_bytes` (robot-ipc-protocol.md "Framing"). The robot
+streams its microphone only after the cloud asks with a `ProtoSubscribe` naming
+`zmqSTTRequest`, and reads the transcript back as a `zmqSTTResponse` in the same framing
+(mqtt-and-conversation.md §3.4, §4.3). The encoders below write that framing with no
+protobuf runtime, mirroring the reader `decode_zmq_stt_frame`; the committed
+`tools/robot-toolkit` pb2 files are the oracle the tests check them against.
 """
 from __future__ import annotations
+import struct
 import time
 from enum import IntEnum
-from typing import Optional
+from typing import Iterable, Optional
+
+#: Descriptor full names: the ZMQ bus routes by these strings (robot-ipc-protocol.md).
+ZMQ_STT_REQUEST = "embodied.perception.audio.zmqSTTRequest"
+ZMQ_STT_RESPONSE = "embodied.perception.audio.zmqSTTResponse"
+PROTO_SUBSCRIBE = "embodied.logging.ProtoSubscribe"
 
 
 class VADState(IntEnum):
@@ -321,8 +337,84 @@ def decode_zmq_stt_frame(payload):
     return out
 
 
-def build_stt_response(uuid: str, speech: str, *, final: bool = True,
-                       confidence: float = 1.0) -> dict:
-    """A zmqSTTResponse (JSON) a revival server publishes back after transcription."""
-    return {"type": "FINAL" if final else "PARTIAL", "speech": speech,
-            "confidence": confidence, "uuid": uuid}
+# ---- the outbound half of the bus framing: stdlib protobuf writers ----
+# Mirrors of `_read_varint` above. Fields are written in field-number order with the
+# wire type protoc uses, so the bytes are the ones the committed pb2 files produce.
+
+def _write_varint(n: int) -> bytes:
+    if n < 0:
+        # `n >>= 7` never reaches 0 from below (-1 >> 7 == -1): refuse, do not spin.
+        raise ValueError(f"a protobuf varint is unsigned here, got {n}")
+    out = bytearray()
+    while True:
+        byte = n & 0x7F
+        n >>= 7
+        if n:
+            out.append(byte | 0x80)
+        else:
+            out.append(byte)
+            return bytes(out)
+
+
+def _varint_field(field: int, value: int) -> bytes:
+    return _write_varint(field << 3) + _write_varint(int(value))        # wire type 0
+
+
+def _bytes_field(field: int, data) -> bytes:
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    return _write_varint((field << 3) | 2) + _write_varint(len(data)) + data
+
+
+def _float_field(field: int, value: float) -> bytes:
+    return _write_varint((field << 3) | 5) + struct.pack("<f", float(value))
+
+
+def now_ms() -> int:
+    """Milliseconds since the epoch: the `timestamp` the robot's protos carry."""
+    return time.time_ns() // 1_000_000
+
+
+def zmq_frame(full_name: str, body: bytes) -> bytes:
+    """One `commands/zmq` payload: `b'<full_name>:' + protobuf_bytes`."""
+    return full_name.encode("utf-8") + b":" + body
+
+
+def encode_proto_subscribe(protos: Iterable[str], *,
+                           timestamp_ms: Optional[int] = None) -> bytes:
+    """The `commands/zmq` frame that asks a robot to stream the named protos to the
+    cloud; for the microphone, `[ZMQ_STT_REQUEST]`. Log.proto: timestamp=1 (uint64),
+    protos=2 (repeated string)."""
+    body = _varint_field(1, now_ms() if timestamp_ms is None else timestamp_ms)
+    for name in protos:
+        body += _bytes_field(2, name)
+    return zmq_frame(PROTO_SUBSCRIBE, body)
+
+
+#: `error_code` of a FINAL whose transcription failed. The recovered zmqSTT.proto defines
+#: the field (uint32 `error_code = 8`, beside `error_message = 9`) but no enum for its
+#: values; this is the value the field-proven community server sends with the exception
+#: text (OpenMoxie site/hive/mqtt/zmq_stt_handler.py:70-73).
+STT_ERROR_CODE = 66
+
+
+def encode_zmq_stt_response(uuid: str, speech: str, *, final: bool = True,
+                            confidence: float = 1.0,
+                            timestamp_ms: Optional[int] = None,
+                            error_code: int = 0, error_message: str = "") -> bytes:
+    """The `commands/zmq` frame carrying one transcript back to the robot. zmqSTT.proto:
+    timestamp=1 (uint64), type=2 (PARTIAL=0 / FINAL=1), speech=3 (string), confidence=4
+    (float), uuid=7 (string), and on a failed transcription error_code=8 (uint32) and
+    error_message=9 (string), written only when set (proto3: an unset field is absent).
+    An empty transcript is still a FINAL with `speech == ""`: the robot's turn ends on
+    FINAL, not on text; so is a failure, with the error fields filled in."""
+    body = (_varint_field(1, now_ms() if timestamp_ms is None else timestamp_ms)
+            + _varint_field(2, 1 if final else 0)
+            + _bytes_field(3, speech or "")
+            + _float_field(4, confidence)
+            + _bytes_field(7, uuid or ""))
+    if error_code:
+        body += _varint_field(8, error_code)
+    if error_message:
+        body += _bytes_field(9, error_message)
+    return zmq_frame(ZMQ_STT_RESPONSE, body)

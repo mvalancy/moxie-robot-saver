@@ -213,9 +213,66 @@ class VoiceMixin:
     # ---- STT (ai-seam §1) ----
     def set_transcriber(self, transcriber):
         """Install an STT engine (`moxie_sdk.stt.Transcriber`); without one audio frames are
-        ignored. Live VAD sessions are dropped: they captured the old engine."""
+        ignored. Live VAD sessions are dropped: they captured the old engine. Every
+        permitted robot we know of that is not yet asked for its microphone this session
+        is asked now: the Listening picker may turn the ears on after the robots
+        connected. Deliberately every robot in `self.robots`, not only those confirmed on
+        this connection: a ghost (served before our socket dropped, silent since) may well
+        still be connected, and it never announces itself again (the broker log is
+        live-only), so leaving it out would leave it deaf. The ask to a ghost costs one
+        QoS 0 message if it is gone and is not recorded (`_subscribe_stt`). `None` (the
+        picker's `off`) asks nobody and keeps each record: the robot was asked and, as
+        far as we know, still streams."""
         self._transcriber = transcriber
         self._stt_sessions.clear()
+        for device_id in list(self.robots):
+            self._subscribe_stt(device_id)
+
+    # The robot streams mic audio only once the cloud subscribes to `zmqSTTRequest` on its
+    # bus: a `ProtoSubscribe` frame on `commands/zmq`, sent after the config push — the
+    # order the field-proven community server uses (OpenMoxie
+    # site/hive/mqtt/moxie_server.py `on_device_connect`, framed by `send_zmq_to_bot`;
+    # mqtt-and-conversation.md §3.4). Latched per robot session on the RobotContext
+    # (`extra["stt_subscribed_at"]`, shown by `/status`) — but only for a robot confirmed
+    # on this broker connection. An ask to a ghost (the roster resume, the picker, a wake
+    # or a Permit while the robot is away after a broker restart) may have reached nobody,
+    # so it is sent but not recorded; otherwise the robot's return would find the latch
+    # set and never be asked (crossed ears, community signal C4, in the ordinary
+    # broker-restart order: the supervisor reconnects first). A wake or a re-permit asks
+    # again because a sleeping robot drops its subscriptions, and `_forget_robot_state`
+    # clears the latch with the rest of our beliefs. Built to the contract and
+    # OpenMoxie's behaviour; not yet verified on our own hardware.
+    def _subscribe_stt(self, device_id, *, again: bool = False) -> bool:
+        """Ask one robot to stream its microphone, once per robot session (`again=True`
+        asks regardless). Nothing without a transcriber — nobody would hear the audio —
+        and nothing for a pending robot. Returns whether the ask was published."""
+        if self._transcriber is None or not self.is_permitted(device_id):
+            return False
+        robot = self.robots.get(device_id)
+        if robot is not None and robot.extra.get("stt_subscribed_at") and not again:
+            return False
+        from moxie_sdk.stt import ZMQ_STT_REQUEST, encode_proto_subscribe
+        ok, _ = self._publish(f"/devices/{device_id}/commands/zmq",
+                              encode_proto_subscribe([ZMQ_STT_REQUEST]),
+                              device_id=device_id, what="stt_subscribe")
+        if ok:
+            # Recorded only with live evidence of the session it was sent into.
+            if robot is not None and device_id in self._seen_since_connect:
+                robot.extra["stt_subscribed_at"] = time.time()
+            self._note("stt", f"👂 asked {device_id} to stream its microphone")
+            print(f"[runtime] 👂 → asked {device_id} to stream its microphone "
+                  f"(ProtoSubscribe {ZMQ_STT_REQUEST})", flush=True)
+        return ok
+
+    def _forget_stt_ask(self, device_id):
+        """Drop the record of the ask for a robot that is no longer permitted. Nothing
+        withdraws a `ProtoSubscribe` (the recovered `Log.proto` has no such message), so
+        the robot may well keep streaming to the broker, where the permit gate drops the
+        audio; but a pending robot is never asked, so `/status` and the card must not say
+        `mic asked`. The next Permit asks again and records it."""
+        robot = self.robots.get(device_id)
+        if robot is not None:
+            robot.extra.pop("stt_subscribed_at", None)
 
     def _stt_session(self, device_id):
         from moxie_sdk.stt import SttSession
@@ -226,19 +283,34 @@ class VoiceMixin:
         return s
 
     def feed_stt(self, device_id, vad, audio: bytes = b"", uuid: str = ""):
-        """Feed one VAD-tagged audio frame; on END_OF_SPEECH transcribe and publish a
-        zmqSTTResponse (`/devices/{id}/commands/zmq`). Returns the final transcript, else
-        None. No transcriber -> no-op."""
+        """Feed one VAD-tagged audio frame; on END_OF_SPEECH transcribe and publish the
+        FINAL `zmqSTTResponse` on `/devices/{id}/commands/zmq` in the bus framing the
+        robot reads (`b'<full_name>:' + protobuf`; an empty transcript is still a FINAL).
+        Returns the final transcript, else None. No transcriber -> no-op. An engine that
+        raises still gets the robot its FINAL (no speech, the failure in the recovered
+        `error_code`/`error_message` fields, as the field-proven server answers: OpenMoxie
+        `zmq_stt_handler.py:70-73`): a robot is never left waiting on a turn that ended."""
         if self._transcriber is None:
             return None
-        from moxie_sdk.stt import build_stt_response
+        from moxie_sdk.stt import STT_ERROR_CODE, encode_zmq_stt_response
         if uuid:
             self._stt_uuid[device_id] = uuid          # frames of one utterance share it
-        transcript = self._stt_session(device_id).feed(vad, audio)
+        try:
+            transcript = self._stt_session(device_id).feed(vad, audio)
+        except Exception as e:                        # noqa: BLE001 — any engine failure
+            why = f"{type(e).__name__}: {e}"
+            frame = encode_zmq_stt_response(self._stt_uuid.pop(device_id, device_id), "",
+                                            error_code=STT_ERROR_CODE, error_message=why)
+            self._publish(f"/devices/{device_id}/commands/zmq", frame,
+                          device_id=device_id, what="stt_result")
+            self._note("error", f"👂 could not transcribe for {device_id}: {why[:80]}")
+            print(f"[runtime] ⚠️  STT failed for {device_id} ({why}); sent the robot a "
+                  f"FINAL with error_code={STT_ERROR_CODE}", flush=True)
+            return None
         if transcript is None:
             return None
-        resp = build_stt_response(self._stt_uuid.pop(device_id, device_id), transcript)
-        self._publish(f"/devices/{device_id}/commands/zmq", resp,
+        frame = encode_zmq_stt_response(self._stt_uuid.pop(device_id, device_id), transcript)
+        self._publish(f"/devices/{device_id}/commands/zmq", frame,
                       device_id=device_id, what="stt_result")
         self._note("stt", f"👂 heard: '{transcript[:40]}'")
         # During telehealth the operator sees the child's side as text (a read of what

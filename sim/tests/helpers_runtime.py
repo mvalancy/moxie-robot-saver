@@ -208,6 +208,9 @@ class FakeClient:
     models the connection — a QoS 0 publish with no socket is dropped and returns
     `MQTT_ERR_NO_CONN` (A3). `drop()` / `up()` / `refuse()` are §5.1's fault-injection
     verbs and drive the runtime's real callbacks.
+
+    A JSON payload is recorded decoded; a `bytes` payload (the binary `commands/zmq`
+    frames) is recorded as it is, so a test reads the wire the robot would.
     """
 
     def __init__(self, runtime=None):
@@ -231,7 +234,9 @@ class FakeClient:
         if not self.connected:
             self.dropped.append((topic, payload))
             return FakeInfo(MQTT_ERR_NO_CONN)
-        self.published.append((topic, json.loads(payload)))
+        decoded = (bytes(payload) if isinstance(payload, (bytes, bytearray))
+                   else json.loads(payload))
+        self.published.append((topic, decoded))
         return FakeInfo(MQTT_ERR_SUCCESS)
 
     def subscribe(self, topic, qos=0):
@@ -455,6 +460,52 @@ class _Msg:
     def __init__(self, topic, payload):
         self.topic = topic
         self.payload = payload if isinstance(payload, bytes) else str(payload).encode()
+
+
+def deliver(rt, topic: str, payload):
+    """Hand one message to the runtime's `_on_message` as the broker would — a robot's
+    event, a `/state`, or a `$SYS/broker/log/N` line."""
+    rt._on_message(None, None, _Msg(topic, payload))
+
+
+# ---------------------------------------------------------------------------
+# The binary `commands/zmq` wire, checked with the committed protobuf oracles
+# ---------------------------------------------------------------------------
+# `tools/robot-toolkit/moxie_toolkit/embodied/**/*_pb2.py` are compiled from the recovered
+# protos and committed; `protobuf` is in requirements-hermetic.txt. A test decodes with
+# them rather than with a reader written by the same hand as the writer under test.
+
+TOOLKIT_DIR = os.path.join(REPO, "tools", "robot-toolkit")
+
+
+def toolkit_pb2(module: str):
+    """`toolkit_pb2("embodied.logging.Log_pb2")` → that committed pb2 module."""
+    import importlib
+    if TOOLKIT_DIR not in sys.path:
+        sys.path.insert(0, TOOLKIT_DIR)
+    return importlib.import_module(f"moxie_toolkit.{module}")
+
+
+def split_zmq_frame(payload) -> tuple:
+    """A `commands/zmq` / `events/zmq` payload → `(full_name, protobuf_bytes)`. Asserts
+    the bus framing `b'<full_name>:' + bytes` (robot-ipc-protocol.md), so a JSON body
+    fails here with the offending payload in the message."""
+    assert isinstance(payload, (bytes, bytearray)), \
+        f"a zmq frame is bytes, not {type(payload).__name__}: {payload!r}"
+    name, sep, body = bytes(payload).partition(b":")
+    assert sep and name.startswith(b"embodied."), f"no `full_name:` prefix: {payload!r}"
+    return name.decode("utf-8"), body
+
+
+def parse_zmq_frame(payload, message_cls):
+    """Parse one zmq frame as `message_cls` (a pb2 class), asserting its prefix is that
+    message's descriptor full name. Returns the parsed message."""
+    name, body = split_zmq_frame(payload)
+    expected = message_cls.DESCRIPTOR.full_name
+    assert name == expected, f"frame is a {name}, expected {expected}"
+    msg = message_cls()
+    msg.ParseFromString(body)
+    return msg
 
 
 class _LoopSide:
