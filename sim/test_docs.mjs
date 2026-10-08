@@ -2,7 +2,9 @@
  * no build step): the index covers every docs/*.md, each file is in the bundle with the right
  * mermaid count and full text, the committed files stay merge-safe, section order follows
  * each README, and every docs folder with >=2 docs has a README. The explorer's runtime
- * behaviour is test_docs_explorer.mjs's. Fix a stale bundle with the builder.
+ * behaviour is test_docs_explorer.mjs's. Fix a stale bundle with the builder. Last, her docs
+ * lookup (functions/api/_lib/docsearch.js) over this index: questions about her internals
+ * cite the page that answers them, and small talk cites nothing.
  * Run: node sim/test_docs.mjs
  */
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
@@ -134,10 +136,80 @@ ok(/registerLanguage\(["']protobuf["']/.test(readFileSync(join(web, "vendor", "h
   if (existsSync(docsRoot)) checkDir(docsRoot);
 }
 
+// ---- her docs lookup: questions about HER INTERNALS cite a page, small talk never does ----
+// functions/api/_lib/docsearch.js runs on every chat turn: a hit puts a passage of the cited
+// document into her prompt and shows "looked it up in <title>" on the page. Run end to end
+// (gate -> rank -> fetch -> passage) against THIS committed index, through a fake ASSETS
+// binding over sim/web, which is what the route fetches from.
+let lookupStats = "";
+{
+  const docsearch = await import(join(repo, "functions", "api", "_lib", "docsearch.js"));
+  const assets = {
+    fetch: async (req) => {
+      const f = join(web, decodeURIComponent(new URL(String(req.url || req)).pathname));
+      return f.startsWith(web + "/") && existsSync(f) ? new Response(readFileSync(f)) : new Response("", { status: 404 });
+    },
+  };
+  const lookup = (q) => docsearch.lookup(assets, "https://docs.test", q);
+
+  /* Ordinary lines from the 2026-10 review's two measured sets: a lane's 30 child/stranger
+   * lines and 30 more written independently before any result was seen. On the old gate 21
+   * of these cited an unrelated page ("what are you doing right now?" -> broker-auth JWT
+   * notes, "what is your name?" -> a note on sort order). The lane's set also held two
+   * questions about how she works; they are pinned in the next table, not here. */
+  const SMALL_TALK = [
+    "hi moxie! what are you doing right now?", "what are you doing?", "what are you up to today?", "what are you?",
+    "what is your name?", "what is your favorite color?", "what is your favorite animal?", "what are you scared of?",
+    "what are your favorite games?", "how do you feel today?", "how do you know so much?", "how did you sleep?",
+    "how does it feel to be a robot?", "what is your favorite food?", "Hi Moxie! What is your favorite animal?",
+    "what are you thinking about?", "what is your best friend's name?", "what are you going to do later?",
+    "how do you say hello in spanish?", "what are you good at?", "Tell me a silly joke", "What makes you happy?",
+    "Surprise me!", "ok bye moxie, see you later!", "how do you play hide and seek?", "what is your favorite song?",
+    "what are you wearing?", "how did you get your name?",
+    "what's your name?", "What is your name", "what are you doing", "how old are you?", "how are you?",
+    "how are you doing today?", "how do you do?", "what is your favorite movie?", "what is your favourite colour?",
+    "what are you called?", "what is your job?", "what are you afraid of?", "what is your dog's name?",
+    "how did you get here?", "how do you like school?", "what are your friends like?", "what is your birthday?",
+    "how did you know that?", "how do you spell cat?", "how do you make a paper airplane?",
+    "what are you going to be for halloween?", "how do you feel about cats?", "what is your favorite game to play?",
+    "how do you make friends?", "what is your mom's name?", "what are you eating?", "how do you dance?",
+    "what is your secret?", "how does a rainbow happen?", "what is your best joke?",
+  ];
+  let cited = 0;
+  for (const q of SMALL_TALK) {
+    const hit = await lookup(q);
+    if (hit) cited += 1;
+    ok(hit === null, `small talk ${JSON.stringify(q)} looked something up (gate ${docsearch.wantsDocs(q)}): ` +
+       `cited ${hit && hit.title} [${hit && hit.path}]`);
+  }
+
+  /* Questions about how she works still cite the page that answers them. "what are you made
+   * of?" and "how were you built?" name no page in their own words; the gate's phrasing
+   * supplies the topic. "how do you work?" is a gated question with no word to rank (all
+   * stop words), so it looks nothing up and she answers from her persona. */
+  const INTERNALS = [
+    ["how does your brain work?", "a page whose title names her brain", (h) => h && /\bbrain\b/i.test(h.title)],
+    ["what is your firmware?", "a firmware page", (h) => h && h.path.startsWith("reverse-engineering/firmware/")],
+    ["how were you built?", "the hardware map", (h) => h && h.path.endsWith("/hardware-map.md")],
+    ["how do you remember things?", "what Moxie remembers", (h) => h && h.path.endsWith("/what-moxie-remembers.md")],
+    ["tell me about the docs", "the docs index", (h) => h && h.path === "README.md"],
+    ["what are you made of?", "the hardware map", (h) => h && h.path.endsWith("/hardware-map.md")],
+    ["how do you work?", "nothing (no word to rank)", (h) => h === null],
+  ];
+  let right = 0;
+  for (const [q, want, pass] of INTERNALS) {
+    const hit = await lookup(q);
+    if (pass(hit)) right += 1;
+    ok(pass(hit), `${JSON.stringify(q)} must cite ${want}; got ${hit ? `${hit.title} [${hit.path}]` : "nothing"}`);
+  }
+  lookupStats = `; docs lookup: ${cited}/${SMALL_TALK.length} small-talk lines cite, ` +
+                `${right}/${INTERNALS.length} internals questions as pinned`;
+}
+
 // ---- report ----
 if (fails.length) {
   console.log("❌ docs tests FAILED:");
   for (const f of fails) console.log("   -", f);
   process.exit(1);
 }
-console.log(`✅ docs tests OK — ${idx.files.length} docs indexed & bundled, ${mermaidTotal} mermaid diagrams`);
+console.log(`✅ docs tests OK — ${idx.files.length} docs indexed & bundled, ${mermaidTotal} mermaid diagrams${lookupStats}`);

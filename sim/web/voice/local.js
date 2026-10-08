@@ -111,6 +111,13 @@
 
   function speak(text, who) {
     if (!V.enabled || !text) return Promise.resolve(false);
+    /* An ambient line (a mutter, the thinking filler) never FLUSHES her queued answer: a
+     * cloud chunk waiting its turn or an autoplay gesture is invisible to every speaking
+     * predicate, so no caller can guard it, and the stop() below would drop it for good. A
+     * PLAYING answer is visible to isMoxieBusy(), which every ambient caller asks first
+     * (ambient.js, bridge/alive.js); unguarded, a line here still cuts it — the negative
+     * control of sim/test_ambient_guard.mjs §2. */
+    if (V.heldBy(who) && V.ttsPending && V.ttsPending() > 0) return Promise.resolve(false);
     V.stop();
     if (!V.heldBy(who)) V.takeFloor();     // a REPLY claims the speakers — THE THIRD SEAM
     var mine = V.floor;

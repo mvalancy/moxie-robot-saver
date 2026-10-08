@@ -21,9 +21,12 @@ curl -X DELETE "http://<server>:8080/api/robots/<robot_id>?rfs=1" \
 Get `<robot_id>` from `GET /api/users/me` (the `robots` relationship) and `<token>` from the login flow
 (or `POST /local/quicklogin` on our server).
 
-**Our server today:** `DELETE /api/robots/{id}` removes the robot record (with or without `rfs`); it
-does not relay a wipe to the robot. `POST /api/robots/{id}/restores` is acknowledged (204) but not
-implemented. Check `server/moxie_server/routes/robots.py` for the current behavior.
+**Our server today:** `DELETE /api/robots/{id}` takes the robot off the account, revokes its permit
+on the supervisor (it is sent the not-paired config) and voids pairing codes made but never used; the
+child is kept. `?rfs=1` does the same and returns the `restore_factory` setup code below: no MQTT
+reset is sent, because none is recovered. The web app's robot card does both behind a typed
+confirmation. `POST /api/robots/{id}/restores` is acknowledged (204) but not implemented. Details:
+`docs/features/robot-lifecycle.md` ("Built here"); code: `server/moxie_server/routes/robots.py`.
 
 ## On the robot: the debug QR
 From `tools/robot-toolkit/`:
