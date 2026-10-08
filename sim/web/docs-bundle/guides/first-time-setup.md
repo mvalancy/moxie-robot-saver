@@ -48,3 +48,5 @@ broker. Show it the code from the console's **🔗 Server** tab. Once the robot 
 open **🤖 Moxie** and press **Add to my account**: the robot card (settings, insights, memory, Wake,
 Unpair) appears. The [bench runbook](bench-runbook.md) covers every step and what each Connection
 monitor line means; see also [Revive your Moxie, Path B](revive-your-moxie.md#path-b-re-home-an-801-or-803-robot-with-a-qr).
+This part (the server code, then Add to my account) is built to the documented flow and not yet
+done with a physical Moxie ([bench runbook](bench-runbook.md), Status).

@@ -1163,7 +1163,7 @@
    "path": "guides/first-time-setup.md",
    "title": "First-time setup",
    "section": "guides",
-   "bytes": 2891,
+   "bytes": 3059,
    "mermaid": 0,
    "headings": [
     "1. Start the server",
@@ -1240,7 +1240,7 @@
    "path": "guides/permitting-a-robot.md",
    "title": "Letting a robot in — \"pending\" and how to permit it",
    "section": "guides",
-   "bytes": 6598,
+   "bytes": 6942,
    "mermaid": 0,
    "headings": [
     "The one-paragraph version",

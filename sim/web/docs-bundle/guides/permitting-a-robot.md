@@ -32,7 +32,9 @@ console is told the robot's id.
 | Your robot rejoined after a factory reset with a new id | **Pending** again — add it to your account (unpair the old record first if it is still there) |
 | A second robot, a friend's robot, or a stray device on your Wi-Fi | **Pending**, and it stays that way until you permit it |
 
-The [bench runbook](bench-runbook.md) walks the whole real-robot path, codes first.
+The [bench runbook](bench-runbook.md) walks the whole real-robot path, codes first. That path
+(pending, then **Add to my account**, then the robot card) is built to the documented flow and
+tested against the simulator and a stand-in robot; no physical Moxie has been through it yet.
 
 ## Permitting a robot
 
@@ -42,7 +44,9 @@ The [bench runbook](bench-runbook.md) walks the whole real-robot path, codes fir
 3. For **your** robot, click **Add to my account** (it is also on the *No Moxie paired yet*
    card). That permits it and puts it on your account, so its robot card appears: settings,
    insights, safety, what Moxie remembers, Wake up, Unpair and Factory reset. For a robot that
-   is not yours to manage, click **Permit**: it is let in, with no robot card.
+   is not yours to manage, click **Permit**: it is let in, with no robot card. (**Add to my
+   account** is built to the documented flow and not yet done with a physical Moxie: see the
+   [bench runbook](bench-runbook.md).)
 
 That is it — no restart, no unplugging the robot. The server immediately sends that robot
 its real configuration, and Moxie starts behaving normally within a few seconds.
