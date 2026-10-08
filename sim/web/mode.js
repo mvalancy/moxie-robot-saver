@@ -24,6 +24,14 @@
  * ordinary turn and no extra call) while the badge keeps saying SCRIPTED. A degrade with no
  * verdict at all (three transport errors) is the poll's to clear: an answer is what was missing.
  *
+ * THE EARS ARE NOT THE BRAIN. Only `/api/chat` gives a verdict on the brain. What the ears
+ * report (`note({route: "ears", …})`, `noteTransportError("ears")` from mic.js: a transcribe
+ * refusal, an upload the hosted page could not even make) stays the ears' own: it never
+ * strikes, degrades or recovers the brain's state, and a 429 there holds the microphone
+ * (`canUseEars`, `earsRetryAfterS`) while typed turns keep going. Measured before this: on a
+ * chat-only deployment the third Listen tap, at any pace, degraded the whole page to
+ * SCRIPTED with "Moxie's brain is unreachable", and one STT 429 paused typed chat for 60 s.
+ *
  * No secret and no hostname (base = `location.origin`). The one public value returned is
  * the Turnstile SITEKEY ("" = not enforced), delivered at runtime so forks and previews
  * never render this deployment's widget.
@@ -91,6 +99,8 @@
   var turnstile = "";
   var sticky = false;            // offline, and gateway_not_configured: never poll again
   var suppressUntil = 0;         // a 429/503 Retry-After window: no live turns until then
+  var earsUntil = 0;             // the EARS' own Retry-After window: the mic waits, chat does not
+  var earsReason = null;         // the last reason the ears gave, until a clean transcript
   var strikes = 0;               // consecutive failed live TURNS (§6.3); only a turn clears them
   var pollStrikes = 0;           // consecutive unreadable polls; a poll that answers clears them
   var turnOut = false;           // a turn's envelope said the brain is out: a turn must say back
@@ -102,6 +112,7 @@
   var lastKey = "";
   // Recorded, not sampled: tests assert on these, never on live timing (test_mode.mjs).
   var stats = { polls: 0, usable: 0, unusable: 0, absent: 0, transportErrors: 0,
+                earsNotes: 0, earsErrors: 0,   // what the ears reported: kept apart, never a strike
                 hiddenSkips: 0, notes: 0, lastDelayMs: 0, scheduled: [], transitions: [] };
 
   function now() { return Date.now(); }
@@ -127,6 +138,15 @@
 
   function retryAfterS() {
     var left = Math.ceil((suppressUntil - now()) / 1000);
+    return left > 0 ? left : 0;
+  }
+
+  /** May the hosted ears take a clip now? Their own window (a transcribe 429) holds the mic
+   *  and nothing else; mic.js asks before opening the microphone. */
+  function canUseEars() { return now() >= earsUntil; }
+
+  function earsRetryAfterS() {
+    var left = Math.ceil((earsUntil - now()) / 1000);
     return left > 0 ? left : 0;
   }
 
@@ -172,6 +192,7 @@
       load: { level: load.level, inflight: load.inflight, capacity: load.capacity },
       limits: limits, voice: voice, ears: ears, turnstile: turnstile,
       liveTurns: canSpendLiveTurn(), retryAfterS: retryAfterS(),
+      earsReason: earsReason, earsRetryAfterS: earsRetryAfterS(),
     };
   }
 
@@ -327,15 +348,34 @@
     schedule(backoff());
   }
 
+  // ---- what the ears report (W3-S16) ---------------------------------------
+  /** A `/api/transcribe` reply, or a refusal the hosted page composed for the ears. Recorded,
+   *  and the ears' window kept; the brain's state, strikes and window are never touched —
+   *  a transcript's outcome says nothing about `/api/chat`, either way. */
+  function noteEars(r, retryMs) {
+    stats.earsNotes++;
+    earsReason = r;
+    if (r === null) { earsUntil = 0; return; }          // a clean clip: the ears are taking them
+    // The per-minute window, the hour or day cap, and the STT cooldown all come as a 429
+    // with Retry-After; `at_capacity` as a 503 with one. Any other reason carrying a wait
+    // is honoured too; none carrying none opens no window (the next tap may try).
+    if (retryMs) earsUntil = now() + retryMs;
+    else if (r === "rate_limited") earsUntil = now() + 10000;
+    else if (r === "at_capacity") earsUntil = now() + 15000;
+  }
+
   // ---- what the transport reports back (§4.5) ------------------------------
   /** cloud-transport.js calls this after every `/api/*` reply so the mode follows reality
-   *  without waiting for the next poll. @param {{status?, reason?, retry_after_s?}} res */
+   *  without waiting for the next poll. @param {{status?, reason?, retry_after_s?, route?}} res
+   *  `route: "ears"` (mic.js) is the ears' own report and never reaches the brain's rules. */
   function note(res) {
     stats.notes++;
     var r = res && res.reason ? String(res.reason) : null;
     if (r !== null && REASONS.indexOf(r) === -1) r = null;
     var retry = Number(res && res.retry_after_s);
     var retryMs = isFinite(retry) && retry > 0 ? retry * 1000 : 0;
+
+    if (res && res.route === "ears") { noteEars(r, retryMs); return snapshot(); }
 
     if (r === "forbidden_origin") { absent(); return snapshot(); }   // §4.5: treated as offline
     if (r === "gateway_not_configured") { setState("degraded", r); clear(); return snapshot(); }
@@ -400,8 +440,15 @@
     return snapshot();
   }
 
-  /** A transport error with no envelope at all (§6.3: 3 consecutive -> degraded). */
-  function noteTransportError() { stats.notes++; turnFailed(); return snapshot(); }
+  /** A transport error with no envelope at all (§6.3: 3 consecutive -> degraded). The ears'
+   *  (`"ears"`: a local upload the hosted CSP refused, a sidecar's bare 5xx) are recorded and
+   *  never a strike: three Listen taps on a chat-only deployment used to degrade the brain. */
+  function noteTransportError(route) {
+    stats.notes++;
+    if (route === "ears") { stats.earsErrors++; earsReason = "transport_error"; return snapshot(); }
+    turnFailed();
+    return snapshot();
+  }
 
   // ---- wiring --------------------------------------------------------------
   try {
@@ -428,6 +475,10 @@
     hasTransport: hasTransport,
     canSpendLiveTurn: canSpendLiveTurn,
     retryAfterS: retryAfterS,
+    /** The ears, apart: their own window and last reason (mic.js reads these). */
+    canUseEars: canUseEars,
+    earsRetryAfterS: earsRetryAfterS,
+    earsReason: function () { return earsReason; },
     note: note,
     noteTransportError: noteTransportError,
     snapshot: snapshot,

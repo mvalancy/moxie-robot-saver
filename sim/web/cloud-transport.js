@@ -26,6 +26,15 @@
  * A voice failure is not a brain failure: speech-route reasons are recorded in the stats and
  * never reported to the mode machine.
  *
+ * ONE LINE AT A TIME FROM THE CONTROLS (`queueUserTurn`): a line from the Ask box, an opener
+ * or the mic's transcript WAITS while a turn is still being answered (its reply not landed,
+ * or its voice still being assembled), then goes out carrying that reply's context, so both
+ * replies are heard whole, in order, and both exchanges reach the next turn. Rule 6 stays as
+ * the backstop for `sendUserTurn` itself, which still sends at once. THE EARS COME FIRST
+ * (`earsOpen` / `earsIdle`, driven by mic.js): opening the mic is a deliberate interruption —
+ * every open pipeline ends through rule 6's path and voice/ is stopped — and nothing of hers
+ * (a reply landing, a stub line, a queued line) starts until the ears are done with the clip.
+ *
  * No secret and no hostname here: the base is `moxieMode.apiBase()` (= location.origin).
  * `ticket` and `context` are opaque, signed server-side, and die with the tab (§2.6).
  */
@@ -34,8 +43,9 @@
 
   // §3.4's client-side ceiling on how long the words wait for the voice.
   var SPEECH_WAIT_MS = 2500;
-  // Client ceilings ABOVE the server's own (20 s / 12 s), so its honest 504 `timeout`
-  // envelope wins the race and the page learns WHY. SPEECH_FETCH_MS is also the deadline
+  // Client ceilings ABOVE the server's own (DEMO_CHAT_TIMEOUT_MS / DEMO_SPEECH_TIMEOUT_MS,
+  // 10 s / 12 s by default), so its honest 504 `timeout` envelope wins the race and the page
+  // learns WHY. SPEECH_FETCH_MS is also the deadline
   // after which a voice is given up for the local one (kept even without AbortSignal.timeout).
   var CHAT_FETCH_MS = 25000;
   var SPEECH_FETCH_MS = 15000;
@@ -69,6 +79,9 @@
     chunkFailures: 0,        // a later chunk refused, unreachable or past the deadline: the voice ended there
     chunksDropped: 0,        // later-chunk audio that landed but was not played (after a failure, too late, or superseded)
     chunksSuperseded: 0,     // chunks of an older reply given up because a newer reply's voice started
+    queued: 0,               // control lines that waited for the turn in flight (or the ears) before going out
+    heldForEars: 0,          // replies and page-composed lines that waited for the ears to finish a clip
+    interrupted: 0,          // the mic opened on a reply: its voice stopped and its pipeline ended on purpose
     blocked: 0,
     botTokens: 0,            // sends that carried a fresh Turnstile token
     botUnavailable: 0,       // sends REFUSED locally because no token could be minted
@@ -157,14 +170,17 @@
   }
 
   /** A reply composed on the page, through the same `route()` a real one takes. It speaks
-   *  at once: the voice of turn `seq` (or of the newest, with none) is starting. */
+   *  as soon as the ears are idle: the voice of turn `seq` (or of the newest, with none) is
+   *  starting. Resolves once it is routed. */
   function localReply(text, markup, seq) {
-    supersedeVoices(seq);
-    stats.order.push("stub");
-    inner.route("/devices/d_sim/commands/remote_chat", JSON.stringify({
-      command: "remote_chat", result: "OK", backend: "router",
-      output: { text: text, markup: markup },
-    }));
+    return whenEarsIdle().then(function () {
+      supersedeVoices(seq);
+      stats.order.push("stub");
+      inner.route("/devices/d_sim/commands/remote_chat", JSON.stringify({
+        command: "remote_chat", result: "OK", backend: "router",
+        output: { text: text, markup: markup },
+      }));
+    });
   }
 
   /** The degraded answer for ONE turn: `stub.js` after the bridge's 450 ms beat. The turn
@@ -174,7 +190,105 @@
     if (!window.moxieStub || !window.moxieStub.enabled) return Promise.resolve();
     var r = window.moxieStub.reply(text);
     return new Promise(function (resolve) {
-      setTimeout(function () { localReply(r.text, r.markup, seq); resolve(); }, FALLBACK_MS);
+      setTimeout(function () { localReply(r.text, r.markup, seq).then(resolve); }, FALLBACK_MS);
+    });
+  }
+
+  /* ---- one line at a time from the controls, and the ears first (W3-S16) ------ *
+   * Two lines 300 ms apart used to race: `chatPost` sends whatever `contextBlob` holds and
+   * the last reply to land overwrites it, so the second line carried no context, the replies
+   * showed in landing order, and the third turn's history lacked one exchange (measured in
+   * Chrome on the shipped page, 2026-10-07). A line from a CONTROL now waits in `waiting`
+   * until no live turn is in flight — POSTed and not yet SETTLED, i.e. its reply wholly handed
+   * to the speakers (every chunk routed, or the voice given up) — so it carries that reply's
+   * context and its own voice queues behind the earlier one in voice/ instead of ending it.
+   * Queued rather than a disabled button: the child's line is taken the moment they tap, and
+   * she answers it next; a dead Send would have them re-typing (and the HUD is not this file's
+   * to change). `sendUserTurn` itself still sends at once (rule 6 above is its backstop; the
+   * transport §4i-4k pins stay as they are).
+   *
+   * THE EARS COME FIRST. mic.js calls `earsOpen()` when the microphone opens: that is the
+   * child saying "stop, listen to me", so every open pipeline ends through `supersedeVoices`
+   * (nothing more of any reply is redeemed; a chunk in flight is dropped when it lands) and
+   * voice/ is stopped (the playing clip and every queued chunk) — before the capture opens,
+   * so the recording never holds her voice. Until `earsIdle()` (the clip dropped, or its
+   * upload settled) nothing of hers starts: a reply that lands meanwhile, a stub line and
+   * the next queued line all wait. ambient.js reads the same fact from body[data-mic]. */
+  var waiting = [];        // {text, resolve}: control lines waiting for the turn in flight
+  var inflight = 0;        // live turns POSTed and not yet settled
+  var earsBusy = false;    // mic.js: recording, or still transcribing the clip
+  var earsWaiters = [];    // what is held for the ears: resolved, in order, by earsIdle()
+
+  function once(fn) {
+    var done = false;
+    return function () { if (done) return; done = true; fn(); };
+  }
+
+  /** Resolves when the ears are idle — at once, when they are. */
+  function whenEarsIdle() {
+    if (!earsBusy) return Promise.resolve();
+    stats.heldForEars++;
+    return new Promise(function (resolve) { earsWaiters.push(resolve); });
+  }
+
+  /** The microphone is opening: stop her, end every pipeline, and hold what follows. */
+  function earsOpen() {
+    earsBusy = true;
+    var a = window.moxieAudio, speaking = false;
+    try { speaking = !!(a && a.isMoxieSpeaking && a.isMoxieSpeaking()); } catch (e) {}
+    if (pipelines.length || speaking) stats.interrupted++;
+    supersedeVoices(null);               // #317's path: nothing more of any reply is paid for
+    try { if (a && a.stop) a.stop(); } catch (e) {}   // the playing clip and every queued chunk
+  }
+
+  /** The ears are done with the clip: what waited for them may go, in order. */
+  function earsIdle() {
+    if (!earsBusy) return;
+    earsBusy = false;
+    var rs = earsWaiters.splice(0);
+    for (var i = 0; i < rs.length; i++) rs[i]();
+    drain();
+  }
+
+  /** The path a turn takes when nothing live can answer it: bridge/'s own (echo + stub). */
+  function delegate(text) {
+    stats.delegated++;
+    inner.sendUserTurn(text);
+    return Promise.resolve();
+  }
+
+  /** Send the next waiting line, if nothing is in flight and the ears are idle. The mode is
+   *  asked again NOW: the earlier reply may have been a refusal that paused live turns, and
+   *  a line already in the log is then answered from `stub.js` (never echoed twice). */
+  function drain() {
+    while (waiting.length && !inflight && !earsBusy) {
+      var w = waiting.shift(), p;
+      if (inner.isLive()) p = delegate(w.text);               // a broker connected meanwhile
+      else if (canSpendLiveTurn()) p = liveTurn(w.text, w.echoed);
+      else if (!w.echoed) p = delegate(w.text);
+      else {
+        var m = mode();
+        status((m && m.message && m.message()) || "answering from her recorded lines.");
+        p = fallbackReply(w.text);
+      }
+      p.then(w.resolve, w.resolve);
+    }
+  }
+
+  /** A line from a control: one at a time, in order. A line that has to wait is echoed NOW
+   *  (taken the moment they tapped) and sent when its turn comes. Resolves as
+   *  `sendUserTurn`'s promise does, once THIS line's reply has started (mic.js holds its
+   *  button on it). */
+  function queueUserTurn(text) {
+    var t = String(text == null ? "" : text).trim();
+    if (!t) return Promise.resolve();
+    stats.turns++;
+    if (inner.isLive()) return delegate(t);      // a connected broker always wins, at once
+    var waits = !!(inflight || waiting.length || earsBusy);
+    if (waits) { stats.queued++; echoUser(t); }
+    return new Promise(function (resolve) {
+      waiting.push({ text: t, resolve: resolve, echoed: waits });
+      drain();
     });
   }
 
@@ -260,7 +374,7 @@
    * nothing later is redeemed or routed — and no local voice stands in for a later chunk:
    * the words are on screen, and her first sentence was heard in her voice (or spoken
    * locally, if chunk 0 failed). */
-  function voiceFirst(chatMessages, tickets, eid, seq) {
+  function voiceFirst(chatMessages, tickets, eid, seq, settle) {
     var n = tickets.length;
     var landed = [];         // chunk -> its TTS messages, once /api/speech delivered them
     var settled = [];        // chunk -> true once its request answered, failed or timed out
@@ -274,10 +388,13 @@
     pipelines.push(pipe);
     expectVoice(eid);
 
-    /** Nothing left to redeem or route: no newer reply can end this one any more. */
+    /** Nothing left to redeem or route: no newer reply can end this one any more, and the
+     *  turn is SETTLED — the next waiting line may go. */
     function close() {
       var k = pipelines.indexOf(pipe);
-      if (k >= 0) pipelines.splice(k, 1);
+      if (k < 0) return;
+      pipelines.splice(k, 1);
+      if (settle) settle();
     }
 
     /** The voice ends here: nothing later is redeemed, and audio already in hand is not played. */
@@ -448,30 +565,35 @@
       return fallbackReply(text);
     }
     status("Moxie could not finish her visitor check — try that again in a moment.");
-    localReply(BOT_LINE, MK_MOOD + MK_SHRUG + BOT_LINE);
-    return Promise.resolve();
+    return localReply(BOT_LINE, MK_MOOD + MK_SHRUG + BOT_LINE);
   }
 
   /* ---- the live turn ----------------------------------------------------- */
-  function liveTurn(text) {
+  /** Resolves once the reply has STARTED (its voice routed, or its words out); the turn is
+   *  SETTLED — in flight no more — once the reply is wholly handed to the speakers.
+   *  `echoed`: the line is already in the log (it waited its turn). */
+  function liveTurn(text, echoed) {
     stats.live++;
+    inflight++;
+    var settle = once(function () { inflight--; drain(); });
     status("thinking…");
     // …and with her face and arms (a child won't read the status line); a fast turn
     // never flashes a pose.
     if (window.moxieAlive) window.moxieAlive.thinking();
-    echoUser(text);
+    if (!echoed) echoUser(text);
     // The bot control, in one line. `""` means this deployment does not enforce it.
     return botToken().then(function (tok) {
-      if (tok === null) return botUnavailable(text);
+      if (tok === null) return botUnavailable(text).then(settle, settle);
       // The widget works now, so the consecutive-failure count restarts.
       botStrikes = 0;
       if (tok) stats.botTokens++;
-      return chatPost(text, tok);
+      return chatPost(text, tok, settle);
     });
   }
 
-  /** The POST itself, split out of `liveTurn` so the token step is a wrapper. */
-  function chatPost(text, token) {
+  /** The POST itself, split out of `liveTurn` so the token step is a wrapper. `settle` is
+   *  called exactly once, on every path, when the reply is wholly handed to the speakers. */
+  function chatPost(text, token, settle) {
     var payload = { text: text, context: contextBlob };
     // Cloudflare's own form-field name (`_lib/turnstile.js::TOKEN_FIELD`); absent when
     // unenforced, so such a deployment sends byte-identically.
@@ -484,7 +606,7 @@
         stats.chatErrors++;
         noteTransportError();
         status("Moxie’s brain is unreachable — answering from her recorded lines.");
-        return fallbackReply(text, seq);
+        return fallbackReply(text, seq).then(settle);
       }
       var body = res.body;
       note(body.reason, body.retry_after_s);
@@ -498,9 +620,12 @@
         if (body.reason === "bad_request") contextBlob = "";
         var m2 = mode();
         status((m2 && m2.message && m2.message()) || "answering from her recorded lines.");
-        // A line with no voice coming speaks at once: this turn's voice is starting.
-        if (body.messages && body.messages.length) { supersedeVoices(seq); routeAll(body.messages, "chat"); return; }
-        return fallbackReply(text, seq);
+        // A line with no voice coming speaks as soon as the ears allow: this turn's voice is
+        // starting.
+        if (body.messages && body.messages.length) {
+          return whenEarsIdle().then(function () { supersedeVoices(seq); routeAll(body.messages, "chat"); settle(); });
+        }
+        return fallbackReply(text, seq).then(settle);
       }
 
       stats.chatOk++;
@@ -536,14 +661,19 @@
       }
       contextBlob = typeof body.context === "string" ? body.context : "";
       var tickets = ticketsOf(body.speech);
-      if (!tickets.length) {
-        // No voice configured (`voice: false`): the words speak from the clips, at once.
-        supersedeVoices(seq);
-        routeAll(body.messages, "chat");
-        return;
-      }
-      stats.tickets += tickets.length;
-      return voiceFirst(body.messages, tickets, eventOf(body.messages, body.speech), seq);
+      // The context is kept NOW (the next line carries it); the reply itself starts only
+      // once the ears are idle — never into an open microphone.
+      return whenEarsIdle().then(function () {
+        if (!tickets.length) {
+          // No voice configured (`voice: false`): the words speak from the clips, at once.
+          supersedeVoices(seq);
+          routeAll(body.messages, "chat");
+          settle();
+          return;
+        }
+        stats.tickets += tickets.length;
+        return voiceFirst(body.messages, tickets, eventOf(body.messages, body.speech), seq, settle);
+      });
     });
   }
 
@@ -601,6 +731,15 @@
       return !!(inner.isLive() || (m && m.state && m.state() === "live"));
     },
 
+    /** A line from a CONTROL (the Ask box, an opener, the mic's transcript): one at a time,
+     *  in order, behind the turn in flight and the ears (additive; see above). */
+    queueUserTurn: queueUserTurn,
+
+    /** The ears' two moments, told by mic.js (additive): the microphone is opening — stop
+     *  her, on purpose — and the ears are done with the clip. */
+    earsOpen: earsOpen,
+    earsIdle: earsIdle,
+
     /** What the transport RECORDED (additive to the bridge's surface). */
     transportStats: function () { return JSON.parse(JSON.stringify(stats)); },
   });
@@ -625,7 +764,9 @@
   }
 
   /** The one typed path (human text only; invented lines use `sendScriptedTurn`). It spends
-   *  exactly like the mic: live only when `canSpendLiveTurn()`. @returns {boolean} sent. */
+   *  exactly like the mic: live only when `canSpendLiveTurn()`, and one line at a time —
+   *  a line typed while she is still answering is taken now and answered next.
+   *  @returns {boolean} sent. */
   function sendTyped(text) {
     var t = String(text == null ? "" : text).trim();
     if (!t) return false;
@@ -634,8 +775,8 @@
       status("that is a bit long — " + max + " characters at most.");
       return false;
     }
-    status("");
-    window.moxieBridge.sendUserTurn(t);
+    status(inflight || waiting.length || earsBusy ? "Moxie will answer that next." : "");
+    window.moxieBridge.queueUserTurn(t);
     return true;
   }
 

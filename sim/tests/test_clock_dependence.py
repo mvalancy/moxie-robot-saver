@@ -89,6 +89,10 @@ REVIEWED: dict = {
         ("Date.now",), "DETERMINISTIC — overrides `Date.now = () => clock` and steps it."),
     "sim/tests/edge/mode/06_outage_honesty.mjs": (
         ("Date.now",), "DETERMINISTIC — overrides `Date.now = () => clock` and steps it."),
+    "sim/tests/edge/mode/07_ears_apart.mjs": (
+        ("Date.now",), "DETERMINISTIC — overrides `Date.now = () => clock` and steps it."),
+    "sim/tests/edge/ears/08_ears_not_brain.mjs": (
+        ("Date.now",), "DETERMINISTIC — `Date.now` is the transport harness's virtual clock."),
     "sim/tests/helpers_stack.py::Broker.wait_ready": (
         ("time.time",), "DETERMINISTIC — a bounded deadline wait."),
     "sim/tests/helpers_stack.py::Supervisor.wait_for": (
