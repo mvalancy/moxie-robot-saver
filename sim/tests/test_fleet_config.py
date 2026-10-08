@@ -147,7 +147,9 @@ def test_normalize_fleet_still_renders_a_pre_fleet_snapshot():
 CONFIG_TOPIC = "/devices/{d}/config"
 
 
-def _runtime(tmp_path, devices=("d_one", "d_two")):
+def _runtime(tmp_path, devices=("d_one", "d_two"), *, app=None, store=None):
+    """A runtime on `tmp_path` with `devices` connected. The store goes to the constructor:
+    that is where the runtime reads each robot's saved settings."""
     pytest.importorskip("paho.mqtt.client", reason="the runtime imports paho")
     from helpers_runtime import make_runtime
     from moxie_sdk.app import MoxieApp
@@ -156,8 +158,8 @@ def _runtime(tmp_path, devices=("d_one", "d_two")):
     class _App(MoxieApp):
         name = "content"
 
-    rt, first = make_runtime(_App(), device_id=devices[0])
-    rt.store = JsonStore(root=str(tmp_path))
+    rt, first = make_runtime(app or _App(), device_id=devices[0],
+                             store=store or JsonStore(root=str(tmp_path)))
     for d in devices[1:]:
         rt.robots[d] = RobotContext(device_id=d, child=rt.child)
     return rt
@@ -224,3 +226,174 @@ def test_status_snapshot_exposes_the_layers_and_stays_json_safe(tmp_path):
     assert one["config_effective"]["audio_volume"] == 0.25       # inherited
     assert one["config_effective"]["alarms"]["wakes"][0]["days"] == [6]
     assert "alarms" not in two["config_effective"]               # not the other robot's
+
+
+# --------------------------------------------------------------------------- #
+# the per-robot layer outlives the process (robots/<id>/config.json)
+# --------------------------------------------------------------------------- #
+# The per-robot layer used to live in RAM only. A restart dropped it, and the roster
+# resume then re-pushed the fleet-only document: volume, bedtime and look snapped back
+# on the robot, the brain pick reset, and a per-robot NO_DATA reverted, so the child's
+# words were kept again. Each test builds a second runtime on the same data dir: that is
+# the restart.
+
+def _record(tmp_path, device_id="d_one"):
+    return tmp_path / "robots" / device_id / "config.json"
+
+
+def _echo():
+    """A brain that answers, so a turn reaches the transcript path."""
+    from moxie_sdk.app import MoxieApp
+    from moxie_sdk.types import Reply
+
+    class _Echo(MoxieApp):
+        name = "echo"
+
+        def respond(self, turn):
+            return Reply(text="ok")
+
+    return _Echo()
+
+
+def test_a_per_robot_override_survives_a_restart(tmp_path, monkeypatch):
+    """Back before anything asks: brain, safety, lifecycle and /status read the per-robot
+    dict directly, so a lazy read would leave them blind after a restart."""
+    from helpers_runtime import http_json, status_server
+    monkeypatch.delenv("MOXIE_APP", raising=False)          # no pin, so the pick stands
+    rt = _runtime(tmp_path, devices=("d_one",))
+    rt.update_config("d_one", weekday_bedtime=["19:30", "07:00"], audio_volume=0.3)
+    rt.update_config("d_one", brain="llm")
+
+    fresh = _runtime(tmp_path, devices=("d_one",))          # same data dir, new runtime
+    assert fresh._config_overrides["d_one"] == {
+        "weekday_bedtime": ["19:30", "07:00"], "audio_volume": 0.3, "brain": "llm"}
+    cfg = fresh._push_config("d_one")
+    assert cfg["audio_volume"] == 0.3
+    assert (cfg["weekday_bedtime_enabled"], cfg["weekday_bedtime_starts_at"],
+            cfg["weekday_bedtime_ends_at"]) == (True, "19:30", "07:00")
+    assert "brain" not in cfg                               # still never sent to the robot
+    assert fresh.brain_for("d_one")["source"] == "robot"
+    snap = http_json(status_server(fresh) + "/status")
+    one = next(r for r in snap["robots"] if r["device_id"] == "d_one")
+    assert one["config_overrides"]["audio_volume"] == 0.3
+    assert one["config_effective"]["weekday_bedtime"] == ["19:30", "07:00"]
+    assert one["brain_source"] == "robot"
+
+
+def test_a_per_robot_no_data_still_holds_after_a_restart(tmp_path, monkeypatch):
+    """The privacy half: a parent who set one child's data sharing to NO_DATA must not
+    have a restart quietly start keeping that child's words again."""
+    from helpers_runtime import drive_turn
+    from moxie_sdk.cloud_config import LoggingPolicy
+    memdir = tmp_path / "transcripts"
+    monkeypatch.setenv("MOXIE_MEMORY_DIR", str(memdir))     # read at construction
+    rt = _runtime(tmp_path, devices=("d_one",), app=_echo())
+    rt.update_config("d_one", logging_policy=int(LoggingPolicy.NO_DATA))
+
+    fresh = _runtime(tmp_path, devices=("d_one",), app=_echo())
+    assert fresh.safety_policy("d_one") == LoggingPolicy.NO_DATA   # reads the dict itself
+    drive_turn(fresh, "d_one", "a-marker")
+    assert not (memdir / "d_one.json").exists(), "the restart wrote the transcript again"
+    assert fresh.memory_store().save("d_one", {"chat": {"facts": ["a-marker"]}}) is False
+    assert not (tmp_path / "robots" / "d_one" / "memory.json").exists()
+
+    # A transcript on disk at boot (a restored backup, a crash mid-flip) is erased by the
+    # boot sweep, which runs after the settings are read; it is never loaded back.
+    memdir.mkdir(exist_ok=True)
+    (memdir / "d_one.json").write_text(json.dumps([{"role": "user", "content": "a-marker"}]))
+    again = _runtime(tmp_path, devices=("d_one",), app=_echo())
+    assert not (memdir / "d_one.json").exists()
+    assert again.history.get("d_one") in (None, [])
+
+
+@pytest.mark.parametrize("damage", ["{not json", "[1, 2]", "null", '"loud"'])
+def test_a_damaged_record_reads_as_no_settings_and_never_breaks_construction(
+        tmp_path, capsys, damage):
+    """One bad file costs that robot its saved settings, never the appliance its boot.
+    The push is the no-override document, and the operator is told once."""
+    from moxie_sdk.cloud_config import build_robot_cloud_config
+    path = _record(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(damage)
+    rt = _runtime(tmp_path, devices=("d_one",))
+    assert rt._config_overrides.get("d_one", {}) == {}
+    assert rt._push_config("d_one") == build_robot_cloud_config(rt.child)
+    said = [ln for ln in capsys.readouterr().out.splitlines() if str(path) in ln]
+    assert len(said) == 1, said
+
+
+def test_a_stored_value_the_whitelist_now_refuses_is_dropped_at_load(tmp_path, capsys):
+    """A hand edit, a value from another build, or a key the console never offers is
+    re-checked by the console's own whitelist, dropped on its own (the rest still loads),
+    never pushed, and named in one line."""
+    path = _record(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"audio_volume": 0.3, "audio_wake_set": "loud",
+                                "weekday_bedtime": ["25:00", "07:00"], "moxie_mode": 1,
+                                "not_a_setting": True}))
+    rt = _runtime(tmp_path, devices=("d_one",))
+    assert rt._config_overrides["d_one"] == {"audio_volume": 0.3}
+    cfg = rt._push_config("d_one")
+    assert cfg["audio_volume"] == 0.3
+    assert (cfg["audio_wake_set"], cfg["weekday_bedtime_enabled"], cfg["moxie_mode"]) == \
+        ("off", False, "DEFAULT_MODE")
+    said = [ln for ln in capsys.readouterr().out.splitlines() if "dropped" in ln]
+    assert len(said) == 1, said
+    for key in ("audio_wake_set", "weekday_bedtime", "moxie_mode", "not_a_setting"):
+        assert key in said[0]
+
+
+def test_a_brain_the_current_pin_refuses_is_dropped_at_load(tmp_path, monkeypatch):
+    """`MOXIE_APP` is the operator's statement about the box (brain-picker.md), so a pick
+    saved before the pin is not restored under it. Loading writes nothing: a later boot
+    whose pin allows the pick again still finds it."""
+    monkeypatch.delenv("MOXIE_APP", raising=False)
+    rt = _runtime(tmp_path, devices=("d_one",))
+    rt.update_config("d_one", brain="webhook", audio_volume=0.4)
+    monkeypatch.setenv("MOXIE_APP", "echo")
+    assert _runtime(tmp_path, devices=("d_one",))._config_overrides["d_one"] == \
+        {"audio_volume": 0.4}
+    for allows_it in ("any", "webhook"):
+        monkeypatch.setenv("MOXIE_APP", allows_it)
+        assert _runtime(tmp_path, devices=("d_one",))._config_overrides["d_one"] == \
+            {"brain": "webhook", "audio_volume": 0.4}
+
+
+def test_clearing_a_value_is_remembered_across_a_restart(tmp_path):
+    """`null` is a setting too ("no bedtime for this robot"); after a restart it must not
+    turn back into the house bedtime."""
+    rt = _runtime(tmp_path, devices=("d_one",))
+    rt.update_fleet_config(weekday_bedtime=["20:00", "07:00"])
+    rt.update_config("d_one", weekday_bedtime=["19:30", "07:00"], brain="webhook")
+    rt.update_config("d_one", weekday_bedtime=None, brain=None)
+    fresh = _runtime(tmp_path, devices=("d_one",))
+    assert fresh._config_overrides["d_one"] == {"weekday_bedtime": None, "brain": None}
+    assert fresh._push_config("d_one")["weekday_bedtime_enabled"] is False
+
+
+def test_be_moxie_mode_is_not_saved_so_a_restart_hands_the_robot_back_its_brain(tmp_path):
+    """Puppet mode belongs to a live operator session, which is RAM-only. A restart must
+    not leave a child's robot waiting on an operator who is gone."""
+    rt = _runtime(tmp_path, devices=("d_one",))
+    rt.update_config("d_one", audio_volume=0.5)
+    rt.telehealth_enable("d_one", True)
+    assert rt._config_overrides["d_one"]["moxie_mode"] == 1
+    fresh = _runtime(tmp_path, devices=("d_one",))
+    assert fresh._config_overrides["d_one"] == {"audio_volume": 0.5}
+    assert fresh._push_config("d_one")["moxie_mode"] == "DEFAULT_MODE"
+
+
+def test_a_save_the_store_refuses_still_applies_now_and_says_it_was_not_saved(tmp_path):
+    """A full disk or a read-only volume: the edit still reaches the robot, and the
+    console's activity feed says it will not survive a restart rather than staying quiet."""
+    class _Refusing(JsonStore):
+        def _write_path(self, path, value):
+            if path == self.path("d_one", "config"):
+                return False
+            return super()._write_path(path, value)
+
+    rt = _runtime(tmp_path, devices=("d_one",), store=_Refusing(root=str(tmp_path)))
+    rt.update_config("d_one", audio_volume=0.2)
+    assert _pushed(rt, "d_one")["audio_volume"] == 0.2
+    assert not _record(tmp_path).exists()
+    assert any("d_one" in n["text"] and "NOT saved" in n["text"] for n in rt.recent)

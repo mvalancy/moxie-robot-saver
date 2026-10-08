@@ -325,10 +325,14 @@ class FleetMixin:
         return out
 
     def update_config(self, device_id, **overrides):
-        """Per-robot config edit: merge overrides into this device's RobotCloudConfig
+        """Per-robot config edit: merge overrides into this device's RobotCloudConfig,
+        save the parent's settings so they survive a restart (`_save_config_overrides`)
         and re-publish it. Overrides persist across re-pushes."""
         self._config_overrides.setdefault(device_id, {}).update(overrides)
         self._note("config", f"⚙️  config updated: {', '.join(overrides)}")
+        # Saved before the purge and the push: a crash after this line still boots with
+        # the parent's choice, so a NO_DATA that was set is swept at the next start.
+        self._save_config_overrides(device_id)
         if "logging_policy" in overrides:
             # The privacy switch moved: under NO_DATA erase transcript + activity record now.
             self.purge_transcripts()
@@ -339,3 +343,89 @@ class FleetMixin:
             look = describe_face(overrides["face"] or {}) or "the default look"
             self._note("config", f"🎨 look updated: {look}")
         return self._push_config(device_id)
+
+    # ---- the per-robot layer on disk: settings survive a restart ----
+    # `robots/<id>/config.json` holds one robot's layer of `effective_config` (volume,
+    # bedtime, look, brain pick, data sharing, ...): only what the console's whitelist,
+    # `sanitize_config_overrides`, accepts. Every `update_config` rewrites it; it is read
+    # back ONCE, at construction, before the transcript sweep, because brain, safety,
+    # lifecycle and the status server read `_config_overrides` directly. Telehealth's
+    # `moxie_mode` is not in the whitelist, so it is not kept: its session lives in RAM,
+    # and a restart hands the robot back to its own brain, as before.
+    ROBOT_CONFIG_COLLECTION = "config"          # → $MOXIE_DATA_DIR/robots/<id>/config.json
+
+    @staticmethod
+    def _storable_settings(overrides) -> tuple:
+        """`(kept, dropped)`: each key re-checked ON ITS OWN through the console's
+        whitelist, so one bad value costs only itself. `kept` holds canonical values."""
+        from moxie_sdk.cloud_config import sanitize_config_overrides
+        kept, dropped = {}, []
+        for key, value in overrides.items():
+            try:
+                clean = sanitize_config_overrides({key: value})
+            except Exception:                    # ValueError, TypeError, KeyError (enum name)
+                clean = {}
+            if key in clean:
+                kept[key] = clean[key]
+            else:
+                dropped.append(str(key))
+        return kept, dropped
+
+    def _save_config_overrides(self, device_id) -> bool:
+        """Write this robot's saved settings (the store's locked, atomic write). A write
+        that fails is said aloud: the edit still applies now, but not after a restart."""
+        kept, _ = self._storable_settings(dict(self._config_overrides.get(device_id) or {}))
+        try:
+            saved = self.store.write(device_id, self.ROBOT_CONFIG_COLLECTION, kept)
+        except Exception as e:                   # persistence must never cost the edit
+            print(f"[runtime] settings write failed for {device_id}: {e}", flush=True)
+            saved = False
+        if not saved:
+            line = (f"⚠️  settings for {device_id} applied but NOT saved — they will not "
+                    f"survive a restart")
+            self._note("error", line)
+            print(f"[runtime] {line}", flush=True)
+        return saved
+
+    def _load_config_overrides(self) -> dict:
+        """Every robot's saved settings, keyed by device id (the store's directory name).
+
+        Runs in the constructor and never raises. A damaged or non-object record reads as
+        no settings (one line). A key the whitelist now refuses, or a brain the current
+        `MOXIE_APP` pin refuses, is dropped (one line per robot) and never pushed. Loading
+        writes nothing: the next save for that robot rewrites its record."""
+        from moxie_sdk import brains as brain_seam
+        pin = brain_seam.pin_for_env(os.environ.get(brain_seam.ENV_VAR, ""))
+        loaded = {}
+        try:
+            devices = self.store.devices()
+        except Exception as e:
+            print(f"[runtime] ⚠️  saved settings not loaded: {e}", flush=True)
+            return loaded
+        missing = object()
+        for device_id in devices:
+            path = self.store.path(device_id, self.ROBOT_CONFIG_COLLECTION)
+            try:
+                raw = self.store.read(device_id, self.ROBOT_CONFIG_COLLECTION, missing)
+                if raw is missing and not os.path.exists(path):
+                    continue                     # nothing saved for this robot
+            except Exception:                    # e.g. RecursionError from a hostile file
+                raw = missing
+            if not isinstance(raw, dict):
+                what = "unreadable" if raw is missing else "not a settings object"
+                print(f"[runtime] ⚠️  {path} is {what}: no saved settings for {device_id} "
+                      f"(the next save rewrites it)", flush=True)
+                continue
+            kept, dropped = self._storable_settings(raw)
+            brain = kept.get(brain_seam.CONFIG_KEY)
+            if brain and not brain_seam.honours_pin(brain, pin):
+                del kept[brain_seam.CONFIG_KEY]
+                dropped.append(f"{brain_seam.CONFIG_KEY} ({brain_seam.ENV_VAR} pins {pin})")
+            if dropped:
+                print(f"[runtime] ⚠️  {device_id}: saved settings dropped at load (not "
+                      f"accepted here now): {', '.join(sorted(dropped))}", flush=True)
+            if kept:
+                loaded[device_id] = kept
+        if loaded:
+            print(f"[runtime] restored saved settings for {len(loaded)} robot(s)", flush=True)
+        return loaded

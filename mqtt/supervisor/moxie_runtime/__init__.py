@@ -93,9 +93,10 @@ class MoxieRuntime(LifecycleMixin, StatusServerMixin, ConnectionMixin, FleetMixi
         self._seen_since_connect: set = set()
         self.robots: dict[str, RobotContext] = {}
         self.history: dict[str, list] = {}
-        # Per-device RobotCloudConfig overrides. Must exist before `_load_memory()`: the
-        # transcript privacy gate resolves through `effective_config`.
-        self._config_overrides = {}
+        # Per-device RobotCloudConfig overrides, read back from each robot's saved settings
+        # NOW (fleet.py): brain, safety, lifecycle and the status server read this dict
+        # directly, and `_load_memory()` gates the transcript through `effective_config`.
+        self._config_overrides = self._load_config_overrides()
         self._memory_dir = os.environ.get("MOXIE_MEMORY_DIR", "").strip()
         self._max_memory = int(os.environ.get("MOXIE_MEMORY_TURNS", "40"))
         self._load_memory()
