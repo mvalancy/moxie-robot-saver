@@ -57,6 +57,12 @@ class ResultCode(int, Enum):
     REPLY_FORCE_QUIT = 8
     REPLY_PENDING = 9          # streaming: more chunks to come
 
+    @classmethod
+    def _missing_(cls, value):
+        # The enum NAME this SDK put on the wire until 2026-10: still read by a robot
+        # double meeting an older server (`ResultCode("SUCCESS")`), never emitted.
+        return cls.__members__.get(value) if isinstance(value, str) else None
+
 
 class ActionType(str, Enum):
     """Structured things a Reply can ask Moxie to do beyond speaking.

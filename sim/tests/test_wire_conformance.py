@@ -412,3 +412,40 @@ def test_the_sil_robot_leaves_a_module_on_exit_module_and_on_the_older_exit():
                                                  "action": verb}]})
         assert vm.action_stats()["module_id"] == "" and vm.action_stats()["last"] == verb
     assert vm.action_stats()["exits"] == 2 and vm.action_stats()["unknown"] == 0
+
+
+def test_the_bench_robot_reads_the_integer_result_as_the_end_of_its_turn():
+    """`sim/tools/first_audio_ab.py::TimedRobot` is the third robot double here, and the
+    one `--brain live` runs through. It closed a turn on `result == "SUCCESS"` alone, so
+    once `result` became the integer every one-response answer (one sentence, or
+    `MOXIE_STREAMING=0`) waited the whole 120 s timeout and reported `ok=False`; CI never
+    saw it because the stub brain streams four sentences. Read through `ResultCode`: the
+    integer, and still the older name."""
+    tools = os.path.join(REPO, "sim", "tools")
+    if tools not in sys.path:
+        sys.path.append(tools)
+    import first_audio_ab as AB
+
+    class _Msg:                      # paho's MQTTMessage, the two attributes read
+        def __init__(self, payload):
+            self.topic = "/devices/d_bench/commands/remote_chat"
+            self.payload = json.dumps(payload).encode()
+
+    robot = AB.TimedRobot("127.0.0.1", 1, device_id="d_bench")       # never connects
+    robot._on_message(None, None, _Msg(build_chat_response("e", "Hi Sam!")))
+    assert robot.done.is_set(), "a one-response answer must end the turn"
+    for pending, closing in ((ResultCode.REPLY_PENDING, ResultCode.SUCCESS),
+                             ("REPLY_PENDING", "SUCCESS")):           # an older server
+        robot.done.clear()
+        robot._on_message(None, None, _Msg({"result": pending, "chunk_num": 0,
+                                            "output": {"text": "One moment."},
+                                            "consistency_control": {"is_completed": False}}))
+        assert not robot.done.is_set(), pending
+        # the closing result alone (no `consistency_control`) ends the turn too
+        robot._on_message(None, None, _Msg({"result": closing, "output": {"text": "Done."}}))
+        assert robot.done.is_set(), closing
+    robot.done.clear()
+    robot._on_message(None, None, _Msg({"result": "nonsense", "output": {"text": "?"}}))
+    assert not robot.done.is_set(), "a value that is no ResultCode neither closes nor raises"
+    assert AB.result_code({"result": 0}) is AB.result_code({"result": "SUCCESS"}) is \
+        ResultCode("SUCCESS") is ResultCode.SUCCESS
