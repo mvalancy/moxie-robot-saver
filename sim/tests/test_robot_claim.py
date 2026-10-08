@@ -209,6 +209,30 @@ def test_refusals_create_no_record_and_post_nothing(client, supervisor, monkeypa
     assert state["robots"] == [] and state["children"] == []
 
 
+def test_a_simulated_scan_refuses_a_robot_on_another_account(client, supervisor):
+    """One robot, one account, on every path: Simulate robot scan, handed the id of a robot
+    another account has added, is refused in the claim's own words and changes nothing. No
+    record, no permit post, and the code is still unused, so the same scan without that id
+    still completes."""
+    from moxie_server import db
+    owner = quicklogin(client, "sim-owner@claim.lan")
+    other = quicklogin(client, "sim-other@claim.lan")
+    assert _claim(client, owner).status_code == 200
+    prep = client.post("/local/pairing/prepare", headers=other,
+                       json={"ssid": "Home", "password": "pw"}).json()
+    robots, posts = db.q1("SELECT COUNT(*) n FROM robots")["n"], len(supervisor.permit_posts)
+
+    r = client.post("/local/simulate-robot-scan",
+                    json={"qr_payload": prep["qr_payload"], "device_id": DEVICE})
+    assert r.status_code == 409, r.text
+    claimed = _claim(client, other)                     # the claim path, for its words
+    assert claimed.status_code == 409 and r.json() == claimed.json()
+    assert db.q1("SELECT COUNT(*) n FROM robots")["n"] == robots
+    assert len(supervisor.permit_posts) == posts and len(_rows_naming(DEVICE)) == 1
+    assert client.post("/local/simulate-robot-scan",
+                       json={"qr_payload": prep["qr_payload"]}).status_code == 200
+
+
 def test_a_claim_uses_no_pairing_code_and_writes_no_public_key(client):
     """Nothing the robot sends carries the pairing seed, so the server cannot tell which
     code (if any) this robot scanned: a claim asserts nothing about one."""

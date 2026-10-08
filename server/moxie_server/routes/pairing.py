@@ -182,7 +182,8 @@ async def simulate_robot_scan(request: Request):
     410. With `device_id` (the MQTT `d_<uuid>`, which the QR does not carry) it also
     permits that robot on the supervisor and remembers the id on the record for later
     device commands — best-effort: a down supervisor leaves the robot pending, it never
-    fails the pairing."""
+    fails the pairing. A `device_id` another account's record names is a 409 in the
+    claim's words, before anything changes: one robot is on one account on every path."""
     body = await read_json(request)
     decoded = moxie_qr.decode_proto(body.get("qr_payload", ""))
     seed = decoded.get("secret_key")
@@ -207,6 +208,9 @@ async def simulate_robot_scan(request: Request):
            "bound_child": pairing["child_id"], "ssid": decoded.get("ssid"),
            "permitted": False, "permit_error": None}
     device_id = (body.get("device_id") or "").strip()
+    if device_id and any(db.device_id_of(r) == device_id for r in db.q(
+            "SELECT attributes FROM robots WHERE user_id<>?", (pairing["user_id"],))):
+        return _claim_refusal(409, "on another account", ON_ANOTHER_ACCOUNT, device_id)
     if device_id:
         res, code = supervisor.post_json("/permits", {
             "device_id": device_id, "permitted": True, "label": "paired via console"})
@@ -246,6 +250,10 @@ def _claim_refusal(status: int, error: str, reason: str, device_id: str, **extra
 #: The label a claim leaves on the robot's permit. Robot access is not per-account, so it
 #: names no one.
 CLAIM_LABEL = "added to a parent account"
+#: Why a robot another account's record names is refused, by the claim and by Simulate
+#: robot scan alike.
+ON_ANOTHER_ACCOUNT = ("That robot is already on another account on this server. Unpair it "
+                      "there first, then add it here.")
 
 
 @router.post("/local/robots/{device_id}/claim")
@@ -286,10 +294,7 @@ def claim_robot(device_id: str, u=Depends(current_user)):
             {"serial": device_id, "name": "Moxie", "state": "paired", "pairing-status": "paired"},
             {"volume": 0.7, "screen-brightness": 0.8}, {"child-first-name": "Moxie Kid"})
     if outcome == "taken":
-        return _claim_refusal(
-            409, "on another account",
-            "That robot is already on another account on this server. Unpair it there "
-            "first, then add it here.", device_id)
+        return _claim_refusal(409, "on another account", ON_ANOTHER_ACCOUNT, device_id)
     if outcome == "occupied":
         name = json.loads(row["attributes"]).get("name") or "Moxie"
         return _claim_refusal(

@@ -47,7 +47,8 @@ it together with the robot side, use the repo-root `docker compose up`
   (the original app's pairing-key code, behind an option), `pairing/qr.png`,
   `factory-reset/payload` and `factory-reset/qr.png` (the `restore_factory` setup
   code and its instructions), and **`simulate-robot-scan`** — completes pairing with no physical robot, for testing
-  (pass `device_id` and it also permits that robot on the supervisor, so pairing needs no second click).
+  (pass `device_id` and it also permits that robot on the supervisor, so pairing needs no second click;
+  a robot another account already has is a 409, in the claim's words).
 - **Add to my account**: `POST /local/robots/{id}/claim` (bearer) puts a robot the supervisor lists
   on the parent's account and permits it, so a robot that paired by scanning the codes gets its
   robot card; `GET /local/state` lists the connected robots on no account as `unclaimed`
