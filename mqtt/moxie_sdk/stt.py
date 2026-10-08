@@ -180,13 +180,14 @@ class OpenAITranscriber(Transcriber):
                  client=None, max_retries: int = 4, pacer=None, sleep=time.sleep,
                  min_ms: int = MIN_MS, language: Optional[str] = None,
                  timeout_s: Optional[float] = None):
-        self._timeout_s = self.TIMEOUT_S if timeout_s is None else float(timeout_s)
+        from .chat import Pacer, timeout_seconds
+        # None = `TIMEOUT_S`; 0 or less is refused here, never read as "no bound".
+        self._timeout_s = timeout_seconds(timeout_s, default=self.TIMEOUT_S)
         if client is None:
             from openai import OpenAI      # lazy — the module imports without openai
             from .chat import client_timeout
             client = OpenAI(base_url=base_url, api_key=api_key or "sk-local",
                             max_retries=0, timeout=client_timeout(self._timeout_s))
-        from .chat import Pacer
         self._client = client
         #: Public: the console model picker reads it.
         self.model = model

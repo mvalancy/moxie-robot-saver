@@ -219,13 +219,14 @@ class LLMApp(MoxieApp):
                  persona: str = DEFAULT_PERSONA, max_tokens: int = 200,
                  temperature: float = 0.8, max_history: int = 12,
                  expressive: bool = True, *, client=None, timeout_s=None, clock=None):
-        # `timeout_s` (config: MOXIE_BRAIN_TIMEOUT_S) bounds every request this brain
-        # makes and the whole of one turn's calls, streamed open and fallback together
+        # `timeout_s` (config: MOXIE_BRAIN_TIMEOUT_S; None = the SDK default, 0 or less
+        # refused — `chat.timeout_seconds`) bounds every request this brain makes and the
+        # whole of one turn's calls, streamed open and fallback together
         # (`_stream_chunks`). `clock` is the test seam for that shared deadline.
-        from ..chat import DEFAULT_TIMEOUT_S, Pacer, client_timeout
+        from ..chat import Pacer, client_timeout, timeout_seconds
         import threading
         import time
-        self._timeout_s = DEFAULT_TIMEOUT_S if timeout_s is None else float(timeout_s)
+        self._timeout_s = timeout_seconds(timeout_s)
         self._clock = clock if clock is not None else time.monotonic
         # What `_stream_chunks` leaves `respond()` of the turn's bound, per thread (one
         # app serves every robot; each turn runs on its own worker), so `respond(turn)`

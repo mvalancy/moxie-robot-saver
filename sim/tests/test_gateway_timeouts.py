@@ -22,7 +22,7 @@ import pytest
 from helpers_runtime import drive_turn, make_runtime, reload_config          # noqa: E402
 from moxie_sdk import chat as chat_seam                                      # noqa: E402
 from moxie_sdk.apps.llm_app import LLMApp                                    # noqa: E402
-from moxie_sdk.chat import (call_with_backoff, client_timeout,               # noqa: E402
+from moxie_sdk.chat import (Pacer, call_with_backoff, client_timeout,        # noqa: E402
                             is_offline_error, is_timeout_error, last_call_error,
                             make_openai_chat, make_openai_stream, model_calls)
 from moxie_sdk.stt import (FallbackTranscriber, OpenAITranscriber,            # noqa: E402
@@ -195,9 +195,10 @@ def test_every_built_client_carries_its_knob(monkeypatch):
     assert [kw["timeout"].write for kw in built] == [7, 8, 9, 10, 11, 12]
     assert all(kw["timeout"].connect == 5.0 for kw in built)
     assert all(kw["max_retries"] == 0 for kw in built)
-    # a knob shorter than the connect bound shortens the connect bound too; 0 = unbounded
+    # a knob shorter than the connect bound shortens the connect bound too; 0 is refused
     assert client_timeout(0.3).connect == 0.3
-    assert client_timeout(0) is None and client_timeout(-1) is None
+    with pytest.raises(ValueError):
+        client_timeout(0)
 
 
 def test_the_knobs_default_to_the_documented_bounds_and_reach_every_engine(monkeypatch):
@@ -535,3 +536,163 @@ def test_a_zero_retry_window_tries_the_primary_on_every_call():
         assert fb.transcribe(PCM_16K) == "heard locally"
     assert primary.calls == 3 and fb.failed
     assert fb.transcribe(PCM_16K) == "heard in the cloud" and not fb.failed
+
+
+# ------------------------------------------- a knob of 0: refused, never "no bound" --
+class _Busy(Exception):
+    """A 503 with `Retry-After: 0.3`: transient, so retried — unless the deadline says
+    the retry would start past the bound."""
+    status_code = 503
+    response = type("R", (), {"headers": {"retry-after": "0.3"}})()
+
+
+class _BusyGateway:
+    """Every endpoint (chat, stream, ears, voice) answers 503 forever, and counts."""
+
+    def __init__(self):
+        self.calls = 0
+        self.chat = self.completions = self.audio = self.transcriptions = self.speech = self
+
+    def create(self, **kw):
+        self.calls += 1
+        raise _Busy("busy")
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "nan", "inf"])
+@pytest.mark.parametrize("knob", ["MOXIE_BRAIN_TIMEOUT_S", "MOXIE_STT_TIMEOUT_S",
+                                  "MOXIE_TTS_TIMEOUT_S"])
+def test_a_knob_of_zero_is_refused_at_startup_not_read_as_no_bound(monkeypatch, knob, bad):
+    """Measured on the first K8 head: `MOXIE_BRAIN_TIMEOUT_S=0` loaded silently and
+    meant three things at once — the client got `timeout=None` (no bound at all; the
+    SDK's own default is 600 s, and the chat call was still blocked at 8 s), the
+    deadline forbade every retry (a 429 then OK raised the 429 after one attempt) and
+    the streaming fallback had no budget (a stream-open 400 answered ERROR_OFFLINE).
+    Now 0 or less has one meaning: refused at startup with a sentence, like the
+    store-lock guard."""
+    with pytest.raises(ValueError) as caught:
+        reload_config(monkeypatch, KNOBS, **{knob: bad})
+    assert knob in str(caught.value) and "positive number of seconds" in str(caught.value)
+    c = reload_config(monkeypatch, KNOBS)                  # whole again, on the defaults
+    assert (c.BRAIN_TIMEOUT_S, c.STT_TIMEOUT_S, c.TTS_TIMEOUT_S) == (60.0, 12.0, 15.0)
+
+
+def test_no_site_builds_a_client_without_a_bound(monkeypatch):
+    """`timeout_s` of 0 or less (or NaN, or inf) is refused at every construction site
+    before any SDK client exists — with or without an injected client, so no deadline
+    is ever 0 either. None stays each engine's documented default."""
+    openai = pytest.importorskip("openai")
+    built = []
+    monkeypatch.setattr(openai, "OpenAI", lambda **kw: built.append(kw))
+    fake = _BusyGateway()
+    for bad in (0, -1, 0.0, float("nan"), float("inf"), "0"):
+        for build in (lambda: make_openai_chat(URL, "k", timeout_s=bad),
+                      lambda: make_openai_stream(URL, "k", timeout_s=bad),
+                      lambda: LLMApp(URL, "k", timeout_s=bad),
+                      lambda: OpenAITranscriber(URL, "k", timeout_s=bad),
+                      lambda: OpenAIVoiceSynthesizer(URL, "k", timeout_s=bad),
+                      lambda: client_timeout(bad),
+                      lambda: make_openai_chat(URL, "k", client=fake, timeout_s=bad),
+                      lambda: LLMApp(URL, "k", client=fake, timeout_s=bad),
+                      lambda: OpenAITranscriber(URL, "k", client=fake, timeout_s=bad),
+                      lambda: OpenAIVoiceSynthesizer(URL, "k", client=fake, timeout_s=bad)):
+            with pytest.raises(ValueError) as caught:
+                build()
+            assert "positive number of seconds" in str(caught.value)
+    assert built == [], "a client was built before its knob was refused"
+    assert fake.calls == 0
+    # None is the documented default, per engine
+    from moxie_sdk.chat import timeout_seconds    # the validator every site shares
+    assert client_timeout(None).read == chat_seam.DEFAULT_TIMEOUT_S == 60.0
+    assert timeout_seconds(None) == 60.0 and timeout_seconds(None, default=12) == 12.0
+    assert timeout_seconds("7.5") == 7.5
+    assert OpenAITranscriber(URL, "k", client=fake)._timeout_s == 12.0
+    assert OpenAIVoiceSynthesizer(URL, "k", client=fake)._timeout_s == 15.0
+
+
+def test_the_shipped_knob_keeps_a_retry_and_the_streaming_fallback(monkeypatch):
+    """What knob 0 silently took away, pinned under the knob config ships, through
+    `config._build_llm`: the SDK client ends up with the 60 s bound; a gateway that
+    refuses to stream (400) still falls back to one whole reply, bounded to what is
+    left; and a 429 then OK is still retried to its answer."""
+    openai = pytest.importorskip("openai")
+    made = []
+
+    class _Gateway(_StreamFails):
+        def __init__(self, **kw):
+            super().__init__(_Clock(), 0.0, _Boom("streaming not supported"))
+            self.client_kw = kw
+            made.append(self)
+
+    monkeypatch.setattr(openai, "OpenAI", _Gateway)
+    c = reload_config(monkeypatch, KNOBS, MOXIE_APP="llm", MOXIE_LLM_BASE_URL=URL)
+    app = c._build_llm()
+    (gateway,) = made
+    assert gateway.client_kw["timeout"].read == c.BRAIN_TIMEOUT_S == 60.0
+    chunks = list(app.respond_stream(_turn()))
+    assert [ch.text for ch in chunks] == [gateway.whole] and chunks[0].final
+    assert chunks[0].result_code is ResultCode.SUCCESS
+    assert (gateway.stream_calls, gateway.whole_calls) == (1, 1)
+    assert 0 < gateway.whole_kw[0]["timeout"] <= 60.0, "the fallback gets what is left"
+
+    class _Limited(Exception):
+        status_code = 429
+        response = type("R", (), {"headers": {"retry-after": "0"}})()
+
+    attempts = []
+
+    class _OnceBusy:
+        def __init__(self):
+            self.chat = self.completions = self
+
+        def create(self, **kw):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise _Limited("slow down")
+            msg = type("M", (), {"content": "ok"})()
+            return type("R", (), {"choices": [type("C", (), {"message": msg})()]})()
+
+    chat = make_openai_chat(URL, "k", "m", client=_OnceBusy(), timeout_s=c.BRAIN_TIMEOUT_S,
+                            on_backoff=None, pacer=Pacer(sleep=lambda s: None))
+    assert chat(MESSAGES) == "ok" and len(attempts) == 2
+
+
+def test_every_entry_point_stops_retrying_inside_its_bound():
+    """A 503 forever with `Retry-After: 0.3` under a 0.2 s knob: the retry would start
+    past the bound, so each entry point makes exactly one attempt and raises. Catches a
+    site that stops passing its knob as the deadline (then: five attempts and 1.2 s of
+    sleeps per site — the mutations the first review found surviving)."""
+    fake = _BusyGateway()
+    chat = make_openai_chat(URL, "k", "m", client=fake, timeout_s=0.2, on_backoff=None)
+    with pytest.raises(_Busy):
+        chat(MESSAGES)
+    assert fake.calls == 1
+
+    fake = _BusyGateway()
+    stream = make_openai_stream(URL, "k", "m", client=fake, timeout_s=0.2, on_backoff=None)
+    with pytest.raises(_Busy):
+        next(iter(stream(MESSAGES)))
+    assert fake.calls == 1
+
+    fake, slept = _BusyGateway(), []
+    ears = OpenAITranscriber(URL, "k", client=fake, timeout_s=0.2, sleep=slept.append)
+    with pytest.raises(_Busy):
+        ears.transcribe(PCM_16K)
+    assert fake.calls == 1 and slept == []
+
+    fake, slept = _BusyGateway(), []
+    voice = OpenAIVoiceSynthesizer(URL, "k", client=fake, timeout_s=0.2, sleep=slept.append)
+    with pytest.raises(_Busy):
+        voice.synthesize("hi")
+    assert fake.calls == 1 and slept == []
+
+
+def test_the_streaming_brains_open_and_its_fallback_each_stop_inside_the_bound():
+    """The same 503 forever through `LLMApp`: one open attempt, then the fallback gets
+    one attempt inside what is left and answers with the fuzzy line (a 503 is not
+    offline) — two requests for the turn, never ten."""
+    fake = _BusyGateway()
+    app = LLMApp(URL, "k", model="m", client=fake, timeout_s=0.2, clock=_Clock())
+    chunks = list(app.respond_stream(_turn()))
+    assert fake.calls == 2, "the open or its fallback kept retrying past the bound"
+    assert len(chunks) == 1 and chunks[0].final and "fuzzy" in chunks[0].text
+    assert chunks[0].result_code is not ResultCode.ERROR_OFFLINE

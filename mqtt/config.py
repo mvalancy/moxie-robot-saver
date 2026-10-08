@@ -257,18 +257,35 @@ if STORE_LOCK_TIMEOUT_S >= BRAIN_BUDGET_S:
 # Seconds one request to the brain / ears / voice may take before it is an offline-class
 # error instead of a hung worker. The openai SDK's own default is 600 s per request and
 # the backoff retried it, so an endpoint that accepted connections and never answered
-# held one turn worker for 5 x 600 s. Each knob also bounds the whole call, retries
-# included (`moxie_sdk.chat.call_with_backoff(deadline_s=...)`). Hang bounds, chosen not
-# measured: the brain's sits above the filler budget and a slow local model's whole
-# non-streamed completion; the ears' inside the broker's keepalive drop (the transcript
-# is produced on the broker thread); 0 = the SDK's own default, no bound.
+# held one turn worker for 5 x 600 s. Each knob is also the deadline past which no retry
+# starts (`moxie_sdk.chat.call_with_backoff(deadline_s=...)`): a timeout is never
+# retried, so a wedged gateway costs one bound; a fast 429/5xx is retried only while
+# the retry starts inside the bound, and that retry runs its own request bound, so one
+# call costs at most just under two. Hang bounds, chosen not measured: the brain's sits
+# above the filler budget and a slow local model's whole non-streamed completion (it
+# also caps the memory summary, the longest completion); the ears' inside the broker's
+# keepalive drop (the transcript is produced on the broker thread, which an ears outage
+# stalls for up to one bound per retry window). 0 or less is REFUSED at startup, below:
+# it is not "no bound", it is the hang these knobs exist to end.
 BRAIN_TIMEOUT_S = _env_float("MOXIE_BRAIN_TIMEOUT_S", 60.0)
 STT_TIMEOUT_S = _env_float("MOXIE_STT_TIMEOUT_S", 12.0)
 TTS_TIMEOUT_S = _env_float("MOXIE_TTS_TIMEOUT_S", 15.0)
+
+for _knob, _seconds in (("MOXIE_BRAIN_TIMEOUT_S", BRAIN_TIMEOUT_S),
+                        ("MOXIE_STT_TIMEOUT_S", STT_TIMEOUT_S),
+                        ("MOXIE_TTS_TIMEOUT_S", TTS_TIMEOUT_S)):
+    if not 0 < _seconds < float("inf"):           # 0, a negative, NaN and inf
+        raise ValueError(
+            f"{_knob} ({_seconds:g}s) must be a positive number of seconds: 0 is not "
+            f"'no bound', it is the hang this knob exists to end. Unset it for the "
+            f"default, or set the seconds a slow model really needs.")
+del _knob, _seconds
+
 # Seconds a standby engine (local whisper / Piper / the tone behind a gateway) keeps the
 # turn before the next call tries the gateway again; an answer clears the latch. Before
 # this knob the first failure latched the standby for the rest of the run, and with no
-# local whisper installed that standby hears nothing. 0 = try the gateway on every call.
+# local whisper installed that standby hears nothing. 0 = try the gateway on every call
+# (a negative value counts as 0).
 ENGINE_RETRY_S = _env_float("MOXIE_ENGINE_RETRY_S", 60.0)
 
 # --- streaming replies ---
