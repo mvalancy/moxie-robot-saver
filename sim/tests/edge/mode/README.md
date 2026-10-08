@@ -1,7 +1,8 @@
 # 🚦 test_mode sections
 
 The sections of [`sim/test_mode.mjs`](../../../test_mode.mjs), in run order, over one
-[`harness.mjs`](harness.mjs) (the ledger, the fake deployment, the `/api/health` call).
+[`harness.mjs`](harness.mjs) (the ledger, the fake deployment, the `/api/health` call, a fake
+DOM element for `env.js`).
 
 - [`01_config_envelope.mjs`](01_config_envelope.mjs) — §1–2: `_lib/env.js` defaults, clamps and
   fail-safe; `_lib/envelope.js`'s closed shape, reasons, statuses and headers.
@@ -11,8 +12,10 @@ The sections of [`sim/test_mode.mjs`](../../../test_mode.mjs), in run order, ove
   a fake DOM, and the public-repo secret lint.
 - [`05_grounding_budget.mjs`](05_grounding_budget.mjs) — §7: the paid grounding probe's attempt
   budget, with zero network calls.
+- [`06_outage_honesty.mjs`](06_outage_honesty.mjs) — §8: outages, timeouts and the hour cap
+  replayed on a clock, with envelopes production can send; and what env.js paints for a rest.
 
-The sections run in order: §4–5 replace `fetch`, timers and `Date.now` for good.
+The sections run in order: §4–5 and §8 replace `fetch`, timers and `Date.now` for good.
 
 ---
 📖 [Edge modules](../README.md) · [Back to top](../../../../README.md)
