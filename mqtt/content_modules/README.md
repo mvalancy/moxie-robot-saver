@@ -57,6 +57,9 @@ Two things worth knowing before you author one:
 - **It reads back as English.** `ext.explain()` renders each rule as a sentence and
   `ext.grant_list()` renders each capability from a fixed table, and both appear in the
   pack review. If your rule does not read well as a sentence, a parent cannot review it.
+  A line acts only on an action tag written whole in its rule's own text (`Goodbye`'s
+  lines each start with `<exit>`); one it builds at run time is taken out and the parent
+  is told, so the sentence names everything the line can make the robot do.
 - **`clock` is not granted by default.** Only `{say, handled, session, child.nickname}`
   are. A *shipped* activity gets more because the wider set is anchored to the **digest of
   the program** (`content_app.SHIPPED_EXTRA_GRANTS`), so an imported pack that overrides a

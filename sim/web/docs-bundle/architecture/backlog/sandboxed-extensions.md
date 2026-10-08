@@ -52,7 +52,12 @@ a registered Python handler existed, and otherwise fell through to the conversat
 that socket. Its whole output surface is a `Volley`
 ([`volley.py`](../../../mqtt/moxie_sdk/content/volley.py)): `set_output`, `add_execution_action`,
 `add_subscriptions`, module-namespaced `persist_data` and per-turn `local_data`. Handler output goes
-through the same `parse_action_tags` + `annotate` path as model output.
+through the same `parse_action_tags` + `annotate` path as model output. An extension's line, though,
+may act only on an action tag written whole in its rule's own text (a `say` or `let` string literal):
+the host takes any other `<exit>`, `<sleep>` or `<launch:…>` out of the line and tells the parent
+(§4.5, §6.4), so the review's sentence for the rule (§5.4) names everything its line can make the
+robot do ([content-module-contract.md](../content-module-contract.md), "What a line's action tags
+may do").
 
 ### 2.2 The pack format it rides in
 
@@ -276,7 +281,7 @@ effect is applied. A breach anywhere discards the list whole (X11), so nothing i
 
 | Statement | What the host does |
 |---|---|
-| `say` | `volley.set_output`, after the output-side safety classifier (a blocked line becomes a redirect) and after `annotate` if no markup was authored |
+| `say` | Acts only on the action tags written whole in the rule's own text (`literal_actions`, read with the robot's own parse): any other `<exit>`, `<sleep>` or `<launch:…>` the line carries is taken out first (`actions.drop_action_tags`), counted and reported (§6.4), never said or acted on. Then `volley.set_output`, after the output-side safety classifier (a blocked line becomes a redirect) and after `annotate` if no markup was authored |
 | `markup` | Checked tag by tag against `vocab.py`. Unknown ids and malformed tags are dropped and counted, never passed through |
 | `remember` / `forget` | `MemoryStore.merge` on `(device_id, namespace)`, both supplied by the host. Dropped at the store under `NO_DATA` |
 | `scratch` | `volley.local_data`, per turn, never persisted |
@@ -352,7 +357,11 @@ Both views are pure functions of the AST ([`explain.py`](../../../mqtt/moxie_sdk
    `ACTION_WORDS` tables, never from author text: *"Can speak to your child · Can check the time"*.
 2. **`explain(ext)`.** One English sentence per rule: *"Whenever this activity is triggered: tells your
    child 'The time is …' and answers without asking the AI."* T13 requires every capability to have
-   words, so a new capability cannot ship without them.
+   words, so a new capability cannot ship without them. A rule's sentence ends with what its line's
+   action tags make happen: every tag written whole in the rule's own text, which is all the host lets
+   the line act on (§4.5), so the sentence names everything the line can make the robot do, at least
+   as *"sometimes"* (the full statement, and what the wording means, is in
+   [content-module-contract.md](../content-module-contract.md)).
 
 ---
 
@@ -406,6 +415,12 @@ too long"*). After `MOXIE_EXT_MAX_BREACHES` breaches for the same (device, exten
 **quarantined** and not evaluated again. Both counters live on the `ContentApp` instance: they last until
 the process restarts and are **not** reset per chat session (a content reload swaps the module but keeps
 the app).
+
+An action tag the host took out of a line (§4.5: one the rule's own text does not write whole) is told
+the same way, one row per (device, extension, reason `tag`), with *"it tried to make Moxie do something
+its review did not name"*. It is not a breach and does not count towards quarantine: as with a markup
+tag the catalogue drops, the line is said without it and the turn goes on. `ContentApp._ext_refusals`
+counts them apart from `_ext_breaches`.
 
 ---
 

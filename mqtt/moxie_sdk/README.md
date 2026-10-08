@@ -5,7 +5,7 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
 
 - [`app.py`](app.py) — the `MoxieApp` interface, the heart of the SDK (what an app implements to control Moxie).
 - [`types.py`](types.py) — shared data types passed to/from apps.
-- [`actions.py`](actions.py) — parses robot-control tags (`<exit>`, `<launch:MOD:CID>`, …) out of a brain's own text into real `Reply.actions`, and the prompt paragraph that teaches a model to use them.
+- [`actions.py`](actions.py) — parses robot-control tags (`<exit>`, `<launch:MOD:CID>`, …) out of a brain's own text into real `Reply.actions`, the filter that lets a sandboxed extension's line act only on the tags its own text writes (`drop_action_tags`), and the two prompt paragraphs that teach a model to use them: `ACTION_TAG_PROMPT` (every tag, the llm brain) and `LEAVE_TAG_PROMPT` (`<exit>` and `<sleep>` only, the content brain).
 - [`apps/`](apps/) — ready-made `MoxieApp` implementations (echo, LLM brain, webhook).
 - [`schedule/`](schedule/) — builds the day plan (`ContentSchedule`) the robot pulls at session
   start: onboarding, a rotation of on-board activities that skips what the child already finished,
