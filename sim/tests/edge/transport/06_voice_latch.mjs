@@ -200,6 +200,21 @@ for (const LINE of ["I love building towers out of blocks and knocking them down
   const heard = world.spy.sounds.slice(s0).filter((s) => moxieLines.some((t) => clipBytes(t) === s.bytes));
   eq(heard.length, moxieLines.length,
      `8e (demo): replayed after a voiced live turn, every one of Moxie's ${moxieLines.length} demo lines is HEARD`);
+
+  // …and a live turn voiced DURING the replay is not mistaken for the recording's voice.
+  const world2 = await boot({ realVoice: true, answer: live((path) => {
+    if (path === "/api/chat") return said("Hello from the live brain.", "sim-r2", { speech: ticket("sim-r2") });
+    if (path === "/api/speech") return voiced("sim-r2", { seconds: 1 });
+    if (path === "sessions/demo.json") return { status: 200, json: demo };
+    return { status: 404, text: "" };
+  }) });
+  world2.clickHandlers["rec-demo"]();
+  await advance(8000);                                    // the demo's first line (at 6 s) is out
+  await turn(world2, "hi moxie", 2000);                   // a live, voiced turn mid-replay
+  const s1 = world2.spy.sounds.length;
+  await advance(15000);                                   // the demo's last line is at 17 s
+  ok(world2.spy.sounds.slice(s1).some((s) => s.bytes === clipBytes(moxieLines[moxieLines.length - 1])),
+     "8e (demo): a live turn voiced mid-replay does not silence the demo's remaining lines");
 }
 {
   // (iii) a replayed bus recording whose voices follow their words: from its 2nd line on, the

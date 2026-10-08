@@ -32,7 +32,9 @@
   function setVoice(eid, v) {
     voices.delete(eid);                               // re-insert: newest last
     voices.set(eid, v);
-    if (voices.size > KEEP_EVENTS) voices.delete(voices.keys().next().value);
+    if (voices.size <= KEEP_EVENTS) return;
+    // Forget the oldest VOICED event; an expected one is still owed its voice (or its words).
+    for (const [k, x] of voices) if (x === VOICED) { voices.delete(k); break; }
   }
 
   function speakLocally(text, eid) {
@@ -81,10 +83,14 @@
   // here we only route + arbitrate.
   function handleTts(payload) {
     const msg = B.parse(payload); if (!msg) return;
+    const eid = msg.event_id || "";
+    // A voice nobody announced came over the bus, or from the recording being replayed.
+    if (!(eid && voices.get(eid) === EXPECTED)) {
+      if (B.isLive()) busVoiced = true;
+      if (rec.replaying) replayVoiced = true;
+    }
     cloudVoice = true;
-    if (B.isLive()) busVoiced = true;
-    if (rec.replaying) replayVoiced = true;
-    if (msg.event_id) { setVoice(msg.event_id, VOICED); held.delete(msg.event_id); }
+    if (eid) { setVoice(eid, VOICED); held.delete(eid); }
     cancelPendingSpeak();
     if (!window.moxieAudio || !window.moxieAudio.playCloudTTS) return;
     window.moxieAudio.playCloudTTS(msg);
