@@ -150,6 +150,25 @@ def bound_device_ids() -> set:
     return {d for d in map(device_id_of, q("SELECT attributes FROM robots")) if d}
 
 
+def bind_scanned_robot(rid, uid, child_id, attributes: dict, robot_setting: dict, id_hash):
+    """Complete a pairing in one transaction: the robot record, and the code marked used.
+    `False`, and nothing changes, when the record names an MQTT identity
+    (`mqtt-device-id`) another account's record names: a robot is on one account.
+    `claim_robot` checks the same rule in its own transaction, so neither path can land
+    between the other's check and its insert."""
+    device_id = str(attributes.get("mqtt-device-id") or "").strip()
+    with _LOCK, _C:
+        if device_id and any(device_id_of(r) == device_id for r in _C.execute(
+                "SELECT attributes FROM robots WHERE user_id<>?", (uid,)).fetchall()):
+            return False
+        _C.execute("INSERT INTO robots(id,user_id,child_id,attributes,robot_setting,"
+                   "last_seen_at,created_at) VALUES(?,?,?,?,?,?,?)",
+                   (rid, uid, child_id, json.dumps(attributes), json.dumps(robot_setting),
+                    now_s(), now_s()))
+        _C.execute("UPDATE pairings SET consumed=? WHERE id_hash=?", (PAIRING_USED, id_hash))
+        return True
+
+
 def claim_robot(uid, device_id, attributes: dict, robot_setting: dict, child_attrs: dict):
     """Bind the robot behind one MQTT identity to an account, in one transaction, keeping
     two rules: a robot is on one account, and an account has one robot (the web app shows

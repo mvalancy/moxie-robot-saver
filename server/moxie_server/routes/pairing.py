@@ -210,22 +210,21 @@ async def simulate_robot_scan(request: Request):
            "bound_child": pairing["child_id"], "ssid": decoded.get("ssid"),
            "permitted": False, "permit_error": None}
     device_id = (body.get("device_id") or "").strip()
-    if device_id and any(db.device_id_of(r) == device_id for r in db.q(
-            "SELECT attributes FROM robots WHERE user_id<>?", (pairing["user_id"],))):
+    if device_id:
+        attrs["mqtt-device-id"] = device_id
+        out["device_id"] = device_id
+    # The record first, checked against every other account in the same transaction, and
+    # only then the permit post, the one call here that waits on the network: a claim that
+    # lands meanwhile finds the robot on this account, so it is never on two.
+    if not db.bind_scanned_robot(rid, pairing["user_id"], pairing["child_id"], attrs,
+                                 {"volume": 0.7, "screen-brightness": 0.8}, id_hash):
         return _claim_refusal(409, "on another account", ON_ANOTHER_ACCOUNT, device_id)
     if device_id:
         res, code = supervisor.post_json("/permits", {
             "device_id": device_id, "permitted": True, "label": "paired via console"})
-        attrs["mqtt-device-id"] = device_id
-        out["device_id"] = device_id
         out["permitted"] = bool(code == 200 and res.get("ok"))
         if not out["permitted"]:
             out["permit_error"] = res.get("error") or f"supervisor returned {code}"
-    db.ex("INSERT INTO robots(id,user_id,child_id,attributes,robot_setting,last_seen_at,created_at)"
-          " VALUES(?,?,?,?,?,?,?)",
-          (rid, pairing["user_id"], pairing["child_id"], json.dumps(attrs),
-           json.dumps({"volume": 0.7, "screen-brightness": 0.8}), db.now_s(), db.now_s()))
-    db.ex("UPDATE pairings SET consumed=? WHERE id_hash=?", (db.PAIRING_USED, id_hash))
     return out
 
 

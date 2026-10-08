@@ -247,6 +247,37 @@ def test_a_simulated_scan_refuses_a_robot_on_another_account(client, supervisor)
                        json={"qr_payload": prep["qr_payload"]}).status_code == 200
 
 
+def test_a_claim_that_lands_mid_scan_leaves_the_robot_on_one_account(client, monkeypatch):
+    """The scan's check and its record are one step. Its permit post is the one call in
+    the scan that waits on the network (up to 3 s): another account's claim that lands
+    then finds the robot already on the scanning account and is refused in the usual
+    words, so the robot is never on two accounts. That claim is the real route, called
+    from inside the post."""
+    from moxie_server import db, supervisor as sv
+    from moxie_server.routes import pairing
+    owner = quicklogin(client, "mid-scan-owner@claim.lan")
+    scanner = quicklogin(client, "mid-scan-scanner@claim.lan")
+    owner_row = db.get_user(_state(client, owner)["user"]["id"])
+    prep = client.post("/local/pairing/prepare", headers=scanner,
+                       json={"ssid": "Home", "password": "pw"}).json()
+    real, raced = sv.post_json, []
+
+    def post_json(path, payload, timeout=3):
+        if payload.get("label") == "paired via console" and not raced:
+            raced.append(pairing.claim_robot(DEVICE, u=owner_row))
+        return real(path, payload, timeout)
+
+    monkeypatch.setattr(sv, "post_json", post_json)
+    scan = client.post("/local/simulate-robot-scan",
+                       json={"qr_payload": prep["qr_payload"], "device_id": DEVICE})
+    assert len(raced) == 1                                  # the claim did land mid-scan
+    owners = sorted({r["user_id"] for r in _rows_naming(DEVICE)})
+    assert owners == [_state(client, scanner)["user"]["id"]], owners
+    assert scan.status_code == 200, scan.text
+    assert raced[0].status_code == 409
+    assert json.loads(raced[0].body)["reason"] == pairing.ON_ANOTHER_ACCOUNT
+
+
 def test_a_claim_uses_no_pairing_code_and_writes_no_public_key(client):
     """Nothing the robot sends carries the pairing seed, so the server cannot tell which
     code (if any) this robot scanned: a claim asserts nothing about one."""
