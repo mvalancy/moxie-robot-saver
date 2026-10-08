@@ -126,3 +126,23 @@ series must not double what a visitor waits.
 
 ---
 📖 [Backlog index](README.md) · [Architecture index](../README.md) · [Live-Sim spec](live-sim-demo.md) · [Deploy guide](../../guides/deploy-cloudflare.md)
+
+## 4. The hosted persona is v2; the robot persona is still v1 (follow-up)
+
+**What changed (2026-10-08).** `functions/api/_lib/env.js::DEFAULT_PERSONA` is a new text
+([live-sim-demo.md §4.11](live-sim-demo.md)): identity and mission first, the child as her mentor, a
+character sheet whose habits are the ones her idle self-talk already has (`sim/web/ambient.json`),
+honest senses for the web page (she hears through Listen and reads typed lines; there is no camera),
+the conversation rules in priority order, the safety block last and unchanged in substance. It was
+measured against v1 on the production pair with `sim/tools/model_bakeoff.mjs` before it merged; the
+numbers are in §4.11.
+
+**What did not change.** The robot path's persona,
+[`mqtt/moxie_sdk/apps/llm_app.py::DEFAULT_PERSONA`](../../../mqtt/moxie_sdk/apps/llm_app.py), is
+still the v1 text (the one the hosted v1 was ported from). It says "you can see and hear them", which
+is TRUE on a robot with a camera and false on the page, so the two texts should not simply be made
+equal: the robot persona needs its own senses paragraph and its own measurement on the robot path
+(`sim/eval_live.mjs` cannot drive it; the SIL stack can). **Open:** decide whether the robot persona
+adopts v2's identity, character sheet and ordered rules with robot senses, and measure it there before
+changing it. Until then the two personas differ on purpose, and nothing asserts they are equal.
+

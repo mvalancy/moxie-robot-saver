@@ -532,7 +532,7 @@ costs money. It scores `repeatOpening`, `maxOverlap`, `exactDupes`, `questionRat
 
 | # | Lever | Where | Cost |
 |---|---|---|---|
-| 1 | Persona rules: keep the conversation moving, never repeat a sentence, do not end every turn with a question | `DEFAULT_PERSONA` / `DEMO_PERSONA` | free |
+| 1 | Persona (§4.11): one contribution of her own per turn, a question only when the cue asks for one, a bare "ok" means it is her turn | `DEFAULT_PERSONA` / `DEMO_PERSONA` | free |
 | 2 | `frequency_penalty` 0.4 / `presence_penalty` 0.3. A value of 0 is not sent. A gateway that 400s on them has them dropped for the life of the isolate, and the call is retried once. | `DEMO_FREQUENCY_PENALTY`, `DEMO_PRESENCE_PENALTY` | free |
 | 3 | **Re-roll:** a reply that exactly matches (ignoring case, whitespace and punctuation: "That's okay." and "That's okay!" were served live as two turns of one conversation) any assistant turn in the signed window is asked again **once**, with a server-built system message forbidding that line. The second body carries the same reference passage as the first, and the diagram served is the one drawn for the served line. | `DEMO_REROLL`, `chat.js` step 8b, `_lib/reply.js::echoOf` | **one extra completion** |
 
@@ -619,7 +619,7 @@ clamped. `_lib/env.js::DEFAULTS` is the source of truth.
 | `DEMO_MAX_RECORD_MS` | 15000 | 1000..600000 |
 | `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500000 / 2000 | 1..5e7 / 0..5e7 |
 | `DEMO_TRUST_XFF` | off | **leave unset in production** |
-| `DEMO_PERSONA` | built-in | the system prompt |
+| `DEMO_PERSONA` | built-in (v2, §4.11) | the system prompt; the built-in text is the measured one, an override is not |
 | `DEMO_DEVICE_ID` | `d_sim` | topic segment |
 | `DEMO_ALLOWED_ORIGINS` | none (the request's own origin) | comma-separated extra origins |
 | `DEMO_TICKET_SECRET` (secret) | HKDF of the API key | set it if you rotate the key often |

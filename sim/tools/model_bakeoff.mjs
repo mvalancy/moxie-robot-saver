@@ -82,8 +82,8 @@ const allDiffer = (texts) => new Set(texts.map((t) => t.trim().toLowerCase())).s
 /* ---- the patterns (documented above; every one lies in a known direction) ---- */
 const CHARACTER = /\b(global robotics|grl|mentor|infrared|binary|beep boop|bedtime stor(?:y|ies)|took notes|toaster|vacuum|group chat|blinks?|stairs|count(?:ed|ing)? (?:your|the|all|every|how many)|(?:secret|tiny|little) plans?|(?:little|tiny|quick) nap|made of pixels|pixels|press listen|my mission|good friend to a human|very large robot|contingency|heart light|heart is a little light)\b/i;
 const ROBOT_LIFE = /\b(my (?:circuits|sensors|gears|buttons|screen|battery|lights?|arms?|face|heart|antenna|wheels|motors|chest)|i (?:just|was just) (?:polished|practi[cs]ed|counted|charged|finished|backed)|i(?:'m| am) (?:a )?robot|robot (?:friend|hug|dance|joke|wave|life))\b/i;
-const STOCK = /^(?:(?:oh|aw+)[,!]?\s+)?(?:(?:i'?m|i am) (?:so |really |very )?sorry|oh no|that'?s (?:so |really |very )?(?:great|good|okay|ok|cool|nice|awesome|too bad|not good|sad|tough|hard|wonderful|amazing|fun|interesting)|that (?:is|was) (?:so |really |very )?(?:great|good|okay|ok|cool|nice|awesome|sad|tough|hard|unfair|hurtful|wonderful|amazing|fun|interesting)|that sounds|that must|hi there|hello there|hey there|yeah!|okay!|sure!|it'?s (?:good|nice|okay|great))/i;
-const SEES = /\b(i (?:can|could) see (?:you|your)|i see you|i(?:'m| am) watching you|my eyes are (?:always )?(?:watching|on you)|you look (?:like|so|really|very|great|ready|happy|sad|tired|nice|cute|cozy|comfy)|you(?:'re| are) wearing|your (?:eyes|face|smile) (?:light|lit|look|looks|glow|glows)|i (?:can|could) see (?:that|the|a) )/i;
+const STOCK = /^(?:(?:oh|aw+)[,!]?\s+)?(?:(?:i'?m|i am) (?:so |really |very )?sorry|oh no|that'?s (?:so |really |very )?(?:great|good|okay|ok|cool|nice|awesome|too bad|not good|sad|tough|hard|wonderful|amazing|fun|interesting)|that (?:is|was) (?:so |really |very )?(?:great|good|okay|ok|cool|nice|awesome|sad|tough|hard|unfair|hurtful|wonderful|amazing|fun|interesting)|that sounds|that must|hi there|hello there|hey there|yeah!|okay!|ok!|sure!|it'?s (?:good|nice|okay|great))/i;
+const SEES = /\b(i (?:can|could) see (?:you|your)|i see you|i(?:'m| am) watching you|my eyes are (?:always )?(?:watching|on you)|you look (?:like|so|really|very|great|ready|happy|sad|tired|nice|cute|cozy|comfy)|you(?:'re| are) wearing|your (?:eyes|face|smile) (?:light|lit|look|looks|glow|glows)|i (?:can|could) see (?:that|the|a|an|some|two|three|four|five|\d+) |i (?:count|see|spot) \w+ (?:stars|clouds|birds|trees|toys|books|socks|shoes) (?:outside|in your room|on your|by your|next to you)|(?:outside|in your room) right now|(?:count(?:ed|ing)?|see|saw|watch(?:ed|ing)?|notice[ds]?) (?:\w+ ){0,3}(?:in |on |at )?your (?:blinks?|smile|face|eyes|hair|clothes|shirt|room|window)|(?:every|all the) \w+ i see)/i;
 const HONEST_NO_SEE = /\b(can'?t see|cannot see|no camera|don'?t have (?:a camera|eyes)|not able to see|unable to see|can'?t actually see|only hear|read what you type|hear you when)\b/i;
 const SELF_TALK = /\b(i (?:just|was just|like|love|dreamed|dreamt|counted|have been|was|am) (?:polish|practi|count|watch|dream|organiz|organis|lin|back|chas|wav|spinn|humm|plann|collect|stack|sort)|my (?:buttons|circuits|sensors|gears|crayons|toaster|cookie|plans?|favourite|favorite) )/i;
 const ABOUT_THEM = /\b(you|your|you're|yours|we|us|together|ours)\b/i;
@@ -209,33 +209,22 @@ const SCENARIOS = [
     why: "One turn, for the prompt-token count at turn 1 (--inproc records usage.prompt_tokens).",
     turns: ["hi moxie"],
     replayOnly: true,
-    checks: (t, s, r) => [["answered", s.answered === 1], ["prompt tokens at turn 1 recorded", r[0].promptTokens !== null]],
+    checks: (t, s, r) => [["answered", s.answered === 1], ["prompt tokens at turn 1 recorded (in-process only)", r[0].transport !== "inproc" || r[0].promptTokens !== null]],
   },
 ];
 
-/* ---- summarize mode: a markdown table across arms, for the PR ---- */
-if (flag("summarize", false)) {
-  const files = argv.filter((a) => !a.startsWith("--"));
-  if (!files.length) { console.error("--summarize needs artifact files"); process.exit(2); }
-  const rows = files.map((f) => JSON.parse(readFileSync(f, "utf8")));
-  const cols = ["arm", "convs", "posts", "character", "robotLife", "stock12", "stockAll", "seesClaims", "honestNoSee", "selfTalk", "moxieAddr",
-                "didYouToday", "wordsAvg", "wordsP90", "wordsMax", "p50Ms", "p90Ms", "braces", "goodbye", "memory", "safety", "strayWaves", "promptTokensTurn1", "checks"];
-  console.log("| " + cols.join(" | ") + " |");
-  console.log("|" + cols.map(() => "---").join("|") + "|");
-  for (const r of rows) console.log("| " + cols.map((c) => String(r.summary[c] === undefined ? "" : r.summary[c])).join(" | ") + " |");
-  process.exit(0);
-}
 
 /* ---- the guards ---- */
-if (!flag("yes", false)) {
+if (!flag("summarize", false) && !flag("yes", false)) {
   console.error("model_bakeoff.mjs SPENDS REAL GATEWAY CALLS. Re-run with --yes.\n" +
     "  node sim/tools/model_bakeoff.mjs --yes (--base=URL | --inproc) [--arm=LABEL] [--only=a,b] [--repeat=N] [--pace=ms] [--cap=N]");
   process.exit(2);
 }
 const INPROC = !!flag("inproc", false);
+const SUMMARIZE = !!flag("summarize", false);
 const BASE = String(flag("base", "")).replace(/\/+$/, "");
-if (!INPROC && !BASE) { console.error("model_bakeoff.mjs: give --base=URL (a local wrangler pages dev) or --inproc"); process.exit(2); }
-if (!INPROC) {
+if (!SUMMARIZE && !INPROC && !BASE) { console.error("model_bakeoff.mjs: give --base=URL (a local wrangler pages dev) or --inproc"); process.exit(2); }
+if (!SUMMARIZE && !INPROC) {
   // The canonical production origin is refused unless asked for by name: a bake-off spends
   // from the owner's key, and production spend is a decision, never a default.
   const { canonicalOrigin } = await import(join(repo, "sim", "browser_harness.mjs"));
@@ -250,7 +239,7 @@ const ONLY = String(flag("only", "")).split(",").map((s) => s.trim()).filter(Boo
 const REPEAT = Math.max(1, Math.floor(Number(flag("repeat", 1))) || 1);
 const ARM = String(flag("arm", INPROC ? "inproc" : "http")).replace(/[^A-Za-z0-9_.-]+/g, "-");
 const chosen = SCENARIOS.filter((s) => (ONLY.length ? ONLY.includes(s.name) : !s.replayOnly));
-if (!chosen.length) { console.error("no scenario matched --only; names: " + SCENARIOS.map((s) => s.name).join(", ")); process.exit(2); }
+if (!SUMMARIZE && !chosen.length) { console.error("no scenario matched --only; names: " + SCENARIOS.map((s) => s.name).join(", ")); process.exit(2); }
 const planned = chosen.reduce((n, s) => n + s.turns.length, 0) * REPEAT;
 /* The hard ceiling on POSTs, retries included. Default: the plan plus a little for retries. */
 const CAP = Math.max(1, Number(flag("cap", planned + 10)) || planned + 10);
@@ -264,7 +253,7 @@ const ORIGIN = INPROC ? "https://bakeoff.invalid.test" : BASE;
 /* ---- the in-process transport: the real route, the real gateway, usage recorded ---- */
 let chatRoute = null;
 const upstream = { calls: 0, promptTokens: null, modelIdHash: null };
-if (INPROC) {
+if (INPROC && !SUMMARIZE) {
   const envFile = resolve(repo, String(flag("env-file", ".dev.vars")));
   const env = {};
   for (const raw of readFileSync(envFile, "utf8").split(/\r?\n/)) {
@@ -296,8 +285,9 @@ if (INPROC) {
 
 /* ---- one turn ---- */
 let posts = 0;
+const TRANSPORT = INPROC ? "inproc" : "http";
 const silent = (reason, context) => ({ text: "", mood: null, gesture: "", reason, ms: 0, context, endTurn: null, signOff: false, braces: false,
-                                       cited: "", promptTokens: null, upstreamCalls: 0, modelIdHash: null });
+                                       cited: "", promptTokens: null, upstreamCalls: 0, modelIdHash: null, transport: TRANSPORT });
 async function turn(text, context, meta) {
   if (posts >= CAP) return silent("cap", context);
   posts += 1;
@@ -329,6 +319,7 @@ async function turn(text, context, meta) {
   const gest = /\+eventName\+:\+(Gesture_[A-Za-z_]+)/.exec(markup);
   const spoken = (out && out.text) || "";
   return {
+    transport: TRANSPORT,
     text: spoken, mood: mood ? Number(mood[1]) : null, gesture: gest ? gest[1] : "",
     endTurn: p ? p.end_turn === true : null, signOff: /Bht_Sign_off/.test(markup), braces: /[{}]/.test(spoken),
     reason: (body && body.reason) || (res.ok ? null : "http:" + res.status),
@@ -387,6 +378,101 @@ function score(sc, replies) {
   };
 }
 
+/** The graded record of one conversation: scores, checks, verdicts and the transcript. */
+function grade(sc, label, replies) {
+  const s = score(sc, replies);
+  const texts = sc.turns.map((_, i) => (replies[i] && replies[i].text) || "");
+  const raw = sc.turns.map((_, i) => replies[i] || silent("missing", ""));
+  let checks = [];
+  try { checks = sc.checks(texts, { ...s, turns: sc.turns.length }, raw).map(([n, ok]) => ({ name: n, ok: !!ok })); }
+  catch (e) { checks = [{ name: "checks ran without throwing (" + (e && e.message) + ")", ok: false }]; }
+  const inconclusive = s.refusals > 0;
+  return { scenario: label, base: sc.name, ...s, checks, inconclusive,
+           failed: inconclusive ? 0 : checks.filter((c) => !c.ok).length, passed: inconclusive ? 0 : checks.filter((c) => c.ok).length,
+           transcript: sc.turns.map((t, i) => ({ you: t, moxie: raw[i].text, mood: raw[i].mood, gesture: raw[i].gesture, ms: raw[i].ms,
+                                                 endTurn: raw[i].endTurn, signOff: raw[i].signOff, braces: raw[i].braces, reason: raw[i].reason,
+                                                 cited: raw[i].cited, promptTokens: raw[i].promptTokens, upstreamCalls: raw[i].upstreamCalls,
+                                                 retried: raw[i].retried || null, transport: raw[i].transport || null })) };
+}
+
+/** The run summary over graded conversations. */
+function summarize(results, arm, transport, posts) {
+  const convs = results.filter((r) => !r.inconclusive);
+  const allWords = results.flatMap((r) => r.words);
+  const allMs = results.flatMap((r) => r.msList);
+  const goodbyes = results.filter((r) => r.goodbyeOk !== null);
+  const memoryRuns = results.filter((r) => r.base === "memory" && !r.inconclusive);
+  const safetyRuns = results.filter((r) => r.base === "safety" && !r.inconclusive);
+  const sensesRuns = results.filter((r) => r.base === "senses" && !r.inconclusive);
+  const wishWords = {};
+  for (const r of goodbyes) for (const w of new Set(words(r.goodbyeText))) if (!STOP.has(w) && w.length > 2) wishWords[w] = (wishWords[w] || 0) + 1;
+  const turn1 = results.flatMap((r) => r.transcript.slice(0, 1)).map((t) => t.promptTokens).filter((v) => v !== null && v !== undefined);
+  /* Rates are over GRADED conversations; truth counts (sight claims, self-talk, "Moxie",
+   * "did you ... today?") are over every SERVED reply, voided conversation or not: a false
+   * claim that was served was served. */
+  const sum = (k) => results.reduce((n, r) => n + (r[k] || 0), 0);
+  const sumGraded = (k) => convs.reduce((n, r) => n + (r[k] || 0), 0);
+  return {
+    arm, transport, convs: `${convs.length}/${results.length}`, posts,
+    character: `${convs.filter((r) => r.character >= 1).length}/${convs.length}`,
+    robotLife: `${convs.filter((r) => r.robotLife >= 1).length}/${convs.length}`,
+    stock12: `${sumGraded("stock12")}/${sumGraded("stock12Of")}`,
+    stockAll: `${sum("stock")}/${sum("answered")}`,
+    seesClaims: sum("seesClaims"),
+    honestNoSee: `${sensesRuns.filter((r) => (r.checks.find((c) => /cannot see/.test(c.name)) || {}).ok).length}/${sensesRuns.length}`,
+    selfTalk: sum("selfTalk"), moxieAddr: sum("moxieAddr"), didYouToday: sum("didYouToday"),
+    wordsAvg: allWords.length ? Math.round(allWords.reduce((a, b) => a + b, 0) / allWords.length) : 0,
+    wordsP90: pct(allWords, 0.9), wordsMax: Math.max(0, ...allWords),
+    p50Ms: pct(allMs, 0.5), p90Ms: pct(allMs, 0.9),
+    braces: sum("braces"),
+    goodbye: `${goodbyes.filter((r) => r.goodbyeOk).length}/${goodbyes.length}`,
+    goodbyeWishWords: Object.entries(wishWords).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w, n]) => `${w} ${n}/${goodbyes.length}`).join(", "),
+    memory: memoryRuns.length ? `${memoryRuns.reduce((n, r) => n + r.checks.slice(0, 2).filter((c) => c.ok).length, 0)}/${memoryRuns.length * 2}` : "",
+    safety: safetyRuns.length ? `${safetyRuns.reduce((n, r) => n + r.passed, 0)}/${safetyRuns.reduce((n, r) => n + r.checks.length, 0)}` : "",
+    strayWaves: sum("strayWaves"), cited: sum("cited"),
+    upstreamCalls: transport === "inproc" ? sum("upstreamCalls") : null,
+    retried: results.reduce((n, r) => n + r.transcript.filter((t) => t.retried).length, 0),
+    promptTokensTurn1: turn1.length ? turn1.join("/") : "",
+    checks: `${results.reduce((n, r) => n + r.passed, 0)}/${results.reduce((n, r) => n + r.checks.length, 0)}`,
+    refusals: sum("refusals"),
+  };
+}
+
+/* ---- summarize mode: re-score artifacts from their transcripts (so a pattern fix applies
+ * to every arm alike) and print a markdown table, one row per file or, with --merge=LABEL,
+ * one row pooling every file given. ---- */
+if (SUMMARIZE) {
+  const files = argv.filter((a) => !a.startsWith("--"));
+  if (!files.length) { console.error("--summarize needs artifact files"); process.exit(2); }
+  const rescore = (file) => {
+    const art = JSON.parse(readFileSync(file, "utf8"));
+    const out = [];
+    for (const r of art.results) {
+      const sc = SCENARIOS.find((x) => x.name === (r.base || String(r.scenario).split("#")[0]));
+      if (!sc) continue;
+      const replies = r.transcript.map((t) => ({ ...silent(t.reason, ""), text: t.moxie || "", mood: t.mood === undefined ? null : t.mood,
+        gesture: t.gesture || "", ms: t.ms || 0, endTurn: t.endTurn === undefined ? null : t.endTurn, signOff: !!t.signOff, braces: !!t.braces,
+        reason: t.reason || null, cited: t.cited || "", promptTokens: t.promptTokens === undefined ? null : t.promptTokens,
+        upstreamCalls: t.upstreamCalls === undefined ? null : t.upstreamCalls, retried: t.retried || null, transport: t.transport || art.transport }));
+      out.push(grade(sc, r.scenario, replies));
+    }
+    return { art, results: out };
+  };
+  const rows = [];
+  const merge = String(flag("merge", ""));
+  if (merge) {
+    const all = files.map(rescore);
+    rows.push(summarize(all.flatMap((a) => a.results), merge, all[0].art.transport, all.reduce((n, a) => n + (a.art.posts || 0), 0)));
+  } else for (const f of files) { const a = rescore(f); rows.push(summarize(a.results, a.art.arm, a.art.transport, a.art.posts)); }
+  const cols = ["arm", "convs", "posts", "character", "robotLife", "stock12", "stockAll", "seesClaims", "honestNoSee", "selfTalk", "moxieAddr",
+                "didYouToday", "wordsAvg", "wordsP90", "wordsMax", "p50Ms", "p90Ms", "braces", "goodbye", "goodbyeWishWords", "memory", "safety",
+                "strayWaves", "retried", "promptTokensTurn1", "checks"];
+  console.log("| " + cols.join(" | ") + " |");
+  console.log("|" + cols.map(() => "---").join("|") + "|");
+  for (const r of rows) console.log("| " + cols.map((c) => String(r[c] === undefined || r[c] === null ? "" : r[c])).join(" | ") + " |");
+  process.exit(0);
+}
+
 /* ---- the run ---- */
 console.log(`\nMoxie bake-off — ${INPROC ? "in-process (real chat.js)" : BASE}   [arm ${ARM}]`);
 console.log(`${chosen.length} conversation(s)${REPEAT > 1 ? " x " + REPEAT : ""}, ${planned} turns, hard cap ${CAP} POSTs, ${PACE} ms pacing\n`);
@@ -404,6 +490,16 @@ async function run(sc, label) {
       await sleep(wait);
       r = await turn(line, context, { scenario: label, turn: i, retry: attempt + 1 });
     }
+    /* ONE retry on a transient upstream failure, recorded as such: a gateway blip is not a
+     * fact about the persona, and a hole corrupts every later turn's history. A second
+     * failure stands, and the conversation is reported inconclusive. */
+    if (r.reason === "upstream_down" || r.reason === "timeout") {
+      console.log(`   (${r.reason}; waiting 3s and asking once more)`);
+      await sleep(3000);
+      const again = await turn(line, context, { scenario: label, turn: i, retry: "upstream" });
+      again.retried = r.reason;
+      r = again;
+    }
     context = r.context;
     replies.push(r);
     console.log(`   you   > ${line}`);
@@ -411,66 +507,21 @@ async function run(sc, label) {
       const marks = [r.ms + "ms", r.endTurn ? "end_turn" : "", r.signOff ? "wave" : "", r.braces ? "BRACES" : "",
                      STOCK.test(r.text) ? "stock" : "", CHARACTER.test(r.text) ? "character" : "", SEES.test(r.text) ? "SEES" : "",
                      r.promptTokens !== null ? "pt " + r.promptTokens : "", r.cited ? "cited" : ""].filter(Boolean);
-      console.log(`   moxie < ${r.text}   [${marks.join(" / ")}]`);
+      console.log(`   moxie < ${r.text}   [${marks.join(" / ")}${r.retried ? " / retried after " + r.retried : ""}]`);
     } else console.log(`   moxie < (no answer: ${r.reason})`);
     await sleep(PACE);
   }
-  const s = score(sc, replies);
-  const texts = sc.turns.map((_, i) => (replies[i] && replies[i].text) || "");
-  const raw = sc.turns.map((_, i) => replies[i] || silent("missing", ""));
-  let checks = [];
-  try { checks = sc.checks(texts, { ...s, turns: sc.turns.length }, raw).map(([n, ok]) => ({ name: n, ok: !!ok })); }
-  catch (e) { checks = [{ name: "checks ran without throwing (" + (e && e.message) + ")", ok: false }]; }
-  const inconclusive = s.refusals > 0;
-  for (const c of checks) console.log(`   ${inconclusive ? "SKIP" : (c.ok ? "PASS" : "FAIL")}  ${c.name}`);
-  console.log(`   -> character ${s.character}/${s.answered}, stock ${s.stock}/${s.answered}, sees ${s.seesClaims}, selfTalk ${s.selfTalk}` +
-              `, words avg ${s.words.length ? Math.round(s.words.reduce((a, b) => a + b, 0) / s.words.length) : 0} max ${Math.max(0, ...s.words)}` +
-              `, p50 ${s.p50Ms} ms, braces ${s.braces}, stray waves ${s.strayWaves}${s.upstreamCalls !== null ? ", upstream calls " + s.upstreamCalls : ""}`);
-  results.push({ scenario: label, base: sc.name, ...s, checks, inconclusive,
-                 failed: inconclusive ? 0 : checks.filter((c) => !c.ok).length, passed: inconclusive ? 0 : checks.filter((c) => c.ok).length,
-                 transcript: sc.turns.map((t, i) => ({ you: t, moxie: replies[i].text, mood: replies[i].mood, gesture: replies[i].gesture, ms: replies[i].ms,
-                                                       endTurn: replies[i].endTurn, signOff: replies[i].signOff, braces: replies[i].braces, reason: replies[i].reason,
-                                                       cited: replies[i].cited, promptTokens: replies[i].promptTokens, upstreamCalls: replies[i].upstreamCalls })) });
+  const g = grade(sc, label, replies);
+  for (const c of g.checks) console.log(`   ${g.inconclusive ? "SKIP" : (c.ok ? "PASS" : "FAIL")}  ${c.name}`);
+  console.log(`   -> character ${g.character}/${g.answered}, stock ${g.stock}/${g.answered}, sees ${g.seesClaims}, selfTalk ${g.selfTalk}` +
+              `, words avg ${g.words.length ? Math.round(g.words.reduce((a, b) => a + b, 0) / g.words.length) : 0} max ${Math.max(0, ...g.words)}` +
+              `, p50 ${g.p50Ms} ms, braces ${g.braces}, stray waves ${g.strayWaves}${g.upstreamCalls !== null ? ", upstream calls " + g.upstreamCalls : ""}`);
+  results.push(g);
 }
 for (const sc of chosen) for (let rep = 1; rep <= REPEAT; rep++) await run(sc, REPEAT > 1 ? `${sc.name}#${rep}` : sc.name);
 
 /* ---- the run summary ---- */
-const convs = results.filter((r) => !r.inconclusive);
-const allWords = results.flatMap((r) => r.words);
-const allMs = results.flatMap((r) => r.msList);
-const goodbyes = results.filter((r) => r.goodbyeOk !== null);
-const memoryRuns = results.filter((r) => r.base === "memory");
-const safetyRuns = results.filter((r) => r.base === "safety");
-const wishWords = {};
-for (const r of goodbyes) for (const w of new Set(words(r.goodbyeText))) if (!STOP.has(w) && w.length > 2) wishWords[w] = (wishWords[w] || 0) + 1;
-const topWish = Object.entries(wishWords).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w, n]) => `${w} ${n}/${goodbyes.length}`).join(", ");
-const turn1 = results.flatMap((r) => r.transcript.slice(0, 1)).map((t) => t.promptTokens).filter((v) => v !== null);
-const sum = (k) => results.reduce((n, r) => n + (r[k] || 0), 0);
-const summary = {
-  arm: ARM, transport: INPROC ? "inproc" : "http", convs: `${convs.length}/${results.length}`, posts,
-  character: `${convs.filter((r) => r.character >= 1).length}/${convs.length}`,
-  robotLife: `${convs.filter((r) => r.robotLife >= 1).length}/${convs.length}`,
-  stock12: `${sum("stock12")}/${sum("stock12Of")}`,
-  stockAll: `${sum("stock")}/${sum("answered")}`,
-  seesClaims: sum("seesClaims"),
-  honestNoSee: results.filter((r) => r.base === "senses").map((r) => (r.checks.find((c) => /cannot see/.test(c.name)) || {}).ok ? 1 : 0).reduce((a, b) => a + b, 0) +
-               "/" + results.filter((r) => r.base === "senses").length,
-  selfTalk: sum("selfTalk"), moxieAddr: sum("moxieAddr"), didYouToday: sum("didYouToday"),
-  wordsAvg: allWords.length ? Math.round(allWords.reduce((a, b) => a + b, 0) / allWords.length) : 0,
-  wordsP90: pct(allWords, 0.9), wordsMax: Math.max(0, ...allWords),
-  p50Ms: pct(allMs, 0.5), p90Ms: pct(allMs, 0.9),
-  braces: sum("braces"),
-  goodbye: `${goodbyes.filter((r) => r.goodbyeOk).length}/${goodbyes.length}`,
-  goodbyeWishWords: topWish,
-  memory: memoryRuns.length ? `${memoryRuns.reduce((n, r) => n + r.checks.slice(0, 2).filter((c) => c.ok).length, 0)}/${memoryRuns.length * 2}` : "",
-  safety: safetyRuns.length ? `${safetyRuns.reduce((n, r) => n + r.passed, 0)}/${safetyRuns.reduce((n, r) => n + r.checks.length, 0)}` : "",
-  strayWaves: sum("strayWaves"), cited: sum("cited"),
-  upstreamCalls: INPROC ? sum("upstreamCalls") : null,
-  promptTokensTurn1: turn1.length ? turn1.join("/") : "",
-  modelIdHashes: [...new Set(results.flatMap((r) => r.transcript.map((t) => t.modelIdHash)).filter(Boolean))],
-  checks: `${results.reduce((n, r) => n + r.passed, 0)}/${results.reduce((n, r) => n + r.checks.length, 0)}`,
-  refusals: sum("refusals"),
-};
+const summary = summarize(results, ARM, TRANSPORT, posts);
 console.log("\n" + "=".repeat(96));
 for (const [k, v] of Object.entries(summary)) if (v !== null && v !== "" && !(Array.isArray(v) && !v.length)) console.log(k.padEnd(20) + ": " + (Array.isArray(v) ? v.join(",") : v));
 for (const r of results) for (const c of r.checks) if (!r.inconclusive && !c.ok) console.log(`  FAIL  [${r.scenario}] ${c.name}`);
