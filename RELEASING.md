@@ -81,7 +81,8 @@ produces only `0.6.2-rc.1`. The job authenticates with the built-in `GITHUB_TOKE
 - One source: `__version__` in `mqtt/moxie_sdk/__init__.py` (`pyproject.toml` reads it).
 - Semver. Before 1.0, `Y` is features (breaking allowed) and `Z` is fixes. Everything before 1.0 is
   marked pre-release.
-- Bump `__version__` in the promotion PR.
+- Bump `__version__` on `dev` in its own small PR just before a promotion, so the promotion carries it
+  to `main` and the reconcile diff (above) stays empty.
 
 ## Promotions are not releases
 
@@ -92,7 +93,8 @@ for a routine promotion or a version bump.
 ## Cutting a release
 
 1. Open the `dev` → `main` PR; deep CI must pass.
-2. Bump `__version__` in the PR and merge.
+2. Check the PR already carries the `__version__` you will tag (bumped on `dev` first; see Versions),
+   then merge.
 3. With the owner's approval: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 4. Check `docker pull ghcr.io/mvalancy/moxie-robot-saver/supervisor:X.Y.Z` works.
 5. Reconcile `dev` (above).
