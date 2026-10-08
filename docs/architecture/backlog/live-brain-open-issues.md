@@ -1,10 +1,11 @@
 # Live brain: open issues
 
 **Status:** open. The guard rails around each measurement are built and tested hermetically, but
-none of the three questions below has a current answer from the live gateway. This note merges the
-former `action-tag-drift`, `grounding-gate-unrun` and `one-brain-no-failover` briefs.
+none of the first three questions below has a current answer from the live gateway, and the fourth
+is a decision not yet taken. This note merges the former `action-tag-drift`, `grounding-gate-unrun` and
+`one-brain-no-failover` briefs.
 
-All three depend on the same thing: a working model gateway (`DEMO_GATEWAY_BASE_URL` for the hosted
+The first three depend on the same thing: a working model gateway (`DEMO_GATEWAY_BASE_URL` for the hosted
 demo, `MOXIE_LLM_*` for the Python runtime). On 2026-09-08 `gateway.graphlings.net` returned
 `503 no_db_connection` for hours. That outage blocked the first two measurements and prompted the third.
 
@@ -123,6 +124,25 @@ our gateway or domain), so a fallback means a second pair of variables and a ret
 Any retry must fit inside the existing wait budget. `DEMO_CHAT_TIMEOUT_MS` defaults to 20 000, and
 `env.js` already clamps the admission queue so it never rivals the upstream timeout. Two attempts in
 series must not double what a visitor waits.
+
+## 4. The hosted persona is v2; the robot persona is still v1 (follow-up)
+
+**What changed (2026-10-08).** `functions/api/_lib/env.js::DEFAULT_PERSONA` is a new text
+([live-sim-demo.md §4.11](live-sim-demo.md)): identity and mission first, the child as her mentor, a
+character sheet whose habits are the ones her idle self-talk already has (`sim/web/ambient.json`),
+honest senses for the web page (she hears through Listen and reads typed lines; there is no camera),
+the conversation rules in priority order, the safety block last and unchanged in substance. It was
+measured against v1 on the production pair with `sim/tools/model_bakeoff.mjs` before it merged; the
+numbers are in §4.11.
+
+**What did not change.** The robot path's persona,
+[`mqtt/moxie_sdk/apps/llm_app.py::DEFAULT_PERSONA`](../../../mqtt/moxie_sdk/apps/llm_app.py), is
+still the v1 text (the one the hosted v1 was ported from). It says "you can see and hear them", which
+is TRUE on a robot with a camera and false on the page, so the two texts should not simply be made
+equal: the robot persona needs its own senses paragraph and its own measurement on the robot path
+(`sim/eval_live.mjs` cannot drive it; the SIL stack can). **Open:** decide whether the robot persona
+adopts v2's identity, character sheet and ordered rules with robot senses, and measure it there before
+changing it. Until then the two personas differ on purpose, and nothing asserts they are equal.
 
 ---
 📖 [Backlog index](README.md) · [Architecture index](../README.md) · [Live-Sim spec](live-sim-demo.md) · [Deploy guide](../../guides/deploy-cloudflare.md)

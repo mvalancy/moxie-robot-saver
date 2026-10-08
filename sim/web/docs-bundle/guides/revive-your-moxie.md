@@ -50,9 +50,14 @@ and a real robot are interchangeable clients of the backend ([why](../architectu
 
 ## Path B: re-home an 801 or 803 robot with a QR
 
-No disassembly. The robot scans a QR that points it at **your** server.
+No disassembly. The robot scans a QR that points it at **your** server. On the day, follow the
+[bench runbook](bench-runbook.md): the same path step by step, with what each Connection monitor
+line means.
 
-1. **Get the robot on Wi-Fi and paired:** [first-time setup](first-time-setup.md).
+1. **Get the robot on Wi-Fi with the Wi-Fi-only code:** the console's **📶 Wi-Fi** tab makes it by
+   default ([first-time setup](first-time-setup.md)), and so do Moxie Direct and the setup page below.
+   Not a pairing-key code: a pairing key sends the robot looking for the original cloud
+   ([live notes](../debugging/live-hardware-debug.md)).
 2. **Point it at your backend**: generate an endpoint QR and show it to Moxie's camera.
 
    **From a phone, nothing installed:** open the [setup page](../../sim/web/setup.html) and make the
@@ -70,7 +75,10 @@ No disassembly. The robot scans a QR that points it at **your** server.
    certificate works. Firmware 801 needs a publicly trusted certificate (a real domain and Let's
    Encrypt); the robot does no certificate pinning
    ([network trust](../reverse-engineering/protocol/network-trust.md), [revival path](../architecture/revival-path.md)).
-4. Moxie connects to your broker, your brain answers, and it talks.
+4. **Add it to your account.** Moxie connects to your broker and waits as *pending*. In the
+   console's **🤖 Moxie** tab, press **Add to my account**: that lets it in and gives you its robot
+   card (settings, insights, memory, Wake, Unpair). Then your brain answers and it talks. This step
+   is built and tested against the simulator; no physical robot has done it yet.
 
 **Wi-Fi caveats** (from the firmware): Open / WPA2-PSK / hidden SSIDs work; **WPA3-only, enterprise
 802.1X, and captive portals do not** — use a normal WPA2 network or a phone hotspot. 5 GHz works but the

@@ -8,6 +8,8 @@ How-tos for Moxie owners and anyone running the backend.
   talking Moxie, by firmware version.
 - [`one-command-stack.md`](one-command-stack.md) — run the whole backend with `docker compose up`.
 - [`first-time-setup.md`](first-time-setup.md) — pair a robot and put it on Wi-Fi.
+- [`bench-runbook.md`](bench-runbook.md) — the day a real robot is on the bench: the Wi-Fi-only code,
+  the server code, what each Connection monitor line means, and **Add to my account**.
 - [`find-moxie-on-lan.md`](find-moxie-on-lan.md) — find the robot's IP address.
 - [`factory-reset-a-paired-moxie.md`](factory-reset-a-paired-moxie.md) — unpair or reset a robot.
 

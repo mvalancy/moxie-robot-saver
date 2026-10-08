@@ -23,7 +23,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap",
    "section": "_root",
-   "bytes": 6894,
+   "bytes": 7053,
    "mermaid": 0,
    "headings": [
     "Definition of done",
@@ -134,7 +134,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT and conversation contract (the robot cloud)",
    "section": "architecture",
-   "bytes": 54183,
+   "bytes": 54468,
    "mermaid": 0,
    "headings": [
     "0. The mechanism in five lines",
@@ -400,7 +400,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 64054,
+   "bytes": 74037,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -428,6 +428,7 @@
     "4.8 The synthesized-audio cache (`_lib/ttscache.js`)",
     "4.9 Repetition levers",
     "4.10 Turn shape (`_lib/turnshape.js`)",
+    "4.11 The persona (`DEFAULT_PERSONA`, v2)",
     "5. Configuration",
     "6. The fallback experience",
     "6.1 Reused as-is",
@@ -849,12 +850,13 @@
    "path": "architecture/backlog/live-brain-open-issues.md",
    "title": "Live brain: open issues",
    "section": "architecture",
-   "bytes": 8695,
+   "bytes": 10189,
    "mermaid": 0,
    "headings": [
     "1. Goodbyes that omit `<exit>`",
     "2. The grounding gate has no usable result",
-    "3. One brain, no failover (proposal)"
+    "3. One brain, no failover (proposal)",
+    "4. The hosted persona is v2; the robot persona is still v1 (follow-up)"
    ],
    "kind": "md"
   },
@@ -1065,7 +1067,7 @@
    "path": "features/robot-lifecycle.md",
    "title": "Map 11 — Robot Lifecycle (pairing / unpair / FACTORY RESET / restore / reboot / OTA / state model)",
    "section": "features",
-   "bytes": 29974,
+   "bytes": 30519,
    "mermaid": 0,
    "headings": [
     "Built here: unpair and factory reset",
@@ -1115,7 +1117,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 1367,
+   "bytes": 1558,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -1124,7 +1126,7 @@
    "path": "guides/revive-your-moxie.md",
    "title": "Revive your Moxie",
    "section": "guides",
-   "bytes": 5978,
+   "bytes": 6682,
    "mermaid": 1,
    "headings": [
     "Which path are you on?",
@@ -1163,15 +1165,32 @@
    "path": "guides/first-time-setup.md",
    "title": "First-time setup",
    "section": "guides",
-   "bytes": 2016,
+   "bytes": 3059,
    "mermaid": 0,
    "headings": [
     "1. Start the server",
     "2. Open the web app from your phone",
     "3. Set up the child + Wi-Fi",
-    "4. Pair Moxie",
+    "4. Show Moxie the code",
     "No robot handy?",
     "What happens next"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/bench-runbook.md",
+   "title": "Bench runbook: bring a real Moxie onto your server",
+   "section": "guides",
+   "bytes": 11489,
+   "mermaid": 0,
+   "headings": [
+    "Before you start",
+    "1. The Wi-Fi code (Wi-Fi only)",
+    "2. The server code",
+    "3. Read the Connection monitor",
+    "4. Add it to your account",
+    "Afterwards",
+    "Code reference"
    ],
    "kind": "md"
   },
@@ -1223,7 +1242,7 @@
    "path": "guides/permitting-a-robot.md",
    "title": "Letting a robot in — \"pending\" and how to permit it",
    "section": "guides",
-   "bytes": 5145,
+   "bytes": 7280,
    "mermaid": 0,
    "headings": [
     "The one-paragraph version",
@@ -1289,12 +1308,13 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 6985,
+   "bytes": 9753,
    "mermaid": 0,
    "headings": [
     "1. Deploy",
     "2. What works with no configuration",
     "3. Make it live",
+    "Which model, which layout, which persona",
     "4. Caps",
     "5. Platform behavior worth knowing",
     "6. Which mode am I in?",
