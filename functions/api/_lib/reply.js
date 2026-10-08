@@ -15,16 +15,14 @@ export function completionText(json) {
 }
 
 /**
- * One JSON object, or several written back to back (`{"say":…} {"mood":…}` — models split the
- * envelope like this), merged left to right. Anything else — an array, trailing prose, a
- * broken brace — is null.
+ * Every balanced `{…}` at the top level of `body`, string-aware, plus an unterminated one
+ * (`open`) when the completion was cut off by `max_tokens` inside the envelope. Models
+ * split the envelope (`{"say":…} {"mood":…}`), wrap it in prose ("Sure! {…}", "{…} Hope
+ * that helps!"), or break it (`&` for `,`, an unescaped quote, single quotes) — all shapes
+ * served live or offline — so the objects are collected here and READ tolerantly below.
  */
-function parseObjects(body) {
-  try {
-    const one = JSON.parse(body);
-    return one && typeof one === "object" && !Array.isArray(one) ? one : null;
-  } catch { /* maybe several objects */ }
-  const merged = {};
+function scanObjects(body) {
+  const objects = [];
   let depth = 0, start = -1, inStr = false, esc = false;
   for (let i = 0; i < body.length; i++) {
     const c = body[i];
@@ -32,32 +30,69 @@ function parseObjects(body) {
       if (esc) esc = false;
       else if (c === "\\") esc = true;
       else if (c === '"') inStr = false;
-    } else if (c === '"') {
-      if (depth === 0) return null;
+    } else if (c === '"' && depth > 0) {
       inStr = true;
     } else if (c === "{") {
       if (depth++ === 0) start = i;
-    } else if (c === "}") {
-      if (--depth < 0) return null;
-      if (depth === 0) {
-        let part;
-        try { part = JSON.parse(body.slice(start, i + 1)); } catch { return null; }
-        Object.assign(merged, part);
-      }
-    } else if (depth === 0 && !/[\s,]/.test(c)) {
-      return null;
+    } else if (c === "}" && depth > 0) {
+      if (--depth === 0) { objects.push(body.slice(start, i + 1)); start = -1; }
     }
   }
-  return depth === 0 && start >= 0 ? merged : null;
+  return { objects, open: start >= 0 ? body.slice(start) : "" };
+}
+
+/** A JSON string's escapes undone; the raw text when it was not valid JSON after all. */
+function unescapeJson(raw) {
+  try { return JSON.parse('"' + raw.replace(/(?<!\\)"/g, '\\"') + '"'); } catch { return raw; }
+}
+
+/**
+ * One string field read out of BROKEN JSON. The value runs to the quote that is followed by
+ * a comma, a closing brace, a stray `&` or the end — so an unescaped quote INSIDE `say`
+ * ("My friend said "hi" to me!") survives. Single quotes are accepted as the delimiter.
+ */
+function fieldOf(text, name) {
+  const re = new RegExp("[\"']" + name + "[\"']\\s*:\\s*([\"'])([\\s\\S]*?)\\1\\s*(?=,|\\}|&|$)");
+  const m = re.exec(text);
+  return m ? unescapeJson(m[2]) : undefined;
+}
+
+/** `say` from an envelope the model never finished: whatever of the line arrived. */
+function openSayOf(text) {
+  const m = /["']say["']\s*:\s*"([^"]*)$/.exec(text);
+  return m ? unescapeJson(m[1]) : undefined;
+}
+
+/** The fields of one object: parsed as JSON, or read by regex when the JSON is broken. */
+function readEnvelope(text, unfinished) {
+  try {
+    const one = JSON.parse(text);
+    if (one && typeof one === "object" && !Array.isArray(one)) return one;
+  } catch { /* broken JSON: read the fields instead */ }
+  const out = {};
+  for (const k of ["say", "mood", "gesture", "diagram"]) {
+    const v = fieldOf(text, k);
+    if (v !== undefined) out[k] = v;
+  }
+  if (unfinished && out.say === undefined) {
+    const partial = openSayOf(text);
+    if (partial !== undefined) out.say = partial;
+  }
+  return out;
 }
 
 /**
  * Read the expressive envelope `{say, mood, gesture, diagram}` out of a reply, or decide
  * there isn't one.
  *
- * NEVER THROWS AND NEVER LOSES THE REPLY: not JSON, an array, no `say`, an empty `say` —
- * all fall back to the raw line with `chosen: null`. A ```json fence is stripped first
- * because models add one even when told not to.
+ * NEVER THROWS, NEVER LOSES THE REPLY, AND NEVER HANDS A BRACE TO THE VOICE. A reply with no
+ * `{` in it is prose and is returned as is. One with an envelope anywhere in it — alone,
+ * split in two, fenced, wrapped in prose, after a `<think>` block, cut off by `max_tokens`,
+ * or with its JSON broken — yields its `say` (the prose around it is the model talking to
+ * itself, not to the child). An object with no `say` in it is not an answer: what is spoken
+ * is whatever prose surrounds it, with every brace removed; an empty result is the route's
+ * `upstream_down`, like any empty completion. Measured offline before this: 9 of 11 served
+ * shapes reached the TTS ticket with the braces in them.
  *
  * @returns {{text: string, chosen: {mood?: string, gesture?: string}|null, diagram: string}}
  */
@@ -66,24 +101,34 @@ export function parseExpressive(raw) {
   const plain = { text: line, chosen: null, diagram: "" };
   if (!line) return plain;
 
-  let body = line;
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(body);
-  if (fenced) body = fenced[1].trim();
-  if (body.charAt(0) !== "{") return plain;
+  // A reasoning model's <think> block is never spoken; an unclosed one runs to the end.
+  let body = line.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/i, "").trim();
+  // A ```json (or bare) fence around the envelope goes; a ```mermaid fence is a diagram and stays.
+  body = body.replace(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi, "$1").trim();
+  if (!body.includes("{")) return body === line ? plain : { text: body, chosen: null, diagram: "" };
 
-  const obj = parseObjects(body);
-  if (!obj) return plain;
+  const { objects, open } = scanObjects(body);
+  const merged = {};
+  for (const o of objects) Object.assign(merged, readEnvelope(o, false));
+  if (open) Object.assign(merged, readEnvelope(open, true));
 
   // Not flattened: `say` may carry a fenced diagram that `splitDiagram` removes first.
-  const say = typeof obj.say === "string" ? obj.say.trim() : "";
-  if (!say) return plain; // an envelope with no line in it is not an answer
+  let say = merged.say;
+  if (Array.isArray(say)) say = say.filter((s) => typeof s === "string").join(" ");
+  say = typeof say === "string" ? say.trim() : "";
+  if (!say) {
+    let prose = body;
+    for (const o of objects) prose = prose.replace(o, " ");
+    if (open) prose = prose.replace(open, " ");
+    return { text: prose.replace(/[{}]/g, " ").replace(/\s+/g, " ").trim(), chosen: null, diagram: "" };
+  }
 
   const chosen = {};
-  if (typeof obj.mood === "string") chosen.mood = obj.mood;
-  if (typeof obj.gesture === "string") chosen.gesture = obj.gesture;
+  if (typeof merged.mood === "string") chosen.mood = merged.mood;
+  if (typeof merged.gesture === "string") chosen.gesture = merged.gesture;
   // A sibling `diagram` field (one level of escaping) is what models actually emit; the
   // ```mermaid fence in `splitDiagram` stays as the fallback for prose replies.
-  const field = typeof obj.diagram === "string" ? obj.diagram.trim() : "";
+  const field = typeof merged.diagram === "string" ? merged.diagram.trim() : "";
   return {
     text: say,
     chosen: Object.keys(chosen).length ? chosen : null,
@@ -117,14 +162,16 @@ export function splitDiagram(text) {
 /**
  * The earlier assistant line `reply` repeats, or "" when it repeats nothing.
  *
- * EXACT (case- and whitespace-insensitive), NOT NEAR. A similarity threshold is a number
- * nobody can defend, and a measured lexical-overlap score already moved the right way while
- * the conversation still read as a loop — spending money on that signal would be wrong.
+ * EXACT (case-, whitespace- and punctuation-insensitive), NOT NEAR. A similarity threshold
+ * is a number nobody can defend, and a measured lexical-overlap score already moved the
+ * right way while the conversation still read as a loop — spending money on that signal
+ * would be wrong. Punctuation is folded because "That's okay." and "That's okay!" were
+ * served live as two turns of one conversation, and a child hears the same line twice.
  * Compared against EVERY assistant turn in the signed history ("A, B, A" is the same loop),
  * which `hmac.js` already bounds.
  */
 export function echoOf(reply, turns) {
-  const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
+  const norm = (v) => String(v == null ? "" : v).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   const key = norm(reply);
   if (!key) return "";
   for (const t of turns || []) {

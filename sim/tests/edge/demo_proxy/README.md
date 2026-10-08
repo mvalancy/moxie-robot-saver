@@ -13,6 +13,7 @@ one [`harness.mjs`](harness.mjs) (stubbed gateway, `fresh()`, `call()`, the `ass
 - [`07_turn_features.mjs`](07_turn_features.mjs) — §15j–15n: expressive envelope, expired context, diagrams, doc lookup.
 - [`08_tts_cache.mjs`](08_tts_cache.mjs) — §16: the synthesised-audio cache.
 - [`09_reroll_shape.mjs`](09_reroll_shape.mjs) — §17–18: the re-roll and the per-turn shape cue.
+- [`10_goodbye_close.mjs`](10_goodbye_close.mjs) — §19–22: the goodbye close (detector, cue, `end_turn`, the sign-off wave), the prompt layouts (`DEMO_PROMPT_LAYOUT`), the brace-proof envelope parser, the punctuation-folding echo.
 
 ---
 📖 [Edge modules](../README.md) · [Back to top](../../../../README.md)
