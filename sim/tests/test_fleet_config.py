@@ -579,6 +579,7 @@ def test_the_console_says_an_unsaved_change_will_be_lost_on_a_restart_not_saved(
     assert lost.startswith("⚠️") and "NOT saved" in lost and "restart" in lost
     assert kept == older == "✅ Saved — pushed to Moxie."
 
+
 def test_two_edits_of_one_robot_reach_the_disk_in_the_order_they_changed_ram(tmp_path):
     """Two edits of one robot at once (a threaded status server, an operator's script):
     each changes RAM, snapshots it and writes the snapshot. Unless the record is held
