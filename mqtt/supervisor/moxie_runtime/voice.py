@@ -301,8 +301,9 @@ class VoiceMixin:
         from moxie_sdk.stt import STT_ERROR_CODE, describe_drop, encode_zmq_stt_response
         if uuid:
             self._stt_uuid[device_id] = uuid          # frames of one utterance share it
-        session = self._stt_session(device_id)
+        session = None
         try:
+            session = self._stt_session(device_id)
             transcript = session.feed(vad, audio)
         except Exception as e:                        # noqa: BLE001 — any engine failure
             why = f"{type(e).__name__}: {e}"

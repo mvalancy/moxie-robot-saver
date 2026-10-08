@@ -215,9 +215,10 @@ STT_API_KEY  = (os.environ.get("MOXIE_STT_API_KEY", "").strip()
 # The levels come from the hosted page's browser microphones, not Moxie's: tune them on
 # bench day from the console feed's "heard nothing" lines, which carry the numbers.
 #: `off` (0/false/no) restores the ears exactly as they were: every clip to the engine,
-#: its text verbatim. Unset or empty is on.
-STT_PHANTOM_GATE = ((os.environ.get("MOXIE_STT_PHANTOM_GATE") or "on").strip().lower()
-                    not in _OFF)
+#: its text verbatim, local whisper without its voice detector. Unset, empty or blank is
+#: on: the same expression as `stt.ears_knobs()`, which a test pins value for value.
+STT_PHANTOM_GATE = (((os.environ.get("MOXIE_STT_PHANTOM_GATE") or "").strip().lower()
+                     or "on") not in _OFF)
 #: RMS level (fraction of full scale) below which a clip is room tone: one of Whisper's
 #: silence phrases ("Bye.", "Thank you.", "you") on it is not the child's word.
 STT_ROOM_TONE_RMS = _env_float("MOXIE_STT_ROOM_TONE_RMS", 0.01)

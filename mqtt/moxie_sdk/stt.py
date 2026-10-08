@@ -29,8 +29,9 @@ Honest ears (ai-seam.md §1 "What the ears refuse to hear"): Whisper answers sil
 noise with words ("Bye.", "Thank you.", "you") or sound labels ("(machine whirring)",
 "[BLANK_AUDIO]"), and the robot would take them as the child's turn. `SttSession` sends
 digital silence and sub-120 ms clips to no engine, strips sound labels, and drops one of
-Whisper's known silence phrases (`PHANTOM_CANON`) when the clip is quiet or short.
-`MOXIE_STT_PHANTOM_GATE=off` restores the ears as they were.
+Whisper's known silence phrases (`PHANTOM_CANON`) when the clip is quiet or short; local
+whisper runs its own voice detector. `MOXIE_STT_PHANTOM_GATE=off` restores the ears as they
+were, local whisper included.
 """
 from __future__ import annotations
 import math
@@ -74,10 +75,12 @@ class Transcriber:
 
 
 # ---- honest ears: what the ears refuse to hear ----
-# Levels are RMS as a fraction of int16 full scale. LOUD_RMS and ROOM_TONE_RMS come from
-# the hosted page's browser microphones (sim/web/mic.js: room tone ~0.005, speech 0.05+,
-# with automatic gain), not from Moxie's far-field, echo-cancelled microphone: they are
-# unverified on a robot, and every drop is reported with its numbers so they can be tuned.
+# Levels are the RMS of the whole clip as a fraction of int16 full scale. LOUD_RMS and
+# ROOM_TONE_RMS come from the hosted page's browser microphones (sim/web/mic.js: room tone
+# ~0.005, speech 0.05+, with automatic gain, judged per block rather than per clip), not
+# from Moxie's far-field, echo-cancelled microphone: they are unverified on a robot. Every
+# drop SttSession makes is reported with its numbers so they can be tuned; what local
+# whisper's own voice detector removes is inside the engine and comes back as no text.
 
 #: Below this a clip is digital silence: nothing to hear, so no engine is asked.
 SILENCE_RMS = 0.001
@@ -184,9 +187,10 @@ def _env_number(name: str, default: float) -> float:
 def ears_knobs() -> dict:
     """The honest-ears knobs from the environment, read when a listening session starts
     (the runtime never imports `config`, which names the same three variables):
-    `MOXIE_STT_PHANTOM_GATE` (on unless 0/off/false/no), `MOXIE_STT_ROOM_TONE_RMS`,
-    `MOXIE_STT_MIN_SPEECH_MS`."""
-    gate = (os.environ.get("MOXIE_STT_PHANTOM_GATE") or "on").strip().lower()
+    `MOXIE_STT_PHANTOM_GATE` (on unless 0/off/false/no; unset, empty or blank is on),
+    `MOXIE_STT_ROOM_TONE_RMS`, `MOXIE_STT_MIN_SPEECH_MS`. config.py spells the gate with
+    this same expression, and a test pins that the two agree."""
+    gate = (os.environ.get("MOXIE_STT_PHANTOM_GATE") or "").strip().lower() or "on"
     return {"phantom_gate": gate not in _OFF,
             "room_tone_rms": _env_number("MOXIE_STT_ROOM_TONE_RMS", ROOM_TONE_RMS),
             "min_speech_ms": _env_number("MOXIE_STT_MIN_SPEECH_MS", MIN_SPEECH_MS)}
@@ -286,17 +290,27 @@ class SttSession:
 
 class WhisperTranscriber(Transcriber):
     """Local STT via faster-whisper (CPU/GPU), imported lazily; `available()` is False
-    without it or numpy. `MOXIE_STT=whisper` selects it even with a gateway configured."""
+    without it or numpy. `MOXIE_STT=whisper` selects it even with a gateway configured.
+
+    The honest ears' half inside the engine, on unless `phantom_gate` is off (default: the
+    `MOXIE_STT_PHANTOM_GATE` knob, read when the engine is built): faster-whisper's own
+    voice detector, and the cut of a segment rated as silence (`NO_SPEECH_PROB`). Off, the
+    model is called exactly as before the gate and every segment is kept."""
     name = "faster-whisper"
 
     #: A segment Whisper itself rates as more likely silence than speech is not the child's.
+    #: Stricter than Whisper's own rule, which skips one only when its average log
+    #: probability is also below -1 (faster-whisper applies that by default): a confident
+    #: short word rated above this is cut too, at any level (ai-seam.md §1).
     NO_SPEECH_PROB = 0.6
 
     def __init__(self, model: str = "base.en", device: str = "auto",
-                 compute_type: str = "int8"):
+                 compute_type: str = "int8", *, phantom_gate: Optional[bool] = None):
         from faster_whisper import WhisperModel   # lazy
         self.model = model                        # public: a console model picker reads it
         self._model = WhisperModel(model, device=device, compute_type=compute_type)
+        self.phantom_gate = (ears_knobs()["phantom_gate"] if phantom_gate is None
+                             else bool(phantom_gate))
 
     def describe(self) -> str:
         return f"{self.name} ({self.model})"
@@ -314,6 +328,9 @@ class WhisperTranscriber(Transcriber):
         import numpy as np
         # 16-bit little-endian PCM → float32 in [-1, 1]
         audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+        if not self.phantom_gate:                    # the engine as it was before the gate
+            segments, _ = self._model.transcribe(audio, language="en", beam_size=1)
+            return " ".join(s.text for s in segments).strip()
         # vad_filter: faster-whisper's own voice detector cuts the silence out before
         # decoding, where Whisper invents "Thank you." (as the SIL STT service does,
         # sim/stt/server.py); a segment it still rates as silence is dropped.

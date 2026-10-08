@@ -15,7 +15,11 @@ Pinned here:
 * the runtime: a drop is still a FINAL (no speech, the utterance's uuid), one console note
   with the canon phrase and the numbers (never the transcript), and `/status` `stt_dropped`.
 * `WhisperTranscriber` passes `vad_filter=True` and drops a segment Whisper rates as silence.
-* `MOXIE_STT_PHANTOM_GATE=off` restores the ears byte for byte.
+* `MOXIE_STT_PHANTOM_GATE=off` restores the ears byte for byte, local whisper included, and
+  config.py reads every spelling of it the way stt.py does.
+* every threshold (the digital-silence floor, the loud edge, whisper's no-speech cut) sits
+  between two pinned clips, so moving it either way fails a test
+  (sim/tools/ears_mutation_check.py breaks each one).
 
 Levels are RMS as a fraction of int16 full scale. The thresholds come from the hosted page's
 browser microphones (sim/web/mic.js) and are unverified against Moxie's microphone; these
@@ -184,6 +188,15 @@ def test_local_whisper_runs_its_own_vad(monkeypatch):
     assert calls[0]["language"] == "en" and calls[0]["beam_size"] == 1, "nothing else moved"
 
 
+def test_local_whispers_silence_cut_sits_at_0_6(monkeypatch):
+    """The cut is `no_speech_prob` above 0.6, on that number alone (stricter than Whisper's
+    own rule, which also wants a low average log probability; ai-seam.md §1): 0.6 and 0.55
+    are kept, 0.65 is cut. Moving the edge either way fails here."""
+    fake_faster_whisper(monkeypatch, [_Segment("one", 0.55), _Segment("two", 0.6),
+                                      _Segment("three", 0.65), _Segment("four", None)])
+    assert stt.WhisperTranscriber().transcribe(tone_pcm(800, **LOUD)) == "one two four"
+
+
 # --------------------------------------------------------------------------- #
 # SttSession: what is dropped, what is kept
 # --------------------------------------------------------------------------- #
@@ -217,14 +230,31 @@ def test_a_silence_phrase_is_dropped_on_room_tone_and_kept_at_speech_level(text)
     (240, 0.02, False, "short and not loud"),
     (600, 0.02, True, "neither quiet nor short"),
     (600, 0.004, False, "quiet"),
-], ids=["240ms-0.3", "240ms-0.02", "600ms-0.02", "600ms-0.004"])
+    (240, 0.055, True, "loud, just over the 0.05 edge"),
+    (240, 0.045, False, "short and just under the loud edge"),
+], ids=["240ms-0.3", "240ms-0.02", "600ms-0.02", "600ms-0.004", "240ms-0.055",
+        "240ms-0.045"])
 def test_the_boundary_table(ms, rms, kept, why):
     """The rule at its edges (levels as RMS): not loud (< 0.05) AND (quieter than room tone
-    0.01 OR shorter than 250 ms) drops a canon phrase; anything else keeps it."""
+    0.01 OR shorter than 250 ms) drops a canon phrase; anything else keeps it. The last two
+    rows sit either side of the loud edge, so moving it either way fails here."""
     said, calls, session = hear("Bye.", tone_pcm(ms, rms=rms))
     assert calls == 1
     assert said == ("Bye." if kept else ""), why
     assert (session.last_drop is None) is kept, why
+
+
+@pytest.mark.parametrize("rms,asked", [(0.0007, False), (0.0014, True)],
+                         ids=["under-0.001", "over-0.001"])
+def test_the_digital_silence_floor_sits_at_0_001(rms, asked):
+    """The only drop made without asking an engine: a clip quieter than RMS 0.001 reaches
+    none, and one just above it does (where room tone may still drop its 'Bye.'). Moving
+    the floor either way fails here."""
+    said, calls, session = hear("Bye.", tone_pcm(600, rms=rms))
+    assert stt.audio_stats(tone_pcm(600, rms=rms))[1] == pytest.approx(rms, rel=0.03)
+    assert (said, calls) == ("", int(asked))
+    assert session.last_drop["reason"] == ("quiet_short_hallucination" if asked
+                                           else "silence")
 
 
 @pytest.mark.parametrize("text", [
@@ -288,6 +318,9 @@ def test_clean_transcript_keeps_the_words_and_tidies_them():
     assert stt.clean_transcript("(laughs) hi Moxie") == "hi Moxie"
     assert stt.clean_transcript("[BLANK_AUDIO] I like dogs (barking)") == "I like dogs"
     assert stt.clean_transcript("\x00hi\x07 there\x1b,\tMoxie\n") == "hi there , Moxie"
+    # DEL and the C1 range, as the hosted ears strip them (transcribe.js cleanTranscript);
+    # none of these is whitespace to str.split(), so only the strip removes them
+    assert stt.clean_transcript("hi\x7fthere\x80Moxie\x9b!\x9f") == "hi there Moxie !"
     assert stt.clean_transcript("  tell   me  a story  ") == "tell me a story"
     assert stt.clean_transcript("7") == "7", "a digit is an answer"
     # through the session, a loud clip: the child's words, without the label
@@ -356,15 +389,20 @@ def test_audio_stats_reads_duration_and_level():
 # The runtime: still a FINAL, one note, a counter
 # --------------------------------------------------------------------------- #
 
-def test_each_drop_is_one_note_with_the_numbers_and_counts_in_status(tmp_path):
+def test_each_drop_is_one_note_with_the_numbers_and_counts_in_status(tmp_path, capsys):
     """Every drop: a FINAL with no speech and the uuid; exactly one console note naming the
     reason, the canon phrase (from the fixed list), the duration and the level, never the
-    audio and never the engine's text; `/status` `stt_dropped` counts them. A kept turn
-    leaves the counter alone and is noted as before."""
+    audio and never the engine's text, and the same words once in the supervisor's log;
+    `/status` `stt_dropped` counts them. A kept turn, and an engine that heard nothing,
+    leave the counter alone and are noted as before."""
     rt, dev = make_runtime(EchoApp(), device_id=DEV, store=JsonStore(str(tmp_path)))
     ears = Ears("Thank you.")
     rt.set_transcriber(ears)
     assert rt.status_snapshot()["robots"][0]["stt_dropped"] == 0
+    capsys.readouterr()
+
+    def logged():
+        return [ln for ln in capsys.readouterr().out.splitlines() if "heard nothing" in ln]
 
     cases = [
         ("Thank you.", tone_pcm(600, **ROOM_TONE),
@@ -384,13 +422,29 @@ def test_each_drop_is_one_note_with_the_numbers_and_counts_in_status(tmp_path):
             (finals[0].FINAL, "", f"utt-{i}")
         assert notes == [line], notes
         assert "secret" not in notes[0] and "Thank you." not in notes[0]
+        assert logged() == [f"[runtime] 👂 {dev} {line[len('👂 '):]}"]
         assert rt.status_snapshot()["robots"][0]["stt_dropped"] == i
 
     ears.text = "I like dogs"
     notes = _notes_during(rt, lambda: speak(rt, dev, tone_pcm(800, **LOUD), "utt-kept"))
     assert notes == ["👂 heard: 'I like dogs'"]
+    # the engine heard nothing: an empty transcription, as before the gate, not a drop
+    for nothing in ("", "  "):
+        ears.text = nothing
+        notes = _notes_during(rt, lambda: speak(rt, dev, tone_pcm(800, **LOUD), "utt-none"))
+        assert notes == ["👂 heard: ''"], notes
+    assert logged() == []
     assert rt.status_snapshot()["robots"][0]["stt_dropped"] == 4
     assert http_json(f"{status_server(rt)}/status")["robots"][0]["stt_dropped"] == 4
+
+
+@pytest.mark.parametrize("nothing", ["", "  ", None])
+def test_an_engine_that_heard_nothing_is_not_a_drop(nothing):
+    """An empty transcription is the engine's answer, not something the ears refused: no
+    reason is recorded for it (it is not 'only a sound label') and it is still ''."""
+    said, calls, session = hear(nothing, tone_pcm(800, **LOUD))
+    assert (said, calls, session.last_drop) == ("", 1, None)
+    assert stt.phantom_reason(tone_pcm(800, **LOUD), 16000, nothing) == ""
 
 
 def test_the_drop_count_lives_on_the_robots_record(timers, tmp_path):
@@ -411,6 +465,23 @@ def test_the_drop_count_lives_on_the_robots_record(timers, tmp_path):
     _connect(rt)
     timers.fire()
     assert rt.status_snapshot()["robots"][0]["stt_dropped"] == 0
+
+
+def test_a_listening_session_that_cannot_be_built_still_answers_the_robot(tmp_path,
+                                                                          monkeypatch):
+    """Building the session is inside `feed_stt`'s guard, with the engine call: if it
+    raises, the robot still gets its FINAL (no speech, `error_code` 66, the utterance's
+    uuid) and is never left waiting on a turn that ended."""
+    rt, dev = make_runtime(EchoApp(), device_id=DEV, store=JsonStore(str(tmp_path)))
+    rt.set_transcriber(Ears())
+
+    def no_session(device_id):
+        raise RuntimeError("no session")
+
+    monkeypatch.setattr(rt, "_stt_session", no_session)
+    final = speak(rt, dev, tone_pcm(600, **LOUD), "utt-broken")
+    assert (final.type, final.speech, final.uuid, final.error_code) == \
+        (final.FINAL, "", "utt-broken", stt.STT_ERROR_CODE)
 
 
 def test_a_drop_never_breaks_the_utterance_that_follows(tmp_path):
@@ -451,16 +522,54 @@ def test_the_kill_switch_restores_the_ears_byte_for_byte(monkeypatch, tmp_path):
     assert rt.status_snapshot()["robots"][0]["stt_dropped"] == 0
 
 
-@pytest.mark.parametrize("value,on", [
+def test_the_kill_switch_turns_off_local_whispers_vad_too(monkeypatch):
+    """Off means every part of the honest ears, the half inside local whisper included: the
+    model is called exactly as origin/dev called it (no `vad_filter`) and a segment it rates
+    as silence is kept. So an operator who suspects the voice detector of eating soft speech
+    can rule it out with the one documented switch."""
+    monkeypatch.setenv("MOXIE_STT_PHANTOM_GATE", "off")
+    calls = fake_faster_whisper(monkeypatch, [_Segment(" Thank you.", 0.9),
+                                              _Segment(" I like dogs.", 0.2)])
+    whisper = stt.WhisperTranscriber()
+    assert whisper.phantom_gate is False
+    assert whisper.transcribe(tone_pcm(800, **LOUD)) == "Thank you.  I like dogs."
+    assert calls == [{"language": "en", "beam_size": 1}], calls
+
+
+def test_an_explicit_setting_wins_over_the_environment(monkeypatch):
+    """`SttSession(phantom_gate=, room_tone_rms=, min_speech_ms=)` and
+    `WhisperTranscriber(phantom_gate=)` override the knobs (an SDK user's own ears)."""
+    quiet = tone_pcm(600, **ROOM_TONE)
+    assert hear("Bye.", quiet, phantom_gate=False)[0] == "Bye."
+    assert hear("Bye.", tone_pcm(600, rms=0.02), room_tone_rms=0.03)[0] == ""
+    assert hear("Bye.", tone_pcm(600, rms=0.02), min_speech_ms=700)[0] == ""
+    monkeypatch.setenv("MOXIE_STT_PHANTOM_GATE", "off")
+    assert hear("Bye.", quiet, phantom_gate=True)[0] == ""
+    calls = fake_faster_whisper(monkeypatch, [_Segment(" Thank you.", 0.9)])
+    assert stt.WhisperTranscriber(phantom_gate=True).transcribe(quiet) == ""
+    assert calls[-1].get("vad_filter") is True
+    monkeypatch.delenv("MOXIE_STT_PHANTOM_GATE")
+    assert stt.WhisperTranscriber(phantom_gate=False).transcribe(quiet) == "Thank you."
+    assert "vad_filter" not in calls[-1]
+
+
+GATE_VALUES = [
     ("off", False), ("OFF", False), ("0", False), ("false", False), ("no", False),
-    ("", True), ("  ", True), ("on", True), ("1", True), ("yes", True), (" On ", True),
-])
+    (" off ", False), ("\toff\n", False),
+    ("", True), ("  ", True), ("\t", True), ("on", True), ("1", True), ("yes", True),
+    (" On ", True), ("maybe", True),
+]
+
+
+@pytest.mark.parametrize("value,on", GATE_VALUES)
 def test_only_an_explicit_off_turns_the_gate_off(monkeypatch, value, on):
     """An empty or blank value (a copied `.env.example`, a compose `${VAR:-}`) keeps the
-    gate on."""
+    gate on, and config.py's name for the knob reads every value the same way."""
+    from helpers_runtime import reload_config
     monkeypatch.setenv("MOXIE_STT_PHANTOM_GATE", value)
     assert stt.ears_knobs()["phantom_gate"] is on
     assert SttSession(Ears()).phantom_gate is on
+    assert reload_config(monkeypatch, MOXIE_STT_PHANTOM_GATE=value).STT_PHANTOM_GATE is on
 
 
 def test_the_knobs_move_the_thresholds_and_config_names_the_same_values(monkeypatch):

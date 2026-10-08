@@ -120,7 +120,9 @@ with `<exit>`, and a goodbye rule has to accept a lone "By." because that is how
 1. asks no engine about a clip at digital silence (RMS below 0.001 of full scale) or shorter than
    120 ms (the gateway engine's own floor, now applied to every engine): no gateway spend, no latency;
 2. removes control characters and Whisper's parenthesised or bracketed sound labels ("(laughs) hi
-   Moxie" becomes "hi Moxie"); a transcript with no letter or digit left is no speech, at any level;
+   Moxie" becomes "hi Moxie"); a transcript with no letter or digit left is no speech, at any level
+   (the hosted ears' `cleanTranscript` in `functions/api/transcribe.js` treats a label-only transcript
+   the same way, but keeps a label that sits beside words);
 3. drops a transcript that is, word for word, one of Whisper's known silence phrases
    (`PHANTOM_CANON`: bye, by, bye bye, goodbye, you, thank you, thanks, thanks for watching, the end,
    and the "Subtitles by the Amara.org community" credit) when the clip is not loud (RMS below 0.05)
@@ -130,11 +132,16 @@ A loud clip is never dropped on its text, and neither is a sentence that only co
 words ("I don't want to play anymore, bye"); a child's real short answers (okay, yes, no, hmm, uh)
 are not on the list. Local whisper also runs faster-whisper's own voice detector
 (`vad_filter=True`, as the SIL STT service does) and drops a segment it rates as more likely silence
-than speech (`no_speech_prob` above 0.6).
+than speech (`no_speech_prob` above 0.6). That cut reads `no_speech_prob` alone, which is stricter
+than Whisper's own rule (skip a segment only when its average log probability is also below -1,
+which faster-whisper already applies), so a confidently decoded short word rated above 0.6 is cut
+too, at any level. What the detector or the cut removes is removed inside the engine: it comes back
+as an empty transcription ("heard: ''" in the feed), not as a "heard nothing" line, and is not
+counted in `stt_dropped`.
 
 | Knob | Default | What it does |
 |---|---|---|
-| `MOXIE_STT_PHANTOM_GATE` | on | `off` (or `0`/`false`/`no`) is the kill switch: every clip goes to the engine and its text comes back verbatim, exactly as before. Empty means on |
+| `MOXIE_STT_PHANTOM_GATE` | on | `off` (or `0`/`false`/`no`) is the kill switch for all of the above: every clip goes to the engine, local whisper runs without its voice detector or the no-speech cut, and the text comes back verbatim, exactly as before. Empty or blank means on |
 | `MOXIE_STT_ROOM_TONE_RMS` | `0.01` | RMS level, as a fraction of full scale, below which a clip is room tone |
 | `MOXIE_STT_MIN_SPEECH_MS` | `250` | Milliseconds below which a clip that is not loud is too short for that phrase to be a word |
 
@@ -142,14 +149,19 @@ A drop is still a `FINAL` with no `speech` and the utterance's `uuid`, like any 
 transcription, so the robot's turn closes; what a real Moxie does next after an empty `FINAL` is
 unverified. The console's activity feed gets one line per drop with the fixed reason, the canon
 phrase and the numbers, never the audio and never the transcript ("heard nothing: dropped a phantom
-'bye' (0.60 s, level 0.004)"), and `/status` counts drops per robot as `stt_dropped` (in memory: it
-starts again at 0 when the broker says the robot left, or when the supervisor restarts).
+'bye' (0.60 s, level 0.004)"), the supervisor's log gets the same words once, and `/status` counts
+drops per robot as `stt_dropped` (in memory: it starts again at 0 when the broker says the robot
+left, or when the supervisor restarts).
 
 The defaults lean one way on purpose: a missed whispered goodbye costs the child one repeat, while a
 phantom goodbye ends the child's activity. The levels come from the hosted page's browser
 microphones, which apply automatic gain (`sim/web/mic.js`: room tone about 0.005, speech 0.05 and
-up). Moxie's far-field, echo-cancelled level has not been measured, so **the thresholds are
-unverified on a robot**: tune them on bench day from the feed's "heard nothing" lines. Tests:
+up), and the page measures them differently: it judges each 4096-sample block (about a twelfth of a
+second), and a clip is speech when any block reaches 0.02. The ears measure the RMS of the whole clip, so the pre-roll and hangover a
+robot's voice detector keeps around a short word lower its level (0.3 s of "bye" at 0.015 inside a
+1.2 s clip of silence measures about 0.0075, which is quiet). Moxie's far-field, echo-cancelled level
+has not been measured, so **the thresholds are unverified on a robot**: tune them on bench day from
+the feed's "heard nothing" lines. Tests:
 [`sim/tests/test_honest_ears.py`](../../sim/tests/test_honest_ears.py) and the goodbye loopback in
 [`sim/tests/test_stt_wire.py`](../../sim/tests/test_stt_wire.py).
 
