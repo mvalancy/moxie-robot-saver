@@ -24,17 +24,21 @@
   const home = () => { for (let i = 0; i < 7; i++) set(i, C); };
 
   // A gesture = a short arm pose, then ease back to centre (the app's Gesture_* set).
-  function gesture(name) {
+  // `keepFace`: the line carries a mood mark, and on the robot the mood IS the face
+  // (behavior-markup.md, playback-mood), so an arm gesture leaves it alone. Without one (a
+  // gesture-only line, alive.js's thinking cue) think/question/celebrate supply the face.
+  function gesture(name, keepFace) {
     const m = window.moxie; if (!m) return;
+    const face = (f) => { if (!keepFace) m.setFace(f); };
     switch (name) {
       case "Gesture_Celebrate":
         set(0, 30000); set(2, 30000); set(1, 24000); set(3, 24000);
-        m.setFace("happy"); setTimeout(armsHome, 1600); break;
+        face("happy"); setTimeout(armsHome, 1600); break;
       case "Gesture_Question":
       case "Gesture_Think":
       case "Gesture_Think_Subtle":
         set(2, 24000); set(3, 8000);            // right hand up near face
-        m.setFace("thinking"); setTimeout(armsHome, 1800); break;
+        face("thinking"); setTimeout(armsHome, 1800); break;
       case "Gesture_Point":
       case "Gesture_Point_Right":
         set(2, 26000); set(3, 30000); setTimeout(armsHome, 1400); break;
@@ -115,13 +119,22 @@
   }
   B.behaviourTree = behaviourTree;
 
+  // When a line was last performed: life.js leaves the face to the line for a beat after,
+  // since a reply's face lands before its audio does. Infinity before the first line.
+  let lineAt = -Infinity;
+  B.api.msSinceLine = () => B.nowMs() - lineAt;
+
   // Parse the marks in a markup string and drive the avatar.
   B.applyMarkup = function applyMarkup(markup) {
     if (!markup || !window.moxie) return;
+    lineAt = B.nowMs();
+    // The mood mark is the line's face, so its arm gestures keep it (concerned + think stays
+    // concerned). A Bht_* tree below still sets its own: sleep, wake and greet are whole-body.
     const mood = /cmd:playback-mood,data:\{[^}]*?\+mood\+:(\d+)/.exec(markup);
-    if (mood) { const f = MOOD_TO_FACE[+mood[1]]; if (f) window.moxie.setFace(f); }
+    const moodFace = mood ? MOOD_TO_FACE[+mood[1]] : undefined;
+    if (moodFace) window.moxie.setFace(moodFace);
     const gx = /\+eventName\+:\+(Gesture_[A-Za-z_]+)\+/g; let g;
-    while ((g = gx.exec(markup))) gesture(g[1]);
+    while ((g = gx.exec(markup))) gesture(g[1], !!moodFace);
     const bx = /\+behaviour\+:\+(Bht_[A-Za-z0-9_]+)\+/g; let b;
     while ((b = bx.exec(markup))) behaviourTree(b[1]);
     // icons-v2: each mark is a command (0 = show, 2 = clear) with up to 4 named icons

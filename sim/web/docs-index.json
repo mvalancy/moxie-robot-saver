@@ -23,7 +23,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap",
    "section": "_root",
-   "bytes": 6305,
+   "bytes": 6894,
    "mermaid": 0,
    "headings": [
     "Definition of done",
@@ -874,7 +874,7 @@
    "path": "architecture/backlog/community-signals.md",
    "title": "Community signals — what owners of real robots report",
    "section": "architecture",
-   "bytes": 7000,
+   "bytes": 7210,
    "mermaid": 0,
    "headings": [
     "1. Where owner reports live",
@@ -1064,9 +1064,12 @@
    "path": "features/robot-lifecycle.md",
    "title": "Map 11 — Robot Lifecycle (pairing / unpair / FACTORY RESET / restore / reboot / OTA / state model)",
    "section": "features",
-   "bytes": 23828,
+   "bytes": 29507,
    "mermaid": 0,
    "headings": [
+    "Built here: unpair and factory reset",
+    "Why the reset is a QR code, not an MQTT command",
+    "Not done yet",
     "0. TL;DR — How to FACTORY-RESET a paired Moxie",
     "1. FACTORY RESET vs UNPAIR",
     "1.1 Endpoint definitions",
@@ -1103,9 +1106,7 @@
     "9. HEALTH / ONLINE DETECTION & NOTIFICATIONS",
     "9.1 Online / offline",
     "9.2 Polling",
-    "9.3 Battery",
-    "9.4 Network / speed test flow",
-    "10. Quick endpoint reference (this map)"
+    "9.3 Battery"
    ],
    "kind": "md"
   },
@@ -1190,11 +1191,12 @@
    "path": "guides/factory-reset-a-paired-moxie.md",
    "title": "Guide: factory-reset (or unpair) a paired Moxie",
    "section": "guides",
-   "bytes": 2491,
+   "bytes": 3697,
    "mermaid": 0,
    "headings": [
     "Unpair vs. factory reset",
     "Doing it from our local server",
+    "The reset code",
     "Restore from backup instead of wiping",
     "Reference"
    ],

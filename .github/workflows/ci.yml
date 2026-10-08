@@ -378,3 +378,5 @@ jobs:
         # erase wiring that works in some render branches and not others.
         # Guarded by sim/tests/test_ci_test_coverage.py.
         run: node sim/test_console_insights.mjs
+      - name: Parent console — Unpair and Factory reset (typed confirmation, erase order, reset code)
+        run: node sim/test_robot_lifecycle.mjs

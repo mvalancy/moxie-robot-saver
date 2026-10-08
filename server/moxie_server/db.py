@@ -118,3 +118,23 @@ def children_of(uid):
 
 def robots_of(uid):
     return q("SELECT * FROM robots WHERE user_id=?", (uid,))
+
+
+#: `pairings.consumed`: a code is OPEN until a robot completes it (USED), or VOID when a
+#: robot on the account was unpaired before anyone used it.
+PAIRING_OPEN, PAIRING_USED, PAIRING_VOID = 0, 1, 2
+
+
+def unpair_robot(rid, uid):
+    """Take one robot off an account in one transaction: delete its record and void every
+    pairing code the account still had open, so a code made before the unpair cannot bind
+    the robot back. `(deleted row, codes voided)`; `(None, 0)` when this account has no
+    robot with that id, and then nothing changes."""
+    with _LOCK, _C:
+        row = _C.execute("SELECT * FROM robots WHERE id=? AND user_id=?", (rid, uid)).fetchone()
+        if not row:
+            return None, 0
+        _C.execute("DELETE FROM robots WHERE id=? AND user_id=?", (rid, uid))
+        voided = _C.execute("UPDATE pairings SET consumed=? WHERE user_id=? AND consumed=?",
+                            (PAIRING_VOID, uid, PAIRING_OPEN)).rowcount
+        return row, voided

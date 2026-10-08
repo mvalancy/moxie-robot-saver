@@ -1,5 +1,6 @@
 # Fixed Moxie phrases pre-rendered for the static deploy (sound works with no server).
-# Regenerate: python3 sim/tools/prerender_audio.py --phrases sim/web/audio/moxie-phrases.txt --out sim/web/audio
+# Regenerate (in the shipped voice; see README.md): python3 sim/tools/prerender_audio.py --engine gateway \
+#   --env-file mqtt/.env --model tts-piper-kristin --phrases sim/web/audio/moxie-phrases.txt --out sim/web/audio
 Hi! I am Moxie. It is nice to meet you.
 Hello there! I am so happy to see you.
 Let's have some fun together!

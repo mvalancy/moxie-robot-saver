@@ -40,6 +40,14 @@ for (const c of cases) {
 /* The point of scoring the act is that the acts do NOT look the same. */
 ok(facesSeen.size >= 6, `the acts must reach visibly different faces; only saw ${[...facesSeen]}`);
 
+/* The mood mark IS the line's face (behavior-markup.md): its arm gestures must not re-set it
+ * (every question once ended 'thinking'). Replayed with the whole-body trees blanked, since a
+ * Bht_* tree may carry its own face (hold's thinking), each act wears its mood's face alone. */
+for (const c of cases) {
+  play(c.markup.replace(/\+behaviour\+:\+Bht_[A-Za-z0-9_]+\+/g, "+behaviour+:++"), c.line);
+  ok(calls.setFace.length === 1, `${c.act}: a gesture re-set the mood's face; got ${JSON.stringify(calls.setFace)}`);
+}
+
 /* A line the planner never touched stays inert (MOXIE_EXPRESSIVE=off), or the above is moot. */
 play("Just words, no markup.", "Just words, no markup.");
 ok(calls.setFace.length === 0 && calls.setMotor.length === 0,
