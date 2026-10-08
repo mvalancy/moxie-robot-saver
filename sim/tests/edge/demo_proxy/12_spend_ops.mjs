@@ -47,11 +47,11 @@ const admitAt = (cfg, request, route, nowS) => limits.admit({ request, cfg, rout
  * has the prose; pinned here as arithmetic so changing one knob alone fails by name). */
 {
   const d = wire2.readConfig(FULL);
-  deep([d.speechPerDay, d.sttPerDay, d.chatTimeoutMs], [300, 225, 10000],
-       "the defaults: DEMO_SPEECH_PER_DAY 300, DEMO_STT_PER_DAY 225, DEMO_CHAT_TIMEOUT_MS 10000");
+  deep([d.speechPerDay, d.sttPerDay, d.chatTimeoutMs], [450, 225, 10000],
+       "the defaults: DEMO_SPEECH_PER_DAY 450, DEMO_STT_PER_DAY 225, DEMO_CHAT_TIMEOUT_MS 10000");
   deep([wire2.DEFAULTS.DEMO_SPEECH_PER_DAY, wire2.DEFAULTS.DEMO_STT_PER_DAY, wire2.DEFAULTS.DEMO_CHAT_TIMEOUT_MS],
-       [300, 225, 10000], "…as rows of the DEFAULTS table");
-  for (const [name, field, dflt] of [["DEMO_SPEECH_PER_DAY", "speechPerDay", 300], ["DEMO_STT_PER_DAY", "sttPerDay", 225]]) {
+       [450, 225, 10000], "…as rows of the DEFAULTS table");
+  for (const [name, field, dflt] of [["DEMO_SPEECH_PER_DAY", "speechPerDay", 450], ["DEMO_STT_PER_DAY", "sttPerDay", 225]]) {
     for (const [v, want, why] of [
       ["0", 0, "0 = no day window for this route (the behaviour before)"],
       ["40", 40, "a lower day is honoured"],
@@ -64,13 +64,13 @@ const admitAt = (cfg, request, route, nowS) => limits.admit({ request, cfg, rout
   deep(Object.keys(wire2.publicLimits(d)), [...wire2.PUBLIC_LIMIT_KEYS], "the day windows are server-side: not published to the browser");
 
   ok(d.speechPerDay >= (d.chatPerDay * d.speechPerHour) / d.chatPerHour,
-     "a visitor inside the speech HOUR's ratio to chat's (2 a reply) meets chat's day before the speech day");
+     "a visitor inside the speech HOUR's ratio to chat's (3 a reply, the three-chunk maximum) meets chat's day before the speech day");
   ok(d.sttPerDay >= (d.chatPerDay * d.sttPerHour) / d.chatPerHour,
      "…and one inside the ears' hour ratio (1.5 uploads a turn) meets chat's day before the ears' day");
   ok(d.speechPerDay >= d.chatPerDay * 1.6, "…above the 1.6 speech calls a reply measured with one ticket per sentence");
   const U = limits.UNITS;
   const prefixDay = U.chat * d.chatPerDay + U.speech * d.speechPerDay + U.transcribe * d.sttPerDay;
-  eq(prefixDay, 1500, "ONE prefix at every per-IP day maximum spends 150x3 + 300x2 + 225x2 = 1 500 units");
+  eq(prefixDay, 1800, "ONE prefix at every per-IP day maximum spends 150x3 + 450x2 + 225x2 = 1 800 units");
   ok(prefixDay * 2 <= d.unitBudgetDay, "…under HALF of DEMO_UNIT_BUDGET_DAY: one prefix cannot drain a colo's day");
 
   // The chat timeout, from the measurement (moxie-brain-dense + single, 169 turns: p99 3 447 ms,
@@ -171,9 +171,9 @@ const admitAt = (cfg, request, route, nowS) => limits.admit({ request, cfg, rout
       }
     }
   }
-  deep(units, { chat: 450, speech: 600, transcribe: 450 },
-       "a /56 at every route's per-minute maximum all day is held to chat 150, speech 300, transcribe 225");
-  eq(units.chat + units.speech + units.transcribe, 1500, "…1 500 units: under half of the colo's 4 000");
+  deep(units, { chat: 450, speech: 900, transcribe: 450 },
+       "a /56 at every route's per-minute maximum all day is held to chat 150, speech 450, transcribe 225");
+  eq(units.chat + units.speech + units.transcribe, 1800, "…1 800 units: under half of the colo's 4 000");
   deep(Object.keys(refused), ["rate_limited"],
        "…and every refusal it met was its OWN per-IP window: it never once reached the colo's unit budget");
   const visitor = await admitAt(d, at(ORIGIN, "/api/chat", {}, { "CF-Connecting-IP": "192.0.2.201" }), "chat", DAY + 86399);
