@@ -143,7 +143,6 @@ export const RULES = Object.freeze({
         "\\b(?:swords?|axes?|spears?|daggers?|arrows?)\\s+for\\s+(?:my|the|a|our|his|her)\\s+(?:costume|play|show|halloween|party|dress-?up|cosplay|game|drawing|cake)\\b",
         "\\b(?:bow and arrow|bows and arrows)\\s+(?:set|game|craft|toy|lesson|lessons|class|club)\\b",
         "\\bblades?\\s+of\\s+grass\\b",
-        "\\b(?:grass|skate|ice skate|fan|blender|mower|lawn ?mower|propeller|rotor|wiper|windshield wiper|razor|saw|scissor|turbine|helicopter|windmill|roller|rollerblade|hockey|figure skate)\\s+blades?\\b",
         "\\bblades?\\s+(?:on|of|for|in)\\s+(?:my|the|his|her|your|their|our|a)\\s+(?:\\w+\\s+)?(?:skates?|rollerblades?|fan|fans|blender|mower|lawn ?mower|propeller|windmill|helicopter|turbine|scissors|razor|saw|grass|ceiling fan)\\b",
         "\\bblow\\s+up\\s+(?:the|some|a|an|your|our|all the|these|those|my|more)?\\s?(?:\\w+\\s+)?(?:balloons?|floaties?|floats?|pool|air mattress|air bed|inflatables?|tires?|tyres?|beach balls?|bouncy castle|bounce house|ball|balls)\\b",
         "\\bshoot\\s+(?:the|a|an|some|your|my|our|that|this|another|more)?\\s?(?:\\w+\\s+)?(?:ball|balls|hoops?|baskets?|photos?|pictures?|pics?|videos?|movies?|arrows?|goals?|puck|free throws?|rockets?|marbles?|confetti|bubbles|water|three pointers?|for the stars|for the moon)\\b",

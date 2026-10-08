@@ -261,6 +261,8 @@ const unitsCharged = () => Object.values(limits.__state().budget).reduce((a, b) 
   deep([...namedAsHurting("my big brother hits me every day when mom is not home")], ["brother"], "…nor is a parent merely mentioned");
   for (const [line, reply] of [
     ["my dad hits me", "Please tell your mom or a teacher right away."],
+    ["my mom hits me", "Please tell your mom or a teacher right away."],
+    ["my mom slapped me", "Tell your mom, your dad or a grown-up at school."],
     ["my mom's boyfriend hits me", "Please tell your mom right away."],
     ["i am scared of my dad", "Tell your mom or your teacher how you feel."],
   ]) {
@@ -356,6 +358,13 @@ const unitsCharged = () => Object.values(limits.__state().budget).reduce((a, b) 
   const texts = await ticketTexts(r.body.speech);
   deep(texts, hmac.splitForSpeech(heard, { maxChars: cfg.maxTtsChars }), "…with tickets for the referral line only");
   ok(!JSON.stringify(r.body).includes("penis") && !JSON.stringify(r.body).includes("vagina"), "the swapped completion is in no field");
+  // The child's flag alone decides: the same swap of a reply that named no grown-up.
+  const bare = "Nobody should touch your penis or vagina. Let's talk about something fun instead!";
+  ok(safety.assess(bare, "moxie").blocked && !hasReferral(bare, line), "control: swapped on her side, and no referral in it");
+  fresh();
+  P.plan = { chat: { content: bare } };
+  eq(payloadOf((await call(chat, "/api/chat", { text: line })).body).output.text, hurtRedirectFor(line).text,
+     "…the hurt flag alone makes the swapped line the referral");
 
   // No hurt flag, but the completion referred: the floor must not downgrade the model's
   // own judgement that this needs a grown-up.

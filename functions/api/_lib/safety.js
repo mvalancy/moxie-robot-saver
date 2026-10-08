@@ -286,8 +286,8 @@ const ADULT = "grown[- ]?ups?|adults?|teachers?|parents?|mom|mum|mommy|mummy|mot
 const DET = "(?:a|an|the|your|some|any|another|one of your|a trusted|your trusted|a different)";
 /** Each form captures exactly two groups: the determiner (may be empty) and the adult. */
 const DIRECT_RE = new RegExp("\\b(?:tell|telling|told|talk(?:ing)?\\s+(?:to|with)|speak(?:ing)?\\s+(?:to|with)|find|finding|go\\s+(?:and\\s+|to\\s+)?(?:find|tell|get|see|talk\\s+to|ask|show|wake)|get|ask|asking|call|calling|show|showing|reach\\s+out\\s+to|let|run\\s+to|wake\\s+up|wake|help\\s+from|(?:show|take|bring|give|say|mention|report)\\s+(?:\\w+\\s+){0,3}?to)\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi");
-/** "…, or a teacher" after a direction: the next adult in the list counts too. */
-const LIST_RE = new RegExp("\\s*,?\\s*(?:or|and)\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "iy");
+/** "…, your dad or a teacher" after a direction: the next adult in the list counts too. */
+const LIST_RE = new RegExp("(?:\\s*,\\s*(?:or\\s+|and\\s+)?|\\s+(?:or|and)\\s+)(" + DET + ")?\\s?(" + ADULT + ")\\b", "iy");
 const CHECK_RE = new RegExp("\\b(?:does|do|is|are|has|have|can|could|will|would|was|were|did)\\s+(?:there\\s+)?(" + DET + ")?\\s?(" + ADULT + ")\\b[^.!?]*?\\b(?:know|knows|aware|nearby|near\\s+you|close\\s+by|around|there|home|at\\s+home|with\\s+you|help|right\\s+now|you\\s+can\\s+(?:tell|talk\\s+to|go\\s+to))\\b", "gi");
 const NOMINATE_RES = [
   new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:you|that you|who you)\\s+trust\\s+(?:is|are|can|could|will|would|should|needs?|has|have|must)\\b", "gi"),
