@@ -10,7 +10,7 @@ import json
 import re
 
 from ..app import MoxieApp
-from ..actions import ACTION_TAG_PROMPT, parse_action_tags
+from ..actions import ACTION_TAG_PROMPT, EXIT_REQUIRED_RULE, parse_action_tags
 from ..automarkup import annotate, enabled as _automarkup_enabled
 from ..segment import SentenceSegmenter
 from ..types import Turn, Reply, ReplyChunk, RobotContext
@@ -253,8 +253,7 @@ class LLMApp(MoxieApp):
         # Robot-control tags the brain may write inline (moxie_sdk/actions.py).
         tags = ("\n\n--- Robot controls (most important rule) ---\n" + ACTION_TAG_PROMPT +
                 "\nThese tags are REQUIRED when they apply, not optional:\n"
-                "  * Child says goodbye / is done / asks to stop -> your reply MUST "
-                "begin with <exit>.\n"
+                + EXIT_REQUIRED_RULE +
                 "  * Child asks for or agrees to an activity you have been told about -> "
                 "your reply MUST begin with <launch:NAME>, that exact name.\n"
                 "The tag is deleted before the child hears a single word, so writing one is "

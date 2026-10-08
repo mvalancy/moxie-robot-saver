@@ -2,7 +2,12 @@
 ContentApp — runs a content module through the AI seam
 (docs/architecture/content-module-contract.md). Each turn: `globals[]` first (always-on
 commands), else the active conversation — render its prompt over the volley, ask the
-injected `chat(messages) -> str` brain, return a Reply.
+injected `chat(messages) -> str` brain, return a Reply. The brain is taught `<exit>` and
+`<sleep>` only (`actions.LEAVE_TAG_PROMPT`); it is never told a module id to launch.
+
+**Opener.** A `prompt` with no speech is the robot starting the conversation, and is
+answered with the conversation's `opener` instead of the brain (OpenMoxie
+`conversations.py` `handle_volley`). Any speech, `continue` and `reprompt` go to the brain.
 
 Global handlers are registered Python callables or sandboxed extensions (`ext/`); a
 module's `code` string is never executed.
@@ -21,11 +26,12 @@ its effects — is `ext_host.py`.
 from __future__ import annotations
 import hashlib
 import json
+import random
 import time
 from typing import Callable, Optional
 
 from ..app import MoxieApp
-from ..actions import parse_action_tags
+from ..actions import LEAVE_TAG_PROMPT, parse_action_tags
 from ..automarkup import annotate, enabled as _automarkup_enabled
 from ..memory_store import MemoryStore
 from ..types import Turn, Reply, RobotContext
@@ -65,7 +71,8 @@ class ContentApp(MoxieApp):
                  global_handlers: Optional[dict] = None,
                  memory: Optional[MemoryStore] = None,
                  safety_classifier=None, content_defaults=None,
-                 ext_grants=None, ext_limits=None, clock=None, monotonic=None):
+                 ext_grants=None, ext_limits=None, clock=None, monotonic=None,
+                 rng=None):
         self.module = module
         # 📦 The shipped baseline, kept apart from `module` (= defaults ⊕ overlay) so a
         # content `undo` can restore a shipped item. None ⇒ none recorded.
@@ -97,6 +104,10 @@ class ContentApp(MoxieApp):
         self._ext_breaches: dict = {}
         #: Already-reported `(device_id, extension_id, reason)`: one event per problem.
         self._ext_reported: set = set()
+        #: `{device_id: the opener line it heard last}`, so an opener never repeats back
+        #: to back; `rng` picks among the others (injectable for tests).
+        self._last_opener: dict = {}
+        self._rng = rng or random
 
     def register_global(self, name: str, handler: GlobalHandler) -> None:
         self._handlers[name] = handler
@@ -265,18 +276,37 @@ class ContentApp(MoxieApp):
             print(f"[ext] {ext_id}: {line}", flush=True)
         return result
 
+    # ---- the opener ----
+    def _opener_reply(self, robot: RobotContext, conv, volley=None,
+                      presence=None) -> Optional[Reply]:
+        """`conv`'s opener as a Reply, or None when it has none. Never calls the brain.
+
+        The `|`-alternatives rotate per device and never repeat back to back; a device
+        hears the first alternative first. `<opener>` is stripped, and `<exit>`, `<sleep>`
+        or `<launch:…>` become actions, as in a model's line."""
+        if conv is None or not conv.opener:
+            return None
+        context = {"volley": volley or self._volley(Turn(robot=robot, speech="")),
+                   "session": Session(), "presence": presence or _presence_vars(robot)}
+        lines = []
+        for alt in conv.opener.split("|"):
+            line = render_prompt(alt, context).replace("<opener>", "").strip()
+            if line and line not in lines:
+                lines.append(line)
+        if not lines:
+            return None
+        device_id = getattr(robot, "device_id", "") or ""
+        last = self._last_opener.get(device_id)
+        line = (lines[0] if last is None
+                else self._rng.choice([x for x in lines if x != last] or lines))
+        self._last_opener[device_id] = line
+        text, actions = parse_action_tags(line)
+        return Reply(text=text, actions=actions)
+
     # ---- MoxieApp ----
     def greeting(self, robot: RobotContext) -> Optional[Reply]:
-        conv = self._active_conversation(Turn(robot=robot, speech=""))
-        if conv and conv.opener:
-            v = self._volley(Turn(robot=robot, speech=""))
-            line = render_prompt(conv.opener.split("|")[0],
-                                 {"volley": v, "session": Session(),
-                                  "presence": _presence_vars(robot)})
-            line = line.replace("<opener>", "").strip()   # strip inline tags
-            if line:
-                return Reply(text=line)
-        return None
+        return self._opener_reply(robot,
+                                  self._active_conversation(Turn(robot=robot, speech="")))
 
     def respond(self, turn: Turn) -> Reply:
         # 1) globals first — always-on commands (timers, "stop", …)
@@ -325,6 +355,15 @@ class ContentApp(MoxieApp):
             self._save_persist_data(turn.robot.device_id, v.persist_data,
                                     json.dumps({}, sort_keys=True))
             return self._reply_from_volley(v)
+        # An empty `prompt` starts the conversation: its opener, not the model (OpenMoxie
+        # conversations.py handle_volley). A conversation with no opener still asks the model.
+        if turn.command == "prompt" and not (turn.speech or "").strip():
+            opener = self._opener_reply(turn.robot, conv, v, turn.presence)
+            if opener is not None:
+                # A `turn.before` extension's act/subscribe go out with it, as with a model line.
+                opener.actions += execution_actions_of(v)
+                opener.subscribe = subscriptions_of(v)
+                return opener
         # `presence` (read-only, vision.md) is available to the prompt template.
         system = render_prompt(conv.prompt, {"volley": v, "session": session,
                                              "presence": (turn.presence
@@ -332,6 +371,8 @@ class ContentApp(MoxieApp):
         note_used(self.memory, turn.robot.device_id, system)   # decay's clock (memory.py)
         if self._persona:
             system = f"{self._persona}\n\n{system}" if system else self._persona
+        # The leave-taking tags go last, after the module's own prompt (actions.py).
+        system = f"{system}\n\n{LEAVE_TAG_PROMPT}" if system else LEAVE_TAG_PROMPT
         messages = [{"role": "system", "content": system}]
         messages += turn.history[-conv.max_history:]
         messages.append({"role": "user", "content": turn.speech})

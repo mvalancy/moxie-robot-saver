@@ -131,14 +131,34 @@ def tag_names(text: str) -> List[str]:
             if m.group(1).lower() in KNOWN_TAGS]
 
 
-# The paragraph that teaches the model the tags; explicit that tags are silent.
-ACTION_TAG_PROMPT = (
+# The paragraph that teaches the model the tags; explicit that tags are silent. Built one
+# line per tag, so a brain that may use only some of them (`LEAVE_TAG_PROMPT`) states each
+# rule in the same words.
+_TAG_INTRO = (
     "You can control the robot with tags. Write a tag on its own inside your spoken "
     "line and it is removed before anyone hears it — never say the tag out loud, never "
-    "mention tags to the child, and never use more than one per reply.\n"
-    "  <exit> - use when the child says goodbye, is done, or asks to stop.\n"
-    "  <sleep> - use only if the child asks you to go to sleep.\n"
+    "mention tags to the child, and never use more than one per reply.\n")
+EXIT_RULE = "  <exit> - use when the child says goodbye, is done, or asks to stop.\n"
+SLEEP_RULE = "  <sleep> - use only if the child asks you to go to sleep.\n"
+_LAUNCH_RULE = (
     "  <launch:MODULE> or <launch:MODULE:CONTENT> - start an activity, and ONLY with "
-    "a module name you have actually been told about in this conversation.\n"
-    "If none of these apply, just talk normally and use no tag at all."
+    "a module name you have actually been told about in this conversation.\n")
+_TAG_OUTRO = "If none of these apply, just talk normally and use no tag at all."
+
+ACTION_TAG_PROMPT = _TAG_INTRO + EXIT_RULE + SLEEP_RULE + _LAUNCH_RULE + _TAG_OUTRO
+
+#: The goodbye rule as an obligation, shared by both brains (llm_app.py lists it among its
+#: REQUIRED tags).
+EXIT_REQUIRED_RULE = ("  * Child says goodbye / is done / asks to stop -> your reply MUST "
+                      "begin with <exit>.\n")
+
+#: The tags for a brain that is never told any module ids (the content brain): `<exit>` and
+#: `<sleep>` only, because a `<launch:…>` it made up would reach the robot unchecked.
+#: Appended after the module's prompt, it is also what DEFAULT_PERSONA's "tags described
+#: below" refers to. A module prompt that asks for a follow-up question is overruled for
+#: the one reply that should not have one.
+LEAVE_TAG_PROMPT = (
+    "--- Robot controls ---\n" + _TAG_INTRO + EXIT_RULE + SLEEP_RULE + _TAG_OUTRO +
+    "\nThe goodbye tag is REQUIRED when it applies, not optional:\n" + EXIT_REQUIRED_RULE +
+    "Write the tag first, then a short warm goodbye. A goodbye asks no question."
 )
