@@ -37,26 +37,34 @@ await withZone("America/Los_Angeles", async () => {
        `${label}: every year-round line still comes up (the gate takes nothing else out)`);
   }
 
-  /* 1c. The last evening of October: until local midnight and not a quip after it, though
-   *     the bag was filled in October. */
+  /* 1c. The last evening of October: until local midnight and not a quip after it. */
   {
     const midnight = at(2026, 11, 1, 0);
     const t = await ambientPage({ start: at(2026, 10, 31, 21), random: seeded(3) },
                                 (t) => t.advance(5 * HOUR));
     const oct = quipsOf(t).filter((s) => october.has(s.text));
     ok(oct.some((s) => s.at < midnight), "31 October, evening: October lines come up");
-    eq(oct.filter((s) => s.at >= midnight).length, 0,
-       "…and none after local midnight, not even from a bag filled on the 31st");
+    eq(oct.filter((s) => s.at >= midnight).length, 0, "…and none after local midnight");
+  }
+  /* …even from a bag filled a minute before midnight, most of it still unsaid (at most three
+   * of its 78 lines are said by then, so most of its October lines are still in it). */
+  {
+    const midnight = at(2026, 11, 1, 0);
+    const t = await ambientPage({ start: at(2026, 10, 31, 23, 59), random: seeded(5) },
+                                (t) => t.advance(2 * HOUR));
+    eq(quipsOf(t).filter((s) => october.has(s.text) && s.at >= midnight).length, 0,
+       "a bag filled at 23:59 on 31 October says no October line after midnight (a new month refills it)");
   }
 
-  /* 1d. The last evening of September: none before local midnight, then they start. */
+  /* 1d. The last minute of September: none before local midnight, then they start at once
+   *     rather than when September's bag runs out (about 23 minutes of quips). */
   {
     const midnight = at(2026, 10, 1, 0);
-    const t = await ambientPage({ start: at(2026, 9, 30, 21), random: seeded(4) },
-                                (t) => t.advance(5 * HOUR));
+    const t = await ambientPage({ start: at(2026, 9, 30, 23, 59), random: seeded(4) },
+                                (t) => t.advance(HOUR));
     const oct = quipsOf(t).filter((s) => october.has(s.text));
-    eq(oct.filter((s) => s.at < midnight).length, 0, "30 September, evening: no October line");
-    ok(oct.some((s) => s.at >= midnight && s.at < midnight + HOUR),
-       "…and they start within the first hour of 1 October (a new month refills the bag)");
+    eq(oct.filter((s) => s.at < midnight).length, 0, "30 September, 23:59: no October line");
+    ok(oct.some((s) => s.at >= midnight && s.at < midnight + 10 * 60 * 1000),
+       "…and they start within ten minutes of 1 October (a new month refills the bag)");
   }
 });

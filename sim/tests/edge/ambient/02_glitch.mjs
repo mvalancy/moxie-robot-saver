@@ -51,13 +51,18 @@ ok(glitchLines.length >= 1, `ambient.json has glitch lines (${glitchLines.length
  *     right after it lets go proves the hold was all that kept it back. */
 {
   const spans = {};
+  const NONE = new Error("no glitch came");
   const t = await ambientPage({ random: always }, async (t) => {
     const nextDue = async () => {                    // wait for a glitch; a minute before the next is due
       const n = t.of(glitchLines).length;
       for (let i = 0; i < 7200 && t.of(glitchLines).length === n; i++) await t.advance(SEC);
+      if (t.of(glitchLines).length === n) throw NONE;   // no glitch at all: the precondition below fails
       const g = t.of(glitchLines).slice(-1)[0].at;
       await t.advance(g + 9 * MIN - t.now);
     };
+    try { await holds(t, nextDue); } catch (e) { if (e !== NONE) throw e; }
+  });
+  async function holds(t, nextDue) {
     await nextDue();                                 // her own long answer
     t.voice(t.now, t.now + 5 * MIN);
     spans["her own voice"] = [t.now, t.now + 5 * MIN + 1600];
@@ -80,7 +85,7 @@ ok(glitchLines.length >= 1, `ambient.json has glitch lines (${glitchLines.length
     t.typing("");
     spans["words in the box"] = [d0, t.now];
     await t.advance(2 * MIN);
-  });
+  }
   eq(Object.keys(spans).length, 4, "precondition: all four holds were reached");
   for (const [what, [from, to]] of Object.entries(spans)) {
     eq(saidIn(t, from, to).length, 0, `nothing at all is said while ${what} holds her, glitch due or not`);
@@ -91,17 +96,23 @@ ok(glitchLines.length >= 1, `ambient.json has glitch lines (${glitchLines.length
 }
 
 /* 2d. A reply arriving mid-flicker ends the glitch: no line, no more flicker, and the ten
- *     minutes are spent anyway. Words typed mid-flicker end it too, and her face comes back. */
-for (const cut of ["a reply", "typing"]) {
+ *     minutes are spent anyway. Words typed mid-flicker end it too, and her face comes back.
+ *     And a reply between the last flicker frame and the line still stops the line. */
+for (const cut of ["a reply", "typing", "a reply after the last frame"]) {
   const t = await ambientPage({ random: always }, async (t) => {
-    for (let i = 0; i < 4000 && !t.hearts.some((h) => h.color === GLITCH_LED); i++) await t.advance(50);
+    const frames = () => t.hearts.filter((h) => h.color === GLITCH_LED).length;
+    const want = cut === "a reply after the last frame" ? 6 : 1;           // GLITCH_FLICKER's length
+    for (let i = 0; i < 40000 && frames() < want; i++) await t.advance(cut === "a reply after the last frame" ? 10 : 50);
     t.cutAt = t.now;
+    t.framesAtCut = frames();
+    if (cut === "a reply after the last frame") { t.reply(); t.voice(t.now, t.now + 4 * SEC); await t.advance(9 * MIN); return; }
     if (cut === "a reply") { t.reply(); t.voice(t.now, t.now + 4 * SEC); } else t.typing("wait");
     await t.advance(2 * SEC);
     if (cut === "typing") t.typing("");
     await t.advance(9 * MIN);
   });
-  ok(t.cutAt !== undefined && t.hearts.some((h) => h.color === GLITCH_LED), `[${cut}] precondition: a flicker began`);
+  const want = cut === "a reply after the last frame" ? 6 : 1;
+  ok(t.framesAtCut >= want && t.framesAtCut <= 6, `[${cut}] precondition: ${want} flicker frame(s) before the cut (${t.framesAtCut})`);
   eq(glitchedIn(t, t.cutAt, t.cutAt + 9 * MIN).length, 0,
      `[${cut}] the glitch line is not said, and no other glitch comes within its ten minutes`);
   ok(!t.hearts.some((h) => h.color === GLITCH_LED && h.on && h.at > t.cutAt + 200),

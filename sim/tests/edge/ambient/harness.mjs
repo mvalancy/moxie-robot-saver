@@ -115,7 +115,7 @@ export async function ambientPage(o, run) {
   const saved = Object.fromEntries(GLOBALS.map((k) => [k, globalThis[k]]));
   const savedRandom = Math.random;
   const clock = virtualClock(o.start === undefined ? at(2026, 10, 15, 12) : o.start);
-  const winL = {}, docL = {}, idleL = {};
+  const winL = {}, docL = {}, idleL = {}, boxL = {};
   const said = [], faces = [], hearts = [], events = [];
   const windows = [];                          // her voice on the speakers: [from, to)
   let mode = o.mode || "live";
@@ -124,7 +124,7 @@ export async function ambientPage(o, run) {
   const lastEnd = (now) => windows.reduce((m, [, b]) => (b <= now && b > m ? b : m), 0);
   const els = {
     "idle-on": { checked: true, addEventListener: (t, fn) => (idleL[t] ||= []).push(fn) },
-    "speech-input": { value: "", addEventListener() {} },
+    "speech-input": { value: "", addEventListener: (t, fn) => (boxL[t] ||= []).push(fn) },
     "led-on": { checked: false },
   };
   try {
@@ -191,6 +191,11 @@ export async function ambientPage(o, run) {
       visitorLine: () => amb.noteTurn(true),
       reply: () => amb.noteTurn(),
       typing: (text) => { els["speech-input"].value = text; },
+      /** Focus the message box and type into it (its focus and input events fire). */
+      keystroke: () => {
+        globalThis.document.activeElement = els["speech-input"];
+        fire(boxL, "focus"); fire(boxL, "input");
+      },
       mic: (on) => { globalThis.document.body.attrs["data-mic"] = on ? "on" : undefined; },
       hide: (hidden) => { globalThis.document.hidden = hidden; fire(docL, "visibilitychange"); },
       liveness: (on) => { els["idle-on"].checked = on; fire(idleL, "change"); },

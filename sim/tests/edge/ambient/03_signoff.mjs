@@ -16,9 +16,10 @@ ok(asides.length >= 3, `ambient.json has post-goodbye asides (${asides.length})`
  * signs off (`signals` times) and is voiced over `voice` ([from, to] ms after the reply), or
  * not at all. Returns the reply's instant `R` and the end of her voice `E` on `t`.
  */
-async function goodbye(t, { voice = [0, 3000], signals = 1 } = {}) {
+async function goodbye(t, { voice = [0, 3000], signals = 1, typed = false } = {}) {
   await t.advance(2 * MIN);
   for (let i = 0; i < 200 && t.busy(GAP); i++) await t.advance(100);   // not over one of her quips
+  if (typed) { t.keystroke(); t.typedHold = t.state().composing; }      // typed, Enter: still focused
   t.visitorLine();
   await t.advance(1500);
   t.R = t.now;
@@ -113,16 +114,17 @@ const asidesOf = (t, from = 0) => t.of(asides).filter((s) => s.at >= from);
   eq(asidesOf(sent).length, 0, "…and a line sent from the box drops it");
 }
 
-/* 3h. Focus alone does not hold it: after Enter the box keeps focus, and she would never say
- *     it for the conversation hold's 45 s. */
+/* 3h. Focus alone does not hold it: they typed "bye moxie" and pressed Enter, which sends
+ *     without blurring the box, so the box is focused and empty, and the quip hold (focus
+ *     plus a keystroke under 45 s ago) would keep the aside back past its moment. */
 {
   const t = await ambientPage({}, async (t) => {
-    globalThis.document.activeElement = t.els["speech-input"];
-    await goodbye(t);
+    await goodbye(t, { typed: true });
     await t.advance(MIN);
   });
   const a = asidesOf(t);
-  ok(a.length === 1 && a[0].at < t.E + GAP + SEC, "a focused, empty box does not hold the aside");
+  ok(t.typedHold === true, "precondition: the focused box holds an ordinary quip (composing)");
+  ok(a.length === 1 && a[0].at < t.E + GAP + SEC, "…but a focused, empty box does not hold the aside");
 }
 
 /* 3i. A hidden tab is not talked at: it waits for the visitor to come back, within a
@@ -165,6 +167,29 @@ const asidesOf = (t, from = 0) => t.of(asides).filter((s) => s.at >= from);
     await t.advance(MIN);
   });
   eq(asidesOf(during).length, 0, "…and switched off while it was owed: dropped, not saved for later");
+  const flick = await ambientPage({}, async (t) => {
+    await goodbye(t);
+    t.liveness(false);
+    await t.advance(100);                            // off and on again inside one 400 ms poll
+    t.liveness(true);
+    await t.advance(MIN);
+  });
+  eq(asidesOf(flick).length, 0, "…even when it is switched straight back on");
+}
+
+/* 3l. The aside is owed first: with the conversation hold cut to 1 s (`__ambient.quietMs`) and
+ *     no voice coming, the quip timer ticks (every 11 s, every chance taken) while she waits
+ *     the 16 s out, and none of those ticks jumps ahead of the aside. */
+{
+  const t = await ambientPage({ random: () => 0 }, async (t) => {
+    globalThis.window.__ambient.quietMs(1000);
+    await goodbye(t, { voice: null });
+    await t.advance(MIN);
+  });
+  const a = asidesOf(t);
+  eq(a.length, 1, "a short conversation hold: still exactly one aside");
+  eq(t.said.filter((s) => s.at >= t.R && (!a.length || s.at < a[0].at)).length, 0,
+     "…and no quip or glitch is said ahead of it while it is owed");
 }
 
 /* 3k. Without a sign-off there is never an aside: hours of idle, a conversation without a
