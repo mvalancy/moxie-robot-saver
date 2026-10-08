@@ -29,7 +29,6 @@ from moxie_sdk.apps.llm_app import DEFAULT_PERSONA, LLMApp
 from moxie_sdk.content import ContentApp, load_modules
 from moxie_sdk.content import ext as E
 from moxie_sdk.content import packs as P
-from moxie_sdk.content.content_app import opener_alternatives
 from moxie_sdk.memory_items import item_text
 from moxie_sdk.memory_store import MemoryStore
 from moxie_sdk.store import JsonStore
@@ -634,6 +633,7 @@ PREVIEW_OPENERS = [
 def test_the_console_preview_shows_the_line_a_robot_hears_first(tmp_path, opener):
     """The preview splits and lifts tags as the robot path does (`pick_opener`), and a
     robot's rotation never leaks into it."""
+    from moxie_sdk.content.content_app import opener_alternatives
     conv = {"name": "Chat", "module_id": "CHAT", "content_id": "default",
             "prompt": "You are Moxie.", "opener": opener}
     app = ContentApp(load_modules({"conversations": [conv]}), Brain(), memory=False)
