@@ -39,7 +39,6 @@ import operator
 import os
 import re
 import struct
-import sys
 import time
 from array import array
 from enum import IntEnum
@@ -138,6 +137,7 @@ def audio_stats(pcm: bytes, sample_rate: int = 16000) -> tuple:
     """`(duration in ms, RMS level as a fraction of int16 full scale)` of 16-bit
     little-endian mono PCM, in the standard library (no numpy; `audioop` left the stdlib
     in 3.13). A trailing odd byte is ignored by the level."""
+    import sys
     data = bytes(pcm or b"")
     ms = (len(data) / 2.0) / float(sample_rate or 1) * 1000.0
     n = len(data) // 2
