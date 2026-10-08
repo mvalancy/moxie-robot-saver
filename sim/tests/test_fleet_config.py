@@ -397,3 +397,25 @@ def test_a_save_the_store_refuses_still_applies_now_and_says_it_was_not_saved(tm
     assert _pushed(rt, "d_one")["audio_volume"] == 0.2
     assert not _record(tmp_path).exists()
     assert any("d_one" in n["text"] and "NOT saved" in n["text"] for n in rt.recent)
+
+
+def test_a_default_store_runtime_keeps_its_records_in_this_tests_own_data_dir(
+        isolated_data_dir):
+    """`make_runtime(store=None)` builds on `JsonStore()`, that is `MOXIE_DATA_DIR`, and a
+    runtime reads every robot's saved settings there when it is built. With one data dir
+    for the whole session a record outlived its test (three did, measured), so a `NO_DATA`
+    set here on `d_test` would have put every later default-store `d_test` under NO_DATA.
+    conftest's `per_test_data_dir` gives each test its own."""
+    pytest.importorskip("paho.mqtt.client", reason="the runtime imports paho")
+    from helpers_runtime import make_runtime
+    from moxie_sdk.app import MoxieApp
+    from moxie_sdk.cloud_config import LoggingPolicy
+
+    class _App(MoxieApp):
+        name = "content"
+
+    rt, did = make_runtime(_App())
+    rt.update_config(did, logging_policy=int(LoggingPolicy.NO_DATA))
+    mine = os.path.join(os.environ["MOXIE_DATA_DIR"], "robots", did, "config.json")
+    assert os.path.exists(mine)
+    assert not os.path.exists(os.path.join(isolated_data_dir, "robots", did, "config.json"))
