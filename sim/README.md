@@ -50,6 +50,7 @@ python3 sim/serve.py           # serve sim/web on 127.0.0.1:8080 with cache-bust
 | `bridge_harness.mjs`, `browser_harness.mjs` | Shared plumbing for the node suites (not tests themselves). |
 | `check_deployed.mjs` | Checks a deployed site in a phone-sized browser. Spends nothing. See [`ci/`](ci/README.md). |
 | `check_hosted_mic.mjs` | Plays a voice into Chrome's fake microphone against a deployment. `--dry-run` is free; a real run spends gateway calls. |
+| `check_live_turn.mjs` | The daily canary: ONE real chat turn against a deployment (spends one completion; the voice ticket is never redeemed). `--selftest` is hermetic. |
 | `eval_live.mjs` | Scores real multi-turn conversations against a deployment. Spends money; refuses to run without `--yes`. Not a test. |
 
 ## What is real and what is simulated
