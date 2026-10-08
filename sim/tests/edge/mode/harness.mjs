@@ -28,3 +28,31 @@ export async function probe(env) {
   const text = await res.clone().text();
   return { res, text, body: JSON.parse(text) };
 }
+
+/** A fake DOM element: just enough for `sim/web/env.js` to paint its badge, pill and banner. */
+export function fakeEl(id) {
+  const el = {
+    id: id || "", tagName: "SPAN", textContent: "", innerHTML: "", title: "", hidden: false,
+    className: "", children: [], attrs: {},
+    classList: {
+      add: (c) => { if (!el.className.split(/\s+/).includes(c)) el.className = (el.className + " " + c).trim(); },
+      remove: (c) => { el.className = el.className.split(/\s+/).filter((x) => x && x !== c).join(" "); },
+      toggle: (c, on) => { on ? el.classList.add(c) : el.classList.remove(c); },
+      contains: (c) => el.className.split(/\s+/).includes(c),
+    },
+    setAttribute: (k, v) => { el.attrs[k] = String(v); },
+    getAttribute: (k) => (k in el.attrs ? el.attrs[k] : null),
+    addEventListener: () => {},
+    appendChild: (c) => { el.children.push(c); c.parentNode = el; return c; },
+    insertBefore: (c) => { el.children.push(c); c.parentNode = el; return c; },
+    remove: () => {},
+    querySelector: (sel) => {
+      const cls = sel.replace(/^\./, "");
+      for (const c of el.children) if (c.classList.contains(cls)) return c;
+      // env.js reads `.eb-text` out of innerHTML it just wrote: a lazily-created stand-in.
+      el._sub = el._sub || {};
+      return (el._sub[cls] = el._sub[cls] || fakeEl(cls));
+    },
+  };
+  return el;
+}
