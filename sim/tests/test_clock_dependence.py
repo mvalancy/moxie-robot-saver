@@ -154,6 +154,10 @@ REVIEWED: dict = {
     _TK + "test_a_fault_before_or_after_the_turn_is_not_seen": (
         ("time.monotonic",), "RELATIVE — the window is closed before `after` is read, so "
         "delay only widens the gap."),
+    "sim/tests/test_leave_taking.py::test_a_looping_transcript_cannot_stall_the_patterns": (
+        ("time.perf_counter",), "RELATIVE — a ceiling 250x the measured worst case (2 ms on "
+        "20 KB): load multiplies a linear match, while an ambiguous pattern grows 2^n and "
+        "is past the ceiling by n=25."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}

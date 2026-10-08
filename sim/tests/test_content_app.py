@@ -2,12 +2,14 @@
 ContentApp tests (M2) — the content engine driving live turns through an injected
 brain (no real LLM/broker). Covers docs/architecture/content-module-contract.md:
 the conversation path (Jinja prompt personalization → brain → Reply), globals-first
-handling, and the opener greeting.
+handling, and the opener (a `greeting()`, and the answer to a `prompt` with no speech).
 """
 import os
+import random
 
+from moxie_sdk.content import ext as E  # noqa: E402
 from moxie_sdk.content import load_module, ContentApp  # noqa: E402
-from moxie_sdk.types import Turn, RobotContext, ChildProfile  # noqa: E402
+from moxie_sdk.types import ActionType, Turn, RobotContext, ChildProfile  # noqa: E402
 
 MODULE = {
     "conversations": [{
@@ -86,6 +88,92 @@ def test_empty_brain_reply_is_graceful():
     app = ContentApp(load_module(MODULE), lambda m: "   ")
     reply = app.respond(Turn(robot=_robot(), speech="hi"))
     assert reply.text == "Tell me more!"
+
+
+# --- The opener is what a conversation starts with ---
+# OpenMoxie (conversations.py `handle_volley`) answers `prompt` with a random opener
+# alternative. Here only a `prompt` with no speech does, so a typed or spoken first line
+# still reaches the brain.
+
+def _counting(answer="from the brain"):
+    calls = []
+
+    def chat(messages):
+        calls.append(messages)
+        return answer
+
+    return chat, calls
+
+
+def _with_opener(opener, **conv):
+    return {"conversations": [dict(MODULE["conversations"][0], opener=opener, **conv)]}
+
+
+def test_an_empty_prompt_is_answered_with_the_opener_not_the_brain():
+    chat, calls = _counting()
+    reply = ContentApp(load_module(MODULE), chat).respond(
+        Turn(robot=_robot(), speech="", command="prompt"))
+    assert calls == [], "an opener must not cost a model call"
+    assert reply.text == "Hi there!" and reply.actions == []
+
+
+def test_speech_continue_and_reprompt_still_reach_the_brain():
+    for command, speech in [("prompt", "hello"), ("prompt", "  hi  "),
+                            ("continue", ""), ("reprompt", "")]:
+        chat, calls = _counting()
+        reply = ContentApp(load_module(MODULE), chat).respond(
+            Turn(robot=_robot(), speech=speech, command=command))
+        assert reply.text == "from the brain", (command, speech)
+        assert [c[-1] for c in calls] == [{"role": "user", "content": speech}]
+
+
+def test_a_conversation_without_an_opener_still_asks_the_brain():
+    chat, calls = _counting()
+    module = {"conversations": [{k: v for k, v in MODULE["conversations"][0].items()
+                                 if k != "opener"}]}
+    reply = ContentApp(load_module(module), chat).respond(
+        Turn(robot=_robot(), speech="", command="prompt"))
+    assert reply.text == "from the brain" and len(calls) == 1
+
+
+def test_openers_rotate_and_never_repeat_back_to_back():
+    app = ContentApp(load_module(_with_opener("One!<opener>|Two!|Three!")),
+                     lambda m: "x", rng=random.Random(3))
+    said = [app.greeting(_robot()).text for _ in range(30)]
+    assert said[0] == "One!", "a robot hears the first opener first"
+    assert set(said) == {"One!", "Two!", "Three!"}
+    assert all(a != b for a, b in zip(said, said[1:])), said
+
+
+def test_each_robot_has_its_own_opener_rotation():
+    app = ContentApp(load_module(_with_opener("One!|Two!")), lambda m: "x")
+    first = [app.greeting(RobotContext(device_id=d, child=ChildProfile(nickname="Sam"),
+                                       module_id="CHAT")).text for d in ("a", "b", "a")]
+    assert first == ["One!", "One!", "Two!"]
+
+
+def test_a_tag_in_an_opener_is_an_action_never_spoken():
+    app = ContentApp(load_module(_with_opener("Let's draw!<launch:DRAW>")), lambda m: "x")
+    reply = app.greeting(_robot())
+    assert reply.text == "Let's draw!"
+    assert [(a.type, a.module_id) for a in reply.actions] == [(ActionType.LAUNCH, "DRAW")]
+
+
+def test_what_a_starting_extension_asks_for_rides_out_with_the_opener():
+    """A `turn.before` program that acts and subscribes without taking the turn: both go
+    out with the opener, as they would with a model's line."""
+    starts = {"ext_format": 1, "capabilities": ["act.eb_enable_qr", "subscribe"],
+              "on": "turn.before",
+              "rules": [{"do": [{"act": {"name": "eb_enable_qr", "args": ["true"]}},
+                                {"subscribe": ["eb-qr-event"]}]}]}
+    chat, calls = _counting()
+    app = ContentApp(load_module(_with_opener("Show me a card!", extension=starts)), chat,
+                     ext_grants=E.DEFAULT_GRANTS | {"act.eb_enable_qr", "subscribe"})
+    reply = app.respond(Turn(robot=_robot(), speech="", command="prompt"))
+    assert calls == [] and reply.text == "Show me a card!"
+    assert [(a.type, a.function, a.args) for a in reply.actions] == [
+        (ActionType.EXECUTE, "eb_enable_qr", ["true"])]
+    assert reply.subscribe == ["eb-qr-event"]
 
 
 # --- 📦 A module's `code` string is DATA — never behaviour (backlog/content-packs.md §2.2) ---
