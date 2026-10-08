@@ -6,7 +6,7 @@
  * Every window here is driven with an EXPLICIT clock (`nowS` into `admit()`). Where a real
  * route reads its own clock, the assertion holds at every minute and hour of the day. */
 import {
-  FULL, FORBIDDEN, KEY, ORIGIN, P, assertClean, call, chat, deep, eq, fresh, limits, ok,
+  FULL, FORBIDDEN, KEY, ORIGIN, P, call, chat, deep, eq, fresh, limits, ok,
   speech, upstreamCalls, wire2, env0,
 } from "./harness.mjs";
 import { api, jsonOf, leakSweep, wavBytes } from "../common.mjs";
