@@ -156,8 +156,12 @@ REVIEWED: dict = {
         "delay only widens the gap."),
     "sim/tests/test_leave_taking.py::test_a_looping_transcript_cannot_stall_the_patterns": (
         ("time.perf_counter",), "RELATIVE — a ceiling 250x the measured worst case (2 ms on "
-        "20 KB): load multiplies a linear match, while an ambiguous pattern grows 2^n and "
-        "is past the ceiling by n=25."),
+        "20 KB), also enforced by a hard alarm per match: load multiplies a linear match, "
+        "while an ambiguous pattern grows 2^n or faster and is past the ceiling by n=25."),
+    "sim/tests/test_content_app.py::test_a_huge_opener_takes_one_pass_and_one_render": (
+        ("time.perf_counter",), "RELATIVE — 1.0 s for two empty prompts, 50x the measured "
+        "0.01-0.02 s: load multiplies one linear split and one render, while the quadratic "
+        "split or a render per alternative took 2.4-10.5 s on the same openers."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}
