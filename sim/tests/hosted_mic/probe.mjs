@@ -15,12 +15,17 @@ import { assertWords, wordOverlap, score, readWav, riff, padded, peakOf,
 /* ════════════════════════ the fixtures ════════════════════════════════════════ *
  * The spoken clip is read from `sim/web/audio/index.json` — the manifest the SITE speaks
  * from — so re-rendering moves the fixture with it. The committed golden
- * (`goldens/real_voice_22050_mono.wav`) is 0.75 s cut from this very clip: too short to
- * transcribe, so it only proves plumbing. This is prerendered Piper speech, not a child in a
- * room; `MOXIE_MIC_WAV` + `MOXIE_MIC_TEXT` point the harness at a real recording. */
+ * (`goldens/real_voice_22050_mono.wav`) is 0.75 s cut from this clip's earlier Piper amy
+ * render: too short to transcribe, so it only proves plumbing. This is prerendered Piper speech
+ * (tts-piper-kristin), not a child in a room; `MOXIE_MIC_WAV` + `MOXIE_MIC_TEXT` point the
+ * harness at a real recording. */
 export const SPOKEN_TEXT = "Happy birthday! I hope your day is amazing.";
-/** No content word in common with `SPOKEN_TEXT`; scored against the SAME transcript. */
-export const DECOY_TEXT = "Can you take a deep breath with me?";
+/** No content word in common with `SPOKEN_TEXT`; scored against the SAME transcript. It must
+ *  also be far from it in ENVELOPE, in the shipped voice: after the re-render in
+ *  tts-piper-kristin (longer sentence-final silence, which looped chunks share with any
+ *  sentence), "Can you take a deep breath with me?" chose right in only 5 of 12 chunks of the
+ *  gauntlet's "30% dropped + saturated" row (needs 6); this line chooses right in 10. */
+export const DECOY_TEXT = "What would you like to talk about today?";
 
 const MANIFEST = JSON.parse(readFileSync(join(web, "audio", "index.json"), "utf8"));
 function manifestClip(text) {
@@ -244,18 +249,24 @@ export async function probeTurn(browser, url, opts) {
   if (opened) {
     await new Promise((r) => setTimeout(r, opts.recordMs));
     if (clicked) await page.click("#mic-btn").catch(() => {});
-    // The OUTCOME: a transcript or any recorded way the ears can fail ends the wait.
+    // The OUTCOME: a transcript or any recorded way the ears can fail ends the wait — and so
+    // does a clip `mic.js` dropped unsent because none of it was speech (`noSpeech`).
     await page.waitForFunction(() => {
       const s = window.moxieMic && window.moxieMic.stats ? window.moxieMic.stats() : null;
-      return !!s && (s.transcripts > 0 || s.fallbacks > 0 || s.tooShort > 0);
+      return !!s && (s.transcripts > 0 || s.fallbacks > 0 || s.tooShort > 0 || s.noSpeech > 0);
     }, { timeout: 45000 }).catch(() => {});
+    // Nothing uploaded, nothing to answer: no 90 s of waiting for a reply that cannot come.
+    const posted = await page.evaluate(
+      () => !(window.moxieMic && window.moxieMic.stats) || window.moxieMic.stats().posts > 0);
     /* Then the ANSWER: every watched request has answered, and a buffer built from gateway
      * PCM (`bytes == null` — no pre-rendered clip can be) was scheduled. A plays-count once
      * let an ambient quip stand in for her answer, and an unanswered request read as 0 B. */
-    await page.waitForFunction(
-      () => window.__mic.calls.length > 0 && window.__mic.calls.every((c) => c.status !== 0),
-      { timeout: 45000 }).catch(() => {});
-    if (!opts.dry) {
+    if (posted) {
+      await page.waitForFunction(
+        () => window.__mic.calls.length > 0 && window.__mic.calls.every((c) => c.status !== 0),
+        { timeout: 45000 }).catch(() => {});
+    }
+    if (posted && !opts.dry) {
       await page.waitForFunction(
         () => (window.__audio.plays || []).some((p) => p.bytes == null && p.frames > 1000),
         { timeout: 45000 }).catch(() => {});

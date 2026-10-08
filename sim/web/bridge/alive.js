@@ -23,11 +23,27 @@
     "Hmmmm. Almost got it.",
     "Thinking, thinking… nearly there."
   ];
-  /* A thinking FACE at 900 ms; a spoken filler only past 1800 ms (beyond the median turn),
-   * so a quick answer is never talked over. */
-  var SPEAK_FILLER_AFTER_MS = 1800;
+  /* A thinking FACE at 900 ms; a spoken filler only once her VOICE is late — past the
+   * expected time-to-voice of a live turn (chat 2.0–2.3 s + speech 1.6–1.9 s, measured), so an
+   * ordinary answer is never talked over (at 1.8 s a filler preceded 3 of 3 measured answers).
+   * And never over a voice of hers still in the air or just ended (`isMoxieBusy`, ambient's
+   * grace beat), nor while her answer waits in the voice queue — no speaking predicate sees a
+   * queued chunk, and the filler's `speak()` would flush it. */
+  var SPEAK_FILLER_AFTER_MS = 3500;
+  var FILLER_GRACE_MS = 1600;
   var thinkTimer = null, thinkStage = 0;
   var lastPick = {};
+
+  /** May the filler make a sound now? */
+  function mayFill() {
+    var a = window.moxieAudio;
+    if (!a || !a.speak) return false;
+    try {
+      if (a.isMoxieBusy && a.isMoxieBusy(FILLER_GRACE_MS)) return false;
+      if (a.ttsPending && a.ttsPending() > 0) return false;
+    } catch (e) { return false; }
+    return true;
+  }
 
   /** One of `list`, never the one this channel returned last. */
   function pickDifferent(channel, list) {
@@ -44,8 +60,9 @@
   }
 
   var alive = {
-    /** Recorded facts for the tests: how many fillers were actually spoken. */
-    stats: { spoke: 0 },
+    /** Recorded facts for the tests: fillers actually spoken, and fillers withheld because
+     *  she was still talking (or her answer was queued). */
+    stats: { spoke: 0, held: 0 },
     /** The visitor just opened the microphone: she notices and leans in. Immediate on
      *  purpose — this IS the acknowledgement that the tap landed. */
     listening: function () {
@@ -74,12 +91,14 @@
             /* The "ambient" group is the one a reply may cut off mid-word
              * (voice/core.js::heldBy) — what a person does when they finish thinking. A
              * missing clip is silence, so this degrades to the face-only cue. */
-            var line = pickDifferent("filler", FILLERS);
             B.gesture(pickDifferent("thinkAgain", ["Gesture_Think", "Gesture_Think_Subtle"]));
-            try {
-              if (window.moxieAudio && window.moxieAudio.speak) window.moxieAudio.speak(line, "ambient");
-              alive.stats.spoke++;
-            } catch (e) {}
+            if (!mayFill()) alive.stats.held++;
+            else {
+              try {
+                window.moxieAudio.speak(pickDifferent("filler", FILLERS), "ambient");
+                alive.stats.spoke++;
+              } catch (e) {}
+            }
           } else {
             B.gesture(pickDifferent("thinkAgain", ["Gesture_Think", "Gesture_Think_Subtle"]));
             B.set(5, pickDifferent("thinkYaw", [17400, 15600]));

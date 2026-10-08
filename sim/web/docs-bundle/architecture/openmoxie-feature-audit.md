@@ -232,7 +232,7 @@ Status is today's code. Items marked ADOPT or BEYOND that we have since built sa
 | Feature | OpenMoxie | Us | Verdict |
 |---|---|---|---|
 | Content model | DB rows | JSON modules (`mqtt/content_modules/`) | HAVE |
-| Authoring UI | Django admin + interact harness | Console editor; no "try it against the brain" yet | ADOPT, partial |
+| Authoring UI | Django admin + interact harness | Console editor, plus the 💬 Try it card: chat with any installed module, free chat or any brain the appliance offers, through the robot's own brain and staging, with no robot and nothing published ([brief](backlog/content-authoring.md) §5.3); an unsaved draft cannot be tried yet | ADOPT, shipped |
 | Packs with review + `source_version` | Two-step import | Versioned, digest-checked packs that also detect local edits (`content/packs/`) | ADOPT, shipped |
 | Globals | Four action types | Regex globals with handlers | HAVE |
 | Stored Python (`METHOD`, `code`) | `exec` with a timeout | Sandboxed declarative rules, no `exec` (`content/ext/`) | BEYOND, shipped |
@@ -254,7 +254,7 @@ Status is today's code. Items marked ADOPT or BEYOND that we have since built sa
 | Telemetry / insights | Never written | Durable events and daily counts in the console; sessions and trends not built | BEYOND, partial |
 | Multi-robot | Per-robot everything | Per-robot runtime and fleet view; one child profile from config | ADOPT, partial |
 | Parent app | None | Full clean-room REST server and phone web app | HAVE |
-| Hardware-free testing | Interact text box | 3D simulator on the real protocol | HAVE |
+| Hardware-free testing | Interact text box | 3D simulator on the real protocol, and the console's 💬 Try it | HAVE |
 
 ### 3.5 Engineering
 
@@ -320,7 +320,7 @@ cheaper outranks work for a robot we do not have.**
 
 | # | Open item | Robot-side? | Ready? |
 |--:|---|:--:|---|
-| 1 | Content authoring P1: `POST /content/try`, one budgeted brain call per click | no | Build-ready ([brief](backlog/content-authoring.md)) |
+| 1 | Content authoring P1 remainder: try an unsaved draft (💬 Try it covers installed items), and *Rehearse this opener* | no | Build-ready ([brief](backlog/content-authoring.md)) |
 | 2 | Insights: sessions, activity mix, trends | no | Build-ready ([brief](backlog/insights.md)) |
 | 3 | Lip-sync from phoneme marks (BEYOND #8) | no | Needs a spec ([brief](backlog/visemes.md)) |
 | 4 | Drop `'unsafe-inline'` from `style-src` | no | Blocked: Mermaid in `docs.html` emits inline styles (`sim/web/_headers`) |
@@ -347,10 +347,8 @@ settle more of this page than a week of building.
    simulator.
 2. **Its `doc/` folder.** `MoxieOverview.md` is the best config reference anywhere, and
    `AssetBundleMasterManifest.csv` lists every robot asset.
-3. **Rehearsal.** Its interact page lets an author chat with a module in the browser; our editor cannot
-   yet call the brain.
-4. **Family layer (Noonster77).** Speaker-scoped memory and downloadable transcripts.
-5. **Missions editor.** We store the history but cannot edit it.
+3. **Family layer (Noonster77).** Speaker-scoped memory and downloadable transcripts.
+4. **Missions editor.** We store the history but cannot edit it.
 
 ### Where we are ahead
 
@@ -366,6 +364,9 @@ settle more of this page than a week of building.
    OpenMoxie never touched.
 8. **Security posture**, and safety, memory, sandboxed content and an adaptive schedule that go beyond
    what any OpenMoxie variant has.
+9. **A try that tells the truth about itself.** Its interact page chats with a module; our 💬 Try it card
+   runs the robot's own brain, safety check and staging, shows her face, moves and actions, keeps to an
+   hourly budget, and writes nothing about the child.
 
 ## 6. How this feeds the build
 

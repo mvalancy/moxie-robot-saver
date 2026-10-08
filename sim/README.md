@@ -13,7 +13,7 @@ docker compose -f sim/docker-compose.yml --profile voice up          # + Piper v
 docker compose -f sim/docker-compose.yml --profile demo up           # + a virtual robot chatting on a loop
 ```
 
-Open <http://localhost:8080> (the hub) or <http://localhost:8080/sim.html> (the simulator) and
+Open <http://localhost:8080> (the hub) or <http://localhost:8080/sim> (the simulator) and
 click **Connect**. The browser talks MQTT over WebSocket to the broker on `:9001`. Drive Moxie
 from the panel, press **Demo** to replay a recorded session, or use the `demo` profile.
 
@@ -43,6 +43,7 @@ python3 sim/serve.py           # serve sim/web on 127.0.0.1:8080 with cache-bust
 | `run_scenarios.sh` | Replays every scenario through a live stack. |
 | `run_soak.sh` | Fault-injection soak: `--profile smoke\|quick\|week` (about 1, 5 or 60 minutes). |
 | `run_compose_smoke.sh` | Brings up the root `docker-compose.yml` on spare ports and round-trips the virtual robot through it. |
+| `nginx.conf` | The `web` service's server block in `docker-compose.yml`: serves `/sim` as `sim.html`, as Cloudflare Pages and `serve.py` do (the hub links `/sim`). |
 | `run_acl_proof.sh` | Proves the broker ACL against a real mosquitto. |
 | `run_broker_outage.sh` | Stops and restarts a real broker under a running supervisor. |
 | `readiness.sh` | The shared "wait for the stack" helpers: a TCP connect to the broker, then the supervisor's `subscriptions acknowledged by the broker` log line. Never a fixed sleep. |
@@ -50,6 +51,7 @@ python3 sim/serve.py           # serve sim/web on 127.0.0.1:8080 with cache-bust
 | `bridge_harness.mjs`, `browser_harness.mjs` | Shared plumbing for the node suites (not tests themselves). |
 | `check_deployed.mjs` | Checks a deployed site in a phone-sized browser. Spends nothing. See [`ci/`](ci/README.md). |
 | `check_hosted_mic.mjs` | Plays a voice into Chrome's fake microphone against a deployment. `--dry-run` is free; a real run spends gateway calls. |
+| `check_live_turn.mjs` | The daily canary: ONE real chat turn against a deployment (spends one completion; the voice ticket is never redeemed). `--selftest` is hermetic. |
 | `eval_live.mjs` | Scores real multi-turn conversations against a deployment. Spends money; refuses to run without `--yes`. Not a test. |
 
 ## What is real and what is simulated

@@ -25,6 +25,8 @@ Criterion 4 cannot be closed without a robot on the bench.
 - Account-free reimplementation of the parent-app REST API, and a phone web app served on the LAN.
 - Wi-Fi pairing QR, **verified on a real Moxie** (it scanned the code and joined the network).
 - Recovery-key crypto matched to the original app, and a hardware-free pairing test.
+- Unpair and factory reset: the robot leaves the account, stops being served and old pairing codes
+  stop working; a reset then shows the robot's own `restore_factory` setup code.
 
 **Robot cloud** — `mqtt/`
 - Mosquitto broker with TLS, per-appliance certificates, per-robot ACLs and a device permit list.
@@ -61,6 +63,8 @@ Everything below is built and tested against the Sim, but no physical robot has 
 - Our markup and moods played on the robot's own face and body.
 - On-device vision events (face found or lost) driving greetings.
 - Puppet mode.
+- Unpair and factory reset on the robot itself: what Moxie shows when it is sent the not-paired
+  settings, and whether the `restore_factory` code resets it.
 - Reflashing an older (pre-801) robot to 803 with `rkdeveloptool`. The method and a signed image are
   documented in [`hardware/firmware-and-older-robots.md`](hardware/firmware-and-older-robots.md).
 
@@ -77,8 +81,11 @@ Ordered by priority.
    ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
 4. **A second brain for the demo.** Today one gateway outage silences it. Needs a second credential
    and an owner cost decision ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
-5. **Parent app depth.** Factory reset and unpair from the web UI; they are specified in
-   [`docs/features/robot-lifecycle.md`](docs/features/robot-lifecycle.md) but not built.
+5. **Parent app depth.** Partly done: unpair and factory reset are in the web app, behind a typed
+   confirmation ([what is built](docs/features/robot-lifecycle.md#built-here-unpair-and-factory-reset)).
+   Still open: a robot paired by scanning the QR gets no account record, so its robot card and
+   Unpair button do not appear (for it, unpair is Revoke in Robot access today), and no physical
+   robot has been reset this way.
 6. **Storage.** Per-robot state is JSON files. That is fine for one home; move to a database only if
    multi-process access needs it.
 

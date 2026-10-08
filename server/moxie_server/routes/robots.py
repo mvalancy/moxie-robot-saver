@@ -3,7 +3,8 @@
 The device actions answer honestly: `wakeup` publishes the recovered command and says
 only that it was published, `reboot` is a 501 (no cloud→robot reboot is recovered), and
 `ota_status` reports what the robot said about itself — the reasoning lives beside
-`UNSUPPORTED_ACTIONS` / `ota_status_view` in `fleet/robots.py`.
+`UNSUPPORTED_ACTIONS` / `ota_status_view` in `fleet/robots.py`. Unpair and factory reset
+(`DELETE robots/{id}[?rfs=1]`) are worded by `lifecycle.py`.
 """
 from __future__ import annotations
 import json
@@ -11,7 +12,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from .. import db, supervisor
+from .. import db, lifecycle, supervisor
 from ..auth import current_user, read_json
 from ..fleet import ota_status_view, resolve_device_id, unsupported_action
 from ..serializers import robot_document
@@ -69,10 +70,46 @@ async def update_robot(rid: str, request: Request, u=Depends(current_user)):
     return robot_document(db.q1("SELECT * FROM robots WHERE id=?", (rid,)))
 
 
+def _revoke(attrs: dict) -> dict:
+    """Stop serving the robot this record names: the very `POST /permits` the console's
+    Revoke button sends, after which the supervisor re-pushes the un-paired config. Only
+    the record's own `mqtt-device-id` counts — `resolve_device_id`'s sole-served guess is
+    fine for a wake-up, but revoking another child's robot is not."""
+    device_id = str(attrs.get("mqtt-device-id") or "").strip()
+    if not device_id:
+        return lifecycle.access_view(None, revoked=False)
+    out, code = supervisor.post_json("/permits", {"device_id": device_id,
+                                                  "permitted": False, "label": ""})
+    ok = code == 200 and bool(out.get("ok"))
+    return lifecycle.access_view(
+        device_id, revoked=ok, open_gate=ok and bool(out.get("allow_unverified_bots")),
+        error=None if ok else (out.get("error") or f"supervisor returned {code}"))
+
+
 @router.delete("/api/robots/{rid}")
 def delete_robot(rid: str, rfs: str = Query(None), u=Depends(current_user)):
-    db.ex("DELETE FROM robots WHERE id=? AND user_id=?", (rid, u["id"]))
-    return Response(status_code=204)
+    """Unpair (`DELETE robots/{id}`) or unpair + factory reset (`?rfs=1`),
+    `docs/features/robot-lifecycle.md` §1-2.
+
+    One transaction takes the record off the account (the app's UNPAIRED: no robot in
+    `users/me`) and voids the account's unused pairing codes; then the robot's permit is
+    revoked. The child is never touched (§2): erasing it is the console's existing erase
+    calls, made only when the parent chooses. Server-side a reset is the same unpair (the
+    doc's cleanup is identical); what differs is reaching the robot, and with no recovered
+    cloud-to-robot reset command the answer carries the `restore_factory` setup code.
+    Idempotent: a repeat, or another account's robot id, changes nothing (`unpaired:
+    false`). Any 2xx is success to the original app, so the body is ours to use."""
+    reset = str(rfs or "").strip().lower() in ("1", "true", "yes")
+    row, voided = db.unpair_robot(rid, u["id"])
+    if row is None:
+        return lifecycle.unpair_result(rid, unpaired=False, factory_reset=reset)
+    kid = (db.q1("SELECT * FROM children WHERE id=? AND user_id=?", (row["child_id"], u["id"]))
+           if row["child_id"] else None)
+    child = ({"id": kid["id"], "name": json.loads(kid["attributes"]).get("child-first-name")}
+             if kid else None)
+    return lifecycle.unpair_result(rid, unpaired=True, factory_reset=reset, child=child,
+                                   codes_voided=voided,
+                                   access=_revoke(json.loads(row["attributes"])))
 
 
 @router.post("/api/robots/{rid}/wakeup")

@@ -19,6 +19,9 @@
  *    budget via `slot.chargeExtra()` but never to the visitor's per-IP window.
  *  - NEVER A BARE 500, NEVER A 200 WITH AN EMPTY STRING: an empty completion is
  *    `upstream_down` and the page degrades visibly.
+ *  - A GOODBYE ENDS THE TURN. When the child's whole line is a leave-taking
+ *    (`_lib/turnshape.js::isGoodbye`) the model is cued to say goodbye, `end_turn` is true
+ *    and the markup carries the sign-off wave — the one place a client is told to stop.
  */
 import { readConfig, modeOf, publicLimits, publicTurnstile, upstreamHeaders } from "./_lib/env.js";
 import { respond } from "./_lib/envelope.js";
@@ -27,7 +30,8 @@ import { admit, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
 import { mintContext, mintTicket, verifyContext } from "./_lib/hmac.js";
 import { TOKEN_FIELD, verify as verifyTurnstile } from "./_lib/turnstile.js";
 import { lookup as lookupDocs } from "./_lib/docsearch.js";
-import { buildChatResponse, chatMessage, eventId, joinUrl, markupFloor, MK } from "./_lib/wire.js";
+import { isGoodbye } from "./_lib/turnshape.js";
+import { buildChatResponse, chatMessage, eventId, joinUrl, markupFloor, MK, SIGN_OFF } from "./_lib/wire.js";
 import { buildUpstreamBody, penaltiesAccepted, rejectPenalties } from "./_lib/prompt.js";
 import { completionText, echoOf, MAX_DIAGRAM_CHARS, parseExpressive, rerollBudgetMs, splitDiagram } from "./_lib/reply.js";
 import { fetchFailure, limitedOrRedirected, refusal as refuse } from "./_lib/upstream.js";
@@ -119,9 +123,12 @@ export async function onRequestPost(context) {
     }
 
     // 8. The first upstream call. The docs lookup is two same-origin asset fetches with no
-    //    gateway cost, and fails open to `null`.
+    //    gateway cost, and fails open to `null`. Whether the child is leaving is decided
+    //    here too, from the whole line and nothing else; it cues the model (inside
+    //    `buildUpstreamBody`) and closes the turn at step 9.
     const turns = history.turns;
     const startedAt = Date.now();
+    const closing = isGoodbye(text);
     const docs = await lookupDocs(context.env && context.env.ASSETS,
                                   new URL(request.url).origin, text);
     const upstream = await callGateway(cfg, buildUpstreamBody(cfg, turns, text, undefined, docs));
@@ -134,15 +141,17 @@ export async function onRequestPost(context) {
     }
 
     // 8b. The re-roll.
-    const served = await rerollOnce(cfg, slot, { turns, text, first: upstream, startedAt });
+    const served = await rerollOnce(cfg, slot, { turns, text, first: upstream, startedAt, docs });
 
-    // 9. The reply. `served.chosen` and `served.text` travel together, so a re-rolled line
-    //    never wears the face the model chose for the other one. `markupFloor` validates
-    //    each field against its closed table.
+    // 9. The reply. `served.chosen`, `served.diagram` and `served.text` travel together, so
+    //    a re-rolled line never wears the face, or shows the picture, the model chose for
+    //    the other one. `markupFloor` validates each field against its closed table; on a
+    //    goodbye it is asked for the sign-off wave and the wire says the turn is over.
     const reply = served.text;
     const eid = eventId();
     const wire = buildChatResponse({
-      eventId: eid, text: reply, markup: markupFloor(reply, served.chosen),
+      eventId: eid, text: reply, endTurn: closing,
+      markup: markupFloor(reply, served.chosen, closing ? SIGN_OFF : ""),
     });
 
     // 10. A voice ticket only when a TTS model is configured, and the next context blob.
@@ -171,7 +180,7 @@ export async function onRequestPost(context) {
         turnstile: publicTurnstile(cfg),
         messages: [chatMessage(cfg.deviceId, wire)],
         speech,
-        diagram: upstream.diagram || "",
+        diagram: served.diagram || "",
         // `"<title>|<path>"` when she looked something up. See `PUBLIC_KEYS`.
         cited: docs ? (docs.title + "|" + docs.path) : "",
         context: nextContext,
@@ -194,22 +203,26 @@ export async function onRequestPost(context) {
  * (`slot.chargeExtra()`, charged BEFORE the call). One call, no loop. Every failure — a
  * timeout, a 500, an empty completion, a second echo — keeps the first reply.
  *
- * @returns {Promise<{text: string, chosen: object|null, rerolled: boolean}>}
+ * The second body is the first body plus the one forbidding sentence: the same docs
+ * passage rides it (it once did not, and the served reply could cite a passage its model
+ * never saw), and the diagram served is the one drawn FOR the served line.
+ *
+ * @returns {Promise<{text: string, chosen: object|null, diagram: string, rerolled: boolean}>}
  */
 async function rerollOnce(cfg, slot, o) {
-  const first = { text: o.first.text, chosen: o.first.chosen, rerolled: false };
+  const first = { text: o.first.text, chosen: o.first.chosen, diagram: o.first.diagram || "", rerolled: false };
   if (!cfg.reroll) return first;
   const echo = echoOf(first.text, o.turns);
   if (!echo) return first;
   const budgetMs = rerollBudgetMs(cfg, Date.now() - o.startedAt);
   if (!budgetMs) return first;
   if (!slot.chargeExtra()) return first;
-  const again = await callGateway(cfg, buildUpstreamBody(cfg, o.turns, o.text, echo), budgetMs);
+  const again = await callGateway(cfg, buildUpstreamBody(cfg, o.turns, o.text, echo, o.docs), budgetMs);
   if (!again.ok) return first;
   // Not an echo of ANYTHING she said — dodging the named line onto an older one is the
   // same defect.
   if (echoOf(again.text, o.turns)) return first;
-  return { text: again.text, chosen: again.chosen, rerolled: true };
+  return { text: again.text, chosen: again.chosen, diagram: again.diagram || "", rerolled: true };
 }
 
 /**
