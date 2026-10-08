@@ -27,6 +27,7 @@ protobuf runtime, mirroring the reader `decode_zmq_stt_frame`; the committed
 """
 from __future__ import annotations
 import struct
+import threading
 import time
 from enum import IntEnum
 from typing import Iterable, Optional
@@ -266,8 +267,13 @@ class FallbackTranscriber(Transcriber):
         self._log = log if log is not None else _warn
         self._retry_s = max(0.0, float(self.RETRY_S if retry_s is None else retry_s))
         self._clock = clock                     # wall clock: `describe()` names the time
+        # The latch is `failed_at`: the instant it (last) closed, None while healthy;
+        # `failed` is the public flag beside it. Both move under `_lock`, and every
+        # reader takes ONE snapshot of `failed_at` — the status page's `describe()` runs
+        # on another thread than the utterance that clears the latch.
+        self._lock = threading.Lock()
         self.failed = False
-        self.failed_at: Optional[float] = None  # when the latch (last) closed
+        self.failed_at: Optional[float] = None
 
     @property
     def engine(self) -> Transcriber:
@@ -280,45 +286,69 @@ class FallbackTranscriber(Transcriber):
 
     def retry_at(self) -> Optional[float]:
         """When the primary is tried again (wall clock), or None while it is healthy."""
-        return None if not self.failed else self.failed_at + self._retry_s
-
-    def _retry_due(self) -> bool:
-        return self.failed and self._clock() >= self.retry_at()
+        at = self.failed_at
+        return None if at is None else at + self._retry_s
 
     def describe(self) -> str:
-        if self.failed:
-            return (f"{self._standby.describe()} (standby since {_hhmm(self.failed_at)} — "
-                    f"{self._primary.name} failed; retrying the primary at "
-                    f"{_hhmm(self.retry_at())})")
-        return f"{self._primary.describe()} (standby: {self._standby.describe()})"
+        at = self.failed_at
+        if at is None:
+            return f"{self._primary.describe()} (standby: {self._standby.describe()})"
+        # Past the window the time has gone by: say what happens instead of when it was.
+        when = ("on the next utterance" if self._clock() >= at + self._retry_s
+                else f"at {_hhmm(at + self._retry_s)}")
+        return (f"{self._standby.describe()} (standby since {_hhmm(at)} — "
+                f"{self._primary.name} failed; retrying the primary {when})")
+
+    def _try_primary(self) -> bool:
+        """Whether THIS utterance goes to the primary: always while healthy; once the
+        window has passed, for the one caller that claims the retry — the window moves
+        at once, so a caller racing it on another thread stays on the standby instead
+        of spending a second timeout on the same dead gateway."""
+        with self._lock:
+            at = self.failed_at
+            if at is None:
+                return True
+            if self._clock() >= at + self._retry_s:
+                self.failed_at = self._clock()
+                return True
+            return False
+
+    def _latch(self, exc: Exception) -> None:
+        with self._lock:
+            first = self.failed_at is None
+            self.failed_at = self._clock()
+            self.failed = True
+        if first:
+            self._log(f"[stt] {self._primary.name} failed ({type(exc).__name__}: {exc}); "
+                      f"hearing with {self._standby.name} until it answers again (next "
+                      f"try in {self._retry_s:g}s)")
+        else:
+            self._log(f"[stt] {self._primary.name} still failing ({type(exc).__name__}); "
+                      f"hearing with {self._standby.name}, next try in {self._retry_s:g}s")
+
+    def _release(self) -> None:
+        with self._lock:
+            was_latched = self.failed_at is not None
+            self.failed, self.failed_at = False, None
+        if was_latched:
+            self._log(f"[stt] {self._primary.name} is back; hearing with it again")
 
     def transcribe(self, pcm: bytes, sample_rate: int = 16000) -> str:
-        if not self.failed or self._retry_due():
+        if self._try_primary():
             try:
                 text = self._primary.transcribe(pcm, sample_rate)
             except Exception as exc:            # noqa: BLE001 — any failure downgrades
-                first = not self.failed
-                self.failed, self.failed_at = True, self._clock()
-                if first:
-                    self._log(f"[stt] {self._primary.name} failed "
-                              f"({type(exc).__name__}: {exc}); hearing with "
-                              f"{self._standby.name} until it answers again (next try "
-                              f"in {self._retry_s:g}s)")
-                else:
-                    self._log(f"[stt] {self._primary.name} still failing "
-                              f"({type(exc).__name__}); hearing with "
-                              f"{self._standby.name}, next try in {self._retry_s:g}s")
+                self._latch(exc)
             else:
-                if self.failed:
-                    self.failed, self.failed_at = False, None
-                    self._log(f"[stt] {self._primary.name} is back; hearing with it again")
+                self._release()
                 return text
         return self._standby.transcribe(pcm, sample_rate)
 
 
 def _hhmm(t: Optional[float]) -> str:
-    """A wall-clock instant as `HH:MM` for a startup/status line."""
-    return time.strftime("%H:%M", time.localtime(t or 0))
+    """A wall-clock instant as `HH:MM ZONE` (the supervisor's local zone — UTC in the
+    container) for a startup/status line."""
+    return time.strftime("%H:%M %Z", time.localtime(t or 0))
 
 
 def _warn(message: str) -> None:

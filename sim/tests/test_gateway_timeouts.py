@@ -483,6 +483,8 @@ def test_a_standby_lets_go_of_a_recovered_primary():
                     f"retrying the primary at {_hhmm(T0 + 60)})")
 
     clock.advance(31)                                      # past the window
+    assert fb.describe().endswith("retrying the primary on the next utterance)"), \
+        "past the window describe() names a time that has gone by"
     assert fb.transcribe(PCM_16K) == "heard in the cloud"  # the retry, and it answers
     assert not fb.failed and fb.failed_at is None and fb.retry_at() is None
     assert primary.calls == 2 and standby.calls == 2
@@ -523,6 +525,7 @@ def test_the_voices_standby_lets_go_the_same_way():
     assert fb.describe() == (f"piper-fake (standby since {_hhmm(T0)} — cloud-voice failed; "
                              f"retrying the primary at {_hhmm(T0 + 60)})")
     clock.advance(1)
+    assert fb.describe().endswith("retrying the primary on the next line)")
     assert fb.synthesize("hi") == b"\x01\x02" * 8 and fb.sample_rate == 22050
     assert not fb.failed and fb.voice_name == "cloud-voice"
     assert len(logged) == 2 and "cloud-voice is back" in logged[1]
@@ -536,6 +539,87 @@ def test_a_zero_retry_window_tries_the_primary_on_every_call():
         assert fb.transcribe(PCM_16K) == "heard locally"
     assert primary.calls == 3 and fb.failed
     assert fb.transcribe(PCM_16K) == "heard in the cloud" and not fb.failed
+
+
+# ------------------------------------------------ one retry at a time, per engine --
+class _RetryInFlightEars(Transcriber):
+    """Fails its first call; its second blocks until released (a retry in flight)."""
+    name = "cloud"
+
+    def __init__(self):
+        self.calls = 0
+        self.entered, self.release = threading.Event(), threading.Event()
+
+    def transcribe(self, pcm, sample_rate=16000):
+        self.calls += 1
+        if self.calls == 1:
+            raise APITimeoutError("Request timed out.")
+        self.entered.set()
+        assert self.release.wait(GUARD_S), "the test never released the retry"
+        return "heard in the cloud"
+
+
+class _RetryInFlightVoice(Synthesizer):
+    name = "cloud-voice"
+    sample_rate = 22050
+
+    def __init__(self):
+        self.calls = 0
+        self.entered, self.release = threading.Event(), threading.Event()
+
+    def synthesize(self, text, voice=None):
+        self.calls += 1
+        if self.calls == 1:
+            raise APITimeoutError("Request timed out.")
+        self.entered.set()
+        assert self.release.wait(GUARD_S), "the test never released the retry"
+        return b"\x01\x02" * 8
+
+
+def test_one_utterance_retries_the_primary_while_a_racing_one_stays_on_the_standby():
+    """Two utterances at the end of the window (one `FallbackTranscriber` hears every
+    robot): the first claims the retry and the window moves at once, so the second goes
+    straight to the standby instead of spending a second timeout on the same gateway;
+    the retry's answer then clears the latch for both. Before: every caller that saw
+    the retry as due tried the primary."""
+    clock, logged = _Clock(T0), []
+    primary, standby = _RetryInFlightEars(), _LocalEars()
+    fb = FallbackTranscriber(primary, standby, log=logged.append, retry_s=60, clock=clock)
+    fb.transcribe(PCM_16K)                                 # latched at T0
+    clock.advance(60)
+    out = {}
+    first = threading.Thread(target=lambda: out.setdefault("text", fb.transcribe(PCM_16K)),
+                             daemon=True)
+    first.start()
+    assert primary.entered.wait(GUARD_S), "the first utterance did not reach the primary"
+    assert fb.transcribe(PCM_16K) == "heard locally"       # the racing one: standby, now
+    assert primary.calls == 2 and standby.calls == 2
+    assert fb.failed and fb.retry_at() == T0 + 120, "the window moves when the retry is claimed"
+    assert fb.describe().endswith(f"retrying the primary at {_hhmm(T0 + 120)})")
+    primary.release.set()
+    first.join(GUARD_S)
+    assert out["text"] == "heard in the cloud" and not fb.failed and fb.retry_at() is None
+    assert len(logged) == 2 and "cloud is back" in logged[1]
+
+
+def test_one_line_retries_the_voice_while_a_racing_filler_stays_on_the_standby():
+    """The voice twin: a turn worker's line and a filler timer's line meet at the end
+    of the window; one retry, the other line on the standby at once."""
+    clock = _Clock(T0)
+    primary, standby = _RetryInFlightVoice(), _LocalVoice()
+    fb = FallbackSynthesizer(primary, standby, log=lambda m: None, retry_s=60, clock=clock)
+    fb.synthesize("hi")                                    # latched at T0
+    clock.advance(60)
+    out = {}
+    first = threading.Thread(target=lambda: out.setdefault("pcm", fb.synthesize("one")),
+                             daemon=True)
+    first.start()
+    assert primary.entered.wait(GUARD_S)
+    assert fb.synthesize("two") == b"\x03\x04" * 8         # the filler: standby, now
+    assert primary.calls == 2 and standby.calls == 2 and fb.retry_at() == T0 + 120
+    primary.release.set()
+    first.join(GUARD_S)
+    assert out["pcm"] == b"\x01\x02" * 8 and not fb.failed and fb.voice_name == "cloud-voice"
 
 
 # ------------------------------------------- a knob of 0: refused, never "no bound" --

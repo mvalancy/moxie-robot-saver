@@ -20,7 +20,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 from moxie_sdk.app import MoxieApp                       # noqa: E402
 from moxie_sdk.store import JsonStore                    # noqa: E402
 from moxie_sdk.types import (Reply, Action, ActionType, RobotContext, ChildProfile,  # noqa: E402
-                             ResultCode)
+                             ResultCode, Turn)
 import moxie_runtime                                     # noqa: E402
 from helpers_runtime import FakeClient, free_port        # noqa: E402
 
@@ -345,6 +345,56 @@ def test_the_guard_never_speaks_for_a_superseded_turn(capsys):
     rt._close_failed_turn("d_super", "evt-old", 4, ValueError("loud"))   # closed: no more
     assert len(_on(rt.client.published, CHAT.format(did="d_super"))) == 1
     assert _failed_lines(capsys) == 2
+
+
+def test_a_final_chunk_closes_the_turn_whatever_its_result_code():
+    """The closed rule the guard reads (`_note_turn_published`): anything but
+    `REPLY_PENDING` closes the turn, and so does a chunk marked `is_completed` even
+    when an app stamped it `REPLY_PENDING` — the robot holds its closing chunk either
+    way, so the guard must never add a second one."""
+    from moxie_runtime import turns as turns_mod
+    rt = _rt("d_rule", app=_ActionApp(), nickname="Sam")
+    key = ("d_rule", "evt-rule")
+    with turns_mod._OPEN_TURNS_LOCK:
+        rt._open_turns()[key] = {"closed": False, "next_chunk": 0}
+    rt._note_turn_published("d_rule", "evt-rule", ResultCode.REPLY_PENDING, 0, False)
+    assert rt._open_turns()[key] == {"closed": False, "next_chunk": 1}
+    rt._note_turn_published("d_rule", "evt-rule", ResultCode.REPLY_PENDING, 1, True)
+    assert rt._open_turns()[key] == {"closed": True, "next_chunk": 2}
+    for result in (ResultCode.SUCCESS, ResultCode.ERROR_OFFLINE):
+        with turns_mod._OPEN_TURNS_LOCK:
+            rt._open_turns()[key] = {"closed": False, "next_chunk": 0}
+        rt._note_turn_published("d_rule", "evt-rule", result, None, None)
+        assert rt._open_turns()[key] == {"closed": True, "next_chunk": 0}
+
+
+def test_a_workers_exit_leaves_a_newer_turn_on_the_same_event_id_alone():
+    """The in-flight table is keyed by (device, event_id). A robot that re-used an
+    event_id, or sent none, puts a newer worker on the same key; the older worker's
+    exit must pop only its own entry, or the newer turn's guard silently does nothing."""
+    from moxie_runtime import turns as turns_mod
+    app = _SlowLoudThenFineApp()
+    rt = _rt("d_reuse", app=app, nickname="Sam")
+    key = ("d_reuse", None)                               # no event_id at all
+    turn = Turn(robot=rt.robots["d_reuse"], speech="hello", history=[])
+    rt._turn_seq["d_reuse"] = 1
+    worker = threading.Thread(target=rt._turn_worker,
+                              args=("d_reuse", None, "hello", turn, 1), daemon=True)
+    worker.start()
+    assert app.entered.wait(10), "the first turn never reached the brain"
+    newer = {"closed": False, "next_chunk": 0}
+    with turns_mod._OPEN_TURNS_LOCK:
+        assert key in rt._open_turns()
+        rt._open_turns()[key] = newer                     # a newer worker took the key
+    app.release.set()                                     # the old one dies in staging
+    worker.join(10)
+    assert not worker.is_alive()
+    assert rt._open_turns().get(key) is newer, "the old worker's exit popped the newer turn"
+    # ...and a turn that is its own newest still leaves nothing behind
+    rt._turn_seq["d_reuse"] = 2
+    rt._turn_worker("d_reuse", "evt-two", "again", Turn(robot=rt.robots["d_reuse"],
+                                                       speech="again", history=[]), 2)
+    assert ("d_reuse", "evt-two") not in rt._open_turns()
 
 
 def test_a_late_reply_for_a_superseded_turn_is_dropped_before_it_can_fail(capsys):

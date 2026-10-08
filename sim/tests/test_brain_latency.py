@@ -12,8 +12,11 @@ one timing assertion (no filler before the budget) uses a monotonic clock, loose
 """
 import json
 import os
+import socketserver
 import threading
 import time
+
+import pytest
 
 from helpers_runtime import (CHAT_TOPIC, CountingSynth, LatchClient,  # noqa: E402
                              dotenv_values, find_repo_dotenv, load_repo_dotenv,
@@ -292,45 +295,87 @@ def test_a_streaming_brain_is_not_entered_for_an_abandoned_turn():
 
 
 # ------------------------------------- the hang bound sits above the filler budget
-class _GatedCompletion:
-    """The openai client's `chat.completions` seam: the completion lands when the test
-    releases it — a brain that answers AFTER the budget, with no sleep."""
+class _HeldGateway:
+    """A loopback gateway that ANSWERS: one canned chat completion per request, written
+    only once the test releases it — a brain whose completion lands after the budget,
+    reached through the real openai client, so the bound under test is the client's
+    own (an injected client would bypass it and never see the knob)."""
 
     def __init__(self, text):
-        self.text, self.release, self.calls = text, threading.Event(), 0
-        self.chat = self.completions = self
+        self.text, self.calls = text, 0
+        self.arrived, self.release = threading.Event(), threading.Event()
+        gateway = self
 
-    def create(self, **kw):
-        self.calls += 1
-        assert self.release.wait(PATIENCE), "the test never released the completion"
-        msg = type("M", (), {"content": self.text})()
-        return type("R", (), {"choices": [type("C", (), {"message": msg})()]})()
+        class _Answer(socketserver.StreamRequestHandler):
+            def handle(self):
+                length = 0                               # the head, then the body it promises
+                while True:
+                    line = self.rfile.readline()
+                    if not line or line in (b"\r\n", b"\n"):
+                        break
+                    if line.lower().startswith(b"content-length:"):
+                        length = int(line.split(b":", 1)[1].strip() or 0)
+                if length:
+                    self.rfile.read(length)
+                gateway.calls += 1
+                gateway.arrived.set()
+                if not gateway.release.wait(PATIENCE):
+                    return                               # the test gave up: just close
+                body = json.dumps({
+                    "id": "cmpl-held", "object": "chat.completion", "created": 0,
+                    "model": "m",
+                    "choices": [{"index": 0, "finish_reason": "stop",
+                                 "message": {"role": "assistant", "content": gateway.text}}],
+                }).encode()
+                self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                                 + f"Content-Length: {len(body)}\r\n".encode()
+                                 + b"Connection: close\r\n\r\n" + body)
+
+        class _Server(socketserver.ThreadingTCPServer):
+            daemon_threads = True
+            allow_reuse_address = True
+
+        self._server = _Server(("127.0.0.1", 0), _Answer)     # an ephemeral port
+        self.base_url = f"http://127.0.0.1:{self._server.server_address[1]}/v1"
+        threading.Thread(target=self._server.serve_forever,
+                         kwargs={"poll_interval": 0.05}, daemon=True).start()
+
+    def close(self):
+        self.release.set()
+        self._server.shutdown()
+        self._server.server_close()
 
 
 def test_a_slow_but_answering_brain_is_never_cut_off_by_the_bound(monkeypatch):
     """`MOXIE_BRAIN_TIMEOUT_S` (60 s by default; a hang bound, chosen not measured) sits
     far above the filler budget: a non-streamed content brain whose completion lands
     after the budget still gets the filler and then its answer, never ERROR_OFFLINE.
-    Driven through the real `make_openai_chat` (its deadline included) over a client
-    released only once the filler is on the wire."""
+    Driven through the real `make_openai_chat` and the real openai client, under the
+    knob config ships, against a loopback gateway that answers only once the filler is
+    on the wire — so the knob is what bounds the wait, and a knob read as shorter than
+    the budget (0.1 s, say) turns this into ERROR_OFFLINE."""
+    pytest.importorskip("openai")
     from helpers_runtime import reload_config
     from moxie_sdk.chat import make_openai_chat
     from moxie_sdk.content import ContentApp, load_module
     c = reload_config(monkeypatch, ("MOXIE_BRAIN_TIMEOUT_S",))
-    gate = _GatedCompletion("The Moon is about 384,400 kilometres away.")
-    chat = make_openai_chat("http://127.0.0.1:1/v1", "k", "m", client=gate,
-                            timeout_s=c.BRAIN_TIMEOUT_S, on_backoff=None)
-    module = load_module({"conversations": [
-        {"module_id": "FREE_CHAT", "content_id": "default", "prompt": "Answer the child."}]})
-    rt, dev = _slow_runtime(ContentApp(module, chat), budget=0.2)
-    _push(rt, dev, "how far is the moon?", "evt-slow-content")
-    assert rt.client.wait_for(lambda pub: len(pub) >= 1), "no filler was published"
-    assert gate.calls == 1 and not gate.release.is_set()
-    gate.release.set()                           # the answer lands after the budget
-    rt._pool.shutdown(wait=True)
+    held = _HeldGateway("The Moon is about 384,400 kilometres away.")
+    try:
+        chat = make_openai_chat(held.base_url, "k", "m", timeout_s=c.BRAIN_TIMEOUT_S,
+                                on_backoff=None)
+        module = load_module({"conversations": [
+            {"module_id": "FREE_CHAT", "content_id": "default", "prompt": "Answer the child."}]})
+        rt, dev = _slow_runtime(ContentApp(module, chat), budget=0.2)
+        _push(rt, dev, "how far is the moon?", "evt-slow-content")
+        assert rt.client.wait_for(lambda pub: len(pub) >= 1), "no filler was published"
+        assert held.arrived.wait(PATIENCE) and held.calls == 1 and not held.release.is_set()
+        held.release.set()                       # the answer lands after the budget
+        rt._pool.shutdown(wait=True)
+    finally:
+        held.close()
     replies = _chats(rt, dev)
     assert [r["result"] for r in replies] == [ResultCode.REPLY_PENDING, ResultCode.SUCCESS]
-    assert replies[1]["output"]["text"] == gate.text
+    assert replies[1]["output"]["text"] == held.text
     assert replies[1]["consistency_control"] == {"is_completed": True}
 
 

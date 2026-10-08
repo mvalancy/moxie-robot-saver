@@ -33,17 +33,22 @@ class TurnsMixin:
         sequence nobody would close. Now it logs once and, unless the turn is stale or
         already answered, closes it with the stock line (`_close_failed_turn`)."""
         key = (device_id, event_id)
+        entry = {"closed": False, "next_chunk": 0}
         with self._presence_lock:
             self._busy.add(device_id)
         with _OPEN_TURNS_LOCK:
-            self._open_turns()[key] = {"closed": False, "next_chunk": 0}
+            self._open_turns()[key] = entry
         try:
             self._handle_turn(device_id, event_id, speech, turn, seq)
         except Exception as e:                  # noqa: BLE001 — never die silently
             self._close_failed_turn(device_id, event_id, seq, e)
         finally:
             with _OPEN_TURNS_LOCK:
-                self._open_turns().pop(key, None)
+                # Only this worker's own entry: a robot that re-used the event_id (or
+                # sent none) has a newer worker on the same key, whose guard must keep
+                # its state.
+                if self._open_turns().get(key) is entry:
+                    del self._open_turns()[key]
             with self._presence_lock:
                 self._busy.discard(device_id)
 
@@ -70,7 +75,10 @@ class TurnsMixin:
         `_is_stale` FIRST (never a word for a superseded turn), the closed flag SECOND
         (never twice for one event) — the stock line as the closing reply: chunk 1 with
         `is_completed` when a filler or opener already went out as chunk 0, else a plain
-        SUCCESS. The line is not remembered: it is not what Moxie meant to say."""
+        SUCCESS. The stock line is not remembered: it is not what Moxie meant to say
+        (on the plain path the brain's own line already is — `_handle_turn` calls
+        `_remember` before `_stage`, where an app's bad field dies; on the streamed path
+        nothing of the turn is)."""
         print(f"[runtime] turn failed ({type(exc).__name__}: {exc}) on {device_id}",
               flush=True)
         self._note("error", f"turn failed ({type(exc).__name__}) for {device_id}")
@@ -567,8 +575,10 @@ class TurnsMixin:
                 kept.append(action)             # no ActionID: `encode_action` drops it
                 continue
             if kind is ActionType.LAUNCH and not self._has_module(action.module_id):
-                what = (f"the brain asked to launch {action.module_id!r}, which this "
-                        f"robot does not have")
+                # The id is the model's own words: cut to a line's worth for the feed.
+                shown = str(action.module_id)[:40]
+                what = (f"the brain asked to launch {shown!r}, which this robot does "
+                        f"not have")
                 print(f"[runtime] {what} ({device_id}); launch dropped", flush=True)
                 self._note("chat", what)
                 continue
