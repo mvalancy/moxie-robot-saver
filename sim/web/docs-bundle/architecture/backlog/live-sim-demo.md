@@ -220,11 +220,10 @@ the prompt. The blob is re-minted each turn and expires after `CONTEXT_TTL_S` = 
   any call and is unchanged; the server-built body, so a visitor can add words but never a message or a
   role; the anchor's restatement at the end of the one system message; and the measurement gate: a
   model is pointed at this layout only after `sim/eval_live.mjs --only=safety,injection` passes on it.
-- **`user-anchor`** keeps one leading system message and appends the anchor to the end of the child's
-  own turn, behind a header that names whose words they are. It keeps "ours is last" on a template that
-  honours only a leading system message. An experiment arm, measured beside `single`; not a default.
 - No layout except `anchor` emits a system message that is not first. An unknown `DEMO_PROMPT_LAYOUT`
-  falls back to `anchor` with a note, never to an unmeasured layout.
+  falls back to `anchor` with a note, never to an unmeasured layout. (A third arm that appended the
+  anchor to the child's own turn was built and dropped unmeasured: a knob value nobody has measured is
+  a trap, not an option.)
 - Nothing reaches disk.
 
 ### 3.4 Voice-first ordering
@@ -611,7 +610,7 @@ clamped. `_lib/env.js::DEFAULTS` is the source of truth.
 | `DEMO_MAX_CONTEXT_CHARS` / `DEMO_MAX_HISTORY_TURNS` | 4000 / 12 | 0..100000 / 0..64 |
 | `DEMO_FREQUENCY_PENALTY` / `DEMO_PRESENCE_PENALTY` | 0.4 / 0.3 | −2..2; 0 is not sent |
 | `DEMO_TURN_SHAPE` / `DEMO_REROLL` | on / on | §4.10 / §4.9 |
-| `DEMO_PROMPT_LAYOUT` | `anchor` | `anchor` · `single` · `user-anchor` (§3.3); an unknown value falls back to `anchor` with a note; measure a model on `single` before switching production to it |
+| `DEMO_PROMPT_LAYOUT` | `anchor` | `anchor` · `single` (§3.3); an unknown value falls back to `anchor` with a note; measure a model on `single` before switching production to it |
 | `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | ≥ 1 |
 | `DEMO_SPEECH_PER_MIN` / `_HOUR` | 10 / 80 | ≥ 1 |
 | `DEMO_STT_PER_MIN` / `_HOUR` | 10 / 60 | ≥ 1 |

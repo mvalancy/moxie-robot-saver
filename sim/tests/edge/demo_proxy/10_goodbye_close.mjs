@@ -119,10 +119,9 @@ const ticketText = async (r) => {
 
 /* 21. THE LAYOUTS (`DEMO_PROMPT_LAYOUT`, §3.3). The persona is sent ONCE in every layout;
  * only `anchor` may emit a system message that is not first (some chat templates reject or
- * drop one); our text is last in `anchor` and `user-anchor`; the child's line is last in
- * `single`. */
+ * drop one); our text is last in `anchor`; the child's line is last in `single`. */
 {
-  deep(LAYOUTS, ["anchor", "single", "user-anchor"], "the three layouts, as a closed set");
+  deep(LAYOUTS, ["anchor", "single"], "the two layouts, as a closed set — nothing unmeasured ships");
   eq(wire2.DEFAULTS.DEMO_PROMPT_LAYOUT, "anchor", "the default is `anchor`");
   eq(wire2.readConfig(FULL).promptLayout, "anchor", "…and is what an unset variable reads as");
   eq(wire2.readConfig({ ...FULL, DEMO_PROMPT_LAYOUT: "SINGLE" }).promptLayout, "single", "the value is case-folded");
@@ -164,21 +163,12 @@ const ticketText = async (r) => {
         deep(systems, [0], `${tag}: EXACTLY ONE system message, and it is first`);
         const last = b.messages[b.messages.length - 1];
         eq(last.role, "user", `${tag}: the last message is the user turn`);
-        const ours = layout === "single" ? b.messages[0].content : last.content;
-        ok(ours.includes(anchorOf(layout)), `${tag}: the restatement rides ${layout === "single" ? "the system message" : "the user turn"}`);
-        // `single`: persona, restatement, passage, diagram cue, format rule, re-roll — all in
-        // the one system message. `user-anchor`: persona, passage, diagram cue in the system
-        // message; restatement, format rule, re-roll at the end of the user turn.
+        eq(last.content, text, `${tag}: the child's line is the last message, untouched`);
+        ok(b.messages[0].content.includes(anchorOf(layout)), `${tag}: the restatement rides the one system message`);
+        // persona, restatement, passage, diagram cue, format rule, re-roll — in that order.
         const passage = docs ? docs.excerpt : "", drawing = chat.wantsDiagram(text) ? "DRAW A DIAGRAM" : "", again = avoid ? "already said this, word for word" : "";
-        const expect = layout === "single" ? [cfg.persona, anchorOf(layout), passage, drawing, FORMAT, again]
-                                           : [cfg.persona, passage, drawing, anchorOf(layout), FORMAT, again];
-        const order = expect.filter(Boolean).map((s) => all.indexOf(s));
+        const order = [cfg.persona, anchorOf(layout), passage, drawing, FORMAT, again].filter(Boolean).map((s) => all.indexOf(s));
         ok(order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1])), `${tag}: our blocks come in the documented order (${order})`);
-        if (layout === "single") eq(last.content, text, `${tag}: the child's line is the last message, untouched`);
-        else {
-          ok(last.content.startsWith(text + "\n\n" + prompt.USER_ANCHOR_HEADER + "\n"), `${tag}: the child's words come first, then the header, then our note`);
-          ok(!b.messages[0].content.includes(FORMAT) && !b.messages[0].content.includes(anchorOf(layout)), `${tag}: the leading system message carries no anchor`);
-        }
       }
       // The cue: close on a goodbye, one of the rotation otherwise, in every layout.
       const cues = [...turnshape.SHAPES, CLOSE].filter((s) => all.includes(turnshape.shapeCue(s)));

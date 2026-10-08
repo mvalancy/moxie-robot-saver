@@ -50,9 +50,6 @@ DEMO_CHAT_MODEL=your-chat-model
 #   under llama.cpp do. The persona's rules are the last word only through the anchor's
 #   wording, so MEASURE a model on this layout (sim/eval_live.mjs --only=safety,injection)
 #   before pointing production at it.
-# `user-anchor`: one leading system message, and the anchor appended to the end of the
-#   child's own turn behind a header naming whose words they are. Keeps "ours is last" on
-#   a single-system-message template; measured as an experiment, not a production default.
 # DEMO_PROMPT_LAYOUT=anchor
 
 # The voice. Unset => `voice: false`, and text still works — spoken from the shipped

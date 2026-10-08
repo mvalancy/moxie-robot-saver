@@ -44,10 +44,9 @@ export const DEFAULTS = Object.freeze({
   // deployment on a tight unit budget.
   DEMO_REROLL: "1",
   // Where our instructions sit in the message array (`_lib/prompt.js`, §3.3): `anchor`
-  // (persona first, a short anchor system message after the child's line), `single` (ONE
+  // (persona first, a short anchor system message after the child's line) or `single` (ONE
   // leading system message, for chat templates that reject or silently drop a system
-  // message that is not first) or `user-anchor` (the anchor rides the end of the child's
-  // own turn). Measured per model before any switch (§4.10).
+  // message that is not first). Measured per model before any switch (§4.10).
   DEMO_PROMPT_LAYOUT: "anchor",
   DEMO_MAX_AUDIO_BYTES: 500000,
   DEMO_MIN_AUDIO_BYTES: 2000,
@@ -156,7 +155,7 @@ function sttFormats(env) {
 /** The message layouts `_lib/prompt.js::buildUpstreamBody` can build (§3.3). A closed set:
  *  an unknown `DEMO_PROMPT_LAYOUT` falls back to the default with a note, never to a layout
  *  nobody measured. */
-export const PROMPT_LAYOUTS = Object.freeze(["anchor", "single", "user-anchor"]);
+export const PROMPT_LAYOUTS = Object.freeze(["anchor", "single"]);
 
 function promptLayout(env, notes) {
   const v = String(str(env, "DEMO_PROMPT_LAYOUT", DEFAULTS.DEMO_PROMPT_LAYOUT)).toLowerCase();

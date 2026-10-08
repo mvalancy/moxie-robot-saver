@@ -101,13 +101,18 @@ const OPENING =
  */
 export function shapeCue(shape) {
   if (shape === CLOSE) {
-    // "mentions something from your talk" is what makes it HER goodbye and not a template;
-    // "no offer" because the rotation's offer cue, obeyed on a goodbye, proposed a game to
-    // a child who had already left (measured).
+    // The farewell is asked for STRUCTURALLY (a goodbye word first), measured on
+    // graphling-medium, 10 four-turn conversations per wording (2026-10-08): "use their
+    // name if you know it" gave a farewell 9/10 but "see you later, [ChildName]!" or an
+    // invented name in 8/10; "if they told you their name, use it, otherwise use no name"
+    // gave 5/10 and a placeholder in 6/10; dropping every mention of a name gave 3/10 —
+    // without the template the model answered the sad turn before the goodbye. The cue
+    // never says "name". "No offer" because the rotation's offer cue, obeyed on a
+    // goodbye, proposed a game to a child who had already left.
     return (
-      "THIS TURN, SAY GOODBYE. They are leaving: one warm, short goodbye that mentions " +
-      "something from your talk — use their name if you know it. No question, no new " +
-      "topic, no offer."
+      "THIS TURN, SAY GOODBYE. They are leaving, so this reply is a goodbye and nothing " +
+      "else: start with a goodbye word (Bye, See you, Good night), then one short, warm " +
+      "wish that fits what you talked about. No question, no new topic, no offer."
     );
   }
   if (shape === "ask") {
