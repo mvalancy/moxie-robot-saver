@@ -81,10 +81,17 @@ async function saveConfig(){
   }catch(e){ s.textContent='⚠️ '+(e.message||'save failed'); }
 }
 function renderRobot(r){
+  // The card's status line (#dev-status) is about the robot on the card, so a redraw of
+  // that same robot keeps it. Add to my account writes its answer there (its ⚠️ says to
+  // press Permit), and both the Wi-Fi tab's poll, on seeing the record a claim made, and
+  // re-opening the tab redraw. A card shown again, or for another robot, starts empty.
+  const rc=$('#robot-card'), id=String(r.id);
+  const same=!$('#moxie-card').classList.contains('hidden') && rc.dataset.id===id;
   $('#moxie-none').classList.add('hidden');
   $('#moxie-card').classList.remove('hidden');
   $('#memory-card').classList.remove('hidden');
-  $('#robot-card').innerHTML =
+  rc.dataset.id=id;
+  rc.innerHTML =
     `<div><strong>${escapeHtml(r.name||'Moxie')}</strong></div>
      <div class="k">Serial: ${escapeHtml(r.serial||r['embodied-robot-id']||'—')}</div>
      <div class="k">Wi-Fi: ${escapeHtml(r['wifi-ssid']||'—')}</div>
@@ -113,7 +120,7 @@ function renderRobot(r){
     rb.onclick=null;
   }
   lcWire(r);       // Unpair / Factory reset (js/robot.js)
-  say('');
+  if(!same) say('');
 }
 function flash(sel,txt){const b=$(sel),o=b.textContent;b.textContent=txt;setTimeout(()=>b.textContent=o,1200);}
 

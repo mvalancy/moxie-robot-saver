@@ -82,7 +82,11 @@ one click:
 
 The robot card then appears: live state, **⚙️ Settings**, **📈 Insights**, **🛡️ Safety**, **🧠 What
 Moxie remembers**, **Wake up**, **Unpair this robot** and **Factory reset**. The card's *Serial* line
-shows the robot's id on this server (`d_…`): the robot never sends its hardware serial here.
+shows the robot's id on this server (`d_…`): the robot never sends its hardware serial here. Under
+**Wake up** the card says what happened, and that line stays while you switch tabs: "✅ Added to
+your account", or "⚠️ Added to your account, but this server could not let it in yet (…)". The
+second means the robot is on your account but still pending, so it gets no child settings yet: press
+**Permit** beside it in Robot access.
 
 **Permit** on its own lets a robot in without putting it on your account, so it gets no robot card.
 Nothing is ever added to an account without the click.

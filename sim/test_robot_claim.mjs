@@ -23,8 +23,9 @@
  *   C6 a robot that arrives while the tab is open gets its Add to my account without
  *      re-opening the tab (the tab's watch reads /local/state), and the watch asks nothing
  *      while another tab is open or once a robot is added
- *   C7 a watch read that lands while a claim is unanswered never redraws over the claim's
- *      own answer ("Added to your account")
+ *   C7 while a claim is unanswered the tab's watch reads nothing (the card does not switch
+ *      under it), and no redraw from the watch wipes the claim's own answer ("Added to your
+ *      account")
  *   C8 a robot another account has added is offered nowhere, and its row in Robot access
  *      (under Allowed: adding it there let it in) says why
  *   S1 a refused Simulate robot scan is shown in the server's words on its card, never as
@@ -37,6 +38,10 @@
  *   W3 a robot record the account had before the code was made (an earlier Simulate robot
  *      scan) is never reported as "Moxie connected!"; the tab says to unpair it first, and
  *      reports a connection once a new record appears
+ *   W4 on the bench path (the Wi-Fi code made on this page, then Add to my account on the
+ *      Moxie tab) the claim's answer, ✅ or ⚠️ "Press Permit", stays on screen after the Wi-Fi
+ *      tab's poll finds the record the claim made and redraws the Moxie tab, and after the
+ *      parent re-opens the tab
  *
  * No FastAPI: `serveStatic` serves server/static and every `/local/*` and `/api/*` call is
  * answered at the browser. The fleet views and the unpair answer come out of the REAL server
@@ -51,10 +56,11 @@
  * cannot be added, or beside one on another account; a refusal swallowed; an answer written
  * to a hidden line, or before Robot access is redrawn; the unreachable state never said, or
  * said of a supervisor that answered; no watch on the Moxie tab, or one still asking with a
- * robot card up or from another tab, or one redrawing over a claim's answer; the pairing-key
- * code by default; a claim from the Wi-Fi tab's poll; an earlier record reported as the robot
- * on the bench; a refused scan left unhandled) and of index.html (the claim's status line back
- * inside the box the redraw hides) must each redden the scenario that guards it.
+ * robot card up or from another tab, or one reading while a claim is unanswered; the
+ * pairing-key code by default; a claim from the Wi-Fi tab's poll; an earlier record reported as
+ * the robot on the bench; a refused scan left unhandled), of index.html (the claim's status
+ * line back inside the box the redraw hides) and of js/settings.js (the robot card's status
+ * line cleared on every redraw of the same robot) must each redden the scenario that guards it.
  *
  *   node sim/test_robot_claim.mjs
  */
@@ -70,8 +76,9 @@ const { fails, ok, eq, count } = makeChecks();
 
 const DEV = "d_bench_01", RID = "r-claimed", CID = "c-kid", TOKEN = "t-fixture";
 const STATIC = join(repo, "server", "static");
-const CORE_JS = "/js/core.js";
+const CORE_JS = "/js/core.js", SETTINGS_JS = "/js/settings.js";
 const SRC = readFileSync(join(STATIC, CORE_JS), "utf8");
+const SETTINGS = readFileSync(join(STATIC, SETTINGS_JS), "utf8");
 const HTML = readFileSync(join(STATIC, "index.html"), "utf8");
 /* The Moxie tab's watch interval, read from js/core.js so a change there moves the windows
  * (5 s when it is missing, so a run against a page without the watch still ends). */
@@ -148,6 +155,9 @@ const CLAIMED = { id: RID, "embodied-robot-id": RID, serial: DEV, name: "Moxie",
 const SIMULATED = { id: "r-sim", name: "Moxie (simulated)", "pairing-status": "paired", child_id: CID };
 const CLAIM_OK = { ok: true, robot_id: RID, device_id: DEV, child_id: CID, created: true,
                    permitted: true, permit_error: null };
+/* The real route's answer when its permit post fails: the record is made, the robot is not
+ * let in yet, and the reason is the route's fallback wording for a supervisor's error code. */
+const CLAIM_NOT_LET_IN = { ...CLAIM_OK, permitted: false, permit_error: "supervisor returned 500" };
 const REFUSED = { ok: false, error: "account already has a robot", device_id: DEV,
                   reason: "This account already has a robot (Moxie (simulated)). Unpair the "
                           + "current robot first, then add this one.", robot_id: SIMULATED.id };
@@ -186,6 +196,8 @@ const browser = await puppeteer.launch({
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/* Wait until `done()` (a check on the fixture's own record), at most `ms`. */
+const until = async (done, ms) => { for (let t = 0; t < ms && !done(); t += 100) await sleep(100); };
 
 /** A fresh first visit, logged in, on the Moxie tab. Until a claim succeeds the account has
  *  `robots` and the broker one pending robot; every POST and DELETE lands in `st.calls`.
@@ -196,11 +208,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  *  way, and from then on the fixture lists what the real server lists after that change.
  *  `elsewhere` lists the robots another account has (`on_other_accounts`) and `fleet` picks
  *  the fleet view by name. `scanRefused` answers Simulate robot scan with the claim's own
- *  409, as the real route does for a robot on another account. `mutate` and `mutateHtml`
- *  serve a changed js/core.js and index.html. */
-async function drive({ mutate = null, mutateHtml = null, robots = [], unclaimed = [DEV], refuse = null,
-                       tab = "moxie", known = true, arriveLater = false, holdClaim = false,
-                       elsewhere = [], fleet = null, scanRefused = false } = {}) {
+ *  409, as the real route does for a robot on another account. `claimAnswer` is what a claim
+ *  that is not refused answers. `mutate`, `mutateHtml` and `mutateSettings` serve a changed
+ *  js/core.js, index.html and js/settings.js. */
+async function drive({ mutate = null, mutateHtml = null, mutateSettings = null, robots = [],
+                       unclaimed = [DEV], refuse = null, tab = "moxie", known = true,
+                       arriveLater = false, holdClaim = false, elsewhere = [], fleet = null,
+                       scanRefused = false, claimAnswer = CLAIM_OK } = {}) {
   const st = { calls: [], auth: [], bodies: {}, claimed: false, unpaired: false,
                arrived: !arriveLater, stateGets: 0, refused: false, staleReads: 0 };
   const page = await browser.newPage();
@@ -215,6 +229,9 @@ async function drive({ mutate = null, mutateHtml = null, robots = [], unclaimed 
     if (p === CORE_JS && mutate)
       return r.respond({ status: 200, contentType: "text/javascript; charset=utf-8",
                          body: mutate(SRC) });
+    if (p === SETTINGS_JS && mutateSettings)
+      return r.respond({ status: 200, contentType: "text/javascript; charset=utf-8",
+                         body: mutateSettings(SETTINGS) });
     if ((p === "/" || p === "/index.html") && mutateHtml)
       return r.respond({ status: 200, contentType: "text/html; charset=utf-8",
                          body: mutateHtml(HTML) });
@@ -264,10 +281,10 @@ async function drive({ mutate = null, mutateHtml = null, robots = [], unclaimed 
       st.claimed = true;
       if (holdClaim) {
         st.claimHeld = true;
-        st.releaseClaim = () => { st.claimHeld = false; return J(CLAIM_OK); };
+        st.releaseClaim = () => { st.claimHeld = false; return J(claimAnswer); };
         return;
       }
-      return J(CLAIM_OK);
+      return J(claimAnswer);
     }
     if (call === `POST /api/robots/${RID}/wakeup`)
       return J({ ok: true, published: true, error: null, resolved_by: "record",
@@ -478,7 +495,6 @@ const SCENARIOS = {
 
   async C7(C, o) {
     const { page, st, errs, aborted } = await drive({ ...o, holdClaim: true });
-    const until = async (done, ms) => { for (let t = 0; t < ms && !done(); t += 100) await sleep(100); };
     try {
       await page.click("#moxie-none .claim-btn");
       await until(() => st.claimHeld, 5000);
@@ -494,6 +510,10 @@ const SCENARIOS = {
       const v = await view(page);
       C.eq(claims(st), 1, "C7: one click is one claim");
       C.ok(v.card, "C7: the robot card is up");
+      /* The robot card keeps its line through a redraw of the same robot, so the answer
+       * below would survive a watch redraw even without this: what the watch's stand-aside
+       * still decides is that the card does not switch under an unanswered claim. */
+      C.ok(!st.readDuringClaim, "C7: the tab's watch reads nothing while the claim is unanswered");
       C.ok(/Added to your account/.test(v.devStatus),
            `C7: the claim's answer is not wiped by a redraw from the tab's watch — got "${v.devStatus}"`);
       C.eq(notable(errs, aborted).length, 0, `C7: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
@@ -657,6 +677,60 @@ function refusalScenario(kind, from) {
 for (const kind of Object.keys(REFUSALS))
   for (const from of ["card", "row"]) SCENARIOS[`C3-${kind}-${from}`] = refusalScenario(kind, from);
 
+/** W4 on the runbook's bench path, for the claim's ✅ answer (`ok`) or its ⚠️ one (`warn`:
+ *  added, but the permit post failed, so the robot is still pending). Making the Wi-Fi code
+ *  starts that tab's 2 s poll of /local/state; it keeps running on the Moxie tab, and the
+ *  read that finds the record the claim made redraws the Moxie tab. */
+function benchPathScenario(kind) {
+  const warn = kind === "warn";
+  const words = warn ? "could not let it in yet (supervisor returned 500). Press Permit in Robot access."
+                     : "Added to your account. Moxie is let in";
+  const name = `W4 (${warn ? "added, not let in" : "added"})`;
+  return async (C, o) => {
+    const { page, st, errs, aborted } = await drive({
+      ...o, tab: "wifi", claimAnswer: warn ? CLAIM_NOT_LET_IN : CLAIM_OK,
+      fleet: warn ? "pending" : null });
+    try {
+      await page.type("#ssid", "BenchNet");
+      await page.type("#wifipass", "s3cret");
+      await page.click("#btn-qr");
+      /* This text lands as one poll read is answered, so the click below comes well before
+       * the next read (about 2 s on): that read is the one that finds the claim's record. */
+      await page.waitForFunction(() => /reached this server/.test(
+        document.querySelector("#pair-status").textContent), { timeout: 8000 });
+      await page.click('.tab[data-tab="moxie"]');
+      await page.waitForSelector("#moxie-none .claim-btn", { visible: true, timeout: 8000 });
+      await page.click("#moxie-none .claim-btn");
+      await waitOnScreen(page, words);
+      C.ok(await onScreen(page, words), `${name}: the claim's answer is shown — status lines: ${await statusLines(page)}`);
+      await page.waitForFunction(() => /Moxie connected!/.test(
+        document.querySelector("#pair-status").textContent), { timeout: 6000 }).catch(() => {});
+      await sleep(1000);                         // and the redraw it started has landed
+      const v = await view(page);
+      C.ok(/Moxie connected!/.test(v.pairStatus),
+           `${name}: the Wi-Fi tab's poll found the record the claim made — got "${v.pairStatus}"`);
+      C.ok(await onScreen(page, words),
+           `${name}: the answer is still on screen after that poll redrew the Moxie tab — status lines: ${await statusLines(page)}`);
+      /* The parent looks at the Wi-Fi tab ("Moxie connected!") and comes back. */
+      await page.click('.tab[data-tab="wifi"]');
+      await sleep(300);
+      const asked = st.stateGets;
+      await page.click('.tab[data-tab="moxie"]');
+      await until(() => st.stateGets > asked, 3000);
+      await sleep(500);
+      C.ok(st.stateGets > asked && await onScreen(page, words),
+           `${name}: and after the parent re-opens the Moxie tab — status lines: ${await statusLines(page)}`);
+      C.ok(v.card, `${name}: the robot card is up`);
+      if (warn)
+        C.eq(JSON.stringify(v.permitButtons), JSON.stringify(["Permit"]),
+             `${name}: Permit is beside the robot in Robot access, where the answer says`);
+      C.eq(claims(st), 1, `${name}: one click is one claim`);
+      C.eq(notable(errs, aborted).length, 0, `${name}: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+    } finally { await page.close(); }
+  };
+}
+for (const kind of ["ok", "warn"]) SCENARIOS[`W4-${kind}`] = benchPathScenario(kind);
+
 /** One scenario into collector `C`; an interaction that throws (a control that never
  *  became clickable) is that scenario's failure, not the end of the run. */
 async function run(C, name, o = {}) {
@@ -676,6 +750,8 @@ const STATUS_LINE = '<div id="claim-status" class="muted" role="status" aria-liv
 const STATUS_IN_BOX = (h) => h.replace(`        ${STATUS_LINE}\n`, "")
   .replace("if it is the one you just showed the codes to.</p>\n        </div>",
            `if it is the one you just showed the codes to.</p>\n          ${STATUS_LINE}\n        </div>`);
+/* js/settings.js as it was: renderRobot empties the card's status line on every redraw. */
+const CLEARED_ON_REDRAW = (s) => s.replace("  if(!same) say('');\n", "  say('');\n");
 const TEETH = [
   ["a claim made without the click", "C1",
    (s) => s.replace("  wireClaims(list, '#claim-status');\n",
@@ -712,7 +788,7 @@ const TEETH = [
   ["the watch still asking with a robot card up", "C6",
    (s) => s.replace("document.hidden || $('#moxie-none').classList.contains('hidden')) return;",
                     "document.hidden) return;")],
-  ["the watch redrawing over a claim's answer", "C7",
+  ["the watch reading while a claim is unanswered", "C7",
    (s) => s.replace("  if(claiming || document.hidden || ", "  if(document.hidden || ")
            .replace("  if(!claiming && accountKey(", "  if(accountKey(")],
   ["the watch still asking from another tab", "C6",
@@ -731,15 +807,20 @@ const TEETH = [
    (s) => s.replace(/  try\{\n    await api\('\/local\/simulate-robot-scan',[\s\S]*?\n    return;\n  \}\n/,
                     "  await api('/local/simulate-robot-scan',\n"
                     + "            {method:'POST',auth:false,body:{qr_payload:LAST.qr_payload, device_id}});\n")],
+  ["the robot card's line cleared on every redraw", "W4-ok", CLEARED_ON_REDRAW, "settings"],
+  ["the robot card's line cleared on every redraw", "W4-warn", CLEARED_ON_REDRAW, "settings"],
 ];
 ok(STATUS_IN_BOX(HTML).split(STATUS_LINE).length === 2
    && STATUS_IN_BOX(HTML).indexOf(STATUS_LINE) < STATUS_IN_BOX(HTML).indexOf("<!-- Outside #claim-box"),
    "teeth: the index.html mutation moves the one #claim-status line back inside #claim-box");
+/* Each file a tooth can mutate: its source, its name, and the drive() option that serves it. */
+const MUTABLE = { core: [SRC, "js/core.js", "mutate"], html: [HTML, "index.html", "mutateHtml"],
+                  settings: [SETTINGS, "js/settings.js", "mutateSettings"] };
 for (const [what, scenario, mutate, file = "core"] of TEETH) {
-  const [before, label] = file === "html" ? [HTML, "index.html"] : [SRC, "js/core.js"];
+  const [before, label, option] = MUTABLE[file];
   ok(mutate(before) !== before, `teeth: the "${what}" mutation must actually change ${label}`);
   const C = makeChecks();
-  await run(C, scenario, file === "html" ? { mutateHtml: mutate } : { mutate });
+  await run(C, scenario, { [option]: mutate });
   ok(C.fails.length > 0, `teeth: ${scenario} must redden when ${label} has "${what}"`);
   console.log(`   teeth "${what}": ${scenario} reddened with ${C.fails.length} failure(s); ` +
               `first: ${C.fails[0]}`);
