@@ -108,7 +108,8 @@ def tryit_turn(body: dict = Body(default=None)):
     bounds it (nothing is checked here). A plain `def`, so FastAPI runs it on a worker
     thread: a try holds its call for as long as the brain takes, and the rest of the
     console keeps answering meanwhile."""
-    out, code = sv.call("POST", "/tryit", json.dumps(body or {}).encode(),
+    # UTF-8, not \uXXXX escapes: a non-Latin session costs half the bytes of the 64 KiB cap.
+    out, code = sv.call("POST", "/tryit", json.dumps(body or {}, ensure_ascii=False).encode(),
                         TRYIT_PROXY_TIMEOUT_S)
     if code == 503 and "timed out" in str(out.get("detail") or "").lower():
         why = f"The supervisor did not answer within {TRYIT_PROXY_TIMEOUT_S} s."

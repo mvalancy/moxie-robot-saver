@@ -149,7 +149,9 @@ def _brain_failure(error, result) -> tuple:
         return kind, ("Moxie's brain could not be reached (refused or timed out). On a "
                       "robot she would fall back to her own on-device chat."), detail
     if isinstance(error, chat_seam.ModelCallBudgetExceeded):
-        why = "This supervisor's model-call cap (MOXIE_MODEL_CALL_LIMIT) is used up."
+        why = ("MOXIE_MODEL_CALL_LIMIT is not a positive whole number, so this supervisor "
+               "makes no model requests." if "positive integer" in str(error) else
+               "This supervisor's model-call cap (MOXIE_MODEL_CALL_LIMIT) is used up.")
     elif status in (401, 403):
         why = (f"The brain's server refused the key (HTTP {status}). Check "
                f"MOXIE_LLM_API_KEY.")
@@ -164,6 +166,21 @@ def _brain_failure(error, result) -> tuple:
     else:
         why = f"The brain failed ({type(error).__name__})."
     return kind, why + " Moxie would have covered it with a stock line.", detail
+
+
+class _Witness:
+    """`app` as `_safe_respond` sees it, keeping what its `respond` raised in `box`: the
+    robot's own fallback answers the child, and the parent still learns why."""
+
+    def __init__(self, app, box: dict):
+        self._app, self._box = app, box
+
+    def respond(self, turn):
+        try:
+            return self._app.respond(turn)
+        except Exception as e:
+            self._box["crash"] = e
+            raise
 
 
 class TryItMixin:
@@ -552,7 +569,8 @@ class TryItMixin:
                     pieces.append((ReplyChunk(text="", final=True), None))
             if stream is None:
                 delivery = "single"
-                reply = app.respond(turn)
+                # A brain that raises gets the robot's own stock line (`_safe_respond`).
+                reply = self._safe_respond(turn, app=_Witness(app, box))
                 pieces.append((reply, self._assess(reply.text, safety_seam.MOXIE)))
         except Exception as e:
             box["crash"] = e

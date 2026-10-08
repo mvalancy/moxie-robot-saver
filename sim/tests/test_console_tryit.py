@@ -26,6 +26,7 @@ from helpers_console import console_app, console_js, set_status_url       # noqa
 from helpers_runtime import (REPO, drive_turn, fresh_pool, http_call,     # noqa: E402
                              make_runtime, status_server)
 from moxie_sdk import brains, chat as chat_seam                           # noqa: E402
+from moxie_sdk import safety as safety_seam                               # noqa: E402
 from moxie_sdk.apps import EchoApp                                        # noqa: E402
 from moxie_sdk.apps.llm_app import LLMApp                                 # noqa: E402
 from moxie_sdk.content import ContentApp                                  # noqa: E402
@@ -66,6 +67,10 @@ class APIConnectionError(Exception):
 
 class AuthenticationError(Exception):
     status_code = 401
+
+
+class BadRequest(Exception):
+    status_code = 400
 
 
 class FakeLLM:
@@ -330,6 +335,32 @@ def test_an_unsafe_answer_is_replaced_before_anyone_sees_it_as_hers(world):
     assert "bullshit" not in out["reply"]["text"].lower() and out["reply"]["text"]
 
 
+def test_an_unsafe_sentence_in_a_streamed_answer_is_replaced_and_ends_it(
+        world, monkeypatch):
+    """The streamed twin (the free brain streams): the blocked sentence becomes the
+    redirect, nothing after it is spoken or remembered, and a robot running the same brain
+    is sent exactly the same pieces. Which redirect line is a random pick, on a robot as
+    here, so the pick is pinned to compare."""
+    monkeypatch.setattr(safety_seam.random, "choice", lambda pool: pool[0])
+    world.free_llm.raw = json.dumps({"say": "That is bullshit. Anyway, hi there!",
+                                     "mood": "happy"})
+    world.rt.update_config(DEVICE, brain="llm")
+    out = tryit(world, speech="what do you think?", device_id=DEVICE)
+    assert out["ok"] is True and out["delivery"] == "stream"
+    gate, = out["safety"]
+    assert gate["stage"] == "output" and gate["action"] == "block"
+    chunk, = out["reply"]["chunks"]
+    assert chunk["final"] is True and chunk["text"]
+    assert "bullshit" not in json.dumps(out["reply"]).lower()
+    assert "bullshit" not in json.dumps(out["history"]).lower()
+    fresh_pool(world.rt)
+    world.rt.client.published.clear()
+    drive_turn(world.rt, DEVICE, "what do you think?")
+    sent = world.rt.client.chat_replies(DEVICE)
+    assert [(s["output"]["text"], s["output"].get("markup")) for s in sent] == \
+        [(c["text"], c["markup"]) for c in out["reply"]["chunks"]]
+
+
 # --- nothing written, anywhere -------------------------------------------------------------
 
 def test_a_try_writes_nothing_and_a_real_turn_through_the_same_runtime_does(world):
@@ -364,7 +395,8 @@ def test_a_try_stages_exactly_what_a_robot_is_sent(world, monkeypatch):
         assert sent["output"].get(field) == chunk["scored"].get(field), field
 
 
-def test_a_streamed_try_is_chunked_like_the_published_stream(world):
+def test_a_streamed_try_is_chunked_like_the_published_stream(world, monkeypatch):
+    monkeypatch.setattr(world.rt, "_try_event_id", lambda: "evt-1")
     world.rt.update_config(DEVICE, brain="llm")
     out = tryit(world, speech="can we draw?", device_id=DEVICE)
     assert out["brain"]["source"] == "robot"
@@ -372,9 +404,37 @@ def test_a_streamed_try_is_chunked_like_the_published_stream(world):
     world.rt.client.published.clear()
     drive_turn(world.rt, DEVICE, "can we draw?")
     sent = world.rt.client.chat_replies(DEVICE)
-    assert [s["output"]["text"] for s in sent] == [c["text"] for c in out["reply"]["chunks"]]
-    assert sent[0]["output"].get("mood") == out["reply"]["chunks"][0]["scored"]["mood"]
+    tried = out["reply"]["chunks"]
+    assert [s["output"]["text"] for s in sent] == [c["text"] for c in tried]
+    assert len(tried) == 2, "the check below needs a piece past the first"
+    for s, c in zip(sent, tried):
+        for field in ("mood", "dialog_act"):
+            assert s["output"].get(field) == c["scored"].get(field), (c["index"], field)
     assert world.free_llm.messages(0) == world.free_llm.messages(1)
+
+
+def test_each_streamed_piece_is_staged_at_its_own_chunk_index(world, monkeypatch):
+    """A brain that streams plain text leaves the performance to `_stage`, where the chunk
+    index decides it (only the first piece plans a face): piece N of a try is staged as
+    piece N of the published stream, so under one turn key the markup is byte-identical.
+    (The expressive free brain writes its own markup, which the index does not touch.)"""
+    plain = FakeLLM(raw="Hi Sam! I love that idea. What should we draw first?")
+    llm = LLMApp(base_url="http://127.0.0.1:1/v1", api_key="k", model="m", client=plain,
+                 expressive=False)
+    llm._pacer = chat_seam.Pacer(sleep=_no_wait)
+    world.engines.apps["llm"] = llm
+    monkeypatch.setattr(world.rt, "_try_event_id", lambda: "evt-1")
+    world.rt.update_config(DEVICE, brain="llm")
+    out = tryit(world, speech="can we draw?", device_id=DEVICE)
+    tried = out["reply"]["chunks"]
+    assert out["delivery"] == "stream" and len(tried) == 2, tried
+    fresh_pool(world.rt)
+    world.rt.client.published.clear()
+    drive_turn(world.rt, DEVICE, "can we draw?")
+    sent = world.rt.client.chat_replies(DEVICE)
+    assert [(s["output"]["text"], s["output"]["markup"]) for s in sent] == \
+        [(c["text"], c["markup"]) for c in tried]
+    assert "playback-mood" in tried[0]["markup"] and "playback-mood" not in tried[1]["markup"]
 
 
 # --- errors a parent can read --------------------------------------------------------------
@@ -416,6 +476,48 @@ def test_each_failure_says_what_to_fix(world, no_backoff_sleep, status, kind, fi
     out = tryit(world, expect=502, speech="hi")
     assert out["kind"] == kind and fix in out["error"], out["error"]
     assert out["detail"]["status"] == status and out["history"] == []
+
+
+def test_a_stream_that_will_not_open_then_a_fallback_that_answers_is_an_answer(
+        world, monkeypatch):
+    """A try reports how its LAST model request ended: the stream's refusal is spent once
+    the single-reply fallback answers (`chat.last_call_error` is cleared by a success)."""
+    real = world.free_llm.create
+
+    def create(**kw):
+        if kw.get("stream"):
+            world.free_llm.requests.append(kw)
+            raise BadRequest("streaming is not supported here")
+        return real(**kw)
+    monkeypatch.setattr(world.free_llm, "create", create)
+    out = tryit(world, speech="hello", brain="llm")
+    assert out["ok"] is True and out["kind"] == "" and out["error"] is None, out["error"]
+    assert out["reply"]["text"] == "Hi Sam! I love that idea. What should we draw first?"
+    assert out["model_calls"] == 2 and len(out["history"]) == 2
+
+
+def test_a_brain_that_raises_shows_the_robots_own_stock_line_and_why(world, monkeypatch):
+    """A crash is not a silent card: the child would hear the robot's `_safe_respond`
+    line, so the try shows it beside what was raised; a real turn says the same line."""
+    def boom(turn):
+        raise TypeError("an app returned markup that is not text")
+    monkeypatch.setattr(world.engines.apps["echo"], "respond", boom)
+    out = tryit(world, expect=502, speech="hi", brain="echo")
+    assert out["kind"] == "brain_error" and "raised TypeError" in out["error"]
+    assert out["detail"]["type"] == "TypeError" and out["history"] == []
+    said = out["reply"]["text"]
+    assert said, "a crash must still show the line the child would have heard"
+    world.rt.update_config(DEVICE, brain="echo")
+    fresh_pool(world.rt)
+    assert drive_turn(world.rt, DEVICE, "hi")["output"]["text"] == said
+
+
+def test_a_cap_of_zero_is_named_as_a_setting_not_as_used_up(world, monkeypatch):
+    monkeypatch.setenv("MOXIE_MODEL_CALL_LIMIT", "0")
+    out = tryit(world, expect=502, speech="hi")
+    assert out["kind"] == "brain_refused" and "not a positive whole number" in out["error"]
+    assert "used up" not in out["error"]
+    assert out["model_calls"] == 0 and world.content_llm.requests == []
 
 
 def test_the_model_call_cap_is_named_and_the_try_is_not_charged(world, monkeypatch):
@@ -493,6 +595,21 @@ def test_an_oversized_body_is_refused_unread(world):
     code, out = http_call(world.base + "/tryit", method="POST",
                           body={"speech": "hi", "pad": "x" * (65 * 1024)})
     assert code == 413 and out["kind"] == "too_large"
+
+
+def test_a_non_latin_session_travels_as_utf8_and_one_too_big_says_start_over(world):
+    """The cap counts bytes: as \\uXXXX escapes this session would be 72 KB (a 413); as
+    UTF-8 it is 36 KB and goes through. Past the cap, the sentence says what to do."""
+    line = "猫" * 300
+    history = [{"role": "user" if i % 2 == 0 else "assistant", "content": line}
+               for i in range(40)]
+    assert len(json.dumps(history).encode()) > 64 * 1024 > \
+        len(json.dumps(history, ensure_ascii=False).encode())
+    out = tryit(world, speech="hi", history=history)
+    assert out["ok"] is True, out["error"]
+    big = [dict(h, content="猫" * 700) for h in history]
+    out = tryit(world, expect=413, speech="hi", history=big)
+    assert out["kind"] == "too_large" and "Start over" in out["error"]
 
 
 def test_the_card_says_so_when_the_supervisor_is_down_or_silent(world, monkeypatch):

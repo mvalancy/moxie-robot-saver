@@ -179,7 +179,8 @@ class _Handler(BaseHTTPRequestHandler):
         Holds this server for the brain's answer (at most `TRY_TIMEOUT_S`), as a voice
         test does; a body over `TRY_MAX_BODY_BYTES` is a 413, refused unread."""
         if int(self.headers.get("Content-Length") or 0) > TRY_MAX_BODY_BYTES:
-            reason = f"A try is at most {TRY_MAX_BODY_BYTES // 1024} KiB."
+            reason = (f"A try is at most {TRY_MAX_BODY_BYTES // 1024} KiB, and this one "
+                      f"(mostly the session sent back) is larger. Start over to keep trying.")
             return self._json_out({"ok": False, "kind": "too_large", "error": reason,
                                    "reason": reason}, 413)
         try:
