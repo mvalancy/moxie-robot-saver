@@ -89,7 +89,7 @@
     "catch (?:you|ya) later|talk (?:to you )?(?:later|soon|tomorrow)|ttyl|" +
     "(?:i )?(?:gotta|got to|have to|need to|must) (?:go|leave)(?: now)?|" +
     "(?:i(?:'m| am)? )?(?:going|off|gotta go|have to go|need to go) to (?:bed|sleep)(?: now)?|" +
-    "(?:i'?m|i am) (?:leaving|off|going home)(?: now)?|(?:it'?s |it is )?(?:my )?bed ?time|time for bed|" +
+    "(?:i'?m|i am) (?:leaving|off|going home|going now|heading out|done talking|done chatting)(?: now)?|(?:it'?s |it is )?(?:my )?bed ?time|time for bed|" +
     "(?:my )?(?:mom|mum|mommy|mummy|dad|daddy) (?:says?|said) (?:it'?s |it is )?(?:bed ?time|time for bed))";
   var NAME = "(?:[\\s,]*(?:moxie|robot|friend|buddy))?";
   var ONE = CLOSING + "(?:\\s+(?:for now|for today|tomorrow|soon|later|again))?" + NAME +
@@ -97,7 +97,7 @@
   var GOODBYE = new RegExp("^(?:(?:ok(?:ay)?|alright|well|so|um+)[\\s,!.]*)*" + ONE +
                            "(?:[\\s,!.]*" + ONE + ")?[\\s,!.]*$", "i");
   // What a phone adds after the words: a smiley, a heart, an emoji (either surrogate half).
-  var DECORATION = /(?:\s|[.!,]|:-?[)D]|;-?\)|<3|[\ud800-\udfff]|[☀-➿]|️|‍)+$/;
+  var DECORATION = /(?:\s|[.!,]|:-?[)D]|;-?\)|<3|[\ud800-\udfff]|[\u2600-\u27bf]|\ufe0f|\u200d)+$/;
   var GOOD_NIGHT = { say: "Good night! Sweet dreams. I will keep watch until morning.",
                      mood: 1, tree: "Bht_Sign_off" };
   var GOOD_BYE = { say: "Bye for now! Have a wonderful day. I will be counting the minutes.",
@@ -115,7 +115,7 @@
 
   function reply(speech) {
     // A phone keyboard's curly apostrophe ("what’s your name") is the same word.
-    var line = String(speech || "").replace(/[‘’ʼ]/g, "'").replace(/\s+/g, " ").trim();
+    var line = String(speech || "").replace(/[\u2018\u2019\u02bc]/g, "'").replace(/\s+/g, " ").trim();
     if (GOODBYE.test(line.replace(DECORATION, "")))
       return build(/night|bed|sleep/i.test(line) ? GOOD_NIGHT : GOOD_BYE);
     for (var i = 0; i < SCRIPT.length; i++)
