@@ -177,7 +177,9 @@ class TryItMixin:
     @staticmethod
     def try_budget() -> int:
         """Tries per rolling hour (`MOXIE_AUTHOR_TRY_BUDGET`, default 40), read per call.
-        Counts tries that reach a brain needing an endpoint, never tokens."""
+        A try is charged once if it made a model request (`chat.note_model_call`), never
+        per token or retry: spent up front for a brain that needs an endpoint, given back
+        when the try turned out to make none (a command, a webhook)."""
         try:
             value = int(os.environ.get("MOXIE_AUTHOR_TRY_BUDGET", "").strip() or 0)
         except ValueError:

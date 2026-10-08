@@ -13,7 +13,11 @@ dependencies** (works fully offline). Served at `/` by the FastAPI server.
   🎚️ Voice (pick the Speech and Listening engines from what this appliance can really use —
   the gateway's models discovered live, the local Piper voices and whisper sizes installed on the
   box, and the built-ins; see the [TTS guide](../../docs/guides/gateway-voice-and-ears.md) and the
-  [STT guide](../../docs/guides/gateway-voice-and-ears.md)).
+  [STT guide](../../docs/guides/gateway-voice-and-ears.md)),
+  📦 Content (packs and the editor), and 💬 Try it (talk to Moxie's real brain with no robot: pick
+  a brain or an installed conversation, type what a child might say, and see her words, face, moves
+  and actions — a preview that publishes nothing and remembers nothing; see
+  [content authoring §5.3](../../docs/architecture/backlog/content-authoring.md)).
 - [`js/`](js/) — the scripts, one per group of cards, loaded in order (no bundler); they talk
   to the server's `/local/*` and `/api/*` endpoints.
 - `style.css` — mobile-first, light/dark aware.
@@ -26,6 +30,11 @@ The QR image itself is rendered server-side (`/local/pairing/qr.png`) so the cli
 statically, answers every `/local/*` call at the browser (no fastapi, no supervisor), and sweeps
 all six render paths of 📈 Insights — including the two-click **Erase history**, asserted on the
 intercepted `DELETE`; its teeth mutate [`js/insights.js`](js/insights.js).
+
+[`sim/test_console_tryit.mjs`](../../sim/test_console_tryit.mjs) does the same for 💬 Try it: the
+card shows with no robot, typing alone never calls the brain, one click (or Enter) is one call
+carrying the session, and a refusal is shown without advancing it; its teeth mutate
+[`js/tryit.js`](js/tryit.js).
 
 Every other card is asserted by Python route tests and source pins
 ([`test_console_roundtrip.py`](../../sim/tests/test_console_roundtrip.py)), which prove what the

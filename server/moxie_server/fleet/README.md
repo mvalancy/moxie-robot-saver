@@ -13,6 +13,7 @@ tier — and none of them raises on a missing, partial or mistyped payload.
 - [`memory.py`](memory.py) — 🧠 what Moxie remembers, as dated per-activity rows.
 - [`cards.py`](cards.py) — 🎭 Be Moxie, 📅 today's plan, 🎚️ voice, 🧠 brain.
 - [`content.py`](content.py) — 📦 content inventory, review table and results.
+- [`tryit.py`](tryit.py) — 💬 Try it: the card's choices and one preview turn.
 
 ---
 📖 [moxie_server](../README.md) · [Back to top](../../../README.md)

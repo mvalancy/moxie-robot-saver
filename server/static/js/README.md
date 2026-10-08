@@ -12,6 +12,8 @@ this order** by [`../index.html`](../index.html). No build step, no dependencies
 - [`perform.js`](perform.js) — 🎭 Be Moxie and 🎬 rehearsal.
 - [`voice-brain.js`](voice-brain.js) — 🎚️ voice and 🧠 brain pickers.
 - [`content.js`](content.js) — 📦 content packs and the ✍️ editor.
+- [`tryit.js`](tryit.js) — 💬 Try it: a preview conversation with the real brain, no robot;
+  `trySend` is its one brain call, click-bound. `sim/test_console_tryit.mjs` mutates this file.
 
 ---
 📖 [static](../README.md) · [Back to top](../../../README.md)
