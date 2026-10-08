@@ -11,9 +11,11 @@
  *   1. every byte of the first load, headers included, fits BUDGET;
  *   2. the largest contentful paint is the hero, in a format lighter than the PNG, and the
  *      request that fetched it was the preload (not the parser finding the <img> late);
- *   3. one copy of the hero crosses the wire: the PNG is a fallback, never a second download.
+ *   3. one copy of the hero crosses the wire: the PNG is a fallback, never a second download;
+ *   4. a browser without AVIF, which skips the AVIF-typed preload and <source>, paints the
+ *      WebP, one copy, and still fits BUDGET (so the WebP cannot quietly grow past it).
  * TEETH: the same load with the old hero rebuilt from the shipped markup (no preload, no
- * <source>) must fail all three, so none of them can pass by measuring nothing.
+ * <source>) must fail 1-3, so none of them can pass by measuring nothing.
  *
  *   node sim/test_hub_weight.mjs
  */
@@ -47,11 +49,17 @@ const SHIPPED = readFileSync(join(web, "index.html"), "utf8");
  * and every <source>, which leaves the <img> and its PNG exactly as they were. */
 const PRELOAD = /[ \t]*<link rel="preload" as="image"[^>]*>\n/g;
 const SOURCE = /[ \t]*<source [^>]*>\n/g;
-const hasShape = (SHIPPED.match(PRELOAD) || []).length === 1 && (SHIPPED.match(SOURCE) || []).length >= 1;
+const AVIF_SOURCE = /[ \t]*<source type="image\/avif"[^>]*>\n/g;
+const hasShape = (SHIPPED.match(PRELOAD) || []).length === 1 && (SHIPPED.match(SOURCE) || []).length >= 1 &&
+                 (SHIPPED.match(AVIF_SOURCE) || []).length === 1;
 ok(hasShape, "sim/web/index.html has no `<link rel=\"preload\" as=\"image\">` line or no " +
-             "`<source>` line for the hero — the preload or the light formats are gone, or the " +
-             "markup was reshaped and this suite's teeth need updating");
+             "`<source type=\"image/avif\">` line for the hero — the preload or the light formats are " +
+             "gone, or the markup was reshaped and this suite's teeth need updating");
 const OLD_HUB = SHIPPED.replace(PRELOAD, "").replace(SOURCE, "");
+/* What a browser without AVIF is served, in effect: it skips the preload (its `type`) and the
+ * AVIF <source>, so the <picture> hands it the WebP. */
+const NO_AVIF_HUB = SHIPPED.replace(PRELOAD, "").replace(AVIF_SOURCE, "");
+const VARIANTS = { old: OLD_HUB, noavif: NO_AVIF_HUB };
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, "http://hub.invalid");
@@ -62,7 +70,8 @@ const server = http.createServer((req, res) => {
   let body;
   try {
     if (!statSync(file).isFile()) throw new Error("dir");
-    body = p === "/index.html" && url.searchParams.has("old") ? Buffer.from(OLD_HUB) : readFileSync(file);
+    const variant = p === "/index.html" && Object.keys(VARIANTS).find((k) => url.searchParams.has(k));
+    body = variant ? Buffer.from(VARIANTS[variant]) : readFileSync(file);
   } catch { res.writeHead(404); return res.end(); }
   const ext = extname(file);
   const h = { "Content-Type": TEXT[ext] || BINARY[ext] || "application/octet-stream" };
@@ -147,7 +156,19 @@ try {
        `${name}: exactly one copy of the hero should cross the wire (got ${JSON.stringify(r.hero)})`);
   }
 
-  /* TEETH: the old hero, rebuilt from the shipped markup, must redden every clause above. */
+  /* 4. A browser without AVIF gets the WebP, and it has to fit the same budget. */
+  if (hasShape) {
+    const w = await firstLoad(browser, VIEWPORTS.phone, "/?noavif");
+    const wUrl = (w.lcp && w.lcp.url) || "";
+    console.log(`   a browser without AVIF (phone): ${kb(w.total)}; LCP ${wUrl.replace(base, "")}`);
+    ok(w.total <= BUDGET,
+       `a browser without AVIF: the first load is ${kb(w.total)}, over the ${kb(BUDGET)} budget — the WebP ` +
+       `fallback is too heavy (biggest: ${breakdown(w.wire)})`);
+    ok(/\.webp$/.test(wUrl) && w.hero.length === 1,
+       `a browser without AVIF should paint the WebP, one copy (LCP url ${wUrl || "none"}, hero ${JSON.stringify(w.hero)})`);
+  }
+
+  /* TEETH: the old hero, rebuilt from the shipped markup, must redden clauses 1-3. */
   if (hasShape) {
     const t = await firstLoad(browser, VIEWPORTS.phone, "/?old");
     const tUrl = (t.lcp && t.lcp.url) || "";

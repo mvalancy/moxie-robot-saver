@@ -30,7 +30,9 @@ try {
    * `data:`/`blob:` are untouched. */
   const blocked = { n: 0, urls: [] };
   /* A click that LEAVES the explorer for another page of this site is answered with a stub
-   * and recorded, so check 11 can prove where it went without loading (and logging) that page. */
+   * and recorded, so check 11 can prove where it went without loading (and logging) that page.
+   * The stub names an icon: a page without one makes Chrome ask for /favicon.ico, which this
+   * server 404s, and whether that console error lands before the next goto is a race. */
   const left = [];
   await page.setRequestInterception(true);
   page.on("request", (r) => {
@@ -42,7 +44,8 @@ try {
     }
     if (r.isNavigationRequest() && r.frame() === page.mainFrame() && new URL(u).pathname !== "/docs.html") {
       left.push(u);
-      return r.respond({ status: 200, contentType: "text/html", body: "<!doctype html><title>left the explorer</title>" });
+      return r.respond({ status: 200, contentType: "text/html",
+                         body: '<!doctype html><link rel="icon" href="data:,"><title>left the explorer</title>' });
     }
     return r.continue();
   });
