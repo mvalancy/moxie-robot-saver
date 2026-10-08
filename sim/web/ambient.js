@@ -84,9 +84,21 @@
    * UI say it is paused. */
   var CHAT_QUIET_MS = 45000;
 
+  /** The visitor is making a line for her: the message box has focus or holds text, or the
+   *  mic is open (mic.js's body[data-mic]). Before their FIRST line there is no `.turn` for
+   *  the hold to count, so her first quip landed 5-9 s after the unlock, while they typed
+   *  (measured on the live site: 5.4-5.7 s before the first send) — and a quip into an open
+   *  mic is a quip in the visitor's own clip. */
+  function composing() {
+    if (document.body && document.body.getAttribute("data-mic") === "on") return true;
+    var box = document.getElementById("speech-input");
+    if (!box) return false;
+    return document.activeElement === box || !!(box.value && String(box.value).trim());
+  }
+
   /** True while a conversation is live enough that a quip would be an interruption. */
   function conversing() {
-    return lastTurnAt > 0 && (Date.now() - lastTurnAt) < CHAT_QUIET_MS;
+    return composing() || (lastTurnAt > 0 && (Date.now() - lastTurnAt) < CHAT_QUIET_MS);
   }
 
   /** Paint the paused state, so the toggle does not look broken while it is held. */
@@ -139,10 +151,14 @@
   /** One quip in the comms log. NOT a `.turn`: a streamed reply appends into the last
    *  `.turn.moxie`, #chat-cue hides once a `.turn` exists, and the observer must not count
    *  her own voice. aria-hidden: #transcript is aria-live, and a quip every 11-24 s would
-   *  talk over real answers (she still says it aloud). */
+   *  talk over real answers (she still says it aloud).
+   *  UNTIL THE FIRST REAL TURN there is one row, re-worded in place: a row per quip grew the
+   *  dock over her body while nobody was talking (css/dock.css holds that row's height). */
   function logMutter(text) {
     var el = document.getElementById("transcript");
     if (!el || !text) return;
+    var solo = el.querySelector(".turn") ? null : el.querySelector(".mutter .msg");
+    if (solo) { solo.textContent = text; return; }
     var row = document.createElement("div");
     row.className = "mutter";
     row.setAttribute("aria-hidden", "true");
@@ -315,16 +331,26 @@
   window.__ambient = {
     quietMs: function (ms) { if (typeof ms === "number" && ms >= 0) CHAT_QUIET_MS = ms; return CHAT_QUIET_MS; },
     state: function () {
-      return { running: running, conversing: conversing(), livenessOn: livenessOn(),
-               lastTurnAt: lastTurnAt, watching: watching };
+      return { running: running, conversing: conversing(), composing: composing(),
+               livenessOn: livenessOn(), lastTurnAt: lastTurnAt, watching: watching };
     },
     noteTurn: noteTurn,
     say: function (text) { logMutter(text); }
   };
 
+  /** Repaint the hold as the visitor starts or stops writing — the next tick can be 24 s
+   *  away. Deferred a task, so a `blur` is read after focus has really moved. */
+  function watchComposer() {
+    var box = document.getElementById("speech-input");
+    if (!box || !box.addEventListener) return;
+    var soon = function () { setTimeout(reflectHold, 0); };
+    ["focus", "blur", "input"].forEach(function (ev) { box.addEventListener(ev, soon); });
+  }
+
   // Attached at LOAD, not in start(): start() waits for liveness + a talking mode, and a
   // later-woken layer would not know a conversation was already under way.
   watchTranscript();
+  watchComposer();
 
   watchMode();          // sim.html loads mode.js BEFORE ambient.js, so it is already there
 

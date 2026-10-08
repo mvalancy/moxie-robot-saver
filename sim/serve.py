@@ -26,6 +26,9 @@ class H(http.server.SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         # Serve any HTML page with on-the-fly cache-busting. "/" is the hub (index.html).
         rel = "index.html" if path == "/" else path.lstrip("/")
+        # "/sim" is "/sim.html", as Cloudflare Pages serves it: the hub links /sim directly.
+        if rel and not os.path.splitext(rel)[1] and os.path.isfile(os.path.join(WEB, rel + ".html")):
+            rel += ".html"
         if rel.endswith(".html") and os.path.isfile(os.path.join(WEB, rel)):
             body = bust(open(os.path.join(WEB, rel), encoding="utf-8").read()).encode("utf-8")
             self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")

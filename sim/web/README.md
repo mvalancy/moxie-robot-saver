@@ -7,10 +7,12 @@ live over MQTT; the by-hand control panel works with no bus at all.
 ## Run it
 
 ```sh
-cd sim/web && python3 -m http.server 8080    # then open http://localhost:8080/
+python3 sim/serve.py 8080    # from the repo root; then open http://localhost:8080/
 ```
 
-Any static server works, fully offline: every library and font is vendored in [`vendor/`](vendor/README.md).
+`sim/serve.py` serves `/sim` as `sim.html`, as Cloudflare Pages does (the hub links `/sim`,
+because Pages answers `sim.html` with a 308). Any other static server works too, fully offline,
+if you open `sim.html` by name: every library and font is vendored in [`vendor/`](vendor/README.md).
 
 ## Files
 
@@ -32,7 +34,7 @@ Any static server works, fully offline: every library and font is vendored in [`
 | `diagram.js` | renders a mermaid diagram she drew into the log (lazy, `securityLevel: strict`) |
 | `stub.js` | offline stand-ins (brain replies with real markup, scripted STT) for a fully static deploy |
 | `qr.js` | revival QR payloads, byte-identical to the Python toolkit (`sim/test_qr.mjs`) |
-| `hud.js`, `rail.js`, `sw-reset.js` | sim.html glue: panel wiring, the phone rail drawer, stale service-worker self-heal |
+| `hud.js`, `rail.js`, `sw-reset.js` | sim.html glue: panel wiring, the rail (a drawer on phones; on a hosted desktop page closed until the visitor opens it, remembered), stale service-worker self-heal |
 | `moxie-wire.js` | faint rotating wireframe Moxie mounted by `wire-bg.js` as a page background |
 | `style.css` + [`css/`](css/README.md) | the HUD skin; cascade order hud → dock → rail → style.css |
 | `_headers` | Cloudflare Pages cache + security headers (CSP etc.); see gotchas below |
