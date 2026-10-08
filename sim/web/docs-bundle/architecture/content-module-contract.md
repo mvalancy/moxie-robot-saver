@@ -152,7 +152,8 @@ recovered the always-listening set from `FlexibleGlobalCommand1`: **`Sleep`, `Wa
 `ListenToMe`, `Earmuffs`, `HoldOn`, `RepeatThat`, `SpeakLouder`, `SpeakSofter`, `SomethingElse`**.
 `starter.json` ships four of them — `HoldOn`, `SomethingElse`, `Earmuffs`, `Sleep` — authored as
 `extension` programs (`say` + `handled`), so they cost **no LLM call** and work during any activity.
-`Sleep` answers with a line that starts with `<sleep>`, which becomes a SLEEP action.
+`Sleep` answers with a line that starts with `<sleep>`, which becomes a SLEEP action. Going to sleep
+ends the conversation as an EXIT does, so its memory summary is written then.
 
 **`Hello` is deliberately not authored.** A global short-circuits *before* the brain, so matching a
 greeting would replace every "hi Moxie" with one fixed string. Free chat greets better than a canned
@@ -523,8 +524,9 @@ MemoryChat expresses as a `complete_handler` is **declared** here instead:
 
 `namespace` alone makes `{{ volley.persist_data.<namespace>.* }}` resolve in the prompt (a
 list of facts renders as `- ` bullets in both the Jinja2 and the dependency-free renderer).
-The **end of a conversation** — an `<exit>`/EXIT action, a module switch, or the robot going
-offline — fires `MoxieApp.on_session_end(robot, history, reason)`, which summarizes the part
+The **end of a conversation** — an `<exit>`/EXIT or `<sleep>`/SLEEP action (when Moxie goes to
+sleep the session is over), a module switch, or the robot going offline — fires
+`MoxieApp.on_session_end(robot, history, reason)`, which summarizes the part
 of the transcript not yet summarized (`_meta.summarized_through`, so a switch back and forth
 never re-summarizes, or re-pays for, the same turns) and merges it in.
 

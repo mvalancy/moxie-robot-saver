@@ -333,6 +333,51 @@ def test_bye_through_the_runtime_ends_the_conversation_and_writes_the_summary(tm
     assert block["_provenance"][0]["reason"] == "exit"
 
 
+class SleepyBrain(Brain):
+    """Like `Brain`, but a turn about a nap gets a model line that starts with <sleep>."""
+
+    def __call__(self, messages):
+        if messages[0].get("role") == "system" and "nap" in messages[-1]["content"]:
+            self.turns.append(messages)
+            return "<sleep>Okay, nap time! Sweet dreams."
+        return super().__call__(messages)
+
+
+@pytest.mark.parametrize("speech,model_calls", [
+    ("Moxie, go to sleep.", 2),           # the Sleep global: no model call
+    ("I'm sleepy, can you take a nap?", 3),   # the brain writes <sleep> itself
+], ids=["sleep-global", "brain-sleep-tag"])
+def test_going_to_sleep_ends_the_conversation_and_writes_the_summary(
+        tmp_path, speech, model_calls):
+    """When Moxie goes to sleep the session is over, so a SLEEP ends the conversation and
+    writes the summary, as an EXIT does (decided by the owner; before, the summary waited
+    for a disconnect or a module switch)."""
+    brain = SleepyBrain(summary=SUMMARY)
+    app = shipped_app("memory_chat.json", brain,
+                      memory=MemoryStore(JsonStore(str(tmp_path / "mem"))))
+    ended = []
+    real_end = app.on_session_end
+
+    def spy(robot_ctx, history, reason=""):
+        ended.append(reason)
+        return real_end(robot_ctx, history, reason)
+
+    app.on_session_end = spy
+    rt, did = _runtime(app, tmp_path)
+    _say(rt, did, "I have a dog", event_id="e1")
+    _say(rt, did, "her name is Pepper", event_id="e2")
+    night = _say(rt, did, speech, event_id="e3")
+    rt._pool.shutdown(wait=True)
+
+    assert len(brain.turns) == model_calls
+    assert night["response_actions"] == [encode_action(Action(type=ActionType.SLEEP))]
+    assert ended == ["sleep"]
+    block = app.memory.load(did)["memory_chat"]
+    assert block["_meta"]["summarized_through"] == len(rt.history[did]) == 6
+    assert [item_text(f) for f in block["facts"]] == ["Sam has a dog named Pepper"]
+    assert block["_provenance"][0]["reason"] == "sleep"
+
+
 def test_go_to_sleep_through_the_runtime_publishes_the_sleep_action(tmp_path):
     brain = Brain()
     rt, did = _runtime(shipped_app("starter.json", brain), tmp_path, module_id="FREE_CHAT")

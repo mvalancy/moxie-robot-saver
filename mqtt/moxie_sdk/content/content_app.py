@@ -13,8 +13,8 @@ Global handlers are registered Python callables or sandboxed extensions (`ext/`)
 module's `code` string is never executed.
 
 **Memory.** `volley.persist_data` is loaded per turn from the durable `MemoryStore` and
-rendered into the prompt. When a conversation ends (`on_session_end`: `<exit>`, module
-switch or disconnect), a module with a declared `memory` block is summarized into its
+rendered into the prompt. When a conversation ends (`on_session_end`: `<exit>`, `<sleep>`,
+module switch or disconnect), a module with a declared `memory` block is summarized into its
 namespace with provenance — OpenMoxie's MemoryChat `complete_handler`, declared rather
 than scripted:
 

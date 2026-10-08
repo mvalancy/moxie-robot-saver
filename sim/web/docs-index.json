@@ -229,7 +229,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 67515,
+   "bytes": 67674,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -1240,7 +1240,7 @@
    "path": "guides/what-moxie-remembers.md",
    "title": "What Moxie remembers — and how to erase it",
    "section": "guides",
-   "bytes": 5802,
+   "bytes": 5834,
    "mermaid": 0,
    "headings": [
     "What is written down",

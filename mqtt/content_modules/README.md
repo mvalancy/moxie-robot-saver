@@ -22,7 +22,8 @@ calls the brain:
 - **`Goodbye`**: a whole-utterance goodbye (*"Bye, Moxie!"*, *"I gotta go"*, *"I'm done"*,
   *"stop"*) gets one of several warm lines that start with `<exit>`. The runtime then ends the
   conversation, and its memory summary is written then, not at the next disconnect.
-- **`Sleep`**: *"go to sleep, Moxie"* or *"time for bed"* answers with `<sleep>`.
+- **`Sleep`**: *"go to sleep, Moxie"* or *"time for bed"* answers with `<sleep>`. Going to sleep
+  ends the conversation too, so its summary is written then as well.
 
 A conversation's `opener` is spoken when the robot starts it, as a `prompt` with no speech.
 See the [contract](../../docs/architecture/content-module-contract.md#conversations-llm-driven-chats).
@@ -77,7 +78,7 @@ memory instead of scripting it:
 
 `namespace` alone makes `{{ volley.persist_data.<namespace>.* }}` resolve in the prompt.
 With `summarize` (the default when a namespace is set), the end of the conversation —
-an `<exit>`, a module switch, or the robot going offline — asks the brain for a short
+an `<exit>` or `<sleep>`, a module switch, or the robot going offline — asks the brain for a short
 structured summary and merges it in with provenance. What is remembered is bounded,
 policy-gated (`LoggingPolicy.NO_DATA` → nothing is written) and erasable by a parent
 (`GET`/`DELETE /memory` on the supervisor's status port).

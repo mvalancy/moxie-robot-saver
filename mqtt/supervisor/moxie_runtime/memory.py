@@ -197,10 +197,13 @@ class MemoryMixin:
 
     # ---- end of a conversation (the contract's complete_handler moment) ----
     def _maybe_end_conversation(self, device_id, actions):
-        """End the conversation if the answer carried an EXIT action (`<exit>`)."""
+        """End the conversation if the answer carried an EXIT action (`<exit>`) or a SLEEP
+        action (`<sleep>`): when Moxie goes to sleep the session is over too."""
         for a in actions or []:
-            if getattr(a, "type", None) == ActionType.EXIT:
-                return self._end_conversation(device_id, "exit", inline=True)
+            kind = getattr(a, "type", None)
+            if kind in (ActionType.EXIT, ActionType.SLEEP):
+                return self._end_conversation(
+                    device_id, "exit" if kind == ActionType.EXIT else "sleep", inline=True)
         return None
 
     def _end_conversation(self, device_id, reason: str, *, robot=None, inline=False):
