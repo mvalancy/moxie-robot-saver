@@ -374,7 +374,8 @@ const THREE = "One sentence here. Two sentences here. Three sentences here.";
  *     refused (429) and answered from stub.js — a clip, which takes the speakers (voice/ cuts
  *     the cloud chunk and clears its queue, as before). The older reply's chunk in flight is
  *     dropped when it lands and its last chunk is never requested, so nothing of it resurfaces
- *     after the stub line (unguarded, voice/ played A1 1.2 s after the clip).
+ *     after the stub line (unguarded, voice/ played chunk 1 at 7.6 s — 1.2 s after it landed
+ *     behind the cleared queue, TTS_GAP_MS — and chunk 2 after it).
  * =========================================================================== */
 {
   const EID = "sim-ov3";
