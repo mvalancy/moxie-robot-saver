@@ -126,17 +126,31 @@ class FleetMixin:
                                         # never trusting mtime granularity
         self._note("permit", f"{'✅ permitted' if permitted else '⛔ revoked'} {device_id}")
         if device_id in self.robots:
-            self._push_config(device_id)
             if permitted:
-                self._subscribe_stt(device_id, again=True)   # config, then the mic ask
-                try:
-                    self.app_for(device_id).on_connect(self.robots[device_id])
-                except Exception as e:
-                    print(f"[runtime] app.on_connect error: {e}", flush=True)
+                self._admit(device_id)
+            else:
+                self._push_config(device_id)             # the minimal un-paired document
+                self._forget_stt_ask(device_id)          # pending: never "mic asked"
         return self.permits_view()
 
+    def _admit(self, device_id):
+        """What a connected robot gets the moment it is let in, by a Permit or by the
+        fleet-wide toggle: its full config, then the mic ask, then the app's greeting —
+        the settle's order (`_device_connect`). Asks regardless of the latch: the
+        parent's click is a "make it work" button."""
+        self._push_config(device_id)
+        self._subscribe_stt(device_id, again=True)       # config, then the mic ask
+        try:
+            self.app_for(device_id).on_connect(self.robots[device_id])
+        except Exception as e:
+            print(f"[runtime] app.on_connect error: {e}", flush=True)
+
     def set_allow_unverified_bots(self, allowed: bool) -> dict:
-        """The fleet-wide "serve any robot" toggle; re-pushes every connected robot."""
+        """The fleet-wide "serve any robot" toggle; re-pushes every connected robot. A
+        robot it lets in is onboarded like a Permit (`_admit`), one it shuts out is
+        pending again (the minimal config, no `mic asked`). Judged on the enforced
+        value: under a constructor or env pin the stored flag changes and nothing else."""
+        was = {device_id: self.is_permitted(device_id) for device_id in list(self.robots)}
         rec = self.permits()
         rec["allow_unverified_bots"] = bool(allowed)
         self.store.write_shared(self.FLEET_PERMITS_COLLECTION, rec)
@@ -144,8 +158,14 @@ class FleetMixin:
                                         # never trusting mtime granularity
         self._note("permit", f"🔓 allow_unverified_bots={bool(allowed)}"
                              if allowed else "🔒 allow_unverified_bots=False")
-        for device_id in list(self.robots):
-            self._push_config(device_id)
+        for device_id, before in was.items():
+            now = self.is_permitted(device_id)
+            if now and not before:
+                self._admit(device_id)
+            else:
+                self._push_config(device_id)
+                if not now:
+                    self._forget_stt_ask(device_id)
         return self.permits_view()
 
     def permits_view(self) -> dict:

@@ -390,6 +390,81 @@ def test_permitting_a_robot_asks_it(timers, tmp_path):
     assert _order(rt)[-1] == "config"
 
 
+def _summary(robot: dict) -> str:
+    sys.path.insert(0, os.path.join(REPO, "server"))
+    from moxie_server.fleet.robots import robot_summary
+    return robot_summary(robot)
+
+
+def test_a_revoked_robot_shows_no_mic_asked(timers, tmp_path):
+    """Nothing withdraws a `ProtoSubscribe` (the recovered `Log.proto` has no such
+    message), so a revoked robot may well keep streaming to the broker, where the permit
+    gate drops the audio. But it is pending now, and a pending robot is never asked: the
+    record of the ask goes with the permit, so `/status` and the card stop saying
+    `mic asked`. A re-permit asks again and records it."""
+    rt = _runtime(tmp_path, allow=False)
+    _connect(rt)
+    timers.fire()
+    rt.set_permit(DEV, True)
+    assert rt.status_snapshot()["robots"][0]["stt_subscribed_at"]
+
+    rt.set_permit(DEV, False)
+    robot = rt.status_snapshot()["robots"][0]
+    assert robot["pending"] is True
+    assert robot["stt_subscribed_at"] is None, "a pending robot is never 'mic asked'"
+    assert "mic asked" not in _summary(robot) and "pending" in _summary(robot)
+    assert len(_asks(rt)) == 1 and _order(rt)[-1] == "config"
+
+    rt.set_permit(DEV, True)
+    assert len(_asks(rt)) == 2
+    assert rt.status_snapshot()["robots"][0]["stt_subscribed_at"]
+
+
+def test_listening_off_keeps_the_ask_on_record(timers, tmp_path):
+    """Listening `off` installs no engine. The robot was asked and, as far as the
+    supervisor knows, still streams (nothing withdraws the ask); the record stands, so
+    the engine installed next finds the robot asked and does not ask again. Pinned as
+    documented in mqtt-and-conversation.md §3.4."""
+    rt = _runtime(tmp_path)
+    _connect(rt)
+    timers.fire()
+    rt.set_transcriber(None)                   # the picker's `off`
+    assert rt.status_snapshot()["robots"][0]["stt_subscribed_at"]
+    rt.set_transcriber(Ears())
+    assert len(_asks(rt)) == 1
+
+
+def test_the_fleet_wide_toggle_onboards_the_robots_it_lets_in(timers, tmp_path, monkeypatch):
+    """`allow_unverified_bots` flipped on from the console lets every pending robot in
+    at once. Each must be onboarded the way a Permit does (full config, then the mic
+    ask, then the greeting), not left deaf until a wake or a reconnect. A robot that was
+    already in gets only the config re-push. Flipped off: the minimal config again, and
+    no `mic asked` on a robot that is pending again."""
+    monkeypatch.delenv("MOXIE_ALLOW_UNVERIFIED_BOTS", raising=False)
+    rt = _runtime(tmp_path, allow=None)        # the durable flag governs
+    _connect(rt, "d_a1")
+    _connect(rt, "d_b2")
+    assert timers.fire() == 2
+    rt.set_permit("d_a1", True)                # one is let in by hand
+    assert _asks(rt, "d_a1") == [[ZMQ_STT_REQUEST]] and _asks(rt, "d_b2") == []
+    assert rt.app.connected == ["d_a1"]
+
+    rt.set_allow_unverified_bots(True)
+    assert _order(rt, "d_b2") == ["config", "config", PROTO_SUBSCRIBE], _order(rt, "d_b2")
+    assert rt.client.on(CONFIG.format(d="d_b2"))[-1]["pairing_status"] == "paired"
+    assert rt.app.connected == ["d_a1", "d_b2"], "the toggle greets the robot it let in"
+    assert len(_asks(rt, "d_a1")) == 1 and _order(rt, "d_a1")[-1] == "config"
+    snap = {r["device_id"]: r for r in rt.status_snapshot()["robots"]}
+    assert snap["d_b2"]["pending"] is False and snap["d_b2"]["stt_subscribed_at"]
+
+    rt.set_allow_unverified_bots(False)
+    snap = {r["device_id"]: r for r in rt.status_snapshot()["robots"]}
+    assert snap["d_b2"]["pending"] is True and snap["d_b2"]["stt_subscribed_at"] is None
+    assert snap["d_a1"]["stt_subscribed_at"], "the hand-permitted robot is still in"
+    assert len(_asks(rt, "d_b2")) == 1 and _order(rt, "d_b2")[-1] == "config"
+    assert rt.client.on(CONFIG.format(d="d_b2"))[-1]["pairing_status"] != "paired"
+
+
 def test_the_listening_picker_asks_the_robots_not_yet_asked(timers, tmp_path):
     """Ears turned on after the robots connected (the console's Listening picker):
     every connected, permitted robot not yet asked this session is asked now; one that

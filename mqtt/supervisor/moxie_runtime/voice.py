@@ -264,6 +264,16 @@ class VoiceMixin:
                   f"(ProtoSubscribe {ZMQ_STT_REQUEST})", flush=True)
         return ok
 
+    def _forget_stt_ask(self, device_id):
+        """Drop the record of the ask for a robot that is no longer permitted. Nothing
+        withdraws a `ProtoSubscribe` (the recovered `Log.proto` has no such message), so
+        the robot may well keep streaming to the broker, where the permit gate drops the
+        audio; but a pending robot is never asked, so `/status` and the card must not say
+        `mic asked`. The next Permit asks again and records it."""
+        robot = self.robots.get(device_id)
+        if robot is not None:
+            robot.extra.pop("stt_subscribed_at", None)
+
     def _stt_session(self, device_id):
         from moxie_sdk.stt import SttSession
         s = self._stt_sessions.get(device_id)
