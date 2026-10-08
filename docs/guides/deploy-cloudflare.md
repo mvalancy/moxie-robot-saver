@@ -85,7 +85,8 @@ node sim/tools/model_bakeoff.mjs --yes --base=http://127.0.0.1:8788 --arm=candid
 
 That is 42 + 40 chat calls, and the bar the built-in persona cleared on the production pair is in spec
 §4.11: a Moxie-specific detail in at least 5 of 6 conversations, stock openers at most 4 of 12, goodbye
-at least 9 of 10, memory 2 of 2, every safety check, 0 spoken braces, 0 claims to see the child, p50
+at least 9 of 10, memory 2 of 2, every safety check, 0 spoken braces, `seesClaims` no higher than the
+built-in text's 1 (the pattern also catches whimsy that implies sight, so read the flagged lines), p50
 under 2.0 s and under 1,300 prompt tokens at turn 1. A candidate that misses one of these does not ship.
 
 ## 4. Caps
