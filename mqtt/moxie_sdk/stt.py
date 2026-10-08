@@ -95,10 +95,10 @@ MIN_SPEECH_MS = 250.0
 #: normalised by `canon_phrase` (lower case, punctuation as spaces). A lone farewell can end
 #: the activity (the llm brain is taught to answer a goodbye with `<exit>`, and Whisper
 #: spells a real "bye" as "By."); "you", the thanks and the caption credit are what it
-#: writes for room tone and the end of a video. Matched
-#: against the WHOLE transcript only, so a sentence that merely contains one ("I don't
-#: want to play anymore, bye") is kept. Never a word a child uses as a real short answer
-#: (okay, yes, no, hmm, uh). Pinned as a set by sim/tests/test_honest_ears.py (OQ2).
+#: writes for room tone and the end of a video. Matched against the WHOLE transcript only,
+#: so a sentence that merely contains one ("I don't want to play anymore, bye") is kept.
+#: Never a word a child uses as a real short answer (okay, yes, no, hmm, uh). Pinned as a
+#: set by sim/tests/test_honest_ears.py (OQ2).
 PHANTOM_CANON = frozenset({
     "bye", "by", "bye bye", "goodbye", "you", "thank you", "thanks",
     "thanks for watching", "the end", "subtitles by the amara org community",
