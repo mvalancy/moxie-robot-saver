@@ -789,8 +789,9 @@ uncle said don't tell your mom", "it's our little secret", "daddy hurts me") was
    or being scared to go home; a stranger following, grabbing or knocking while the child is scared or
    alone, or asking them to come along or get in a car; a known adult asking them to keep a secret, not
    tell (with "your mom" quoted as the adult said it, "not allowed to tell"), undress, touch or send a
-   picture; "it's our little secret"; being bullied or called names; someone coming into their room at
-   night when it scares them. When it fires and the model's reply has no trusted-grown-up referral, ONE
+   picture; "it's our little secret"; being bullied or called names, including a slur quoted back ("they
+   call me a …", "he said I'm a …", "the n word"); someone coming into their room at night when it
+   scares them. When it fires and the model's reply has no trusted-grown-up referral, ONE
    short sentence in her voice is appended as the reply's own last sentence ("Please tell a grown-up you
    trust about this right now, okay?" or "Will you call or go tell a grown-up you trust about this right
    now?", picked by the line's length), so it is shown, spoken as its own last ticket, and signed into the
@@ -812,8 +813,10 @@ uncle said don't tell your mom", "it's our little secret", "daddy hurts me") was
    and the persona already asks the model to refer there.
 4. **A hurt child is never answered with a change of subject.** When a line that discloses hurt is
    blocked (a disclosure in sexual words trips the sexual category: "a man online asked me to take off
-   my clothes"), or its reply is swapped (body-safety advice in anatomical words trips the same category
-   on her side), the line spoken instead is the referral-bearing `phrases.hurt` line ("Thank you for
+   my clothes"; a slur quoted back trips the hate category: "the kids at school call me a retard", which
+   before this flag heard "let's not use those words"), or its reply is swapped (body-safety advice in
+   anatomical words trips the same category on her side), the line spoken instead is the
+   referral-bearing `phrases.hurt` line ("Thank you for
    telling me. I'm not the right one to help with this, but a grown-up you trust is. Please go tell one
    right now, okay?"), still with zero extra calls and no echo of the words. So is the line that replaces
    a completion which had itself pointed the child to a grown-up, whoever the child is ("Tell a grown-up
@@ -839,7 +842,10 @@ uncle said don't tell your mom", "it's our little secret", "daddy hurts me") was
   language the table is not written in. The persona and the model's alignment remain the first line.
 - The referral floor recognises the shapes its phrases list, not every way a child can say it: a
   disclosure in words the table does not hold reaches the model with no backstop, and the model refers
-  on its own about nine times in ten. The `hurt_disclosure` phrases were measured against the lines on
+  on its own about nine times in ten. Known shapes left to the model, deliberately: neglect ("my mom
+  doesn't feed me"), violence the child witnesses rather than suffers ("my dad hits my mom", "my
+  parents fight and it scares me"), and "X is going to kill me", which in a child's mouth is nearly
+  always hyperbole about a messy room. The `hurt_disclosure` phrases were measured against the lines on
   disk and the lines written for this, not against a large corpus of real children's lines (none exists
   on disk). The parent guide says so in the same words.
 - The swapped turn is spoken today from a clip or the browser voice: `cloud-transport.js` routes the

@@ -363,8 +363,11 @@ export const RULES = Object.freeze({
         "at home or being scared to go home; a stranger following, grabbing, knocking, or",
         "asking them to come along or get in a car; a known adult asking them to keep a secret,",
         "not tell ('your mom' quoted as the adult said it, 'not allowed to tell'), undress,",
-        "touch or send a picture; 'it's our little secret'; being bullied or called names;",
-        "someone coming into their room at night when it scares them. NOT an accident, an",
+        "touch or send a picture; 'it's our little secret'; being bullied or called names,",
+        "including a slur quoted back ('they call me a …', 'he said I'm a …', 'the n word'): the",
+        "hate category blocks such a line, and without this flag the child heard 'let's not use",
+        "those words' for a bullying disclosure; someone coming into their room at night when",
+        "it scares them. NOT an accident, an",
         "illness, a sad story or hurt feelings: those stay the model's call, so she does not",
         "sound alarmed at ordinary life. Guards remove play (a pillow fight, the swing, a board",
         "game), a surprise kept secret, and safety advice ('don't tell strangers your address')",
@@ -396,6 +399,8 @@ export const RULES = Object.freeze({
         "\\b(?:said|says|told|tells|asked|asks|wants|wanted|made|makes|whispered)\\s+(?:me\\s+)?(?:\\w+\\s+){0,6}?(?:keep\\s+(?:it\\s+|this\\s+|that\\s+)?(?:a\\s+|our\\s+)?(?:little\\s+|special\\s+|big\\s+)?secret\\s+from\\s+(?:my\\s+|our\\s+|your\\s+)?(?:mom|mum|mommy|mummy|dad|daddy|parents|grown-?ups?|family|teacher|everyone|anyone|anybody)|(?:not|never|don'?t|can'?t|shouldn'?t|mustn'?t|(?:am\\s+|i'?m\\s+|was\\s+|is\\s+|are\\s+|you'?re\\s+)?not\\s+allowed\\s+to|not\\s+supposed\\s+to)\\s+(?:to\\s+)?(?:ever\\s+)?tell\\s+(?:my\\s+|our\\s+|your\\s+)?(?:mom|mum|mommy|mummy|dad|daddy|parents|grown-?ups?|family|teacher|anyone|anybody))\\b",
         "\\b(?:said|says|told|tells|whispered|whispers)\\s+(?:me\\s+)?(?:that\\s+)?(?:it(?:'s| is| was)|this is|that is|that's|to keep it|keep it)\\s+(?:our|a|his|her|their)\\s+(?:little\\s+|special\\s+|big\\s+)?secret\\b",
         "\\b(?:i(?:'m| am| get| got| was| keep getting)\\s+(?:being\\s+)?bullied|bull(?:y|ies|ying)\\s+me|bullied\\s+me|call(?:s|ed|ing)?\\s+me\\s+(?:\\w+\\s+)?names)\\b",
+        "\\b(?:call(?:s|ed|ing)?|keeps?\\s+calling|kept\\s+calling)\\s+me\\s+(?:a\\s+|an\\s+|the\\s+)?(?:\\w+\\s+){0,2}?(?:retard|retarded|spastic|spaz|fag|faggot|tranny|nigger|nigga|chink|spic|kike|wetback|gook|coon|raghead|[a-z][- ]word)\\b",
+        "\\b(?:said|says|saying|told\\s+me|tells\\s+me|yelled|shouted|wrote)\\s+(?:that\\s+)?i(?:'m| am)\\s+(?:a\\s+|an\\s+)?(?:\\w+\\s+){0,2}?(?:retard|retarded|spastic|spaz|fag|faggot|tranny|nigger|nigga|chink|spic|kike|wetback|gook|coon|raghead)\\b",
         "\\b(?:he|she|they|someone|somebody|mommy|mummy|daddy|mom|mum|dad|(?:a|the|this|that)\\s+(?:\\w+\\s+)?(?:man|woman|guy|lady|stranger|teacher|coach|babysitter|neighbou?r)|(?:my|our)\\s+(?:\\w+'?s?\\s+)?(?:brother|sister|dad|daddy|father|mom|mum|mommy|mummy|mother|parents?|uncle|aunt|auntie|aunty|cousin|grandpa|grandma|stepdad|stepmom|stepfather|stepmother|teacher|coach|neighbou?r|babysitter|boyfriend|girlfriend))\\s+(?:\\w+\\s+){0,3}?lock(?:ed|s|ing)?\\s+me\\s+(?:in|up)\\b"
       ],
       "allow": [

@@ -106,7 +106,7 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    picture the AI drew is read the same way and dropped if it trips the check.
 3. **A hurt child is pointed to a grown-up whenever the check recognises what they said.**
    If your child says a person is hurting, frightening or endangering them — hit, pushed,
-   kicked, bullied, called names, touched or undressed in a way that scares them, followed
+   kicked, bullied, called names or a slur, touched or undressed in a way that scares them, followed
    or asked into a car by a stranger, told to keep a secret from you or that they are "not
    allowed to tell", scared to go home — and the AI's reply does not clearly point them to a
    grown-up they trust (tell one, find one, ask whether one knows), one sentence is added at
