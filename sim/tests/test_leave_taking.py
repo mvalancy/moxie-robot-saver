@@ -11,10 +11,13 @@ reaches `chat.model_calls()`), tmp storage, the real `MoxieRuntime` over a fake 
 What goes on the wire (actions, the result code, signals) is compared through `ActionType`
 and the wire encoders (`encode_action`, `build_chat_response`), never as wire literals.
 """
+import contextlib
 import hashlib
 import json
 import os
 import re
+import signal
+import threading
 import time
 
 import pytest
@@ -180,26 +183,61 @@ def test_both_shipped_modules_carry_the_same_goodbye_and_sleep():
         assert starter[item] == memory[item], item
 
 
+class _Stalled(Exception):
+    """One match ran past its budget (raised from the SIGALRM handler)."""
+
+
+@contextlib.contextmanager
+def _hard_limit(seconds):
+    """Interrupt the block after `seconds`. `re` checks for signals while it backtracks
+    (measured: a catastrophic match is stopped at 0.50 s on Python 3.10 and 3.12), so a
+    stalling pattern fails at its budget instead of when its match finally ends. Off the
+    main thread, without `setitimer`, or with someone else's alarm armed, it is a no-op
+    and the caller's own timing check still applies."""
+    if (not hasattr(signal, "setitimer")
+            or threading.current_thread() is not threading.main_thread()
+            or signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0)):
+        yield
+        return
+
+    def stalled(signum, frame):
+        raise _Stalled()
+
+    previous = signal.signal(signal.SIGALRM, stalled)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def test_a_looping_transcript_cannot_stall_the_patterns():
-    """Speech-to-text can loop ("bye bye bye ..."). Every word of these patterns reads one
-    way only. An ambiguous one backtracks exponentially: a Goodbye mutated to
-    `(?:bye\\W*)+` took 0.56 s at 20 repeats and 17 s at 25. The count ramps up one repeat
-    at a time, so such a pattern fails at the first count past the ceiling (1.2 s for that
-    mutation, against 17 s when the first count tried was 25)."""
+    """Speech-to-text can loop ("bye bye bye ...", or glued: "byebyebyebye"). Every word of
+    these patterns reads one way only. An ambiguous one backtracks exponentially: a Goodbye
+    mutated to `(?:bye\\W*)+` took 0.56 s at 20 repeats and 17 s at 25, and one mutated
+    to `(?:\\w*bye)+` grows five- to eightfold per glued "byebyebyebye". The count ramps up
+    one repeat at a time and every match runs under a hard 0.5 s alarm, so such a pattern
+    fails at 0.5 s into the first match past the budget, however steep its growth."""
     module = load_modules(_raw("starter.json"))
     patterns = [g for g in module.globals if g.name in ("Goodbye", "Sleep")]
     assert len(patterns) == 2
-    for unit in ("bye ", "bye moxie ", "ok bye ", "bye-", "byebye ", "now ", "moxie ",
-                 "good night ", "i'm done ", "go to sleep ", "stop ", "by ", "foxy ",
-                 "bye i love you ", "love you ", "see you later alligator "):
+    for unit in ("bye ", "bye moxie ", "ok bye ", "bye-", "byebye ", "byebyebyebye ",
+                 "now ", "moxie ", "good night ", "i'm done ", "go to sleep ", "stop ",
+                 "by ", "foxy ", "bye i love you ", "love you ", "see you later alligator "):
         for n in (*range(1, 26), 100, 400, 2000):
             for tail in ("x", "!"):
                 text = unit * n + tail
                 for g in patterns:
+                    where = f"{g.name} on {unit!r}*{n}+{tail!r}"
                     started = time.perf_counter()
-                    g.match(text)
+                    try:
+                        with _hard_limit(0.5):
+                            g.match(text)
+                    except _Stalled:
+                        pytest.fail(f"{where} was still matching after 0.5 s")
                     took = time.perf_counter() - started
-                    assert took < 0.5, f"{g.name} took {took:.2f}s on {unit!r}*{n}+{tail!r}"
+                    assert took < 0.5, f"{where} took {took:.2f}s"
 
 
 def test_an_edited_goodbye_falls_back_to_the_brain_which_is_taught_the_same_rule():
