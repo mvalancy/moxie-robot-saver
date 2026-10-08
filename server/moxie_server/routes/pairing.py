@@ -385,16 +385,21 @@ def local_state(u=Depends(current_user)):
         return [{"id": r["id"], **json.loads(r["attributes"])} for r in rs]
     # Each robot row also names the child it is bound to: the unpair sheet words its
     # erase choice with that child's name.
+    mine = db.robots_of(u["id"])
     robots = [{"id": r["id"], **json.loads(r["attributes"]), "child_id": r["child_id"]}
-              for r in db.robots_of(u["id"])]
+              for r in mine]
     # Robots on the broker that no account's record names: what "Add to my account"
     # offers. Empty when the supervisor cannot be asked, and then `unclaimed_known` is
-    # false: nobody could check, which is not the same as no robot having arrived.
+    # false: nobody could check, which is not the same as no robot having arrived. Those
+    # another account's record names are listed apart (`on_other_accounts`, ids only), so
+    # Robot access can say why it offers no button for them.
     seen = _devices_for_state()
-    unclaimed = sorted(seen["connected"] - db.bound_device_ids()) if seen else []
+    connected, bound = (seen["connected"] if seen else set()), db.bound_device_ids()
+    others = bound - {db.device_id_of(r) for r in mine}
     return {"user": {"id": u["id"], **json.loads(u["attributes"])},
             "children": rows(db.children_of(u["id"])), "robots": robots,
-            "unclaimed": unclaimed, "unclaimed_known": seen is not None}
+            "unclaimed": sorted(connected - bound), "unclaimed_known": seen is not None,
+            "on_other_accounts": sorted(connected & others)}
 
 
 @router.get("/healthz")

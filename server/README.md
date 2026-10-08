@@ -53,8 +53,8 @@ the browser suites `sim/test_console_insights.mjs`, `sim/test_robot_lifecycle.mj
 - **Add to my account**: `POST /local/robots/{id}/claim` (bearer) puts a robot the supervisor lists
   on the parent's account and permits it, so a robot that paired by scanning the codes gets its
   robot card; `GET /local/state` lists the connected robots on no account as `unclaimed`
-  (`unclaimed_known: false` when the supervisor could not be asked)
-  ([bench runbook](../docs/guides/bench-runbook.md)).
+  (`unclaimed_known: false` when the supervisor could not be asked) and those another account has
+  as `on_other_accounts` ([bench runbook](../docs/guides/bench-runbook.md)).
 - **`/local/*` fleet + access** (proxied to the MQTT supervisor): `fleet`, `broker/status`,
   `robots/{id}/config`, `fleet/config`, `robots/{id}/telemetry`, `robots/{id}/safety`, and the
   **device allowlist** — `permits`, `robots/{id}/permit`, `fleet/permits`

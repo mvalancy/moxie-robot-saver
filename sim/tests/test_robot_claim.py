@@ -13,8 +13,9 @@ makes the record. What each test below pins:
   account or an account that already has a robot (409); a repeat is a no-op;
 * it is the parent's word, not a proof: no pairing code is used, no public key is written;
 * the whole lifecycle (Wake, Unpair, Factory reset) then works on that record;
-* `/local/state.unclaimed` lists the connected robots no account has added, and the
-  claim's own supervisor read is the one the page's redraw after it gets;
+* `/local/state.unclaimed` lists the connected robots no account has added, and
+  `on_other_accounts` those another account has; the claim's own supervisor read is the one
+  the page's redraw after it gets;
 * Simulate robot scan keeps the same rules, also when a claim, an unpair or another scan
   lands while it runs.
 
@@ -433,3 +434,18 @@ def test_unclaimed_lists_the_connected_robots_no_account_has_added(client, monke
     set_status_url(DEAD, monkeypatch)
     down = _state(client, second)
     assert down["unclaimed"] == [] and down["unclaimed_known"] is False
+
+
+def test_a_robot_on_another_account_is_named_apart(client, monkeypatch):
+    """Robot access lists every robot on the broker to every account. One that another
+    account has added is not offered (`unclaimed`), and `on_other_accounts` names it (its
+    id, never the account) so the page can say why there is no button. The account's own
+    robot is in neither list, and nothing is named when nobody could check."""
+    owner, other = quicklogin(client, "owner@apart.lan"), quicklogin(client, "other@apart.lan")
+    assert _claim(client, owner).status_code == 200
+    mine, theirs = _state(client, owner), _state(client, other)
+    assert (mine["unclaimed"], mine["on_other_accounts"]) == ([], [])
+    assert (theirs["unclaimed"], theirs["on_other_accounts"]) == ([], [DEVICE])
+    set_status_url(DEAD, monkeypatch)
+    down = _state(client, other)
+    assert (down["on_other_accounts"], down["unclaimed_known"]) == ([], False)

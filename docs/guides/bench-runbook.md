@@ -67,11 +67,13 @@ the broker during the live session; it has not yet been seen in this monitor wit
 
 ## 4. Add it to your account
 
-Console → **🤖 Moxie**. A connected robot that is on no account is listed in two places: under
-**No Moxie paired yet** and in **🔐 Robot access → Waiting for you**. You can open the tab before
-the robot arrives: while **No Moxie paired yet** is showing, the tab checks every few seconds and
-the robot appears on its own, with no need to re-open the tab. Press **Add to my account** in
-either place. That one click:
+Console → **🤖 Moxie**. A connected robot that is on no account is listed under **No Moxie paired
+yet**, with an **Add to my account** button, and in **🔐 Robot access**: under **Waiting for you**,
+with the same button beside **Permit**, or under **Allowed** if someone permitted it earlier. An
+Allowed row has no Add button; use the one under **No Moxie paired yet**. You can open the tab
+before the robot arrives: while **No Moxie paired yet** is showing, the tab checks every few seconds
+and the robot appears on its own, with no need to re-open the tab. Press **Add to my account**. That
+one click:
 
 - puts the robot (its `d_…` id) on your account, bound to your child; a child named "Moxie Kid" is
   made if the account has none;
@@ -95,17 +97,19 @@ can press. Add only the robot you just showed the codes to.
 | What you see | Next |
 |---|---|
 | Beside the robot in Robot access, and on your robot card: "This account already has a robot (…): unpair it first." The 📶 Wi-Fi tab says the same. | One robot per account. An earlier test leaves exactly this (**Simulate robot scan** makes a record). Press **Unpair this robot** on the robot card; **Add to my account** then appears. |
+| Beside the robot in Robot access, usually under **Allowed** (adding it there let it in): "That robot is on another account on this server: unpair it there first." | It was added from another account on this server. Unpair it on that account's robot card; it is then offered here. |
 | Under **No Moxie paired yet**: "The robot service cannot be reached right now". | The supervisor is down or not answering, so the page cannot check. Start the stack again. |
 
-If a click is refused, nothing was changed. The page shows the server's own words, and each one
-means something changed after the page last looked:
+If a click is refused, nothing was changed. The server's own words stay on screen: on the card you
+clicked in, or, when the page's redraw took that card away, on the card that shows now. Each
+message means something changed after the page last looked:
 
-| The message | Next |
-|---|---|
-| "That robot is already on another account on this server" | It was added from another account first. Unpair it there. |
-| "This account already has a robot (…). Unpair the current robot first" | A robot was added to this account from another page. Unpair one first. |
-| "No robot with that id has connected to this server" | It left the broker: back to step 3. |
-| "This server cannot reach its robot side" | The supervisor went down. Start it and try again. |
+| The message | Where it shows, and what else changes | Next |
+|---|---|---|
+| "That robot is already on another account on this server" | Where you clicked. The robot is no longer offered, and its row in Robot access now says it is on another account. | It was added from another account first. Unpair it there. |
+| "This account already has a robot (…). Unpair the current robot first" | Your robot card now shows in place of **No Moxie paired yet**: the message is on it, or in Robot access if you clicked there. The card names the waiting robot with the same reason. | A robot was added to this account from another page. Unpair one first. |
+| "No robot with that id has connected to this server" | Where you clicked. The robot is no longer offered; if no robot is left on the broker, Robot access hides and the message is under **No Moxie paired yet**. | It left the broker: back to step 3. |
+| "This server cannot reach its robot side" | Under **No Moxie paired yet** (Robot access hides while the supervisor cannot be asked). The server keeps its last list for up to 10 s and the tab checks every 5 s, so the robot can stay offered for up to about 15 s; then the card says the robot service cannot be reached. | The supervisor went down. Start it and try again. |
 
 ## Afterwards
 
@@ -118,8 +122,9 @@ means something changed after the page last looked:
 - The Wi-Fi tab's code: `POST /local/wifi/payload`; the pairing-key code: `POST /local/pairing/prepare`
   ([`routes/pairing.py`](../../server/moxie_server/routes/pairing.py)).
 - Add to my account: `POST /local/robots/{device_id}/claim` with the parent's token; `/local/state`
-  lists the connected robots no account has added as `unclaimed`, and says `unclaimed_known: false`
-  when the supervisor could not be asked (the list is then empty because nobody could check).
+  lists the connected robots no account has added as `unclaimed`, says `unclaimed_known: false`
+  when the supervisor could not be asked (the list is then empty because nobody could check), and
+  lists the connected robots another account has added as `on_other_accounts` (their ids only).
 - Tests: [`test_wifi_first_qr.py`](../../sim/tests/test_wifi_first_qr.py),
   [`test_robot_claim.py`](../../sim/tests/test_robot_claim.py), the browser suite
   [`test_robot_claim.mjs`](../../sim/test_robot_claim.mjs), and

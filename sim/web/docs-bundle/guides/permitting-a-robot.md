@@ -102,8 +102,12 @@ damaged or missing file means "nobody is permitted" — it fails safe, never ope
 - **No Add to my account, and the row says this account already has a robot** → an account
   holds one robot, and an earlier test (*Simulate robot scan*) leaves one. Unpair it from its
   robot card first.
-- **The 🔐 Robot access card is missing** → the supervisor is not running; check the
-  server, then reload the console.
+- **No Add to my account, and the row says the robot is on another account** → someone added
+  it from another account on this server (adding it let it in, so it is usually under
+  *Allowed*). Unpair it on that account's robot card, then add it here.
+- **The 🔐 Robot access card is missing** → no robot is connected and *Let any robot that
+  connects use this server* is off, or the supervisor is not running; check the server, then
+  reload the console.
 - **The robot is not in either list** → it has not reached the broker at all. That is a
   network/pairing problem, not a permission one — see the
   [bench runbook](bench-runbook.md#3-read-the-connection-monitor),

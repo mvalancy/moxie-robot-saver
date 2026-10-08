@@ -13,10 +13,12 @@ async function api(path, {method='GET', body, auth=true}={}){
   if(auth && TOKEN) h['Authorization']='Bearer '+TOKEN;
   const r=await fetch(path,{method,headers:h,body:body?JSON.stringify(body):undefined});
   if(!r.ok){
-    // A refusal carries a sentence for the parent (`reason`, else `error`): throw that.
+    // A refusal carries a sentence for the parent (`reason`, else `error`, else the
+    // `detail` of a plain HTTPException): throw that.
     const text=await r.text();
     let msg=text||String(r.status);
-    try{ const j=JSON.parse(text); msg=(j&&(j.reason||j.error))||msg; }catch(_){}
+    try{ const j=JSON.parse(text);
+         msg=(j&&(j.reason||j.error||(typeof j.detail==='string'&&j.detail)))||msg; }catch(_){}
     throw new Error(msg);
   }
   const ct=r.headers.get('content-type')||''; return ct.includes('json')?r.json():r.text();
@@ -172,10 +174,12 @@ function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;',
 
 // ---- Moxie status ----
 // The account's side of the last /local/state: its robot records, the robots on the
-// broker that no account has added (`unclaimed`), and whether that list could be checked
-// at all (`known`). 🔐 Robot access reads it too.
-let ACCOUNT={robots:[], unclaimed:[], known:true};
-const accountOf=st=>({robots:st.robots||[], unclaimed:st.unclaimed||[], known:st.unclaimed_known!==false});
+// broker that no account has added (`unclaimed`), whether that list could be checked at
+// all (`known`), and the robots on the broker that another account has (`elsewhere`).
+// 🔐 Robot access reads it too.
+let ACCOUNT={robots:[], unclaimed:[], known:true, elsewhere:[]};
+const accountOf=st=>({robots:st.robots||[], unclaimed:st.unclaimed||[],
+                      known:st.unclaimed_known!==false, elsewhere:st.on_other_accounts||[]});
 async function refreshMoxie(){
   try{
     const st=await api('/local/state');
@@ -185,7 +189,7 @@ async function refreshMoxie(){
            $('#memory-card').classList.add('hidden'); }
     renderClaims();
   }catch(e){}
-  refreshLive();
+  await refreshLive();     // Robot access too: a claim places its answer once both are drawn
 }
 
 // While No Moxie paired yet is showing, the tab looks for a robot arriving (or one added
@@ -196,7 +200,7 @@ async function refreshMoxie(){
 // redraws the cards itself and then says what happened, so the watch stands aside while
 // one is in flight: a redraw of its own would wipe that answer (renderRobot clears it).
 const WATCH_MS=5000;
-const accountKey=a=>JSON.stringify([a.robots.map(r=>r.id), a.unclaimed, a.known]);
+const accountKey=a=>JSON.stringify([a.robots.map(r=>r.id), a.unclaimed, a.known, a.elsewhere]);
 async function watchForRobot(){
   if(claiming || document.hidden || $('#moxie-none').classList.contains('hidden')) return;
   let st; try{ st=await api('/local/state'); }catch(e){ return; }
@@ -206,12 +210,14 @@ async function watchForRobot(){
 // ---- ➕ Add to my account ----
 // A robot that paired by scanning the codes reaches the broker with no account record, so
 // it has no robot card. One click claims it (the server permits it too); nothing is ever
-// claimed without that click. Offered only where it can work: an account has one robot.
-// Where that rule hides it, the page says so beside the robot (claimBlocked) rather than
-// offer a button that can only be refused.
+// claimed without that click. Offered only where it can work: an account has one robot,
+// and a robot is on one account. Where a rule hides it, the page says so beside the robot
+// (claimBlocked) rather than offer a button that can only be refused.
 function claimable(deviceId){ return !ACCOUNT.robots.length && ACCOUNT.unclaimed.includes(deviceId); }
-/** Why a robot on no account is not offered here, or ''. The server's 409 says the same. */
+/** Why a robot on the broker is not offered here, or ''. The server's 409s say the same. */
 function claimBlocked(deviceId){
+  if(ACCOUNT.elsewhere.includes(deviceId))
+    return 'That robot is on another account on this server: unpair it there first.';
   if(!ACCOUNT.robots.length || !ACCOUNT.unclaimed.includes(deviceId)) return '';
   return `This account already has a robot (${ACCOUNT.robots[0].name||'Moxie'}): unpair it first.`;
 }
@@ -235,23 +241,31 @@ function renderClaims(){
                                           + claimBlocked(waiting[0]) : '';
            w.classList.toggle('hidden', !waiting.length); } }
 }
+/** Where an answer about adding a robot goes: the status line of the card it belongs to
+ *  (`fromSel`) while that card shows, else the line of the Moxie card that shows now. The
+ *  redraw after a refusal can hide the card the click came from: a robot added meanwhile
+ *  replaces No Moxie paired yet, and Robot access hides once no robot is connected. An
+ *  answer on a hidden line is one the parent never sees. */
+function claimLine(fromSel){
+  return [fromSel, '#claim-status', '#dev-status'].map(s=>$(s))
+    .find(el=>el && !el.closest('.hidden')) || null;
+}
 let claiming=false;
 async function claimRobot(deviceId, statusSel){
   if(claiming) return;                       // one click, one claim
   claiming=true;
   $$('.claim-btn').forEach(b=>{ b.disabled=true; });
   const s=$(statusSel); if(s) s.textContent='Adding Moxie to your account…';
-  let r=null;
-  try{
-    r=await api(`/local/robots/${encodeURIComponent(deviceId)}/claim`,{method:'POST'});
-    if(s) s.textContent='';
-  }catch(e){ if(s) s.textContent=oops(e,'could not add it'); }
-  await refreshMoxie();
-  const d=$('#dev-status');
-  if(r && d) d.textContent = !r.created ? 'This robot is already on your account.'
+  let r=null, refused='';
+  try{ r=await api(`/local/robots/${encodeURIComponent(deviceId)}/claim`,{method:'POST'}); }
+  catch(e){ refused=oops(e,'could not add it'); }
+  if(s) s.textContent='';
+  try{ await refreshMoxie(); }catch(e){}    // the whole redraw first: it decides what shows
+  const answer = !r ? refused : !r.created ? 'This robot is already on your account.'
     : r.permitted ? '✅ Added to your account. Moxie is let in and gets your settings.'
     : `⚠️ Added to your account, but this server could not let it in yet (${r.permit_error}). `
       + 'Press Permit in Robot access.';
+  const line=claimLine(r ? '#dev-status' : statusSel); if(line) line.textContent=answer;
   claiming=false;          // only now: the tab's watch must not redraw over that answer
 }
 // live runtime state (battery/volume/Wi-Fi/mode/telemetry) from the MQTT supervisor
@@ -334,6 +348,10 @@ function renderPermits(f){
   const row=(r,act)=>
     `<div class="ev"><span>${escapeHtml(r.device_id||'')}</span> `
     + `<b>${escapeHtml(r.permit_label||r.summary||'')}</b> ${act}</div>`;
+  // Why a robot has no Add to my account (on either list: one on another account is
+  // usually Allowed, because adding it there let it in).
+  const why=r=>claimBlocked(r.device_id)
+    ? ` <span class="muted claim-why">${escapeHtml(claimBlocked(r.device_id))}</span>` : '';
   const parts=[];
   const adding=pending.some(r=>claimable(r.device_id));
   if(pending.length) parts.push('<div class="insights-hd">Waiting for you</div>'
@@ -341,12 +359,11 @@ function renderPermits(f){
               + 'Permit only lets it in.</div>' : '')
     + pending.map(r=>row(r,
         `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="1">Permit</button>`
-        + (claimable(r.device_id) ? ' '+claimButton(r.device_id) : '')
-        + (claimBlocked(r.device_id)
-           ? ` <span class="muted claim-why">${escapeHtml(claimBlocked(r.device_id))}</span>` : ''))).join(''));
+        + (claimable(r.device_id) ? ' '+claimButton(r.device_id) : '') + why(r))).join(''));
   if(permitted.length) parts.push('<div class="insights-hd">Allowed</div>'
     + permitted.map(r=>row(r,
-        `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="0">Revoke</button>`)).join(''));
+        `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="0">Revoke</button>`
+        + why(r))).join(''));
   if(!parts.length) parts.push('<div class="live-off">No robot has connected yet.</div>');
   box.innerHTML=parts.join('');
   box.querySelectorAll('.permit-btn').forEach(b=>{ b.onclick=()=>setPermit(b.dataset.id, b.dataset.permit==='1'); });
@@ -393,8 +410,15 @@ $('#btn-sim').onclick = async () => {
     const f=await api('/local/fleet',{auth:false});
     if(f.ok && (f.pending||[]).length===1) device_id=f.pending[0];
   }catch(e){}
-  await api('/local/simulate-robot-scan',
-            {method:'POST',auth:false,body:{qr_payload:LAST.qr_payload, device_id}});
+  try{
+    await api('/local/simulate-robot-scan',
+              {method:'POST',auth:false,body:{qr_payload:LAST.qr_payload, device_id}});
+  }catch(e){
+    // Refused (the code was used or cancelled, or that robot is on another account):
+    // the server's words, on the card this button is on.
+    const line=claimLine('#claim-status'); if(line) line.textContent=oops(e,'the scan was refused');
+    return;
+  }
   setTimeout(refreshMoxie,500);
 };
 

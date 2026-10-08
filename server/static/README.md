@@ -41,9 +41,11 @@ over an answer still on its way; its teeth mutate [`js/tryit.js`](js/tryit.js).
 [`sim/test_robot_claim.mjs`](../../sim/test_robot_claim.mjs) covers the bench-day flow: the Wi-Fi
 tab's code is Wi-Fi only unless the pairing-key box is ticked; a robot on no account is offered ➕ Add
 to my account on *No Moxie paired yet* and beside Permit on its pending row in 🔐 Robot access (one
-click, one claim, never automatic); the page says why when it cannot be offered or when the
-supervisor cannot be asked; and the tab notices a robot that arrives while it is open. Its teeth
-mutate [`js/core.js`](js/core.js).
+click, one claim, never automatic); the page says why when it cannot be offered (this account
+already has a robot, or another account has this one) or when the supervisor cannot be asked; each
+refusal stays on screen in the server's words, also when the redraw after it hides the card that
+was clicked; and the tab notices a robot that arrives while it is open. Its teeth mutate
+[`js/core.js`](js/core.js) and, once, [`index.html`](index.html).
 
 Every other card is asserted by Python route tests and source pins
 ([`test_console_roundtrip.py`](../../sim/tests/test_console_roundtrip.py)), which prove what the

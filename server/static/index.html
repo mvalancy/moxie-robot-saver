@@ -149,7 +149,7 @@
         <label class="check"><input id="permit-allowall" type="checkbox">
           Let any robot that connects use this server</label>
         <div id="permit-warn" class="muted"></div>
-        <div id="permit-status" class="muted"></div>
+        <div id="permit-status" class="muted" role="status" aria-live="polite"></div>
       </div>
       <!-- A robot that paired by scanning the codes reaches the broker with no account
            record. "Add to my account" (js/core.js, POST /local/robots/{id}/claim) makes
@@ -169,8 +169,10 @@
           <div id="claim-list"></div>
           <p class="muted">This server cannot tell one Moxie from another. Add a robot only
             if it is the one you just showed the codes to.</p>
-          <div id="claim-status" class="muted" role="status" aria-live="polite"></div>
         </div>
+        <!-- Outside #claim-box on purpose: a refused click redraws the box away (the robot
+             was added elsewhere, or left), and the answer must stay in view. -->
+        <div id="claim-status" class="muted" role="status" aria-live="polite"></div>
         <details class="dev"><summary>Test without a robot</summary>
           <p class="muted">Simulate a robot scanning a pairing-key code (make one in the Wi-Fi
             tab, under For the original Moxie app or Simulate robot scan).</p>
