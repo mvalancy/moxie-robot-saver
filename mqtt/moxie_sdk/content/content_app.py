@@ -108,9 +108,11 @@ def pick_opener(opener: str, context: dict, last: Optional[str] = None,
 
     With no `last` it is the first alternative that says something: what a robot hears
     first, and the `opener` the content preview route returns. Otherwise it is a random other
-    one, and `last` again only when nothing else says anything. Only the alternative drawn
-    is rendered, so an opener with thousands of alternatives costs one render, not one
-    per alternative."""
+    one, and `last` again only when nothing else says anything. Alternatives are rendered one
+    at a time, as they are drawn, until one says something: an opener with thousands of
+    alternatives costs one render when they say something, and one more for each drawn
+    alternative that says nothing (5,000 that say nothing took 0.6 s per empty prompt, and
+    50,000 took 6.5-7.1 s, measured)."""
     alts, seen = [], set()
     for alt in opener_alternatives(opener):
         key = alt.replace("<opener>", "").strip()

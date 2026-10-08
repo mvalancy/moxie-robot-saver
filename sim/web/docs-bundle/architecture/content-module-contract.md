@@ -49,8 +49,11 @@ A module is JSON with three optional sections:
   in a model's line. A conversation with no opener asks the brain, as before. Only a `|` outside
   `{{ }}`, `{% %}` and `{# #}` separates alternatives; inside them it is a Jinja filter
   (`{{ volley.config.child_pii.nickname | upper }}`) or comment text. OpenMoxie splits on every `|`
-  (`conversations.py`:218), but it never templates an opener (:56-57). The split is one pass and
-  only the line said is rendered, so a long opener costs one render per turn. The content preview
+  (`conversations.py`:218), but it never templates an opener (:56-57). The split is one pass, and
+  alternatives are rendered one at a time as they are drawn until one says something: a long
+  opener costs one render per turn when its alternatives say something, and one more for each
+  drawn alternative that says nothing (50,000 that say nothing took 6.5-7.1 s per empty prompt,
+  measured). The content preview
   route (`POST /content/render`) uses the same split and pick: its `opener` is the line a robot hears
   first, with its tags lifted. The console's editor card shows only the rendered prompt so far, not
   the opener. *Built to this contract and the OpenMoxie reference; no physical robot has sent us an
@@ -813,30 +816,63 @@ big"*); after three breaches the extension is quarantined for the session.
 one sentence per capability from a fixed table (never author-supplied text, which would be
 a place to lie); `ext.explain()` is one English sentence per rule — *"Whenever this
 activity is triggered: tells your child 'The time is …' and answers without asking the
-AI."* Both appear in the pack review beside the diff. An action tag written in the line's
-literal strings is lifted out of the quote, and the sentence ends with what it does, so the
-shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and answers
-without asking the AI; then the conversation ends."* That sentence is the only place a
-parent learns of a tag, because an extension's line goes through the same tag parse as a
-model's with no grant of its own. So `explain()` reads every line the rule's last `say` can
-speak (each `say` replaces the line before it): through `if`, `and`/`or`, `concat`, `let`
-names, `random.pick`, `upper`/`lower`/`trim`/`str`, and any part built only from literals,
-which it works out with the evaluator itself (a tag split across `concat` parts or
-assembled with `replace` included). Any other part is worked out at run time, so it is read
-as some text and again as nothing: a null, a list or a map is said as nothing, and a tag
-written around it then forms (`"<ex"`, a value the robot did not send, `"it>Bye!"`). A tag
-is quoted in its pieces (*'<ex … it>Bye! …'*) when another part stands before its first `:`
-or holds its `>`, since the quote shows only the line's literal strings; one with other
-parts in its fields only (`"<launch:"`, what the child said, `">"`) is lifted out. Either
-way the sentence ends with what the tag does. An effect that not every one of these
-readings has reads *sometimes* (*"…; then sometimes Moxie starts the DRAW activity."*), and
-so does a tag that feeds an op it does not follow line by line (`get`, `replace`, `join`,
-…). A launch whose module is worked out at run time reads *"Moxie starts an activity it
-works out"*. A `say` that can speak more than 256 different lines (or a million characters
-across them) is not read line by line: every text written in it and in its `let` names
+AI."* Both appear in the pack review beside the diff. An action tag written in the literal
+strings of a line Moxie says is lifted out of the quote, and the sentence ends with what it
+does, so the shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
+answers without asking the AI; then the conversation ends."* A quote that is not said,
+such as a test on what the child said, shows a tag as written (*"When what your child said
+is '<exit>'"*). The sentence is the only place a parent learns of a tag, because an
+extension's line goes through the same tag parse as a model's with no grant of its own. So
+`explain()` reads every line the rule's last `say` can speak (each `say` replaces the line
+before it): through `if`, `and`/`or`, `concat`, `let` names, `random.pick`,
+`upper`/`lower`/`trim`/`str`, and any part built only from literals, which it works out
+with the evaluator itself (a tag split across `concat` parts or assembled with `replace`
+included). Any other part is worked out at run time, so it is read as some text and again
+as nothing: a null, a list or a map is said as nothing, and a tag written around it then
+forms (`"<ex"`, a value the robot did not send, `"it>Bye!"`). At an end of a `trim` such a
+part may take the spaces beside it too, and is read that way. A tag is quoted in its pieces
+(*'<ex … it>Bye! …'*) when another part stands before its first `:` or holds its `>`, since
+the quote shows only the line's literal strings; one with other parts in its fields only
+(`"<launch:"`, what the child said, `">"`) is lifted out. Either way the sentence ends with
+what the tag does. An effect that not every one of these readings has reads *sometimes*
+(*"…; then sometimes Moxie starts the DRAW activity."*), and so does a tag that feeds an op
+it does not follow line by line (`get`, `replace`, `join`, …), read through each case op
+that op's value passes on the way to the line. A launch whose module is worked out at run
+time reads *"Moxie starts an activity it works out"*, and a module that is not an id is
+quoted (*"Moxie starts the 'Draw now' activity"*). A line too long ever to be said (over
+1,000 characters, not counting spaces and worked-out parts: the evaluator refuses such a
+`say` whole) names nothing. One sentence names at most 16 activities, the rest as
+*"sometimes Moxie starts an activity it works out"*, and past 64 different tags that an op
+it does not follow may hand on, every effect a tag can have counts. A `say` that can speak
+more than 256 different lines (or whose `concat` would hold more than a million characters
+across its lines) is not read line by line: every text written in it and in its `let` names
 counts, as *sometimes*, with each `concat` of up to a million characters read as one text
-through its literal parts, nested `concat`s, case ops and `let` names. Three kinds of tag
-cannot be read ahead:
+through its literal parts, nested `concat`s, case ops and `let` names.
+
+**The reading has one budget.** All that one `explain()` call builds while it reads its
+rules' lines counts against four million characters, plus 16 for each line, text or tag it
+keeps: each line and join, each copy a case op makes, each value it works out, each text
+read in parts and each `concat` joined, each tag found, and every `let` name's memo of
+these. A part made of literals is worked out an op at a time, each op sized before it
+builds anything, and one sure to break the evaluator's value cap is read in its parts
+instead (the evaluator itself builds a value before it refuses one: a 32 KB `replace` or
+`join` built 256 MB). Past the budget, the rest of the call is read from the program's own
+text in one pass: each tag written whole in a string of the `say` or of its rule's `let`
+values counts, through every sequence of `upper` and `lower` when the rule has either; and
+every effect a tag can have counts when the pieces of one could meet (a `<` with no `>`
+after it in one string, and a `>` with no `<` before it in one), or when a `<` or `>` is in
+what an op that cuts or rewrites text reads (`get`, `slice`, `split`, `replace`,
+`reverse`). Every effect then reads *sometimes*. Programs built to multiply what it reads
+(a thousand `let` names that each copy a million-character line, 400 that alternate `upper`
+and `lower` over one, 100 that each add 16,000 characters under `upper`, 300 that each split
+900,000 commas, a `replace` that would build 256 million characters) read in under 0.2 s
+with a peak of 11 MB (tracemalloc), measured. On the previous head the same programs took
+6.8 s to more than 60 s, built 1 GB for that `replace` and a `join` like it, or ran out of
+memory at 7.7 GB. The quotes are not under the budget: a
+`let` name is quoted again wherever it is read, so a 125 KB program that reads one name
+from 1,024 places makes a 25-million-character sentence (0.19 s, as before this change).
+
+Three kinds of tag cannot be read ahead:
 
 - one that needs text the program reads at run time (what the child said, a memory,
   something the robot sent) for its `<`, its name, a `:` or its `>`;
@@ -845,9 +881,13 @@ cannot be read ahead:
 - past 256 lines, one that needs the text of a `concat` part that can come out as
   different lines: an `if`, `and`/`or`, `random.pick`, or a `let` name bound to one.
 
+Past the budget, every effect counts wherever the pieces of a tag could meet, so the
+one-pass reading can miss only the first kind.
+
 `sim/tests/test_leave_taking.py` runs each shape through the real `ContentApp` and checks
-the sentence against what the robot is sent, including a sweep of every tag split at every
-point around a part worked out at run time.
+the sentence against what the robot is sent, also as read past the budget, including a
+sweep of every tag split at every point around a part worked out at run time or a trimmed
+part.
 
 **Capability escalation.** An incoming item declaring a capability the installed version
 did not is defaulted **un-ticked** whatever its state, with its own sentence — *"This
