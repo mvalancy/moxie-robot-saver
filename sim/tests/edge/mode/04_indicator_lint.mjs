@@ -1,39 +1,12 @@
 /* test_mode §5–6: `sim/web/env.js` driven by the MODE on a fake DOM, and the public-repo lint. */
 import {
-  readFileSync, join, here, repo, ok, eq,
+  readFileSync, join, here, repo, ok, eq, fakeEl,
 } from "./harness.mjs";
 
 const ENV_SRC = readFileSync(join(here, "web", "env.js"), "utf8");
 
 // 5. sim/web/env.js — badge, pill, banner and needs-backend marks, driven by the MODE and not
-//    the hostname. Hermetic: a fake DOM, no browser.
-function fakeEl(id) {
-  const el = {
-    id: id || "", tagName: "SPAN", textContent: "", innerHTML: "", title: "", hidden: false,
-    className: "", children: [], attrs: {},
-    classList: {
-      add: (c) => { if (!el.className.split(/\s+/).includes(c)) el.className = (el.className + " " + c).trim(); },
-      remove: (c) => { el.className = el.className.split(/\s+/).filter((x) => x && x !== c).join(" "); },
-      toggle: (c, on) => { on ? el.classList.add(c) : el.classList.remove(c); },
-      contains: (c) => el.className.split(/\s+/).includes(c),
-    },
-    setAttribute: (k, v) => { el.attrs[k] = String(v); },
-    getAttribute: (k) => (k in el.attrs ? el.attrs[k] : null),
-    addEventListener: () => {},
-    appendChild: (c) => { el.children.push(c); c.parentNode = el; return c; },
-    insertBefore: (c) => { el.children.push(c); c.parentNode = el; return c; },
-    remove: () => {},
-    querySelector: (sel) => {
-      const cls = sel.replace(/^\./, "");
-      for (const c of el.children) if (c.classList.contains(cls)) return c;
-      // env.js reads `.eb-text` out of innerHTML it just wrote: a lazily-created stand-in.
-      el._sub = el._sub || {};
-      return (el._sub[cls] = el._sub[cls] || fakeEl(cls));
-    },
-  };
-  return el;
-}
-
+//    the hostname. Hermetic: a fake DOM (`harness.mjs::fakeEl`), no browser.
 function mountEnv(snapshot) {
   const els = {};
   const get = (id) => (els[id] = els[id] || fakeEl(id));

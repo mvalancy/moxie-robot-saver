@@ -181,10 +181,11 @@ MUTATIONS = [
      "        pass",
      T_ROSTER, "every_ingress_path or roster_survives_the_process"),
     ("R10 THE LIE: the resume marks rostered robots as connected", RT_CONNECTION,
-     "                self._push_config(device_id)\n                pushed.append(device_id)",
+     "            try:\n                self._push_config(device_id)",
+     "            try:\n"
      "                self.robots.setdefault(device_id, RobotContext(\n"
      "                    device_id=device_id, child=self.child))\n"
-     "                self._push_config(device_id)\n                pushed.append(device_id)",
+     "                self._push_config(device_id)",
      T_ROSTER, "not_reported_as_connected"),
     ("R11 the reconnect-storm generation check is dropped", RT_CONNECTION,
      "            if generation != self._connect_generation or self._stopping:\n                return",
@@ -285,24 +286,23 @@ MUTATIONS = [
 
     # ---- the returning robot, and the vision latch (the same defect twice) ------
     ("O1  _device_connect early-returns on membership (the roster ghost)", RT_CONNECTION,
-     "        if robot is not None and device_id in self._seen_since_connect:\n"
-     "            return                            # already onboarded on this connection",
-     "        if robot is not None:\n            return",
+     "        onboarded = robot is not None and device_id in self._seen_since_connect\n",
+     "        onboarded = robot is not None\n",
      T_ROSTER, "returning_after_a_broker_restart or event_also_re_onboards"),
     ("O2  the disconnect does not un-confirm anybody", RT_CONNECTION,
      "        self._forget_robot_state()\n        if self._stopping:",
      "        if self._stopping:",
      T_ROSTER, "returning_after_a_broker_restart"),
     ("O3  onboarding re-fires on every packet (the stampede)", RT_CONNECTION,
-     "        if robot is not None and device_id in self._seen_since_connect:",
-     "        if False:",
+     "        if onboarded and not fresh:\n            return",
+     "        if False:\n            return",
      T_ROSTER, "idempotent_within_one_connection"),
     ("O4  /status claims a robot we have not heard from is present", RT_LIFECYCLE,
      '                "seen_since_connect": r.device_id in self._seen_since_connect,',
      '                "seen_since_connect": True,',
      T_ROSTER, "status_labels"),
     ("O5  the returning robot gets a fresh context (its conversation is lost)", RT_CONNECTION,
-     "        if robot is None:\n            robot = RobotContext(device_id=device_id, child=self.child)\n"
+     "        else:\n            robot = RobotContext(device_id=device_id, child=self.child)\n"
      "            self.robots[device_id] = robot",
      "        if True:\n            robot = RobotContext(device_id=device_id, child=self.child)\n"
      "            self.robots[device_id] = robot",

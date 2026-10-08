@@ -113,6 +113,27 @@ import {
   }
 }
 
+/* B5c. NOBODY SAID THE CONSOLATION LINE, so the page never reports it as heard (it read
+ * 'heard (scripted): "Guess what, it's my bir"'): the status names it a pretend line, after
+ * the reason when there is one. `sim/tests/edge/fallback/06_pretend_line.mjs` follows the
+ * same line into the transcript, where it is never a "You" row. */
+{
+  for (const [label, opts] of [
+    ["a refusal with a reason", { answer: () => ({ status: 503, json: { ok: false, reason: "upstream_down" } }) }],
+    ["a network failure, no reason", { answer: () => ({ reject: true }) }],
+    ["a clip refused client-side as too long", { recorder: { size: 900000 } }],
+  ]) {
+    const w = bootMic(opts);
+    await recordToCap(w);
+    eq(w.mic.stats().fallbacks, 1, `${label}: a scripted line consoles the visitor`);
+    ok(/pretend line/i.test(w.statusText()) && !/\bheard\b/i.test(w.statusText()),
+       `${label}: …and the status calls it a pretend line, never something the page heard (got "${w.statusText()}")`);
+  }
+  const why = bootMic({ answer: () => ({ status: 503, json: { ok: false, reason: "upstream_down" } }) });
+  await recordToCap(why);
+  ok(/^Moxie can't hear right now/.test(why.statusText()), `the reason still comes first (got "${why.statusText()}")`);
+}
+
 /* B6. The free client-side gates — a doomed upload never happens. */
 {
   const tiny = bootMic({ recorder: { size: 500 } });

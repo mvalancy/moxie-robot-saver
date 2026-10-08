@@ -1,7 +1,7 @@
 /* test_mode §4: `sim/web/mode.js` loaded as source under a stubbed window/document/fetch, on
  * injected time and timers — assertions are on recorded state, never a live timer. */
 import {
-  readFileSync, join, here, ok, eq, deep, env2, FULL, probe,
+  readFileSync, join, here, ok, eq, deep, env2, lib, limits, FULL, probe,
 } from "./harness.mjs";
 
 const MODE_SRC = readFileSync(join(here, "web", "mode.js"), "utf8");
@@ -252,21 +252,22 @@ for (const reason of ["bad_request", "too_long", "too_short", "bad_ticket", "blo
   eq(h.m.reason(), "upstream_down", "...as upstream_down");
   eq(h.m.stats().transportErrors, 3, "the strikes are recorded, not inferred");
 }
-// A 504 timeout counts toward the same three strikes (§4.5).
+// A 504 timeout degrades at ONCE (§4.5): a hung gateway makes every turn wait out the server's
+// whole deadline, and the 3-strike count it used to join never added up at a human pace,
+// because each poll between two turns reset it (§8 replays that on a clock).
 {
   const h = await bootLive();
   h.m.note({ status: 504, reason: "timeout" });
-  h.m.note({ status: 504, reason: "timeout" });
-  eq(h.m.state(), "live", "two timeouts are survivable");
-  h.m.note({ status: 504, reason: "timeout" });
-  eq(h.m.state(), "degraded", "the third timeout degrades");
+  eq(h.m.state(), "degraded", "the FIRST timeout degrades");
+  eq(h.m.reason(), "timeout", "...as timeout");
+  eq(h.m.badge(), "HOSTED DEMO · SCRIPTED", "...with §7's scripted badge");
+  eq(h.m.stats().lastDelayMs, 60000, "...and the poll that may allow a trial turn waits 60 s");
 }
 // A clean turn after a degrade recovers without waiting for a poll.
 {
-  const h = boot({ transport: true,
-                   replies: [{ status: 503, body: envelopeText({ reason: "upstream_down", mode: "degraded" }) }] });
-  await flush();
-  eq(h.m.state(), "degraded", "start degraded");
+  const h = await bootLive();
+  h.m.note({ status: 503, reason: "upstream_down" });
+  eq(h.m.state(), "degraded", "a turn reported the brain out");
   h.m.note({ status: 200, reason: null });
   eq(h.m.state(), "live", "a clean turn recovers to live");
   eq(h.m.badge(), "MOXIE ONLINE", "...and the badge flips back (§6.3, recovery is visible)");
@@ -279,21 +280,35 @@ for (const reason of ["bad_request", "too_long", "too_short", "bad_ticket", "blo
   eq(h.m.state(), "degraded", "gateway_not_configured is sticky for the session");
 }
 
-// 4g. degraded -> live on a poll, and the 30 s -> 5 min backoff ladder.
+// 4g. degraded -> live, and the 30 s -> 5 min backoff ladder. The replies are ones
+// /api/health CAN send: always 200, and live, not configured or budget spent (§8 checks the
+// handler) — it never sees the gateway.
 {
-  const h = boot({
-    transport: true,
-    replies: [
-      { status: 503, body: envelopeText({ reason: "upstream_down", mode: "degraded" }) },
-      { status: 200, body: HEALTH_LIVE },
-    ],
-  });
+  // What the probe saw itself, the probe may clear: a spent budget, then a fresh window.
+  limits.__reset();
+  limits.__exhaustBudget(lib.readConfig(FULL));
+  const spent = (await probe(FULL)).text;
+  limits.__reset();
+  const h = boot({ transport: true,
+                   replies: [{ status: 200, body: spent }, { status: 200, body: HEALTH_LIVE }] });
   await flush();
-  eq(h.m.state(), "degraded", "boot lands degraded");
+  deep([h.m.state(), h.m.reason()], ["degraded", "budget_exhausted"], "boot lands degraded: the probe saw the budget spent");
   await h.fire();
   eq(h.m.state(), "live", "§6.3: a health poll returning live recovers, on its own");
   eq(h.m.badge(), "MOXIE ONLINE", "...visibly");
   eq(h.m.stats().polls, 2, "two polls happened, and that is recorded");
+}
+{
+  // What a TURN saw, a poll cannot clear: it lets the next turn try (a trial turn) instead.
+  const h = await bootLive();
+  h.m.note({ status: 503, reason: "upstream_down" });
+  await h.fire();
+  eq(h.m.stats().polls, 2, "the poll ran, and answered live");
+  deep([h.m.state(), h.m.badge()], ["degraded", "HOSTED DEMO · SCRIPTED"],
+       "a poll answering live does NOT undo what a turn saw (it never asks the gateway)");
+  eq(h.m.canSpendLiveTurn(), true, "...but the next turn may go live, as a trial");
+  h.m.note({ status: 200, reason: null });
+  deep([h.m.state(), h.m.badge()], ["live", "MOXIE ONLINE"], "a clean trial turn is what brings her back");
 }
 {
   // One good boot, then nothing but network failures: 30s, 60s, 120s, 240s, 300s (ceiling).
