@@ -97,9 +97,10 @@ GOODBYES = ["bye", "Bye.", "bye bye Moxie", "Bye, Moxie!", "ok bye", "goodbye",
             "Goodbye Moxie, see you tomorrow!", "night night", "I have to go to bed",
             # the name's mishearings OpenMoxie's own globals allow (MoxieTimers.json:1)
             "Bye, Foxy!", "bye boxy", "Oxy, goodbye!",
-            # Whisper's spelling of a lone "bye", as the last word only
-            "By.", "Ok, by.", "Good by.", "bye bye by",
-            # a trailing "I love you"
+            # Whisper's spelling of a lone "bye": alone, after ok or the name, as "good by",
+            # or after another bye
+            "By.", "Ok, by.", "Moxie, by.", "Good by.", "bye bye by",
+            # "I love you" after a farewell
             "Goodbye Moxie, I love you", "bye, I love you", "Bye Moxie, love you so much!",
             "see you later alligator", "See ya later, alligator!"]
 
@@ -123,7 +124,10 @@ ORDINARY = ["my dog said bye to the mailman", "can you stop the music in the sto
             # near misses of the words a goodbye may carry: "I love you" only after one,
             # "by" only as the last word, and a name alone is not a goodbye
             "I love you Moxie", "I love you", "buy it", "by the way", "stand by me",
-            "By then.", "Foxy"]
+            "By then.", "Foxy",
+            # "by" after stop, no or yes is a sentence ("stop by my house"), and "I love you"
+            # after stop is play: both reach the brain
+            "stop by", "please stop by", "no, by", "yes by", "Stop, I love you!"]
 
 SLEEPS = ["go to sleep Moxie", "time to sleep", "Moxie, go to sleep.",
           "you can go to sleep now", "time for bed", "it's bedtime",
@@ -224,7 +228,8 @@ def test_a_looping_transcript_cannot_stall_the_patterns():
     assert len(patterns) == 2
     for unit in ("bye ", "bye moxie ", "ok bye ", "bye-", "byebye ", "byebyebyebye ",
                  "now ", "moxie ", "good night ", "i'm done ", "go to sleep ", "stop ",
-                 "by ", "foxy ", "bye i love you ", "love you ", "see you later alligator "):
+                 "by ", "foxy ", "bye i love you ", "love you ", "see you later alligator ",
+                 "stop by ", "ok by ", "stop i love you "):
         for n in (*range(1, 26), 100, 400, 2000):
             for tail in ("x", "!"):
                 text = unit * n + tail

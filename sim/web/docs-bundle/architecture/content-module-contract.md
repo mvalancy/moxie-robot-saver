@@ -174,13 +174,16 @@ gets a good-night line. `memory_chat.json` carries the same `Goodbye` and `Sleep
 Both patterns match the **whole utterance**, because a global answers before the brain. Inside a
 sentence the words are ordinary speech: *"my dog said bye to the mailman"* must still reach the brain.
 Around the goodbye, the patterns allow what speech-to-text writes: punctuation, a leading
-*ok*/*um*/*yeah*, the name at either end, a trailing *"I love you"*, and two goodbyes in a row
-(*"I gotta go, bye!"*). The name may come out as *Moxy*, *Foxy*, *Boxy* or *Oxy*, the mishearings
-OpenMoxie's own command patterns accept (`content_modules/MoxieTimers.json`, `MoxieTime.json` and
-`MoxieGo.json`). *"By."* is how Whisper spells a lone *bye*, so *by* counts only as the last word:
-*"by the way"* and *"By then."* still reach the brain, as does *"I love you Moxie"* with no goodbye in
-it. *"See you later, alligator!"* is a goodbye. A bare *"done"* or *"night"* is not, because either can
-be a plain answer to Moxie. Every word in the pattern can be read only one way, so a transcript that
+*ok*/*um*/*yeah*, the name at either end, an *"I love you"* after a farewell (*"Goodbye Moxie, I love
+you"*), and two goodbyes in a row (*"I gotta go, bye!"*). The name may come out as *Moxy*, *Foxy*,
+*Boxy* or *Oxy*, the mishearings OpenMoxie's own command patterns accept
+(`content_modules/MoxieTimers.json`, `MoxieTime.json` and `MoxieGo.json`). *"By."* is how Whisper
+spells a lone *bye*, so *by* counts only alone or after *ok* or the name (*"By."*, *"Ok, by."*), as
+*"good by"*, or after another *bye* (*"bye bye by"*). *"by the way"*, *"By then."*, *"stop by"*,
+*"no, by"* and *"yes by"* still reach the brain. So do *"I love you Moxie"*, with no goodbye in it,
+and *"Stop, I love you!"*, which is play: *"I love you"* counts after a farewell, never after *stop* or
+*done*. *"See you later, alligator!"* is a goodbye. A bare *"done"* or *"night"* is not, because either
+can be a plain answer to Moxie. Every word in the pattern can be read only one way, so a transcript that
 loops (*"bye bye bye …"*) cannot make the regex backtrack exponentially. `random` is a shipped grant,
 anchored to the digest of the program (the `extension` block), not to the item's name. Editing the
 pattern, which is what the console's editor can change (it never changes a program), keeps the
