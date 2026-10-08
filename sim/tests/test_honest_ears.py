@@ -433,10 +433,11 @@ def test_the_kill_switch_restores_the_ears_byte_for_byte(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("value,on", [
     ("off", False), ("OFF", False), ("0", False), ("false", False), ("no", False),
-    ("", True), ("on", True), ("1", True), ("yes", True), (" On ", True),
+    ("", True), ("  ", True), ("on", True), ("1", True), ("yes", True), (" On ", True),
 ])
 def test_only_an_explicit_off_turns_the_gate_off(monkeypatch, value, on):
-    """An empty value (a copied `.env.example`, a compose `${VAR:-}`) keeps the gate on."""
+    """An empty or blank value (a copied `.env.example`, a compose `${VAR:-}`) keeps the
+    gate on."""
     monkeypatch.setenv("MOXIE_STT_PHANTOM_GATE", value)
     assert stt.ears_knobs()["phantom_gate"] is on
     assert SttSession(Ears()).phantom_gate is on
