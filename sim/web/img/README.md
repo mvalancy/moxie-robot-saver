@@ -22,11 +22,14 @@ s(i+".png").avif({quality:88,effort:9,chromaSubsampling:"4:4:4"}).toFile(i+".avi
 s(i+".png").webp({quality:95,effort:6,smartSubsample:true}).toFile(i+".webp")'
 ```
 
-The face carries a faint scanline texture, and it is what a low quality smooths away first. AVIF
-q88 keeps all of it (row-to-row luma energy 1.03, the PNG's 1.03; q80 keeps 86 %). WebP keeps
-55 % at q95, the highest quality that holds a browser without AVIF under the 400 KB budget (q97
-keeps 84 % at 131 KB). Rendered on the hub at 390x844 and 1440x900, the AVIF and the PNG differ
-by at most 15 of 255 levels on any channel (PSNR above 50 dB).
+The face carries a faint scanline texture, and it is what a low quality smooths away first.
+Measured as the mean luma step between vertically adjacent pixels over a flat 160x60 patch of the
+face (x 520, y 470 in the PNG), AVIF q88 keeps all of it (1.03, the PNG's 1.03; q80 keeps 86 %).
+WebP keeps 55 % at q95, the highest quality that holds a browser without AVIF under the 400 KB
+budget (q97 keeps 84 % at 131 KB). So that browser gets a step down: against the PNG the WebP
+scores PSNR 44.4 dB and is up to 61 of 255 levels off on a channel, the AVIF 49.2 dB and 20.
+Rendered on the hub at 390x844 and 1440x900, the AVIF and the PNG differ by at most 15 of 255
+levels on any channel (PSNR above 50 dB); that screenshot comparison covered the AVIF only.
 
 **Doc images live here, not next to the doc.** This directory is the site root's `img/`. Markdown
 writes images repo-relative so GitHub renders them; the docs explorer serves the same Markdown from
