@@ -294,8 +294,8 @@ for (const [text, chosen, want, motor] of [
      `no usable mood mark: think still shows 'thinking'; got ${JSON.stringify(L.calls.setFace)}`);
 }
 {
-  // A goodbye line ends on a Bht_Sign_off tree (the hosted goodbye turn appends one): the mood
-  // rule must not swallow the wave (arm up, then the hand swings out).
+  // A goodbye ends on a Bht_Sign_off tree after the floor's marks (the planner's `closing` act
+  // does): the mood rule must not swallow the wave (arm up, then the hand swings out).
   const signOff = '<mark name="cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,' +
     '+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,' +
     '+behaviour+:+Bht_Sign_off+,+Track+:++}"/>';
