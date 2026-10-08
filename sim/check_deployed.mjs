@@ -281,7 +281,7 @@ function report(p, { expectBeacon, expectLive = false }) {
   console.log(`    scripts ran     moxie.js: ${p.ran.stage} stage canvas, ${p.ran.motors} motors, ` +
               `${p.ran.faces} faces   hud.js: ${p.ran.named} named sliders   ` +
               `mode.js: data-mode=${JSON.stringify(p.ran.mode)}   env.js: badge ${JSON.stringify(p.ran.badge)}`);
-  console.log(`    live            ${expectLive ? "REQUIRED (the canonical origin)" : "not required here"}` +
+  console.log(`    live            ${expectLive ? "REQUIRED (the canonical-origin rule)" : "not required here"}` +
               `   data-mode=${JSON.stringify(p.ran.mode)}   badge ${JSON.stringify(p.ran.badge)}`);
   console.log(`    qr.js           ${p.qr.present ? `${p.qr.ink} ink px on ${p.qr.w}x${p.qr.h}` : "NO #qr-make/#qr-canvas"}` +
               `   payload ${JSON.stringify(String(p.qr.status).slice(0, 46))}`);
