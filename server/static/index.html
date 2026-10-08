@@ -145,6 +145,11 @@
         <details class="dev"><summary>Test without a robot</summary>
           <p class="muted">Simulate a robot scanning the Wi-Fi QR.</p>
           <button id="btn-sim" class="ghost">Simulate robot scan</button></details>
+        <details class="lc-entry"><summary>Factory reset a robot</summary>
+          <p class="muted">For a Moxie that is still paired somewhere else, or one you are
+            passing on: this shows the code Moxie scans to reset itself. Nothing on this
+            server changes.</p>
+          <button id="btn-reset-code" class="ghost lc-danger">Show the factory reset code</button></details>
       </div>
       <div class="card hidden" id="moxie-card">
         <h2>✅ Your Moxie</h2>
@@ -194,7 +199,54 @@
           <button id="btn-reboot" class="ghost grow" disabled>Reboot</button>
         </div>
         <div id="dev-status" class="muted"></div>
+        <!-- Unpair and factory reset (docs/features/robot-lifecycle.md): one endpoint,
+             DELETE /api/robots/{id}, with ?rfs=1 for the reset. Both open the confirmation
+             sheet below, which js/robot.js drives. -->
+        <div class="lc-actions">
+          <button id="btn-unpair" class="ghost">Unpair this robot</button>
+          <button id="btn-factory-reset" class="ghost lc-danger">Factory reset</button>
+        </div>
       </div>
+      <!-- The unpair / factory-reset confirmation sheet: a native <dialog> opened with
+           showModal(), so focus moves in and stays in, Escape cancels and the page behind
+           is inert. Nothing is sent until the confirmation word is typed. -->
+      <dialog id="lc-sheet" class="lc-sheet" aria-labelledby="lc-title" aria-describedby="lc-what">
+        <h2 id="lc-title">Unpair this robot</h2>
+        <div id="lc-ask">
+          <ul id="lc-what" class="lc-list"></ul>
+          <fieldset id="lc-erase" class="lc-erase">
+            <legend>Also erase (optional)</legend>
+            <label class="check lc-opt"><input id="lc-erase-memory" type="checkbox">
+              <span id="lc-erase-memory-text">What Moxie remembers, and the activity history on this server</span></label>
+            <label class="check lc-opt"><input id="lc-erase-child" type="checkbox">
+              <span id="lc-erase-child-text">Your child's profile on this server</span></label>
+            <p id="lc-erase-note" class="muted"></p>
+          </fieldset>
+          <label class="check lc-opt hidden" id="lc-ack-row"><input id="lc-ack" type="checkbox">
+            <span>I understand Moxie will be reset back to new, and that this cannot be undone.</span></label>
+          <label for="lc-confirm" id="lc-confirm-label">Type UNPAIR to confirm</label>
+          <input id="lc-confirm" type="text" autocomplete="off" autocapitalize="off"
+                 autocorrect="off" spellcheck="false">
+          <div class="row">
+            <button id="lc-go" class="lc-go grow" disabled>Unpair</button>
+            <button id="lc-cancel" class="ghost grow">Cancel</button>
+          </div>
+        </div>
+        <div id="lc-done" class="hidden">
+          <p id="lc-message" class="lc-message"></p>
+          <ul id="lc-details" class="lc-list"></ul>
+          <div id="lc-code" class="hidden">
+            <h3>Show Moxie this reset code</h3>
+            <div class="qrwrap"><img id="lc-qr" alt="Factory reset code to show Moxie's camera"></div>
+            <ol id="lc-steps" class="lc-steps"></ol>
+            <p id="lc-effect"></p>
+            <p id="lc-after" class="muted"></p>
+            <p id="lc-limit" class="lc-limit"></p>
+          </div>
+          <button id="lc-close" class="primary">Done</button>
+        </div>
+        <div id="lc-status" class="muted" role="status" aria-live="polite"></div>
+      </dialog>
       <!-- 🎨 Moxie's look (audit ADOPT #9). The child's chosen face rides down inside
            child_pii as `face_options` (a list of layer labels), and the pushed
            child_pii.id is re-derived from that list so the robot cannot serve a stale
@@ -540,6 +592,7 @@
 <script src="/js/insights.js"></script>
 <script src="/js/memory.js"></script>
 <script src="/js/settings.js"></script>
+<script src="/js/robot.js"></script>
 <script src="/js/perform.js"></script>
 <script src="/js/voice-brain.js"></script>
 <script src="/js/content.js"></script>
