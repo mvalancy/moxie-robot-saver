@@ -125,6 +125,9 @@
   }
 
   function earsDone() {
+    // An earlier clip settling while a NEW recording is open does not make the ears idle:
+    // that recording's own end will.
+    if (recording || opening) return;
     try { document.body.removeAttribute("data-mic"); } catch (e) {}
     var b = window.moxieBridge;
     if (b && typeof b.earsIdle === "function") { try { b.earsIdle(); } catch (e) {} }
