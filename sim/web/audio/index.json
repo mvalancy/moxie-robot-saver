@@ -18,9 +18,6 @@
   "I'm sorry you're feeling that way. Do you want to talk about it?": "moxie/625efb222370ccb7.mp3",
   "School days can be big days. What happened today?": "moxie/1cbb9b26c05c8248.mp3",
   "Getting sleepy? I could use a rest too.": "moxie/235f9522eb3e4077.mp3",
-  "Tell me more about that!": "moxie/1764ea192172aab4.mp3",
-  "That's really interesting. What else?": "moxie/01e326d523e38519.mp3",
-  "I like hearing about this.": "moxie/3006c503ba181119.mp3",
   "Hmm, let me think about that one.": "moxie/d334872a228295fc.mp3",
   "Ooh, good question! Give me a second.": "moxie/777cf598031510bb.mp3",
   "One moment \u2014 my thinking gears are spinning.": "moxie/600ba615a9d9ed0e.mp3",
@@ -29,7 +26,16 @@
   "Just a sec \u2014 I want to get this right.": "moxie/abb8331a3502d3f0.mp3",
   "Hmmmm. Almost got it.": "moxie/0013767c4d18aad5.mp3",
   "Thinking, thinking\u2026 nearly there.": "moxie/ced3c159291db30f.mp3",
-  "The cloud has gone quiet. Do not worry, I am running on what I remember.": "moxie/9ce5966156378ed7.mp3"
+  "The cloud has gone quiet. Do not worry, I am running on what I remember.": "moxie/9ce5966156378ed7.mp3",
+  "Oh, nothing. Definitely not plotting. Just waiting for you.": "moxie/b3515f6271aeec1b.mp3",
+  "I am Moxie! A little robot who is learning all about friendship. You are my favorite teacher.": "moxie/e1df42957919a1d0.mp3",
+  "Surprise! An octopus has three hearts. I only have one, and it glows for you.": "moxie/3b660c8d63f5935a.mp3",
+  "I am listening with my whole robot heart.": "moxie/c18057dcee5fb196.mp3",
+  "My ears are on, and my heart light is glowing.": "moxie/b84ef71e1254471d.mp3",
+  "My big brain is resting right now, but my little brain is right here with you.": "moxie/678e79b2c29ef71b.mp3",
+  "Good night! Sweet dreams. I will keep watch until morning.": "moxie/674568f00de344b2.mp3",
+  "Bye for now! Have a wonderful day. I will be counting the minutes.": "moxie/5fad7ec3acc7bb95.mp3",
+  "You do! A full battery is nice too, but you are number one. Do not tell the battery.": "moxie/c13ef2add33efcc7.mp3"
  },
  "child": {
   "Guess what, it's my birthday today!": "child/5506a77777bb3885.mp3",
