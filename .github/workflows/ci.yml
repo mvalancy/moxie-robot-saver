@@ -389,3 +389,5 @@ jobs:
         run: node sim/test_console_insights.mjs
       - name: Parent console — Unpair and Factory reset (typed confirmation, erase order, reset code)
         run: node sim/test_robot_lifecycle.mjs
+      - name: Parent console — 💬 Try it (a preview turn, published nowhere)
+        run: node sim/test_console_tryit.mjs

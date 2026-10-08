@@ -353,3 +353,22 @@ button.lc-go:disabled{opacity:.45;cursor:not-allowed}
 .lc-basis{display:block;color:var(--muted);font-size:12px}
 .lc-limit{border-left:3px solid #d08b12;padding:6px 10px;font-size:13px}
 #lc-status{min-height:18px;margin-top:8px}
+
+/* 💬 Try it — a preview conversation with the brain (content-authoring.md §5.3). One block
+   per exchange: what the child said, then each piece of her answer and what its markup
+   makes the body do. A blocked line, a refusal or a failed brain is red, never silent. */
+.try-log{max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;
+         margin:8px 0}
+.try-log:empty{display:none}
+.try-turn{border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px}
+.try-you span,.try-moxie>span{display:block;font-size:11px;color:var(--muted);
+                              font-weight:700;letter-spacing:.02em}
+.try-you{margin-bottom:6px}
+.try-line{margin-top:4px}
+.try-perf{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+          opacity:.75;word-break:break-word}
+.try-act,.try-safety{font-size:12px;margin-top:4px}
+.try-raw{font-size:11px}
+.try-raw summary{cursor:pointer;color:var(--muted)}
+.try-raw pre{white-space:pre-wrap;word-break:break-all;margin:4px 0 0;opacity:.8}
+#try-note,#try-status{font-size:12px}

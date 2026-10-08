@@ -58,6 +58,12 @@ class BrainMixin:
         Called once at the top of a turn. The lock covers the build only, never `respond()`.
         """
         name = self.brain_for(device_id)["brain"]
+        return self.app_named(name)
+
+    def app_named(self, name):
+        """The `MoxieApp` for brain `name`, from the same cache `app_for` fills (the
+        console's *Try it* asks for a brain by name). A brain that cannot be built answers
+        with the appliance's own and says so once (`_brain_failed`)."""
         app = self._brains.get(name)
         if app is not None:
             return app

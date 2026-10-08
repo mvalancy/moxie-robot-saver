@@ -54,7 +54,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog: design notes and proposals",
    "section": "architecture",
-   "bytes": 5615,
+   "bytes": 5697,
    "mermaid": 0,
    "headings": [
     "Index",
@@ -297,7 +297,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit",
    "section": "architecture",
-   "bytes": 25365,
+   "bytes": 25809,
    "mermaid": 0,
    "headings": [
     "Credit",
@@ -587,7 +587,7 @@
    "path": "architecture/backlog/content-authoring.md",
    "title": "Content authoring",
    "section": "architecture",
-   "bytes": 22243,
+   "bytes": 31719,
    "mermaid": 0,
    "headings": [
     "0. Ceilings, stated first",
@@ -602,8 +602,8 @@
     "4.5 What the editor will never author",
     "5. The loop: edit → see → hear → try → keep",
     "5.1 Rung 1: the resolved prompt, free",
-    "5.2 Rung 3 (P1): a paid try that cannot fire on a keystroke",
-    "5.3 `POST /content/try` (P1), exactly",
+    "5.2 Rung 3: a paid try that cannot fire on a keystroke",
+    "5.3 The 💬 Try it card: `GET/POST /local/tryit`, exactly",
     "5.4 Rung 2 needs a live device",
     "6. How it stays safe: one validation path",
     "6.1 The rule",
