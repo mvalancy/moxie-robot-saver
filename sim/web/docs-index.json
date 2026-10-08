@@ -400,7 +400,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 59306,
+   "bytes": 61533,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -1289,7 +1289,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 6985,
+   "bytes": 7437,
    "mermaid": 0,
    "headings": [
     "1. Deploy",
