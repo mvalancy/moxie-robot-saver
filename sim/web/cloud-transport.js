@@ -12,8 +12,8 @@
  * ONE VOICE (§3.4): with no MQTT client, `bridge/index.js::speakLocally` speaks a line at
  * once unless its EVENT expects a server voice. So a turn holding speech tickets:
  *   1. POST /api/chat  -> the chat message plus the speech tickets, one per sentence;
- *   2. tell the bridge to expect that event's voice, and POST /api/speech for chunk 0 (and
- *      the next, `SPEECH_PARALLEL` at a time) immediately;
+ *   2. tell the bridge to expect that event's voice, and POST /api/speech for chunk 0
+ *      immediately (each later chunk as its predecessor lands: `SPEECH_PARALLEL`);
  *   3. route the chat message when EITHER chunk 0 lands (TTS routed FIRST) or
  *      `SPEECH_WAIT_MS` elapses — still expecting the voice, which plays when it lands;
  *   4. if chunk 0 fails (refused, unreachable, or no answer by `SPEECH_FETCH_MS`), release
@@ -192,10 +192,12 @@
     try { if (eid && inner.releaseCloudVoice) inner.releaseCloudVoice(eid); } catch (e) {}
   }
 
-  /** How many /api/speech redemptions of one reply are in flight at once: chunk 0 and the
-   *  next. The rest follow as each lands, so a long answer never puts three syntheses in
-   *  front of a visitor's first words. */
-  var SPEECH_PARALLEL = 2;
+  /** How many /api/speech redemptions of one reply are in flight at once: ONE. Chunk 1 is
+   *  requested the moment chunk 0 lands and synthesises while chunk 0 plays (a 24-char chunk
+   *  plays ~1.8 s, a synthesis takes ~1.6-2.0 s), and so on. Two at once was measured to
+   *  slow both — chunk 0 took 2.7-3.7 s beside chunk 1 against 1.6-2.6 s alone (2026-10-08,
+   *  10 turns each) — which delays the first words, the one thing chunking is for. */
+  var SPEECH_PARALLEL = 1;
   /** More tickets than any reply is worth. A server that minted them is misconfigured, and
    *  nothing past this many is redeemed: each costs the visitor's speech window. */
   var MAX_TICKETS = 8;
@@ -221,12 +223,13 @@
    *
    * THE CHUNKS. Chunk 0 decides the turn exactly as one ticket did: voice first, or the
    * words at SPEECH_WAIT_MS still expecting it, or a local voice once if it fails. The later
-   * chunks are redeemed SPEECH_PARALLEL at a time and ROUTED IN ORDER, chunk k only behind
-   * chunk k-1, because voice/ writes a missing chunk off after TTS_GAP_MS and then drops it
-   * when it does arrive: routed as they landed, a slow sentence 2 would be lost behind a
-   * fast sentence 3. The first chunk that fails ends the voice — nothing later is redeemed
-   * or routed — and no local voice stands in for a later chunk: the words are on screen,
-   * and her first sentence was heard in her voice (or spoken locally, if chunk 0 failed). */
+   * chunks are redeemed SPEECH_PARALLEL at a time, each as its predecessor lands, and ROUTED
+   * IN ORDER, chunk k only behind chunk k-1, because voice/ writes a missing chunk off after
+   * TTS_GAP_MS and then drops it when it does arrive: routed as they landed, a slow sentence
+   * 2 would be lost behind a fast sentence 3. The first chunk that fails ends the voice —
+   * nothing later is redeemed or routed — and no local voice stands in for a later chunk:
+   * the words are on screen, and her first sentence was heard in her voice (or spoken
+   * locally, if chunk 0 failed). */
   function voiceFirst(chatMessages, tickets, eid) {
     var n = tickets.length;
     var landed = [];         // chunk -> its TTS messages, once /api/speech delivered them

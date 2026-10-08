@@ -162,8 +162,15 @@ with empty text.
 
 **`POST /api/speech`** accepts `{ticket}` and nothing else. **It has no text field.** A ticket is
 `v1.<base64url(JSON {t, e, c, x})>.<base64url(HMAC-SHA-256)>` minted by `chat.js` (`_lib/hmac.js`):
-`t` is our reply truncated to `DEMO_MAX_TTS_CHARS`, `e`/`c` are the event id and chunk, and `x` is the
-expiry `now + DEMO_TICKET_TTL_S` (60 s). Redemption checks the signature first, before parsing the
+`t` is **one chunk** of our reply, `e`/`c` are the event id and chunk, and `x` is the expiry
+`now + DEMO_TICKET_TTL_S` (60 s). A reply is minted as **one ticket per sentence**, chunk 0 first
+(`_lib/hmac.js::splitForSpeech` / `mintTickets`): at most `MAX_SPEECH_CHUNKS` (3) tickets, each at most
+`DEMO_MAX_TTS_CHARS`, a chunk under 24 characters merged with its neighbour (a tiny chunk starts the
+voice no sooner: synthesis time is mostly overhead), a sentence longer than the cap cut at a space, never
+inside a word, and nothing splits inside a number, after an abbreviation or an initial, or inside a
+```mermaid fence. Joined with one space the chunks are the reply up to the cap. Until 2026-10-08 the
+one ticket was the reply cut at 300 characters, mid-word ("…it rains, lo" was spoken for a 311-char
+reply). Redemption checks the signature first, before parsing the
 payload, using a constant-time compare. It then checks expiry and re-checks the char cap. An over-cap
 ticket answers `too_long`; forged, malformed or expired answers `bad_ticket`. A per-isolate spent-set
 (2000 entries) refuses a replayed ticket as `bad_ticket`. As a result `/api/speech` can only
@@ -239,13 +246,23 @@ the prompt. The blob is re-minted each turn and expires after `CONTEXT_TTL_S` = 
   (28/28 and 38/38 in two measurements) and loses it under `single` (10/33).
 - Nothing reaches disk.
 
-### 3.4 Voice-first ordering
+### 3.4 Voice-first ordering, one ticket per sentence
 
-`cloud-transport.js` posts `/api/chat`, then immediately posts `/api/speech` with the ticket. It routes
-the TTS message **before** the chat message, which latches `cloudVoice` so `speakLocally` stays
-silent. The chat message is routed when the speech lands, or after `SPEECH_WAIT_MS` = **2500 ms**
-(client-side). Late TTS is dropped if a local voice is already speaking. The result is one voice per
-turn, with no edit to `bridge.js`.
+`cloud-transport.js` posts `/api/chat`, tells the bridge to expect that event's voice
+(`expectCloudVoice`, per event since 2026-10-08: a line whose voice is on the way waits silently rather
+than starting a local stand-in that the late voice then cuts), and immediately posts `/api/speech` with
+**chunk 0's** ticket. It routes chunk 0's TTS message **before** the chat message; the chat message goes
+out when chunk 0 lands or after `SPEECH_WAIT_MS` = **2500 ms** (client-side), still expecting the voice,
+which plays when it lands. If chunk 0 fails — refused, unreachable, or no answer by the client's own 15 s
+deadline — the held words are spoken locally once (`releaseCloudVoice`) and a voice turning up later is
+dropped. The later chunks are redeemed **one at a time**: chunk k+1 is requested the moment chunk k
+lands, so it synthesises while chunk k plays (two at once were measured to slow chunk 0 from 1.6–2.6 s
+to 2.7–3.7 s, 2026-10-08), and they are routed in order behind chunk 0 (`voice/cloud.js` starts chunks
+in `chunk_num` order and writes a missing one off after 1.2 s, so arrival order would lose a slow
+sentence). The first chunk that fails ends the voice: nothing later is redeemed, and no local voice ever
+stands in for a later chunk — the words are on screen and her first sentence was heard. The result is
+one voice per turn, her first words after one short synthesis; the bridge's per-event seam is its only
+change.
 
 ### 3.5 `cloud-transport.js` wraps, it does not replace
 
@@ -271,12 +288,12 @@ rule rules out model substitution, `n`/`tools` amplification and system-prompt o
 | `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500 000 / 2 000 | a **size** cap, not a duration cap. 500 KB is about 15 s at 16 kHz s16, but over 60 s at 8 kHz 8-bit. The floor answers `too_short` for free. |
 | `DEMO_MAX_RECORD_MS` | 15 000 | **The real ceiling on STT cost.** `mic.js` hard-stops the recorder. The server reads a WAV header's own `rate × channels × bits` against the data size (`_lib/wav.js::wavDurationMs`) and refuses `too_long` with zero upstream calls. Compressed containers cannot be measured without a decoder. The WAV-only default for `DEMO_STT_FORMATS` is what makes the cap total. Widening that list re-opens the gap. |
 | Per-IP chat | 5/min · 40/hour · 150/day | generous for a person, cheap for us |
-| Per-IP speech | 10/min · 80/hour | no day window (the unit budget's day covers it) |
+| Per-IP speech | 10/min · 80/hour | no day window (the unit budget's day covers it). Sized for **two** voice chunks per chat turn at full pace (5/min, 40/hour); a visitor whose every reply is three sentences at full pace has later chunks refused `rate_limited`, which ends that reply's voice (the words stay on screen). Raising them is a `DEFAULTS` change. |
 | Per-IP transcribe | 10/min · 60/hour | no day window |
 | Concurrency | chat 4 · speech 8 | `transcribe` **shares chat's ceiling**. Matched to the upstream key's parallel limit, which protects a neighbouring service. Deliberately not raised. |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_DEPTH` | 2 500 ms / 8 | At the ceiling a request waits in a bounded FIFO. Past the depth, or when the wait expires, it is refused `at_capacity`. **Either set to 0** gives instant refusal. |
 | Timeouts, chat / speech / STT | 20 000 / 12 000 / 12 000 ms | Chat is below the 45 s worst case on purpose: a fast honest degrade beats a slow success. |
-| Unit budget | 600/hour · 4 000/day | **Request units**, not dollars, because no price sheet exists (assumption 19). chat = 3, speech = 2, transcribe = 2 (`_lib/counters.js::UNITS`). A full turn is 5 units, so about 120 turns an hour. |
+| Unit budget | 600/hour · 4 000/day | **Request units**, not dollars, because no price sheet exists (assumption 19). chat = 3, speech = 2, transcribe = 2 (`_lib/counters.js::UNITS`). A turn is 3 + 2 per voice chunk: 5 units with one chunk (120 turns an hour, 800 a day), 9 with the three-chunk maximum (66 an hour, 444 a day); measured 2026-10-08, ten typed turns made 16 chunks, 7 units a turn on average (about 85 turns an hour). |
 | `DEMO_TICKET_TTL_S` | 60 | long enough for a slow client, short enough that a leaked ticket is useless |
 | `DEMO_ENABLED` | on | kill switch: `0` forces `gateway_not_configured` without deleting the secret |
 
@@ -727,11 +744,11 @@ suite is split into modules under `sim/tests/edge/<suite>/`.
 
 | # | Test | Pins |
 |--:|---|---|
-| 1 | `sim/test_demo_proxy.mjs` | Unknown keys dropped; the upstream body uses the configured model and `max_tokens`; `too_long`; origin refusal with zero upstream calls; upstream 429/500 sanitized (no model or key text in any response); `budget_exhausted`; `X-RateLimit-*` on success; the §2.2 field set with no `chunk_num`, `consistency_control` or `emotion`. Also the queue (block 13), shared tier (§15), TTS cache (§16), re-roll and turn shape, the goodbye close and the prompt layouts (§19–22: persona once, anchor last, no non-first system message outside `anchor`, no brace ever in the spoken text or the ticket), API headers, and a fail on any `.json` import under `functions/`. |
-| 2 | `sim/test_demo_tickets.mjs` | Forged, expired, over-length, replayed or tampered ticket or context; round-trip; constant-time compare. |
+| 1 | `sim/test_demo_proxy.mjs` | Unknown keys dropped; the upstream body uses the configured model and `max_tokens`; `too_long`; origin refusal with zero upstream calls; upstream 429/500 sanitized (no model or key text in any response); `budget_exhausted`; `X-RateLimit-*` on success; the §2.2 field set with no `chunk_num`, `consistency_control` or `emotion`. Also the queue (block 13), shared tier (§15), TTS cache (§16), re-roll and turn shape, the goodbye close and the prompt layouts (§19–22: persona once, anchor last, no non-first system message outside `anchor`, no brace ever in the spoken text or the tickets), one ticket per sentence (§10f: the measured 311-char reply yields 2–3 tickets that join back to the whole reply, every one redeemable with its `chunk_num`; the three-chunk cap; a word-bounded cut; a three-chunk turn is 9 units), API headers, and a fail on any `.json` import under `functions/`. |
+| 2 | `sim/test_demo_tickets.mjs` | Forged, expired, over-length, replayed or tampered ticket or context; round-trip; constant-time compare; the sentence splitter (numbers, abbreviations, initials, ellipses and mermaid fences never split; chunks join back to the reply; the cap and the word-bounded cut) and `mintTickets`. |
 | 3 | `sim/test_wav_decode.mjs` | The RIFF walker uses the header's own rate and channels, refuses 8- and 24-bit and JSON, and agrees sample-for-sample with `audio.js`'s decoder; `wavDurationMs`. |
 | 4 | `sim/test_mode.mjs` | The state machine, backoff, hidden-tab rule, `offline` never polls; env defaults and envelope. |
-| 5 | `sim/test_cloud_transport.mjs` | Seven members intact; TTS routed before chat; chat lands by the 2.5 s wait; delegation when not live; the naive ordering proven to double-voice. |
+| 5 | `sim/test_cloud_transport.mjs` | Seven members intact; TTS routed before chat; chat lands by the 2.5 s wait; delegation when not live; the naive ordering proven to double-voice; one ticket per sentence (§4b–4h: chunks redeemed one at a time and routed in order behind chunk 0, a later chunk's failure ends the voice with no local stand-in, a hanging chunk given up at the deadline, three chunks heard in order on the real `voice/`). |
 | 6 | `sim/test_fallback_coverage.mjs` | Every line the degraded page can utter has a clip on disk; the prerender tool keeps every manifest group. |
 | 6b | `sim/test_demo_ears.mjs` | `/api/transcribe`: byte caps, windows, budget, timeout, format allowlist returning 400 with no call, the upstream status table, secret sweeps. Plus the real `mic.js`: 15 s hard stop, target selection, browser WAV encoder read back by the server walker. |
 | 7 | `sim/test_env_hosted.mjs` | Zero `:8081`/`:8082` probes on a hosted host; badge per mode in Chrome. |
@@ -803,7 +820,7 @@ These numbers are stable, and code cites them.
 | 15 | The gateway accepts webm/Opus for STT | **settled false**: it returns 500 to webm/ogg/mp4 and transcribes 16 kHz mono WAV. So `DEMO_STT_FORMATS=wav`, and `mic.js` encodes WAV in the browser. |
 | 16 | `MediaRecorder` defaults and mic sample rate | moot for the hosted path, which no longer uses `MediaRecorder`; the encoder writes the true rate |
 | 17 | An `https://` page cannot open `ws://` | inferred; irrelevant to the HTTP path |
-| 18 | A robot plays chunk 1+ of an event | unverified; single-chunk turns only |
+| 18 | A robot plays chunk 1+ of an event | unverified on a robot. The SIM does: the hosted turn is up to three chunks and `voice/cloud.js` plays them in order (test_cloud_transport §4b–4g; measured live 2026-10-08, gaps between chunks under 110 ms). |
 | 19 | Gateway cost per token or second | unknown: no price sheet, so budgets are in request units |
 | 20 | `emotion` is not in the chat contract | proven |
 | 21–23 | Clip rendering is reproducible; child clips are not played; the account id is public in check-run URLs | proven |

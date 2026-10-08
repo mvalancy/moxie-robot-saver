@@ -126,31 +126,32 @@ const THREE = "One sentence here. Two sentences here. Three sentences here.";
 }
 
 /* =========================================================================== *
- * 4b. ONE TICKET PER SENTENCE. The chunks are redeemed two at a time and ROUTED IN ORDER
- *     behind chunk 0, even when a later one lands first — voice/ writes a missing chunk off
- *     after 1.2 s and then drops it, so routing by arrival would lose a slow sentence 2
- *     behind a fast sentence 3. One voice, no local stand-in. (origin/dev redeemed
+ * 4b. ONE TICKET PER SENTENCE. The chunks are redeemed ONE AT A TIME — chunk 1 the moment
+ *     chunk 0 lands, chunk 2 the moment chunk 1 lands — so each later sentence synthesises
+ *     while the one before it plays, and chunk 0 never shares the gateway with anything
+ *     (measured: two syntheses at once slowed chunk 0 from 1.6-2.6 s to 2.7-3.7 s). They are
+ *     routed behind chunk 0 in order; one voice, no local stand-in. (origin/dev redeemed
  *     speech[0] only: one /api/speech, one chunk, the rest of the reply never spoken.)
  * =========================================================================== */
 {
   const EID = "sim-chunks3";
-  // Each delay runs from its own request: chunk 2 is requested when chunk 0 lands (t+1000)
-  // and lands at t+1600, BEFORE chunk 1 at t+2500.
-  const AT = [1000, 2500, 600];
+  const AT = [1000, 1500, 600];                        // each delay runs from its own request
   const world = await boot({ answer: chunked(said(THREE, EID, { speech: tickets(EID, 3) }),
     (n) => voicedChunk(EID, n, { delayMs: AT[n] })) });
   const turn = globalThis.window.moxieBridge.sendUserTurn("say three things");
 
   await advance(500);
-  deep(redeemed(world), [0, 1], "4b: chunk 0 and chunk 1 are redeemed at once — two in flight, not one, not three");
+  deep(redeemed(world), [0], "4b: chunk 0 alone is redeemed first — nothing synthesises beside the first words");
   await advance(600);                                  // t+1100: chunk 0 landed at 1000
   deep(T().order, ["tts", "chat"], "4b: chunk 0 first, then the words — voice first, exactly as one ticket");
-  deep(redeemed(world), [0, 1, 2], "4b: …and chunk 2 goes out the moment chunk 0 lands (the parallel cap is two)");
-  await advance(600);                                  // t+1700: chunk 2 landed at 1600, chunk 1 not yet
-  deep(played(world), [0], "4b: CHUNK 2 IS HELD — it landed before chunk 1 and is not routed ahead of it");
-  await advance(900);                                  // t+2600: chunk 1 landed at 2500
+  deep(redeemed(world), [0, 1], "4b: …and chunk 1 goes out the moment chunk 0 lands, not before");
+  await advance(1000);                                 // t+2100: chunk 1 not yet (lands at 2500)
+  deep([redeemed(world), played(world)], [[0, 1], [0]], "4b: chunk 2 is not requested until chunk 1 has landed");
+  await advance(500);                                  // t+2600: chunk 1 landed at 2500, chunk 2 requested
+  deep([redeemed(world), played(world)], [[0, 1, 2], [0, 1]], "4b: chunk 1 is routed as it lands and chunk 2 goes out");
+  await advance(700);                                  // t+3300: chunk 2 landed at 3100
   await turn;
-  deep(played(world), [0, 1, 2], "4b: the chunks reach the voice as 0, 1, 2 — ascending by construction, not by arrival");
+  deep(played(world), [0, 1, 2], "4b: the chunks reach the voice as 0, 1, 2");
   deep(T().order, ["tts", "chat", "tts", "tts"], "4b: …routed behind the words, in order");
   eq(world.spy.speak.length, 0, "4b: and no local voice was ever started");
   const st = T();
@@ -170,17 +171,17 @@ const THREE = "One sentence here. Two sentences here. Three sentences here.";
   await say("say three things", 6000);
   deep(played(world), [0], "4c: chunk 0 played; chunk 1 was refused, so the voice ends there");
   eq(world.spy.speak.length, 0, "4c: A FAILED LATER CHUNK NEVER STARTS A LOCAL VOICE");
+  deep(redeemed(world), [0, 1], "4c: …and chunk 2 is never redeemed: a failed voice stops spending");
   const st = T();
   deep([st.chunkFailures, st.chunksDropped, st.chunksRouted, st.voiceFallbacks, st.speechReasons, st.reasons.includes("upstream_down")],
-       [1, 1, 0, 0, ["upstream_down"], false],
-       "4c: one chunk failure; chunk 2's audio (landed at 2.0 s) dropped; no fallback; the reason recorded, never noted");
+       [1, 0, 0, 0, ["upstream_down"], false],
+       "4c: one chunk failure, nothing dropped, no fallback; the reason recorded, never noted");
   eq(M().state(), "live", "4c: …and the page stays live");
 }
 
 /* =========================================================================== *
- * 4d. CHUNK 0 FAILS: the words are spoken locally, ONCE, exactly as with one ticket; the
- *     chunk 1 audio that landed is not played on top, and chunk 2 is never redeemed — a
- *     failed voice stops spending.
+ * 4d. CHUNK 0 FAILS: the words are spoken locally, ONCE, exactly as with one ticket, and
+ *     chunks 1 and 2 are never redeemed — a failed voice stops spending.
  * =========================================================================== */
 {
   const EID = "sim-chunk0fail";
@@ -188,17 +189,17 @@ const THREE = "One sentence here. Two sentences here. Three sentences here.";
     (n) => (n === 0 ? Object.assign(SPEECH_DOWN(), { delayMs: 800 }) : voicedChunk(EID, n, { delayMs: 1000 }))) });
   await say("say three things", 6000);
   deep([played(world), world.spy.speak], [[], [THREE]],
-       "4d: chunk 0 refused: the line is spoken locally ONCE, and chunk 1's audio (which landed) is not played over it");
-  deep(redeemed(world), [0, 1], "4d: chunk 2 was never redeemed");
+       "4d: chunk 0 refused: the line is spoken locally ONCE, and no chunk is played over it");
+  deep(redeemed(world), [0], "4d: chunks 1 and 2 were never redeemed");
   const st = T();
-  deep([st.voiceFallbacks, st.chunksDropped, st.chunkFailures, st.chunksRouted], [1, 1, 0, 0],
-       "4d: recorded: one voice fallback, one chunk dropped, no later-chunk failure (the voice was over)");
+  deep([st.voiceFallbacks, st.chunksDropped, st.chunkFailures, st.chunksRouted], [1, 0, 0, 0],
+       "4d: recorded: one voice fallback, nothing dropped, no later-chunk failure (the voice was over)");
 }
 
 /* =========================================================================== *
- * 4e. CHUNK 0 SLOW (past SPEECH_WAIT_MS), chunk 1 FAST: the words land at 2.5 s with no
- *     local voice, chunk 1 waits for chunk 0, and when chunk 0 lands at 3 s the three play in
- *     order — the §3 behaviour, per chunk.
+ * 4e. CHUNK 0 SLOW (past SPEECH_WAIT_MS): the words land at 2.5 s with no local voice and
+ *     nothing else is requested meanwhile; when chunk 0 lands at 3 s it plays, and chunks 1
+ *     and 2 follow it in order — the §3 behaviour, per chunk.
  * =========================================================================== */
 {
   const EID = "sim-chunkslow0";
@@ -206,9 +207,9 @@ const THREE = "One sentence here. Two sentences here. Three sentences here.";
     (n) => voicedChunk(EID, n, { delayMs: n === 0 ? 3000 : 500 })) });
   const turn = globalThis.window.moxieBridge.sendUserTurn("say three things");
   await advance(2600);
-  deep([world.spy.setSpeech, played(world), world.spy.speak.length], [[THREE], [], 0],
-       "4e: at 2.5 s the words are out, chunk 1 (landed at 0.5 s) is held, and nothing local speaks");
-  await advance(600);
+  deep([world.spy.setSpeech, played(world), redeemed(world), world.spy.speak.length], [[THREE], [], [0], 0],
+       "4e: at 2.5 s the words are out, only chunk 0 has been requested, and nothing local speaks");
+  await advance(1600);                                 // chunk 0 at 3.0 s, chunk 1 at 3.5 s, chunk 2 at 4.0 s
   await turn;
   deep([played(world), T().order], [[0, 1, 2], ["chat", "tts", "tts", "tts"]],
        "4e: chunk 0 lands at 3 s and plays first; chunks 1 and 2 follow it in order");
@@ -218,9 +219,9 @@ const THREE = "One sentence here. Two sentences here. Three sentences here.";
 }
 
 /* =========================================================================== *
- * 4f. A LATER CHUNK THAT NEVER ANSWERS: the voice ends at the client's own 15 s deadline,
- *     a chunk behind it is dropped, its audio turning up at 20 s is dropped, and still no
- *     local voice.
+ * 4f. A LATER CHUNK THAT NEVER ANSWERS: the voice ends at the client's own 15 s deadline
+ *     (from that chunk's request), chunk 2 is never requested, the audio turning up at 20 s
+ *     is dropped, and still no local voice.
  * =========================================================================== */
 {
   const EID = "sim-chunkhang";
@@ -228,24 +229,25 @@ const THREE = "One sentence here. Two sentences here. Three sentences here.";
     (n) => voicedChunk(EID, n, { delayMs: n === 1 ? 20000 : 1000 })) });
   const t0 = now();
   const turn = globalThis.window.moxieBridge.sendUserTurn("say three things");
-  await advance(14000);
-  deep([played(world), T().chunkFailures], [[0], 0], "4f: at 14 s chunk 1 is still awaited — nothing was written off early");
-  await advance(1500);
-  deep([played(world), T().chunkFailures, T().chunksDropped], [[0], 1, 1],
-       `4f: at the 15 s deadline (${now() - t0} ms in) chunk 1 is given up and chunk 2, landed at 2 s, is dropped`);
-  await advance(7000);
+  await advance(15500);                                // chunk 1 was requested at 1 s: its deadline is 16 s
+  deep([played(world), redeemed(world), T().chunkFailures], [[0], [0, 1], 0],
+       "4f: at 15.5 s chunk 1 is still awaited — nothing was written off early, and chunk 2 not requested");
+  await advance(1000);
+  deep([played(world), T().chunkFailures, redeemed(world)], [[0], 1, [0, 1]],
+       `4f: at its 15 s deadline (${now() - t0} ms in) chunk 1 is given up and chunk 2 is never requested`);
+  await advance(6000);
   await turn;
-  deep([played(world), world.spy.speak.length, T().chunksDropped], [[0], 0, 2],
-       "4f: chunk 1's audio at 20 s is dropped too, and no local voice ever started");
+  deep([played(world), world.spy.speak.length, T().chunksDropped], [[0], 0, 1],
+       "4f: chunk 1's audio at 21 s is dropped, and no local voice ever started");
 }
 
 /* =========================================================================== *
  * 4g. ON THE REAL voice/: three chunks of one event are HEARD in order, as one voice, with
- *     nothing cut — chunk 2 landing before chunk 1 included.
+ *     nothing cut; chunk 2 is queued behind chunk 1 while it plays (pipelined).
  * =========================================================================== */
 {
   const EID = "sim-realchunks";
-  const AT = [1000, 2500, 600], SEC = [1, 2, 3];      // chunk 2 lands at t+1600, before chunk 1
+  const AT = [1000, 1500, 600], SEC = [1, 2, 3];      // chunk 1 lands at 2.5 s, chunk 2 at 3.1 s
   const world = await boot({ realVoice: true, answer: chunked(said(THREE, EID, { speech: tickets(EID, 3) }),
     (n) => voicedChunk(EID, n, { delayMs: AT[n], seconds: SEC[n] })) });
   globalThis.window.moxieBridge.sendUserTurn("say three things");

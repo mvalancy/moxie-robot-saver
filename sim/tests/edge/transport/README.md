@@ -3,13 +3,13 @@
 The sections of [`sim/test_cloud_transport.mjs`](../../../test_cloud_transport.mjs), in run order,
 over one [`harness.mjs`](harness.mjs): the REAL `stub.js`, `bridge/`, `mode.js` and
 `cloud-transport.js` loaded as source under a fake DOM/audio/mqtt/fetch on a virtual clock, plus
-answer builders (`live`, `serve`, `said`, `ticket`, `voiced`). By default `window.moxieAudio` is a
+answer builders (`live`, `serve`, `said`, `ticket`, `voiced`, and `tickets`/`voicedChunk`/`chunked` for a reply with several voice chunks). By default `window.moxieAudio` is a
 spy whose `isSpeaking()` is as narrow as the real one; `boot({ realVoice: true })` loads the REAL
 `voice/` instead, over a fake Web Audio stack and speechSynthesis that record every sound that
 starts and every one cut short (`autoplay: "policy"` adds the browser's activation rule).
 
 - [`01_wrapper_turn.mjs`](01_wrapper_turn.mjs) — §1–2: a wrapper, not a replacement; one whole live turn.
-- [`02_voice_order.mjs`](02_voice_order.mjs) — §3–4: slow speech starts no local voice and plays once; the double-voice hazard proven real, and the per-event expectation that removes it.
+- [`02_voice_order.mjs`](02_voice_order.mjs) — §3–4: slow speech starts no local voice and plays once; the double-voice hazard proven real, and the per-event expectation that removes it. §4b–4h: one ticket per sentence — chunks redeemed one at a time and routed in order behind chunk 0, a later chunk's failure ends the voice with no local stand-in, on the spy and on the real `voice/`.
 - [`03_degraded.mjs`](03_degraded.mjs) — §5: every degraded path answers, and is spoken, even after a voiced turn.
 - [`04_talk_scripted.mjs`](04_talk_scripted.mjs) — §6–6b: the Talk box; the consolation line is free.
 - [`05_bot_control.mjs`](05_bot_control.mjs) — §7: one fresh Turnstile token per send, never a dead Send.
