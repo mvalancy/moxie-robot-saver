@@ -3,7 +3,8 @@ from __future__ import annotations
 import json, os, time
 
 from moxie_sdk.types import ResultCode
-from moxie_sdk.wire import build_activity_response
+from moxie_sdk.wire import (build_activity_response, build_remote_modules, is_data_query,
+                            is_module_query)
 from moxie_sdk import safety as safety_seam
 from moxie_sdk import performance as performance_seam
 from markup import perform
@@ -126,16 +127,31 @@ class FleetMixin:
                                         # never trusting mtime granularity
         self._note("permit", f"{'✅ permitted' if permitted else '⛔ revoked'} {device_id}")
         if device_id in self.robots:
-            self._push_config(device_id)
             if permitted:
-                try:
-                    self.app_for(device_id).on_connect(self.robots[device_id])
-                except Exception as e:
-                    print(f"[runtime] app.on_connect error: {e}", flush=True)
+                self._admit(device_id)
+            else:
+                self._push_config(device_id)             # the minimal un-paired document
+                self._forget_stt_ask(device_id)          # pending: never "mic asked"
         return self.permits_view()
 
+    def _admit(self, device_id):
+        """What a connected robot gets the moment it is let in, by a Permit or by the
+        fleet-wide toggle: its full config, then the mic ask, then the app's greeting —
+        the settle's order (`_device_connect`). Asks regardless of the latch: the
+        parent's click is a "make it work" button."""
+        self._push_config(device_id)
+        self._subscribe_stt(device_id, again=True)       # config, then the mic ask
+        try:
+            self.app_for(device_id).on_connect(self.robots[device_id])
+        except Exception as e:
+            print(f"[runtime] app.on_connect error: {e}", flush=True)
+
     def set_allow_unverified_bots(self, allowed: bool) -> dict:
-        """The fleet-wide "serve any robot" toggle; re-pushes every connected robot."""
+        """The fleet-wide "serve any robot" toggle; re-pushes every connected robot. A
+        robot it lets in is onboarded like a Permit (`_admit`), one it shuts out is
+        pending again (the minimal config, no `mic asked`). Judged on the enforced
+        value: under a constructor or env pin the stored flag changes and nothing else."""
+        was = {device_id: self.is_permitted(device_id) for device_id in list(self.robots)}
         rec = self.permits()
         rec["allow_unverified_bots"] = bool(allowed)
         self.store.write_shared(self.FLEET_PERMITS_COLLECTION, rec)
@@ -143,8 +159,14 @@ class FleetMixin:
                                         # never trusting mtime granularity
         self._note("permit", f"🔓 allow_unverified_bots={bool(allowed)}"
                              if allowed else "🔒 allow_unverified_bots=False")
-        for device_id in list(self.robots):
-            self._push_config(device_id)
+        for device_id, before in was.items():
+            now = self.is_permitted(device_id)
+            if now and not before:
+                self._admit(device_id)
+            else:
+                self._push_config(device_id)
+                if not now:
+                    self._forget_stt_ask(device_id)
         return self.permits_view()
 
     def permits_view(self) -> dict:
@@ -168,7 +190,7 @@ class FleetMixin:
     def _serve_unpermitted(self, device_id, name, payload):
         """Everything a not-permitted device gets on `/events/…`:
         * remote-chat prompt -> one fixed child-free line (no brain, no history); `notify`
-          is dropped.
+          is dropped. A module query -> an empty list; any other data query -> dropped.
         * activity-log queries (`schedule`, `mentor_behaviors`, `license`) -> an empty
           CloudQueryResponse so the robot's pull resolves; reports are dropped.
         * everything else (zmq audio, telemetry, vision, lifecycle) -> dropped.
@@ -181,9 +203,13 @@ class FleetMixin:
             if rcr.get("command") == "notify":
                 return
             backend = rcr.get("backend", "router")
-            if backend == "data" and rcr.get("query") == "modules":
+            if is_module_query(rcr):
                 return self._publish_chat(device_id, rcr.get("event_id"), backend, "",
-                                          markup="", result=ResultCode.SUCCESS, modules=[])
+                                          markup="", result=ResultCode.SUCCESS,
+                                          query_data=build_remote_modules([]))
+            if is_data_query(rcr):          # no other data query is answered (turns.py)
+                self._note("permit", f"ignored a data query from pending {device_id}")
+                return None
             self._note("permit", f"⛔ turn refused — {device_id} is pending")
             line, scored = self._stage(self.NOT_PAIRED_LINE)
             return self._publish_chat(device_id, rcr.get("event_id"), backend,
@@ -266,6 +292,7 @@ class FleetMixin:
             # The socket died between the check and the write. Still not a success.
             return {"ok": False, "device_id": device_id, "published": False,
                     "acknowledged": False, "error": "publish failed", "reason": why}
+        self._subscribe_stt(device_id, again=True)   # a woken robot has no mic subscription
         cfg = self.effective_config(device_id) or {}
         # `wake_button_enabled` defaults True: only an explicit False is worth a warning.
         wake_button = cfg.get("wake_button_enabled", True)

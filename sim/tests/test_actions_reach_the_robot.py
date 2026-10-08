@@ -86,7 +86,7 @@ def test_a_launch_on_a_real_turn_puts_the_robot_in_the_module():
     assert acted["unknown"] == 0, f"the robot did not understand its own reply: {acted}"
     # …and it is the SAME action the wire carried, in the recovered shape.
     on_wire = next(a for a in vm.reply_payload["response_actions"] if a.get("action"))
-    assert on_wire == {"output_type": "GLOBAL", "action": "launch", "module_id": "DRAW",
+    assert on_wire == {"output_type": "GLOBAL_RESPONSE", "action": "launch", "module_id": "DRAW",
                        "content_id": "default"}, on_wire
     assert acted["applied"][-1]["action"] == "launch"
     # The child never hears the tag: asserted on the ROBOT's copy, the text it reads out.
@@ -100,7 +100,7 @@ def test_an_exit_tag_on_a_real_turn_arrives_as_the_only_action():
                     speech="bye moxie")
     actions = [a["action"] for a in vm.reply_payload.get("response_actions", [])
                if a.get("action")]
-    assert actions == ["exit"], vm.reply_payload
+    assert actions == ["exit_module"], vm.reply_payload     # the ActionID name
     assert vm.reply_payload["output"]["text"] == "Bye Sam!"
     assert vm.action_stats()["exits"] == 1
 
@@ -112,12 +112,13 @@ def test_an_exit_on_a_real_turn_takes_the_robot_back_out():
                     '"mood": "positive", "gesture": "celebrate"}')
     assert vm.action_stats()["module_id"] == "DRAW"
     # a second reply on the same client, exactly as a second turn would deliver it
-    vm._on_chat_reply({"command": "remote_chat", "result": "SUCCESS", "event_id": "e2",
+    vm._on_chat_reply({"command": "remote_chat", "result": 0, "event_id": "e2",
                        "output": {"text": "Bye!"},
-                       "response_actions": [{"output_type": "GLOBAL", "action": "exit"}]})
+                       "response_actions": [{"output_type": "GLOBAL_RESPONSE",
+                                             "action": "exit_module"}]})
     acted = vm.action_stats()
     assert acted["exits"] == 1 and acted["module_id"] == "" and acted["content_id"] == ""
-    assert acted["last"] == "exit", acted
+    assert acted["last"] == "exit_module", acted
 
 
 def test_an_untagged_reply_leaves_the_robot_where_it_was():
@@ -156,6 +157,33 @@ def test_actions_from_an_external_brain_reach_the_robot_too():
         ("launch", "GAME", "level1")], "the bogus action type should have been dropped"
     assert vm.reply_payload["output"]["text"] == "Let's play a game!"
     assert vm.action_stats()["module_id"] == "GAME"
+
+
+def test_a_webhooks_older_exit_spelling_leaves_the_module_as_exit_module():
+    """`{"type": "exit"}` is back-compat for webhooks written against the pre-K1 value (the
+    SDK spelled it `exit` until 2026-10; the webhook contract's example shows only a launch).
+    `ActionType._missing_` reads it, the wire carries `exit_module` (RemoteChat.proto:260)
+    and the robot leaves the module it was in."""
+    from moxie_sdk.apps import WebhookApp
+
+    class _Webhook(WebhookApp):
+        def _post(self, path_hint, body):
+            return {"text": "Bye Sam!", "actions": [{"type": "exit"}]}
+
+    rt, dev = make_runtime(_Webhook("http://127.0.0.1:1/turn"), device_id=DEV)
+    vm = VirtualMoxie(host="127.0.0.1", port=1, device_id=dev, verbose=False)
+    loopback(rt, vm)
+    vm._on_chat_reply({"command": "remote_chat", "result": 0, "event_id": "e0",
+                       "output": {"text": ""},
+                       "response_actions": [{"output_type": "GLOBAL_RESPONSE",
+                                             "action": "launch", "module_id": "DM"}]})
+    vm.client.publish(vm.t_event("remote-chat"), json.dumps(
+        {"event_id": "evt-webhook-exit", "command": "prompt", "backend": "router",
+         "speech": "bye"}))
+    rt._pool.shutdown(wait=True)
+    ra = [a["action"] for a in vm.reply_payload.get("response_actions", []) if a.get("action")]
+    assert ra == ["exit_module"], vm.reply_payload
+    assert vm.action_stats()["exits"] == 1 and vm.action_stats()["module_id"] == ""
 
 
 def test_the_robot_records_the_event_subscription_the_brain_asked_for():
@@ -205,7 +233,7 @@ def test_the_legacy_singular_never_fires_the_same_action_twice():
     """`response_action` mirrors `response_actions[0]`, so a client that read both would
     launch twice (mqtt-and-conversation.md §4.1). Golden entry act-2 carries both."""
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_dup", verbose=False)
-    entry = {"output_type": "GLOBAL", "action": "launch", "module_id": "DM"}
+    entry = {"output_type": "GLOBAL_RESPONSE", "action": "launch", "module_id": "DM"}
     vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
                        "response_action": entry, "response_actions": [entry]})
     assert vm.action_stats()["launches"] == 1, vm.action_stats()
@@ -216,7 +244,7 @@ def test_the_singular_alone_is_still_read():
     singular still moves the robot."""
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_legacy", verbose=False)
     vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
-                       "response_action": {"output_type": "GLOBAL", "action": "launch",
+                       "response_action": {"output_type": "GLOBAL_RESPONSE", "action": "launch",
                                            "module_id": "DM"}})
     assert vm.action_stats()["module_id"] == "DM", vm.action_stats()
 
@@ -233,12 +261,34 @@ def test_an_execute_is_recorded_by_name_and_never_run():
     vm.client = type("C", (), {"publish": lambda _s, t, p: sent.append((t, p))})()
     vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
                        "response_actions": [
-                           {"output_type": "GLOBAL", "action": "execute",
+                           {"output_type": "GLOBAL_RESPONSE", "action": "execute",
                             "function_id": "eb_enable_qr", "function_args": ["true"]}]})
     applied = vm.action_stats()["applied"]
     assert applied == [{"action": "execute", "module_id": "", "content_id": "",
                         "function": "eb_enable_qr", "args": ["true"]}], applied
     assert sent == [], f"an execute must not make this client publish anything: {sent}"
+
+
+def test_the_p0a_arm_turns_the_qr_badge_on_like_the_older_enable_qr():
+    """`ActionType.ENABLE_QR` goes out as `execute eb_enable_qr ["true"]` (qr-launch-cards.md
+    §P0-a), so the older `enable_qr` verb no longer arrives and neither Sim client set
+    `qr_enabled`. Both now read the P0-a shape as the arm (`bridge/actions.js` is held to
+    the same by `sim/test_bridge.mjs`); an execute with any other name or argument is not."""
+    from moxie_sdk.types import Action, ActionType
+    from moxie_sdk.wire import build_chat_response
+    vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_arm", verbose=False)
+    vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
+                       "response_actions": [
+                           {"output_type": "GLOBAL_RESPONSE", "action": "execute",
+                            "function_id": "eb_enable_qr", "function_args": ["false"]},
+                           {"output_type": "GLOBAL_RESPONSE", "action": "execute",
+                            "function_id": "eb_wake", "function_args": ["true"]}]})
+    assert vm.action_stats()["qr_enabled"] is False, vm.action_stats()
+    vm._on_chat_reply(build_chat_response("e2", "Show me a card!",
+                                          actions=[Action(type=ActionType.ENABLE_QR)]))
+    stats = vm.action_stats()
+    assert stats["qr_enabled"] is True and stats["last"] == "execute", stats
+    assert stats["applied"][-1]["function"] == "eb_enable_qr", stats
 
 
 def test_execute_reads_the_sims_spelling_too():
@@ -249,9 +299,9 @@ def test_execute_reads_the_sims_spelling_too():
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_exec2", verbose=False)
     vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
                        "response_actions": [
-                           {"output_type": "GLOBAL", "action": "execute",
+                           {"output_type": "GLOBAL_RESPONSE", "action": "execute",
                             "function": "eb_enable_qr"},
-                           {"output_type": "GLOBAL", "action": "execute"}]})
+                           {"output_type": "GLOBAL_RESPONSE", "action": "execute"}]})
     assert [a["function"] for a in vm.action_stats()["applied"]] == ["eb_enable_qr", ""]
 
 
@@ -276,15 +326,15 @@ def test_what_our_own_server_sends_now_names_the_function_it_wants_run():
 
 def test_the_briefs_own_worked_example_is_the_shape_that_goes_out():
     """qr-launch-cards.md §P0-a / §4 T9's exact JSON, key for key:
-    `{"output_type": "GLOBAL", "action": "execute", "function_id": "eb_enable_qr",
+    `{"output_type": "GLOBAL_RESPONSE", "action": "execute", "function_id": "eb_enable_qr",
     "function_args": ["true"]}` — a list of args is `function_args` (field 8)."""
     from moxie_sdk.types import Action, ActionType
     from moxie_sdk.wire import build_chat_response
     resp = build_chat_response("e", "hi", actions=[
         Action(type=ActionType.EXECUTE, function="eb_enable_qr", args=["true"])])
     assert resp["response_actions"] == [
-        {"output_type": "GLOBAL", "action": "execute", "module_id": None,
-         "content_id": None, "function_id": "eb_enable_qr", "function_args": ["true"]}]
+        {"output_type": "GLOBAL_RESPONSE", "action": "execute",
+         "function_id": "eb_enable_qr", "function_args": ["true"]}]
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_exec4", verbose=False)
     vm._on_chat_reply(resp)
     assert vm.action_stats()["applied"][0]["args"] == ["true"], vm.action_stats()
@@ -305,7 +355,7 @@ def test_an_action_with_no_function_gains_no_empty_keys():
             assert "function_id" not in entry, entry
     plain = build_chat_response("e", "hi", actions=[
         Action(type=ActionType.LAUNCH, module_id="DRAW", content_id="default")])
-    assert plain["response_actions"] == [{"output_type": "GLOBAL", "action": "launch",
+    assert plain["response_actions"] == [{"output_type": "GLOBAL_RESPONSE", "action": "launch",
                                           "module_id": "DRAW", "content_id": "default"}]
 
 
@@ -329,24 +379,31 @@ def test_arg_values_go_out_as_the_strings_the_proto_declares():
     assert entry(args="true")["function_args"] == ["true"]
 
 
-def test_the_naming_defects_p0a_still_owns_are_pinned_here_not_fixed():
-    """Deliberately pins what is still wrong: two `ActionType` values are not in the
-    recovered `ActionID` enum (RemoteChat.proto:256-265):
+def test_the_two_naming_defects_p0a_owned_are_fixed_on_the_wire():
+    """Until 2026-10-08 this test pinned two wrong wire spellings (qr-launch-cards.md
+    §P0-a / §7 R3); now it holds the fix. Neither `exit` nor `enable_qr` is a name in the
+    recovered `ActionID` enum (RemoteChat.proto:256-266), so:
 
-      * `EXIT = "exit"` — the enum spells it `exit_module`;
-      * `ENABLE_QR = "enable_qr"` — not a verb at all; the contract arms the scanner with
-        `execute` + `function_id: "eb_enable_qr"`.
+      * `ActionType.EXIT` goes out as `exit_module` (:260);
+      * `ActionType.ENABLE_QR` goes out as the contract's `execute` (:263) +
+        `function_id: "eb_enable_qr"`, `function_args: ["true"]` — the §P0-a shape.
 
-    Renaming a wire value is its own contract change (bridge/actions.js `ACTION_KINDS` agrees with
-    us; `test_sim_client_parity.py` holds the vocabularies equal), owned by
-    qr-launch-cards.md §P0-a / §7 R3. The fix must turn this red."""
+    Both clients still accept the older spellings (`test_sim_client_parity.py`), and the
+    SIL robot reads the execute by name exactly as it reads any other."""
     from moxie_sdk.types import Action, ActionType
     from moxie_sdk.wire import build_chat_response
     resp = build_chat_response("e", "hi", actions=[Action(type=ActionType.ENABLE_QR),
                                                    Action(type=ActionType.EXIT)])
-    assert [a["action"] for a in resp["response_actions"]] == ["enable_qr", "exit"]
-    assert "function_id" not in resp["response_actions"][0], (
-        "ENABLE_QR does not yet route through execute + eb_enable_qr")
+    assert [a["action"] for a in resp["response_actions"]] == ["execute", "exit_module"]
+    assert resp["response_actions"][0] == {
+        "output_type": "GLOBAL_RESPONSE", "action": "execute",
+        "function_id": "eb_enable_qr", "function_args": ["true"]}
+    vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_qr", verbose=False)
+    vm._on_chat_reply(resp)
+    applied = vm.action_stats()["applied"]
+    assert [a["action"] for a in applied] == ["execute", "exit_module"], applied
+    assert applied[0]["function"] == "eb_enable_qr" and applied[0]["args"] == ["true"]
+    assert vm.action_stats()["exits"] == 1 and vm.action_stats()["unknown"] == 0
 
 
 def test_sleep_is_recorded_and_does_not_stop_the_client():
@@ -354,10 +411,10 @@ def test_sleep_is_recorded_and_does_not_stop_the_client():
     would be inventing the contract's other half."""
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_sleep", verbose=False)
     vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
-                       "response_actions": [{"output_type": "GLOBAL", "action": "sleep"}]})
+                       "response_actions": [{"output_type": "GLOBAL_RESPONSE", "action": "sleep"}]})
     assert vm.action_stats()["asleep"] is True
     vm._on_chat_reply({"command": "remote_chat", "event_id": "e2", "output": {"text": ""},
-                       "response_actions": [{"output_type": "GLOBAL", "action": "launch",
+                       "response_actions": [{"output_type": "GLOBAL_RESPONSE", "action": "launch",
                                              "module_id": "DM"}]})
     assert vm.action_stats()["asleep"] is False, "a launch wakes the client, as on the SIM"
 
@@ -371,7 +428,7 @@ def test_action_state_outlives_the_turn_that_set_it():
     browser SIM's `actionState` has the same lifetime."""
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_life", verbose=False)
     vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
-                       "response_actions": [{"output_type": "GLOBAL", "action": "launch",
+                       "response_actions": [{"output_type": "GLOBAL_RESPONSE", "action": "launch",
                                              "module_id": "DM", "content_id": "c"}]})
     vm._reset_turn()
     assert vm.action_stats()["module_id"] == "DM", vm.action_stats()
@@ -383,11 +440,11 @@ def test_an_action_on_a_streamed_chunk_is_not_lost():
     """A streamed answer is several publishes; an action may ride any of them, including
     a `REPLY_PENDING` chunk that never becomes `reply_payload`."""
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_stream", verbose=False)
-    vm._on_chat_reply({"command": "remote_chat", "result": "REPLY_PENDING", "chunk_num": 0,
+    vm._on_chat_reply({"command": "remote_chat", "result": 9, "chunk_num": 0,
                        "event_id": "s", "output": {"text": "One moment."},
-                       "response_actions": [{"output_type": "GLOBAL", "action": "launch",
+                       "response_actions": [{"output_type": "GLOBAL_RESPONSE", "action": "launch",
                                              "module_id": "DM"}]})
-    vm._on_chat_reply({"command": "remote_chat", "result": "SUCCESS", "chunk_num": 1,
+    vm._on_chat_reply({"command": "remote_chat", "result": 0, "chunk_num": 1,
                        "event_id": "s", "output": {"text": "Here we go!"},
                        "consistency_control": {"is_completed": True}})
     assert vm.action_stats()["module_id"] == "DM", vm.action_stats()
@@ -423,7 +480,7 @@ def test_no_shape_of_the_new_arg_fields_can_break_a_turn_either():
                                                    "junk"]}, {"a": "1"})):
         vm._on_chat_reply({"command": "remote_chat", "event_id": "a",
                            "output": {"text": ""},
-                           "response_actions": [dict(entry, output_type="GLOBAL")]})
+                           "response_actions": [dict(entry, output_type="GLOBAL_RESPONSE")]})
         assert vm.action_stats()["applied"][-1]["args"] == want, entry
     assert vm.action_stats()["unknown"] == 0, "none of these is junk to be counted"
 
@@ -433,7 +490,7 @@ def test_the_applied_log_is_bounded_like_the_browser_sims():
     for i in range(60):
         vm._on_chat_reply({"command": "remote_chat", "event_id": f"e{i}",
                            "output": {"text": ""},
-                           "response_actions": [{"output_type": "GLOBAL",
+                           "response_actions": [{"output_type": "GLOBAL_RESPONSE",
                                                  "action": "launch",
                                                  "module_id": f"M{i}"}]})
     stats = vm.action_stats()
@@ -447,7 +504,7 @@ def test_a_clearing_subscription_replaces_rather_than_appends():
     def sub(active, clear):
         vm._on_chat_reply({"command": "remote_chat", "event_id": "e",
                            "output": {"text": ""},
-                           "response_actions": [{"output_type": "GLOBAL",
+                           "response_actions": [{"output_type": "GLOBAL_RESPONSE",
                                                  "event_subscription": {
                                                      "active": active, "clear": clear}}]})
     sub(["eb-found-face", "eb-lost-target"], False)

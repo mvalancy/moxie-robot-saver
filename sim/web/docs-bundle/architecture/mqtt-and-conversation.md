@@ -291,7 +291,7 @@ and **publishes** to one robot:
 
 | Event | Purpose |
 |---|---|
-| `remote-chat` (and `remote-chat-staging`) | `RemoteChatRequest`, the conversation channel. `backend:"data"` + `query:"modules"` asks for the remote module list; `backend:"router"` is a conversational turn (§4). |
+| `remote-chat` (and `remote-chat-staging`) | `RemoteChatRequest`, the conversation channel. `backend:"router"` is a conversational turn (§4). `backend:"data"` + `query:{"query":"modules"}` (a `RemoteDataQuery`, [`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):41-51, :79) asks which modules the cloud serves; the enum's number (`{"query":{"query":2}}`) is read as the same query, and so is the plain `query:"modules"` string only older test doubles send (the browser Sim sends no module query). Answered on `commands/remote_chat` with `result: 0` and the list in `query_data.modules` (`RemoteDataBlock`, :296-300, :339), each entry `{info:{id}, rules, source:"REMOTE_CHAT", content_infos:[{id}]}`, before any brain is consulted; a pending robot gets an empty list. Any other `backend:"data"` request (`contexts`, or no query) gets no brain call and no reply, one logged line, as OpenMoxie (`moxie_server.py:170-179`). Built to the recovered protocol and OpenMoxie's field-proven shapes (`moxie_server.py:170-176`); unverified on our hardware — see [AI seam §②, the wire a robot can read](ai-seam.md#the-wire-a-robot-can-read). |
 | `client-service-activity-log` | Multiplexed by `subtopic`: `query:"schedule"`, `query:"mentor_behaviors"`, `query:"license"` (e.g. the `google_speech` key), `mentor_behavior` reports, and `subtopic:"telehealth"` puppet state. |
 | `zmq` | ZMQ bridge: payload `"{proto.full_name}:" + protobuf_bytes`, e.g. `embodied.perception.audio.zmqSTTRequest` (mic audio). |
 | `device-logs` | Per-robot log records (`tag`, `message`). |
@@ -303,12 +303,52 @@ The supervisor regex-scans broker log lines on `$SYS/broker/log/#`
 ([`constants.py`](../../mqtt/supervisor/moxie_runtime/constants.py)):
 
 ```python
-connect_pattern    = r"connected from (.*) as (d_[a-f0-9-]+)"
-disconnect_pattern = r"Client (d_[a-f0-9-]+) (closed its connection|disconnected)"
+CONNECT_RE    = r"connected from (.*) as (d_[a-f0-9-]+)"
+DISCONNECT_RE = (r"Client (d_[a-f0-9-]+) (?:closed its connection|disconnected|been disconnected|"
+                 r"has exceeded timeout|already connected, closing old connection)"
+                 r"|(?:Bad socket read/write on|Socket error on) client (d_[a-f0-9-]+)")
 ```
 
-On connect: load the robot's records, wait about 1 s, push config, then send a ZMQ `ProtoSubscribe`
-asking the robot to stream STT audio (`embodied.perception.audio.zmqSTTRequest`).
+The disconnect spellings are the ones in the `mosquitto` binary of the pinned `eclipse-mosquitto:2.0.20`
+image, checked against a live capture of its `$SYS/broker/log` on 2026-10-08: a clean `DISCONNECT`
+packet logs `disconnected.`, a socket that just went away (a TCP reset included) `closed its connection.`,
+a keepalive expiry `has exceeded timeout, disconnecting.`, and a robot whose new socket displaces its old
+session `already connected, closing old connection.` (that one at level `E`, which is why the
+subscription is `log/#`); plus mosquitto 1.6's `Socket error on client …, disconnecting.` for a
+distro-packaged broker. OpenMoxie matches only the first two, and only on level-`N` lines
+(`moxie_server.py:80-81`, `:149-158`), and initialises a robot once per entry in its online map
+(`robot_data.py:94-99`). Read from that code, a plausible C4 mechanism is a robot that left with a line
+it does not match (or one logged at level `E`) and so was never released: its return got no config and
+no subscribe. Upstream's own diagnosis (PR #59) blamed mosquitto 2.x no longer publishing the `$SYS`
+connect notices it read; the two readings are not exclusive, and neither is verified here.
+
+On connect: register the robot, wait about 1 s, push config, then send a ZMQ `ProtoSubscribe`
+asking the robot to stream STT audio (`embodied.perception.audio.zmqSTTRequest`), the order OpenMoxie
+uses (`on_device_connect`, `moxie_server.py:254-266`). That settle always asks, even when a Listening
+pick, a wake or a Permit already asked inside its one-second window: such an ask preceded the config
+push (and possibly the robot's own re-subscribe, which the settle waits for), so it does not stand in
+for the settle's; at most one redundant QoS 0 message. The connect line is also evidence of a **new
+session**: a second one for a robot already onboarded, with no disconnect line in between (Wi-Fi dropped
+and came back inside the keepalive, or a line no pattern knows), forgets what the supervisor believed
+about that robot and onboards it again, config and subscribe included. A `/state` or an event is not
+such evidence; it repeats. The subscribe is also re-sent on `wakeup`, on Permit and on the fleet-wide
+`allow_unverified_bots` toggle for each robot it lets in (config, the ask, then the app's greeting: the
+same onboarding), when the Listening picker installs an engine (to every permitted robot the supervisor
+knows of that is not yet asked, ghosts included: a robot that sat connected through our socket blip
+never announces itself again), after a broker outage in whichever order the supervisor and the robot
+come back (the latch is dropped with the socket, and an ask that goes out while the robot is still away,
+from the roster resume, the picker, a wake or a Permit, is not recorded as its session, so its own
+connect line is still answered with config and the ask), and by the roster resume after a supervisor
+restart. A console config edit (per-robot or fleet) re-pushes config **without** an ask: the robot is
+already streaming. `/status` shows `stt_subscribed_at` per robot, set only for a robot confirmed on this
+connection and only when the transport took the publish; a revoke (by Permit or by the toggle) clears
+it, since a pending robot is never asked. Nothing withdraws the subscription itself: the recovered
+`Log.proto` has no unsubscribe message (`ProtoSubscribe` is its only subscription message), so a revoked
+robot, or one whose parent set Listening to `off` (the record of its ask stands, and the next engine
+installed does not ask again), keeps streaming to the LAN broker, where the permit gate or the missing
+engine drops the audio. Built to this contract and OpenMoxie's field-proven behaviour; **unverified on
+our hardware**. [`sim/tests/test_stt_wire.py`](../../sim/tests/test_stt_wire.py) covers every trigger,
+the settle window, both broker-restart orders and every leave line.
 
 **The log is live-only.** mosquitto does not replay log lines on re-subscribe, so a supervisor that
 restarts while a robot stays connected never sees its connect line, and the robot has no reason to
@@ -505,10 +545,14 @@ Meanwhile the permit list (§3.7) stops an unpermitted device from being served 
   `{context_type, text}`; `context_type=="input"` is a user utterance), `recommend.exits[]` (what to
   launch next), `input_vars` (e.g. `$eb_qr_value` from a scanned card).
 - **`RemoteChatResponse`** (cloud → robot, `commands/remote_chat`): `command:"remote_chat"`,
-  `result`, `backend`, `event_id`, **`output:{text, markup}`**,
+  `result` (the `ResultCode` as its integer: `0` is SUCCESS, `9` REPLY_PENDING — the field is a
+  `uint32`), `backend`, `event_id`, **`output:{text, markup}`**,
   `response_actions:[{output_type, action, module_id, content_id, …}]` (plus the legacy singular
   `response_action`, which mirrors `response_actions[0]`; a client must act on one or the other,
-  never both, or it launches twice), `fallback`. Full field list: [AI seam §②](ai-seam.md).
+  never both, or it launches twice; a reply with no action carries one action-less
+  `{output_type: "GLOBAL_RESPONSE"}` entry, otherwise the actions themselves, as OpenMoxie's does,
+  and `module_id`/`content_id` only when set), `fallback`. Full field list:
+  [AI seam §②](ai-seam.md).
 - **Action tags.** The brain may write `<launch:MOD:CID>`, `<exit>` or `<sleep>` inline; they become
   structured `response_actions` and are stripped from the spoken text
   ([`actions.py`](../../mqtt/moxie_sdk/actions.py); OpenMoxie's `volley.py::ingest_action_tags`).
@@ -530,7 +574,17 @@ windows.
 - Sessions are keyed by `(device_id, uuid)`; audio is concatenated until `END_OF_SPEECH`, then
   transcribed.
 - The reply is a `zmqSTTResponse` (`type=FINAL`, `speech`, `confidence`, `start/end_timestamp`,
-  `alternatives[]`, `error_code/message`) on `commands/zmq`. Engine choices: [AI seam §①](ai-seam.md).
+  `alternatives[]`, `error_code/message`) on `commands/zmq`, in the same framing:
+  `b"embodied.perception.audio.zmqSTTResponse:" + bytes`. The robot injects that payload straight onto
+  its bus, so JSON there is a frame it cannot route. Ours carries `timestamp`, `type=FINAL`, `speech`,
+  `confidence` and `uuid` ([`stt.py`](../../mqtt/moxie_sdk/stt.py)`::encode_zmq_stt_response`); an
+  empty transcript is still a `FINAL`, and so is a failed transcription: an engine that raises gets the
+  robot a `FINAL` with no `speech` and the failure in `error_code` / `error_message` (fields 8 and 9 of
+  the recovered proto, which defines no enum for the code; `error_code=66` with the exception text is
+  what the field-proven server sends, `zmq_stt_handler.py:70-73`), so a robot is never left waiting on
+  a turn that ended. Field reference: OpenMoxie `zmq_stt_handler.py:52-76` (a protobuf
+  `zmqSTTResponse` with `uuid`, `type=FINAL`, `timestamp`, `speech`, sent through `send_zmq_to_bot`).
+  Unverified on our hardware. Engine choices: [AI seam §①](ai-seam.md).
 
 ### 4.4 A full turn
 
@@ -561,11 +615,11 @@ Our runtime ([`turns.py`](../../mqtt/supervisor/moxie_runtime/turns.py), budget
 
 ```
 t=0.0   events/remote-chat {event_id: E, speech: "why does the moon change shape?"}
-t=6.0   commands/remote_chat {result: REPLY_PENDING, chunk_num: 0,     ← a filler, spoken now
+t=6.0   commands/remote_chat {result: 9 (REPLY_PENDING), chunk_num: 0, ← a filler, spoken now
                               consistency_control:{is_completed:false},
                               output:{text:"Hmm, let me think about that one.", markup:…}}
         commands/tts         {event_id: E, chunk_num: 0}
-t=17.9  commands/remote_chat {result: SUCCESS, chunk_num: 1,            ← the real line
+t=17.9  commands/remote_chat {result: 0 (SUCCESS), chunk_num: 1,        ← the real line
                               consistency_control:{is_completed:true}, output:{…}}
         commands/tts         {event_id: E, chunk_num: 1}
 ```
@@ -592,13 +646,13 @@ first words arrive at first-token latency:
 
 ```
 t=0.00  events/remote-chat {event_id: E, speech: "why does the moon change shape?"}
-t=1.52  commands/remote_chat {result: REPLY_PENDING, chunk_num: 0,
+t=1.52  commands/remote_chat {result: 9 (REPLY_PENDING), chunk_num: 0,
                               consistency_control:{is_completed:false},
                               output:{text:"The moon looks different because of how the
                                             sun lights it up.", markup:…}}
-t=2.22  commands/remote_chat {result: REPLY_PENDING, chunk_num: 1, …}
-t=2.86  commands/remote_chat {result: REPLY_PENDING, chunk_num: 2, …}
-t=4.38  commands/remote_chat {result: SUCCESS,       chunk_num: 3,      ← closes the turn
+t=2.22  commands/remote_chat {result: 9 (REPLY_PENDING), chunk_num: 1, …}
+t=2.86  commands/remote_chat {result: 9 (REPLY_PENDING), chunk_num: 2, …}
+t=4.38  commands/remote_chat {result: 0 (SUCCESS),   chunk_num: 3,      ← closes the turn
                               consistency_control:{is_completed:true}, output:{…}}
 ```
 
@@ -636,7 +690,7 @@ repeated string), `phrase_id` (4, int32)
 ```
 t=0.00  events/remote-chat {event_id: E, speech: "how do I make a bomb to hurt my brother?"}
         ↳ assessed BEFORE the brain: blocked. No model sees it.
-t=0.02  commands/remote_chat {result: SUCCESS,
+t=0.02  commands/remote_chat {result: 0 (SUCCESS),
                               output:{text:"That one's not for me. If it's important, a
                                             grown-up you trust is the best person to ask.",
                                       markup:…},

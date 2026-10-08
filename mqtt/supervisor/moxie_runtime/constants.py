@@ -4,7 +4,26 @@ import re
 from moxie_sdk.cloud_config import LoggingPolicy
 
 CONNECT_RE = re.compile(r"connected from (.*) as (d_[a-f0-9-]+)", re.I)
-DISCONNECT_RE = re.compile(r"Client (d_[a-f0-9-]+) (?:closed its connection|disconnected)", re.I)
+# Every way mosquitto says a robot's session ended, so a robot that comes back is
+# re-onboarded (config + the STT subscribe) rather than left half-connected (C4). The
+# strings are from the `mosquitto` binary of the pinned eclipse-mosquitto:2.0.20 image
+# (`strings`, 2026-10-08) and from a live capture of its `$SYS/broker/log`:
+#   "Client d_x disconnected."                                  clean DISCONNECT packet
+#   "Client d_x disconnected due to ..." / ": <strerror>."      broker-side errors
+#   "Client d_x closed its connection."                         socket gone (a TCP reset too)
+#   "Client d_x has exceeded timeout, disconnecting."           keepalive expiry
+#   "Client d_x already connected, closing old connection."     the robot's new socket
+#                                                               displaced its old session
+#                                                               (logged at level E)
+#   "Client d_x been disconnected by administrative action."
+#   "Bad socket read/write on client d_x: ..."                  other socket errors
+# and from eclipse-mosquitto:1.6.15 (a distro-packaged broker), the same binary check:
+#   "Socket error on client d_x, disconnecting."
+# `DISCONNECT_RE.search(line)` has the id in whichever group matched (`_on_log`).
+DISCONNECT_RE = re.compile(
+    r"Client (d_[a-f0-9-]+) (?:closed its connection|disconnected|been disconnected|"
+    r"has exceeded timeout|already connected, closing old connection)"
+    r"|(?:Bad socket read/write on|Socket error on) client (d_[a-f0-9-]+)", re.I)
 
 # paho's third `connect()` argument is the keepalive, not a timeout (production-hardening.md
 # §4.1). 30 s halves paho's default so a half-open socket (NAT/Wi-Fi drop) is noticed within
