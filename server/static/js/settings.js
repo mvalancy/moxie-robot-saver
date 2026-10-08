@@ -112,6 +112,7 @@ function renderRobot(r){
     rb.textContent='Reboot (not available)';
     rb.onclick=null;
   }
+  lcWire(r);       // Unpair / Factory reset (js/robot.js)
   say('');
 }
 function flash(sel,txt){const b=$(sel),o=b.textContent;b.textContent=txt;setTimeout(()=>b.textContent=o,1200);}

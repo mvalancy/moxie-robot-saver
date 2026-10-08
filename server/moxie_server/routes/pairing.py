@@ -2,8 +2,8 @@
 
 Login without an email round trip, the whole pre-QR crypto dance server-side, the QR
 images (EC level L by default: the original app used ZXing L because Moxie's camera
-struggles with dense codes), Moxie Direct, and `simulate-robot-scan`, which completes a
-pairing with no hardware.
+struggles with dense codes), the factory-reset code, Moxie Direct, and
+`simulate-robot-scan`, which completes a pairing with no hardware.
 """
 from __future__ import annotations
 import base64
@@ -16,7 +16,7 @@ import sys
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from .. import crypto, db, diceware, supervisor
+from .. import crypto, db, diceware, lifecycle, supervisor
 from ..auth import current_user, mint_tokens, read_json
 from .account import create_child_row, user_id_for
 from .robots import register_pairing
@@ -114,6 +114,18 @@ def endpoint_qr_png(host: str = "", port: int = 8883, ec: str = "l"):
     return png(moxie_endpoint_qr.build_endpoint_qr(host or lan_ip(), port), ec)
 
 
+@router.get("/local/factory-reset/payload")
+def factory_reset_payload():
+    """The `restore_factory` setup code and its instructions, each step labelled with
+    where it comes from. Public like the other QR routes: the code is fixed and documented."""
+    return lifecycle.reset_view()
+
+
+@router.get("/local/factory-reset/qr.png")
+def factory_reset_qr_png(ec: str = "l"):
+    return png(lifecycle.RESTORE_FACTORY_QR, ec)
+
+
 def _ap():
     ssid, pw = os.environ.get("MOXIE_AP_SSID"), os.environ.get("MOXIE_AP_PASSWORD")
     wifi = (moxie_qr.encode_wifi_only(moxie_qr.WifiInfo(ssid, pw, band=moxie_qr.Band.ONLY_24G))
@@ -145,10 +157,11 @@ async def simulate_robot_scan(request: Request):
     the pending pairing by SHA256(seed), bind a robot record to that parent and child.
     Body: `{qr_payload, device_id?}`.
 
-    A pairing completes once; a replayed QR is a 409. With `device_id` (the MQTT
-    `d_<uuid>`, which the QR does not carry) it also permits that robot on the supervisor
-    and remembers the id on the record for later device commands — best-effort: a down
-    supervisor leaves the robot pending, it never fails the pairing."""
+    A pairing completes once; a replayed QR is a 409, and one voided by an unpair is a
+    410. With `device_id` (the MQTT `d_<uuid>`, which the QR does not carry) it also
+    permits that robot on the supervisor and remembers the id on the record for later
+    device commands — best-effort: a down supervisor leaves the robot pending, it never
+    fails the pairing."""
     body = await read_json(request)
     decoded = moxie_qr.decode_proto(body.get("qr_payload", ""))
     seed = decoded.get("secret_key")
@@ -158,6 +171,9 @@ async def simulate_robot_scan(request: Request):
     pairing = db.q1("SELECT * FROM pairings WHERE id_hash=?", (id_hash,))
     if not pairing:
         raise HTTPException(404, "no pending pairing matches this QR")
+    if pairing["consumed"] == db.PAIRING_VOID:
+        raise HTTPException(410, "this pairing QR was cancelled when a robot was unpaired "
+                                 "from this account — make a new one")
     if pairing["consumed"]:
         raise HTTPException(409, "this pairing QR has already been used")
     keys = crypto.keys_from_seed(seed)      # the robot derives its identity from the seed
@@ -182,7 +198,7 @@ async def simulate_robot_scan(request: Request):
           " VALUES(?,?,?,?,?,?,?)",
           (rid, pairing["user_id"], pairing["child_id"], json.dumps(attrs),
            json.dumps({"volume": 0.7, "screen-brightness": 0.8}), db.now_s(), db.now_s()))
-    db.ex("UPDATE pairings SET consumed=1 WHERE id_hash=?", (id_hash,))
+    db.ex("UPDATE pairings SET consumed=? WHERE id_hash=?", (db.PAIRING_USED, id_hash))
     return out
 
 
@@ -190,8 +206,12 @@ async def simulate_robot_scan(request: Request):
 def local_state(u=Depends(current_user)):
     def rows(rs):
         return [{"id": r["id"], **json.loads(r["attributes"])} for r in rs]
+    # Each robot row also names the child it is bound to: the unpair sheet words its
+    # erase choice with that child's name.
+    robots = [{"id": r["id"], **json.loads(r["attributes"]), "child_id": r["child_id"]}
+              for r in db.robots_of(u["id"])]
     return {"user": {"id": u["id"], **json.loads(u["attributes"])},
-            "children": rows(db.children_of(u["id"])), "robots": rows(db.robots_of(u["id"]))}
+            "children": rows(db.children_of(u["id"])), "robots": robots}
 
 
 @router.get("/healthz")
