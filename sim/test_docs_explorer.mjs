@@ -397,19 +397,29 @@ try {
        `the README's ${name} link should open ${REPO}/blob/main/${name} in a new tab (got ${JSON.stringify(l)})`);
   }
 
-  // An in-page heading link, clicked, scrolls to its heading AND leaves the doc in the URL,
-  // so a reload lands on the same doc (it used to land on the home doc). The link is one the
-  // sweep found whose heading starts far below the fold, so no scroll means no pass.
+  /* 12) An in-page heading link, clicked, scrolls to its heading AND leaves the doc in the URL,
+   * so a reload lands on the same doc (it used to land on the home doc). The link is one the
+   * sweep found whose heading starts far below the fold, so no scroll means no pass. */
   ok(!!inPage, "the sweep should have found an in-page heading link far down its doc to click");
   if (inPage) {
-    await page.goto(base + "/docs.html#" + inPage.doc, { waitUntil: "domcontentloaded" });
-    await page.waitForFunction((s) => !!document.querySelector(`#content article a[href="${s}"]`), { timeout: 8000 }, inPage.attr)
-      .catch(() => {});
-    await page.evaluate((s) => { const a = document.querySelector(`#content article a[href="${s}"]`); if (a) a.click(); }, inPage.attr);
+    const LINK = `#content article a[href="${inPage.attr}"]`;
     const target = decodeURIComponent(inPage.attr.slice(inPage.attr.indexOf("#", 1) + 1));
+    const openDocAtTop = async () => {
+      await page.goto(base + "/docs.html#" + inPage.doc, { waitUntil: "domcontentloaded" });
+      await page.waitForFunction((s) => !!document.querySelector(s), { timeout: 8000 }, LINK).catch(() => {});
+    };
+    /* The target, and where focus is: its tag and text, and whether it comes after the target. */
+    const where = () => page.evaluate((id) => {
+      const el = document.getElementById(id) || [...document.querySelectorAll("#content article h1, #content article h2, #content article h3, #content article h4")]
+        .find((x) => x.textContent.toLowerCase().replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-").replace(/-+/g, "-") === id);
+      const ae = document.activeElement, main = document.getElementById("main");
+      return { scrollTop: Math.round(main.scrollTop), onTarget: !!el && ae === el,
+               afterTarget: !!el && !!ae && ae !== el && !!(el.compareDocumentPosition(ae) & Node.DOCUMENT_POSITION_FOLLOWING),
+               focus: ae ? `${ae.tagName} "${ae.textContent.trim().slice(0, 40)}"` : null };
+    }, target);
     /* Landed = the hash names the doc AND the heading, and the heading sits at the top of the
      * reading pane (or the pane is scrolled to its end, for a heading too low to reach it). */
-    const landed = await page.waitForFunction((h, id) => {
+    const landed = () => page.waitForFunction((h, id) => {
       if (location.hash !== h) return false;
       const el = document.getElementById(id) || [...document.querySelectorAll("#content article h1, #content article h2, #content article h3, #content article h4")]
         .find((x) => x.textContent.toLowerCase().replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-").replace(/-+/g, "-") === id);
@@ -418,13 +428,43 @@ try {
       const top = el.getBoundingClientRect().top - main.getBoundingClientRect().top;
       return top > -5 && (top < 150 || main.scrollTop + main.clientHeight >= main.scrollHeight - 2);
     }, { timeout: 8000 }, inPage.attr, target).then(() => true, () => false);
-    ok(landed, `clicking ${inPage.attr} in ${inPage.doc} should scroll to its heading with the doc kept in the URL ` +
-               `(hash ${await page.evaluate(() => location.hash)})`);
+    /* The pane's scroll once it has stopped moving (smooth scrolling animates). */
+    const settled = () => page.evaluate(() => new Promise((resolve) => {
+      const main = document.getElementById("main"), cap = setTimeout(() => resolve(main.scrollTop), 4000);
+      let last = -1, still = 0;
+      const tick = () => { const s = main.scrollTop; still = s === last ? still + 1 : 0; last = s;
+        if (still >= 12) { clearTimeout(cap); resolve(s); } else requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }));
+    await openDocAtTop();
+    await page.evaluate((s) => { const a = document.querySelector(s); if (a) a.click(); }, LINK);
+    ok(await landed(), `clicking ${inPage.attr} in ${inPage.doc} should scroll to its heading with the doc kept in the URL ` +
+                       `(hash ${await page.evaluate(() => location.hash)})`);
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForFunction((p) => !!document.querySelector(`a.doc.active[data-path="${p}"]`), { timeout: 8000 }, inPage.doc)
       .catch(() => {});
     const after = await page.evaluate(() => { const a = document.querySelector("a.doc.active"); return a ? a.dataset.path : null; });
     ok(after === inPage.doc, `a reload after that click should reopen ${inPage.doc} (got ${after})`);
+
+    /* …and by KEYBOARD. The href names no element, so the browser moves nothing: the explorer
+     * has to put focus on the heading, or the next Tab resumes at the link, far above, and
+     * drags the pane back up the doc (it did, 2026-10-08: landed 17,486 px down, one Tab, 3,651).
+     * A fresh load, so the reload above has not already scrolled the pane there. */
+    await page.goto("about:blank");
+    await openDocAtTop();
+    await page.focus(LINK).catch(() => {});
+    await page.keyboard.press("Enter");
+    const keyLanded = await landed();
+    await settled();
+    const onEnter = await where();
+    ok(keyLanded && onEnter.onTarget,
+       `Enter on ${inPage.attr} should scroll to its heading and move focus there ` +
+       `(landed ${keyLanded}, focus on ${onEnter.focus}, pane at ${onEnter.scrollTop})`);
+    await page.keyboard.press("Tab");
+    const pane = await settled(), onTab = await where();
+    ok(onTab.afterTarget && pane >= onEnter.scrollTop - 2,
+       `the next Tab should continue below that heading, not jump back up the doc ` +
+       `(focus on ${onTab.focus}, pane ${onEnter.scrollTop} -> ${Math.round(pane)})`);
   }
 
   /* Forgive exactly the off-origin refusals this suite caused itself, and nothing else. */

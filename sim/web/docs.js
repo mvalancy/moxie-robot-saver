@@ -199,8 +199,14 @@
       var href=a.getAttribute("href");
       if(/^(https?:|mailto:)/.test(href)){ if(/^https?:/.test(href)){a.target="_blank";a.rel="noopener";} return; }
       if(href.charAt(0)==="#"){
+        /* That href names no element, so the browser neither scrolls to the heading nor moves
+           the keyboard's place to it. Do both, or the next Tab resumes at this link, far above,
+           and drags the pane back up the doc. */
         if(href.length>1){ a.setAttribute("href","#"+fromPath+href);
-          a.onclick=function(){ var el=anchorEl(root, href); if(el) el.scrollIntoView({block:"start",behavior:reduce?"auto":"smooth"}); }; }
+          a.onclick=function(){ var el=anchorEl(root, href); if(!el) return;
+            el.scrollIntoView({block:"start",behavior:reduce?"auto":"smooth"});
+            if(!el.hasAttribute("tabindex")) el.setAttribute("tabindex","-1");
+            el.focus({preventScroll:true}); }; }
         return;
       }
       if(/^([a-z][a-z0-9+.-]*:|\/\/)/i.test(href)) return;            // another scheme: leave alone
