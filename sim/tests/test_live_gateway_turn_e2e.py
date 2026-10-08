@@ -41,6 +41,7 @@ pytest.importorskip("numpy", reason="the speech/tone guard needs numpy")
 import helpers_audio as A                                     # noqa: E402
 import helpers_stack as S                                     # noqa: E402
 from helpers_runtime import load_repo_dotenv                  # noqa: E402
+from moxie_sdk.types import ResultCode                        # noqa: E402
 
 load_repo_dotenv()          # mqtt/.env of this tree or the main checkout
 
@@ -91,7 +92,7 @@ def turn(tmp_path_factory):
 def test_one_real_turn_round_trips_through_the_assembled_appliance(turn):
     assert turn["ok"], turn["errors"]
     reply = turn["vm"].reply_payload
-    assert reply["command"] == "remote_chat" and reply["result"] == "SUCCESS", reply
+    assert reply["command"] == "remote_chat" and reply["result"] == ResultCode.SUCCESS, reply
     assert reply["backend"] == "router", reply
     text = (reply.get("output") or {}).get("text", "")
     assert text.strip(), reply
