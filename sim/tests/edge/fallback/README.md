@@ -9,6 +9,8 @@ lines earlier ones extracted.
 - [`02_inventory.mjs`](02_inventory.mjs) — §3–6: the fallback is wired; every utterable line has its clip; the ambient layer is server-free.
 - [`03_ambient_probe.mjs`](03_ambient_probe.mjs) — §7–8: the degraded line through the real `ambient.js`; when the Piper probe may fire.
 - [`04_child_voice.mjs`](04_child_voice.mjs) — §8b–9: the child's voice is clip-or-nothing; end to end on the real assets; the renderer keeps every group.
+- [`05_stub_matchers.mjs`](05_stub_matchers.mjs) — §10–12: the three openers, a goodbye (only where the hosted brain would close, with her wave) and her name get matched lines; the fallback asks nothing; her register.
+- [`06_pretend_line.mjs`](06_pretend_line.mjs) — §13: on the real `mic.js`, `stub.js`, `bridge/` and `cloud-transport.js`, an STT failure's scripted line is a "Pretend line" row, never a "You" row, and spends nothing.
 
 ---
 📖 [Edge modules](../README.md) · [Back to top](../../../../README.md)
