@@ -343,6 +343,28 @@ def test_a_stored_value_the_whitelist_now_refuses_is_dropped_at_load(tmp_path, c
         assert key in said[0]
 
 
+def test_a_hand_edited_value_is_canonicalized_at_load_never_pushed_raw(tmp_path, capsys):
+    """Saves are always canonical, so only a hand edit reaches this. The whitelist's own
+    canonical value is what loads: `audio_volume: 30` (the console's 0-100 slider) comes
+    back as 0.3, not as a volume of 30 pushed to the robot, and a data-sharing choice
+    written by name comes back as the number every policy reader resolves, rather than
+    a string they cannot read (which would quietly mean the default)."""
+    from moxie_sdk.cloud_config import LoggingPolicy
+    path = _record(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"audio_volume": 30, "screen_brightness": 50,
+                                "logging_policy": "NO_DATA", "audio_wake_set": "ON"}))
+    rt = _runtime(tmp_path, devices=("d_one",))
+    assert rt._config_overrides["d_one"] == {
+        "audio_volume": 0.3, "screen_brightness": 0.5,
+        "logging_policy": int(LoggingPolicy.NO_DATA), "audio_wake_set": "on"}
+    cfg = rt._push_config("d_one")
+    assert (cfg["audio_volume"], cfg["screen_brightness"], cfg["audio_wake_set"]) == \
+        (0.3, 0.5, "on")
+    assert rt.safety_policy("d_one") == LoggingPolicy.NO_DATA
+    assert "dropped" not in capsys.readouterr().out
+
+
 def test_a_brain_the_current_pin_refuses_is_dropped_at_load(tmp_path, monkeypatch):
     """`MOXIE_APP` is the operator's statement about the box (brain-picker.md), so a pick
     saved before the pin is not restored under it. Loading writes nothing: a later boot
