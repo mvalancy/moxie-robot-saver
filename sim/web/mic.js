@@ -56,7 +56,8 @@
   /* SILENCE AUTO-STOP, which must never cut somebody off: SILENCE_END_MS applies only after
    * speech was heard (well past a breath or a thinking pause); NO_SPEECH_MS is an accidental
    * press or a muted mic. SPEECH_RMS is generous (room tone ~0.005, speech 0.05+): erring to
-   * "speech" only lengthens a recording, and the hard cap stays the outer bound. */
+   * "speech" only lengthens a recording, and the hard cap stays the outer bound. It also
+   * decides what is SENT: a measured clip with no block over it is dropped (`onstop`). */
   var SPEECH_RMS = 0.02;
   var SILENCE_END_MS = 1100;
   var NO_SPEECH_MS = 5000;
