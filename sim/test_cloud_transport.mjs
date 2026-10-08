@@ -4,7 +4,10 @@
  * The hazard: with no MQTT broker `bridge/speakLocally` speaks IMMEDIATELY, so a transport
  * that routed the chat message before the TTS message would play two voices at once. §4 drives
  * that naive order through the real bridge and proves the double voice happens; §2–3 prove the
- * shipped voice-first order makes it impossible. Sections live in `sim/tests/edge/transport/`.
+ * shipped order (voice first, or the words held for an EXPECTED voice) makes it impossible, and
+ * §8–10 measure one voice per reply on the real voice/ — no line silent after a voiced one, no
+ * stand-in voice on a slow turn, a filler that never talks over her, an honest audio unlock.
+ * Sections live in `sim/tests/edge/transport/`.
  *
  *   node sim/test_cloud_transport.mjs
  */
@@ -17,6 +20,7 @@ await runSections(new URL("./tests/edge/transport/", import.meta.url), [
   "03_degraded.mjs",
   "04_talk_scripted.mjs",
   "05_bot_control.mjs",
+  "06_voice_latch.mjs",
 ]);
 
 if (fails.length) {
