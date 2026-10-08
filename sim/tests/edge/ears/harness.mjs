@@ -55,7 +55,9 @@ globalThis.fetch = async (url, opt) => {
 };
 
 /** A byte string that sniffs as a real container. `kind` picks the magic number, which is
- *  the whole point of the sniffer under test. */
+ *  the whole point of the sniffer under test. A `wav` of 44 bytes or more carries a REAL
+ *  16 kHz mono 16-bit header (what `mic.js::encodeWav` writes): the route refuses a RIFF/WAVE
+ *  whose `fmt ` it cannot read (03_route_duration.mjs A-FMT keeps that junk shape). */
 export function clip(n, kind) {
   const b = new Uint8Array(Math.max(n, 16));
   const magic = {
@@ -65,15 +67,21 @@ export function clip(n, kind) {
     mp3: [0x49, 0x44, 0x33, 0x04],               // "ID3"
     junk: [0x7b, 0x22, 0x65, 0x72],              // `{"er` — a JSON body, not audio
   }[kind || "wav"];
+  for (let i = 12; i < b.length; i++) b[i] = i & 0xff;
   if (!kind || kind === "wav") {
     b.set([0x52, 0x49, 0x46, 0x46], 0);          // "RIFF"
     b.set([0x57, 0x41, 0x56, 0x45], 8);          // "WAVE"
+    if (b.length >= 44) {
+      b.set(wavlib.writeWav(new Uint8Array(0), { sampleRate: 16000, channels: 1 }), 0);
+      const v = new DataView(b.buffer);
+      v.setUint32(4, b.length - 8, true);        // RIFF size
+      v.setUint32(40, b.length - 44, true);      // data size: the rest is the "audio"
+    }
   } else if (kind === "mp4") {
     b.set([0x66, 0x74, 0x79, 0x70], 4);          // "ftyp" at offset 4
   } else {
     b.set(magic, 0);
   }
-  for (let i = 12; i < b.length; i++) b[i] = i & 0xff;
   return b;
 }
 
@@ -218,6 +226,8 @@ export function bootMic(o) {
     mediaDevices: {
       getUserMedia: (c) => {
         gum.push(c);
+        // `gumError`: what a real browser rejects with (a DOMException NAME, e.g. NotFoundError).
+        if (opts.gumError) return Promise.reject(opts.gumError);
         return opts.denyMic
           ? Promise.reject(new Error("NotAllowedError"))
           : Promise.resolve({ getTracks: () => [{ stop() {} }] });

@@ -128,7 +128,9 @@ const snap = (over) => Object.assign({
   eq(v.badge.textContent, "HOSTED DEMO · SCRIPTED", "budget spent: the badge says scripted");
   eq(v.pill.hidden, false, "budget spent: the pill explains");
   ok(v.el("mic-btn").classList.contains("needs-backend"), "budget spent: the mic is marked again");
-  ok(/need a locally/.test(v.bannerText), "budget spent: the banner goes back to the honest one");
+  // NOT "need a locally-run backend": this deployment HAS a brain, out until the budget resets.
+  ok(/brain is resting/.test(v.bannerText) && /try again later/.test(v.bannerText) && !/locally/.test(v.bannerText),
+     `budget spent: the banner says her brain is resting, not that the site needs a local backend (${v.bannerText})`);
 }
 {
   // mode.js absent entirely (a fork that did not copy it): the page must be today's.
