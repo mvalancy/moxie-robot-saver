@@ -384,6 +384,84 @@ def merge_config_layers(*layers) -> dict:
     return out
 
 
+# --- the child's name: the parent app's record, per robot ----------------------------
+#
+# The name Moxie says comes from the parent's account (`server/moxie_server/child_profile.py`
+# posts it as `child: {nickname, birthday?}` on the robot's own layer); the appliance's
+# profile (`MOXIE_CHILD_NICKNAME`) is the fallback when no account names the child. It is
+# read into every brain prompt and pushed as `child_pii`, so it is checked by ONE rule,
+# the one the Try it card already used for a name typed for a try (`tryit.py` imports it).
+
+#: The longest name, counted once whitespace runs are collapsed.
+NAME_MAX_CHARS = 40
+#: Unicode letters and digits, spaces, periods, apostrophes, hyphens: no tags, no braces.
+NAME_RE = _re.compile(r"^[\w .'\-]+$")
+#: Every line boundary `str.splitlines` knows: a name is one line.
+_LINE_BREAK = _re.compile(r"[\n\r\v\f\x1c-\x1e\x85  ]")
+_YMD = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
+#: The words a refusal uses. Never the name itself: a refusal is echoed to the console.
+NAME_RULE = (f"A child's name is one line of up to {NAME_MAX_CHARS} letters, digits, "
+             f"spaces, periods, apostrophes or hyphens.")
+
+
+def clean_child_name(raw) -> str:
+    """The child's name as Moxie will say it, or ValueError (the console answers 400).
+
+    Whitespace runs collapse to one space and the ends are trimmed, then the Try it rule
+    applies (`NAME_RE`, at most `NAME_MAX_CHARS`). Stricter than a try twice over: a
+    name is required (a try may leave it blank), and a line break is refused rather than
+    folded into a space."""
+    if not isinstance(raw, str):
+        raise ValueError(f"The child's nickname must be text. {NAME_RULE}")
+    if _LINE_BREAK.search(raw):
+        raise ValueError(f"The child's nickname has a line break. {NAME_RULE}")
+    name = " ".join(raw.split())
+    if not name:
+        raise ValueError("The child's nickname is empty: send a name, or null to clear it.")
+    if len(name) > NAME_MAX_CHARS or not NAME_RE.match(name):
+        raise ValueError(NAME_RULE)
+    return name
+
+
+def _child(value):
+    """`{"nickname", "birthday"?}` → a clean copy, or None to clear. Other keys (pronouns,
+    notes) are dropped: nothing in the parent app collects them."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError('child must be {"nickname": "…", "birthday": "YYYY-MM-DD"} '
+                         'or null')
+    out = {"nickname": clean_child_name(value.get("nickname"))}
+    birthday = value.get("birthday")
+    if birthday not in (None, ""):
+        import datetime as _dt
+        try:
+            if not (isinstance(birthday, str) and _YMD.match(birthday)):
+                raise ValueError
+            _dt.date.fromisoformat(birthday)
+        except ValueError:
+            raise ValueError("The child's birthday must be a date, YYYY-MM-DD.") from None
+        out["birthday"] = birthday
+    return out
+
+
+def child_profile_for(layer, default):
+    """The `ChildProfile` a robot's config, brains, hello, `/status` and day plan use: the
+    parent's record from this robot's own layer (`child`), else `default` (the appliance's
+    profile, returned as is). Pure. A value the whitelist would refuse (a hand-edited
+    record) is ignored, never spoken."""
+    record = layer.get("child") if isinstance(layer, dict) else None
+    if not isinstance(record, dict):
+        return default
+    try:
+        clean = _child(record)
+    except ValueError:
+        return default
+    import dataclasses
+    return dataclasses.replace(default, nickname=clean["nickname"],
+                               birthday_iso=clean.get("birthday"))
+
+
 def sanitize_config_overrides(raw: dict) -> dict:
     """Parent-console config edit → clean, JSON-safe kwargs for build_robot_cloud_config.
 
@@ -436,12 +514,16 @@ def sanitize_config_overrides(raw: dict) -> dict:
                 raise ValueError(f"{str(value)!r} is not a brain this appliance knows. "
                                  f"Choose one of: {brains.offered()}.")
             out[brains.CONFIG_KEY] = name
+    if "child" in raw:                                   # ChildDecrypted.nickname (3)
+        # The parent's record for this robot's child (`child_profile_for`); `null` clears it.
+        out["child"] = _child(raw["child"])
     return out
 
 
-#: Config keys that ride the config layers but are the SERVER's business, never sent to
-#: the robot (`build_robot_cloud_config` would raise `TypeError` on them).
-SERVER_ONLY_KEYS = (brains.CONFIG_KEY,)
+#: Config keys that ride the config layers but are never builder kwargs
+#: (`build_robot_cloud_config` would raise `TypeError` on them): `brain` is the server's
+#: business alone; `child` reaches the robot as `child_pii`, through `child_profile_for`.
+SERVER_ONLY_KEYS = (brains.CONFIG_KEY, "child")
 
 
 def robot_config_kwargs(cfg) -> dict:

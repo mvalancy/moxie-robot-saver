@@ -433,7 +433,7 @@ class ConnectionMixin:
             self._note("robot", f"🤖 robot back after the outage: {device_id} — "
                                 f"re-pushing config")
         else:
-            robot = RobotContext(device_id=device_id, child=self.child)
+            robot = RobotContext(device_id=device_id, child=self.child_for(device_id))
             self.robots[device_id] = robot
             print(f"[runtime] 🤖 robot connected: {device_id}", flush=True)
             self._note("robot", f"🤖 robot connected: {device_id}")
