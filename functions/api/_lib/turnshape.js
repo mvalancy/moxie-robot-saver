@@ -164,12 +164,15 @@ const CLOSING = "(?:" + [
   "bye+", "bye[- ]?bye", "buh[- ]?bye", "good[- ]?bye",
   "good[- ]?night", "night[- ]?night", "nighty[- ]?night", "g'?night",
   "see (?:you|ya|u)(?: (?:later|soon|tomorrow|next time|around|again|in a bit))?", "cya", "c u",
-  "laters?", "catch (?:you|ya) later", "talk (?:to you )?(?:later|soon|tomorrow)", "ttyl",
+  // A bare "later" is not here: it is the natural deferral of an OFFER ("Want to hear a
+  // story?" — "later!"), and a false hit hangs up the turn.
+  "catch (?:you|ya) later", "talk (?:to you )?(?:later|soon|tomorrow)", "ttyl",
   // Leaving, said plainly. "I have to go to school tomorrow" is a fact, not a leave-taking:
   // the only destinations allowed are the ones a child leaves a conversation FOR.
   "(?:i |i'?ve )?(?:gotta|got to|have to|hafta|need to|must|better) (?:go|leave|get going|run)(?: now)?",
   "(?:i(?:'m| am)? )?(?:going|gotta go|got to go|have to go|need to go|off) to (?:bed|sleep|eat|have dinner)(?: now)?",
-  "(?:i'?m|i am) (?:leaving|off|going now|going home|heading out|done talking|done chatting|done playing|done for today|done for now)(?: now)?",
+  // "done playing" is not here either: it ends a game as often as it ends the visit.
+  "(?:i'?m|i am) (?:leaving|off|going now|going home|heading out|done talking|done chatting|done for today|done for now)(?: now)?",
   "(?:it'?s |its |it is )?(?:my )?bed ?time(?: now)?", "time for bed", "time to (?:go|sleep)(?: now)?",
   "(?:my )?(?:mom|mum|mommy|mummy|dad|daddy|mama|papa|grandma|grandpa|parents?) (?:says?|said) " +
     "(?:it'?s |its |it is )?(?:bed ?time|time for bed|time to go|time for dinner|dinner ?time|i have to go|i need to go|to come|come)",
@@ -179,10 +182,16 @@ const COMPANION = "(?:[\\s,!.]*(?:(?:i )?love you|thanks?|thank you|that was fun
 const ONE = CLOSING + TAIL + NAME + COMPANION + NAME;
 const GOODBYE = new RegExp("^" + LEAD_IN + ONE + "(?:[\\s,!.]*" + ONE + ")?[\\s.!,]*$", "i");
 
+/** What a phone keyboard adds without changing the words: a curly apostrophe ("I’m going
+ *  to bed"), and a waving hand, a heart or a smiley after the goodbye. */
+const CURLY_APOSTROPHE = /[‘’ʼ]/g;
+const TRAILING_DECORATION = /(?:\s|[.!,]|:-?[)D]|;-?\)|<3|\p{Extended_Pictographic}|\p{Emoji_Modifier}|️|‍)+$/u;
+
 /** Whether the child's whole line is a leave-taking. Pure; pinned both ways by
  *  `sim/tests/edge/demo_proxy/10_goodbye_close.mjs`. */
 export function isGoodbye(text) {
-  const line = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+  const line = String(text == null ? "" : text)
+    .replace(CURLY_APOSTROPHE, "'").replace(TRAILING_DECORATION, "").replace(/\s+/g, " ").trim();
   return !!line && GOODBYE.test(line);
 }
 

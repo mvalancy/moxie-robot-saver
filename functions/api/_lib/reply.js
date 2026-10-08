@@ -30,6 +30,11 @@ function scanObjects(body) {
       if (esc) esc = false;
       else if (c === "\\") esc = true;
       else if (c === '"') inStr = false;
+    } else if (depth === 0 && body.slice(i, i + 10).toLowerCase() === "```mermaid") {
+      // A fenced diagram's braces are drawing (`B{Cold?}` is a decision node), not an
+      // envelope: skip to its closing fence. An unclosed fence runs to the end.
+      const end = body.indexOf("```", i + 10);
+      i = end < 0 ? body.length : end + 2;
     } else if (c === '"' && depth > 0) {
       inStr = true;
     } else if (c === "{") {
@@ -39,6 +44,17 @@ function scanObjects(body) {
     }
   }
   return { objects, open: start >= 0 ? body.slice(start) : "" };
+}
+
+/** The pieces of `text` around and including its ```mermaid fences: prose at the even
+ *  indexes, a fence at every odd one. Diagrams are set aside this way wherever braces are
+ *  read or removed, because inside a fence a brace is syntax and a newline is a line. */
+const FENCE_SPLIT = /(```mermaid[\s\S]*?```)/i;
+const proseAndFences = (text) => String(text).split(FENCE_SPLIT);
+
+/** `text` with every brace outside a fence removed. Not flattened. */
+function braceless(text) {
+  return proseAndFences(text).map((part, i) => (i % 2 ? part : part.replace(/[{}]/g, ""))).join("");
 }
 
 /** A JSON string's escapes undone; the raw text when it was not valid JSON after all. */
@@ -95,6 +111,12 @@ function readEnvelope(text, unfinished) {
  * `upstream_down`, like any empty completion. Measured offline before this: 9 of 11 served
  * shapes reached the TTS ticket with the braces in them.
  *
+ * The brace claim is made true by a LAST PASS over `say` itself, not by the shapes above
+ * being exhaustive: a `say` that is itself an envelope (a model quoting its own format) is
+ * unwrapped once, and any brace still standing is dropped. The one place a brace survives
+ * is inside a ```mermaid fence, where it is a decision node and `splitDiagram` takes the
+ * whole fence out of the spoken text before anything is said.
+ *
  * @returns {{text: string, chosen: {mood?: string, gesture?: string}|null, diagram: string}}
  */
 export function parseExpressive(raw) {
@@ -102,8 +124,11 @@ export function parseExpressive(raw) {
   const plain = { text: line, chosen: null, diagram: "" };
   if (!line) return plain;
 
-  // A reasoning model's <think> block is never spoken; an unclosed one runs to the end.
-  let body = line.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/i, "").trim();
+  // A reasoning model's <think> block is never spoken; an unclosed one runs to the end, and
+  // a block the chat template opened arrives with only its closing tag — everything before
+  // that tag is the model talking to itself.
+  let body = line.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/i, "");
+  body = body.replace(/^[\s\S]*<\/think>/i, "").trim();
   // A ```json (or bare) fence around the envelope goes; a ```mermaid fence is a diagram and stays.
   body = body.replace(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi, "$1").trim();
   if (!body.includes("{")) return body === line ? plain : { text: body, chosen: null, diagram: "" };
@@ -121,7 +146,25 @@ export function parseExpressive(raw) {
     let prose = body;
     for (const o of objects) prose = prose.replace(o, " ");
     if (open) prose = prose.replace(open, " ");
-    return { text: prose.replace(/[{}]/g, " ").replace(/\s+/g, " ").trim(), chosen: null, diagram: "" };
+    // The words lose their braces and are flattened; a diagram among them keeps both.
+    const text = proseAndFences(prose)
+      .map((part, i) => (i % 2 ? part : part.replace(/[{}]/g, "").replace(/\s+/g, " ")))
+      .join("").trim();
+    return { text, chosen: null, diagram: "" };
+  }
+  if (say.includes("{")) {
+    // The last pass. One level of nesting is read (the inner fields fill gaps, never
+    // overrule); whatever brace is left outside a fence is not for a child to hear.
+    const inner = scanObjects(say);
+    const nested = {};
+    for (const o of inner.objects) Object.assign(nested, readEnvelope(o, false));
+    if (inner.open) Object.assign(nested, readEnvelope(inner.open, true));
+    if (typeof nested.say === "string" && nested.say.trim()) {
+      say = nested.say.trim();
+      for (const k of ["mood", "gesture", "diagram"]) if (merged[k] === undefined && nested[k] !== undefined) merged[k] = nested[k];
+    }
+    say = braceless(say).trim();
+    if (!say) return { text: "", chosen: null, diagram: "" };
   }
 
   const chosen = {};
