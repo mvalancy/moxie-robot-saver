@@ -360,7 +360,8 @@ class FleetMixin:
     # ---- the per-robot layer on disk: settings survive a restart ----
     # `robots/<id>/config.json` holds one robot's layer of `effective_config` (volume,
     # bedtime, look, brain pick, data sharing, ...): only what the console's whitelist,
-    # `sanitize_config_overrides`, accepts. Every `update_config` rewrites it; it is read
+    # `sanitize_config_overrides`, accepts. Every `update_config` rewrites it (a record
+    # that failed closed waits for a parent's save, `_fail_closed`); it is read
     # back ONCE, at construction, before the transcript sweep, because brain, safety,
     # lifecycle and the status server read `_config_overrides` directly. Telehealth's
     # `moxie_mode` is not in the whitelist, so it is not kept: its session lives in RAM,
