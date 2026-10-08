@@ -85,6 +85,38 @@ async def preview_line(device_id: str, request: Request):
         "icons": bool(body.get("icons")), "sfx": bool(body.get("sfx"))}))
 
 
+# --- 💬 Try it: the brain, without a robot ----------------------------------------------
+#: The supervisor holds a try for up to its own 30 s deadline; the proxy waits longer, so
+#: the sentence a parent reads is the supervisor's, not a bare timeout.
+TRYIT_PROXY_TIMEOUT_S = 40
+
+
+@router.get("/local/tryit")
+def tryit_options(device_id: str = ""):
+    """The 💬 card's choices: who answers this robot (or, with no robot, the appliance)
+    and which layer decided, what else may answer, the installed conversations, the
+    child's name, the limits and what is left of the hour's tries."""
+    path = dq("/tryit", device_id) if device_id else "/tryit"
+    return proxy("GET", path, fleet.normalize_tryit_options, timeout=10)
+
+
+@router.post("/local/tryit")
+def tryit_turn(body: dict = Body(default=None)):
+    """One preview turn through the robot's own brain: `{"speech", "history",
+    "device_id"?, "brain"?, "module"?, "nickname"?}`. Never published to a robot and
+    never remembered; the session travels in the request. The supervisor validates and
+    bounds it (nothing is checked here). A plain `def`, so FastAPI runs it on a worker
+    thread: a try holds its call for as long as the brain takes, and the rest of the
+    console keeps answering meanwhile."""
+    # UTF-8, not \uXXXX escapes: a non-Latin session costs half the bytes of the 64 KiB cap.
+    out, code = sv.call("POST", "/tryit", json.dumps(body or {}, ensure_ascii=False).encode(),
+                        TRYIT_PROXY_TIMEOUT_S)
+    if code == 503 and "timed out" in str(out.get("detail") or "").lower():
+        why = f"The supervisor did not answer within {TRYIT_PROXY_TIMEOUT_S} s."
+        out, code = {"ok": False, "kind": "timeout", "error": why, "reason": why}, 504
+    return reply(fleet.normalize_tryit(out), code)
+
+
 # --- 📈 insights, 🔌 connection, 🛡️ safety ------------------------------------------------
 @router.get("/local/robots/{device_id}/telemetry")
 def robot_telemetry(device_id: str, limit: int = 20, days: int = 7):

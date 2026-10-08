@@ -16,13 +16,18 @@
  * load (each way it has failed passes the other two tests); 2 the beacon LOADS and zero
  * `securitypolicyviolation`s fire; 3 every same-origin non-/api asset arrived (/api/health
  * 404ing is how a static origin decides it is offline); 4 each script RAN, by one mark it
- * alone leaves — a file served 200 OK and inert passes clause 3.
+ * alone leaves — a file served 200 OK and inert passes clause 3; 5 on the site's own
+ * canonical origin, the deployment is LIVE (`data-mode` "live", badge MOXIE ONLINE).
+ *
+ * What it cannot see: a dead brain. `/api/health` reads configuration only, so a gateway
+ * outage still paints MOXIE ONLINE; `check_live_turn.mjs` spends one turn a day on that.
  */
 import { writeFileSync, existsSync, mkdtempSync, cpSync, appendFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { requireBrowser, serveStatic, pagesHeaders, makeChecks, finish, web, launchBrowser,
-         PHONE, IOS_UA, SPENDING, deployedTarget, recordCspViolations, measureBoxes }
+         PHONE, IOS_UA, SPENDING, deployedTarget, recordCspViolations, measureBoxes,
+         canonicalOrigin, liveFixture, pcmToneBase64 }
   from "./browser_harness.mjs";
 
 const LABEL = "deployed-composer check";
@@ -44,6 +49,19 @@ function expectsBeacon(url) {
   const h = u.hostname.toLowerCase();
   if (/(^|\.)pages\.dev$/.test(h)) return false;
   return true;
+}
+
+/**
+ * Must this deployment be LIVE (clause 5)? Yes on the site's own canonical origin, the one
+ * deployment configured with a gateway, where `degraded` means lost secrets or the kill
+ * switch and `offline` means no Functions. No anywhere else: previews and forks are keyless
+ * by design. `MOXIE_EXPECT_LIVE=1|0` overrides.
+ */
+function expectsLive(url, override = process.env.MOXIE_EXPECT_LIVE) {
+  if (override === "1" || override === "true") return true;
+  if (override === "0" || override === "false") return false;
+  const canon = canonicalOrigin();
+  try { return !!canon && new URL(url).origin === canon; } catch { return false; }
 }
 
 /** Load `url` on a phone and RECORD what a first-time visitor finds; the caller decides what
@@ -147,7 +165,7 @@ async function probe(browser, url, { settleMs = 2000 } = {}) {
 }
 
 /* ---- the assertions, over one probe record -------------------------------- */
-function assertReachable(c, p, tag, { expectBeacon }) {
+function assertReachable(c, p, tag, { expectBeacon, expectLive = false }) {
   const { ok, eq } = c;
   const origin = new URL(p.url).origin;
 
@@ -210,6 +228,18 @@ function assertReachable(c, p, tag, { expectBeacon }) {
   ok(p.qr.present && /\{/.test(p.qr.status),
      `${tag}: qr.js ran — …and printed the JSON payload it encoded (${JSON.stringify(String(p.qr.status).slice(0, 48))})`);
 
+  /* ---- clause 5: the canonical origin is LIVE. Clause 4 proves mode.js RAN, not what it
+   * found: "degraded" (secrets lost, the kill switch) and "offline" (no Functions) are
+   * answers too, and all three passed clauses 1-4 (24/24, five fixtures, 2026-10-07). The
+   * badge is env.js painting mode.js's verdict, so it also reddens a live origin whose
+   * cloud-transport.js never loaded (HOSTED DEMO · SCRIPTED). ---- */
+  if (expectLive) {
+    eq(r.mode, "live", `${tag}: the canonical origin is LIVE — body[data-mode] is mode.js's verdict ` +
+       `from /api/health ("degraded" = secrets lost or the kill switch, "offline" = no Functions)`);
+    eq(r.badge, "MOXIE ONLINE", `${tag}: the badge a visitor sees says MOXIE ONLINE ` +
+       `(SCRIPTED = live with no cloud-transport.js; BUSY = live at the concurrency ceiling)`);
+  }
+
   /* ---- the beacon reality (clause 2) ---- */
   eq(p.csp.length, 0, `${tag}: ZERO securitypolicyviolation events on load — ` +
      JSON.stringify(p.csp.slice(0, 4)));
@@ -234,7 +264,7 @@ function assertReachable(c, p, tag, { expectBeacon }) {
 }
 
 /** One line per measurement, so a run leaves numbers behind rather than a verdict. */
-function report(p, { expectBeacon }) {
+function report(p, { expectBeacon, expectLive = false }) {
   const box = (m) => m.found
     ? (m.sized ? `${m.w}×${m.h} at y=${m.top}…${m.bottom}  hit=${m.hit}${m.self ? " (self)" : " ⚠ NOT SELF"}`
                : `${m.w}×${m.h}  display:${m.display} visibility:${m.visibility}`)
@@ -251,6 +281,8 @@ function report(p, { expectBeacon }) {
   console.log(`    scripts ran     moxie.js: ${p.ran.stage} stage canvas, ${p.ran.motors} motors, ` +
               `${p.ran.faces} faces   hud.js: ${p.ran.named} named sliders   ` +
               `mode.js: data-mode=${JSON.stringify(p.ran.mode)}   env.js: badge ${JSON.stringify(p.ran.badge)}`);
+  console.log(`    live            ${expectLive ? "REQUIRED (the canonical-origin rule)" : "not required here"}` +
+              `   data-mode=${JSON.stringify(p.ran.mode)}   badge ${JSON.stringify(p.ran.badge)}`);
   console.log(`    qr.js           ${p.qr.present ? `${p.qr.ink} ink px on ${p.qr.w}x${p.qr.h}` : "NO #qr-make/#qr-canvas"}` +
               `   payload ${JSON.stringify(String(p.qr.status).slice(0, 46))}`);
   console.log(`    spending routes aborted: ${p.blocked.length}   failed requests: ${p.failed.length}` +
@@ -301,6 +333,28 @@ const MUTATIONS = [
    null, /qr\.js ran/, gut("qr.js"), "qr.js"],
 ];
 
+/* Clause 5's teeth, checked the way the scheduled run checks the canonical origin. Each copy
+ * answers /api/health with what the REAL route says (`liveFixture`), so a fixture cannot
+ * drift from production. The control must pass every clause. J and K are the "degraded" and
+ * "offline" answers that passed clauses 1-4 on 2026-10-07 (lost secrets and the kill switch
+ * send the same body); L is the half only the badge sees, mode "live" with no transport. */
+const LIVE_CASES = [
+  // [name, the /api/health answer (null = the route is absent), the clause it MUST fire, mutate(dir), the file it needs]
+  ["live control · the canonical origin, configured", "health", null],
+  ["J · degraded on the canonical origin (secrets lost, or the kill switch)", "bareHealth", /is LIVE/],
+  ["K · offline on the canonical origin (no Functions: /api/health 404s)", null, /is LIVE/],
+  ["L · live, but cloud-transport.js served 200 OK and INERT (the badge reads SCRIPTED)",
+   "health", /says MOXIE ONLINE/, gut("cloud-transport.js"), "cloud-transport.js"],
+];
+
+/** A `serveStatic` handler answering `GET /api/health` with `body`, as the route would. */
+const answerHealth = (body) => (req, res) => {
+  if ((req.url || "/").split("?")[0] !== "/api/health") return false;
+  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  res.end(body);
+  return true;
+};
+
 /* `force: true`: with qr.js already gone (page_teeth_check's `qr-gone`), a throwing delete
  * once crashed setup and scored as "caught". The anchor check in `selftest()` names it. */
 function mutatedCopy(css, mutate) {
@@ -316,33 +370,54 @@ async function selftest(puppeteer, chrome) {
   const headers = pagesHeaders();
 
   // A mutation whose target file is missing mutates NOTHING — a named check, not a crash.
-  for (const [name, , , , anchor] of MUTATIONS) {
+  for (const [name, , , , anchor] of [...MUTATIONS, ...LIVE_CASES]) {
     if (!anchor) continue;
     c.ok(existsSync(join(web, anchor)),
          `mutation ${name} needs sim/web/${anchor} to exist before it can break it — ` +
          `the file is missing from the tree, so this mutation proves nothing`);
   }
 
+  // Clause 5 keys on the canonical origin: the scheduled run (no URL) must be held to it,
+  // a preview must not be, and the override must work both ways.
+  const canon = canonicalOrigin();
+  const preview = "https://preview.example.com/sim";
+  c.ok(!!canon, `sim/web/index.html declares <link rel="canonical"> — clause 5 keys on it`);
+  if (canon) {
+    c.ok(expectsLive(canon + "/sim", ""), `the scheduled target ${canon}/sim must be held to clause 5`);
+    c.ok(!expectsLive(preview, ""), `a preview (${preview}) must NOT be held to clause 5 — previews are keyless`);
+    c.ok(!expectsLive(canon + "/sim", "0") && expectsLive(preview, "1"),
+         `MOXIE_EXPECT_LIVE=0|1 must override the derivation both ways`);
+  }
+  const fx = await liveFixture({ eid: "sim-selftest", reply: "hi", tone: pcmToneBase64({ seconds: 0.05 }) });
+
   // Every server first: Chrome takes its resolver rules at LAUNCH, and one browser serves all.
   const targets = [];
   for (const [i, entry] of [[0, null], ...MUTATIONS.map((m, n) => [n + 1, m])]) {
     const [name, css, wanted, mutate] = entry || ["baseline (the tree as committed)", null, null];
     const site = await serveStatic(mutatedCopy(css, mutate), { headers });
-    targets.push({ name, wanted, site, host: `moxie-selftest-${i}.hosted.test` });
+    targets.push({ name, wanted, site, host: `moxie-selftest-${i}.hosted.test`,
+                   control: i === 0, expectLive: false });
+  }
+  for (const [name, answer, wanted, mutate] of LIVE_CASES) {
+    const handle = answer ? answerHealth(fx[answer]) : undefined;
+    const site = await serveStatic(mutatedCopy(null, mutate), { headers, handle });
+    targets.push({ name, wanted, site, host: `moxie-selftest-${targets.length}.hosted.test`,
+                   control: !wanted, expectLive: true });
   }
   const browser = await launchBrowser(puppeteer, chrome,
     { hosts: Object.fromEntries(targets.map((t) => [t.host, t.site.port])) });
 
   try {
-    for (const [i, t] of targets.entries()) {
+    for (const t of targets) {
       const url = `http://${t.host}:${t.site.port}/sim.html`;
       const m = makeChecks();
       const p = await probe(browser, url);
-      report(p, { expectBeacon: false });
-      assertReachable(m, p, i === 0 ? "baseline" : "mutant", { expectBeacon: false });
+      report(p, { expectBeacon: false, expectLive: t.expectLive });
+      assertReachable(m, p, t.control ? "baseline" : "mutant",
+                      { expectBeacon: false, expectLive: t.expectLive });
       console.log(`    → ${t.name}\n      fired: ${m.fails.length ? m.fails.map((f) => "· " + f).join("\n      ") : "NOTHING"}`);
 
-      if (i === 0) {
+      if (t.control) {
         // The control: a baseline that does not pass proves nothing about the mutations.
         c.ok(m.fails.length === 0,
              `the UNMUTATED tree must pass every clause — ${m.fails.length} failure(s): ` +
@@ -373,10 +448,11 @@ const target = deployedTarget(cliUrl, LABEL);
 const browser = await launchBrowser(puppeteer, chrome);
 try {
   const expectBeacon = expectsBeacon(target);
+  const expectLive = expectsLive(target);
   const c = makeChecks();
   const p = await probe(browser, target);
-  report(p, { expectBeacon });
-  assertReachable(c, p, "deployed", { expectBeacon });
+  report(p, { expectBeacon, expectLive });
+  assertReachable(c, p, "deployed", { expectBeacon, expectLive });
   await browser.close();
   finish(LABEL, c);
 } catch (err) {

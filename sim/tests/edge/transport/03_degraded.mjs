@@ -1,7 +1,8 @@
-/* §5 (§6.3): every degraded path answers, and none of them goes quiet.
+/* §5 (§6.3): every degraded path answers, and none of them goes quiet — not even after her
+ * first voiced reply (the old session-wide voice latch silenced (c)'s three lines then).
  */
 import {
-  boot, chatMsg, deep, envelope, eq, live, ok, said, say, serve,
+  boot, chatMsg, deep, envelope, eq, live, ok, said, say, serve, ticket, voiced,
 } from "./harness.mjs";
 
 /* =========================================================================== *
@@ -38,8 +39,9 @@ import {
     ok(world.spy.transcript.length === 2, "…and the stub still answers");
   }
 
-  // (c) A 429 mid-conversation: the mode STAYS live (a rate-limited visitor is not a
-  // broken deployment), this turn is answered from the stub, and the page is not quiet.
+  // (c) A 429 mid-conversation, AFTER A VOICED TURN: the mode STAYS live (a rate-limited
+  // visitor is not a broken deployment), this turn is answered from the stub, and that answer
+  // is SPOKEN — no voice is expected for a line the page composed.
   {
     let refuse = false;
     const world = await boot({
@@ -50,12 +52,14 @@ import {
             ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "degraded" }) };
         }
         if (path === "/api/chat") {
-          return { status: 200, json: envelope({ messages: [chatMsg("Sure!", "sim-e1")] }) };
+          return { status: 200, json: envelope({ messages: [chatMsg("Sure!", "sim-e1")], speech: ticket("sim-e1") }) };
         }
+        if (path === "/api/speech") return voiced("sim-e1");
         return { status: 404, text: "" };
       },
     });
     await say("first", 10);
+    deep([world.spy.playCloudTTS.length, world.spy.speak.length], [1, 0], "turn 1 was voiced by the gateway");
     refuse = true;
     await say("tell me a joke", 1000);
 
@@ -65,12 +69,40 @@ import {
          "a 429 does NOT leave the live state (§6.3 soft degrade): §7's chip copy, a Retry-After window, live turns suppressed");
     ok(world.spy.transcript.includes("Why did the robot cross the road? To recharge on the other side!"),
        "THE REFUSED TURN IS STILL ANSWERED, from stub.js — the page never goes silent (A5)");
+    deep(world.spy.speak, ["Why did the robot cross the road? To recharge on the other side!"],
+         "…AND SPOKEN, exactly once, though her previous reply was voiced by the gateway");
     eq(globalThis.window.moxieBridge.transportStats().fallbacks, 1, "…recorded as one fallback");
 
     // And while the window is open, the next turn is delegated without a request.
     const before = world.spy.fetches.length;
     await say("and another", 1000);
     eq(world.spy.fetches.length, before, "no /api/chat is spent while the Retry-After window is open");
+  }
+
+  // (c2) A safety BLOCK after a voiced turn: the redirect carries no voice ticket, so it is
+  // spoken locally, once. (c3) A reply whose /api/speech is refused (503): its words are spoken
+  // locally, once, and the page STAYS live — a voice failure is not a brain failure.
+  for (const [label, second] of [
+    ["c2 blocked", { chat: said("Thank you for telling me. Feelings this big need a grown-up.", "sim-blk2",
+                                 { ok: true, degraded: true, reason: "blocked", mode: "live" }) }],
+    ["c3 speech 503", { chat: said("Volcanoes puff out hot melted rock!", "sim-v2", { speech: ticket("sim-v2") }),
+                        speech: { status: 503, json: envelope({ ok: false, degraded: true, reason: "upstream_down",
+                                                                 retry_after_s: 0, mode: "live" }) } }],
+  ]) {
+    let n = 0;
+    const world = await boot({
+      answer: live((path) => {
+        if (path === "/api/chat") { n++; return n === 1 ? said("Hello!", "sim-v1", { speech: ticket("sim-v1") }) : second.chat; }
+        if (path === "/api/speech") return n === 1 ? voiced("sim-v1") : second.speech;
+        return { status: 404, text: "" };
+      }),
+    });
+    await say("hi", 10);
+    await say("and now", 1000);
+    const line = JSON.parse(second.chat.json.messages[0].payload).output.text;
+    deep([world.spy.playCloudTTS.length, world.spy.speak], [1, [line]],
+         `(${label}) after a gateway-voiced turn, the next line is SPOKEN locally exactly once`);
+    eq(globalThis.window.moxieMode.state(), "live", `(${label}) …and the page stays live`);
   }
 
   // (d) `upstream_down`, and `gateway_unreachable_or_gated` (an Access login page in front of

@@ -199,7 +199,9 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
   #rail-toggle { display: flex; }
   #hud.rail-closed { grid-template-columns: minmax(0, 1fr) auto; }
   #hud.rail-closed #rail-scroll { display: none; }
-  #hud.rail-closed #panel { margin-left: 0; }
+  /* Closed, the column is just its handle: a full-height empty glass column read as a
+     broken panel, and it is what a hosted desktop page now opens with (rail.js). */
+  #hud.rail-closed #panel { margin-left: 0; align-self: start; }
   #hud.rail-closed #rail-toggle {
     border-bottom: none;
     width: auto;
@@ -209,6 +211,17 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
 }
 
 /* ---- Environment awareness (env.js): hosted-demo vs local, disabled hints ---- */
+
+/* A HOSTED page is a toy, not a bench: a stranger meets Moxie, not "v24.10.803 ·
+   SOFTWARE-IN-THE-LOOP · LINK IDLE", a "window.moxie API" hint and a bubble labelled
+   "TTS OUT". Keyed on env.js's body[data-env], so a local page (the developer's bench) is
+   exactly as it was; the rail, which also starts closed here, is rail.js's. The scene hint
+   keeps "DRAG · ORBIT // SCROLL · ZOOM": that is how a visitor turns her around. */
+body[data-env="hosted"] #topbar .tag,
+body[data-env="hosted"] #topbar .linkstate,
+body[data-env="hosted"] #scene-hint .lbl-eng,
+body[data-env="hosted"] #bubble .callout-label .lbl-eng { display: none; }
+
 .env-badge {
   font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em;
   padding: 2px 7px; border-radius: 4px; margin-right: var(--sp-3); white-space: nowrap;
@@ -286,14 +299,27 @@ body[data-env="hosted"][data-mode="live"] #env-banner {
 }
 @media (max-width: 640px) {
   /* On phones: a wider, evenly-centered card (10px margins each side) with a big,
-     easy-to-hit corner X instead of the tiny inline one. */
+     easy-to-hit corner X instead of the tiny inline one.
+     UNDER THE HEADER, NOT ON HER. Lifted above the dock, this card covered her from the chin
+     down (measured at 390x844: 98 px of her torso at boot, 118 px mid-chat, because the
+     lift rides up as the log grows). Below the header it sits in her headroom, clear of her
+     body. `--eb-top` is the header's measured bottom (env.js `liftBanner`). The chip and the
+     "what works here" sentence go: the topbar badge already says HOSTED DEMO, and every row
+     here is a row of her head on a short phone. */
   #env-banner {
     left: 10px; right: 10px; transform: none; max-width: none; width: auto;
-    flex-wrap: wrap; gap: 8px;
-    padding: 14px 46px 14px 14px;          /* reserve room for the corner X */
+    top: calc(var(--eb-top, 64px) + 8px); bottom: auto;
+    flex-wrap: wrap; gap: 6px;
+    padding: 10px 46px 10px 12px;          /* reserve room for the corner X */
+    /* Under the HUD layer (#hud is 4): on a short phone her speech bubble shares this
+       headroom, and her words beat the note. The X stays tappable — #stage passes taps. */
+    z-index: 3;
   }
-  #env-banner .eb-badge { order: -1; }
-  #env-banner .eb-link { margin-top: 2px; }
+  #env-banner .eb-badge, #env-banner .eb-more { display: none; }
+  #env-banner .eb-link { margin-top: 0; }
+  /* The drawer, opened, rises to meet it on a short phone (its handle went under the card at
+     360x640 and 375x667): while the visitor is in the tools, the note steps aside. */
+  #hud:not(.rail-closed) ~ #env-banner { visibility: hidden; pointer-events: none; }
   #env-banner .eb-x {
     position: absolute; top: 6px; right: 6px;
     width: 36px; height: 36px; padding: 0; font-size: 19px;

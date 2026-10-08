@@ -97,6 +97,15 @@ jobs:
           node sim/test_turnstile.mjs
           node sim/test_cloud_transport.mjs
           node sim/test_fallback_coverage.mjs
+      - name: Live-turn canary — its own teeth, hermetically
+        # `sim/check_live_turn.mjs` spends ONE real chat turn a day on the deployed brain
+        # (sim/ci/deployed.yml's `canary` job), because no free check can see a dead brain.
+        # Here it runs `--selftest`: the REAL chat route on loopback with the gateway stubbed,
+        # the canary run as a child against it. Two controls must exit 0; a dead brain, lost
+        # secrets, the kill switch, no Functions, an empty reply, no ticket, a slow turn and two
+        # rate-limit shapes must each exit non-zero on their own clause, inside the ledger.
+        # Node only: no browser, no network. Guarded by sim/tests/test_ci_deployed_monitor.py.
+        run: node sim/check_live_turn.mjs --selftest
       - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
         run: bash sim/run_smoke.sh
       - name: Bridge markup→avatar unit test (incl. presence events)
@@ -339,6 +348,8 @@ jobs:
         # executed by nobody. This job is that file's owner, so the exemption is now gone
         # from the ratchet and the suite runs on every push and every PR.
         run: node sim/test_ambient_guard.mjs
+      - name: One voice per reply, on a phone (Chrome's own autoplay policy, raw touch)
+        run: node sim/test_one_voice.mjs
       # The accessibility suite, wired here for the same reason the ambient guard is: it
       # was written UNWIRED only because this job did not exist yet and its CI file was
       # held by another pass. That reason is gone, so parking it in KNOWN_UNRUN would now
@@ -378,3 +389,5 @@ jobs:
         run: node sim/test_console_insights.mjs
       - name: Parent console — Unpair and Factory reset (typed confirmation, erase order, reset code)
         run: node sim/test_robot_lifecycle.mjs
+      - name: Parent console — 💬 Try it (a preview turn, published nowhere)
+        run: node sim/test_console_tryit.mjs

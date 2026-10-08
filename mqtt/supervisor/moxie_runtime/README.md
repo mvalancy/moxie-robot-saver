@@ -22,6 +22,7 @@ composed from one mixin per concern. Import it as `moxie_runtime.MoxieRuntime` o
 | [`telemetry.py`](telemetry.py) | telemetry + mentor-behavior ingest, the durable activity record, and its erasure |
 | [`telehealth.py`](telehealth.py) | the telehealth remote-puppet session path |
 | [`voice.py`](voice.py) | server voice (TTS), the voice picker, and the STT extension point |
+| [`tryit.py`](tryit.py) | the console's 💬 Try it: one preview turn through the robot's own brain, safety check and stager — never published, never remembered |
 
 ---
 📖 [supervisor](../README.md) · [Back to top](../../../README.md)

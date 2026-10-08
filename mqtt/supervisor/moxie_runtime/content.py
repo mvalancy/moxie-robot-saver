@@ -226,7 +226,7 @@ class ContentMixin:
     # functions (§6.1). The one new safety line is `validate_item` in `content_save_item`:
     # `mark_edited` only normalizes, and an invalid global `pattern` would otherwise crash
     # `reload_content()` for every item (authoring_mutation_check.py deletes it to prove
-    # it). No brain call in P0: there is no `/content/try` route.
+    # it). No brain call here: the paid try is `tryit.py`, and it tries installed items only.
 
     #: Item kinds the editor may write. `schedule` is refused by name: it reaches the robot
     #: as `ContentSchedule` and no Moxie has been served a pack-authored one (brief §0).

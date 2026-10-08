@@ -15,12 +15,17 @@ import { assertWords, wordOverlap, score, readWav, riff, padded, peakOf,
 /* ════════════════════════ the fixtures ════════════════════════════════════════ *
  * The spoken clip is read from `sim/web/audio/index.json` — the manifest the SITE speaks
  * from — so re-rendering moves the fixture with it. The committed golden
- * (`goldens/real_voice_22050_mono.wav`) is 0.75 s cut from this very clip: too short to
- * transcribe, so it only proves plumbing. This is prerendered Piper speech, not a child in a
- * room; `MOXIE_MIC_WAV` + `MOXIE_MIC_TEXT` point the harness at a real recording. */
+ * (`goldens/real_voice_22050_mono.wav`) is 0.75 s cut from this clip's earlier Piper amy
+ * render: too short to transcribe, so it only proves plumbing. This is prerendered Piper speech
+ * (tts-piper-kristin), not a child in a room; `MOXIE_MIC_WAV` + `MOXIE_MIC_TEXT` point the
+ * harness at a real recording. */
 export const SPOKEN_TEXT = "Happy birthday! I hope your day is amazing.";
-/** No content word in common with `SPOKEN_TEXT`; scored against the SAME transcript. */
-export const DECOY_TEXT = "Can you take a deep breath with me?";
+/** No content word in common with `SPOKEN_TEXT`; scored against the SAME transcript. It must
+ *  also be far from it in ENVELOPE, in the shipped voice: after the re-render in
+ *  tts-piper-kristin (longer sentence-final silence, which looped chunks share with any
+ *  sentence), "Can you take a deep breath with me?" chose right in only 5 of 12 chunks of the
+ *  gauntlet's "30% dropped + saturated" row (needs 6); this line chooses right in 10. */
+export const DECOY_TEXT = "What would you like to talk about today?";
 
 const MANIFEST = JSON.parse(readFileSync(join(web, "audio", "index.json"), "utf8"));
 function manifestClip(text) {
