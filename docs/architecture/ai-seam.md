@@ -108,7 +108,9 @@ racing it stays on the standby — and an answer clears the latch with one recov
 `describe()` says `standby since HH:MM … retrying the primary at HH:MM`, in the supervisor's local zone, or
 `on the next utterance` once the window has passed). Before that window existed one outage latched the
 standby for the rest of the run, and with no local whisper installed that standby hears nothing. Both
-numbers are hang bounds, chosen not measured; 0 or less is refused at startup, never read as "no bound"
+numbers are chosen, not measured, and they are different kinds: `MOXIE_STT_TIMEOUT_S` is a hang bound, so
+0 or less is refused at startup, never read as "no bound"; `MOXIE_ENGINE_RETRY_S` is a cool-down, so 0 is
+accepted and tries the gateway on every utterance (a negative value counts as 0)
 ([production-hardening.md](backlog/production-hardening.md) §4.4, §9).
 
 The console's **Listening** picker chooses the engine at runtime; see [Choosing an
