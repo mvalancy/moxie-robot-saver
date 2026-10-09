@@ -4,8 +4,10 @@ touches the world on the evaluator's behalf. `ext/` is the pure evaluator; here:
 
 * `ext_facts()` builds a plain-JSON fact base — no live object to walk (X2).
 * `apply_ext_effects()` applies effects only after the program ended, so a breach leaves
-  nothing half-applied (X11), and lets a spoken line act only on the action tags written
-  whole in the rule's own text (`literal_actions()`), never on one it built at run time.
+  nothing half-applied (X11), lets a spoken line act only on the action tags written
+  whole in the rule's own text (`literal_actions()`), never on one it built at run time,
+  and lets markup reach the robot only with no tag of ours and nothing outside the
+  catalogue (`robot_markup()`).
 * `execution_actions_of()` / `subscriptions_of()` bound what a pack may put on the wire to
   the closed robot function / event tables.
 
@@ -20,7 +22,7 @@ from typing import Optional
 from .. import automarkup as _automarkup
 from .. import safety as _safety
 from .. import vocab
-from ..actions import drop_action_tags, parse_action_tags
+from ..actions import drop_action_tags, lift_action_tags, parse_action_tags, tag_names
 from ..types import Action, ActionType
 from .memory import provenance
 from .volley import Volley, Session
@@ -107,10 +109,23 @@ def ext_facts(volley: Volley, session: Session, *, namespace: str = "",
     return facts
 
 
+def _refused_tag(tag: str) -> bool:
+    """A catalogue tag the gate drops: one with an id outside the frozen catalogue
+    (`vocab.validate_markup`), or one cut short by a `>` inside its own quotes (an odd
+    number of `"` in what `_EXT_TAG` matched). `_EXT_TAG` ends a tag at its first `>`, so
+    `<spurt spurt_id="n>pe"/>` is read here as `<spurt spurt_id="n>`, which names no id and
+    so has nothing to refuse, while the same catalogue check over the whole markup reads a
+    spurt with the id `n>pe`, which it refuses; what the robot's own reader makes of such a
+    tag is unverified, so it goes."""
+    return bool(vocab.validate_markup(tag)) or tag.count('"') % 2 == 1
+
+
 def ext_markup(markup: str) -> tuple:
     """`(clean, dropped)` — markup filtered tag by tag through the frozen `vocab.py`
     catalogue (M3); invalid tags are dropped and counted, text survives. `markup` reaches
-    the robot's body, so it is never passed through unchecked (R4)."""
+    the robot's body, so it is never passed through unchecked (R4). One pass: dropping a
+    tag can make the pieces around it meet (`<spu<usel genre="nope">rt spurt_id="nope"/>`
+    leaves a spurt this pass never saw), which `robot_markup` catches."""
     if not markup:
         return "", 0
     dropped = 0
@@ -120,7 +135,7 @@ def ext_markup(markup: str) -> tuple:
         out.append(markup[pos:m.start()])
         pos = m.end()
         tag = m.group(0)
-        if vocab.validate_markup(tag):
+        if _refused_tag(tag):
             dropped += 1
             _automarkup._drop("ext")          # the existing `dropped_ids()` counter
         else:
@@ -170,13 +185,41 @@ def _action_key(action: Action) -> tuple:
             json.dumps(action.args, sort_keys=True, default=str))
 
 
-def _no_action_tags(markup: str) -> str:
-    """`markup` with every tag of ours taken out (`actions.drop_action_tags` with nothing
-    kept), to a fixpoint. The robot speaks its markup when it is given one, and markup acts
-    on nothing, so no tag of ours may reach it: not even one that would only form once the
-    robot's one-pass parse lifted the tags inside it (`<ex<sleep>it>Hi` read as
-    `<exit>Hi`). Never counted or reported: nothing in markup was ever acted on."""
-    return drop_action_tags(markup, lambda a: False)[0]
+def robot_markup(markup) -> tuple:
+    """`(clean, dropped)`: `markup` as it may reach the robot, or `""` when it may not.
+
+    The robot speaks its markup when it is given one (`ContentApp._reply_from_volley`
+    lifts our tags from it once, as from a line, and the runtime sends it as written), and
+    markup acts on nothing, so what reaches the robot must hold no tag of ours and nothing
+    the catalogue gate refuses: the robot's own lift and the gate must both leave it as it
+    is. Three passes, each linear in the markup: every tag with one of our names is lifted
+    as the robot's parse lifts them (`actions.lift_action_tags`, one pass, malformed ones
+    too); then the gate (`ext_markup`); then, if a tag of ours is in what is left, or the
+    gate would drop anything more, the markup is dropped whole and the runtime's markup
+    floor speaks the line. Either can be there only because a tag the gate dropped stood
+    between the pieces of another (`<ex<ex<mark name="cmd:zzz"/>it>it>` would reach the
+    robot as `<exit>`; `<spu<usel genre="nope">rt spurt_id="nope"/>` as a spurt the gate
+    never saw), and keeping any of it would need a pass the robot does not make, so nothing
+    is kept. The last pass is not skipped when the gate dropped nothing, although it could
+    be (the gate then left the markup as it was): the check must not depend on the order of
+    the two passes before it. Measured through the real app, two runs, one under other
+    load: a turn with one 8 KB nest of tag pieces around a malformed tag takes 0.4-0.7 ms,
+    with the four a turn can carry 1.5-2.4 ms, and four ordinary 3 KB markups 0.3-0.7 ms;
+    on the function, 8 KB of 130 valid marks (the densest the gate sees) 1.5 ms, half of
+    it the gate and most of the rest the last pass. Before round 8 the tags of ours were
+    taken out to a fixpoint (`actions.drop_action_tags` with nothing kept) and the gate
+    ran once after, which let a dropped tag's neighbours meet, and the fixpoint cost
+    0.6-1.0 s per 8 KB nest (2.1-3.7 s for four). `dropped` counts the tags the gate
+    dropped, and one more for a markup dropped whole. Never reported to the parent:
+    nothing in markup is acted on."""
+    lifted = lift_action_tags(str(markup or "")[:ext.MAX_MARKUP_CHARS])
+    clean, dropped = ext_markup(lifted)
+    exposed = bool(tag_names(clean)) or any(_refused_tag(m.group(0))
+                                            for m in _EXT_TAG.finditer(clean))
+    if exposed:
+        _automarkup._drop("ext")
+        return "", dropped + 1
+    return clean, dropped
 
 
 def _strings_in(node, out: list) -> list:
@@ -234,8 +277,8 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
     the default is the empty set, so a line from a caller that passes nothing acts on no
     tag at all. A line that carries only allowed tags is kept exactly as written. It then
     passes the same output safety classifier as a model line (unsafe → redirect, M2).
-    Markup (a `say`'s or a `markup` statement's) loses every tag of ours before the
-    catalogue check (`_no_action_tags`): the robot speaks it, and it acts on nothing.
+    Markup (a `say`'s or a `markup` statement's) reaches the robot only as `robot_markup`
+    leaves it: no tag of ours, nothing outside the catalogue, or none at all.
     `remember`/`forget` name only a key; device and namespace come from the host (X9).
     """
     spoke = wrote = dropped = acted = subscribed = 0
@@ -258,13 +301,12 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
                     text = _safety.redirect_for(verdict, classifier=classifier).line
                     markup = None
             if markup:
-                markup, n = ext_markup(_no_action_tags(str(markup)[:ext.MAX_MARKUP_CHARS]))
+                markup, n = robot_markup(markup)
                 dropped += n
             volley.set_output(text, markup or None)
             spoke += 1
         elif kind == "markup":
-            clean, n = ext_markup(_no_action_tags(
-                str(eff.get("markup") or "")[:ext.MAX_MARKUP_CHARS]))
+            clean, n = robot_markup(eff.get("markup"))
             dropped += n
             volley.set_output(volley.output_text or "", clean or None)
         elif kind == "scratch":

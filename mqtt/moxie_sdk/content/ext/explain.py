@@ -150,8 +150,11 @@ def _lift_parts(parts) -> list:
 
 
 #: What `_plain` makes a space (braces, double quotes and line breaks), and the straight
-#: quote it writes curly (’): a sentence quotes author text in straight quotes, so none
-#: inside it can close the quote early and read as part of the sentence.
+#: quote it writes curly (’): a sentence quotes author text in straight quotes, so no
+#: straight quote inside it can close the quote for a machine (the pack review and the
+#: tests split a sentence at its one "; then"). To a parent the curly quote is the
+#: typographic close, and so is a lookalike the author writes (ʼ ＇ ′ ` ´ ‘), which
+#: `_plain` leaves as it is: author text can still read to a parent as the sentence's own.
 _UNQUOTED = str.maketrans({**{c: " " for c in "{}\"\n\r\t"}, "'": "\u2019"})
 
 #: Characters a parent cannot see but that reorder or hide what they read: Unicode
@@ -162,14 +165,19 @@ _UNSEEN = ("Cf", "Cc")
 
 def _plain(text, lift: bool = False) -> str:
     """Author text made safe for a parent-facing sentence: no braces, double quotes or
-    straight quotes (a straight quote is written curly), no format or control characters,
-    one line, ≤ 80 chars — never JSON-looking, and never reading as part of the sentence
-    around it, however hostile the input (T13). A line Moxie says (`lift`) loses its
-    action tags as well: the sentence says what they do instead."""
+    straight quotes (a straight quote is written curly), no format or control characters
+    (dropped before the cut, so they cannot fill it and hide the words after them), one
+    line, ≤ 80 chars — never JSON-looking, and never closing the quote around it for a
+    machine, however hostile the input (T13). It is still the author's words inside a
+    quote: a curly quote or a lookalike in them can read to a parent as the close and the
+    rest as the sentence's own, a misreading that names more effects than happen, never
+    fewer. A line Moxie says (`lift`) loses its action tags as well: the sentence says what
+    they do instead."""
     out = _lift(text) if lift else str(text)
-    out = " ".join(out.translate(_UNQUOTED).split())
-    out = out[:80] + ("…" if len(out) > 80 else "")
-    return "".join(c for c in out if unicodedata.category(c) not in _UNSEEN)
+    out = "".join(c for c in out.translate(_UNQUOTED)
+                  if unicodedata.category(c) not in _UNSEEN)
+    out = " ".join(out.split())
+    return out[:80] + ("…" if len(out) > 80 else "")
 
 
 def _picked_lines(value):

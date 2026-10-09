@@ -13,10 +13,11 @@ rule's text does not write whole (a string literal in a `say` or a `let` value,
 `ext_host.literal_actions`) out of the line before the line is kept, counts it and tells the
 parent once; `explain()` names every tag the rule writes whole, and its reading ahead only
 decides the wording. Before this, an exit the review did not name could happen; after it,
-it cannot.
+it cannot. The robot's markup, which it speaks when it is given one, holds no tag of ours
+and nothing the catalogue refuses, or the line goes without markup (`ext_host.robot_markup`).
 
-Hermetic: the real `ContentApp` (`helpers_ext.app_with`; the default grants, plus `random`
-and `memory.read` for the programs that declare them) over fake brains that count their own
+Hermetic: the real `ContentApp` (`helpers_ext.app_with`; the default grants, plus `random`,
+`memory.read` and `markup` for the programs that declare them) over fake brains that count their own
 calls, a tmp store for memory and the `ext_events` ring. The property test runs larger as a
 script: `python3 sim/tests/test_ext_say_tags.py PROGRAMS SEED MODE` from the checkout root,
 MODE `literal` (tags only in the program's own text) or `runtime` (what the child said, a
@@ -37,7 +38,9 @@ if __name__ == "__main__":                 # the script mode, from the checkout 
 import pytest
 
 from helpers_ext import CHAT_MODULE, app_with, robot as ext_robot
-from moxie_sdk.actions import _fields, _TAG_RE, drop_action_tags, parse_action_tags, tag_names
+from moxie_sdk import vocab
+from moxie_sdk.actions import (_fields, _TAG_RE, drop_action_tags, lift_action_tags,
+                               parse_action_tags, tag_names)
 from moxie_sdk.content import content_app as CA
 from moxie_sdk.content import ext as E
 from moxie_sdk.content import ext_host as H
@@ -53,8 +56,9 @@ from test_leave_taking import (Brain, DRAW, GOODBYES, QUESTION, SHIPPED, SLEEPS,
 X = importlib.import_module("moxie_sdk.content.ext.explain")
 
 #: The grants the property test runs under: the defaults, and what a generated program may
-#: declare. The guard does not depend on grants; these only let the ops run.
-GRANTS = E.DEFAULT_GRANTS | {"random", "memory.read"}
+#: declare. The guard does not depend on grants; these only let the ops run, and `markup`
+#: lets a program write the robot's markup, the channel the review's round 7 found open.
+GRANTS = E.DEFAULT_GRANTS | {"random", "memory.read", "markup"}
 #: Where a global named `Probe` keeps its memory (`ext_host.ext_namespace`).
 NAMESPACE = "ext:global_probe"
 
@@ -337,27 +341,11 @@ def test_a_tag_that_forms_only_once_the_kept_tags_are_lifted_is_never_spoken():
 
 
 def test_no_other_path_lets_a_built_tag_act():
-    """A tag in a line's markup or a `markup` statement never acts (the robot path keeps
-    markup's text only) and is never spoken either: the robot speaks its markup when it is
-    given one, so the host takes every tag of ours out of it, to a fixpoint, before the
-    catalogue check, the one the robot's one-pass parse would have exposed included
-    (`<ex<sleep>it>Hi`, which that parse spoke as `<exit>Hi`), and counts nothing (markup
-    acts on nothing). A `scratch` value is never spoken, an earlier `say`'s written exit is
-    replaced by the later line (which carries a built tag, taken out), and a conversation's
-    `turn.before` program and the `perceive` path go through the same host."""
-    markup = E.DEFAULT_GRANTS | {"markup"}
-    for tagged in ({"concat": ["<ex", _SPEECH, ">"]}, "<ex<sleep>it>Hi",
-                   {"concat": ["<ex", _SPEECH, "it>Hi"]}):
-        for program in (
-                _imported({"do": [{"say": "Hi", "markup": tagged}, {"handled": True}]},
-                          caps=("handled", "markup", "say")),
-                _imported({"do": [{"markup": tagged}, {"say": "Hi"}, {"handled": True}]},
-                          caps=("handled", "markup", "say"))):
-            assert E.validate(program, grants=markup) == []
-            reply, app, _ = _run(program, "<exit>" if tagged == "<ex<sleep>it>Hi" else "it",
-                                 grants=markup)
-            assert reply.text == "Hi" and reply.actions == [], (tagged, reply)
-            assert tag_names(reply.markup or "") == [] and _refused(app) == 0, (tagged, reply)
+    """A `scratch` value is never spoken, an earlier `say`'s written exit is replaced by the
+    later line (which carries a built tag, taken out), and a conversation's `turn.before`
+    program and the `perceive` path go through the same host. Markup, the channel beside
+    the line, is `test_the_robots_markup_holds_no_tag_of_ours_and_nothing_the_catalogue_refuses`."""
+    tagged = {"concat": ["<ex", _SPEECH, "it>Hi"]}
     program = _imported({"do": [{"scratch": {"key": "x", "value": tagged}}, {"say": "Hi"},
                                 {"handled": True}]})
     reply, app, _ = _run(program, "it")
@@ -385,6 +373,121 @@ def test_no_other_path_lets_a_built_tag_act():
     seen = app.perceive(Turn(robot=ext_robot(), speech="eb-lost-target"))
     assert seen is not None and seen.text == "" and seen.actions == []
     assert app._ext_refusals == {("robot-1", "conversation:CHAT/default"): 1}
+
+
+#: The grants a program with markup runs under, and catalogue tags the host keeps or drops.
+MARKUP = E.DEFAULT_GRANTS | {"markup"}
+GOOD_MARK = '<mark name="cmd:playback-mood,data:{+mood+:0,+intensity+:1}"/>'
+BAD_MARK = '<mark name="cmd:zzz"/>'
+GOOD_USEL = '<usel genre="question">'
+BAD_USEL = '<usel genre="nope">'
+
+#: Markup a program may write, and what the host lets reach the robot of it: `(markup, what
+#: the robot is given before its markup floor, the tags the catalogue dropped plus one for a
+#: markup dropped whole)`. The last three shapes are the review's (round 7): a tag the
+#: catalogue drops stood between the pieces of a tag of ours, and reached the robot as
+#: `<exit>Hi`, `<sleep>Hi` and `<launch:DRAW>Hi`; the one after is the catalogue's own
+#: counterpart (a mark the catalogue would refuse forms once the robot has lifted the exit).
+MARKUPS = {
+    "a plain tag of ours is lifted as the robot would, the rest kept": (
+        f"<exit>{GOOD_USEL}Hi", f"{GOOD_USEL}Hi", 0),
+    "a malformed tag of ours is lifted too": (f"<exit:now>{GOOD_USEL}Hi", f"{GOOD_USEL}Hi", 0),
+    "a tag the catalogue refuses is dropped, a valid one kept": (
+        f"{BAD_MARK}{GOOD_MARK}Hi", f"{GOOD_MARK}Hi", 1),
+    "a tag closed by a valid tag's own pieces is not ours, and stays": (
+        f"<ex{GOOD_USEL}it>Hi", f"<ex{GOOD_USEL}it>Hi", 0),
+    "a tag that forms once the lifted tag's pieces meet": ("<ex<sleep>it>Hi", "", 1),
+    "a tag three lifts deep": ("<e<ex<sleep>it>xit>Hi", "", 1),
+    "a mark the catalogue drops stood between an exit's pieces": (
+        f"<ex<ex{BAD_MARK}it>it>Hi", "", 2),
+    "a usel the catalogue drops stood between a sleep's pieces": (
+        f"<sl<sl{BAD_USEL}eep>eep>Hi", "", 2),
+    "a mark the catalogue drops stood between a launch's pieces": (
+        f"<la<launch:DR{BAD_MARK}AW>unch:DRAW>Hi", "", 2),
+    "a mark the catalogue would refuse forms once the robot lifts the exit": (
+        '<m<ex<sleep>it>ark name="cmd:zzz"/>Hi', "", 1),
+    # Found by this round's generator, and open on dev: the gate is one pass, so the pieces
+    # around a tag it drops can form a tag it never saw; and a `>` inside a tag's quotes
+    # cuts the tag short for the gate while the robot reads it whole.
+    "a usel the catalogue drops stood between a spurt's pieces": (
+        f"<spu{BAD_USEL}rt spurt_id=\"nope\"/>Hi", "", 2),
+    "a tag of ours lifted leaves a usel the catalogue refuses, and it goes": (
+        f"<us<exit>el genre=\"nope\">Hi", "Hi", 1),
+    "a spurt cut short by a > inside its quotes is malformed, and goes": (
+        '<spurt spurt_id="n>pe"/>Hi', 'pe"/>Hi', 1),
+    "a mark cut short by a > inside its data is malformed, and goes": (
+        '<mark name="cmd:playback-mood,data:{+mood+:0>,+intensity+:1}"/>Hi', ',+intensity+:1}"/>Hi', 1),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(MARKUPS))
+def test_the_robots_markup_holds_no_tag_of_ours_and_nothing_the_catalogue_refuses(shape):
+    """The robot speaks its markup when it is given one (`_reply_from_volley` lifts our tags
+    from it once, as from a line, and the runtime sends it as written), and markup acts on
+    nothing, so `robot_markup` lets markup reach the robot only with no tag of ours and
+    nothing outside the catalogue: every tag of ours is lifted as the robot's own parse
+    lifts them, the catalogue drops what it refuses, and if a tag of ours is then in what
+    is left (a dropped tag stood between its pieces) the markup is dropped whole and the
+    runtime's markup floor speaks the line. Before round 8 the tags were taken out to a
+    fixpoint and the catalogue checked after, so the pieces around a dropped tag met and
+    the robot was given `<exit>Hi`. Checked on the function and through the real app, for
+    a `say`'s markup and for a `markup` statement after the say; a statement before the say
+    is replaced by the say's own output, so it could never show a leak. Never counted as a
+    refusal and never a breach. The robot path annotates a markup that holds no tag at all
+    (`annotate` leaves one with a tag alone), so a surviving markup reaches the robot as
+    `annotate` leaves it: the catalogue's own marks around the same text."""
+    markup, clean, dropped = MARKUPS[shape]
+    assert H.robot_markup(markup) == (clean, dropped), shape
+    assert tag_names(clean) == [] and vocab.validate_markup(clean) == [], shape
+    assert lift_action_tags(clean) == clean, "the robot's own lift finds nothing left"
+    assert H.ext_markup(clean) == (clean, 0), "the gate would drop nothing more"
+    for program in (
+            _imported({"do": [{"say": "Hi", "markup": markup}, {"handled": True}]},
+                      caps=("handled", "markup", "say")),
+            _imported({"do": [{"say": "Hi"}, {"markup": markup}, {"handled": True}]},
+                      caps=("handled", "markup", "say"))):
+        assert E.validate(program, grants=MARKUP) == []
+        reply, app, brain = _run(program, "hi", grants=MARKUP)
+        assert brain.turns == [] and reply.text == "Hi" and reply.actions == [], (shape, reply)
+        assert tag_names(reply.markup or "") == [], (shape, reply.markup)
+        assert vocab.validate_markup(reply.markup or "") == [], (shape, reply.markup)
+        assert H.ext_markup(reply.markup or "") == (reply.markup or "", 0), (shape, reply.markup)
+        assert (reply.markup is None) == (clean == ""), (shape, reply.markup)
+        if clean:
+            expected = CA.annotate(clean) if CA._automarkup_enabled() else clean
+            assert reply.markup == expected, (shape, reply.markup)
+        assert _refused(app) == 0 and not app._ext_breaches, shape
+    before = _imported({"do": [{"markup": markup}, {"say": "Hi"}, {"handled": True}]},
+                       caps=("handled", "markup", "say"))
+    assert _run(before, "hi", grants=MARKUP)[0].markup is None, "the say replaces it"
+
+
+def test_four_markups_at_the_cap_are_cleared_in_time_linear_in_their_text():
+    """A turn carries at most four spoken lines and markup statements together
+    (`MAX_ACTIONS`), each with up to 8,192 characters of markup, cleared on every turn
+    with the GIL held. Before round 8 a markup went through `drop_action_tags` to a
+    fixpoint, quadratic in the markup: one 8 KB nest took 0.6-0.7 s and a turn with four
+    2.1-3.7 s on the build host, measured. `robot_markup` is three passes, each linear: the
+    same turn takes 1.5-2.4 ms (0.4-0.7 ms with one nest). The alarm turns a quadratic
+    pass red at 5 s rather than later; the 0.5 s bound is what fails it on a quiet host."""
+    nest = "<ex" * 1363 + "<exit:now>" + "it>" * 1363          # 8,188 characters
+    assert len(nest) <= E.MAX_MARKUP_CHARS
+    program = {"ext_format": 1, "capabilities": ["handled", "markup", "say"], "on": "global",
+               "rules": [{"do": [{"say": "Hi", "markup": nest}] * 4 + [{"handled": True}]}]}
+    assert E.validate(program, grants=MARKUP) == []
+    app = app_with(_module(program), chat=Brain(), ext_grants=MARKUP, clock=lambda: 1_700_000_000)
+    started = time.perf_counter()
+    try:
+        with _hard_limit(5.0):
+            reply = app.respond(Turn(robot=ext_robot(), speech="hi"))
+    except _Stalled:
+        pytest.fail("still clearing four 8 KB markups after 5 s")
+    took = time.perf_counter() - started
+    assert reply.text == "Hi" and reply.actions == [] and reply.markup is None, reply
+    assert _refused(app) == 0 and not app._ext_breaches
+    assert took < 0.5, f"four 8 KB markups took {took:.2f} s"
+    assert H.robot_markup(nest) == ("", 1)
+    assert H.robot_markup("<ex" * 1364 + "<sleep>" + "it>" * 1364) == ("", 1)
 
 
 def test_a_taken_out_tag_is_told_to_the_parent_once_and_is_not_a_breach(tmp_path, capsys):
@@ -564,16 +667,22 @@ def test_explain_reads_a_written_tag_exactly_as_the_robot_parses_it():
                                               content_id=key[2])), (seed, key, words)
 
 
-def test_author_text_cannot_read_as_part_of_the_sentence():
+def test_author_text_cannot_close_its_quote_for_a_machine():
     """A sentence quotes author text (a line Moxie says, a test on what the child said, a
     module that is not an id) in straight quotes. A straight quote in that text is written
-    curly (’), so it cannot close the quote early: a module id `x' activity and the
-    conversation ends and Moxie starts the 'y` read as two launches and a certain exit
-    the robot was never sent. Characters a parent cannot see (bidi overrides, zero-width
-    spaces, soft hyphens and other format characters, and control characters) are dropped
-    from the quote, and a module that is not shown exactly as written is quoted: `DRAW`
-    followed by a zero-width space is not the DRAW activity, and the robot is sent the id
-    as written."""
+    curly (’), so no straight quote closes the quote early and a sentence keeps its one
+    "; then" (what `_named_in` and the pack review split at): the module id `x' activity
+    and the conversation ends and Moxie starts the 'y` would otherwise have read as two
+    launches and a certain exit the robot was never sent. To a parent, though, the curly
+    quote is the typographic close, and a lookalike the author writes (ʼ ＇ ′ ` ´ ‘) is
+    left as it is, so that id still reads as three effects while the robot is sent one
+    launch: author text can still read as the sentence's own, naming more than happens and
+    never fewer (the docs say so). Characters a parent cannot see (bidi overrides,
+    zero-width spaces, soft hyphens and other format characters, and control characters)
+    are dropped from the quote before its 80-character cut, so they cannot fill the cut
+    and hide the words after them; and a module that is not shown exactly as written is
+    quoted: `DRAW` followed by a zero-width space is not the DRAW activity, and the robot
+    is sent the id as written."""
     module = "x' activity and the conversation ends and Moxie starts the 'y"
     program = _says(f"<launch:{module}>Go")
     (sentence,) = E.explain(program)
@@ -599,6 +708,11 @@ def test_author_text_cannot_read_as_part_of_the_sentence():
     assert reply.actions == [Action(type=ActionType.LAUNCH, module_id="DRAW​")]
     assert _sent(reply) == ["Moxie starts the 'DRAW' activity"] and _refused(app) == 0
     assert E.explain(_says("<launch:DRAW>Go"))[0].endswith(f"; then {DRAW}.")
+    for look in "’ʼ＇‘′`´":
+        assert X._plain(f"x{look} activity") == f"x{look} activity", hex(ord(look))
+    assert X._plain("​" * 80 + "Bye") == "Bye"
+    (sentence,) = E.explain(_says("​" * 80 + "Bye"))
+    assert "tells your child 'Bye'" in sentence, sentence
 
 
 #: Round 5's shapes as the reading ahead (`_say_effects`) finds them, with the three fixes:
@@ -733,6 +847,12 @@ WHOLE = ["<exit>Bye", "<sleep>", "<launch:DRAW>Go", "<exıt>", "<ſleep>", "Hi",
 RUNTIME = ["a", "ab", "<exit>", "it>", "<ex", "<launch:DRAW>", "DRAW", "<sleep>Bye", ">", "<",
            "<launch:", "ıt>", "exit", "Draw", "<exıt>", "o"]
 IDX = {"%": [{"len": [_SPEECH]}, 2]}
+#: Markup pieces: the tag pieces of ours, tags the catalogue keeps and drops, and the pieces
+#: of those, so a dropped tag can stand between the pieces of a tag of ours, and a tag of
+#: ours between the pieces of a catalogue tag.
+MARKUP_PIECES = PIECES + [GOOD_MARK, BAD_MARK, GOOD_USEL, BAD_USEL, '<break size="1"/>',
+                          "</usel>", "<m", 'ark name="cmd:zzz"/>', "<us", 'el genre="nope">',
+                          "Hi "]
 
 
 class _Generator:
@@ -740,18 +860,29 @@ class _Generator:
     `upper`, `lower`, `trim`, `get`, `slice`, `split`, `join`, `replace`, `reverse`,
     `repeat`, `and`/`or`, `let` and `var`, over literal pieces of tags and non-tags, and a
     map's keys read out by `keys`; one or two rules, one or two `say`s each, a `when` on
-    the first, and in some a `scratch` statement that writes a tag whole where no `say` or
-    `let` does. In the `runtime` mode what the child said, a value the robot sent, a
-    memory and a note from this turn are text parts too; in the `literal` mode they only
-    pick `if` branches and `get` indexes."""
+    the first, in some a `scratch` statement that writes a tag whole where no `say` or
+    `let` does, and in some markup (a `say`'s, or a `markup` statement after the lines)
+    over the catalogue's tags and the pieces of ours. In the `runtime` mode what the child
+    said, a value the robot sent, a memory and a note from this turn are text parts too;
+    in the `literal` mode they only pick `if` branches and `get` indexes."""
 
     def __init__(self, rng, mode):
         self.rng, self.mode = rng, mode
-        self.random = self.memory = False
+        self.random = self.memory = self.marked = False
         self.names: list = []
 
     def lit(self):
         return "".join(self.rng.choice(PIECES) for _ in range(self.rng.randint(1, 2)))
+
+    def markup(self):
+        """Markup over the catalogue's tags, kept and refused, the pieces of ours and the
+        text ops: what a program may put in a `say`'s markup or a `markup` statement."""
+        self.marked = True
+        r = self.rng
+        parts = [r.choice(MARKUP_PIECES) for _ in range(r.randint(1, 3))]
+        if r.random() < 0.5:
+            parts.insert(r.randint(0, len(parts)), self.text(2))
+        return parts[0] if len(parts) == 1 else {"concat": parts}
 
     def test(self):
         k = self.rng.randint(0, 3)
@@ -820,7 +951,14 @@ class _Generator:
             for i in range(self.rng.randint(0, 3)):
                 let[f"v{i}"] = self.text()
                 self.names.append(f"v{i}")
-            do = [{"say": self.text()} for _ in range(self.rng.randint(1, 2))]
+            do = []
+            for _ in range(self.rng.randint(1, 2)):
+                say = {"say": self.text()}
+                if self.rng.random() < 0.35:
+                    say["markup"] = self.markup()
+                do.append(say)
+            if self.rng.random() < 0.25:   # a markup statement after the lines
+                do.append({"markup": self.markup()})
             if self.rng.random() < 0.3:    # a tag written whole, but not in a say or a let
                 do.insert(0, {"scratch": {"key": "x", "value": self.lit()}})
             rule = {"do": do + [{"handled": True}]}
@@ -830,7 +968,7 @@ class _Generator:
                 rule["when"] = self.test()
             rules.append(rule)
         caps = ["handled", "say"] + (["random"] if self.random else []) + (
-            ["memory.read"] if self.memory else [])
+            ["memory.read"] if self.memory else []) + (["markup"] if self.marked else [])
         return {"ext_format": 1, "capabilities": caps, "on": "global", "rules": rules}
 
 
@@ -862,13 +1000,14 @@ class _Memory:
 def _property(programs, seed, mode):
     """Run `programs` random programs in `mode`, each on three inputs, through the real
     `ContentApp`, and check the invariant on every turn. Returns the counts; raises on the
-    first miss (an action sent that the rule's sentence does not name) or a false
-    certainty (an effect named without "sometimes" that was not sent). Deterministic:
-    fixed seeds, a fixed clock, and no clock read of its own."""
+    first miss (an action sent that the rule's sentence does not name), a false certainty
+    (an effect named without "sometimes" that was not sent), or a robot markup that holds
+    a tag of ours or a tag the catalogue refuses. Deterministic: fixed seeds, a fixed
+    clock, and no clock read of its own."""
     rng = random.Random(seed)
     store = _Memory()
     counts = {"programs": 0, "invalid": 0, "turns": 0, "breached": 0, "unmatched": 0,
-              "sent": 0, "refused": 0, "certain": 0}
+              "sent": 0, "refused": 0, "certain": 0, "marked": 0}
     real = E.evaluate
     for _ in range(programs):
         program = _Generator(rng, mode).program()
@@ -899,6 +1038,17 @@ def _property(programs, seed, mode):
             counts["turns"] += 1
             (result,) = seen
             sent = _sent(reply)
+            # Whatever the rule wrote in a say's markup or a markup statement, the robot's
+            # markup holds no tag of ours and nothing the catalogue refuses, read tag by
+            # tag (the gate) or over the whole text: the robot's own lift and the gate both
+            # leave it as it is.
+            robot = reply.markup or ""
+            assert tag_names(robot) == [] and H.ext_markup(robot) == (robot, 0) and (
+                vocab.validate_markup(robot) == []), (
+                seed, mode, json.dumps(program, ensure_ascii=False), speech, t, m, robot)
+            if result.ok and result.rule >= 0 and any(
+                    "markup" in s for s in program["rules"][result.rule]["do"]):
+                counts["marked"] += 1
             if not result.ok:
                 counts["breached"] += 1
                 assert sent == [] and brain.turns, (program, speech)

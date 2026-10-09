@@ -127,6 +127,15 @@ def parse_action_tags(text: str) -> Tuple[str, List[Action]]:
     return tidy_spoken_text(_TAG_RE.sub(_sub, text)), actions
 
 
+def lift_action_tags(text: str) -> str:
+    """`text` with every tag that has one of our names lifted out in one pass, malformed
+    ones too: what `parse_action_tags` speaks before `tidy_spoken_text`, with no action
+    read. Linear in `text`. The sandboxed-extension host clears a line's markup with it
+    (`ext_host.robot_markup`)."""
+    return _TAG_RE.sub(lambda m: "" if m.group(1).lower() in KNOWN_TAGS else m.group(0),
+                       text or "")
+
+
 def _lift_known(text: str) -> Tuple[str, List[int]]:
     """`text` as `parse_action_tags` would speak it, every tag with one of our names lifted
     in one pass (malformed ones too), and for each character kept its index in `text`."""
@@ -158,10 +167,13 @@ def drop_action_tags(text: str, keep) -> Tuple[str, List[Action]]:
     with the pieces it was made of, whatever `keep` says of it (the robot path would never
     act on it), and is in the result only when `keep` refuses it. Whatever the text then
     parses to, `keep` allowed, and what is spoken holds no tag of ours. Each pass takes at
-    least one character out, so the passes are bounded by the text. The sandboxed-extension
-    host uses it to let a pack's line act only on the tags written whole in the pack's own
-    text, and with nothing kept to clear a line's markup of every tag of ours
-    (`ext_host.apply_ext_effects`).
+    least one character out, so the passes are bounded by the text, and the cost by its
+    square: the worst 1,000-character line (165 nested `<ex … it>` around a malformed
+    tag) takes 8-16 ms, and a turn can carry four such lines, each filtered on its own,
+    45-68 ms a turn through the host, measured on two runs, one under other load. The
+    sandboxed-extension host uses it to let a pack's line act only on the tags written
+    whole in the pack's own text (`ext_host.apply_ext_effects`); a line's markup, where
+    nothing is kept, is cleared in linear time instead (`ext_host.robot_markup`).
     """
     dropped: List[Action] = []
     while text:
