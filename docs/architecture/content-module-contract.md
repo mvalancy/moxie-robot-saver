@@ -45,9 +45,11 @@ A module is JSON with three optional sections:
   `handle_volley` answers `prompt` with a random alternative from `get_opener()`. Here only an
   *empty* `prompt` does, so a typed or spoken first line still reaches the brain, as do `continue`
   and `reprompt`. A robot hears the first alternative first, and after that never the same line
-  twice in a row. `<opener>` is stripped; `<exit>`, `<sleep>` and `<launch:XX>` become actions, as
-  in a model's line (so an imported opener's tags act with no review sentence: the opener is outside
-  the guarantee an extension's line is under, see "What a line's action tags may do" under
+  twice in a row. `<opener>` is stripped. An `<exit>`, `<sleep>` or `<launch:XX>` acts only when the
+  same action is written whole in the alternative said, as written before it is rendered, and at
+  most as many times as it is written there; a tag that only forms as the template renders
+  (`{{ '<la' ~ 'unch:DRAW>' }}`) is lifted, never said and never acted on, and the pack review
+  names every tag that can act in the opener's own row (see "A conversation's opener" under
   [extensions](#extensions-a-pack-that-can-do-something)). A conversation with no opener asks the brain, as before. Only a `|` outside
   `{{ }}`, `{% %}` and `{# #}` separates alternatives; inside them it is a Jinja filter
   (`{{ volley.config.child_pii.nickname | upper }}`) or comment text. OpenMoxie splits on every `|`
@@ -841,21 +843,30 @@ by construction rather than by reading the program cleverly:
   one-pass parse never acts on) is cut out with the pieces it is made of, so the child
   never hears a tag of ours. The robot's markup (a `say`'s or a `markup` statement's,
   under the `markup` grant, which only shipped programs have today) holds no tag of ours
-  and nothing the catalogue gate refuses, or the line goes without it
-  (`ext_host.robot_markup`): the robot speaks its markup when it is given one, lifting our
-  tags from it once as from a line, and markup acts on nothing, so every tag of ours is
-  lifted as that parse lifts them (one pass, malformed ones too), the gate drops what the
-  catalogue refuses, and if a tag of ours, or a tag the gate would drop, is then in what
-  is left (a dropped tag stood between the pieces of another, so its neighbours met:
-  `<ex<ex<mark name="cmd:zzz"/>it>it>` would have reached the robot as `<exit>`), the
-  markup is dropped whole and the runtime's markup floor speaks the line. Three passes,
-  each linear in the markup: a turn with four 8 KB nests of tag pieces takes 1.5-2.4 ms
-  (0.4-0.7 ms with one), measured through the real app on two runs, one under other load,
-  where the fixpoint pass this replaced took 0.6-1.0 s per nest and 2.1-3.7 s for four.
-  A tag cut short by a `>` inside its own quotes is dropped too (read tag
-  by tag, `<spurt spurt_id="n>pe"/>` names no id, while the same check over the whole
-  markup reads a spurt the catalogue never saw). Never counted as a refusal: nothing in
-  markup is acted on. The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
+  and nothing the catalogue refuses, or the line goes without it
+  (`ext_host.robot_markup`), checked on exactly what the robot is sent: the robot speaks
+  its markup when it is given one, and the robot path sends it through the same parse as a
+  line, our tags lifted once and the rest tidied (which takes out the space before a comma
+  and so can join a mark's pieces). So every tag of ours is lifted as that parse lifts
+  them (one pass, malformed ones too); the gate drops tag by tag what the catalogue
+  refuses, a tag cut short by a `>` inside its own quotes and a tag holding another `<`;
+  the rest is tidied as the robot path tidies it; and the markup is dropped whole, and the
+  runtime's markup floor speaks the line, if what is left holds a tag of ours (a dropped
+  tag stood between the pieces of another: `<ex<ex<mark name="cmd:zzz"/>it>it>` would
+  have reached the robot as `<exit>`), a tag the gate would drop (the tidying joined one:
+  `<mark name="cmd:zzz ,data:{}"/>`), a catalogue tag left open, or anything the
+  catalogue's own check over the whole text refuses (`vocab.validate_markup`, which reads
+  a quoted `>` as part of the value: `<spurt x" spurt_id="n>pe"/>` is a spurt with the id
+  `n>pe`, which the tag-by-tag read never sees). Every pass is linear in the markup but
+  that whole-text check, which reads on from every opening it finds: a markup with a tag
+  left open or holding another `<` is dropped before it runs (it took 0.4-0.7 s on an 8 KB
+  run of `<usel genre="` openings), and the slowest markup left to it that a search of
+  9,000 random 8 KB markups found, mark openings whose data is never closed, takes it
+  7-14 ms on 8 KB, quadratic in the markup, measured. Five turns of four 8 KB markups of
+  the shapes that were super-linear take 7-17 ms in all through the real app, where a turn
+  with four runs of `<mark` openings took 0.37-0.52 s before round 9 and the fixpoint pass
+  before round 8 took 2.1-3.7 s a turn on four nests. Never counted as a refusal: nothing
+  in markup is acted on. The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
   answers without asking the AI; then the conversation ends."* and sends its `<exit>` as
   before, because its rule writes it. A taken-out tag is counted, and the parent is told
   once per robot, program and reason through the same `ext_events` ring a breach uses
@@ -930,22 +941,34 @@ line cannot start an activity, end the chat or put Moxie to sleep from run-time 
 however it is built: from a program's line, a child-facing robot acts only on what the
 parent's review named.
 
-**A conversation's opener is not under this guarantee.** It is rendered as a template on an
-empty `prompt`, and its `<exit>`, `<sleep>` and `<launch:…>` act as in a model's line (the
-`opener` field above). So an imported conversation's opener (`opener` is a pack field) can
-end the chat, put Moxie to sleep or start an activity, written plainly or built as it renders
-(`{{ '<la' ~ 'unch:DRAW>' }}`), while the pack review shows it only as a raw diff row: no
-sentence, no warning, and the row ticked by default. Whether to hold the opener to the same
-rule (act only on a tag written whole in its unrendered text, and name it in the review) is an
-open decision; until it is taken, an imported opener is text the parent must read as code.
+**A conversation's opener acts only on the tags written whole in it.** An opener is said on
+an empty `prompt` (the `opener` field above), and `opener` is a pack field, so it is held to
+the rule a program's line is under: it is rendered as a template, the robot path parses the
+line as a model's, and an `<exit>`, `<sleep>` or `<launch:…>` in it acts only when the same
+action (its type and every field as parsed) is written whole in the `|`-alternative said, as
+written before it is rendered, and at most as many times as it is written there
+(`content_app.said_opener`). A tag that only forms as the template renders (an expression,
+`{{ '<la' ~ 'unch:DRAW>' }}`; a filter; a `{% set %}`; pieces joined around a comment or
+across what reads as two alternatives; a copy a loop adds) is lifted: never said and never
+acted on. So is a tag in the child's name as it is rendered into an opener, and a tag that
+forms only once the tags around it are lifted (`{{ '<ex' }}<sleep>{{ 'it>' }}`: every level
+is lifted, in one pass, where the robot path's own parse of a model's line lifts one). The
+pack review names every tag written whole in any alternative in the opener's own row, beside
+the diff, before the parent ticks the row: *"When this conversation starts, Moxie says its
+opener; then sometimes Moxie goes to sleep."* Each effect reads *"sometimes"*, since which
+alternative is said, and what its template leaves in, varies. The rule holds for every
+opener; the shipped ones write no tag, so they say and do what they did. A tag an opener
+lifts is not reported to the parent the way a program's is: the robot did nothing, and the
+row already named all it can do.
 
 `sim/tests/test_ext_say_tags.py` holds the invariant as a property over random programs
 (every op above over literal pieces of tags and non-tags, with what the child said, a
 memory and an `input_vars` value holding tag pieces or whole tags), through the real
-`ContentApp` and the pack review, pins the host's parse and `explain.py`'s restatement
-of the grammar to each other on 20,000 random lines, and holds the first read of a program's
-text to linear time (200,000 spaces after `<exit:` in a branch never taken, a megabyte at the
-pack cap); `test_leave_taking.py` runs every
+`ContentApp` and the pack review, and the opener's rule as a property over random opener
+templates; pins the host's parse and `explain.py`'s restatement of the grammar to each other
+on 20,000 random lines, and holds the first read of a program's text to linear time (200,000
+spaces after `<exit:` in a branch never taken, a megabyte at the pack cap);
+`test_leave_taking.py` runs every
 shape the five review rounds found, each against what the robot is sent, also as read past
 the budget, including a sweep of every tag split at every point around a part worked out
 at run time or a trimmed part.
