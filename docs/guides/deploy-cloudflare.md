@@ -128,7 +128,7 @@ A public demo that proxies a paid gateway needs limits. Each is a `DEMO_*` varia
 | `DEMO_MAX_RECORD_MS` | 15000 | Recording length ceiling |
 | `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500000 / 2000 | Below the floor, no upstream call |
 | `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | Per visitor IP |
-| `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY` | 10 / 80 / 300 | Per visitor IP; a `_DAY` of `0` removes that day window |
+| `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY` | 15 / 120 / 450 | Per visitor IP: chat's windows times three, the most voice chunks a reply is spoken in; a `_DAY` of `0` removes that day window |
 | `DEMO_STT_PER_MIN` / `_HOUR` / `_DAY` | 10 / 60 / 225 | Per visitor IP; a `_DAY` of `0` removes that day window |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | Matched to the upstream key's parallel limit; raise the queue, not these |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | 2500 / 8 | At the ceiling a request waits briefly instead of being refused; `0` disables |
