@@ -106,9 +106,10 @@ async function withRefusalLines(fn) {
   P.plan = { chat: { content: herPhone } };
   const r2 = await call(chat, "/api/chat", { text: "what is your phone number" });
   eq(r2.body.reason, "blocked", "a completion blocked ONLY on the Moxie side is swapped at the route");
-  // The tickets are read as the words they carry: a random base64 ticket holds "555" in about
-  // one run in a thousand, which made this pin flaky (seen once in round 4's mutation runs).
-  ok(!JSON.stringify({ ...r2.body, speech: await ticketTexts(r2.body.speech) }).includes("555"), "…and the number is in no field");
+  // The tickets are read as the words they carry, and the number is looked for as said: a random
+  // ticket or id holds "555" now and then, which made this pin flaky (seen once in round 4's
+  // mutation runs and once in round 5's, 27 runs each).
+  ok(!/555\s*1234/.test(JSON.stringify({ ...r2.body, speech: await ticketTexts(r2.body.speech) })), "…and the number is in no field");
 }
 
 /* 25b. A harmless completion that merely mentions a knight's sword passes untouched. */
@@ -917,6 +918,7 @@ async function withRefusalLines(fn) {
     ["my dad said don't tell mom we had ice cream before dinner", false], ["my brother told me not to tell mom he broke the vase", false],
     ["my mom said the trip is a secret so don't tell dad", false], ["my grandpa said it's our secret that we had milkshakes", false],
     ["my sister said don't tell mom i stayed up late", false], ["my mom said not to tell the teacher why i was late after the movie", true],
+    ["my dad told me not to tell mom about bedtime", true], ["my mom said not to tell the teacher i was late", true],
     ["my grandpa said don't tell grandma about our special time at the zoo", true], ["my grandpa always says don't tell grandma about our secret", true],
     // a ride or a throw every day: from someone the child names as theirs; from "someone at school" a habit vetoes it
     ["my brother keeps pushing me on the swing", false], ["my dad always pushes me on the swing", false], ["someone at school keeps pushing me on the slide", true],
@@ -925,7 +927,7 @@ async function withRefusalLines(fn) {
     ["my friend punched my arm as a joke", false], ["everyone hits me as a joke", true], ["my big cousin who is 16 punches me as a joke", true],
     ["my brother pushed me to the ground as a joke", true], ["we were playing tag and the kids at school hit me with rocks", true],
     ["a boy in my class pushed me and the teacher saw as a joke", true], ["my brother punched me in the stomach while we were playing cards", true],
-    ["someone chased me during tag at recess", false], ["a man chased me while we were playing tag", true],
+    ["someone chased me during tag at recess", false], ["a man chased me while we were playing tag", true], ["my friend and a guy chased me in tag", true],
     ["my dad pushed me on the swing so hard i fell off", true], ["my sister hit me with a pillow and we laughed so hard", false],
     ["my dad throws balls at me when he is angry", true], ["my mom's boyfriend throws me in the pool and holds me under", true],
     // a pillow, a snowball or a game won: a toy or a game the child names, in the past tense — "hits me with a ball" never
