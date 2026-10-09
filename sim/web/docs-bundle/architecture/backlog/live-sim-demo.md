@@ -455,7 +455,7 @@ The `/api/*` routes write nothing durable anywhere.
 
 | Status | `reason` | `Retry-After` | The Sim |
 |---|---|---|---|
-| 429 | `rate_limited` (per-IP window, or the gateway's own 429) | window reset / upstream value (none named: 10, or 60 on `/api/transcribe`) | Answers this turn from `stub.js` and suppresses live turns until `Retry-After`. Up to 60 s (the minute window) it stays `live` with the *slow down* chip; longer (such as the hour or day cap) it **rests**: `degraded`, a `RESTING` badge and the minutes left, `live` again when the window lifts. |
+| 429 | `rate_limited` (per-IP window, or the gateway's own 429) | window reset / upstream value (none named: 10, or 60 on `/api/transcribe`) | Answers this turn from `stub.js` and suppresses live turns until `Retry-After`. Up to 60 s (the minute window) it stays `live` with the *slow down* chip; longer (such as the hour or day cap) it **rests**: `degraded`, a `RESTING` badge and the minutes left, `live` again when the window lifts. The pause is per route (`mode.js`): that is a `/api/chat` 429; one from `/api/transcribe` holds only the Listen button until its `Retry-After` (`canUseEars`) and leaves the badge and typed turns alone (§6.3). |
 | 503 | `at_capacity` (ceiling reached and queue full or wait expired) | 15 | Busy pill, answers from the stub. |
 | 503 | `budget_exhausted` | seconds to the window reset | Full degrade. Next health poll at `Retry-After`. |
 | 503 | `upstream_down`, `gateway_unreachable_or_gated` | 60 | Full degrade, ended only by a clean turn (§6.3). |
