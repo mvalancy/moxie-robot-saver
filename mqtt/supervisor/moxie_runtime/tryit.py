@@ -23,8 +23,10 @@ from moxie_sdk import chat as chat_seam
 from moxie_sdk import presence as presence_seam
 from moxie_sdk import safety as safety_seam
 from moxie_sdk import vocab
-# The name rule is shared with the child's name a parent saves (`cloud_config`).
-from moxie_sdk.cloud_config import NAME_MAX_CHARS as TRY_MAX_NAME_CHARS, NAME_RE as _NAME_RE
+# The name rule is shared with the child's name a parent saves (`cloud_config`): the shape,
+# NFC, and Moxie's safety table.
+from moxie_sdk.cloud_config import (NAME_MAX_CHARS as TRY_MAX_NAME_CHARS,
+                                    check_name as _check_name)
 from moxie_sdk.types import Reply, ReplyChunk, ResultCode, RobotContext, Turn
 from moxie_sdk.wire import encode_action
 
@@ -73,15 +75,15 @@ def _scrub(text, limit: int = 300, rules=_UPSTREAM_SCRUB) -> str:
 
 
 def _try_name(raw) -> str:
-    """A nickname typed for this try only, or `""`. Plain name characters only: it is
-    read into the prompt, so no tags, braces or line breaks."""
+    """A nickname typed for this try only, or `""`. The child's-name rule (`check_name`):
+    plain name characters, since it is read into the prompt (no tags, braces or line
+    breaks; a line break folds into a space here), NFC, and nothing Moxie's safety table
+    blocks or flags."""
     name = " ".join(str(raw or "").split())
     if not name:
         return ""
-    if len(name) > TRY_MAX_NAME_CHARS or not _NAME_RE.match(name):
-        raise ValueError(f"A name here is up to {TRY_MAX_NAME_CHARS} letters, spaces, "
-                         f"apostrophes or hyphens.")
-    return name
+    return _check_name(name, refusal=f"A name here is up to {TRY_MAX_NAME_CHARS} letters, "
+                                     f"spaces, apostrophes or hyphens.")
 
 
 def read_markup(markup: str) -> dict:

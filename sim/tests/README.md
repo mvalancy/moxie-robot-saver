@@ -85,7 +85,7 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 | `test_live_*.py`, `test_smoke_live_brain` | Real gateway completions, TTS, STT, hosted ears, voice round trip; skip without credentials |
 | `test_robot_lifecycle` | Unpair and factory reset: account record, permit revoke, voided pairing codes, the `restore_factory` code (need `fastapi` + `httpx`) |
 | `test_robot_claim`, `test_wifi_first_qr` | Bench-day pairing: the Wi-Fi-only first code, Add to my account (the claim), `/local/state`'s lists of robots, and one robot per account on Simulate robot scan too (need `fastapi` + `httpx`); `test_sil_robot_claim` (SIL group) runs the claim against real mosquitto and the real supervisor |
-| `test_child_name`, `test_console_child_name` | The child's name Moxie says: the one name rule (shared with Try it), every place Moxie names the child, a write for a robot that is away, K4's fail-closed race, where the name never goes; the console's sends, clears and who may read it back (the console file needs `fastapi` + `httpx`) |
+| `test_child_name`, `test_child_name_safety`, `test_console_child_name` | The child's name Moxie says: the one name rule (shared with Try it: its shape, NFC, Moxie's safety rules), every place Moxie names the child, a hello the safety rules block, a write for a robot that is away, K4's fail-closed race, where the name never goes (the log and the feed say `[child]`), a revoke that takes it off; the console's sends, clears, a name refused before it is saved, the unpair retried by a revoke, and who may read it back (the console file needs `fastapi` + `httpx`) |
 
 Every file's docstring states what it proves and, where relevant, its mutation-check companion
 in [`../tools/`](../tools/README.md).

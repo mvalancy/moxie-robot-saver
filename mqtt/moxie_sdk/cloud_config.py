@@ -389,28 +389,100 @@ def merge_config_layers(*layers) -> dict:
 # The name Moxie says comes from the parent's account (`server/moxie_server/child_profile.py`
 # posts it as `child: {nickname, birthday?}` on the robot's own layer); the appliance's
 # profile (`MOXIE_CHILD_NICKNAME`) is the fallback when no account names the child. It is
-# read into every brain prompt and pushed as `child_pii`, so it is checked by ONE rule,
-# the one the Try it card already used for a name typed for a try (`tryit.py` imports it).
+# read into every brain prompt, pushed as `child_pii` and SPOKEN (the hello, the opener),
+# so it is checked by ONE rule, `check_name`, which the Try it card uses for a name typed
+# for a try as well (`tryit.py` imports it): the shape, then Moxie's safety table.
 
-#: The longest name, counted once whitespace runs are collapsed.
+#: The longest name, counted once whitespace runs are collapsed (NFC code points).
 NAME_MAX_CHARS = 40
 #: Unicode letters and digits, spaces, periods, apostrophes, hyphens: no tags, no braces.
+#: The shape of a name once the combining marks its letters carry are set aside
+#: (`_name_shape_ok`).
 NAME_RE = _re.compile(r"^[\w .'\-]+$")
 #: Every line boundary `str.splitlines` knows: a name is one line.
 _LINE_BREAK = _re.compile(r"[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
 _YMD = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #: The words a refusal uses. Never the name itself: a refusal is echoed to the console.
-NAME_RULE = (f"A child's name is one line of up to {NAME_MAX_CHARS} letters, digits, "
-             f"spaces, periods, apostrophes or hyphens.")
+NAME_RULE = (f"A child's name is one line of up to {NAME_MAX_CHARS} letters (with their "
+             f"accents or vowel signs), digits, spaces, periods, apostrophes or hyphens.")
+#: The refusal when Moxie's safety table cannot be read: no name can be checked, so none
+#: is taken (and a saved one is not said) until it can.
+NAME_UNCHECKED = ("Moxie's safety rules could not be read on this server, so no name can be "
+                  "checked now and Moxie says its default name. Fix the rules file "
+                  "(MOXIE_SAFETY_RULES), then save the name again.")
+
+
+def _name_shape_ok(name: str) -> bool:
+    r"""`NAME_RE` over `name` with the combining marks its letters carry set aside.
+
+    A mark (`\p{M}`: an accent left decomposed, a Devanagari vowel sign or virama, a Thai
+    tone mark) is allowed after a letter, or after another mark that follows one, so the
+    scripts that write vowels as marks pass. A mark that starts the name, or follows a
+    digit, a space or punctuation, refuses it."""
+    import unicodedata
+    base, after_letter = [], False
+    for ch in name:
+        kind = unicodedata.category(ch)[0]
+        if kind == "M":
+            if not after_letter:
+                return False
+            continue
+        after_letter = kind == "L"
+        base.append(ch)
+    return NAME_RE.fullmatch("".join(base)) is not None
+
+
+def _name_safety_refusal(name: str) -> str:
+    """`""` when Moxie's safety table finds nothing in `name`, else the sentence a refusal
+    says (the categories by their labels, never the name).
+
+    The table is the one the runtime's own classifier reads (`moxie_sdk/safety.py` over
+    `safety_rules.json`, or `MOXIE_SAFETY_RULES`), on the CHILD's side, where every
+    category the table has either blocks or flags. A name the table merely flags (a
+    single profanity, say) is refused as well: Moxie says the name over and over, and a
+    flag is "let through once and tell a parent", not "say it every hello". A table that
+    cannot be read refuses every name (`NAME_UNCHECKED`)."""
+    from . import safety
+    try:
+        classifier = safety.default_classifier()
+        verdict = classifier.assess(name, role=safety.CHILD)
+    except Exception:                    # noqa: BLE001 (a table that cannot be read)
+        return NAME_UNCHECKED
+    if not verdict:
+        return ""
+    labels = safety.category_labels(classifier)
+    named = ", ".join(str(labels.get(c) or c) for c in verdict.categories)
+    return (f"Moxie will not say that name: Moxie's safety rules flag it ({named}). "
+            f"Please choose another name or a nickname.")
+
+
+def check_name(name: str, *, refusal: str = NAME_RULE) -> str:
+    """The one name rule, for a child's name (`clean_child_name`) and for a name typed on
+    the Try it card (`tryit._try_name`) alike, so the two can never drift apart.
+
+    `name` is one line with its whitespace already collapsed. It is NFC-normalized first
+    (a decomposed `José` is the same name as a composed one, and is kept composed), then
+    it is at most `NAME_MAX_CHARS` characters of the shape `_name_shape_ok` checks, then
+    nothing Moxie's safety table blocks or flags (`_name_safety_refusal`). Returns the NFC
+    name, else ValueError: `refusal` for the shape, the table's sentence for safety;
+    neither repeats the name, since a refusal is echoed to the console."""
+    import unicodedata
+    name = unicodedata.normalize("NFC", name)
+    if len(name) > NAME_MAX_CHARS or not _name_shape_ok(name):
+        raise ValueError(refusal)
+    why = _name_safety_refusal(name)
+    if why:
+        raise ValueError(why)
+    return name
 
 
 def clean_child_name(raw) -> str:
     """The child's name as Moxie will say it, or ValueError (the console answers 400).
 
-    Whitespace runs collapse to one space and the ends are trimmed, then the Try it rule
-    applies (`NAME_RE`, at most `NAME_MAX_CHARS`). Stricter than a try twice over: a
-    name is required (a try may leave it blank), and a line break is refused rather than
-    folded into a space."""
+    Whitespace runs collapse to one space and the ends are trimmed, then the one name rule
+    applies (`check_name`: NFC, the shape, Moxie's safety table). Stricter than a try twice
+    over: a name is required (a try may leave it blank), and a line break is refused rather
+    than folded into a space."""
     if not isinstance(raw, str):
         raise ValueError(f"The child's nickname must be text. {NAME_RULE}")
     if _LINE_BREAK.search(raw):
@@ -418,9 +490,59 @@ def clean_child_name(raw) -> str:
     name = " ".join(raw.split())
     if not name:
         raise ValueError("The child's nickname is empty: send a name, or null to clear it.")
-    if len(name) > NAME_MAX_CHARS or not NAME_RE.match(name):
-        raise ValueError(NAME_RULE)
-    return name
+    return check_name(name)
+
+
+# --- the name kept out of the supervisor's log and activity feed ------------------------
+
+#: What the supervisor's log and activity feed show where a child's name was said.
+CHILD_MASK = "[child]"
+#: What Moxie calls a child nobody named (`ChildProfile`'s default, `pick_greeting`'s
+#: stand-in): a word, not a name, so it is never masked.
+GENERIC_CHILD_NAME = "friend"
+#: The accents a speech engine or a model may drop from a name (Combining Diacritical Marks).
+_LATIN_ACCENTS = _re.compile("[\u0300-\u036f]")
+
+
+def _name_forms(name: str) -> set:
+    """The spellings of `name` a line may carry: the whole name, each part of it of two
+    characters or more (split at spaces, periods, apostrophes and hyphens: `Mary-Kate`
+    is also `Mary` and `Kate`), and each of those without its Latin accents (`José` is
+    also `Jose`). NFC; the generic `friend` is never one."""
+    import unicodedata
+    whole = unicodedata.normalize("NFC", " ".join(str(name).split()))
+    forms = {whole} | {p for p in _re.split(r"[ .'\-]+", whole) if len(p) >= 2}
+    bare = {unicodedata.normalize(
+        "NFC", _LATIN_ACCENTS.sub("", unicodedata.normalize("NFD", f))) for f in forms}
+    return {f for f in forms | bare
+            if f.strip() and f.casefold() != GENERIC_CHILD_NAME}
+
+
+import functools as _functools
+
+
+@_functools.lru_cache(maxsize=32)
+def _mask_pattern(names: tuple):
+    forms = set()
+    for name in names:
+        forms |= _name_forms(name)
+    if not forms:
+        return None
+    # Longest first, so `Mary-Kate` is masked whole before `Mary` could split it.
+    return _re.compile(r"(?<!\w)(?:%s)(?!\w)" % "|".join(
+        map(_re.escape, sorted(forms, key=lambda f: (-len(f), f)))), _re.IGNORECASE)
+
+
+def mask_child_names(text, names) -> str:
+    """`text` as the supervisor's log and activity feed may keep it: every one of `names`
+    (and every spelling `_name_forms` gives it), standing as a word in any case, replaced
+    by `CHILD_MASK`. The text is NFC-normalized first. Pure. Only for copies kept for
+    people to read: what a robot hears is never passed through this."""
+    import unicodedata
+    text = unicodedata.normalize("NFC", "" if text is None else str(text))
+    keys = tuple(sorted({n for n in names if isinstance(n, str) and n.strip()}))
+    rx = _mask_pattern(keys) if keys else None
+    return rx.sub(CHILD_MASK, text) if rx is not None else text
 
 
 def _child(value):
