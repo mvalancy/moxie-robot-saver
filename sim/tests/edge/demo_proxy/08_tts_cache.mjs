@@ -377,10 +377,13 @@ import {
       const handed = [];
       const timers = [];
       let answered = false;
+      // A no-op catch the moment a write is handed over, so one that rejects early fails its
+      // named check below instead of crashing the suite as an unhandled rejection.
+      const waitUntil = (p) => { handed.push(p); Promise.resolve(p).catch(() => {}); };
       globalThis.setTimeout = (fn) => { timers.push(fn); return timers.length; };
       globalThis.clearTimeout = (id) => { timers[id - 1] = null; };
       try {
-        const route = speech.onRequestPost({ request: req("/api/speech", { ticket }), env, waitUntil: (p) => { handed.push(p); } });
+        const route = speech.onRequestPost({ request: req("/api/speech", { ticket }), env, waitUntil });
         route.then(() => { answered = true; }, () => { answered = true; });
         for (let k = 0; k < TICKS && !answered; k++) await new Promise((r) => realSetTimeout(r, 5));
         const frozen = { answered, handed: handed.length, writePending: false, inflight: limits.__state().inflight.speech };
