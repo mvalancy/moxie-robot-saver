@@ -97,8 +97,21 @@ Neither is a fallback ranking; which one fits is a property of the box
 ([STT setup](../guides/gateway-voice-and-ears.md)). `auto` (the default) picks the gateway when a URL **and**
 a key resolve, else local whisper, else none. The gateway engine wraps the PCM in a WAV header at the
 rate it was handed (a wrong header pitch-shifts the audio), skips clips under 120 ms, and shares the LLM
-path's `call_with_backoff` + `Pacer` for 429/5xx. `FallbackTranscriber` puts the local engine (or a
-`NullTranscriber` returning `""`) behind the gateway and latches on the first failure, reporting it once.
+path's `call_with_backoff` + `Pacer` for 429/5xx. Every gateway request is bounded by
+`MOXIE_STT_TIMEOUT_S` (12 s: the transcript is produced on the broker thread, so the bound sits inside the
+broker's keepalive drop — and during an ears outage each retry spends it there, stalling the MQTT loop for
+up to 12 s while there is speech) and a timeout is never retried within one utterance — the SDK's own
+default was 600 s per request, and the backoff retried it. `FallbackTranscriber` puts the local engine (or
+a `NullTranscriber` returning `""`) behind the gateway and latches on the first failure, reporting it once;
+after `MOXIE_ENGINE_RETRY_S` (60 s) the next utterance tries the gateway again — one utterance; another
+racing it stays on the standby — and an answer clears the latch with one recovery line (meanwhile
+`describe()` says `standby since HH:MM … retrying the primary at HH:MM`, in the supervisor's local zone, or
+`on the next utterance` once the window has passed). Before that window existed one outage latched the
+standby for the rest of the run, and with no local whisper installed that standby hears nothing. Both
+numbers are chosen, not measured, and they are different kinds: `MOXIE_STT_TIMEOUT_S` is a hang bound, so
+0 or less is refused at startup, never read as "no bound"; `MOXIE_ENGINE_RETRY_S` is a cool-down, so 0 is
+accepted and tries the gateway on every utterance (a negative value counts as 0)
+([production-hardening.md](backlog/production-hardening.md) §4.4, §9).
 
 The console's **Listening** picker chooses the engine at runtime; see [Choosing an
 engine](#choosing-an-engine) under ③.
@@ -266,6 +279,14 @@ and `action` is the `ActionID` **name** — `launch`, `exit_module`, `sleep`, `e
 The SDK's `ActionType.ENABLE_QR` has no `ActionID` and goes out as `execute` with
 `function_id: "eb_enable_qr"`, `function_args: ["true"]` ([launch cards](backlog/qr-launch-cards.md) §P0-a).
 
+**The launch check.** A `launch` must name a module the robot has. The runtime drops a `LAUNCH` whose
+`module_id` is neither in the launch-card catalog (`launch_cards.LAUNCHABLE_MODULE_IDS`, the on-robot
+activities) nor one of the remote-chat modules this appliance itself serves (`remote_modules()`), with one
+log line and one activity note (*the brain asked to launch 'ROBOTDANCE', which this robot does not have*);
+the spoken text and every other action on that reply still go out. The tag rules invite a brain to write
+`<launch:NAME>`, so an id a model made up — or a webhook brain declared — never reaches the robot
+unchecked; a content pack launching its own module, and a printed card, pass as before.
+
 **(c) `RemoteChatInput` — the brain's read of the child (optional).** `emotion`/`dialog_act`/`sentiment`
 + **`InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}`** — the content-moderation verdict.
 This is the moderation hook; a kid-facing backend should populate it.
@@ -368,6 +389,21 @@ mirrored by `ResultCode` in [`types.py`](../../mqtt/moxie_sdk/types.py). There i
 `uint32 result = 2` ([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):320),
 and a robot parsing the JSON as protobuf rejects `"SUCCESS"` outright (`invalid literal for int()`),
 which it cannot skip the way it skips an unknown field. OpenMoxie sends `result: 0`.
+
+**Bounded calls.** Every request to the brain is bounded by `MOXIE_BRAIN_TIMEOUT_S` (60 s by default: a
+hang bound above the filler budget and a slow local model's whole non-streamed completion, chosen not
+measured; 0 or less is refused at startup, never read as "no bound"), the backoff starts a retry only
+inside that same bound and never after a timeout — so a wedged gateway costs exactly one bound, and a fast
+429/5xx retried just inside it at most just under two, since the retry runs its own request bound — and a
+streamed turn's open and its single-reply fallback share one bound. So a gateway that accepts connections
+and never answers costs one `ERROR_OFFLINE` reply after one bound — not a turn worker for 5 x 600 s, the
+SDK's default read timeout times the backoff's attempts, which is what it cost before. Two more things the
+turn path promises: a prompt that waited on the worker pool behind a newer one is never sent to the brain
+(the robot has already re-prompted; measured on a one-worker pool, three prompts cost two calls — a
+re-prompt that finds a free worker, as it does on the eight-worker pool, goes to the brain at once), and a
+worker that dies after the brain answered — an app's unreadable `mood_intensity`, a `result_code` the wire
+cannot encode — logs it once and still closes the turn with the stock line, as chunk 1 with `is_completed`
+when the filler already went out, so the robot never waits on a sequence nobody will finish.
 
 #### The wire a robot can read
 
@@ -491,7 +527,11 @@ The gateway voice is a network call to someone else's box, so it is wrapped in a
 `FallbackSynthesizer` whose standby is exactly the rung it displaced (Piper if configured, else the
 tone). A 400, an outage past the SDK's backoff, or a body that is JSON rather than audio is surfaced
 **once** and then latched: the turn *downgrades* to a working voice instead of handing a child
-silence. `synth.voice_name` says which one is talking.
+silence. Each request is bounded by `MOXIE_TTS_TIMEOUT_S` (15 s; the SDK's own default was 600 s) and
+a timeout is not retried; the latch holds for `MOXIE_ENGINE_RETRY_S` (60 s), after which the next line
+tries the gateway again (one line; a filler racing it on another thread stays on the standby) and an
+answer clears it with one recovery line. `synth.voice_name` says which one is talking, and `describe()`
+since when and when the gateway is tried next (`on the next line` once the window has passed).
 
 ### Choosing an engine
 
