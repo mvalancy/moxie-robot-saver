@@ -949,8 +949,9 @@ async function withRefusalLines(fn) {
   // Each hurt guard and phrase names the word it cannot match without (`need`), so an isolate's first line
   // does not run — and compile — all of them. A need is a speed-up only: wherever a pattern matches a pinned
   // line, its need matches too, so skipping it on a line without that word can change no verdict.
-  const hurtCat = safety.TABLE.categories.find((c) => c.id === "hurt_disclosure");
-  ok(hurtCat.allow.every((g) => g.need) && hurtCat.phrases.every((p) => p.need),
+  // (On a tree without the floor there is no such category: the shim makes the pins fail by name.)
+  const hurtCat = safety.TABLE.categories.find((c) => c.id === "hurt_disclosure") || { allow: [], phrases: [] };
+  ok(hurtCat.allow.length > 0 && hurtCat.allow.every((g) => g.need) && hurtCat.phrases.every((p) => p.need),
      `every hurt guard (${hurtCat.allow.length}) and phrase (${hurtCat.phrases.length}) names the word it needs`);
   const unneeded = [];
   for (const t of [...lines.harmless, ...lines.hurt_disclosures].map((x) => safety.normalize(x))) {
