@@ -188,6 +188,17 @@ for (const [reason, badge, snippet] of [
   else eq(h.m.message(), "", `${reason} keeps today's copy`);
 }
 
+// THE PARITY PIN (W4-S6): the two closed reason lists are ONE list. envelope.js coerces a
+// reason it does not know to bad_request; mode.js coerces one to null, and a refused turn
+// with a null reason reads as a clean one (note(): strikes cleared, the page live). So a
+// reason added on one side only is a refusal the page calls healthy.
+{
+  const m = MODE_SRC.match(/var REASONS = \[([\s\S]*?)\];/);
+  const client = m ? [...m[1].matchAll(/"(\w+)"/g)].map((x) => x[1]).sort() : [];
+  ok(client.length > 0, "mode.js REASONS parsed (the pin must not pass on an empty list)");
+  deep(client, [...env2.REASONS].sort(), "mode.js REASONS is exactly envelope.js REASONS");
+}
+
 // 4f. What the transport reports back (§4.5), and the live -> degraded transitions (§6.3).
 {
   const h = await bootLive();
