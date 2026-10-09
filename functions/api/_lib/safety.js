@@ -7,9 +7,9 @@
  *
  * BEFORE THE CALL, like `mqtt/moxie_sdk/safety.py`: a hard-blocked turn never reaches a
  * model and spends ZERO gateway units — one rule, a safety control and a cost control. The
- * child side of every category that blocks keeps the authority table's phrases and guards
- * (plus this floor's own weapon phrases), so it is never weaker than the robot's: the story,
- * accident and idiom guards written for her replies apply to her side only (`allow_moxie`).
+ * child side of every category that blocks keeps the authority table's words, phrases and
+ * guards (plus this floor's own weapon phrases): the story, accident and idiom guards written
+ * for her replies apply to her side only (`allow_moxie`).
  *
  * AFTER THE CALL, like the core supervisor's `role="moxie"` check: the completion is
  * assessed with each category's `action.moxie` BEFORE a voice ticket is minted, so an

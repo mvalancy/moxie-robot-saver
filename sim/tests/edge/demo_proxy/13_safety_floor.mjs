@@ -946,6 +946,18 @@ async function withRefusalLines(fn) {
   ]) {
     eq(disclosesHurt(safety.assess(t)), want, `ROUND 5: ${want ? "A DISCLOSURE" : "not a disclosure"}: ${JSON.stringify(t)}`);
   }
+  // Each hurt guard and phrase names the word it cannot match without (`need`), so an isolate's first line
+  // does not run — and compile — all of them. A need is a speed-up only: wherever a pattern matches a pinned
+  // line, its need matches too, so skipping it on a line without that word can change no verdict.
+  const hurtCat = safety.TABLE.categories.find((c) => c.id === "hurt_disclosure");
+  ok(hurtCat.allow.every((g) => g.need) && hurtCat.phrases.every((p) => p.need),
+     `every hurt guard (${hurtCat.allow.length}) and phrase (${hurtCat.phrases.length}) names the word it needs`);
+  const unneeded = [];
+  for (const t of [...lines.harmless, ...lines.hurt_disclosures].map((x) => safety.normalize(x))) {
+    for (const [i, g] of hurtCat.allow.entries()) if (new RegExp(g.re.source, "i").test(t) && !(g.need && g.need.test(t))) unneeded.push(`guard ${i + 1}: ${t}`);
+    for (const [i, p] of hurtCat.phrases.entries()) if (new RegExp(p.source, "i").test(t) && !(p.need && p.need.test(t))) unneeded.push(`phrase ${i + 1}: ${t}`);
+  }
+  deep(unneeded.slice(0, 3), [], "WHEREVER A HURT PATTERN MATCHES A PINNED LINE, THE WORD IT NEEDS IS THERE");
   // Through the route: a cover story the model answers without a referral gets the sentence — and so does
   // a disclosure whose "but it really hurt" speech-to-text put in a sentence of its own.
   const split = "the kids at school punched me as a joke. but it really hurt.";
