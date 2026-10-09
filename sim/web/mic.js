@@ -21,6 +21,17 @@
  * TIME: a Listen tap is ignored while a clip or its turn is in flight, and just after an
  * auto-stop that already sent the clip.
  *
+ * THE TAP IS DELIBERATE: it stops her speech on purpose — the playing clip and every queued
+ * sentence (`interruptVoice` on the bridge, the transport's seam) — and from the recorder
+ * RUNNING until the ears are done with the clip nothing of hers starts (`earsOpen` /
+ * `earsIdle`; `body[data-mic]` stays set through the upload, which is what ambient.js
+ * reads). A permission prompt left unanswered, or a recorder that will not start, holds
+ * nothing; every way a recording can end releases the hold, and a valve bounds it (see
+ * `hush` … `earsDone`), so the recording never holds her own voice and a tap can never hold
+ * the conversation for good. THE EARS ARE NOT THE BRAIN: what the ears report to the mode
+ * machine (`route: "ears"`) stays the ears' own status, and a transcribe 429 holds this
+ * button for as long as it said, while typed turns go on.
+ *
  * THE 15-SECOND HARD STOP lives here because the server's byte cap is not a duration cap
  * and a Function only sees a finished upload (live-sim-demo.md §4.1); `DEMO_MAX_RECORD_MS`
  * arrives in `/api/health`'s `limits`.
@@ -103,6 +114,81 @@
     return p;
   }
 
+  /* THE TAP IS THE INTERRUPTION; THE RUNNING RECORDER IS THE HOLD. The tap stops her at once
+   * (`hush`: the bridge's `interruptVoice`, #317's end-the-pipeline path — the playing clip,
+   * every queued sentence, no further ticket; without the transport, `moxieAudio.stop()`)
+   * and HOLDS NOTHING: the browser may now be asking for the microphone, and a permission
+   * prompt left unanswered need never settle (`getUserMedia` neither resolves nor rejects),
+   * so a hold taken at the tap kept a typed line, and a grown-up redirect already on its
+   * way, from ever reaching the child (measured 2026-10-08: nothing sent in five minutes).
+   * From the recorder RUNNING until the clip is dropped or its upload has settled the ears
+   * are working (`earsOpen` … `earsDone`): `body[data-mic]` says so (ambient.js holds its
+   * mutters on it — before this it was cleared at stop, and a quip could start during the
+   * 2-3 s upload) and the bridge is told, so the transport stops her again (a reply may have
+   * begun while the browser asked) and holds everything of hers. Only once `rec.start()` has
+   * returned: taken before it, a `start()` that threw (NotSupportedError, a MediaRecorder on
+   * an inactive stream) left the ears working with nothing to end them — a typed line, and a
+   * hurt child's line, never sent (the W3-S16 review's probe A). Each recording has its own
+   * number (`clipSeq`), so an earlier clip settling after a NEW recording opened cannot end
+   * it, and every ending releases it: `stop()`, a recorder that cannot stop, and one that
+   * stopped BY ITSELF (its tracks ended — a headset unplugged, the OS took the microphone:
+   * `onstop` with no `stop()` of ours; left as "recording" it held the spoken line and the
+   * next typed one for half an hour, probe B). And it is BOUNDED whatever the recorder does:
+   * `holdValve`, the record cap plus BUSY_MAX_MS after the recorder ran (45 s by default),
+   * declares the ears idle — the same number the transport is told, so its own valve on the
+   * hold agrees (a served 60 s cap is 90 s, never the transport's 45 s default). */
+  var clipSeq = 0;         // this recording's number: `earsDone(gen)` ends the ears for the newest only
+  var holdValve = null;    // bounds the hold, from the recorder running
+
+  function hush() {
+    var b = window.moxieBridge;
+    if (b && typeof b.interruptVoice === "function") { try { b.interruptVoice(); } catch (e) {} return; }
+    var a = window.moxieAudio;
+    try { if (a && a.stop) a.stop(); } catch (e) {}
+  }
+
+  function earsOpen(gen, holdMs) {
+    try { document.body.setAttribute("data-mic", "on"); } catch (e) {}
+    if (holdValve !== null) clearTimeout(holdValve);
+    holdValve = setTimeout(function () {
+      holdValve = null;
+      stats.holdValved++;
+      // Still recording at the bound (a cap timer that never fired): stopped here, its clip
+      // sent if it is worth sending; the ears are idle regardless.
+      if (recording && gen === clipSeq) stop();
+      earsDone(gen);
+    }, holdMs);
+    var b = window.moxieBridge;
+    if (b && typeof b.earsOpen === "function") { try { b.earsOpen(holdMs); } catch (e) {} return; }
+    var a = window.moxieAudio;
+    try { if (a && a.stop) a.stop(); } catch (e) {}
+  }
+
+  function earsDone(gen) {
+    // An earlier clip settling after a NEW recording opened does not make the ears idle:
+    // that recording's own end will. (A capture still opening holds nothing: see above.)
+    if (gen !== clipSeq) return;
+    if (holdValve !== null) { clearTimeout(holdValve); holdValve = null; }
+    try { document.body.removeAttribute("data-mic"); } catch (e) {}
+    var b = window.moxieBridge;
+    if (b && typeof b.earsIdle === "function") { try { b.earsIdle(); } catch (e) {} }
+  }
+
+  /** The ears are done when `p` settles — or after BUSY_MAX_MS, so an upload that never
+   *  answers (no `AbortSignal.timeout`) cannot hold her voice for good. */
+  function earsUntil(p, gen) {
+    var done = false;
+    var valve = setTimeout(finish, BUSY_MAX_MS);
+    function finish() {
+      if (done) return;
+      done = true;
+      clearTimeout(valve);
+      earsDone(gen);
+    }
+    Promise.resolve(p).then(finish, finish);
+    return p;
+  }
+
   function clearSilence() {
     if (silenceTimer !== null) { clearTimeout(silenceTimer); silenceTimer = null; }
   }
@@ -135,9 +221,12 @@
   }
 
   /** Recorded, never sampled: tests assert WHY a recording ended from these. `noSpeech`
-   *  counts clips dropped unsent; `ignoredTaps` counts Listen taps refused mid-turn. */
+   *  counts clips dropped unsent; `ignoredTaps` counts Listen taps refused mid-turn;
+   *  `selfStops` recorders that stopped by themselves (counted in `stops` too);
+   *  `holdValved` holds ended by their bound rather than by the clip. */
   var stats = { starts: 0, stops: 0, autoStops: 0, speechDetected: 0, silenceStops: 0,
-                emptyStops: 0, noSpeech: 0, ignoredTaps: 0, posts: 0, transcripts: 0,
+                emptyStops: 0, noSpeech: 0, ignoredTaps: 0, restedTaps: 0, selfStops: 0, holdValved: 0,
+                posts: 0, transcripts: 0,
                 fallbacks: 0, tooShort: 0, tooLong: 0,
                 botUnavailable: 0, botTokens: 0, reasons: [], lastUrl: "", lastBytes: 0,
                 lastMime: "", lastCapMs: 0, lastKind: "" };
@@ -194,9 +283,13 @@
   /** Words the visitor actually said — the paid path on a live deployment, by design. */
   function publishUtterance(text) {
     // the bridge's live turn if it has one, else route locally so the loop stays visible;
-    // a live turn's promise (cloud-transport.js) counts as in flight until she answers
-    if (window.moxieBridge && window.moxieBridge.sendUserTurn) {
-      hold(window.moxieBridge.sendUserTurn(text));
+    // a live turn's promise (cloud-transport.js) counts as in flight until she answers.
+    // One at a time, in order: behind a typed line still being answered (`queueUserTurn`).
+    var b = window.moxieBridge;
+    if (b && typeof b.queueUserTurn === "function") {
+      hold(b.queueUserTurn(text));
+    } else if (b && b.sendUserTurn) {
+      hold(b.sendUserTurn(text));
     } else if (window.moxieBridge && window.moxieBridge.route) {
       window.moxieBridge.route(USER_TOPIC, JSON.stringify({ command: "prompt", speech: text }));
     }
@@ -225,23 +318,35 @@
     return String(alt.transcript || "").trim();
   }
 
-  /** Tell the mode machine what the server said so the badge follows reality (§4.5). */
+  /** Tell the mode machine what the EARS saw (`route: "ears"`): their own status and their
+   *  own window, never the brain's verdict — a refused or failed clip says nothing about
+   *  `/api/chat`, so it must not strike it, nor pause typed turns (§4.5). */
   function note(reason, retryAfterS) {
     if (reason) stats.reasons.push(reason);
     var m = mode();
-    if (m && m.note) m.note({ reason: reason || null, retry_after_s: retryAfterS || 0 });
+    if (m && m.note) m.note({ route: "ears", reason: reason || null, retry_after_s: retryAfterS || 0 });
   }
 
   function noteTransportError() {
     stats.reasons.push("transport_error");
     var m = mode();
-    if (m && m.noteTransportError) m.noteTransportError();
+    if (m && m.noteTransportError) m.noteTransportError("ears");
+  }
+
+  /** The ears' wait, in words. The per-minute window is a few seconds; the hour or day cap
+   *  (and the gateway's STT cooldown, 60 s) says how long — one line used to say "a few
+   *  seconds" for a 40-minute wait. Mirrors mode.js's `restingCopy` for the brain. */
+  function restCopy(s) {
+    s = Number(s) || 0;
+    if (s <= 15) return "one at a time — give Moxie a few seconds";
+    var m = Math.max(1, Math.ceil(s / 60)), h = Math.round(s / 3600);
+    var when = s >= 7200 ? h + " hours" : m === 1 ? "a minute" : m + " minutes";
+    return "Moxie’s ears need a rest — back in about " + when;
   }
 
   /** One line of honest copy per refusal, never a status code (§7). Anything unnamed
-   *  degrades silently to the scripted line. */
+   *  degrades silently to the scripted line. `rate_limited` is `restCopy(retry_after_s)`. */
   var REASON_COPY = {
-    rate_limited: "one at a time — give Moxie a few seconds",
     at_capacity: "Moxie has her hands full — using a scripted line",
     budget_exhausted: "the live ears are out of demo budget for now",
     upstream_down: "Moxie can't hear right now — using a scripted line",
@@ -291,8 +396,8 @@
     if (typeof asked === "string") return upload(blob, target, asked);
     return asked.then(function (tok) {
       if (tok === null) {
-        // No token, no upload: a free scripted line plus a transport strike, as
-        // `cloud-transport.js::botUnavailable` does for typed turns.
+        // No token, no upload: a free scripted line, and the ears' own error — never a
+        // strike against the brain (unlike `cloud-transport.js::botUnavailable`'s typed turn).
         stats.botUnavailable++;
         noteTransportError();
         return fallback("Moxie couldn’t finish her visitor check — using a scripted line");
@@ -328,10 +433,11 @@
       // The house envelope carries WHY, so a refused turn degrades honestly.
       var reason = body && typeof body.reason === "string" ? body.reason : null;
       if (reason) {
-        note(reason, Number(body.retry_after_s) || 0);
+        var wait = Number(body.retry_after_s) || 0;
+        note(reason, wait);
         if (reason === "too_short") stats.tooShort++;
         if (reason === "too_long") stats.tooLong++;
-        return fallback(REASON_COPY[reason] || null);
+        return fallback(reason === "rate_limited" ? restCopy(wait) : (REASON_COPY[reason] || null));
       }
       if (res.status < 200 || res.status >= 300 || !body) {
         // A sidecar that answered a bare non-2xx, or anything unparseable.
@@ -512,11 +618,16 @@
   }
 
   /** The browser is still asking for the microphone (the permission prompt): a second tap
-   *  must not open a second capture, whose stream nothing would ever release. */
+   *  must not open a second capture, whose stream nothing would ever release. It says so,
+   *  and what else the visitor can do, since the prompt may be sitting unanswered. */
   var opening = false;
+  var STILL_ASKING = "waiting for the microphone — allow it in the browser, or type a message and tap Ask";
 
   function start() {
-    if (recording || opening) return Promise.resolve();
+    if (recording) return Promise.resolve();
+    if (opening) { status(STILL_ASKING); return Promise.resolve(); }
+    // The tap itself is the interruption: her voice stops NOW. Nothing is held yet.
+    hush();
     var asked = captureFor(sttTarget().kind);
     opening = true;
     return asked.then(function (got) {
@@ -525,9 +636,13 @@
       stream = (got && got.stream) || null;
       if (!rec) { status("mic unsupported in this browser"); return; }
       chunks = [];
+      var gen = 0;                        // this recording's number, once it runs
       rec.ondataavailable = function (e) { if (e && e.data && e.data.size) chunks.push(e.data); };
       rec.onstop = function () {
         clearCap();
+        // No `stop()` of ours: the recorder stopped BY ITSELF (its tracks ended). It is
+        // stopped all the same, and its clip is judged like any other.
+        if (recording && gen === clipSeq) { stats.selfStops++; ended(); }
         var blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
         var auto = autoStopped;
         autoStopped = false;
@@ -535,15 +650,23 @@
         releaseStream();
         // Measured, and never loud enough to be speech (the auto-stop or a second tap): drop
         // it unsent, whatever its size. No upload, no scripted line, no turn.
-        if (levelBlocks > 0 && !speechSeen) { stats.noSpeech++; status(NOTHING_HEARD); return; }
+        if (levelBlocks > 0 && !speechSeen) { stats.noSpeech++; status(NOTHING_HEARD); earsDone(gen); return; }
         // Both gates are FREE refusals of clips the route would refuse anyway.
-        if (blob.size < minBytes()) { stats.tooShort++; status("(too short)"); return; }
+        if (blob.size < minBytes()) { stats.tooShort++; status("(too short)"); earsDone(gen); return; }
         if (auto) armTapGuard();
-        if (blob.size > maxBytes()) { stats.tooLong++; hold(fallback(REASON_COPY.too_long)); return; }
-        hold(transcribe(blob));
+        if (blob.size > maxBytes()) { stats.tooLong++; hold(earsUntil(fallback(REASON_COPY.too_long), gen)); return; }
+        hold(earsUntil(transcribe(blob), gen));
       };
+      // THE HARD STOP's length (§4.1, below) is also the hold's bound: the cap, then 30 s.
+      var cap = maxRecordMs();
+      // The recorder RUNS: the microphone is open. From here until the clip is dropped or its
+      // upload has settled the ears are working, and she is stopped again in the same tick
+      // (a reply may have begun while the browser asked) — no frame reaches the recorder
+      // first. Had `start()` thrown, nothing would have been held (the `catch` below).
       rec.start();
       recording = true;
+      gen = ++clipSeq;
+      earsOpen(gen, cap + BUSY_MAX_MS);
       speechSeen = false;
       levelBlocks = 0;
       autoStopped = false;
@@ -552,14 +675,12 @@
       // Only the hosted (WAV) capture hands us levels; MediaRecorder never sees samples.
       if (got && typeof got.setLevelListener === "function") got.setLevelListener(onLevel);
       stats.starts++;
-      document.body.setAttribute("data-mic", "on");
       status("● listening…");
       if (window.moxieAudio) window.moxieAudio.sfx("listen");
       // She notices the tap (`bridge/alive.js::moxieAlive` owns the vocabulary).
       if (window.moxieAlive) window.moxieAlive.listening();
 
       // THE HARD STOP (§4.1): this, not the byte cap, bounds what one visitor can spend.
-      var cap = maxRecordMs();
       stats.lastCapMs = cap;
       clearCap();
       capTimer = setTimeout(function () {
@@ -571,6 +692,8 @@
         stop();
       }, cap);
     }).catch(function (e) {
+      // The capture never opened, or its recorder would not start: nothing was held, since
+      // the hold is taken only once the recorder runs.
       opening = false;
       clearCap();
       releaseStream();
@@ -590,24 +713,41 @@
     return "the microphone did not start";
   }
 
-  function stop() {
-    if (!recording) return;
+  /** The recording is over, however it ended: what `stop()` and a recorder that stopped by
+   *  itself (`onstop` with no `stop()` of ours) have in common. */
+  function ended() {
     clearSilence();
     // Whatever comes next owns her face; `thinking()` is armed by the SEND, not the stop.
     if (window.moxieAlive) window.moxieAlive.settled();
     recording = false;
     stats.stops++;
     clearCap();
-    document.body.removeAttribute("data-mic");
-    try { rec && rec.state !== "inactive" && rec.stop(); } catch (e) {}
   }
 
-  /** The Listen button. Stopping is never refused; starting waits for the last turn. */
+  function stop() {
+    if (!recording) return;
+    ended();
+    // The ears stay "working" (body[data-mic], the bridge) until `onstop` has dropped the
+    // clip or its upload has settled; a recorder that cannot stop ends them here.
+    var stopping = false;
+    try { if (rec && rec.state !== "inactive") { rec.stop(); stopping = true; } } catch (e) {}
+    if (!stopping) earsDone(clipSeq);
+  }
+
+  /** The Listen button. Stopping is never refused; starting waits for the last turn, and for
+   *  the hosted ears' own window (a transcribe 429): the status says how long, and no clip
+   *  is recorded only to be refused. */
   function toggle() {
     if (recording) return stop();
     if (tapGuard !== null || busy > 0) {
       stats.ignoredTaps++;
       status(ONE_AT_A_TIME);
+      return Promise.resolve();
+    }
+    var m = mode();
+    if (sttTarget().kind === "cloud" && m && typeof m.canUseEars === "function" && !m.canUseEars()) {
+      stats.restedTaps++;
+      status(restCopy(typeof m.earsRetryAfterS === "function" ? m.earsRetryAfterS() : 0));
       return Promise.resolve();
     }
     return start();

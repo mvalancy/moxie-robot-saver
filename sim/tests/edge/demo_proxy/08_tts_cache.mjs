@@ -1,9 +1,10 @@
 /* test_demo_proxy §16: the synthesised-audio cache (§4.8) — `/api/speech` stops paying twice
  * for a line. A hit is byte-identical to a miss and costs zero upstream calls; every failure
- * costs exactly one synthesis; only a successful synthesis is stored; the caps decide first.
+ * costs exactly one synthesis; only a successful synthesis is stored; the caps decide first;
+ * and on Pages the answer never waits for the write (16h).
  * Not asserted: any hit rate (per-colo; a cold colo pays full price). Run via the entry file. */
 import {
-  FULL, ORIGIN, P, call, chat, deep, eq,
+  FULL, ORIGIN, P, assertClean, call, chat, deep, eq,
   fresh, limits, ok, pcmBytes, req, sent, speech, ttscache, wav, wire2,
 } from "./harness.mjs";
 
@@ -350,6 +351,117 @@ import {
       fresh();
       const again = await turn(LINE, { ...FULL, DEMO_TTS_VOICE: "amy" });
       ok(synths() === 0 && bytesOf(again).equals(bytesOf(t)), "…and with both tiers on, the repeat is still a byte-identical hit");
+    });
+  }
+
+  // 16h. THE ANSWER NEVER WAITS FOR THE WRITE. On Cloudflare the put is handed to
+  // `context.waitUntil` and finishes after the response; bare node has no `waitUntil` and
+  // still awaits it, which is the path 16a-16g pin (16b reads `wrote` the moment the call
+  // returns). The clock here is VIRTUAL and frozen while the route runs: a response that
+  // waited for a hanging put could only arrive through the put's deadline timer, which
+  // fires only when the test fires it.
+  {
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+    const TICKS = 400;   // real 5 ms timer ticks (2 s or more) for a route NOT waiting on a timer
+    const SERVED = Buffer.from(pcmBytes(200));   // the stub's synthesis, as samples
+    const ticketFor = async (env) => {
+      P.plan = { chat: { content: LINE }, speech: P.plan.speech };
+      return (await call(chat, "/api/chat", { text: "say it" }, null, env)).body.speech[0].ticket;
+    };
+    /** Redeem a ticket the way Pages calls the route: a context whose `waitUntil` records
+     *  what it was handed, with every timer frozen until the response has arrived (or
+     *  TICKS real ticks pass; no clock is read). The frozen timers are fired afterwards, so
+     *  neither the route nor the handed write is left pending. */
+    async function onPages(ticket, env) {
+      const handed = [];
+      const timers = [];
+      let answered = false;
+      // A no-op catch the moment a write is handed over, so one that rejects early fails its
+      // named check below instead of crashing the suite as an unhandled rejection.
+      const waitUntil = (p) => { handed.push(p); Promise.resolve(p).catch(() => {}); };
+      globalThis.setTimeout = (fn) => { timers.push(fn); return timers.length; };
+      globalThis.clearTimeout = (id) => { timers[id - 1] = null; };
+      try {
+        const route = speech.onRequestPost({ request: req("/api/speech", { ticket }), env, waitUntil });
+        route.then(() => { answered = true; }, () => { answered = true; });
+        for (let k = 0; k < TICKS && !answered; k++) await new Promise((r) => realSetTimeout(r, 5));
+        const frozen = { answered, handed: handed.length, writePending: false, inflight: limits.__state().inflight.speech };
+        if (handed.length) {
+          let settled = false;
+          handed[0].then(() => { settled = true; }, () => { settled = true; });
+          await new Promise((r) => setImmediate(r));
+          frozen.writePending = !settled;
+        }
+        for (let k = 0; k < timers.length; k++) if (timers[k]) { const f = timers[k]; timers[k] = null; f(); }
+        const res = await route;
+        await assertClean(res, "/api/speech on Pages");
+        const body = JSON.parse(await res.clone().text());
+        const audio = body.messages && body.messages[0] ? JSON.parse(body.messages[0].payload).audio : {};
+        const outcomes = await Promise.all(handed.map((p) => Promise.resolve(p).then(() => "resolved", () => "rejected")));
+        return { res, body, audio, bytes: Buffer.from(audio.buffer || "", "base64"), handed, outcomes, frozen };
+      } finally {
+        globalThis.setTimeout = realSetTimeout;
+        globalThis.clearTimeout = realClearTimeout;
+      }
+    }
+
+    // A put that HANGS FOR EVER: today's await would hold the answer for the whole deadline.
+    fresh();
+    await withCache(audioCache({ putHangs: true }), async () => {
+      const t = await onPages(await ticketFor(FAST), FAST);
+      ok(t.frozen.answered, "a hanging put does not delay the response: it arrived while the put still hung and no timer had fired");
+      ok(t.frozen.handed === 1 && t.frozen.writePending, "…because context.waitUntil was handed the write, still pending when the answer left");
+      deep([t.res.status, t.body.reason, t.bytes.equals(SERVED)], [200, null, true], "…and the answer carries the synthesized audio");
+      deep([t.outcomes, cstats().timeouts, cstats().wrote], [["resolved"], 1, 0],
+           "…and the handed write still ends at its own deadline, resolved, recorded as a timeout");
+      eq(t.frozen.inflight, 0, "…and the concurrency slot was back before the write ended, not held for it");
+    });
+
+    // A put that REJECTS or THROWS: the answer is unaffected and the handed promise resolves.
+    for (const [label, o] of [["REJECTS", { putRejects: true }], ["THROWS SYNCHRONOUSLY", { putThrowsSync: true }]]) {
+      fresh();
+      await withCache(audioCache(o), async () => {
+        const t = await onPages(await ticketFor(FAST), FAST);
+        deep([t.frozen.answered, t.res.status, t.body.reason, t.bytes.equals(SERVED)], [true, 200, null, true],
+             `a put that ${label} never fails the response: 200 with the synthesized audio`);
+        deep([t.handed.length, t.outcomes, cstats().errors, cstats().wrote], [1, ["resolved"], 1, 0],
+             `…and the write handed to waitUntil RESOLVES (it never rejects into the runtime), recorded as an error`);
+      });
+    }
+
+    // A working cache: the entry lands after the answer and decodes to exactly what was served.
+    fresh();
+    const colo = audioCache();
+    await withCache(colo, async () => {
+      const t = await onPages(await ticketFor(VOICED), VOICED);
+      deep([t.frozen.answered, t.res.status, t.handed.length, t.outcomes], [true, 200, 1, ["resolved"]],
+           "a working put is handed to waitUntil and resolves after the answer");
+      const key = ttsEntries(colo)[0];
+      const stored = key ? wav.pcmFromAudio(colo.bytes(key), { format: "wav" }) : { pcm: new Uint8Array(0) };
+      ok(Buffer.from(stored.pcm).equals(t.bytes) && stored.sampleRate === t.audio.sample_rate && stored.channels === t.audio.channels,
+         "…and the STORED entry still decodes to exactly the PCM, rate and channels served");
+      deep([cstats().wrote, ttsCalls(colo, "put")], [1, 1], "…written once");
+
+      // The next redemption of the same line is a hit and hands nothing to waitUntil.
+      fresh();
+      P.plan = { speech: { audio: wavOf(77, 8000) } };
+      const hit = await onPages(await ticketFor(VOICED), VOICED);
+      deep([hit.res.status, synths(), hit.handed.length, hit.bytes.equals(t.bytes)], [200, 0, 0, true],
+           "…so the next redemption is a byte-identical hit with no write to hand off");
+    });
+
+    // A window refusal: the cap decides before the cache, so nothing is read, written or handed.
+    fresh();
+    const capped = audioCache();
+    await withCache(capped, async () => {
+      const limited = { ...VOICED, DEMO_SPEECH_PER_MIN: "2" };
+      const ts = [await ticketFor(limited), await ticketFor(limited), await ticketFor(limited)];
+      for (const t of ts.slice(0, 2)) await onPages(t, limited);
+      const before = ttsOps(capped);
+      const refused = await onPages(ts[2], limited);
+      deep([`${refused.res.status} ${refused.body.reason}`, ttsOps(capped) - before, refused.handed.length], ["429 rate_limited", 0, 0],
+           "a window refusal makes ZERO audio-cache calls and hands nothing to waitUntil");
     });
   }
 }
