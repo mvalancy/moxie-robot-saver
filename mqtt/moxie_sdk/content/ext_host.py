@@ -225,8 +225,8 @@ def robot_markup(markup) -> tuple:
     so what the robot is sent must hold no tag of ours and nothing the catalogue refuses.
     This is the channel of a `say`'s markup and a `markup` statement only: a mark written in
     a line or in a conversation's opener reaches the robot's markup another way, unchecked
-    (the runtime's markup floor sends a line holding `<` as it is). `_reply_from_volley` sends
-    `actions.parse_action_tags(clean)[0]`: our tags lifted once, as from a line, then
+    (the runtime's markup floor sends a line holding `<` as it is). `_reply_from_volley`
+    sends `actions.parse_action_tags(clean)[0]`: our tags lifted once, as from a line, then
     `tidy_spoken_text`, which takes out the space before a comma and so can join a tag's
     pieces (`<mark name="cmd:zzz ,data:{}"/>` would become a mark with the verb `zzz`; the
     gate drops that one first, since the catalogue's mark pattern does not read it whole).
@@ -247,11 +247,10 @@ def robot_markup(markup) -> tuple:
     usel's genre or a spurt's id is read as in its own tag, or read on past that tag's `>`,
     which no catalogue id holds), so the last pass does not read ids tag by tag again
     (pinned, `test_the_last_pass_reads_ids_once_and_refuses_what_a_tag_by_tag_read_would`).
-    A tag of ours or one the
-    gate would drop can be left only because a tag the gate dropped stood between the
-    pieces of another (`<ex<ex<mark name="cmd:zzz"/>it>it>` would reach the robot as
-    `<exit>`), or because tidying joined one; keeping any of it would need a pass the robot
-    does not make, so nothing is kept.
+    A tag of ours or one the gate would drop can be left only because a tag the gate
+    dropped stood between the pieces of another (`<ex<ex<mark name="cmd:zzz"/>it>it>` would
+    reach the robot as `<exit>`), or because tidying joined one; keeping any of it would
+    need a pass the robot does not make, so nothing is kept.
 
     Cost: every pass is linear in the markup, the whole-text check included. That check is
     `vocab.py`'s, and it runs only when nothing above dropped the markup, so every catalogue
