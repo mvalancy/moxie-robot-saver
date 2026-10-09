@@ -101,24 +101,26 @@ async function open(label, o = {}) {
 
 /* A TAP TIMED LIKE A FINGER. puppeteer's touchscreen.tap / mouse.click send the lift only once
  * the page has handled the press, so on a loaded runner a page busy at the press made a quick
- * tap look like a 900 ms hold, by the events' own clocks too (measured: timeStamp 911 ms apart,
- * against 50 ms when the lift carries its own time). scene.js times a tap by those clocks, as a
- * real phone's finger is timed, so these send the press and the lift 60 ms apart by timestamp. */
+ * tap look like a 900 ms hold, by the events' own clocks too (measured: timeStamp 911 ms
+ * apart). scene.js times a tap by those clocks, as a real phone's finger is timed, so these
+ * send the press and the lift back to back, without waiting on the page: the browser stamps
+ * both as they arrive (measured: 0 ms apart, trusted, the click and its activation intact)
+ * however long the page then takes. No clock is read here. */
 async function fingerTap(page, x, y) {
   const s = await page.target().createCDPSession();
   try {
-    const t = Date.now() / 1000;
-    await s.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }], timestamp: t });
-    await s.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [], timestamp: t + 0.06 });
+    await Promise.all([
+      s.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] }),
+      s.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })]);
   } finally { await s.detach().catch(() => {}); }
 }
 async function mouseClick(page, x, y) {
   const s = await page.target().createCDPSession();
   try {
-    const t = Date.now() / 1000;
-    await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, timestamp: t - 0.02 });
-    await s.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1, timestamp: t });
-    await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1, timestamp: t + 0.06 });
+    await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    await Promise.all([
+      s.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 }),
+      s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 })]);
   } finally { await s.detach().catch(() => {}); }
 }
 
