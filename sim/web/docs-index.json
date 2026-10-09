@@ -400,7 +400,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 96962,
+   "bytes": 100644,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -1227,7 +1227,7 @@
    "path": "guides/child-safety.md",
    "title": "Child safety — what Moxie checks, and where you review it",
    "section": "guides",
-   "bytes": 8959,
+   "bytes": 9458,
    "mermaid": 0,
    "headings": [
     "What actually happens in a turn",

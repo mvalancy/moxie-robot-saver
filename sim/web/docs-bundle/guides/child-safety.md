@@ -118,11 +118,16 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    she still answers with a line that points them to a grown-up — never with "let's talk
    about something else". If the AI is busy, slow or down after the check has read the line,
    the server still sends that pointing line and the page speaks it. A scraped knee, a sad
-   film, a day out ("my dad took me to the zoo"), a hug or a hand held is left to the AI: the
-   added sentence is for a person hurting them, not an accident or an outing. This is a
-   word-and-phrase check like the rest, so it recognises the shapes it lists, not every way a
-   child can say it; a disclosure in other words reaches the AI, which points the child to a
-   grown-up on its own about nine times in ten. What it cannot cover: a turn refused before
+   film, a day out ("my dad took me to the zoo"), a hug, a hand held, a bath ("my mom told me
+   to take off my wet clothes"), a goodnight kiss, a drawing shown to grandpa, a picture of it
+   sent to grandma, a treat kept secret from mom, a push into the pool, a joke or an accident
+   the child calls one is left to the AI: the added sentence is for a person hurting them, not
+   an accident, an outing or ordinary family life. The same words from an uncle, a cousin, a
+   coach, a babysitter or a stranger ("asked me to take off my pants", "made me kiss him") do
+   get it, and so do they from a parent when the child adds that they did not like it or it
+   was a secret. This is a word-and-phrase check like the rest, so it recognises the shapes it
+   lists, not every way a child can say it; a disclosure in other words reaches the AI, which
+   points the child to a grown-up on its own about nine times in ten. What it cannot cover: a turn refused before
    the line is read (too long, a stale session), a demo with no AI configured at all, or a
    page that gave up waiting for the server — those answer from Moxie's recorded lines, which
    do not point anywhere.

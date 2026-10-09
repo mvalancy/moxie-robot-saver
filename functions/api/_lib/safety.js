@@ -296,6 +296,8 @@ const LIST_RE = new RegExp("(?:\\s*,\\s*(?:or\\s+|and\\s+)?|\\s+(?:or|and)\\s+)(
  *  grown-up nearby?", "is your mom home right now?". "Was a teacher there?" and "did your
  *  teacher hear them?" ask about the past and point nowhere. */
 const CHECK_RE = new RegExp("\\b(?:does|do|is|are|can|could)\\s+(?:there\\s+)?(" + DET + ")?\\s?(" + ADULT + ")\\b[^.!?]*?\\b(?:know|knows|aware|nearby|near\\s+you|close\\s+by|around|home|at\\s+home|with\\s+you|right\\s+now|you\\s+can\\s+(?:tell|talk\\s+to|go\\s+to))\\b", "gi");
+/** "Do you have a grown-up you can talk to?": a check that names someone to go to now. */
+const HAVE_RE = new RegExp("\\b(?:do|does)\\s+you\\s+have\\s+(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:you|that\\s+you|who\\s+you|whom\\s+you)\\s+(?:can|could|feel\\s+safe\\s+to|are\\s+able\\s+to)\\s+(?:tell|talk\\s+to|talk\\s+with|trust|go\\s+to|ask|turn\\s+to|call)\\b", "gi");
 const NOMINATE_RES = [
   new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:you|that you|who you)\\s+trust\\s+(?:is|are|can|could|will|would|should|needs?|has|have|must)\\b", "gi"),
   // "this needs a grown-up", "feelings this big need a grown-up": the SITUATION needs one.
@@ -304,11 +306,13 @@ const NOMINATE_RES = [
   new RegExp("\\b(?:this|that|it|these|those|feelings?\\s+(?:this|that|so)\\s+big|(?:something|anything|a\\s+(?:problem|thing|worry|secret))\\s+(?:this|that|so)\\s+big|(?:something|things?|stuff|a\\s+problem|a\\s+worry|a\\s+secret)\\s+like\\s+(?:this|that|these|those))\\s+(?:really\\s+|always\\s+)?needs?\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi"),
   new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:is|are|would\\s+be|will\\s+be|'s)\\s+the\\s+(?:right|best|safest|perfect|good)\\s+(?:one|person|people|grown[- ]?ups?|adults?)\\b", "gi"),
   new RegExp("\\b(?:this|that|it)\\s+(?:is|'s)\\s+(?:something|one|a\\s+job|a\\s+thing|a\\s+problem|a\\s+question)\\s+(?:for\\s+)?(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi"),
-  new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:can|could|should|will|would|needs?\\s+to|has\\s+to|have\\s+to|ought\\s+to|is\\s+able\\s+to|are\\s+able\\s+to|is\\s+there\\s+to|are\\s+there\\s+to)\\s+(?:really\\s+|always\\s+|definitely\\s+)?(?:help|keep\\s+you\\s+safe|make\\s+(?:it|this|him|her|them)\\s+stop|protect\\s+you|sort\\s+(?:this|it)\\s+out|fix\\s+(?:this|it)|take\\s+care\\s+of\\s+(?:this|it|you)|look\\s+after\\s+you|stop\\s+(?:this|it|him|her|them)|make\\s+sure)\\b", "gi"),
+  // "a grown-up can help", "your teacher should know about this", "your mom would want to
+  // know": the adult is named as the one to act — but "should know better" names nobody.
+  new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:can|could|should|will|would|needs?\\s+to|has\\s+to|have\\s+to|ought\\s+to|is\\s+able\\s+to|are\\s+able\\s+to|is\\s+there\\s+to|are\\s+there\\s+to)\\s+(?:really\\s+|always\\s+|definitely\\s+|want\\s+to\\s+|wants\\s+to\\s+)?(?:help|keep\\s+you\\s+safe|make\\s+(?:it|this|him|her|them)\\s+stop|protect\\s+you|sort\\s+(?:this|it)\\s+out|fix\\s+(?:this|it)|take\\s+care\\s+of\\s+(?:this|it|you)|look\\s+after\\s+you|stop\\s+(?:this|it|him|her|them)|make\\s+sure|know(?!\\s+(?:better|how))|hear\\s+about\\s+(?:this|it)|be\\s+told|find\\s+out)\\b", "gi"),
   new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:is|are)\\s+(?:nearby|near\\s+you|close\\s+by|around|with\\s+you|there|home|at\\s+home)\\b", "gi"),
   new RegExp("\\b(?:is|are)\\s+(?:for|a\\s+job\\s+for)\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi"),
 ];
-const FORMS = [DIRECT_RE, CHECK_RE, ...NOMINATE_RES];
+const FORMS = [DIRECT_RE, CHECK_RE, HAVE_RE, ...NOMINATE_RES];
 
 /** A family role word onto its canonical role, or `null` for an adult that is never the
  *  one named ("a grown-up", "someone you trust", "a doctor"). */
