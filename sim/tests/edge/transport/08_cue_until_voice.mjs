@@ -196,7 +196,7 @@ const send = (text) => globalThis.window.moxieBridge.sendUserTurn(text);
   deep([n.settled, status(), T().chatFirst, a.stats.spoke, a.stats.held, world.spy.said.filter((s) => s.who === "ambient").length], [1, "", 1, 0, 0, 0],
        "12f: ONCE THE BRAIN HAS ANSWERED NO SPOKEN FILLER STARTS: the 3.5 s beat is passed over (not held), and the body settles there as the words go out");
   deep(motors.filter(([i, , t]) => i === 5 && t - t0 > 1000 && t - t0 < 3500).map(([, , t]) => t - t0), [3000],
-       "12f: …while the quiet beat (a small head move, no sound) 2 s after the answer kept her visibly working until the words");
+       "12f: …while the quiet beat (a small turn, no sound) 2 s after the answer kept her visibly working until the words");
   await advance(2900);                                 // t+6.5 s: her voice landed at 6.0 s
   deep([world.spy.sounds.map((s) => [s.kind, s.t - t0]), aliveState().pose, n.settled, a.stats.spoke], [[["cloud", 6000]], null, 1, 0],
        "12f: the only sound of the turn is her answer, however late (6.0 s); nothing settled again, nothing was said meanwhile");
