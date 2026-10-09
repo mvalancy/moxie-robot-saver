@@ -166,6 +166,9 @@ class MoxieRuntime(LifecycleMixin, StatusServerMixin, ConnectionMixin, FleetMixi
         self._busy: set = set()                    # robots with a turn in flight
         self._last_greeting: dict[str, str] = {}   # never the same hello twice running
         self._pending_opener: dict[str, str] = {}  # hello queued for the next turn
+        #: Child names renamed or cleared away during this run: the log and feed still mask
+        #: them (a conversation's history can bring one back). RAM only, never written.
+        self._retired_child_names: set = set()
         self._vision_subscribed: dict[str, str] = {}   # device -> module we subscribed for
         #: What the app layer subscribed to, `{device: {event: module}}`. Keyed to the
         #: module because subscriptions end when the module exits (RemoteModuleAPI).

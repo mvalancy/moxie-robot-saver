@@ -5,6 +5,8 @@ import time
 from moxie_sdk.types import Turn, ResultCode
 from moxie_sdk import presence as presence_seam
 from moxie_sdk import launch_cards as cards_seam
+from moxie_sdk import safety as safety_seam
+from moxie_sdk.cloud_config import GENERIC_CHILD_NAME, mask_child_names
 from markup import make_markup
 
 
@@ -75,8 +77,9 @@ class PresenceMixin:
         # A card and a hello can share one reply (one greeting, one launch).
         text, markup = greeting if greeting is not None else ("", "")
         if greeting is not None:
-            self._note("chat", f"hello (unprompted): '{text[:40]}'")
-            print(f"[runtime] 👋 {device_id} walked back in -> '{text}'", flush=True)
+            self._note("chat", f"hello (unprompted): '{self._masked(text, 40)}'")
+            print(f"[runtime] 👋 {device_id} walked back in -> '{self._masked(text)}'",
+                  flush=True)
         if card is not None:
             self._note("vision", f"🎴 launch card -> {card.module_id}")
             print(f"[runtime] 🎴 {device_id} scanned a launch card -> {card.module_id}",
@@ -137,9 +140,9 @@ class PresenceMixin:
         if text:
             markup, scored = self._stage(text, reply, turn_key=rcr.get("event_id"),
                                          chunk_index=0, markup=reply.markup)
-        self._note("vision", f"🧬 a pack answered {name}: '{text[:40]}'")
+        self._note("vision", f"🧬 a pack answered {name}: '{self._masked(text, 40)}'")
         print(f"[runtime] 🧬 {device_id}: {name} woke a content pack -> "
-              f"'{text[:60]}'", flush=True)
+              f"'{self._masked(text, 60)}'", flush=True)
         self._publish_chat(device_id, rcr.get("event_id"),
                            rcr.get("backend", "router"), text, markup or "",
                            actions=actions or None,
@@ -156,7 +159,8 @@ class PresenceMixin:
         Gates: an `arrived` signal with `away_s >= greet_after_s` (0 = off; a first
         sighting never greets); once per absence (`greeted_at` vs `last_lost_at`); never
         over a turn in flight (queued for `_speak_opener`); never to an unpermitted robot;
-        never in bedtime hours.
+        never in bedtime hours. The line itself passes the output safety check
+        (`_speakable_hello`), queued or not.
         """
         if self.greet_after_s <= 0:
             return None
@@ -172,18 +176,24 @@ class PresenceMixin:
             self._note("vision", f"hello suppressed (bedtime) for {device_id}")
             return None
         now = time.time()
+        name = robot.child.nickname
         with self._presence_lock:
             state = self._presence_state(robot)
             greeted_at = state.get("greeted_at")
             lost_at = state.get("last_lost_at") or 0.0
             if greeted_at is not None and greeted_at >= lost_at:
                 return None                       # already said hello for this absence
-            text = presence_seam.pick_greeting(robot.child.nickname,
-                                               self._last_greeting.get(device_id, ""))
-            self._last_greeting[device_id] = text
+            last = self._last_greeting.get(device_id, "")
             state = dict(state)
-            state["greeted_at"] = now
+            state["greeted_at"] = now             # one hello per absence, said or not
             robot.extra["presence"] = state
+        # Outside the lock: a classifier may be slow, and a block writes the review queue.
+        text = self._speakable_hello(device_id, presence_seam.pick_greeting(name, last),
+                                     name, last)
+        if not text:
+            return None
+        with self._presence_lock:
+            self._last_greeting[device_id] = text
             busy = device_id in self._busy
             if busy:
                 self._pending_opener[device_id] = text
@@ -194,6 +204,38 @@ class PresenceMixin:
         return text, make_markup(text, turn_key=f"greet|{device_id}|{now:.0f}",
                                  chunk_index=0)
 
+    def _speakable_hello(self, device_id, text, name, last) -> str:
+        """`text`, a hello naming the child, as it may be said: through the output check
+        every other line Moxie says passes (`_assess`, Moxie's side; the preview, telehealth
+        and the brain's answers do the same).
+
+        The name was checked when it was saved (`cloud_config.check_name`); this is the
+        defence in depth for one that never was (the appliance's own
+        `MOXIE_CHILD_NICKNAME`, a record an older build wrote, a classifier stricter than
+        the table). A BLOCKED hello becomes the generic one (`GENERIC_CHILD_NAME`), and
+        only the parent hears of it: the block in the safety review queue (its excerpt
+        with the name masked) and one feed line. A flagged hello is said and recorded, as
+        a flagged answer is. `""` when even the generic hello is blocked (a rules table
+        can block anything): then there is no hello."""
+        verdict = self._assess(text, safety_seam.MOXIE)
+        if not verdict:
+            return text
+        verdict.excerpt = mask_child_names(text, [name])   # the queue never keeps a name
+        self._record_safety(device_id, verdict)
+        if verdict.action != safety_seam.BLOCK:
+            return text
+        generic = presence_seam.pick_greeting(GENERIC_CHILD_NAME, last)
+        again = self._assess(generic, safety_seam.MOXIE)
+        if again and again.action == safety_seam.BLOCK:
+            self._note("safety", f"🛑 no hello for {device_id}: the safety rules block the "
+                                 f"hello that names the child and the generic one too")
+            return ""
+        self._note("safety", f"🛑 the hello for {device_id} named the child, and the "
+                              f"safety rules block that name "
+                              f"({', '.join(verdict.categories)}): Moxie said the generic "
+                              f"hello instead. Give the child another name in the Wi-Fi tab.")
+        return generic
+
     def _speak_opener(self, device_id, event_id, seq):
         """Deliver a queued hello as chunk 0 of the starting turn — the filler wire shape
         (`REPLY_PENDING`, `chunk_num=0`), so the real answer follows as chunk 1. Returns the
@@ -203,8 +245,9 @@ class PresenceMixin:
         if not text or self._is_stale(device_id, seq):
             return None
         markup, scored = self._stage(text, turn_key=f"greet|{event_id}", chunk_index=0)
-        self._note("chat", f"hello (queued): '{text[:40]}'")
-        print(f"[runtime] 👋 delivering queued opener on {device_id}: '{text}'", flush=True)
+        self._note("chat", f"hello (queued): '{self._masked(text, 40)}'")
+        print(f"[runtime] 👋 delivering queued opener on {device_id}: "
+              f"'{self._masked(text)}'", flush=True)
         self._publish_chat(device_id, event_id, "router", text, markup,
                            result=ResultCode.REPLY_PENDING, chunk_num=0,
                            is_completed=False, scored=scored)

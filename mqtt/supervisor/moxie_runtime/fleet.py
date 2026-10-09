@@ -49,6 +49,68 @@ class FleetMixin:
         from moxie_sdk.cloud_config import child_profile_for
         return child_profile_for(self._config_overrides.get(device_id), self.child)
 
+    def child_names(self) -> set:
+        """Every name Moxie may call a child on this appliance, for the log and feed mask
+        (`_masked`): each connected robot's (`RobotContext.child`), each robot's saved
+        record (`child` on its layer, connected or away), the appliance's own
+        (`MOXIE_CHILD_NICKNAME`), and any renamed or cleared away during this run (a
+        conversation's history can bring one back). Raw strings, unchecked: a name the
+        rule refuses is masked too. Safe while the constructor is still loading the layers."""
+        names = {getattr(self.child, "nickname", None)}
+        names.update(getattr(r.child, "nickname", None)
+                     for r in list((getattr(self, "robots", None) or {}).values()))
+        for layer in list((getattr(self, "_config_overrides", None) or {}).values()):
+            record = layer.get("child") if isinstance(layer, dict) else None
+            if isinstance(record, dict):
+                names.add(record.get("nickname"))
+        names.update(getattr(self, "_retired_child_names", None) or ())
+        return {n for n in names if isinstance(n, str) and n.strip()}
+
+    def _child_changed(self, device_id, before) -> None:
+        """After this robot's `child` record changed (a parent's save, a revoke): the next
+        turn, hello, brain card and `/status` say the name in force at once. When it is
+        another name (or none), the day plan's stored "why" lines, which name the child,
+        are dropped (`GET /schedule` plans on the spot until the robot asks for its next
+        plan), and so is a hello queued for the next turn: it was built with the old name.
+        The old name stays masked in the log and feed for the rest of the run, and the
+        feed's lines in RAM are masked again, so one written before the new name was known
+        (the child said it first) no longer shows it."""
+        child = self.child_for(device_id)
+        if device_id in self.robots:
+            self.robots[device_id].child = child
+        if (child.nickname, child.birthday_iso) != (before.nickname, before.birthday_iso):
+            self.store.delete(device_id, self.SCHEDULE_EXPLAIN_COLLECTION)
+            with self._presence_lock:
+                self._pending_opener.pop(device_id, None)
+        if child.nickname != before.nickname:
+            self._retired_child_names.add(before.nickname)
+            for entry in list(self.recent):
+                if isinstance(entry, dict) and isinstance(entry.get("text"), str):
+                    entry["text"] = self._masked(entry["text"])
+
+    def _forget_child(self, device_id) -> bool:
+        """A robot this appliance no longer lets in keeps no child's name: the `child`
+        record on its layer is dropped, in RAM and in its saved settings. An unpair or a
+        reset whose clear (`child: null`) never arrived is retried this way: Revoke in
+        Robot access. True when its saved settings hold no name now; False when they
+        could not be saved (the store refused, or the record failed closed), so a restart
+        could bring the name back."""
+        layer = self._config_overrides.get(device_id)
+        had = isinstance(layer, dict) and "child" in layer
+        if not had and self.settings_saved(device_id):
+            return True                  # RAM and the saved record agree: no name
+        before = self.child_for(device_id)
+        with self._settings_record(device_id) as held:
+            if isinstance(layer, dict):
+                layer.pop("child", None)
+            saved = self._save_config_overrides(device_id, held)
+        if had:
+            self._child_changed(device_id, before)
+            line = f"🧹 {device_id} is not let in, so its settings keep no child's name"
+            self._note("permit", line if saved else
+                       f"{line} (NOT saved: a restart brings the name back)")
+        return saved
+
     def configurable(self, device_id) -> bool:
         """May a parent's setting be saved for this robot now? A connected robot, or one
         this appliance knows while it is away: on the permit list or in the roster. Its
@@ -127,7 +189,9 @@ class FleetMixin:
 
     def set_permit(self, device_id, permitted: bool = True, label: str = "") -> dict:
         """Permit or revoke one device durably, and re-push its config now (full config
-        on permit, the minimal un-paired document on revoke)."""
+        on permit, the minimal un-paired document on revoke). A revoke also takes the
+        child's name off the robot's settings (`_forget_child`), and its answer says
+        whether they hold none now (`child_cleared`)."""
         device_id = str(device_id or "").strip()
         if not device_id:
             raise ValueError("device_id is required")
@@ -141,13 +205,17 @@ class FleetMixin:
         self._permits_cache = None      # our own write invalidates outright,
                                         # never trusting mtime granularity
         self._note("permit", f"{'✅ permitted' if permitted else '⛔ revoked'} {device_id}")
+        cleared = None if permitted else self._forget_child(device_id)
         if device_id in self.robots:
             if permitted:
                 self._admit(device_id)
             else:
                 self._push_config(device_id)             # the minimal un-paired document
                 self._forget_stt_ask(device_id)          # pending: never "mic asked"
-        return self.permits_view()
+        out = self.permits_view()
+        if cleared is not None:
+            out["child_cleared"] = cleared
+        return out
 
     def _admit(self, device_id):
         """What a connected robot gets the moment it is let in, by a Permit or by the
@@ -357,8 +425,8 @@ class FleetMixin:
                            result=ResultCode.SUCCESS, scored=scored)
         if speak:
             self._maybe_synthesize(device_id, staged.markup, event_id, chunk_num=0)
-        self._note("preview", f"🎬 rehearsed '{line[:40]}' on {device_id}")
-        print(f"[runtime] 🎬 preview → {device_id}: '{line[:60]}'", flush=True)
+        self._note("preview", f"🎬 rehearsed '{self._masked(line, 40)}' on {device_id}")
+        print(f"[runtime] 🎬 preview → {device_id}: '{self._masked(line, 60)}'", flush=True)
         out = {"ok": True, "device_id": device_id, "published": True, "spoke": speak,
                "event_id": event_id, "text": line, "markup": staged.markup,
                "mode": staged.mode, "scored": scored,
@@ -399,15 +467,9 @@ class FleetMixin:
             # with the parent's choice, so a NO_DATA that was set is swept at the next start.
             self._save_config_overrides(device_id, held)
         if before is not None:
-            child = self.child_for(device_id)
-            if device_id in self.robots:
-                # The next turn, hello, brain card and /status say the new name at once.
-                self.robots[device_id].child = child
-            if (child.nickname, child.birthday_iso) != (before.nickname, before.birthday_iso):
-                # The day plan's stored "why" lines name the child too (`build_schedule_for`):
-                # a changed or cleared name must not linger there. `GET /schedule` plans on
-                # the spot until the robot asks for its next plan.
-                self.store.delete(device_id, self.SCHEDULE_EXPLAIN_COLLECTION)
+            # The new name at once; the day plan's "why" lines and a queued hello, which
+            # name the child too, never linger with the old one (`_child_changed`).
+            self._child_changed(device_id, before)
         if "logging_policy" in overrides or ends_fail_closed:
             # The privacy switch moved (a parent's choice, or a parent's choice back in force
             # after failing closed): under NO_DATA erase transcript + activity record now.

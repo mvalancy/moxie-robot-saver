@@ -6,7 +6,7 @@ thin adapter onto one runtime method, which owns the behaviour and the refusal w
 GET     /status /conn /permits /voice /brain /content /content/export
         /telemetry /safety /schedule /config /memory /telehealth /tryit   (`?device_id=…`)
 POST    /config /safety /permits /telehealth /voice /voice/test /brain /preview /wakeup
-        /memory /content/{review,import,undo,item,render} /tryit
+        /memory /content/{review,import,undo,item,render} /tryit /child-name
 DELETE  /memory /telemetry   (erases are never policy-gated)
 """
 from __future__ import annotations
@@ -170,8 +170,22 @@ class _Handler(BaseHTTPRequestHandler):
         route = {"/memory": self._memory_write, "/telehealth": self._telehealth,
                  "/preview": self._preview, "/wakeup": self._wakeup, "/brain": self._brain,
                  "/permits": self._permits, "/safety": self._safety,
-                 "/config": self._config, "/tryit": self._tryit}.get(u.path)
+                 "/config": self._config, "/tryit": self._tryit,
+                 "/child-name": self._child_name}.get(u.path)
         return route(u.query) if route else self._not_found()
+
+    def _child_name(self, _query):
+        """`{"nickname": "…"}`: would Moxie take this as a child's name? The one name rule
+        (`cloud_config.clean_child_name`: the shape, NFC, Moxie's safety table), and nothing
+        is saved or pushed. `{ok: true}`, or a 400 whose `reason` says why in the parent's
+        words (never the name). The console asks before it saves an account's child record
+        (`server/moxie_server/child_profile.py` `refusal_for`)."""
+        from moxie_sdk.cloud_config import clean_child_name
+        try:
+            clean_child_name(self._body(strict=True).get("nickname"))
+        except Exception as e:
+            return self._refuse(e)
+        return self._json_out({"ok": True})
 
     def _tryit(self, query):
         """`{"speech", "history", "device_id", "brain", "module", "nickname"}`: one preview
