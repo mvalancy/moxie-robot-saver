@@ -28,7 +28,7 @@ class ScheduleMixin:
         except Exception as e:
             print(f"[runtime] effective config unavailable ({e}); planning without it")
             config = {}
-        child = getattr(self.child, "nickname", "") or ""
+        child = getattr(self.child_for(device_id), "nickname", "") or ""
         return plan(device_id, content_schedules=schedules,
                     mentor_behaviors=self.mentor_behaviors(device_id),
                     effective_config=config, telemetry_packets=packets,

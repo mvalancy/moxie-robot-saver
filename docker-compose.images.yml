@@ -227,7 +227,7 @@ services:
       # deployment's 🧠 card offers `content` alone. `any` hands the choice back.
       MOXIE_APP: ${MOXIE_APP:-content}       # content | llm | echo | webhook | any
       MOXIE_CONTENT_MODULE: ${MOXIE_CONTENT_MODULE:-content_modules/starter.json}
-      MOXIE_CHILD_NICKNAME: ${MOXIE_CHILD_NICKNAME:-friend}
+      MOXIE_CHILD_NICKNAME: ${MOXIE_CHILD_NICKNAME:-friend}   # fallback: a parent's name for their child wins
       MOXIE_TTS: ${MOXIE_TTS:-tone}          # tone = the built-in zero-dependency voice
       MOXIE_TTS_VOICE: ${MOXIE_TTS_VOICE:-}   # empty = derived from the model name
       MOXIE_PIPER_MODEL: ${MOXIE_PIPER_MODEL:-}      # published images ship no Piper — see the guide
