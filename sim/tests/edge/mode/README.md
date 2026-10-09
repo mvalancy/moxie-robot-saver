@@ -14,8 +14,11 @@ DOM element for `env.js`).
   budget, with zero network calls.
 - [`06_outage_honesty.mjs`](06_outage_honesty.mjs) — §8: outages, timeouts and the hour cap
   replayed on a clock, with envelopes production can send; and what env.js paints for a rest.
+- [`07_ears_apart.mjs`](07_ears_apart.mjs) — §9: the ears apart — what `/api/transcribe` reports
+  (`route: "ears"`) opens the ears' own window and never moves the brain's state, strikes or window;
+  every `/api/chat` rule of §4 and §8 unchanged beside it; the ears' default windows (§9f).
 
-The sections run in order: §4–5 and §8 replace `fetch`, timers and `Date.now` for good.
+The sections run in order: §4–5 and §8–9 replace `fetch`, timers and `Date.now` for good.
 
 ---
 📖 [Edge modules](../README.md) · [Back to top](../../../../README.md)
