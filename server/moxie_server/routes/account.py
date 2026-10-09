@@ -8,7 +8,7 @@ import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from .. import db
+from .. import child_profile, db
 from ..auth import current_user, digits, mint_tokens, read_json
 from ..serializers import user_document
 
@@ -154,15 +154,22 @@ async def create_child(request: Request, u=Depends(current_user)):
 
 @router.put("/api/children/{cid}")
 async def update_child(cid: str, request: Request, u=Depends(current_user)):
+    """Update the record, then send its name to every robot of this account bound to this
+    child (the Wi-Fi tab's name field is the rename). `child_pushed` and `reason` say
+    whether the robots got it; the record is saved either way."""
     row = _child(cid, u["id"])
     body = await read_json(request)
     attrs = {**json.loads(row["attributes"]), **body.get("child", body)}
     db.ex("UPDATE children SET attributes=? WHERE id=?", (json.dumps(attrs), cid))
-    return {"data": {"id": cid, "type": "children", "attributes": attrs}}
+    return {"data": {"id": cid, "type": "children", "attributes": attrs},
+            **child_profile.push_to_robots_of_child(u["id"], cid)}
 
 
 @router.delete("/api/children/{cid}")
 def delete_child(cid: str, u=Depends(current_user)):
+    """The record goes, and with it the name on any robot of this account still bound to
+    it (the web app unpairs first, so there is usually none)."""
+    child_profile.clear_from_robots_of_child(u["id"], cid)
     db.ex("DELETE FROM children WHERE id=? AND user_id=?", (cid, u["id"]))
     return Response(status_code=NO_CONTENT)
 
