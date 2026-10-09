@@ -80,6 +80,7 @@ A scheduler may queue duties into **one** session (never several competing write
 | 2 hours | Trace one real user path and find one evidenced gap. |
 | 3 hours | Rotate one security, spending, performance, privacy, browser, lifecycle or test boundary. |
 | 4 hours | Build a status packet for an independent, read-only strategy review. |
+| Daily (a standing owner goal) | Grow the creature: add a few `sim/web/ambient.json` lines (or a gesture in `ambient.js`'s keyframe style) in her register: mischievous, odd, secretly devoted; mock-sinister plans that end harmless; never menace aimed at the child, nothing scary at bedtime. Extend the habits the chat persona names; seasonal lines carry `"months"`. Render in `tts-piper-kristin` with `prerender_audio.py --engine gateway` under a call ledger, check every clip word for word with a local whisper (reword on a miss), and keep `node sim/test_ambient.mjs` and `node sim/test_fallback_coverage.mjs` green. |
 
 Rules for each batch:
 

@@ -164,7 +164,7 @@ curl -s https://YOUR-DOMAIN/api/health
 | `mode` | Meaning |
 |---|---|
 | `live` | Configured, switched on, and no spent budget this isolate can see; visitors get a real brain. |
-| `degraded` | `reason` says which: `gateway_not_configured` (a required variable is missing, half of an Access or Turnstile pair is set, or `DEMO_ENABLED=0`) or `budget_exhausted` (the unit budget, as this isolate counts it). |
+| `degraded` | `reason` says which: `gateway_not_configured` (a required variable is missing, half of an Access or Turnstile pair is set, `DEMO_ENABLED=0`, or `DEMO_SERVE_HOSTS` is set and does not list this host) or `budget_exhausted` (the unit budget, as this isolate counts it). |
 | `offline` | The page's own verdict when no answer comes: `/api/health` is absent or not this API's JSON (plain static hosting), so the page is the static demo. Health itself never says it. |
 
 There is no `busy` mode. `load.level` (`ok`, `busy`, `full`) is this isolate's count against the chat

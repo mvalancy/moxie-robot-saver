@@ -23,7 +23,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap",
    "section": "_root",
-   "bytes": 9252,
+   "bytes": 9408,
    "mermaid": 0,
    "headings": [
     "Definition of done",
@@ -99,7 +99,7 @@
    "path": "architecture/agent-workflow.md",
    "title": "Agent and contributor workflow",
    "section": "architecture",
-   "bytes": 6941,
+   "bytes": 7561,
    "mermaid": 0,
    "headings": [
     "Goals, in priority order",
@@ -1308,7 +1308,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 16541,
+   "bytes": 16596,
    "mermaid": 0,
    "headings": [
     "1. Deploy",
