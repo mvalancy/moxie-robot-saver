@@ -17,7 +17,19 @@
  *                       negative value is overlap, which voice/ forbids, so it is a bug)
  *   voice_ms            the whole voice, first start to last end
  *   reply_chars         the reply's length, so arms can be compared on like replies
- * and prints the medians. Audio is unlocked by Chrome's flag; nothing here taps the page.
+ *   marks               where each request's time went, in ms from the send: the chat's
+ *                       `sent`/`headers`/`body`, and per voice chunk `sent`, `headers` (the
+ *                       fetch resolved), `body` (the page's read of it resolved), `decode` /
+ *                       `decoded` (`voice/cloud.js::decodeCloudTTS` entered / returned: the
+ *                       hand-off and the base64 → PCM work) and `playing` (its buffer started)
+ *   chunk0_client_ms    chunk 0 from its headers to its sound, split as download (headers →
+ *                       body), handoff (body → decode: parse and routing), decode, and
+ *                       schedule (decoded → playing: the voice queue and Web Audio)
+ * and prints the medians, plus `first_turn_ms` (turn 1, the cold one) and the median of the
+ * turns after it, so a cold first turn and a long tail read on their own. A mark the page
+ * no longer exposes (a renamed reader or decoder) is null, never a guess; `marks_complete`
+ * counts the turns whose chunk-0 marks are all present and in order.
+ * Audio is unlocked by Chrome's flag; nothing here taps the page.
  *
  * ONE TURN AT A TIME: each turn waits for the previous voice to end, so this never sees two
  * replies overlap. The overlap rule (a newer reply's voice starting ends the older pipeline;
@@ -78,7 +90,10 @@ const p90 = (xs) => {
   return s.length ? s[Math.min(s.length - 1, Math.floor(0.9 * (s.length - 1)))] : null;
 };
 
-/** PAGE-SIDE, before any page script: every /api/* fetch with its timings. */
+/** PAGE-SIDE, before any page script: every /api/* fetch with its timings. `doneAt` is the
+ *  headers; `bodyAt` is when the page's read of the body resolved. The page reads with
+ *  `text()` (`cloud-transport.js::post`); `json()` and `arrayBuffer()` are wrapped too, so
+ *  a change of reader cannot leave the mark blank. */
 function instrumentFetch() {
   window.__api = [];
   const of = window.fetch;
@@ -86,11 +101,36 @@ function instrumentFetch() {
     const url = String((input && input.url) || input || "");
     const m = /\/api\/(chat|speech|transcribe)\b/.exec(url);
     if (!m) return of.call(this, input, init);
-    const rec = { route: m[1], t: performance.now(), doneAt: null, status: null };
+    const rec = { route: m[1], t: performance.now(), doneAt: null, bodyAt: null, status: null };
     window.__api.push(rec);
-    return of.call(this, input, init).then((r) => { rec.doneAt = performance.now(); rec.status = r.status; return r; },
-                                           (e) => { rec.doneAt = performance.now(); rec.status = "error"; throw e; });
+    return of.call(this, input, init).then((r) => {
+      rec.doneAt = performance.now();
+      rec.status = r.status;
+      for (const k of ["text", "json", "arrayBuffer"]) {
+        const read = r[k].bind(r);
+        r[k] = () => read().then((v) => { if (rec.bodyAt === null) rec.bodyAt = performance.now(); return v; });
+      }
+      return r;
+    }, (e) => { rec.doneAt = performance.now(); rec.status = "error"; throw e; });
   };
+}
+
+/** PAGE-SIDE, once the page is live: stamp every gateway-voice decode. `playCloudTTS` looks
+ *  `decodeCloudTTS` up on `window.__moxieVoice` at call time, so wrapping it there sees each
+ *  chunk as the transport hands it to the voice. False (and the decode marks null) when the
+ *  page no longer has it. */
+function instrumentDecode() {
+  window.__decodes = [];
+  const V = window.__moxieVoice;
+  if (!V || typeof V.decodeCloudTTS !== "function") return false;
+  const decode = V.decodeCloudTTS;
+  V.decodeCloudTTS = function (resp) {
+    const t = performance.now();
+    const out = decode.apply(this, arguments);
+    window.__decodes.push({ t, doneAt: performance.now(), chunk: out ? out.chunkNum : null, frames: out ? out.frames : 0 });
+    return out;
+  };
+  return true;
 }
 
 const { puppeteer, chrome } = await requireBrowser("measure_voice_latency");
@@ -111,6 +151,8 @@ try {
           window.moxieTypedTurn && window.moxieTypedTurn.adopted(),
     { timeout: 20000, polling: 100 }).then(() => true, () => false);
   if (!ready) throw new Error("the page never became live with a typed turn (is /api/health live? is .dev.vars set?)");
+  result.decodeMarks = await page.evaluate(instrumentDecode);
+  if (!result.decodeMarks) console.error("note: the page has no window.__moxieVoice.decodeCloudTTS; the decode marks are null");
   // Unlock audio the way a visitor would, once, so no turn is waiting on a gesture.
   await page.mouse.click(10, 10);
   await sleep(1500);
@@ -119,7 +161,8 @@ try {
     const line = LINES[i % LINES.length];
     // Her previous voice (and the ambient mutters) must be over, or a cut would be counted.
     await page.waitForFunction(() => !window.moxieAudio.isMoxieBusy(800), { timeout: 30000, polling: 100 }).catch(() => {});
-    const before = await page.evaluate(() => ({ api: window.__api.length, plays: window.__audio.plays.length, now: performance.now() }));
+    const before = await page.evaluate(() => ({ api: window.__api.length, plays: window.__audio.plays.length,
+                                                decodes: (window.__decodes || []).length, now: performance.now() }));
     const t0 = await page.evaluate((x) => { const t = performance.now(); window.moxieTypedTurn.send(x); return t; }, line);
     // Wait for the first gateway-voice buffer to start, then for the voice to end.
     const first = await page.waitForFunction((n) => window.__audio.plays.slice(n).some((p) => p.src === "pcm"),
@@ -135,6 +178,7 @@ try {
     const tl = await page.evaluate((b) => ({
       api: window.__api.slice(b.api).map((a) => ({ ...a })),
       plays: window.__audio.plays.slice(b.plays).filter((p) => p.src === "pcm").map((p) => ({ t: p.t, dur: p.dur, frames: p.frames })),
+      decodes: (window.__decodes || []).slice(b.decodes).map((d) => ({ ...d })),
       stops: window.__audio.stops.filter((s) => s.t >= b.now).length,
       reply: (() => { const r = document.querySelectorAll("#transcript .turn.moxie .msg"); return r.length ? r[r.length - 1].textContent : ""; })(),
       stats: window.moxieBridge.transportStats(),
@@ -144,6 +188,17 @@ try {
     const plays = tl.plays.sort((a, b) => a.t - b.t);
     const gaps = [];
     for (let k = 1; k < plays.length; k++) gaps.push(Math.round(plays[k].t - (plays[k - 1].t + plays[k - 1].dur)));
+    // Chunks are redeemed one at a time in chunk order (cloud-transport.js), so the k-th
+    // speech request, the decode carrying chunk_num k and the k-th voice start are chunk k's.
+    const at = (x) => (Number.isFinite(x) ? Math.round(x - t0) : null);
+    const chunkMarks = speeches.map((s, k) => {
+      const d = tl.decodes.find((x) => x.chunk === k && (s.bodyAt === null || x.t >= s.bodyAt));
+      return { sent: at(s.t), headers: at(s.doneAt), body: at(s.bodyAt), decode: at(d && d.t),
+               decoded: at(d && d.doneAt), playing: at(plays[k] && plays[k].t) };
+    });
+    const m0 = chunkMarks[0] || null;
+    const seq0 = m0 ? [m0.sent, m0.headers, m0.body, m0.decode, m0.decoded, m0.playing] : [];
+    const span = (a, b) => (m0 && m0[a] !== null && m0[b] !== null ? m0[b] - m0[a] : null);
     const row = {
       i: i + 1, line, reply_chars: tl.reply.length, reply: tl.reply.slice(0, 120),
       send_to_chat_ms: chat && chat.doneAt ? Math.round(chat.doneAt - t0) : null,
@@ -158,10 +213,20 @@ try {
       voice_ms: plays.length ? Math.round(plays[plays.length - 1].t + plays[plays.length - 1].dur - plays[0].t) : null,
       stops: tl.stops,
       reasons: tl.stats.speechReasons.slice(-3),
+      marks: {
+        chat: chat ? { sent: at(chat.t), headers: at(chat.doneAt), body: at(chat.bodyAt) } : null,
+        chunks: chunkMarks,
+      },
+      chunk0_client_ms: m0 ? { download: span("headers", "body"), handoff: span("body", "decode"), decode: span("decode", "decoded"),
+                               schedule: span("decoded", "playing"), total: span("headers", "playing") } : null,
+      // Every chunk-0 mark present and none earlier than the one before it.
+      marks_complete: seq0.length > 0 && seq0.every((x, k) => x !== null && (k === 0 || x >= seq0[k - 1])),
     };
     result.turns.push(row);
+    const c0 = row.chunk0_client_ms || {};
     console.log(`turn ${row.i}: chat ${row.chat_rtt_ms} ms, first audio ${row.send_to_first_audio_ms} ms, ` +
-                `${row.chunks} chunk(s) rtt [${row.speech_rtt_ms}], gaps [${row.gaps_ms}], reply ${row.reply_chars} chars`);
+                `${row.chunks} chunk(s) rtt [${row.speech_rtt_ms}], gaps [${row.gaps_ms}], reply ${row.reply_chars} chars; ` +
+                `chunk 0 after headers: download ${c0.download} + handoff ${c0.handoff} + decode ${c0.decode} + schedule ${c0.schedule} ms`);
     await sleep(1500);
   }
   result.final = await page.evaluate(() => window.moxieBridge.transportStats());
@@ -173,14 +238,22 @@ try {
 }
 
 const T = result.turns;
+const client0 = (k) => T.map((t) => (t.chunk0_client_ms && t.chunk0_client_ms[k] !== null ? t.chunk0_client_ms[k] : NaN));
 result.summary = {
   turns: T.length,
   voiced: T.filter((t) => t.send_to_first_audio_ms != null).length,
   median_send_to_first_audio_ms: median(T.map((t) => t.send_to_first_audio_ms)),
   p90_send_to_first_audio_ms: p90(T.map((t) => t.send_to_first_audio_ms)),
+  first_turn_ms: T.length ? T[0].send_to_first_audio_ms : null,
+  median_send_to_first_audio_after_first_ms: median(T.slice(1).map((t) => t.send_to_first_audio_ms)),
   median_chat_rtt_ms: median(T.map((t) => t.chat_rtt_ms)),
   median_chunk0_rtt_ms: median(T.map((t) => (t.speech_rtt_ms[0] != null ? t.speech_rtt_ms[0] : NaN))),
+  median_chunk0_client_ms: { download: median(client0("download")), handoff: median(client0("handoff")),
+                             decode: median(client0("decode")), schedule: median(client0("schedule")),
+                             total: median(client0("total")) },
+  marks_complete: T.filter((t) => t.marks_complete).length,
   median_reply_chars: median(T.map((t) => t.reply_chars)),
+  reply_chars_per_turn: T.map((t) => t.reply_chars),
   chunks_per_turn: T.map((t) => t.chunks),
   max_gap_ms: Math.max(-1, ...T.flatMap((t) => t.gaps_ms)),
   gaps_over_1500_ms: T.flatMap((t) => t.gaps_ms).filter((g) => g > 1500).length,
