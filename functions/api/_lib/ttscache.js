@@ -186,9 +186,10 @@ export async function readCachedAudio(store, cfg, key) {
 }
 
 /**
- * Store one successful synthesis. Best effort; the visitor already has their audio.
- * AWAITED rather than `waitUntil`, so tests can observe the write finish; the deadline
- * bounds it at a fraction of the synthesis it follows.
+ * Store one successful synthesis. Best effort, and NEVER REJECTS: `/api/speech` hands this
+ * promise to `context.waitUntil`, so the visitor already has their audio while it runs
+ * (bare node, with no `waitUntil`, awaits it; that is how the hermetic suite observes the
+ * write finish). The deadline bounds it at a fraction of the synthesis it follows.
  */
 export async function writeCachedAudio(store, cfg, key, audio) {
   if (!store || !key || !audio || !audio.pcm || !audio.pcm.length) return;
