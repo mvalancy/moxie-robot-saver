@@ -851,7 +851,7 @@
    "path": "architecture/backlog/live-brain-open-issues.md",
    "title": "Live brain: open issues",
    "section": "architecture",
-   "bytes": 11359,
+   "bytes": 11692,
    "mermaid": 0,
    "headings": [
     "1. Goodbyes that omit `<exit>`",
