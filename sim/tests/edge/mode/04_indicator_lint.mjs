@@ -102,13 +102,16 @@ const snap = (over) => Object.assign({
 
   // ...then the budget runs out.
   v.push(snap({ state: "degraded", reason: "budget_exhausted", badge: "HOSTED DEMO · SCRIPTED",
-                message: "Moxie’s live brain has used up today’s demo budget.", level: "ok" }));
+                message: "Moxie’s live brain is out of demo budget — back in about 17 minutes.",
+                level: "ok" }));
   eq(v.badge.textContent, "HOSTED DEMO · SCRIPTED", "budget spent: the badge says scripted");
   eq(v.pill.hidden, false, "budget spent: the pill explains");
   ok(v.el("mic-btn").classList.contains("needs-backend"), "budget spent: the mic is marked again");
   // NOT "need a locally-run backend": this deployment HAS a brain, out until the budget resets.
-  ok(/brain is resting/.test(v.bannerText) && /try again later/.test(v.bannerText) && !/locally/.test(v.bannerText),
-     `budget spent: the banner says her brain is resting, not that the site needs a local backend (${v.bannerText})`);
+  // ONE SOURCE (W4-S6): the banner says the pill's own sentence — they read "today's demo
+  // budget" and "try again later" for the same hour.
+  eq(v.bannerText, v.pill.textContent, "budget spent: the banner says exactly what the pill says");
+  ok(!/locally/.test(v.bannerText), `budget spent: …and never that the site needs a local backend (${v.bannerText})`);
   eq(v.el("memory-hint").hidden, false, "budget spent: the memory line stays (still true of this page's chat)");
 }
 {

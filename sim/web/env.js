@@ -376,7 +376,16 @@
     '<b>Moxie&#39;s brain is resting</b> &mdash; she&#39;s using her recorded lines for ' +
     'now; try again later.';
   var NAPPING = { upstream_down: true, timeout: true };
+  /* ONE SOURCE. For a spent budget the banner says mode.js's pill sentence itself, so the
+   * two can never disagree: an hourly budget read "today’s demo budget" in the pill and
+   * "try again later" here. (The hour cap keeps RESTING: its pill already says how long,
+   * and the two agree.) */
+  var SAME_AS_PILL = { budget_exhausted: true };
   var bannerEl = null;
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
 
   function paintBanner(snap) {
     if (!bannerEl) return;
@@ -386,6 +395,7 @@
     var out = !live && brainOut(snap);
     var want = live ? BANNER_LIVE
              : !out ? BANNER_SCRIPTED
+             : SAME_AS_PILL[snap.reason] && snap.message ? escapeHtml(snap.message)
              : NAPPING[snap.reason] ? BANNER_NAPPING : BANNER_RESTING;
     if (t.innerHTML !== want) t.innerHTML = want;
     // "Run it locally" is advice for a deployment with no brain, never for one that is out.

@@ -175,7 +175,8 @@ for (const [inflight, capacity, badge, snippet] of [
 
 // 4e. §7's degrade rows.
 for (const [reason, badge, snippet] of [
-  ["budget_exhausted", "HOSTED DEMO · SCRIPTED", "today’s demo budget"],
+  // No wait in this envelope: the plain line, which no longer says "today's" (W4-S6).
+  ["budget_exhausted", "HOSTED DEMO · SCRIPTED", "out of demo budget for now"],
   ["upstream_down", "HOSTED DEMO · SCRIPTED", "unreachable"],
   ["timeout", "HOSTED DEMO · SCRIPTED", "unreachable"],
   ["gateway_not_configured", "HOSTED DEMO", ""],
@@ -188,6 +189,23 @@ for (const [reason, badge, snippet] of [
   else eq(h.m.message(), "", `${reason} keeps today's copy`);
 }
 
+// 4e'. W4-S6. A spent budget says when she is back, from ITS retry_after_s: the unit budget
+//      can be the hour's, and "today's demo budget" promised a day. Hours, never "tomorrow"
+//      (the day resets at midnight UTC, this afternoon for a visitor west of it).
+for (const [retry, want] of [[1020, "back in about 17 minutes"], [60, "back in about a minute"],
+                             [5 * 3600, "back in about 5 hours"]]) {
+  const body = envelopeText({ reason: "budget_exhausted", mode: "degraded", retry_after_s: retry });
+  const h = boot({ transport: true, replies: [{ status: 503, body }] });
+  await flush();
+  ok(h.m.message().includes(want), `budget spent, retry_after_s ${retry}: says "${want}" (got "${h.m.message()}")`);
+  ok(!/today|tomorrow/.test(h.m.message()), `…and promises no day (got "${h.m.message()}")`);
+}
+{
+  const h = await bootLive();
+  h.m.note({ status: 503, reason: "budget_exhausted", retry_after_s: 1020 });
+  ok(h.m.message().includes("back in about 17 minutes"),
+     `a TURN's budget refusal carries its wait the same way (got "${h.m.message()}")`);
+}
 // THE PARITY PIN (W4-S6): the two closed reason lists are ONE list. envelope.js coerces a
 // reason it does not know to bad_request; mode.js coerces one to null, and a refused turn
 // with a null reason reads as a clean one (note(): strikes cleared, the page live). So a

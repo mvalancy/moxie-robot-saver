@@ -288,10 +288,11 @@ try {
   }
 
   /* =====================================================================
-   * 1b. A DEPLOYMENT WITH A BRAIN, DEGRADED, at 390x844: the banner says she is napping or
-   * resting — never "need a locally-run backend" or "Run it locally" (that is true only of a
-   * deployment with no brain, block 1's fixture) — and it covers no part of her. Both ways
-   * in: the budget answered by /api/health, and a turn the brain fails mid-conversation.
+   * 1b. A DEPLOYMENT WITH A BRAIN, DEGRADED, at 390x844: the banner says she is napping,
+   * resting or (a spent budget) back in a while — never "need a locally-run backend" or "Run
+   * it locally" (that is true only of a deployment with no brain, block 1's fixture) — and it
+   * covers no part of her. Both ways in: the budget answered by /api/health, and a turn the
+   * brain fails mid-conversation.
    * =================================================================== */
   for (const [kind, fixture] of [
     ["budget spent", { health: JSON.stringify({ ok: true, degraded: true, reason: "budget_exhausted", retry_after_s: 1800,
@@ -317,8 +318,9 @@ try {
     const ban = await bannerBox(page);
     const body = await herBody(page);
     ok(ban && ban.shown, `${L}: the degraded banner is showing (${JSON.stringify(ban)})`);
-    ok(ban && /napping|resting/.test(ban.text) && !/locally/i.test(ban.text) && !ban.link,
-       `${L}: it says she is napping or resting, with no "locally-run backend" and no "Run it locally" (${JSON.stringify(ban && ban.text)})`);
+    // A spent budget's banner is the pill's own sentence, with when she is back (W4-S6).
+    ok(ban && /napping|resting|back in about/.test(ban.text) && !/locally/i.test(ban.text) && !ban.link,
+       `${L}: it says she is napping, resting or back in a while, with no "locally-run backend" and no "Run it locally" (${JSON.stringify(ban && ban.text)})`);
     ok(ban && body && ban.bottom < body.crown,
        `${L}: …and it covers NO part of her, head included (banner ${ban && ban.top}..${ban && ban.bottom}, crown ${body && body.crown})`);
     v.aborted.refused += failed.n;
