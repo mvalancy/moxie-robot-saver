@@ -777,7 +777,7 @@ async function withRefusalLines(fn) {
     const lost = lines.hurt_disclosures.filter((t) => !disclosesHurt(safety.assess(t + suf)));
     eq(lost.length, 0, `EVERY PINNED DISCLOSURE STAYS FLAGGED WITH ${JSON.stringify(suf)} APPENDED (${lines.hurt_disclosures.length}): ${JSON.stringify(lost.slice(0, 3))}`);
   }
-  ok(lines.hurt_disclosures.length >= 260, `the disclosures swept include the review's lines and round 4's fresh ones (${lines.hurt_disclosures.length})`);
+  ok(lines.hurt_disclosures.length >= 280, `the disclosures swept include the review's lines and round 4's fresh ones (${lines.hurt_disclosures.length})`);
   for (const t of ["my stepdad pushed me down the stairs and told everyone it was an accident", "my uncle touched me and said it was a game",
                    "my cousin grabbed my privates as a joke", "the big kids kick me in gym every day and it hurts",
                    "the big kids hit me with snowballs every day and it hurts", "my uncle locked me in the closet for fun",
@@ -797,7 +797,10 @@ async function withRefusalLines(fn) {
     ["my cousin grabbed my body as a joke", true],
     // the bath and the goodnight kiss are a caregiver's
     ["mommy took off my clothes for the bath", false], ["my babysitter told me to get undressed for the bath", false], ["my cousin took off my clothes before bed", true],
-    ["my babysitter takes off my clothes for the bath and touches me", true], ["my mom told me to kiss her goodnight", false],
+    ["my babysitter takes off my clothes for the bath and touches me", true], ["my babysitter took off my clothes before bed", true],
+    ["my big sister took my shirt off so i could get in the bath", false], ["my big brother took off my clothes before bed", true],
+    ["my uncle took off my clothes for the bath", true],
+    ["my mom told me to kiss her goodnight", false], ["my coach tried to kiss me goodbye", true],
     ["my uncle made me kiss him before bed", true], ["my aunt tried to kiss me goodbye", false], ["my uncle tried to kiss me before bed", true],
     // a treat-secret starts at the family member, and nobody in its sentence was hurt
     ["my dad said don't tell mom we had ice cream before dinner", false], ["my brother told me not to tell mom he broke the vase", false],
@@ -807,7 +810,7 @@ async function withRefusalLines(fn) {
     // the lady at the store, unless someone follows, takes a hand or asks them outside
     ["the lady at the store asked if i wanted candy", false], ["at the store a man asked if i wanted candy and followed me outside", true],
     ["at the store a man asked if i wanted candy and then followed me", true],
-    ["a man at the store asked if i wanted candy and tried to grab my hand", true],
+    ["a man at the store asked if i wanted candy and tried to grab my hand", true], ["a man i didn't know took my hand at the park", true],
     // "beat me at" a game, never a place; sport contact between children, never an adult's
     ["my dad beat me at chess again", false], ["my dad beat me at home", true], ["my dad beats me every time i get a bad grade", true],
     ["a kid kicked me during the soccer game", false], ["my coach hits me in soccer when i miss a goal", true], ["my little brother keeps hitting me at practice", true],
