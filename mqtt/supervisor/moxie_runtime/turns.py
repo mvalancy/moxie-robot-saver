@@ -252,7 +252,7 @@ class TurnsMixin:
             state["done"] = True
             filler = state["filler"]
         if self._is_stale(device_id, seq):
-            self._note_stale(device_id, seq, f"dropping '{reply.text[:40]}'")
+            self._note_stale(device_id, seq, f"dropping '{self._masked(reply.text, 40)}'")
             return
         # A blocked answer is never published: a safe line goes out and is journaled.
         out_verdict = self._assess(reply.text, safety_seam.MOXIE)
@@ -411,9 +411,11 @@ class TurnsMixin:
         print(f"[runtime] ⏭️  turn {seq} superseded on {device_id}; {detail}", flush=True)
 
     def _log_exchange(self, device_id, speech, text, suffix=""):
-        self._note("chat", f"💬 '{speech[:30]}' → '{text[:40]}'")
-        print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{text[:60]}'{suffix}",
-              flush=True)
+        """One exchange in the feed and the log, the child's name masked in both sides
+        (`_masked`): the published line keeps it."""
+        self._note("chat", f"💬 '{self._masked(speech, 30)}' → '{self._masked(text, 40)}'")
+        print(f"[runtime] 💬 {device_id}: '{self._masked(speech, 40)}' → "
+              f"'{self._masked(text, 60)}'{suffix}", flush=True)
 
     def _safe_respond(self, turn, app=None):
         """One non-streamed answer from `app` (the appliance's own when None)."""

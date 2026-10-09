@@ -10,11 +10,13 @@ best-effort: a supervisor that is down never fails the parent's call, and the an
 whether the name went and was saved (`child_pushed`, `child_cleared`) and why not
 (`reason`): a change the supervisor applies but cannot save (`saved: false`) is not done,
 since a restart undoes it. The supervisor is the one
-judge of a name (`moxie_sdk.cloud_config.NAME_RULE`; this process has no `moxie_sdk`), so
-here only the pairing placeholder and a blank are held back, and both CLEAR the robot's
-copy instead (`child: null`): the robot then says the appliance's default, never a name
-an earlier record left on it (an unpair whose clear could not reach the supervisor, a
-console database that was reset under a kept supervisor).
+judge of a name (`moxie_sdk.cloud_config.check_name`: the shape and Moxie's safety table;
+this process has no `moxie_sdk`): the console asks it before saving a typed name
+(`refusal_for`, `POST /child-name`), and here only the pairing placeholder and a blank are
+held back, and both CLEAR the robot's copy instead (`child: null`): the robot then says
+the appliance's default, never a name an earlier record left on it (an unpair whose clear
+and revoke could not reach the supervisor, a console database that was reset under a kept
+supervisor).
 
 The name is a child's, so nothing here logs it, and the console's two `/status` views hand
 it only to a caller with a token for the account that has the robot (`redact_status`). That
@@ -40,6 +42,8 @@ NO_DEVICE = ("This robot's record does not say which robot on this server it is,
 NO_ROBOT = "No robot on this account is bound to this child yet: the name goes with it."
 UNREACHABLE = ("This server could not reach its robot side, so the name was not sent. "
                "Save it again once the supervisor is running.")
+#: The same for a clear (unpair, reset): there is nothing for the parent to save again.
+UNREACHABLE_CLEAR = "This server could not reach its robot side."
 #: The supervisor applied the change but could not write the robot's saved settings
 #: (`saved: false`): the robot has it now, and a restart undoes it.
 NOT_SAVED = ("This server could not save the name in the robot's settings, so a restart "
@@ -51,6 +55,17 @@ NOT_SAVED_CLEAR = ("The robot stopped using the name, but this server could not 
 MASK = "[name]"
 
 
+def name_in(attrs) -> str:
+    """The name a child record's attributes give Moxie (`nickname`, else
+    `child-first-name`), whitespace-collapsed, or `""` for none (no attributes, a blank
+    name, or the pairing placeholder)."""
+    if not isinstance(attrs, dict):
+        return ""
+    raw = attrs.get("nickname") or attrs.get("child-first-name") or ""
+    name = " ".join(str(raw).split())
+    return "" if name.casefold() == PLACEHOLDER.casefold() else name
+
+
 def name_for(child_row) -> str:
     """The name to send for one `children` row, or `""` when there is none to send (no
     row, a blank name, or the pairing placeholder)."""
@@ -60,9 +75,22 @@ def name_for(child_row) -> str:
         attrs = json.loads(child_row["attributes"]) or {}
     except (TypeError, ValueError):
         return ""
-    raw = attrs.get("nickname") or attrs.get("child-first-name") or ""
-    name = " ".join(str(raw).split())
-    return "" if name.casefold() == PLACEHOLDER.casefold() else name
+    return name_in(attrs)
+
+
+def refusal_for(name: str) -> Optional[str]:
+    """Why the supervisor would refuse `name` as a child's name, in the parent's words, or
+    None. The supervisor is the one judge (`POST /child-name`: the shape, NFC and Moxie's
+    safety table; nothing is saved there). None too when there is no name to judge (`""`)
+    or the supervisor cannot be asked (down, or a build without that route): then the
+    record is saved as before, and the name is judged again when it is sent."""
+    if not name:
+        return None
+    out, code = supervisor.post_json("/child-name", {"nickname": name})
+    if code != 400:
+        return None
+    out = out if isinstance(out, dict) else {}
+    return str(out.get("reason") or out.get("error") or "Moxie will not take that name.")
 
 
 def _birthday(value) -> str:
@@ -83,7 +111,8 @@ def _took(out, code: int) -> bool:
     return code == 200 and isinstance(out, dict) and bool(out.get("ok"))
 
 
-def _outcome(out: dict, code: int, not_saved: str) -> Optional[str]:
+def _outcome(out: dict, code: int, not_saved: str,
+             unreachable: str = UNREACHABLE) -> Optional[str]:
     """`None` when the supervisor took the change and saved it, else the parent's reason:
     `not_saved` when it applied the change but its answer says the robot's record does not
     hold it (`saved: false`), since a restart would undo it."""
@@ -91,7 +120,7 @@ def _outcome(out: dict, code: int, not_saved: str) -> Optional[str]:
         return not_saved if out.get("saved") is False else None
     out = out if isinstance(out, dict) else {}
     if code == 503:
-        return UNREACHABLE
+        return unreachable
     return str(out.get("reason") or out.get("error") or f"supervisor returned {code}")
 
 
@@ -133,7 +162,7 @@ def clear_child(device_id: str) -> dict:
         return {"child_cleared": False, "reason": NO_DEVICE}
     out, code = supervisor.post_json(supervisor.device_query("/config", device_id),
                                      {"child": None})
-    reason = _outcome(out, code, NOT_SAVED_CLEAR)
+    reason = _outcome(out, code, NOT_SAVED_CLEAR, UNREACHABLE_CLEAR)
     return {"child_cleared": reason is None, "reason": reason}
 
 

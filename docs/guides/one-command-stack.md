@@ -91,7 +91,7 @@ Option A also reads `MOXIE_IMAGE_REGISTRY`, `MOXIE_IMAGE_TAG` and `MOXIE_IMAGE_P
 | `MOXIE_PORT_MQTT` | `1883` | The Sim, `sim/virtual_moxie.py`, tests (loopback only by default) |
 | `MOXIE_PORT_WS` | `9001` | The browser UI (MQTT over WebSocket) |
 | `MOXIE_PORT_CONSOLE` | `8080` | Your phone or browser |
-| `MOXIE_PORT_STATUS` | `8931` | The supervisor's `/status`, `/telemetry`, `/config`. Unauthenticated, so bound to `127.0.0.1` by default. It is a small forwarder ([`status_proxy.py`](../../mqtt/status_proxy.py)) to the runtime's loopback-only port, so the console container can reach it. |
+| `MOXIE_PORT_STATUS` | `8931` | The supervisor's `/status`, `/telemetry`, `/config`. Unauthenticated. Compose binds it to `MOXIE_BIND_HOST`: `127.0.0.1` when that is unset, but `.env.example` sets `0.0.0.0`, which puts it on your network, where anyone can read the child's name there and change settings (owner question OQ3). It is a small forwarder ([`status_proxy.py`](../../mqtt/status_proxy.py)) to the runtime's loopback-only port, so the console container can reach it. |
 
 ## Broker security
 
