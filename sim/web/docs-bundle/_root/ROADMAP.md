@@ -106,8 +106,8 @@ Ordered by priority.
 3. **Answer quality on the hosted demo.** Run the grounding check with a real negative control
    ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
 4. **A second brain for the demo.** Today one gateway outage silences it. (A failing model does
-   not: the reference gateway falls back to a second model under the same alias.) Needs a second
-   credential and an owner cost decision ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
+   not: the reference gateway falls back from one model alias to a second when the first errors.)
+   Needs a second credential and an owner cost decision ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
 5. **Parent app depth.** Partly done: unpair and factory reset are in the web app, behind a typed
    confirmation ([what is built](docs/features/robot-lifecycle.md#built-here-unpair-and-factory-reset)).
    A robot paired by scanning the codes now joins the account with one click, **Add to my

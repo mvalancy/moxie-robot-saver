@@ -23,7 +23,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap",
    "section": "_root",
-   "bytes": 9408,
+   "bytes": 9424,
    "mermaid": 0,
    "headings": [
     "Definition of done",
@@ -1308,7 +1308,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 16596,
+   "bytes": 16625,
    "mermaid": 0,
    "headings": [
     "1. Deploy",

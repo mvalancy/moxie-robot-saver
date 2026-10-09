@@ -101,7 +101,7 @@ Two more settings decide what she sounds like and how she hears:
 | Setting | Production (2026-10-08) | Why |
 |---|---|---|
 | `DEMO_TTS_MODEL` | `tts-piper-kristin` | Picked by ear from 18 gateway voices. Every one of her pre-recorded clips (`sim/web/audio/`) is in this voice too, so her scripted lines and her live replies sound like one Moxie. Change it only together with a re-render of every clip (`sim/tools/prerender_audio.py --engine gateway`). |
-| `DEMO_STT_MODEL` | `stt-whisper-small` | Word-perfect and the quickest of four speech-to-text aliases on a 2026-10-08 spot check (one clip each). It hears one utterance at a time, so a burst of four queues for about 10 s. |
+| `DEMO_STT_MODEL` | `stt-whisper-small` | Word-perfect and the quickest of four speech-to-text aliases on a 2026-10-08 spot check (one clip each). A burst of four utterances queued for about 10 s on 2026-10-08. |
 
 **Every model named here is a gateway alias.** What serves an alias is the gateway's business, and
 this repo never names it. Two things follow:
@@ -205,9 +205,10 @@ deployment, each of which still answers on its own `https://<hash>.<project>.pag
    step that reaches every deployment at once, old ones included, with no redeploy: a key the gateway
    refuses spends nothing, the turns answer `upstream_down`, and the page falls back to her scripted
    lines. To come back, store the new key (`npx wrangler pages secret put DEMO_GATEWAY_API_KEY
-   --project-name <your-project>`) and make a new deployment (step 2). Unless `DEMO_TICKET_SECRET` is
-   set, the key also signs the speech tickets and the conversation blobs, so after that deployment an
-   open tab's next turn is answered from her recorded lines once and the conversation starts over.
+   --project-name <your-project>`) and make a new deployment (**Retry deployment** or a push, as in
+   step 2). Unless `DEMO_TICKET_SECRET` is set, the key also signs the speech tickets and the
+   conversation blobs, so after that deployment an open tab's next turn is answered from her recorded
+   lines once and the conversation starts over.
 2. **`DEMO_ENABLED=0`, then a new deployment.** Every route answers `gateway_not_configured` with no
    upstream call, and the secret stays where it is. Only a new production deployment applies it:
    **Retry deployment** on the current one in the dashboard, or a push to the production branch. It
