@@ -1,11 +1,14 @@
 /* Harness for `sim/test_demo_ears.mjs`. Part A: the real `transcribe.js` behind a stubbed
  * gateway (`setPlan` picks its answer, `sent` records every request). Part B: the real
  * `sim/web/mic.js` under a stubbed window, a VIRTUAL CLOCK and a FAKE RECORDER — no
- * microphone is ever opened.
+ * microphone is ever opened. Part C: the whole hosted page (`bootPage`): the transport
+ * harness's world — the real `stub.js`, `bridge/`, `mode.js`, `cloud-transport.js` and
+ * `voice/` on its virtual clock — with the real `mic.js` loaded after them, as sim.html does.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { repo, api, ledger, BASE, KEY, ORIGIN, GATEWAY, leakSweep, jsonOf } from "../common.mjs";
+import * as transport from "../transport/harness.mjs";
 
 export { BASE, KEY, ORIGIN };
 
@@ -320,5 +323,72 @@ export function bootMic(o) {
   return { mic, rec, posts, notes, published, scripted, routed, els, bodyAttrs, audioCtx, gum,
            level: (rms) => { if (levelFn) levelFn(rms); },
            statusText: () => els["mic-status"].textContent };
+}
+
+/* =========================================================================== *
+ * PART C — the whole hosted page, with the real mic.js
+ * =========================================================================== */
+
+/** The transport harness's world helpers (`advance`, `now`, `live`, `envelope`, `said`,
+ *  `tickets`, `voicedChunk`, …) for the sections that drive the whole page. Its `fails` are
+ *  the transport ledger's: a section folds them into this suite's. */
+export const page = transport;
+
+/** Boot sim.html's scripts in order — stub.js, bridge/, mode.js, cloud-transport.js, voice/
+ *  (`realVoice`), then mic.js — under the transport harness's fake DOM, Web Audio and
+ *  speechSynthesis, on its virtual clock. `opts` go to `transport.boot` (`answer` decides
+ *  every `/api/*` reply; health must say `ears: true` for the hosted capture). The recorder
+ *  yields one `clipBytes`-byte WAV (40 000 by default) whenever it is stopped; `level(rms)`
+ *  drives the silence auto-stop; `attrs` is what mic.js wrote on `body`. */
+export async function bootPage(opts) {
+  const o = opts || {};
+  const world = await transport.boot(Object.assign({ realVoice: true }, o));
+  // A browser always has `navigator` (Node 20 does not; Node 21+'s has no `mediaDevices`):
+  // mic.js reads `navigator.mediaDevices` when a capture fails (`captureFailure`), so the
+  // copy a section pins must not depend on the Node version or on Part B having run first.
+  if (!globalThis.navigator || !globalThis.navigator.mediaDevices) {
+    Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: { mediaDevices: {} } });
+  }
+  const attrs = {};
+  globalThis.document.body = {
+    setAttribute: (k, v) => { attrs[k] = String(v); },
+    removeAttribute: (k) => { delete attrs[k]; },
+    getAttribute: (k) => (k in attrs ? attrs[k] : null),
+    appendChild() {},
+    classList: { add() {}, remove() {}, toggle() {} },
+  };
+  (0, eval)(MIC_SRC);
+  const mic = globalThis.window.moxieMic;
+  const size = o.clipBytes === undefined ? 40000 : o.clipBytes;
+  let levelFn = null;
+  const rec = {
+    log: [], state: "inactive", mimeType: "audio/wav", ondataavailable: null, onstop: null,
+    start() { rec.log.push(["start", transport.now()]); rec.state = "recording"; },
+    stop() {
+      rec.log.push(["stop", transport.now()]);
+      rec.state = "inactive";
+      if (rec.ondataavailable) rec.ondataavailable({ data: new Blob([new Uint8Array(size)], { type: "audio/wav" }) });
+      if (rec.onstop) rec.onstop();
+    },
+  };
+  mic.setCapture(() => Promise.resolve({
+    recorder: rec, stream: { getTracks: () => [] },
+    setLevelListener: (fn) => { levelFn = fn; },
+  }));
+  return {
+    world, mic, rec, attrs,
+    level: (rms) => { if (levelFn) levelFn(rms); },
+    micStatus: () => globalThis.document.getElementById("mic-status").textContent,
+    /** Tap Listen, say a second's worth, fall silent: the auto-stop sends the clip. */
+    async speak() {
+      await mic.toggle();
+      await transport.advance(50);
+      level(0.09);
+      await transport.advance(300);
+      level(0.001);
+      await transport.advance(1150);
+    },
+  };
+  function level(rms) { if (levelFn) levelFn(rms); }
 }
 

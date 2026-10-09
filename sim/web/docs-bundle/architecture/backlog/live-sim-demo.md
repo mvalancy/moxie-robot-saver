@@ -271,13 +271,61 @@ and A2 was heard after the whole of B, out of context. A chunk of the older repl
 voice plays out ahead of it. The result is one voice per turn, her first words after one short synthesis,
 and the newest reply always the one being heard; the bridge's per-event seam is its only change.
 
+**One line at a time from the controls** (`queueUserTurn`, since 2026-10-08). A line from the Ask box,
+an opener or the mic's transcript sent while a turn is still being answered — its reply not landed, or
+its voice still being assembled — is taken at once (echoed, the box cleared, the status saying "Moxie
+will answer that next.") and sent when that turn SETTLES: its reply wholly handed to the speakers (every
+chunk routed, or the voice given up). It then carries the earlier reply's context, its chunk 0 queues
+behind the earlier reply's last chunk in `voice/` rather than ending it, and the next turn's history
+holds both exchanges. Measured in Chrome on the shipped page before this (review lane l6): two lines
+300 ms apart were both posted with context "", the fast answer showed before the slow one, and the third
+turn carried only the exchange that landed last. Queued rather than a disabled button, so the child's
+line is never refused and never re-typed. The mode is asked again when the line's turn comes: after a
+refusal that paused live turns it is answered from `stub.js`, never echoed twice. `sendUserTurn` itself
+still sends at once, so the supersede rule above remains the backstop for that path
+(`transportStats().queued`).
+
+**The ears come first** (`interruptVoice`, `earsOpen` / `earsIdle`, driven by `mic.js`). The Listen
+tap is the child saying "stop, listen to me": every open pipeline ends through the supersede path
+(nothing more of any reply is redeemed; a chunk in flight is dropped when it lands) and `voice/` is
+stopped — the playing clip and every queued chunk; the interrupted reply's text stays in the log. The
+tap HOLDS NOTHING: the browser may now be asking for the microphone, and a permission prompt left
+unanswered need never settle, so a hold taken at the tap kept a typed line, and a safety redirect already
+on its way, from ever reaching the child (the W3-S16 review's probes, 2026-10-08; origin/dev answered in
+every case). The hold starts once the recorder is RUNNING — `mic.js` calls `earsOpen` only after
+`rec.start()` has returned, and she is stopped again in the same tick, so the recording never holds her
+own voice; a recorder that will not start holds nothing (taken before `start()`, a `NotSupportedError`
+from a MediaRecorder on an inactive stream held a typed line, and a hurt child's line, for good: the
+review's probe A, 2026-10-08) — and lasts until the ears are done with the clip (dropped unsent, or its
+upload settled), whichever way the recording ended: `stop()`, a recorder that cannot stop, or one that
+stopped by itself when its tracks ended (`onstop` with no `stop()` of ours; left as "recording", it held
+the spoken line and the next typed one for half an hour, probe B). Each recording has its own number,
+so an earlier clip settling after a new recording opened cannot end it. A reply that lands meanwhile is
+held (its context kept, its synthesis not yet bought), and so are a stub line and the next queued line;
+a line nothing live can take is answered from `stub.js` by the transport itself for the same reason
+(bridge/'s own 450 ms beat cannot be held, and spoke into a microphone opened just after the line).
+Every leg is bounded: an upload that never answers releases the ears after 30 s (`mic.js`'s valve); the
+hold itself ends at the record cap plus those 30 s after the recorder ran, whatever the recorder did
+(45 s by default, 90 s under a served 60 s cap — a legitimate long recording is never released early;
+`mic.js`'s `holdValved`), and `cloud-transport.js` bounds `earsBusy` by the same number itself, or by
+`EARS_HOLD_MAX_MS` (45 s) when no number is named, so a caller that never says `earsIdle` cannot hold
+her for ever (`transportStats().earsValved`); and a turn whose pipeline never closes is settled by
+`TURN_MAX_MS` (190 s: the chat deadline, the ears' hold, eight sentences at the speech deadline;
+`transportStats().turnsValved`). `mic.js` keeps
+`body[data-mic]` set from the capture opening through the upload, which is the fact `ambient.js` reads,
+so a mutter cannot start during the 2-3 s a clip is being transcribed either. Without the transport (a
+fork with `bridge/` and `voice/` only) `mic.js` stops her voice itself (`transportStats().interrupted`,
+`heldForEars`).
+
 ### 3.5 `cloud-transport.js` wraps, it does not replace
 
 It is loaded after `bridge.js`. It wraps `window.moxieBridge.sendUserTurn` and `isLive`. The other
 members pass through, so the seven-member surface is intact. When the mode is not `live`, it
 delegates to the original `sendUserTurn`, so the MQTT and stub paths are unchanged. When live, it
 echoes the user turn through `inner.route()`. It also injects the **Talk** box, because nothing on the
-page could otherwise send a child's turn. Vision events are not sent to `/api/chat`.
+page could otherwise send a child's turn. Vision events are not sent to `/api/chat`. Its additive
+members are `sendScriptedTurn` (§6), `queueUserTurn`, `interruptVoice`, `earsOpen`, `earsIdle` (§3.4)
+and `transportStats`.
 
 ## 4. The security model
 
@@ -409,7 +457,7 @@ The `/api/*` routes write nothing durable anywhere.
 
 | Status | `reason` | `Retry-After` | The Sim |
 |---|---|---|---|
-| 429 | `rate_limited` (per-IP window, or the gateway's own 429) | window reset / upstream value (none named: 10, or 60 on `/api/transcribe`) | Answers this turn from `stub.js` and suppresses live turns until `Retry-After`. Up to 60 s (the minute window) it stays `live` with the *slow down* chip; longer (such as the hour or day cap) it **rests**: `degraded`, a `RESTING` badge and the minutes left, `live` again when the window lifts. |
+| 429 | `rate_limited` (per-IP window, or the gateway's own 429) | window reset / upstream value (none named: 10, or 60 on `/api/transcribe`) | Answers this turn from `stub.js` and suppresses live turns until `Retry-After`. Up to 60 s (the minute window) it stays `live` with the *slow down* chip; longer (such as the hour or day cap) it **rests**: `degraded`, a `RESTING` badge and the minutes left, `live` again when the window lifts. The pause is per route (`mode.js`): that is a `/api/chat` 429; one from `/api/transcribe` holds only the Listen button until its `Retry-After` (`canUseEars`) and leaves the badge and typed turns alone (§6.3). |
 | 503 | `at_capacity` (ceiling reached and queue full or wait expired) | 15 | Busy pill, answers from the stub. |
 | 503 | `budget_exhausted` | seconds to the window reset | Full degrade. Next health poll at `Retry-After`. |
 | 503 | `upstream_down`, `gateway_unreachable_or_gated` | 60 | Full degrade, ended only by a clean turn (§6.3). |
@@ -1063,6 +1111,18 @@ and a poll never resets them, so at a human pace the polls between failed turns 
 they clear only when a turn gets a healthy answer, so after a poll's recovery the next failed turn
 degrades again at once.
 
+**The ears are not the brain.** Only `/api/chat` gives a verdict on the brain. What `mic.js` reports
+(`note({route: "ears", …})`, `noteTransportError("ears")`: a transcribe refusal or failure, an upload the
+hosted page could not even make) stays the ears' own — it never strikes, degrades or recovers the brain's
+state — and a transcribe 429 opens the EARS' window only (`canUseEars`, `earsRetryAfterS`): the mic waits
+for as long as it said, its status says how long ("back in about a minute" for the gateway's STT
+cooldown, the minutes of the hour cap, "a few seconds" for the minute window), and typed turns go on.
+Measured before this: on a chat-only deployment (`DEMO_STT_MODEL` unset) a Listen tap uploads to the
+local sidecar's address, the hosted CSP refuses it, and the third tap at any pace degraded the whole page
+to `HOSTED DEMO · SCRIPTED` with "Moxie's brain is unreachable"; one STT 429 with Retry-After 60 paused
+typed chat for 60 s and said "give Moxie a few seconds". The three transport errors of the diagram are
+chat's.
+
 Polls follow `Retry-After` when sent. Otherwise they start at 30 s (`POLL_MIN_MS`) and double to 5 min
 (`POLL_MAX_MS`), resetting on success, except while a turn's outage is unproven. After a `timeout`
 trial turns back off from 60 s to 5 min, because each one into a hung gateway costs its visitor the
@@ -1110,10 +1170,10 @@ suite is split into modules under `sim/tests/edge/<suite>/`.
 | 1 | `sim/test_demo_proxy.mjs` | Unknown keys dropped; the upstream body uses the configured model and `max_tokens`; `too_long`; origin refusal with zero upstream calls; upstream 429/500 sanitized (no model or key text in any response); `budget_exhausted`; `X-RateLimit-*` on success; the §2.2 field set with no `chunk_num`, `consistency_control` or `emotion`. Also the queue (block 13), shared tier (§15), TTS cache (§16), re-roll and turn shape, the goodbye close and the prompt layouts (§19–22: persona once, anchor last, no non-first system message outside `anchor`, no brace ever in the spoken text or the tickets), one ticket per sentence (§10f: the measured 311-char reply yields 2–3 tickets that join back to the whole reply, every one redeemable with its `chunk_num`; the three-chunk cap; a word-bounded cut; a three-chunk turn is 9 units), API headers, and a fail on any `.json` import under `functions/`. |
 | 2 | `sim/test_demo_tickets.mjs` | Forged, expired, over-length, replayed or tampered ticket or context; round-trip; constant-time compare; the sentence splitter (numbers, abbreviations, initials, ellipses and mermaid fences never split; chunks join back to the reply; the cap and the word-bounded cut) and `mintTickets`. |
 | 3 | `sim/test_wav_decode.mjs` | The RIFF walker uses the header's own rate and channels, refuses 8- and 24-bit and JSON, and agrees sample-for-sample with `voice/cloud.js::decodeCloudTTS`; `wavDurationMs`. |
-| 4 | `sim/test_mode.mjs` | The state machine, backoff, hidden-tab rule, `offline` never polls; env defaults and envelope. |
-| 5 | `sim/test_cloud_transport.mjs` | Seven members intact; TTS routed before chat; chat lands by the 2.5 s wait; delegation when not live; the naive ordering proven to double-voice; one ticket per sentence (§4b–4h: chunks redeemed one at a time and routed in order behind chunk 0, a later chunk's failure ends the voice with no local stand-in, a hanging chunk given up at the deadline, three chunks heard in order on the real `voice/`); overlapping turns (§4i–4k, on the real `voice/`: two typed turns 200 ms apart, three chunks each — once the newer chunk 0 is routed nothing more of the older reply is requested and no sentence of it is heard after the newer reply; an older chunk 0 still in flight is dropped with no local stand-in; a stub answer to the newer turn ends the older pipeline too). |
+| 4 | `sim/test_mode.mjs` | The state machine, backoff, hidden-tab rule, `offline` never polls; env defaults and envelope; the ears apart (§9: an ears 429 opens the ears' window and leaves typed turns spendable, a chat 429 still pauses chat, ears reasons and transport errors never move the brain, a clean transcript never recovers it; the ears' default windows, 10 s and 15 s, and a clean transcript lifting one). |
+| 5 | `sim/test_cloud_transport.mjs` | Seven members intact; TTS routed before chat; chat lands by the 2.5 s wait; delegation when not live; the naive ordering proven to double-voice; one ticket per sentence (§4b–4h: chunks redeemed one at a time and routed in order behind chunk 0, a later chunk's failure ends the voice with no local stand-in, a hanging chunk given up at the deadline, three chunks heard in order on the real `voice/`); overlapping turns (§4i–4k, on the real `voice/`: two typed turns 200 ms apart, three chunks each — once the newer chunk 0 is routed nothing more of the older reply is requested and no sentence of it is heard after the newer reply; an older chunk 0 still in flight is dropped with no local stand-in; a stub answer to the newer turn ends the older pipeline too); one line at a time from the controls (§11: two lines 300 ms apart through the Ask path are sent in turn, the second carrying the first reply's context, both heard whole in order on the real `voice/`, the third turn holding both exchanges; the mic's transcript takes the same queue; a waiting line is re-decided when its turn comes; `sendUserTurn` still sends at once; a turn whose pipeline never closes is settled by `TURN_MAX_MS`, §11e). |
 | 6 | `sim/test_fallback_coverage.mjs` | Every line the degraded page can utter has a clip on disk; the prerender tool keeps every manifest group. |
-| 6b | `sim/test_demo_ears.mjs` | `/api/transcribe`: byte caps, windows, budget, timeout, format allowlist returning 400 with no call, the upstream status table, secret sweeps. Plus the real `mic.js`: 15 s hard stop, target selection, browser WAV encoder read back by the server walker. |
+| 6b | `sim/test_demo_ears.mjs` | `/api/transcribe`: byte caps, windows, budget, timeout, format allowlist returning 400 with no call, the upstream status table, secret sweeps. Plus the real `mic.js`: 15 s hard stop, target selection, browser WAV encoder read back by the server walker. Plus the whole page (§B11–B16, the real `cloud-transport.js`, `mode.js` and `voice/` with `mic.js`): barge-in cuts the playing sentence at the tap and buys no further ticket, a reply landing into an open mic is held, `body[data-mic]` lasts through the upload; four refused uploads on a chat-only deployment leave the brain live while three chat errors still degrade it, transcribe refusals stay the ears' own, an STT 429 holds the mic and says how long while typed lines go out; the tap holds nothing (§B17–B19: a permission prompt left unanswered still lets a typed line out and a reply in flight through, the grown-up redirect included; a redirect and stub lines landing mid-recording wait; a hung upload releases the ears at 30 s; a reply that began while the browser asked is cut the instant the capture opens); the recorder's own endings on the local path (§B20–B23: a `start()` that throws holds nothing, a recorder that stops by itself is stopped and its clip sent, one that cannot stop ends the ears at once, and the hold is bounded at the record cap plus 30 s whatever the recorder did — 45 s by default, 90 s under a served 60 s cap). |
 | 7 | `sim/test_env_hosted.mjs` | Zero `:8081`/`:8082` probes on a hosted host; badge per mode in Chrome. |
 | 8 | `sim/tests/test_ci_workflows.py` | The node tests are wired into `sim/ci/ci.yml`. |
 | 9 | repo lint (`sim/tests/edge/demo_proxy/04_deploy_only.mjs`) | No key, gateway host or account id under `functions/` or `sim/web/`; no `[vars]` in `wrangler.toml`. |
