@@ -84,7 +84,7 @@ REVIEWED: dict = {
         ("Date.now",), "RELATIVE — a ticket aged 61 s past a 60 s expiry is expired at any hour."),
     "sim/tests/edge/turnstile/02_fail_open.mjs": (
         ("Date.now",), "RELATIVE — elapsed time between two reads, bounded both ways by "
-        "wide margins (>= 120 ms deadline, << 20 s timeout); mutation row D3e."),
+        "wide margins (>= 120 ms deadline, << 10 s timeout); mutation row D3e."),
     "sim/tests/edge/mode/03_mode_machine.mjs": (
         ("Date.now",), "DETERMINISTIC — overrides `Date.now = () => clock` and steps it."),
     "sim/tests/edge/mode/06_outage_honesty.mjs": (

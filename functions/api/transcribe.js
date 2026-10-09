@@ -18,8 +18,10 @@
  *     EVERY visitor for about a minute.
  *  7. A bot control (`_lib/turnstile.js`) with its OWN action, so a chat token cannot buy
  *     the ears. This is the more expensive route to leave open: 60/hour x 15 s from one
- *     address with no daily window.
- *  8. NOTHING IS STORED, LOGGED OR CACHED. Caching STT is a privacy problem, not a saving.
+ *     address, up to `DEMO_STT_PER_DAY` (225) a day.
+ *  8. NOTHING IS STORED OR CACHED, and neither the audio nor the transcript is logged: a
+ *     refusal writes one line of route, reason, status and colo (`envelope.js::logRefusal`).
+ *     Caching STT is a privacy problem, not a saving.
  *  9. A transcript of sound labels only ("(machine whirring)", "[BLANK_AUDIO]") is silence,
  *     not the child's words (`cleanTranscript`).
  *

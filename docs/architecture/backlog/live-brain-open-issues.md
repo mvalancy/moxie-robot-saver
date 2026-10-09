@@ -121,7 +121,7 @@ outage ([deploy guide §6](../../guides/deploy-cloudflare.md)).
 
 **Constraint.** Base URL and key are resolved in one place (C3 in `env.js`: nothing hard-coded to
 our gateway or domain), so a fallback means a second pair of variables and a retry at the call site.
-Any retry must fit inside the existing wait budget. `DEMO_CHAT_TIMEOUT_MS` defaults to 20 000, and
+Any retry must fit inside the existing wait budget. `DEMO_CHAT_TIMEOUT_MS` defaults to 10 000, and
 `env.js` already clamps the admission queue so it never rivals the upstream timeout. Two attempts in
 series must not double what a visitor waits.
 

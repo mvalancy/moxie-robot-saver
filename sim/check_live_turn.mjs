@@ -43,7 +43,7 @@ const cliUrl = argv.find((a) => !a.startsWith("-"));
 
 /** What a child says first. */
 const LINE = "hi moxie";
-/** Clause 6. Production turns measured 1.8-3.5 s (2026-10-07); the route gives up at 20 s. */
+/** Clause 6. Production turns measured 1.8-3.5 s (2026-10-07); the route gives up at 10 s. */
 const MAX_MS = Math.max(1, Number(process.env.MOXIE_CANARY_MAX_MS) || 10000);
 /** THE LEDGER: two POSTs at most, the second only after a free `rate_limited` refusal. */
 const MAX_POSTS = 2;
