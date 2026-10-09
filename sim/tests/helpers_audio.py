@@ -179,6 +179,27 @@ def duration_s(pcm: bytes, sample_rate: int) -> float:
     return (len(pcm) / 2.0) / float(sample_rate or 1)
 
 
+def silence_pcm(ms: float, sample_rate: int = ROBOT_SAMPLE_RATE) -> bytes:
+    """`ms` of digital silence (zero samples), mono PCM16."""
+    return b"\x00\x00" * int(round(sample_rate * ms / 1000.0))
+
+
+def tone_pcm(ms: float, *, rms: float = None, amplitude: float = None,
+             freq: float = 300.0, sample_rate: int = ROBOT_SAMPLE_RATE) -> bytes:
+    """`ms` of a sine, mono PCM16, at a LEVEL the honest ears measure: `rms` as a fraction
+    of int16 full scale (`moxie_sdk.stt.audio_stats`), or a peak `amplitude` (a sine's RMS
+    is its peak over sqrt 2). Stdlib only, deterministic: the stand-in for speech-level
+    audio (0.3 full scale), room tone (0.004) and the levels between."""
+    if (rms is None) == (amplitude is None):
+        raise ValueError("give exactly one of rms= or amplitude=")
+    peak = amplitude if amplitude is not None else rms * math.sqrt(2.0)
+    n = int(round(sample_rate * ms / 1000.0))
+    out = array("h", bytes(2 * n))
+    for i in range(n):
+        out[i] = int(round(32767.0 * peak * math.sin(2.0 * math.pi * freq * i / sample_rate)))
+    return out.tobytes()
+
+
 def spectral_flatness(pcm: bytes) -> float:
     """Wiener entropy: geometric mean / arithmetic mean of the power spectrum.
 

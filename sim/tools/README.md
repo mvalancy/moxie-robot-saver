@@ -33,6 +33,7 @@ Each removes one guard at a time and requires the named test to go red; a green 
 ```sh
 python3 sim/tools/authoring_mutation_check.py
 python3 sim/tools/brain_mutation_check.py
+python3 sim/tools/ears_mutation_check.py
 python3 sim/tools/ext_mutation_check.py
 python3 sim/tools/hardening_mutation_check.py
 python3 sim/tools/hardening_p1_mutation_check.py
@@ -48,6 +49,7 @@ python3 sim/tools/unit_budget_mutation_check.py
 |---|---|---|
 | `authoring` | content editor | authoring region of `moxie_runtime/`, `packs.shadow_check`, `render.render_prompt` |
 | `brain` | brain registry | `moxie_sdk/brains.py` and its runtime |
+| `ears` | honest ears: no-call floor, label strip, phantom drop, local VAD, kill switch | `moxie_sdk/stt.py` (`SttSession`, `WhisperTranscriber`), `moxie_runtime/voice.py` `feed_stt` |
 | `ext` | extension sandbox | `ext/`, `render.py`, `ext_host.py`, `packs/` pattern cap |
 | `hardening` | P0: store lock, connection region | `moxie_sdk/store.py`, `moxie_runtime/` connection code |
 | `hardening_p1` | P1: roster, conn telemetry, shutdown | `moxie_sdk/{roster,conn_telemetry}.py`, `fleet/activity.py` |

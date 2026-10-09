@@ -74,6 +74,7 @@ def _snapshot(overrides: dict, fleet: dict = None) -> dict:
             "permitted": True, "pending": False, "permit_label": "",
             "seen_since_connect": True,
             "stt_subscribed_at": None,          # when the mic was last asked for (/status)
+            "stt_dropped": 0,                   # utterances the honest ears dropped
             "battery_level": 91, "audio_volume": 0.4, "wifi_ssid": "Home",
             "mode": "normal", "ota_reboot_required": False,
             "config_overrides": dict(overrides),
