@@ -6,7 +6,10 @@
  * ('The output floor'), §2.6.
  *
  * BEFORE THE CALL, like `mqtt/moxie_sdk/safety.py`: a hard-blocked turn never reaches a
- * model and spends ZERO gateway units — one rule, a safety control and a cost control.
+ * model and spends ZERO gateway units — one rule, a safety control and a cost control. The
+ * child side of every category that blocks keeps the authority table's phrases and guards
+ * (plus this floor's own weapon phrases), so it is never weaker than the robot's: the story,
+ * accident and idiom guards written for her replies apply to her side only (`allow_moxie`).
  *
  * AFTER THE CALL, like the core supervisor's `role="moxie"` check: the completion is
  * assessed with each category's `action.moxie` BEFORE a voice ticket is minted, so an
@@ -158,6 +161,8 @@ function compile(rules) {
       allow: phraseRes(c.allow, "gi"), // applied by REMOVAL, so global
       // Her side only: a refusal that quotes the request is the right reply, not a swap.
       allowMoxie: phraseRes(c.allow_moxie, "gi"),
+      // Her side only: words a child may say but she may never ("don't tell a grown-up").
+      phrasesMoxie: phraseRes(c.phrases_moxie),
     });
   }
   return { version: Number(rules && rules.version) || 0, categories: cats, phrases: (rules && rules.phrases) || {} };
@@ -219,16 +224,44 @@ export function assess(text, role) {
 }
 
 function matches(cat, forms, side) {
+  const guards = side === MOXIE ? cat.allow.concat(cat.allowMoxie) : cat.allow;
   for (const form of forms) {
     // The false-positive guards are applied FIRST and by REMOVAL, so `killing myself
     // laughing` never counts as self-harm and `flag football` never counts as a slur.
-    let t = form;
-    for (const g of cat.allow) t = t.replace(g, " ");
-    if (side === MOXIE) for (const g of cat.allowMoxie) t = t.replace(g, " ");
+    const t = unguarded(form, guards);
     if (cat.words && cat.words.test(t)) return true;
     for (const p of cat.phrases) if (p.test(t)) return true;
+    if (side === MOXIE) for (const p of cat.phrasesMoxie) if (p.test(t)) return true;
   }
   return false;
+}
+
+/** `form` with every guard's spans blanked, EACH GUARD READ AGAINST THE LINE AS SAID (round 4).
+ *  Applied one after another, a guard could delete the words that veto a later one: the
+ *  hand-held guard removed "grab my hand" from "a man at the store asked if i wanted candy and
+ *  tried to grab my hand", and the store guard, no longer seeing it, removed the stranger's
+ *  offer too. Now every guard matches the original form, the spans are merged, and each run of
+ *  removed text becomes one space — the same blank the sequential `replace` left. */
+function unguarded(form, guards) {
+  if (!guards.length) return form;
+  const cut = new Uint8Array(form.length);
+  let any = false;
+  for (const g of guards) {
+    g.lastIndex = 0;
+    let m;
+    while ((m = g.exec(form))) {
+      if (!m[0].length) { g.lastIndex += 1; continue; }
+      cut.fill(1, m.index, m.index + m[0].length);
+      any = true;
+    }
+  }
+  if (!any) return form;
+  let out = "";
+  for (let i = 0; i < form.length; i++) {
+    if (!cut[i]) out += form[i];
+    else if (i === 0 || !cut[i - 1]) out += " ";
+  }
+  return out;
 }
 
 /**
@@ -368,11 +401,38 @@ function sentencesOf(text) {
   return String(text || "").split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
 }
 
+/* NOT A REFERRAL: A DIRECTION UNDER A NEGATION, OR A PERMISSION NOT TO (round 4). "Don't tell a
+ * grown-up, just tell me", "you don't need to tell a grown-up right now", "no need to tell a
+ * teacher", "you shouldn't tell your mom yet" and "maybe someday you can tell a teacher, but not
+ * today" name the right adult and point the child AWAY from them. The clause before the matched
+ * form is read back to the nearest clause break (a comma, a dash, "but", "and", "if", "so" …): a
+ * negation there un-credits it. A deferral or an opt-out anywhere in the sentence ("someday",
+ * "not yet", "if you want") does too. A negation that governs something else is not one: "don't
+ * be afraid to tell", "don't wait", "you won't get in trouble for telling", "it's never too late
+ * to tell" still point there. Un-crediting is the safe error — the floor then appends its own
+ * sentence; crediting one of these would leave a hurt child told to keep it from a grown-up. */
+const CLAUSE_BREAK_RE = /[,;:()–—]|\s-\s|\b(?:but|and|or|so|then|if|when|because|while|although|though|unless|until|instead)\b/gi;
+const NEGATION_RE = /\b(?:don'?t|do\s+not|doesn'?t|does\s+not|didn'?t|did\s+not|never|not|no|no\s+need|shouldn'?t|should\s+not|won'?t|will\s+not|wouldn'?t|would\s+not|mustn'?t|must\s+not|can'?t|cannot|can\s+not|nobody|no\s+one)\b/i;
+const NOT_A_NEGATION_RE = /\b(?:oh\s+no|no\s+matter)\b|\b(?:don'?t|do\s+not|never|not|won'?t|will\s+not|wouldn'?t|shouldn'?t|no)\s+(?:ever\s+)?(?:(?:have|need)\s+to\s+)?(?:be\s+(?:afraid|scared|shy|nervous|embarrassed|worried|ashamed)|feel\s+(?:bad|scared|shy|embarrassed|ashamed|silly)|wait|hesitate|forget|(?:get|be)\s+in\s+trouble|need\s+permission|too\s+late|(?:a\s+)?(?:wrong|bad\s+idea|silly|mean|tattling|snitching))\b/gi;
+const DEFER_RE = /\b(?:some\s?day|one\s+day|not\s+(?:yet|today|now|right\s+now)|maybe\s+later|later\s+on|when\s+you(?:'re|\s+are)\s+(?:older|bigger|ready)|(?:only\s+)?if\s+you\s+(?:want|wanna|feel\s+like\s+it))\b/i;
+
+function negated(sentence, at) {
+  if (DEFER_RE.test(sentence)) return true;
+  const before = sentence.slice(0, at);
+  let start = 0;
+  CLAUSE_BREAK_RE.lastIndex = 0;
+  let b;
+  while ((b = CLAUSE_BREAK_RE.exec(before))) start = b.index + b[0].length;
+  return NEGATION_RE.test(before.slice(start).replace(NOT_A_NEGATION_RE, " "));
+}
+
 function pointsToAdult(sentence, named) {
   for (const re of FORMS) {
     re.lastIndex = 0;
     let m;
     while ((m = re.exec(sentence))) {
+      // A negated direction is skipped with its list: "don't tell your mom or a teacher" points nowhere.
+      if (negated(sentence, m.index)) continue;
       if (!sendsBack(m[1], m[2], named)) return true;
       if (re !== DIRECT_RE) continue;
       // "tell your mom or a teacher": the next adult in the list.
