@@ -27,10 +27,11 @@
  * never reported to the mode machine.
  *
  * ONE LINE AT A TIME FROM THE CONTROLS (`queueUserTurn`): a line from the Ask box, an opener
- * or the mic's transcript WAITS while a turn is still being answered (its reply not landed,
- * or its voice still being assembled), then goes out carrying that reply's context, so both
- * replies are heard whole, in order, and both exchanges reach the next turn. Rule 6 stays as
- * the backstop for `sendUserTurn` itself, which still sends at once. THE EARS COME FIRST
+ * or the mic's transcript WAITS while a turn's reply is still on its way, then goes out
+ * carrying that reply's context, and its own reply waits behind that reply's voice, so both
+ * replies are heard whole, in order, and both exchanges reach the next turn — unless it is
+ * the route's safety line, which is said next, after the sentence now playing (W4-S7). Rule 6
+ * stays as the backstop for `sendUserTurn` itself, which still sends at once. THE EARS COME FIRST
  * (`interruptVoice`, `earsOpen` / `earsIdle`, driven by mic.js): the Listen tap is a
  * deliberate interruption — every open pipeline ends through rule 6's path and voice/ is
  * stopped — and from the microphone OPENING until the ears are done with the clip nothing of
@@ -84,6 +85,9 @@
     chunksDropped: 0,        // later-chunk audio that landed but was not played (after a failure, too late, or superseded)
     chunksSuperseded: 0,     // chunks of an older reply given up because a newer reply's voice started
     queued: 0,               // control lines that waited for the turn in flight (or the ears) before going out
+    early: 0,                // control lines sent while an earlier reply was still being voiced (its words back)
+    heldReplies: 0,          // …of their replies, those held behind an earlier reply's voice
+    safetyFirst: 0,          // safety lines of an early line said next: every earlier reply ended after its playing sentence
     heldForEars: 0,          // replies and page-composed lines that waited for the ears to finish a clip
     interrupted: 0,          // the Listen tap landed on a reply: its voice stopped and its pipeline ended on purpose
     earsValved: 0,           // holds the transport ended itself: `earsOpen` with no `earsIdle` by its bound
@@ -227,9 +231,29 @@
    * it itself, and `earsOpen` bounds it here too, in the state this file keeps, by the
    * number mic.js names (its record cap plus 30 s) or EARS_HOLD_MAX_MS — a caller that
    * never says `earsIdle` cannot hold her for ever. ambient.js reads the same fact from
-   * body[data-mic]. */
+   * body[data-mic].
+   *
+   * A SAFETY LINE NEVER WAITS BEHIND AN EARLIER REPLY (W4-S7). Holding the POST until the
+   * earlier turn SETTLED cost a hurt child 3.7 s: a three-sentence reply playing from 4.1 s,
+   * "i fell off my bike and my arm is bleeding" typed at 5.0 s, the grown-up redirect heard
+   * at 9.9 s, against 6.2 s before the queue (the W3-S16 review, on the virtual clock). So a
+   * waiting line goes out the moment every earlier reply's WORDS are back (`awaitingChat`):
+   * its context is known then, and nothing is bought sooner than it would have been. Its
+   * reply is then held (`heldBehind`) until every turn POSTed before it has settled — and,
+   * when it would start a local voice, until her playing sentence ends — so the earlier
+   * reply is still heard whole and never cut. UNLESS it is the route's own SAFETY LINE: the
+   * words on a reason body (an input block's redirect; the output floor's swap and a hurt
+   * child's referral on a refusal ride the same shape). Then every earlier reply ends
+   * (`endEarlier`): nothing more of it redeemed, a chunk in flight dropped when it lands
+   * (rule 6's path), a sentence already queued in voice/ dropped (`dropQueuedTTS`), its
+   * words put in the log first if they are not yet, silently, and a reply still held never
+   * voiced; the sentence now playing plays out, and the safety line is said next, its words
+   * with its voice. A line sent with nothing in flight, and `sendUserTurn`, behave exactly
+   * as before. */
   var waiting = [];        // {text, resolve}: control lines waiting for the turn in flight
   var inflight = 0;        // live turns POSTed and not yet settled
+  var awaitingChat = 0;    // …of those, the ones whose reply is not back yet: a waiting line waits for these
+  var openTurns = [];      // the live turns in flight, in POST order (what an early line's reply is held behind)
   var earsBusy = false;    // mic.js: recording, or still transcribing the clip
   var earsWaiters = [];    // what is held for the ears: resolved, in order, by earsIdle()
   var earsValve = null;    // the hold's own bound here: mic.js's valve is the first line, this the second
@@ -293,25 +317,27 @@
     return Promise.resolve();
   }
 
-  /** Send the next waiting line, if nothing is in flight and the ears are idle. The mode is
-   *  asked again NOW: the earlier reply may have been a refusal that paused live turns, and
-   *  a line already in the log is then answered from `stub.js` (never echoed twice). With
+  /** Send the next waiting line, if no reply is still on its way and the ears are idle (a
+   *  turn whose words are back may still be voicing them: the line goes out EARLY, and its
+   *  reply waits behind that voice, W4-S7). The mode is asked again NOW: the earlier reply
+   *  may have been a refusal that paused live turns, and a line already in the log is then
+   *  answered from `stub.js` (never echoed twice). With
    *  nothing live to answer it the line is echoed and answered from `stub.js` HERE, as
    *  bridge/'s own path would, so that the stub line waits for the ears like any voice of
    *  hers: bridge/'s own 450 ms beat cannot be held, and spoke into a microphone opened
    *  just after the line (a broker connected meanwhile still gets the turn itself). */
   function drain() {
-    while (waiting.length && !inflight && !earsBusy) {
+    while (waiting.length && !awaitingChat && !earsBusy) {
       var w = waiting.shift(), p;
       if (inner.isLive()) p = delegate(w.text);               // a broker connected meanwhile
-      else if (canSpendLiveTurn()) p = liveTurn(w.text, w.echoed);
+      else if (canSpendLiveTurn()) p = liveTurn(w.text, w.echoed, inflight > 0);
       else {
         if (!w.echoed) echoUser(w.text);
         else {
           var m = mode();
           status((m && m.message && m.message()) || "answering from her recorded lines.");
         }
-        p = fallbackReply(w.text);
+        p = stubBehind(w.text);
       }
       p.then(w.resolve, w.resolve);
     }
@@ -326,12 +352,75 @@
     if (!t) return Promise.resolve();
     stats.turns++;
     if (inner.isLive()) return delegate(t);      // a connected broker always wins, at once
-    var waits = !!(inflight || waiting.length || earsBusy);
+    var waits = !!(awaitingChat || waiting.length || earsBusy);
     if (waits) { stats.queued++; echoUser(t); }
     return new Promise(function (resolve) {
       waiting.push({ text: t, resolve: resolve, echoed: waits });
       drain();
     });
+  }
+
+  /* ---- the hold an early line's reply takes, and the safety line's way past it (W4-S7) */
+  /** How often a held line asks whether her sentence is over, and the longest it asks: a
+   *  speaking predicate stuck true delays a line, never holds it. A sentence is bounded by
+   *  the speech route's character cap; 20 s is past it. */
+  var QUIET_POLL_MS = 100;
+  var QUIET_MAX_MS = 20000;
+
+  /** Resolves once her SERVER voice is off the speakers — at once, when it is. The narrow
+   *  predicate on purpose: what a held line must not cut is a chunk of a reply it went out
+   *  behind (between two queued chunks it stays true); a local voice is cut by a newer line
+   *  exactly as before. */
+  function whenQuiet() {
+    return new Promise(function (resolve) {
+      var waited = 0;
+      (function poll() {
+        var a = window.moxieAudio, speaking = false;
+        try { speaking = !!(a && a.isSpeaking && a.isSpeaking()); } catch (e) {}
+        if (!speaking || waited >= QUIET_MAX_MS) return resolve();
+        waited += QUIET_POLL_MS;
+        setTimeout(poll, QUIET_POLL_MS);
+      })();
+    });
+  }
+
+  /** What an EARLY line's reply waits for before it starts: every turn POSTed BEFORE it to
+   *  settle (its reply wholly handed to the speakers), then — for words that would start a
+   *  local voice (`local`: no ticket, a stub line) — her playing sentence to end, so the
+   *  earlier reply is heard whole and never cut, as when the POST itself waited. A ticketed
+   *  reply needs no second wait: its chunk 0 queues behind the playing one in voice/. With
+   *  no `turn` (a waiting line nothing live can take) the hold is on every open turn. A line
+   *  that went out with nothing in flight waits for nothing. */
+  function heldBehind(turn, local) {
+    if (turn ? !turn.early : !inflight) return Promise.resolve();
+    var earlier = [];
+    for (var i = 0; i < openTurns.length && openTurns[i] !== turn; i++) earlier.push(openTurns[i].done);
+    if (turn && earlier.length) stats.heldReplies++;
+    return Promise.all(earlier).then(function () { return local ? whenQuiet() : undefined; });
+  }
+
+  /** A waiting line nothing live can take, answered from `stub.js` behind every open turn:
+   *  a stub line is a local voice, and would cut her. */
+  function stubBehind(text) {
+    return heldBehind(null, true).then(function () { return fallbackReply(text); });
+  }
+
+  /** The safety line of `turn` (turn `seq`) is said next: every reply of a turn POSTed before
+   *  it ends. Its words go in the log now if they are not out yet — silently (its voice is
+   *  expected), so the log reads in order and the bubble ends on the safety line — and
+   *  nothing more of it is redeemed or heard after the sentence now playing: rule 6's path,
+   *  and the sentences already queued in voice/ behind the playing one dropped. A reply
+   *  still held behind it is never voiced. */
+  function endEarlier(turn, seq) {
+    stats.safetyFirst++;
+    for (var i = 0; i < pipelines.length; i++) if (pipelines[i].seq < seq) pipelines[i].flushWords();
+    for (var j = 0; j < openTurns.length && openTurns[j] !== turn; j++) {
+      openTurns[j].silenced = true;
+      if (openTurns[j].mute) openTurns[j].mute();
+    }
+    supersedeVoices(seq);
+    var a = window.moxieAudio;
+    try { if (a && a.dropQueuedTTS) a.dropQueuedTTS(); } catch (e) {}
   }
 
   /* ---- §3.4: one voice per reply ----------------------------------------- */
@@ -437,7 +526,8 @@
     var over = false;        // the voice is finished with: a chunk failed, or chunk 0 was given up
     var superseded = false;  // …because a newer reply's voice started: its words stay silent, no stand-in
     var failedAt = -1;       // the first later chunk known to have failed, noticed in order by pump()
-    var pipe = { seq: seq, supersede: supersede };
+    var wordsOut = false;    // the chat message has been routed (once, by whichever path gets there first)
+    var pipe = { seq: seq, supersede: supersede, flushWords: words };
     pipelines.push(pipe);
     expectVoice(eid);
 
@@ -448,6 +538,14 @@
       if (k < 0) return;
       pipelines.splice(k, 1);
       if (settle) settle();
+    }
+
+    /** The words, once. A safety line ending this reply before they are out puts them in the
+     *  log first (`endEarlier`, W4-S7), silently: the voice is expected, so nothing local says them. */
+    function words() {
+      if (wordsOut) return;
+      wordsOut = true;
+      routeAll(chatMessages, "chat");
     }
 
     /** The voice ends here: nothing later is redeemed, and audio already in hand is not played. */
@@ -537,7 +635,7 @@
         // older reply still being assembled ends here.
         supersedeVoices(seq);
         routeAll(landed[0], "tts");
-        routeAll(chatMessages, "chat");
+        words();
         stats.voiceFirst++;
         voiced = true;
         pump();
@@ -547,11 +645,11 @@
         // Refused or unreachable before the wait was up: words and local voice together
         // (superseded meanwhile: the words alone, silently — a newer reply has the voice).
         if (!superseded) fallBack();
-        routeAll(chatMessages, "chat");
+        words();
         return;
       }
       // No voice yet: the words go out now, silently, still expecting their own voice.
-      routeAll(chatMessages, "chat");
+      words();
       stats.chatFirst++;
       return speech0.then(function () {
         if (landed[0] && eid) {
@@ -624,12 +722,30 @@
   /* ---- the live turn ----------------------------------------------------- */
   /** Resolves once the reply has STARTED (its voice routed, or its words out); the turn is
    *  SETTLED — in flight no more — once the reply is wholly handed to the speakers.
-   *  `echoed`: the line is already in the log (it waited its turn). */
-  function liveTurn(text, echoed) {
+   *  `echoed`: the line is already in the log (it waited its turn). `early`: it goes out
+   *  while an earlier reply is still being voiced, so its own reply waits behind that voice
+   *  (`heldBehind`) — unless it is a safety line (W4-S7). */
+  function liveTurn(text, echoed, early) {
     stats.live++;
     inflight++;
+    awaitingChat++;
+    if (early) stats.early++;
+    // What the queue knows of this turn: `chatBack` once its reply's words are back (the
+    // next line may go), `done` once it settles, `silenced`/`mute` for a later safety line.
+    var finish;
+    var turn = { early: !!early, silenced: false, mute: null, chatBack: once(function () { awaitingChat--; }) };
+    turn.done = new Promise(function (resolve) { finish = resolve; });
+    openTurns.push(turn);
     var valve = null;
-    var settle = once(function () { clearTimeout(valve); inflight--; drain(); });
+    var settle = once(function () {
+      clearTimeout(valve);
+      turn.chatBack();           // a reply that never came back (the valve) frees the next line too
+      inflight--;
+      var k = openTurns.indexOf(turn);
+      if (k >= 0) openTurns.splice(k, 1);
+      finish();                  // a reply held behind this turn may start
+      drain();
+    });
     // However it goes, the turn is in flight for TURN_MAX_MS at most (see there).
     valve = setTimeout(function () { stats.turnsValved++; settle(); }, TURN_MAX_MS);
     status("thinking…");
@@ -639,17 +755,18 @@
     if (!echoed) echoUser(text);
     // The bot control, in one line. `""` means this deployment does not enforce it.
     return botToken().then(function (tok) {
-      if (tok === null) return botUnavailable(text).then(settle, settle);
+      if (tok === null) return heldBehind(turn, true).then(function () { return botUnavailable(text); }).then(settle, settle);
       // The widget works now, so the consecutive-failure count restarts.
       botStrikes = 0;
       if (tok) stats.botTokens++;
-      return chatPost(text, tok, settle);
+      return chatPost(text, tok, settle, turn);
     });
   }
 
   /** The POST itself, split out of `liveTurn` so the token step is a wrapper. `settle` is
-   *  called exactly once, on every path, when the reply is wholly handed to the speakers. */
-  function chatPost(text, token, settle) {
+   *  called exactly once, on every path, when the reply is wholly handed to the speakers;
+   *  `turn` is what the queue knows of it (`liveTurn`). */
+  function chatPost(text, token, settle, turn) {
     var payload = { text: text, context: contextBlob };
     // Cloudflare's own form-field name (`_lib/turnstile.js::TOKEN_FIELD`); absent when
     // unenforced, so such a deployment sends byte-identically.
@@ -662,7 +779,7 @@
         stats.chatErrors++;
         noteTransportError();
         status("Moxie’s brain is unreachable — answering from her recorded lines.");
-        return fallbackReply(text, seq).then(settle);
+        return heldBehind(turn, true).then(function () { return fallbackReply(text, seq); }).then(settle);
       }
       var body = res.body;
       note(body.reason, body.retry_after_s);
@@ -677,11 +794,18 @@
         var m2 = mode();
         status((m2 && m2.message && m2.message()) || "answering from her recorded lines.");
         // A line with no voice coming speaks as soon as the ears allow: this turn's voice is
-        // starting.
+        // starting. The route's own words on a reason body are its SAFETY LINE, never held
+        // behind an earlier reply: that reply ends, and this line follows the sentence now
+        // playing rather than cutting it (W4-S7).
         if (body.messages && body.messages.length) {
-          return whenEarsIdle().then(function () { supersedeVoices(seq); routeAll(body.messages, "chat"); settle(); });
+          if (turn.early) endEarlier(turn, seq);
+          return (turn.early ? whenQuiet() : Promise.resolve()).then(whenEarsIdle).then(function () {
+            supersedeVoices(seq);
+            routeAll(body.messages, "chat");
+            settle();
+          });
         }
-        return fallbackReply(text, seq).then(settle);
+        return heldBehind(turn, true).then(function () { return fallbackReply(text, seq); }).then(settle);
       }
 
       stats.chatOk++;
@@ -717,9 +841,19 @@
       }
       contextBlob = typeof body.context === "string" ? body.context : "";
       var tickets = ticketsOf(body.speech);
-      // The context is kept NOW (the next line carries it); the reply itself starts only
-      // once the ears are idle — never into an open microphone.
-      return whenEarsIdle().then(function () {
+      // The context is kept NOW, and a line waiting for it goes out at once (W4-S7). The
+      // reply itself starts only once every reply POSTed before it is handed over (an early
+      // line) and the ears are idle — never into an open microphone. Until then a later
+      // safety line may end it: its words go in the log at once, silently, never voiced.
+      turn.mute = once(function () {
+        var eid = eventOf(body.messages, body.speech);
+        if (eid) { expectVoice(eid); routeAll(body.messages, "chat"); }
+      });
+      turn.chatBack();
+      drain();
+      return heldBehind(turn, !tickets.length).then(whenEarsIdle).then(function () {
+        turn.mute = null;
+        if (turn.silenced) { stats.tickets += tickets.length; stats.chunksSuperseded += tickets.length; settle(); return; }
         if (!tickets.length) {
           // No voice configured (`voice: false`): the words speak from the clips, at once.
           supersedeVoices(seq);

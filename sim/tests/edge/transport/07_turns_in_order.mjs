@@ -72,19 +72,20 @@ const soundName = (t0) => (s) => {
        "11a: …while the child's line is already in the log: taken the moment they tapped");
   eq(T().queued, 1, "11a: recorded as one line that waited");
 
-  await advance(6400);                                // t+6.7 s: colour landed at 2.2 s, both its chunks routed by 6.8 s
-  deep(chats(world).map((c) => c.context), [""], "11a: at 6.7 s the second line still waits: the colour reply's last sentence is not yet handed over");
-  await advance(200);                                 // t+6.9 s: colour's chunk 1 landed at 6.8 s and was routed: the turn is settled
+  await advance(1800);                                // t+2.1 s: the colour reply is still on its way (it lands at 2.2 s)
+  deep(chats(world).map((c) => c.context), [""], "11a: at 2.1 s the second line still waits: the colour reply's words are not back");
+  await advance(200);                                 // t+2.3 s: colour landed at 2.2 s — its context is known, its voice still to be bought
   deep(chats(world), [{ text: "what is your favorite color?", context: "" }, { text: "and your favorite food?", context: "CTX-after-color" }],
-       "11a: THE SECOND LINE GOES OUT ONCE THE FIRST REPLY IS WHOLLY HANDED OVER, CARRYING ITS CONTEXT (it carried \"\" at 300 ms)");
+       "11a: THE SECOND LINE GOES OUT THE MOMENT THE FIRST REPLY'S WORDS ARE BACK, CARRYING ITS CONTEXT (it carried \"\" at 300 ms; W4-S7 — before, it waited for the whole voice, until 6.8 s)");
+  await advance(4600);                                // t+6.9 s: colour's chunk 1 landed at 6.8 s and was routed: the turn is settled, the food reply (back at 2.6 s) released
 
-  await advance(7100);                                // t+14 s: food landed at 7.2 s, its two chunks heard by 13.4 s
+  await advance(7100);                                // t+14 s: food's two chunks heard by 12.9 s
   eq(typed.send("what did I ask first?"), true, "11a: a third line, after both answers");
   await advance(1000);
   deep(chats(world).map((c) => c.context), ["", "CTX-after-color", "CTX-after-food"],
        "11a: THE THIRD TURN CARRIES BOTH EXCHANGES: the food reply's context, which holds the colour exchange before it");
-  deep(world.spy.sounds.map(soundName(t0)), ["color0@4500", "color1@6800", "food0@9500", "food1@11800", "browser@14100"],
-       "11a: BOTH REPLIES ARE HEARD WHOLE, IN SEND ORDER: colour's two sentences, then food's two, then the third (no voice ticket: the local voice)");
+  deep(world.spy.sounds.map(soundName(t0)), ["color0@4500", "color1@6800", "food0@9100", "food1@11400", "browser@14100"],
+       "11a: BOTH REPLIES ARE HEARD WHOLE, IN SEND ORDER: colour's two sentences, then food's two (its reply, back at 2.6 s, waited for the colour voice to be handed over at 6.8 s: heard at 9.1 s, 400 ms sooner than with the POST held), then the third (no voice ticket: the local voice)");
   deep(world.spy.cuts, [], "11a: …nothing was cut short");
   deep(speeches(world).map(chunkName), ["color0", "color1", "food0", "food1"],
        "11a: …every sentence was paid for exactly once, in order — nothing of the older reply given up");
@@ -98,6 +99,8 @@ const soundName = (t0) => (s) => {
   deep([st.turns, st.live, st.queued, st.chunksSuperseded, st.chunksDropped, st.voiceFirst, st.chunksRouted, st.chunkFailures, st.voiceFallbacks],
        [3, 3, 1, 0, 0, 2, 2, 0, 0],
        "11a: recorded: three live turns, one waited, NO chunk superseded or dropped, both voiced replies voice-first, two later chunks routed, no failure or fallback");
+  deep([st.early, st.heldReplies, st.safetyFirst], [1, 1, 0],
+       "11a: …the food line went out early (its reply held once behind the colour voice), no safety line (W4-S7)");
   eq(globalThis.window.moxieMode.state(), "live", "11a: …and the page is live throughout");
 }
 
@@ -129,15 +132,16 @@ const soundName = (t0) => (s) => {
   await advance(10);
   deep(chats(world).map((c) => c.text), ["typed first"], "11b: the transcript waits behind the typed line in flight");
   deep(world.spy.transcript, ["typed first", "spoken second"], "11b: …though it is in the log at once, as a child's words always were");
-  await advance(4100);                                // t+4.6 s: typed landed at 2.2 s, its one chunk routed at 4.5 s: settled
+  await advance(1800);                                // t+2.3 s: the typed reply landed at 2.2 s; its one chunk is being bought
   deep(chats(world), [{ text: "typed first", context: "" }, { text: "spoken second", context: "CTX-typed" }],
-       "11b: THE TRANSCRIPT GOES OUT WHEN THE TYPED REPLY IS HANDED OVER, carrying its context");
+       "11b: THE TRANSCRIPT GOES OUT THE MOMENT THE TYPED REPLY'S WORDS ARE BACK, carrying its context (W4-S7 — before, it waited for the chunk, until 4.5 s)");
+  await advance(2300);                                // t+4.6 s: the typed chunk routed at 4.5 s (settled); the spoken reply, back at 4.4 s, is released
   eq(started, null, "11b: …and mic.js's hold has not been released: her answer to the spoken line has not started");
-  await advance(5000);                                // spoken landed at 6.7 s, its chunk at 9.0 s
+  await advance(5000);                                // the spoken chunk landed at 6.8 s, after the typed one ended at 6.5 s
   await p;
-  eq(started, 9000, "11b: the promise settles when the spoken line's OWN reply starts (9.0 s), not when the typed one did");
-  deep(world.spy.sounds.map((s) => [s.kind, s.t - t0]), [["cloud", 4500], ["cloud", 9000]],
-       "11b: the typed reply is heard at 4.5 s and the spoken reply at 9.0 s, after it, nothing cut");
+  eq(started, 6800, "11b: the promise settles when the spoken line's OWN reply starts (6.8 s), not when the typed one did");
+  deep(world.spy.sounds.map((s) => [s.kind, s.t - t0]), [["cloud", 4500], ["cloud", 6800]],
+       "11b: the typed reply is heard at 4.5 s and the spoken reply at 6.8 s, after it (its reply waited for the typed one to be handed over), nothing cut");
   deep(world.spy.cuts, [], "11b: nothing was cut");
 }
 
