@@ -128,8 +128,15 @@ export async function onRequestPost(context) {
         });
       }
       audio = { pcm: upstream.pcm, sampleRate: upstream.sampleRate, channels: upstream.channels };
-      // Only a successful synthesis is ever stored; every failure returned above.
-      if (store) await writeCachedAudio(store, cfg, cacheKey, audio);
+      // Only a successful synthesis is ever stored; every failure returned above. The
+      // visitor does not wait for the write (§4.8): it is handed to `waitUntil` and finishes
+      // after the response. `writeCachedAudio` never rejects and its own deadline bounds it.
+      // Bare node (the hermetic suite, the `--inproc` tools) has no `waitUntil`: awaited there.
+      if (store) {
+        const write = writeCachedAudio(store, cfg, cacheKey, audio);
+        if (typeof context.waitUntil === "function") context.waitUntil(write);
+        else await write;
+      }
     }
 
     // 6. The `CloudTTSResponse` `voice/cloud.js` decodes, carrying the WAV header's OWN rate and
