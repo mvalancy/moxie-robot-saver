@@ -7,8 +7,9 @@ supervisor as `child: {nickname}` on that robot's own layer (`POST /config?devic
 `child` key, so every robot heard "Hi friend!" whatever the parent typed. What each test
 pins:
 
-* the whitelist: one name rule, the Try it card's, byte for byte; a refused name changes
-  nothing; a house rule names no child; `child` is never a builder kwarg;
+* the whitelist: one name rule, shared with the Try it card (its safety, NFC and marks are
+  `test_child_name_safety.py`'s); a refused name changes nothing; a house rule names no
+  child; `child` is never a builder kwarg;
 * the runtime: the next `/config`, both brains, the walk-back-in hello, the opener, the day
   plan and `/status` name the parent's child, per robot, at once and after a restart;
 * a setting saved for a robot that is away is kept, and lands when it connects;
@@ -104,26 +105,33 @@ def test_the_whitelist_keeps_a_childs_name_and_refuses_what_is_not_one():
 
 
 def test_the_try_it_card_and_the_childs_name_share_one_rule():
-    """The rule moved from the Try it card to the SDK and is imported back: the same
-    pattern byte for byte, and the card's behaviour unchanged (a blank try names no one;
-    a line break typed for a try folds into a space). A child's name is stricter in
-    exactly those two places. `is` alone cannot tell the import from a copy (`re.compile`
-    hands an identical pattern its cached object), so the source is checked for a copy."""
+    """One rule, `cloud_config.check_name` (the shape, NFC, Moxie's safety table, K7.1),
+    which the Try it card imports: the card's behaviour is otherwise unchanged (a blank
+    try names no one; a line break typed for a try folds into a space), and a child's
+    name is stricter in exactly those two places. `is` alone cannot tell the import from a
+    copy, so the source is checked for one: no name pattern, cap or rule of its own."""
     import inspect
+    import json as _json
+    import unicodedata
     from moxie_sdk import cloud_config
     from moxie_runtime import tryit
-    assert tryit._NAME_RE is cloud_config.NAME_RE                 # a drifted copy fails
+    assert tryit._check_name is cloud_config.check_name           # a drifted copy fails
     source = inspect.getsource(tryit)
-    assert "_NAME_RE = " not in source and "TRY_MAX_NAME_CHARS = " not in source, \
+    assert "NAME_RE" not in source and "TRY_MAX_NAME_CHARS = " not in source \
+        and "def check_name" not in source, \
         "tryit keeps its own copy of the name rule: import it from moxie_sdk.cloud_config"
     assert cloud_config.NAME_RE.pattern == r"^[\w .'\-]+$"
     assert tryit.TRY_MAX_NAME_CHARS == cloud_config.NAME_MAX_CHARS == 40
     assert tryit._try_name("") == "" and tryit._try_name("Sam\nB") == "Sam B"
     # The allowed names punctuated: a period, an apostrophe and a hyphen, each of which the
-    # two sides must treat alike (a fixture with none lets six such divergences pass).
-    for raw in ("Sam", " José ", "Zoë", "Moxie Kid", "x" * 40, "Sam. Zoë-José O'Sam"):
+    # two sides must treat alike (a fixture with none lets six such divergences pass); a
+    # decomposed name and one written with vowel signs, which both now take, composed.
+    for raw in ("Sam", " José ", "Zoë", "Moxie Kid", "x" * 40, "Sam. Zoë-José O'Sam",
+                unicodedata.normalize("NFD", "Zoë"), "सैम"):
         assert tryit._try_name(raw) == cloud_config.clean_child_name(raw)
-    for raw in ("<exit>", "{{ x }}", "x" * 41, "Sam!"):
+    with open(os.path.join(REPO, "mqtt", "moxie_sdk", "safety_rules.json")) as fh:
+        listed = [w for c in _json.load(fh)["categories"] for w in (c.get("words") or [])[:1]]
+    for raw in ("<exit>", "{{ x }}", "x" * 41, "Sam!", "\u0301Sam", *listed):
         with pytest.raises(ValueError):
             tryit._try_name(raw)
         with pytest.raises(ValueError):
@@ -371,8 +379,8 @@ def test_the_name_never_reaches_the_log_the_feed_or_telemetry(tmp_path, capsys):
     between), save one for a robot that is away and let it connect, and have a name
     refused: the supervisor's output, the activity feed and the connection record never
     carry a name, and afterwards the only file holding one is the away robot's own
-    settings. (A line Moxie SAYS can carry the name in the feed and the log, like any
-    word of a conversation: that is the turn and hello lines, outside this slice.)"""
+    settings. (A line Moxie SAYS that carries the name is masked in the feed and the log:
+    `test_child_name_safety.py`.)"""
     from helpers_runtime import LatchClient, deliver, http_call, status_server
     names = ("Zoë", "José")
     rt = _runtime(tmp_path, devices=("d_one",), allow_unverified_bots=False)

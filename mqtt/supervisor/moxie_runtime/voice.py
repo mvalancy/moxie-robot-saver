@@ -203,7 +203,7 @@ class VoiceMixin:
                     "reason": "The voice engine could not speak that line — see the "
                               "supervisor log."}
         audio = resp.get("audio") or {}
-        self._note("voice", f"🎚️ test '{line[:40]}' → {device_id}")
+        self._note("voice", f"🎚️ test '{self._masked(line, 40)}' → {device_id}")
         return {"ok": True, "device_id": device_id, "spoke": line, "event_id": event_id,
                 "engine": self._synth.describe(),
                 "sample_rate": int(audio.get("sample_rate") or 0),
@@ -329,7 +329,7 @@ class VoiceMixin:
             self._note("stt", f"👂 heard nothing: {line}")
             print(f"[runtime] 👂 {device_id} heard nothing: {line}", flush=True)
         else:
-            self._note("stt", f"👂 heard: '{transcript[:40]}'")
+            self._note("stt", f"👂 heard: '{self._masked(transcript, 40)}'")
         # During telehealth the operator sees the child's side as text (a read of what
         # STT already produced; backlog/telehealth.md §2.5).
         if self._telehealth.get(device_id, {}).get("session_id"):
