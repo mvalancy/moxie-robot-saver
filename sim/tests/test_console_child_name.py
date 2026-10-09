@@ -15,6 +15,8 @@ permit still stand. What each test pins:
 * another account's child is never sent;
 * unpair and reset clear the robot's copy first (post order), and through a REAL runtime
   the robot's saved settings then hold no name;
+* a change the supervisor applies but cannot save (`saved: false`) is never reported as
+  done: a restart would undo it;
 * the console's two `/status` views, and a config answer, name a robot's child only to
   the account that has the robot (nor give away the face cache id, from which a list of
   first names recovers it); the activity feed masks the rest.
@@ -417,3 +419,51 @@ def test_a_robot_that_joins_an_account_never_says_a_name_an_earlier_record_left(
     assert rt.client.on(topic)[-1]["child_pii"]["nickname"] == "friend"
     assert "child" not in json.loads(record.read_text())
     assert client.get("/local/fleet", headers=later).json()["robots"][0]["child"] == "friend"
+
+
+def test_a_change_the_supervisor_applies_but_cannot_save_is_never_called_done(
+        client, tmp_path, monkeypatch):
+    """The supervisor answers `saved: false` when it applied a change but could not write
+    the robot's saved settings (the store refused: a full disk, a record another process
+    held past its timeout), and a restart undoes such a change. So a rename or a claim
+    whose name is not saved is not `child_pushed`, though the robot says the name now (a
+    claim must not clear a name the robot took); and an unpair whose clear is not saved
+    never tells the parent the name is gone: it is still in the robot's saved settings, and
+    the supervisor's next start brings it back."""
+    pytest.importorskip("paho.mqtt.client", reason="the runtime imports paho")
+    from helpers_runtime import make_runtime, status_server
+    from moxie_sdk.app import MoxieApp
+    from moxie_sdk.store import JsonStore
+
+    class _App(MoxieApp):
+        name = "content"
+
+    rt, _ = make_runtime(_App(), device_id=DEVICE, nickname="friend",
+                         allow_unverified_bots=False, store=JsonStore(root=str(tmp_path)))
+    set_status_url(status_server(rt) + "/status", monkeypatch)
+    record = tmp_path / "robots" / DEVICE / "config.json"
+    auth, claim, cid = _claimed(client, "unsaved@child.lan", "Sam")
+    assert claim["child_pushed"] is True
+    write = rt.store.write
+
+    def refused(device_id, collection, value):
+        if collection == rt.ROBOT_CONFIG_COLLECTION:
+            return False                    # what the store answers when it cannot write
+        return write(device_id, collection, value)
+
+    monkeypatch.setattr(rt.store, "write", refused)
+    renamed = client.put(f"/api/children/{cid}", headers=auth,
+                         json={"child": {"child-first-name": "José"}}).json()
+    assert rt.robots[DEVICE].child.nickname == "José"                  # said now
+    assert renamed["child_pushed"] is False and "restart" in renamed["reason"], renamed
+
+    gone = client.delete(f"/api/robots/{claim['robot_id']}", headers=auth).json()
+    assert gone["unpaired"] is True and gone["child_cleared"] is False, gone
+    assert "restart" in gone["child_clear_error"]
+    assert not any("no longer hold" in d["text"] for d in gone["details"]), gone["details"]
+    assert json.loads(record.read_text())["child"] == {"nickname": "Sam"}   # still there
+
+    _, joined, _ = _claimed(client, "unsaved-next@child.lan", "Zoë")
+    assert joined["permitted"] is True and joined["child_pushed"] is False, joined
+    assert "restart" in joined["reason"]
+    assert rt.robots[DEVICE].child.nickname == "Zoë"                   # not cleared

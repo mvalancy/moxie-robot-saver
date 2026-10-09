@@ -285,10 +285,13 @@ anyone who can open the console on your network, as every console card shows the
 **Unpair and factory reset** clear the robot's copy (`child: null`) before the record is deleted and
 before the permit is revoked; the robot then falls back to `MOXIE_CHILD_NICKNAME`, and its saved
 settings keep no `child` key. When that clear cannot reach the supervisor the answer says so, and the
-name stays on the robot until it joins an account again. A write for a robot that is away is kept: a
-robot on the permit list or in the roster has it saved (`online: false, pushed: false`: no connected
-robot heard it) and the settle pushes it when the robot connects (OpenMoxie keeps an offline robot's
-edit the same way: `site/hive/mqtt/moxie_server.py:284-290`).
+name stays on the robot until it joins an account again. A change the supervisor applies but cannot
+save (its answer says `saved: false`) is not reported as done either: a clear is then not
+`child_cleared`, because the name is still in the robot's saved settings and a restart brings it
+back, and a name sent on a claim or a rename is not `child_pushed`, with the reason. A write for a
+robot that is away is kept: a robot on the permit list or in the roster has it saved (`online: false,
+pushed: false`: no connected robot heard it) and the settle pushes it when the robot connects
+(OpenMoxie keeps an offline robot's edit the same way: `site/hive/mqtt/moxie_server.py:284-290`).
 
 > **Unverified on a physical Moxie.** Whether a real robot re-reads `child_pii.nickname` from a config
 > push without reconnecting, and where it says it, has not been observed by this project. OpenMoxie

@@ -204,7 +204,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config and telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 37990,
+   "bytes": 38305,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -1068,7 +1068,7 @@
    "path": "features/robot-lifecycle.md",
    "title": "Map 11 — Robot Lifecycle (pairing / unpair / FACTORY RESET / restore / reboot / OTA / state model)",
    "section": "features",
-   "bytes": 31096,
+   "bytes": 31291,
    "mermaid": 0,
    "headings": [
     "Built here: unpair and factory reset",

@@ -7,7 +7,9 @@ settings (`POST /config?device_id=… {"child": {"nickname": …}}`, saved in
 `/config`, both brains' prompts, the walk-back-in hello, the opener and `/status`. This
 module is the one place the console sends or clears it. Like the permit post it is
 best-effort: a supervisor that is down never fails the parent's call, and the answer says
-whether the name went (`child_pushed`) and why not (`reason`). The supervisor is the one
+whether the name went and was saved (`child_pushed`, `child_cleared`) and why not
+(`reason`): a change the supervisor applies but cannot save (`saved: false`) is not done,
+since a restart undoes it. The supervisor is the one
 judge of a name (`moxie_sdk.cloud_config.NAME_RULE`; this process has no `moxie_sdk`), so
 here only the pairing placeholder and a blank are held back, and both CLEAR the robot's
 copy instead (`child: null`): the robot then says the appliance's default, never a name
@@ -38,6 +40,13 @@ NO_DEVICE = ("This robot's record does not say which robot on this server it is,
 NO_ROBOT = "No robot on this account is bound to this child yet: the name goes with it."
 UNREACHABLE = ("This server could not reach its robot side, so the name was not sent. "
                "Save it again once the supervisor is running.")
+#: The supervisor applied the change but could not write the robot's saved settings
+#: (`saved: false`): the robot has it now, and a restart undoes it.
+NOT_SAVED = ("This server could not save the name in the robot's settings, so a restart "
+             "undoes it. Save it again.")
+NOT_SAVED_CLEAR = ("The robot stopped using the name, but this server could not save that, "
+                   "so the name is still in the robot's saved settings and a restart would "
+                   "bring it back.")
 #: Where a name that is held back from a caller stands in the activity feed's lines.
 MASK = "[name]"
 
@@ -69,11 +78,18 @@ def _birthday(value) -> str:
         return ""
 
 
-def _outcome(out: dict, code: int) -> Optional[str]:
-    """`None` when the supervisor took the change, else the parent's reason."""
+def _took(out, code: int) -> bool:
+    """Did the supervisor apply the change (saved or not)?"""
+    return code == 200 and isinstance(out, dict) and bool(out.get("ok"))
+
+
+def _outcome(out: dict, code: int, not_saved: str) -> Optional[str]:
+    """`None` when the supervisor took the change and saved it, else the parent's reason:
+    `not_saved` when it applied the change but its answer says the robot's record does not
+    hold it (`saved: false`), since a restart would undo it."""
+    if _took(out, code):
+        return not_saved if out.get("saved") is False else None
     out = out if isinstance(out, dict) else {}
-    if code == 200 and out.get("ok"):
-        return None
     if code == 503:
         return UNREACHABLE
     return str(out.get("reason") or out.get("error") or f"supervisor returned {code}")
@@ -102,9 +118,9 @@ def push_child(device_id: str, child_row, *, joining: bool = False) -> dict:
         child["birthday"] = birthday
     out, code = supervisor.post_json(supervisor.device_query("/config", device_id),
                                      {"child": child})
-    reason = _outcome(out, code)
-    if joining and reason is not None and code != 503:
-        clear_child(device_id)
+    reason = _outcome(out, code, NOT_SAVED)
+    if joining and not _took(out, code) and code != 503:
+        clear_child(device_id)       # refused: never a name an earlier record left there
     return {"child_pushed": reason is None, "reason": reason}
 
 
@@ -117,7 +133,7 @@ def clear_child(device_id: str) -> dict:
         return {"child_cleared": False, "reason": NO_DEVICE}
     out, code = supervisor.post_json(supervisor.device_query("/config", device_id),
                                      {"child": None})
-    reason = _outcome(out, code)
+    reason = _outcome(out, code, NOT_SAVED_CLEAR)
     return {"child_cleared": reason is None, "reason": reason}
 
 
