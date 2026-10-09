@@ -6,8 +6,8 @@ touches the world on the evaluator's behalf. `ext/` is the pure evaluator; here:
 * `apply_ext_effects()` applies effects only after the program ended, so a breach leaves
   nothing half-applied (X11), lets a spoken line act only on the action tags written
   whole in the rule's own text (`literal_actions()`), never on one it built at run time,
-  and lets markup reach the robot only with no tag of ours and nothing outside the
-  catalogue (`robot_markup()`).
+  and lets a `say`'s markup or a `markup` statement reach the robot only with no tag of
+  ours and nothing the catalogue's check refuses (`robot_markup()`).
 * `execution_actions_of()` / `subscriptions_of()` bound what a pack may put on the wire to
   the closed robot function / event tables.
 
@@ -42,6 +42,8 @@ EXT_MAX_MEMORY_BYTES = 32768
 _EXT_TAG = re.compile(r"<(?:mark|usel|/usel|spurt|break)\b[^>]*/?>", re.I)
 #: Where one of those tags opens, closed or not.
 _EXT_OPEN = re.compile(r"<(?:mark|usel|/usel|spurt|break)\b", re.I)
+#: A tag `_EXT_TAG` read as a mark (the same flags, so the same letters count as `mark`).
+_EXT_MARK = re.compile(r"<mark\b", re.I)
 _EXT_VAR_KEY = re.compile(r"^[A-Za-z_$][A-Za-z0-9_.$-]{0,63}$")
 
 
@@ -112,20 +114,33 @@ def ext_facts(volley: Volley, session: Session, *, namespace: str = "",
     return facts
 
 
+def _malformed_tag(tag: str) -> bool:
+    """A catalogue tag whose form the gate refuses, read before any id: one holding another
+    `<` (`_EXT_TAG` reads from a `<mark`, `<usel`, `<spurt` or `<break` to the next `>`, so
+    `<usel<usel…>` is one tag), one cut short by a `>` inside its own quotes (an odd number
+    of `"` in what `_EXT_TAG` matched), or a mark that the catalogue's own mark pattern
+    (`vocab._MARK_RE`) does not read whole. `_EXT_TAG` ends a tag at its first `>`, so
+    `<spurt spurt_id="n>pe"/>` is read here as `<spurt spurt_id="n>`, which names no id and
+    so has nothing to refuse, while the same catalogue check over the whole markup reads a
+    spurt with the id `n>pe`, which it refuses; what the robot's own reader makes of such a
+    tag is unverified, so it goes. A mark that pattern does not read whole (`<mark
+    name='cmd:zzz'/>`, `<mark name = "cmd:zzz"/>`, `<mark name="cmd:a,data:{">`) is one the
+    catalogue check passes without reading, so it would reach the robot unchecked; and in
+    the whole markup the pattern reads on from its opening past the tag's end (`data:{.*?}`
+    is lazy and runs on to the next `}"` that a `>` or `/>` closes), once per such mark, so
+    a run of them cost that check quadratic time (`robot_markup`'s Cost). Read whole, a mark
+    is read to its own end and no further. All three are read before the catalogue check,
+    which is the costly one: its own patterns scan from every opening inside a tag to that
+    tag's end (the gate took 26-78 ms on one 8 KB tag of `<usel` or `<spurt` openings,
+    measured), and on a tag with one opening they read it once."""
+    return ("<" in tag[1:] or tag.count('"') % 2 == 1
+            or (_EXT_MARK.match(tag) is not None and vocab._MARK_RE.fullmatch(tag) is None))
+
+
 def _refused_tag(tag: str) -> bool:
-    """A catalogue tag the gate drops: one holding another `<` (`_EXT_TAG` reads from a
-    `<mark`, `<usel`, `<spurt` or `<break` to the next `>`, so `<usel<usel…>` is one tag),
-    one cut short by a `>` inside its own quotes (an odd number of `"` in what `_EXT_TAG`
-    matched), or one with an id outside the frozen catalogue (`vocab.validate_markup`).
-    `_EXT_TAG` ends a tag at its first `>`, so `<spurt spurt_id="n>pe"/>` is read here as
-    `<spurt spurt_id="n>`, which names no id and so has nothing to refuse, while the same
-    catalogue check over the whole markup reads a spurt with the id `n>pe`, which it
-    refuses; what the robot's own reader makes of such a tag is unverified, so it goes.
-    The first two are read before the catalogue check, which is the costly one: its own
-    patterns scan from every opening inside a tag to that tag's end (the gate took 26-78 ms
-    on one 8 KB tag of `<usel` or `<spurt` openings, measured), and on a tag with one
-    opening they read it once."""
-    return "<" in tag[1:] or tag.count('"') % 2 == 1 or bool(vocab.validate_markup(tag))
+    """A catalogue tag the gate drops: a malformed one (`_malformed_tag`), or one with an id
+    outside the frozen catalogue (`vocab.validate_markup`)."""
+    return _malformed_tag(tag) or bool(vocab.validate_markup(tag))
 
 
 def _tags_in(markup: str):
@@ -205,42 +220,62 @@ def _action_key(action: Action) -> tuple:
 def robot_markup(markup) -> tuple:
     """`(clean, dropped)`: `markup` as it may reach the robot, or `""` when it may not.
 
-    The robot speaks its markup when it is given one, and markup acts on nothing, so what
-    the robot is sent must hold no tag of ours and nothing the catalogue refuses.
-    `ContentApp._reply_from_volley` sends `actions.parse_action_tags(clean)[0]`: our tags
-    lifted once, as from a line, then `tidy_spoken_text`, which takes out the space before
-    a comma and so can join a tag's pieces (`<mark name="cmd:zzz ,data:{}"/>` becomes a
-    mark with the verb `zzz`). So: every tag with one of our names is lifted as that parse
-    lifts them (`actions.lift_action_tags`, one pass, malformed ones too); then the gate
-    (`ext_markup`); then `tidy_spoken_text`, so that what is checked last is what the robot
-    is sent (the parse finds no tag of ours left to lift, and tidying twice changes
-    nothing); then the markup is dropped whole, and the runtime's markup floor speaks the
-    line, if what is left holds a tag of ours, a tag the gate would drop, a catalogue tag
-    opened with no `>` after it, or anything the catalogue's own check over the whole text
-    refuses (`vocab.validate_markup`, which reads a quoted `>` as part of the value:
-    `<spurt x" spurt_id="n>pe"/>` is a spurt with the id `n>pe`). A tag of ours or one the
+    The robot speaks its markup when it is given one, and no action tag in it is acted on
+    (`ContentApp._reply_from_volley` keeps the text of its parse and none of its actions),
+    so what the robot is sent must hold no tag of ours and nothing the catalogue refuses.
+    This is the channel of a `say`'s markup and a `markup` statement only: a mark written in
+    a line or in a conversation's opener reaches the robot's markup another way, unchecked
+    (the runtime's markup floor sends a line holding `<` as it is). `_reply_from_volley` sends
+    `actions.parse_action_tags(clean)[0]`: our tags lifted once, as from a line, then
+    `tidy_spoken_text`, which takes out the space before a comma and so can join a tag's
+    pieces (`<mark name="cmd:zzz ,data:{}"/>` would become a mark with the verb `zzz`; the
+    gate drops that one first, since the catalogue's mark pattern does not read it whole).
+    So: every tag with one of our names is lifted as that parse lifts them
+    (`actions.lift_action_tags`, one pass, malformed ones too); then the gate
+    (`ext_markup`), which drops tag by tag, the rest kept, what `_refused_tag` refuses: an
+    id the catalogue refuses, a mark the catalogue's mark pattern does not read whole, a
+    tag cut short by a `>` inside its own quotes, a tag holding another `<`; then
+    `tidy_spoken_text`, so that what is checked last is what the robot is sent (the parse
+    finds no tag of ours left to lift, and tidying twice changes nothing); then the markup
+    is dropped whole, and the runtime's markup floor speaks the line, if what is left holds
+    a tag of ours, a catalogue tag whose form the gate refuses (`_malformed_tag`), a
+    catalogue tag opened with no `>` after it (left open), or anything the catalogue's own
+    check over the whole text refuses (`vocab.validate_markup`, which reads a quoted `>`
+    as part of the value: `<spurt x" spurt_id="n>pe"/>` is a spurt with the id `n>pe`).
+    With every tag's form one the gate keeps and none left open, that whole-text check
+    refuses every id the gate's tag-by-tag check would (each mark is read as itself; a
+    usel's genre or a spurt's id is read as in its own tag, or read on past that tag's `>`,
+    which no catalogue id holds), so the last pass does not read ids tag by tag again
+    (pinned, `test_the_last_pass_reads_ids_once_and_refuses_what_a_tag_by_tag_read_would`).
+    A tag of ours or one the
     gate would drop can be left only because a tag the gate dropped stood between the
     pieces of another (`<ex<ex<mark name="cmd:zzz"/>it>it>` would reach the robot as
     `<exit>`), or because tidying joined one; keeping any of it would need a pass the robot
     does not make, so nothing is kept.
 
-    Cost: every pass is linear in the markup but the whole-text catalogue check, which is
-    `vocab.py`'s and reads on from every opening it finds: a markup with an opening left
-    open is dropped before it runs (it took 0.4-0.7 s on an 8 KB run of `<usel genre="`
-    openings), and so is one with a tag holding another `<` (`_refused_tag`). The slowest
-    markup left to it that a search of 9,000 random 8 KB markups found is a run of mark
-    openings whose data is never closed, which it reads in quadratic time: 7-14 ms on 8 KB,
-    measured, so up to about 56 ms for the four markups a turn can carry. Before
-    round 8 the tags of ours were taken out to a fixpoint (`actions.drop_action_tags` with
-    nothing kept) and the gate ran once after, which let a dropped tag's neighbours meet,
-    and the fixpoint cost 0.6-1.0 s per 8 KB nest (2.1-3.7 s for four). `dropped` counts
-    the tags the gate dropped, and one more for a markup dropped whole. Never reported to
-    the parent: nothing in markup is acted on."""
+    Cost: every pass is linear in the markup, the whole-text check included. That check is
+    `vocab.py`'s, and it runs only when nothing above dropped the markup, so every catalogue
+    tag left has a form the gate keeps (`_malformed_tag`) and none is left open. Each of
+    its patterns then reads from an opening to that tag's end and no further (a mark is read
+    whole), except that a usel's genre or a spurt's id whose opening quote is its tag's last
+    is read on to the next `"` (and a usel's on to the next `>`): once per tag at most, and
+    the search goes on past what it read. Measured with the 8 KB cap lifted, `robot_markup`
+    took about twice as long per doubling, up to 128 KB, on every shape tried. Before round
+    10 a mark that pattern does not read whole was kept, and the check read on from each one
+    past its tag: on 8 KB of `<mark name="cmd:a,data:{">` tags followed by `}"`, 30
+    ideographic spaces and `/x` over and over (the round-9 review's shape), `robot_markup`
+    took 15-17 ms and five turns of four such markups 0.33-0.48 s, against 0.3 ms and
+    12-23 ms now, measured (the review measured 20-27 ms and 0.48 s before). Before round 8
+    the tags of ours were taken out to a fixpoint (`actions.drop_action_tags` with nothing
+    kept) and the gate ran once after, which let a dropped tag's neighbours meet, and the
+    fixpoint cost 0.6-1.0 s per 8 KB nest (2.1-3.7 s for four). `dropped` counts the tags
+    the gate dropped, and one more for a markup dropped whole. Never reported to the parent:
+    no action tag in markup is acted on."""
     lifted = lift_action_tags(str(markup or "")[:ext.MAX_MARKUP_CHARS])
     clean, dropped = ext_markup(lifted)
     clean = tidy_spoken_text(clean)
     exposed = (bool(tag_names(clean))
-               or any(_refused_tag(m.group(0)) for m in _tags_in(clean))
+               or any(_malformed_tag(m.group(0)) for m in _tags_in(clean))
                or _EXT_OPEN.search(clean, clean.rfind(">") + 1) is not None
                or bool(vocab.validate_markup(clean)))
     if exposed:
@@ -305,7 +340,7 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
     tag at all. A line that carries only allowed tags is kept exactly as written. It then
     passes the same output safety classifier as a model line (unsafe → redirect, M2).
     Markup (a `say`'s or a `markup` statement's) reaches the robot only as `robot_markup`
-    leaves it: no tag of ours, nothing outside the catalogue, or none at all.
+    leaves it: no tag of ours and nothing the catalogue's check refuses, or none at all.
     `remember`/`forget` name only a key; device and namespace come from the host (X9).
     """
     spoke = wrote = dropped = acted = subscribed = 0

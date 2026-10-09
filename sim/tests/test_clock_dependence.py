@@ -179,10 +179,11 @@ REVIEWED: dict = {
         "enforced by a hard 5 s alarm: the lazy parse had not finished a megabyte of spaces "
         "after 8 s."),
     "sim/tests/test_ext_say_tags.py::test_four_markups_at_the_cap_are_cleared_in_time_linear_in_their_text": (
-        ("time.perf_counter",), "RELATIVE — 0.5 s for five turns measured at 7-30 ms, also "
+        ("time.perf_counter",), "RELATIVE — 0.5 s for five turns measured at 7-31 ms, also "
         "enforced by a hard 5 s alarm: load multiplies linear passes, while with any one of "
         "round 9's bounds undone the same five turns took 0.94-6.8 s, and the fixpoint pass "
-        "took 2.1-3.7 s a turn on the nests."),
+        "took 2.1-3.7 s a turn on the nests. With round 10's mark rule undone the review's "
+        "shape took 0.33-0.48 s, under the bound, and the test fails it on what it sends."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}

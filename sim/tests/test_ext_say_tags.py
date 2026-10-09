@@ -13,8 +13,9 @@ rule's text does not write whole (a string literal in a `say` or a `let` value,
 `ext_host.literal_actions`) out of the line before the line is kept, counts it and tells the
 parent once; `explain()` names every tag the rule writes whole, and its reading ahead only
 decides the wording. Before this, an exit the review did not name could happen; after it,
-it cannot. The robot's markup, which it speaks when it is given one, holds no tag of ours
-and nothing the catalogue refuses, or the line goes without markup (`ext_host.robot_markup`).
+it cannot. A `say`'s markup or a `markup` statement, which the robot speaks when it is
+given one, reaches it with no tag of ours and nothing the catalogue's check refuses, or
+the line goes without markup (`ext_host.robot_markup`), in time linear in the markup.
 A conversation's opener, which this PR makes speak on the robot path, is held to the same
 rule (section E): it acts only on a tag written whole in the alternative said, unrendered,
 and the pack review names each such tag in the opener's own row.
@@ -46,7 +47,8 @@ from helpers_content import free_chat_pack
 from helpers_ext import CHAT_MODULE, app_with, robot as ext_robot
 from moxie_sdk import vocab
 from moxie_sdk.actions import (_fields, _TAG_RE, drop_action_tags, lift_action_tags,
-                               lift_every_action_tag, parse_action_tags, tag_names)
+                               lift_every_action_tag, parse_action_tags, tag_names,
+                               tidy_spoken_text)
 from moxie_sdk.content import content_app as CA
 from moxie_sdk.content import ext as E
 from moxie_sdk.content import ext_host as H
@@ -424,44 +426,105 @@ MARKUPS = {
     "a mark cut short by a > inside its data is malformed, and goes": (
         '<mark name="cmd:playback-mood,data:{+mood+:0>,+intensity+:1}"/>Hi', ',+intensity+:1}"/>Hi', 1),
     # Round 9, the review's six (round 8's check ran before the robot path tidied the
-    # markup, and tag by tag only). Tidying takes out the space before a comma, which joins
-    # a mark the catalogue refuses: its verb, its sound, its mood.
+    # markup, and tag by tag only). Tidying takes out the space before a comma, which would
+    # join a mark the catalogue refuses: its verb, its sound, its mood. The catalogue's mark
+    # pattern does not read such a mark whole, so the gate drops it first, the rest kept.
     "tidying would join a mark with a verb the catalogue refuses": (
-        '<mark name="cmd:zzz ,data:{}"/>Hi', "", 1),
+        '<mark name="cmd:zzz ,data:{}"/>Hi', "Hi", 1),
     "tidying would join a mark with a sound the catalogue refuses": (
-        '<mark name="cmd:playaudio ,data:{+SoundToPlay+:+nope+}"/>Hi', "", 1),
+        '<mark name="cmd:playaudio ,data:{+SoundToPlay+:+nope+}"/>Hi', "Hi", 1),
     "tidying would join a mark with a mood the catalogue refuses": (
-        '<mark name="cmd:playback-mood ,data:{+mood+:+nope+,+intensity+:1}"/>Hi', "", 1),
+        '<mark name="cmd:playback-mood ,data:{+mood+:+nope+,+intensity+:1}"/>Hi', "Hi", 1),
     # A quoted `>` after an earlier unbalanced quote: tag by tag the quotes even out, while
-    # the catalogue's check over the whole text reads the `>` inside the value.
+    # the catalogue's check over the whole text reads the `>` inside the value. (The mark's
+    # data stops at its first `>` for the gate, and the mark pattern does not read what is
+    # left of it whole, so the gate drops that; the text after it is kept.)
     "a spurt id holding a quoted > after an unbalanced quote": (
         '<spurt x" spurt_id="n>pe"/>Hi', "", 1),
     "a mark whose quoted data holds a >": (
-        '<mark name="cmd:playback-mood,data:{"a":">"}"/>Hi', "", 1),
+        '<mark name="cmd:playback-mood,data:{"a":">"}"/>Hi', '"}"/>Hi', 1),
     "a usel genre holding a quoted > after an unbalanced quote": (
         '<usel x" genre="a>b">Hi</usel>', "", 1),
     # What keeps the whole-text check off the shapes it reads in more than linear time: a
-    # catalogue tag left open (it reads on from such an opening, and passed this one), and
-    # a catalogue tag holding another `<` (it passed this one too).
+    # catalogue tag left open (it reads on from such an opening, and passed this one), a
+    # catalogue tag holding another `<` (it passed this one too), and a mark the
+    # catalogue's mark pattern does not read whole (it passed these, and in the whole text
+    # read on from each to the next `}"/>`).
     "a catalogue tag left open goes, with the markup": ('Hi <usel genre="nope"', "", 1),
     "a catalogue tag holding another < goes": ('<usel<usel genre="question">Hi', "Hi", 1),
+    "a mark whose data is never closed goes": ('<mark name="cmd:a,data:{">Hi', "Hi", 1),
+    "a mark in single quotes goes": ("<mark name='cmd:zzz'/>Hi", "Hi", 1),
+    "a mark with spaces around its = goes": ('<mark name = "cmd:zzz"/>Hi', "Hi", 1),
+    "unclosed marks before a tail of }\" and ideographic spaces go, the tail kept": (
+        '<mark name="cmd:a,data:{">' * 3 + '}"' + "　" * 30 + "/x",
+        '}"' + "　" * 30 + "/x", 3),
+    "a mark the pattern reads whole, a space before its />, is kept": (
+        GOOD_MARK.replace('"/>', '" />') + "Hi", GOOD_MARK.replace('"/>', '" />') + "Hi", 0),
+    "a mark the pattern cannot read, formed once the gate drops a tag between its pieces": (
+        "<mar<mark name='x'/>k name='cmd:zzz'/>Hi", "", 2),
+    # The gate's tag search runs to the last `>`, so a tag after a kept one is read too.
+    "a tag the catalogue refuses after a valid one is dropped, the valid one kept": (
+        f"{GOOD_MARK}{BAD_MARK}Hi", f"{GOOD_MARK}Hi", 1),
+    # What is kept is tidied as the robot path tidies it, so the robot is sent what was
+    # checked.
+    "what is kept is tidied as the robot path tidies it": (
+        f"{GOOD_USEL}Hi  there ,you", f"{GOOD_USEL}Hi there,you", 0),
 }
+
+
+def _marks_read_whole(markup: str) -> bool:
+    """Every mark in `markup` (from `<mark` to its first `>`) is one the catalogue's own
+    mark pattern reads whole: what the robot is sent, said independently of the gate."""
+    return all(vocab._MARK_RE.fullmatch(m.group(0))
+               for m in re.finditer(r"<mark\b[^>]*>", markup, re.I))
+
+
+def _exposed(clean, per_tag) -> bool:
+    """`robot_markup`'s last-pass decision on `clean`, reading each tag with `per_tag`."""
+    return (bool(tag_names(clean)) or any(per_tag(m.group(0)) for m in H._tags_in(clean))
+            or H._EXT_OPEN.search(clean, clean.rfind(">") + 1) is not None
+            or bool(vocab.validate_markup(clean)))
+
+
+def test_the_last_pass_reads_ids_once_and_refuses_what_a_tag_by_tag_read_would():
+    """The last pass reads each tag's form (`_malformed_tag`) and the ids over the whole
+    text only (the gate has read them tag by tag already). With every form sound and none
+    left open, the whole-text check refuses every id a tag-by-tag read would: each mark is
+    read as itself, and a usel's genre or a spurt's id is read as in its own tag, or read
+    on past that tag's `>` and refused for it. So the decision is the one a tag-by-tag
+    read of the ids as well would make: pinned on the shapes above, on what the gate
+    leaves of 20,000 random markups, and on 20,000 random texts the gate never saw, over
+    the markup pieces and values read on past a tag's end."""
+    rng = random.Random(9)
+    pool = MARKUP_PIECES + ['<usel a=" genre="', '<spurt a=" spurt_id="', 'question">',
+                            'laugh"/>', '"', '>', ' genre="', ' spurt_id="', "laugh",
+                            '<spurt spurt_id="laugh"/>', '<spurt spurt_id="nope"/>', "<spurt "]
+    randoms = ["".join(rng.choice(pool) for _ in range(rng.randint(1, 8))) for _ in range(20_000)]
+    for markup in [m for m, _, _ in MARKUPS.values()] + randoms:
+        clean = tidy_spoken_text(H.ext_markup(lift_action_tags(markup))[0])
+        exposed = _exposed(clean, H._refused_tag)
+        assert _exposed(clean, H._malformed_tag) == exposed, repr(markup)
+        assert H.robot_markup(markup)[0] == ("" if exposed else clean), repr(markup)
+    for text in randoms:
+        assert _exposed(text, H._malformed_tag) == _exposed(text, H._refused_tag), repr(text)
 
 
 @pytest.mark.parametrize("shape", sorted(MARKUPS))
 def test_the_robots_markup_holds_no_tag_of_ours_and_nothing_the_catalogue_refuses(shape):
     """The robot speaks its markup when it is given one (`_reply_from_volley` sends
     `parse_action_tags(markup)[0]`: our tags lifted once, as from a line, then tidied), and
-    markup acts on nothing, so `robot_markup` lets markup reach the robot only with no tag
-    of ours and nothing outside the catalogue: every tag of ours is lifted as the robot's
-    own parse lifts them, the catalogue drops what it refuses, the rest is tidied as the
-    robot path tidies it, and if a tag of ours, a tag the catalogue would drop, a tag left
-    open or anything the catalogue's own whole-text check refuses is then in what is left,
-    the markup is dropped whole and the runtime's markup floor speaks the line. Before
-    round 8 the tags were taken out to a fixpoint and the catalogue checked after, so the
-    pieces around a dropped tag met and the robot was given `<exit>Hi`; before round 9 the
-    last check ran before the tidying and tag by tag only, so the robot was given marks and
-    a spurt and a usel the catalogue refuses. Checked on the function and through the real
+    no action is read from it, so `robot_markup` lets a `say`'s markup or a `markup`
+    statement reach the robot only with no tag of ours and nothing the catalogue refuses:
+    every tag of ours is lifted as the robot's own parse lifts them, the catalogue drops
+    tag by tag what it refuses (a mark its pattern does not read whole among them), the
+    rest is tidied as the robot path tidies it, and if a tag of ours, a tag the catalogue
+    would drop, a tag left open or anything the catalogue's own whole-text check refuses is
+    then in what is left, the markup is dropped whole and the runtime's markup floor speaks
+    the line. Before round 8 the tags were taken out to a fixpoint and the catalogue
+    checked after, so the pieces around a dropped tag met and the robot was given
+    `<exit>Hi`; before round 9 the last check ran before the tidying and tag by tag only,
+    so the robot was given marks and a spurt and a usel the catalogue refuses, and a mark
+    the catalogue's pattern could not read at all. Checked on the function and through the real
     app, for a `say`'s markup and for a `markup` statement after the say; a statement
     before the say is replaced by the say's own output, so it could never show a leak.
     Never counted as a refusal and never a breach. The robot path annotates a markup that
@@ -471,6 +534,7 @@ def test_the_robots_markup_holds_no_tag_of_ours_and_nothing_the_catalogue_refuse
     markup, clean, dropped = MARKUPS[shape]
     assert H.robot_markup(markup) == (clean, dropped), shape
     assert tag_names(clean) == [] and vocab.validate_markup(clean) == [], shape
+    assert _marks_read_whole(clean), shape
     assert lift_action_tags(clean) == clean, "the robot's own lift finds nothing left"
     assert parse_action_tags(clean) == (clean, []), "the robot path sends what was checked"
     assert H.ext_markup(clean) == (clean, 0), "the gate would drop nothing more"
@@ -484,6 +548,7 @@ def test_the_robots_markup_holds_no_tag_of_ours_and_nothing_the_catalogue_refuse
         assert brain.turns == [] and reply.text == "Hi" and reply.actions == [], (shape, reply)
         assert tag_names(reply.markup or "") == [], (shape, reply.markup)
         assert vocab.validate_markup(reply.markup or "") == [], (shape, reply.markup)
+        assert _marks_read_whole(reply.markup or ""), (shape, reply.markup)
         assert H.ext_markup(reply.markup or "") == (reply.markup or "", 0), (shape, reply.markup)
         assert (reply.markup is None) == (clean == ""), (shape, reply.markup)
         if clean:
@@ -495,20 +560,30 @@ def test_the_robots_markup_holds_no_tag_of_ours_and_nothing_the_catalogue_refuse
     assert _run(before, "hi", grants=MARKUP)[0].markup is None, "the say replaces it"
 
 
-#: Markups at the cap that a pass of `robot_markup` once read in more than linear time.
+#: The review's shape (round 9): closed mark tags whose data is never closed, then `}"`,
+#: 30 ideographic spaces (which tidying leaves alone) and `/x`, over and over.
+_UNREAD_TAIL = '}"' + "　" * 30 + "/x"
+
+#: Markups at the cap that a pass of `robot_markup` once read in more than linear time:
+#: `(markup, what robot_markup returns)`.
 BOUNDED_MARKUPS = {
     # Round 8: a nest of our tag pieces around a malformed tag, which the fixpoint pass
     # read once per level (0.6-1.0 s per nest).
-    "a nest of tag pieces": "<ex" * 1363 + "<exit:now>" + "it>" * 1363,
+    "a nest of tag pieces": ("<ex" * 1363 + "<exit:now>" + "it>" * 1363, ("", 1)),
     # Round 9, the review's: `<mark` openings with no `>` after them, which `_EXT_TAG` read
     # to the end once per opening, in the gate and again in the last pass.
-    "a run of <mark": ("<mark" * 1639)[:8192],
+    "a run of <mark": (("<mark" * 1639)[:8192], ("", 1)),
     # Round 9: openings the catalogue's whole-text check reads on from, to the end (from
     # each `genre="` again), so it is dropped as left open before that check runs ...
-    'a run of <usel genre="': ('<usel genre="' * 631)[:8192],
+    'a run of <usel genre="': (('<usel genre="' * 631)[:8192], ("", 1)),
     # ... and one tag holding thousands of openings, which the catalogue check reads from
-    # each, so the gate refuses it for holding a `<` before that check runs.
-    "one tag of <spurt openings": ("<spurt" * 1366)[:8191] + ">",
+    # each, so the gate refuses it for holding a `<` before that check runs ...
+    "one tag of <spurt openings": (("<spurt" * 1366)[:8191] + ">", ("", 1)),
+    # ... and marks the catalogue's mark pattern does not read whole, which the whole-text
+    # check read on from, each to the end (`data:{.*?}` is lazy and backs off over every
+    # space run after a `}"`), so the gate drops each of them, and the tail is kept.
+    "marks whose data is never closed, then a long tail": (
+        '<mark name="cmd:a,data:{">' * 189 + _UNREAD_TAIL * 96, (_UNREAD_TAIL * 96, 189)),
 }
 
 
@@ -516,16 +591,20 @@ BOUNDED_MARKUPS = {
 def test_four_markups_at_the_cap_are_cleared_in_time_linear_in_their_text(shape):
     """A turn carries at most four spoken lines and markup statements together
     (`MAX_ACTIONS`), each with up to 8,192 characters of markup, cleared on every turn
-    with the GIL held; here five turns of four, 7-30 ms in all on the build host. Before
+    with the GIL held; here five turns of four, 7-31 ms in all on the build host. Before
     round 8 a markup went through `drop_action_tags` to a fixpoint, quadratic in the markup:
     a turn with four nests took 2.1-3.7 s. Before round 9 the gate's tag search read from
-    each opening with no `>` after it to the end of the markup, twice (a turn with four
-    `<mark` runs took 0.37-0.52 s), and the catalogue's whole-text check, which round 9
-    adds, takes 0.4-0.7 s on one `<usel genre="` run unless an opening left open drops the
-    markup first, measured. With any one of round 9's bounds undone the five turns take
-    0.94-6.8 s. The alarm turns a super-linear pass red at 5 s rather than later; the 0.5 s
-    bound is what fails one on a quiet host."""
-    markup = BOUNDED_MARKUPS[shape]
+    each opening with no `>` after it to the end of the markup, twice (five turns of four
+    `<mark` runs took 3.5 s), and the catalogue's whole-text check, which round 9 adds,
+    takes 0.4-0.7 s on one `<usel genre="` run unless an opening left open drops the
+    markup first, measured. With one of round 9's bounds undone (the tag search stopped at
+    the last `>`, a markup with a tag left open dropped, a tag holding another `<`
+    refused) the five turns take 0.94-6.8 s. With round 10's undone (a mark the catalogue's
+    pattern does not read whole is dropped), the review's shape takes 0.33-0.48 s, under
+    the bound, and this test fails it on what reaches the robot instead: the whole markup,
+    kept. The alarm turns a super-linear pass red at 5 s rather than later; the 0.5 s bound
+    is what fails one on a quiet host."""
+    markup, (clean, dropped) = BOUNDED_MARKUPS[shape]
     assert len(markup) <= E.MAX_MARKUP_CHARS
     program = {"ext_format": 1, "capabilities": ["handled", "markup", "say"], "on": "global",
                "rules": [{"do": [{"say": "Hi", "markup": markup}] * 4 + [{"handled": True}]}]}
@@ -538,11 +617,12 @@ def test_four_markups_at_the_cap_are_cleared_in_time_linear_in_their_text(shape)
     except _Stalled:
         pytest.fail(f"still clearing four 8 KB markups ({shape}) after 5 s")
     took = time.perf_counter() - started
+    sent = (CA.annotate(clean) if CA._automarkup_enabled() else clean) if clean else None
     for reply in replies:
-        assert reply.text == "Hi" and reply.actions == [] and reply.markup is None, reply
+        assert reply.text == "Hi" and reply.actions == [] and reply.markup == sent, reply
     assert _refused(app) == 0 and not app._ext_breaches
     assert took < 0.5, f"five turns of four 8 KB markups ({shape}) took {took:.2f} s"
-    assert H.robot_markup(markup) == ("", 1)
+    assert H.robot_markup(markup) == (clean, dropped)
     assert H.robot_markup("<ex" * 1364 + "<sleep>" + "it>" * 1364) == ("", 1)
 
 
@@ -907,12 +987,16 @@ IDX = {"%": [{"len": [_SPEECH]}, 2]}
 #: of those, so a dropped tag can stand between the pieces of a tag of ours, and a tag of
 #: ours between the pieces of a catalogue tag; and (round 9) what the robot path's tidying
 #: joins (a space before a comma), quoted `>`s after an unbalanced quote, an opening left
-#: open and a tag holding another `<`.
+#: open, a tag holding another `<`, and marks the catalogue's mark pattern does not read
+#: whole (data never closed, single quotes) with the `}"` and spaces such a mark's data
+#: read on to.
 MARKUP_PIECES = PIECES + [GOOD_MARK, BAD_MARK, GOOD_USEL, BAD_USEL, '<break size="1"/>',
                           "</usel>", "<m", 'ark name="cmd:zzz"/>', "<us", 'el genre="nope">',
                           "Hi ", '<mark name="cmd:zzz', ' ,data:{}"/>', 'x" ', '"a":">"}"/>',
                           '<spurt x" spurt_id="n>pe"/>', '<usel x" genre="a>b">',
-                          '<mark name="cmd:playback-mood,data:{', '<usel genre="', "<usel"]
+                          '<mark name="cmd:playback-mood,data:{', '<usel genre="', "<usel",
+                          '<mark name="cmd:a,data:{">', "<mark name='cmd:zzz'/>",
+                          '}"　　/>', '}" />']
 
 
 class _Generator:
@@ -1100,11 +1184,12 @@ def _property(programs, seed, mode):
             sent = _sent(reply)
             # Whatever the rule wrote in a say's markup or a markup statement, the robot's
             # markup holds no tag of ours and nothing the catalogue refuses, read tag by
-            # tag (the gate) or over the whole text: the robot's own lift and the gate both
+            # tag (the gate) or over the whole text, and every mark in it is one the
+            # catalogue's mark pattern reads whole: the robot's own lift and the gate both
             # leave it as it is.
             robot = reply.markup or ""
             assert tag_names(robot) == [] and H.ext_markup(robot) == (robot, 0) and (
-                vocab.validate_markup(robot) == []), (
+                vocab.validate_markup(robot) == []) and _marks_read_whole(robot), (
                 seed, mode, json.dumps(program, ensure_ascii=False), speech, t, m, robot)
             if result.ok and result.rule >= 0 and any(
                     "markup" in s for s in program["rules"][result.rule]["do"]):
@@ -1214,6 +1299,20 @@ def test_an_opener_acts_only_on_a_tag_written_whole_in_it(shape):
         reply = _started(app)
         assert tag_names(reply.text) == [], (shape, reply.text)
         assert all(any(_names(n, e) for n in named) for e in _sent(reply)), (shape, reply)
+
+
+def test_each_alternative_acts_only_on_the_tags_it_writes_itself():
+    """The rotation says the alternatives in turn (two of them alternate whatever the draw),
+    and each is read on its own: an exit the first alternative writes whole does not let
+    the second, which only builds one, act; and the other way round, a built exit said
+    first does not stop the written one, said second, from acting."""
+    exit_ = ["the conversation ends"]
+    for opener, heard in (
+            ("<exit>Bye|{{ '<ex' ~ 'it>' }}Again", [("Bye", exit_), ("Again", []), ("Bye", exit_)]),
+            ("{{ '<ex' ~ 'it>' }}Hi|<exit>Bye", [("Hi", []), ("Bye", exit_), ("Hi", [])])):
+        app = _opener_app(opener, rng=random.Random(3))
+        replies = [_started(app) for _ in range(3)]
+        assert [(r.text, _sent(r)) for r in replies] == heard, (opener, replies)
 
 
 def test_a_childs_name_that_holds_a_tag_is_never_said_or_acted_on():

@@ -877,7 +877,7 @@ def written_effects(texts) -> list:
     read exactly as the robot parses it (`_tag_reads` with no worked-out parts), as
     `_literal_reads` reads a rule's strings. The pack review names what a conversation's
     opener can make happen this way, one `|`-alternative at a time, unrendered
-    (`packs.review.opener_warnings`): the robot acts on nothing else an opener says."""
+    (`packs.review.opener_warnings`): no other action tag an opener says is acted on."""
     out: dict = {}
     for text in texts:
         for _, words, _ in _tag_reads(str(text), holes=False):
