@@ -140,8 +140,11 @@ def test_actions_from_an_external_brain_reach_the_robot_too():
         """The real app with its one network call stubbed."""
 
         def _post(self, path_hint, body):
+            # DRAW is an activity a real Moxie has: a module id the robot does not
+            # have is dropped by the runtime's launch check before the wire
+            # (test_runtime_turn.py), whatever brain asked for it.
             return {"text": "Let's play a game!",
-                    "actions": [{"type": "launch", "module_id": "GAME",
+                    "actions": [{"type": "launch", "module_id": "DRAW",
                                  "content_id": "level1"},
                                 {"type": "not-a-real-action"}]}
 
@@ -154,9 +157,9 @@ def test_actions_from_an_external_brain_reach_the_robot_too():
     rt._pool.shutdown(wait=True)
     ra = [a for a in vm.reply_payload.get("response_actions", []) if a.get("action")]
     assert [(a["action"], a["module_id"], a["content_id"]) for a in ra] == [
-        ("launch", "GAME", "level1")], "the bogus action type should have been dropped"
+        ("launch", "DRAW", "level1")], "the bogus action type should have been dropped"
     assert vm.reply_payload["output"]["text"] == "Let's play a game!"
-    assert vm.action_stats()["module_id"] == "GAME"
+    assert vm.action_stats()["module_id"] == "DRAW"
 
 
 def test_a_webhooks_older_exit_spelling_leaves_the_module_as_exit_module():

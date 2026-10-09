@@ -132,7 +132,7 @@ export async function onRequestPost(context) {
       if (store) await writeCachedAudio(store, cfg, cacheKey, audio);
     }
 
-    // 6. The `CloudTTSResponse` `audio.js` decodes, carrying the WAV header's OWN rate and
+    // 6. The `CloudTTSResponse` `voice/cloud.js` decodes, carrying the WAV header's OWN rate and
     //    channels so the payload stays truthful when the voice changes.
     const wire = buildCloudTtsResponse({
       buffer: b64FromBytes(audio.pcm),
@@ -216,7 +216,8 @@ async function callGateway(cfg, text) {
 /**
  * The `/audio/speech` request body, from configuration plus the one signed string.
  * Exported so `sim/tools/probe_demo_gateway.mjs` can post exactly this body to a real
- * gateway. `response_format` is `wav` or `pcm` only — the two `audio.js` can decode.
+ * gateway. `response_format` is `wav` or `pcm` only — the two `_lib/wav.js::pcmFromAudio`
+ * turns into the raw PCM `voice/cloud.js` plays.
  */
 export function buildSpeechBody(cfg, text) {
   const body = {

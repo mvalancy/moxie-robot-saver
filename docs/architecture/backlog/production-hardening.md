@@ -173,6 +173,7 @@ error for an `event_id` it has abandoned.
 | Broker restarts | its own session drops; whether and how fast it reconnects is **unverified (A5)** | as above, and every robot is re-onboarded on its next packet (§8 P1) |
 | Supervisor restarts | nothing, if the broker stayed up | the roster resume re-pushes config within seconds of CONNACK, with each robot's saved settings (§8) |
 | Broker absent at boot | nothing | C1 turns this into a retry loop instead of a dead process |
+| A gateway hangs (accepts connections, never answers) | the filler at the budget; the turn's one `ERROR_OFFLINE` after `MOXIE_BRAIN_TIMEOUT_S` (60 s), published only if the robot has not re-prompted since — a re-prompt starts a newer turn and the late offline reply is dropped as stale (§4.2), and whether a robot waits 60 s or re-prompts at about 20 s is A4, **unverified**; a re-prompt that finds a free worker goes to the brain at once (eight workers), one that waited in the pool behind a newer prompt is skipped before any brain call | every brain / ears / voice request is bounded by its knob and a timeout is never retried (`chat.call_with_backoff`); the standby voice and ears take over for `MOXIE_ENGINE_RETRY_S` (60 s) and then one call tries the gateway again; a worker that dies after the brain answered still closes the turn with the stock line (K8; before it, one hung endpoint held a turn worker for 5 x 600 s and the first failure latched the standby for the rest of the run) |
 
 **Readiness.** `[runtime] broker connected` means only that CONNACK said yes. `subscribe()` merely
 queues a packet, so a robot's `/state` sent right after CONNACK could be lost. The runtime therefore
@@ -433,6 +434,7 @@ needs a transaction or a query (§3.2). It would keep the JSON tree as the expor
 | A24 | A killed writer's `.tmp` gets cleaned up | **false; not fixed** (§7) |
 | A25 | The backoff is safe at any timeout | was **false** (`OverflowError` above about 2.05 s); fixed by the exponent clamp |
 | A26 | A supervisor restart keeps each robot's parent settings | was **false** (memory only; the roster resume re-pushed the fleet-only document); fixed by `robots/<id>/config.json` (§8) |
+| A27 | 60 s is the right brain bound (12 s ears, 15 s voice, 60 s standby retry window) | **chosen, not measured** (`MOXIE_*_TIMEOUT_S`, `MOXIE_ENGINE_RETRY_S`); the brain's must stay above a slow local model's whole non-streamed completion, and it also caps the memory summary (`content/memory.py`, the longest completion); measured only that a wedged loopback gateway now costs one bound. What a knob bounds, exactly: each request, and when a retry may *start* — a fast 429/5xx retried just inside the bound runs its own request bound, so one call costs at most just under two; a timeout is never retried. The ears' bound is spent on the broker thread (`voice.py` `feed_stt`), so during an ears outage each retry window stalls the MQTT loop, for every robot, for up to 12 s while there is speech. 0 or less is refused at startup, never read as "no bound" |
 
 ---
 📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) ·

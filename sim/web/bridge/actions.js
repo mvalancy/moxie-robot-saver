@@ -25,6 +25,15 @@
     last: "",
   };
 
+  /* THE SIGN-OFF SEAM: a goodbye has closed the conversation, so ambient.js may say one
+   * aside to herself once it is over. The robot path closes with an `exit`/`exit_module`
+   * action (applyAction); the hosted brain sends no actions and closes with `end_turn: true`
+   * (functions/api/chat.js, on a goodbye only), read in handleActions. A model-chosen wave
+   * without `end_turn` is a wave, not a goodbye. Never throws. */
+  function signOff() {
+    try { window.dispatchEvent(new CustomEvent("moxie-signoff")); } catch (e) {}
+  }
+
   // `action_args` (proto field 10, `repeated ActionArgsEntry{key, value}`) as `{key: value}`,
   // or `null` when absent/unreadable so the caller falls through to the next spelling.
   // Mirrors `virtual_moxie.py::VirtualMoxie._action_args` exactly (entries without `key`
@@ -76,6 +85,7 @@
         if (m && m.clearIcons) m.clearIcons();
         B.behaviourTree("Bht_Sign_off");
         status("action: exit");
+        signOff();
         break;
       case "sleep":
         actionState.asleep = true;
@@ -133,6 +143,7 @@
       try { applyAction(entry); }
       catch (e) { actionState.unknown += 1; status(`action failed: ${e && e.message}`); }
     }
+    if (msg.end_turn === true) signOff();     // the hosted brain's goodbye (see signOff)
   };
 
   /* What `response_actions` actually DID, recorded as it happened. `applied` keys are

@@ -174,6 +174,9 @@ class _Local(Transcriber):
 
 
 def test_the_fallback_latches_to_the_standby_and_reports_once():
+    """Inside the retry window (60 s by default; the window itself is driven with an
+    injected clock in test_gateway_timeouts.py) every call goes to the standby and the
+    failure is reported once."""
     logged, standby = [], _Local()
     fb = FallbackTranscriber(_Deaf(), standby, log=logged.append)
     assert fb.describe() == "deaf (standby: local-fake)"
@@ -182,10 +185,14 @@ def test_the_fallback_latches_to_the_standby_and_reports_once():
     assert fb.failed and fb.engine_name == "local-fake"
     assert fb.transcribe(PCM_16K) == "heard locally"
     assert fb.transcribe(PCM_16K) == "heard locally"
-    assert standby.calls == 3, "the standby did not take over the whole run"
+    assert standby.calls == 3, "the standby did not take over inside the window"
     assert len(logged) == 1, f"the failure was reported {len(logged)} times: {logged}"
     assert "deaf failed" in logged[0] and "local-fake" in logged[0]
-    assert fb.describe() == "local-fake (standby — deaf failed)"
+    # the startup/status line says it is a standby, since when, and when the gateway
+    # is tried again (the HH:MM strings are the wall clock's)
+    desc = fb.describe()
+    assert desc.startswith("local-fake (standby since ") and desc.endswith(")")
+    assert "deaf failed; retrying the primary at " in desc
 
 
 def test_a_healthy_primary_is_never_downgraded():

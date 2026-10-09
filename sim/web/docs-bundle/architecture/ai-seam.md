@@ -97,11 +97,86 @@ Neither is a fallback ranking; which one fits is a property of the box
 ([STT setup](../guides/gateway-voice-and-ears.md)). `auto` (the default) picks the gateway when a URL **and**
 a key resolve, else local whisper, else none. The gateway engine wraps the PCM in a WAV header at the
 rate it was handed (a wrong header pitch-shifts the audio), skips clips under 120 ms, and shares the LLM
-path's `call_with_backoff` + `Pacer` for 429/5xx. `FallbackTranscriber` puts the local engine (or a
-`NullTranscriber` returning `""`) behind the gateway and latches on the first failure, reporting it once.
+path's `call_with_backoff` + `Pacer` for 429/5xx. Every gateway request is bounded by
+`MOXIE_STT_TIMEOUT_S` (12 s: the transcript is produced on the broker thread, so the bound sits inside the
+broker's keepalive drop — and during an ears outage each retry spends it there, stalling the MQTT loop for
+up to 12 s while there is speech) and a timeout is never retried within one utterance — the SDK's own
+default was 600 s per request, and the backoff retried it. `FallbackTranscriber` puts the local engine (or
+a `NullTranscriber` returning `""`) behind the gateway and latches on the first failure, reporting it once;
+after `MOXIE_ENGINE_RETRY_S` (60 s) the next utterance tries the gateway again — one utterance; another
+racing it stays on the standby — and an answer clears the latch with one recovery line (meanwhile
+`describe()` says `standby since HH:MM … retrying the primary at HH:MM`, in the supervisor's local zone, or
+`on the next utterance` once the window has passed). Before that window existed one outage latched the
+standby for the rest of the run, and with no local whisper installed that standby hears nothing. Both
+numbers are chosen, not measured, and they are different kinds: `MOXIE_STT_TIMEOUT_S` is a hang bound, so
+0 or less is refused at startup, never read as "no bound"; `MOXIE_ENGINE_RETRY_S` is a cool-down, so 0 is
+accepted and tries the gateway on every utterance (a negative value counts as 0)
+([production-hardening.md](backlog/production-hardening.md) §4.4, §9).
 
 The console's **Listening** picker chooses the engine at runtime; see [Choosing an
 engine](#choosing-an-engine) under ③.
+
+#### What the ears refuse to hear
+
+Whisper does not answer silence with silence. On room tone, a breath or a door it writes words,
+most often "Bye.", "Thank you." or "you", or it names the sound: "(machine whirring)",
+"[BLANK_AUDIO]". The hosted ears measured it: the gateway answered every one of six no-speech clips
+with text, "(machine whirring)" for room tone and "you" for silence
+([`sim/tests/edge/ears/06_no_speech.mjs`](../../sim/tests/edge/ears/06_no_speech.mjs)). On the robot
+path that text was the child's `FINAL` and the robot sent it back as the child's turn, so a child who
+only paused could lose the activity to a phantom "Bye." (the llm brain is taught to answer a goodbye
+with `<exit>`, and a goodbye rule has to accept a lone "By." because that is how Whisper spells a real
+"bye"). OpenMoxie publishes `whisper-1`'s text verbatim with no level check
+(`site/hive/mqtt/zmq_stt_handler.py:57-69`), so the field-proven server does not guard this either.
+`SttSession` ([`stt.py`](../../mqtt/moxie_sdk/stt.py)) therefore:
+
+1. asks no engine about a clip at digital silence (RMS below 0.001 of full scale) or shorter than
+   120 ms (the gateway engine's own floor, now applied to every engine): no gateway spend, no latency;
+2. removes control characters and Whisper's parenthesised or bracketed sound labels ("(laughs) hi
+   Moxie" becomes "hi Moxie"); a transcript with no letter or digit left is no speech, at any level
+   (the hosted ears' `cleanTranscript` in `functions/api/transcribe.js` treats a label-only transcript
+   the same way, but keeps a label that sits beside words);
+3. drops a transcript that is, word for word, one of Whisper's known silence phrases
+   (`PHANTOM_CANON`: bye, by, bye bye, goodbye, you, thank you, thanks, thanks for watching, the end,
+   and the "Subtitles by the Amara.org community" credit) when the clip is not loud (RMS below 0.05)
+   and is either quieter than room tone or shorter than a real word (the two knobs below).
+
+A loud clip is never dropped on its text, and neither is a sentence that only contains one of those
+words ("I don't want to play anymore, bye"); a child's real short answers (okay, yes, no, hmm, uh)
+are not on the list. Local whisper also runs faster-whisper's own voice detector
+(`vad_filter=True`, as the SIL STT service does) and drops a segment it rates as more likely silence
+than speech (`no_speech_prob` above 0.6). That cut reads `no_speech_prob` alone, which is stricter
+than Whisper's own rule (skip a segment only when its average log probability is also below -1,
+which faster-whisper already applies), so a confidently decoded short word rated above 0.6 is cut
+too, at any level. What the detector or the cut removes is removed inside the engine: it comes back
+as an empty transcription ("heard: ''" in the feed), not as a "heard nothing" line, and is not
+counted in `stt_dropped`.
+
+| Knob | Default | What it does |
+|---|---|---|
+| `MOXIE_STT_PHANTOM_GATE` | on | `off` (or `0`/`false`/`no`) is the kill switch for all of the above: every clip goes to the engine, local whisper runs without its voice detector or the no-speech cut, and the text comes back verbatim, exactly as before. Empty or blank means on |
+| `MOXIE_STT_ROOM_TONE_RMS` | `0.01` | RMS level, as a fraction of full scale, below which a clip is room tone |
+| `MOXIE_STT_MIN_SPEECH_MS` | `250` | Milliseconds below which a clip that is not loud is too short for that phrase to be a word |
+
+A drop is still a `FINAL` with no `speech` and the utterance's `uuid`, like any empty
+transcription, so the robot's turn closes; what a real Moxie does next after an empty `FINAL` is
+unverified. The console's activity feed gets one line per drop with the fixed reason, the canon
+phrase and the numbers, never the audio and never the transcript ("heard nothing: dropped a phantom
+'bye' (0.60 s, level 0.004)"), the supervisor's log gets the same words once, and `/status` counts
+drops per robot as `stt_dropped` (in memory: it starts again at 0 when the broker says the robot
+left, or when the supervisor restarts).
+
+The defaults lean one way on purpose: a missed whispered goodbye costs the child one repeat, while a
+phantom goodbye ends the child's activity. The levels come from the hosted page's browser
+microphones, which apply automatic gain (`sim/web/mic.js`: room tone about 0.005, speech 0.05 and
+up), and the page measures them differently: it judges each 4096-sample block (about a twelfth of a
+second), and a clip is speech when any block reaches 0.02. The ears measure the RMS of the whole clip, so the pre-roll and hangover a
+robot's voice detector keeps around a short word lower its level (0.3 s of "bye" at 0.015 inside a
+1.2 s clip of silence measures about 0.0075, which is quiet). Moxie's far-field, echo-cancelled level
+has not been measured, so **the thresholds are unverified on a robot**: tune them on bench day from
+the feed's "heard nothing" lines. Tests:
+[`sim/tests/test_honest_ears.py`](../../sim/tests/test_honest_ears.py) and the goodbye loopback in
+[`sim/tests/test_stt_wire.py`](../../sim/tests/test_stt_wire.py).
 
 ---
 
@@ -203,6 +278,14 @@ and `action` is the `ActionID` **name** — `launch`, `exit_module`, `sleep`, `e
 ([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):256-266).
 The SDK's `ActionType.ENABLE_QR` has no `ActionID` and goes out as `execute` with
 `function_id: "eb_enable_qr"`, `function_args: ["true"]` ([launch cards](backlog/qr-launch-cards.md) §P0-a).
+
+**The launch check.** A `launch` must name a module the robot has. The runtime drops a `LAUNCH` whose
+`module_id` is neither in the launch-card catalog (`launch_cards.LAUNCHABLE_MODULE_IDS`, the on-robot
+activities) nor one of the remote-chat modules this appliance itself serves (`remote_modules()`), with one
+log line and one activity note (*the brain asked to launch 'ROBOTDANCE', which this robot does not have*);
+the spoken text and every other action on that reply still go out. The tag rules invite a brain to write
+`<launch:NAME>`, so an id a model made up — or a webhook brain declared — never reaches the robot
+unchecked; a content pack launching its own module, and a printed card, pass as before.
 
 **(c) `RemoteChatInput` — the brain's read of the child (optional).** `emotion`/`dialog_act`/`sentiment`
 + **`InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}`** — the content-moderation verdict.
@@ -306,6 +389,21 @@ mirrored by `ResultCode` in [`types.py`](../../mqtt/moxie_sdk/types.py). There i
 `uint32 result = 2` ([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):320),
 and a robot parsing the JSON as protobuf rejects `"SUCCESS"` outright (`invalid literal for int()`),
 which it cannot skip the way it skips an unknown field. OpenMoxie sends `result: 0`.
+
+**Bounded calls.** Every request to the brain is bounded by `MOXIE_BRAIN_TIMEOUT_S` (60 s by default: a
+hang bound above the filler budget and a slow local model's whole non-streamed completion, chosen not
+measured; 0 or less is refused at startup, never read as "no bound"), the backoff starts a retry only
+inside that same bound and never after a timeout — so a wedged gateway costs exactly one bound, and a fast
+429/5xx retried just inside it at most just under two, since the retry runs its own request bound — and a
+streamed turn's open and its single-reply fallback share one bound. So a gateway that accepts connections
+and never answers costs one `ERROR_OFFLINE` reply after one bound — not a turn worker for 5 x 600 s, the
+SDK's default read timeout times the backoff's attempts, which is what it cost before. Two more things the
+turn path promises: a prompt that waited on the worker pool behind a newer one is never sent to the brain
+(the robot has already re-prompted; measured on a one-worker pool, three prompts cost two calls — a
+re-prompt that finds a free worker, as it does on the eight-worker pool, goes to the brain at once), and a
+worker that dies after the brain answered — an app's unreadable `mood_intensity`, a `result_code` the wire
+cannot encode — logs it once and still closes the turn with the stock line, as chunk 1 with `is_completed`
+when the filler already went out, so the robot never waits on a sequence nobody will finish.
 
 #### The wire a robot can read
 
@@ -429,7 +527,11 @@ The gateway voice is a network call to someone else's box, so it is wrapped in a
 `FallbackSynthesizer` whose standby is exactly the rung it displaced (Piper if configured, else the
 tone). A 400, an outage past the SDK's backoff, or a body that is JSON rather than audio is surfaced
 **once** and then latched: the turn *downgrades* to a working voice instead of handing a child
-silence. `synth.voice_name` says which one is talking.
+silence. Each request is bounded by `MOXIE_TTS_TIMEOUT_S` (15 s; the SDK's own default was 600 s) and
+a timeout is not retried; the latch holds for `MOXIE_ENGINE_RETRY_S` (60 s), after which the next line
+tries the gateway again (one line; a filler racing it on another thread stays on the standby) and an
+answer clears it with one recovery line. `synth.voice_name` says which one is talking, and `describe()`
+since when and when the gateway is tried next (`on the next line` once the window has passed).
 
 ### Choosing an engine
 

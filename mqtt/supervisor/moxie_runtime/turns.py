@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, threading
 
-from moxie_sdk.types import Turn, Reply, ReplyChunk, RobotContext, ResultCode
+from moxie_sdk.types import ActionType, Turn, Reply, ReplyChunk, RobotContext, ResultCode
 from moxie_sdk.wire import (build_chat_response, build_activity_response,
                             build_remote_modules, is_data_query, is_module_query,
                             query_name)
@@ -14,17 +14,92 @@ from moxie_sdk import vocab as vocab_seam
 from markup import perform
 from .constants import MAX_FILLERS_PER_TURN
 
+#: What the robot hears when a brain raised, or a worker died after it answered
+#: (`_safe_respond`, `_close_failed_turn`). Never remembered as something Moxie said.
+STOCK_REPLY = "Hmm, let me think about that."
+
+#: Guards the table of turns the worker pool is answering (`_open_turns`), so the worker
+#: guard and `_publish_chat` agree on whether a turn already has its closing reply.
+#: Module-level: the runtime's constructor lives in `__init__.py`, and one lock for every
+#: runtime in a process is held for a dict lookup at a time.
+_OPEN_TURNS_LOCK = threading.Lock()
+
 
 class TurnsMixin:
     def _turn_worker(self, device_id, event_id, speech, turn, seq):
-        """`_handle_turn` with an in-flight marker (read by `_greeting_for` to queue a hello)."""
+        """`_handle_turn` with an in-flight marker (read by `_greeting_for` to queue a
+        hello) and a guard: a worker that dies mid-turn used to die inside a discarded
+        future, no log line, and a robot that had already heard the filler waited on a
+        sequence nobody would close. Now it logs once and, unless the turn is stale or
+        already answered, closes it with the stock line (`_close_failed_turn`)."""
+        key = (device_id, event_id)
+        entry = {"closed": False, "next_chunk": 0}
         with self._presence_lock:
             self._busy.add(device_id)
+        with _OPEN_TURNS_LOCK:
+            self._open_turns()[key] = entry
         try:
             self._handle_turn(device_id, event_id, speech, turn, seq)
+        except Exception as e:                  # noqa: BLE001 — never die silently
+            self._close_failed_turn(device_id, event_id, seq, e)
         finally:
+            with _OPEN_TURNS_LOCK:
+                # Only this worker's own entry: a robot that re-used the event_id (or
+                # sent none) has a newer worker on the same key, whose guard must keep
+                # its state.
+                if self._open_turns().get(key) is entry:
+                    del self._open_turns()[key]
             with self._presence_lock:
                 self._busy.discard(device_id)
+
+    def _open_turns(self) -> dict:
+        """`{(device_id, event_id): {"closed", "next_chunk"}}` for the turns in flight on
+        the pool. Created on first use (held under `_OPEN_TURNS_LOCK` by every caller)."""
+        return self.__dict__.setdefault("_turns_in_flight", {})
+
+    def _note_turn_published(self, device_id, event_id, result, chunk_num, is_completed):
+        """Keep the in-flight table honest after every `_publish_chat`: which chunk the
+        turn is on, and whether the robot now holds its closing reply — anything but
+        `REPLY_PENDING`, or a chunk marked `is_completed`."""
+        with _OPEN_TURNS_LOCK:
+            state = self._open_turns().get((device_id, event_id))
+            if state is None:
+                return
+            if chunk_num is not None:
+                state["next_chunk"] = max(state["next_chunk"], int(chunk_num) + 1)
+            if ResultCode(result) is not ResultCode.REPLY_PENDING or is_completed:
+                state["closed"] = True
+
+    def _close_failed_turn(self, device_id, event_id, seq, exc):
+        """The worker guard. One line and one `error` note for whoever asks why; then —
+        `_is_stale` FIRST (never a word for a superseded turn), the closed flag SECOND
+        (never twice for one event) — the stock line as the closing reply: chunk 1 with
+        `is_completed` when a filler or opener already went out as chunk 0, else a plain
+        SUCCESS. The stock line is not remembered: it is not what Moxie meant to say
+        (on the plain path the brain's own line already is — `_handle_turn` calls
+        `_remember` before `_stage`, where an app's bad field dies; on the streamed path
+        nothing of the turn is)."""
+        print(f"[runtime] turn failed ({type(exc).__name__}: {exc}) on {device_id}",
+              flush=True)
+        self._note("error", f"turn failed ({type(exc).__name__}) for {device_id}")
+        if self._is_stale(device_id, seq):
+            return
+        with _OPEN_TURNS_LOCK:
+            state = self._open_turns().get((device_id, event_id))
+            if state is None or state["closed"]:
+                return
+            n = state["next_chunk"]
+        chunk = n if n > 0 else None
+        try:
+            markup, scored = self._stage(STOCK_REPLY, turn_key=event_id, chunk_index=n)
+            self._publish_chat(device_id, event_id, "router", STOCK_REPLY, markup,
+                               result=ResultCode.SUCCESS, chunk_num=chunk,
+                               is_completed=None if chunk is None else True,
+                               scored=scored)
+            self._maybe_synthesize(device_id, markup, event_id, chunk_num=chunk or 0)
+        except Exception as e:                  # noqa: BLE001 — say so, do not die twice
+            print(f"[runtime] could not close the failed turn on {device_id} "
+                  f"({type(e).__name__}: {e})", flush=True)
 
     # ---- events ----
     def _on_event(self, device_id, name, payload):
@@ -139,6 +214,13 @@ class TurnsMixin:
         The interlude idea is OpenMoxie Fork A's `ReasoningChatSession`; the code is ours.
         """
         if self._safety_gate_input(device_id, event_id, speech, seq):
+            return
+        # A turn that waited on the pool behind a newer one: the robot has re-prompted
+        # already, so a brain call here buys words that are never spoken. (The checks
+        # after the answer catch a turn superseded WHILE the brain was thinking.)
+        if self._is_stale(device_id, seq):
+            self._note_stale(device_id, seq, "skipping the brain, it was never asked",
+                             what="skipped a superseded turn")
             return
         # Resolve the brain once; a mid-turn swap applies from the next turn.
         app = self.app_for(device_id)
@@ -339,7 +421,7 @@ class TurnsMixin:
             return (app if app is not None else self.app).respond(turn)
         except Exception as e:
             print(f"[runtime] app.respond error: {e}", flush=True)
-            return Reply(text="Hmm, let me think about that.")
+            return Reply(text=STOCK_REPLY)
 
     def _stage(self, text, obj=None, *, turn_key="", chunk_index=0, markup=None, **kw):
         """`(markup, scored)` for one spoken line: the single place a published line
@@ -468,6 +550,41 @@ class TurnsMixin:
             out[chat["module_id"]].append(chat["content_id"])
         return [(mid, list(cids)) for mid, cids in out.items()]
 
+    def _has_module(self, module_id) -> bool:
+        """Can this robot launch `module_id`? The closed launch-card catalog
+        (`launch_cards.LAUNCHABLE_MODULE_IDS`, the on-robot activities) or one of the
+        remote-chat modules this appliance itself serves (`remote_modules`)."""
+        from moxie_sdk import launch_cards
+        if launch_cards.is_launchable(module_id):
+            return True
+        return isinstance(module_id, str) and any(
+            module_id == mid for mid, _cids in self.remote_modules())
+
+    def _launchable_actions(self, device_id, actions):
+        """The launch check. A LAUNCH naming a module this robot does not have — a brain
+        that made one up (`<launch:ROBOTDANCE>`), which `wire.encode_action` would
+        otherwise send unchecked — is dropped with one log line and one note; the spoken
+        text and every other action still go out."""
+        if not actions:
+            return actions
+        kept = []
+        for action in actions:
+            try:
+                kind = ActionType(getattr(action, "type", None))
+            except ValueError:
+                kept.append(action)             # no ActionID: `encode_action` drops it
+                continue
+            if kind is ActionType.LAUNCH and not self._has_module(action.module_id):
+                # The id is the model's own words: cut to a line's worth for the feed.
+                shown = str(action.module_id)[:40]
+                what = (f"the brain asked to launch {shown!r}, which this robot does "
+                        f"not have")
+                print(f"[runtime] {what} ({device_id}); launch dropped", flush=True)
+                self._note("chat", what)
+                continue
+            kept.append(action)
+        return kept
+
     def _query_payload(self, device_id, query):
         """The value for a CloudQuery — None means "send this field's empty value"."""
         if query == "schedule":
@@ -509,6 +626,8 @@ class TurnsMixin:
                       query_data=None, mood=None, dialog_act=None,
                       chunk_num=None, is_completed=None, safety=None, scored=None,
                       subscribe=None):
+        # A made-up launch never reaches the wire (`_launchable_actions`).
+        actions = self._launchable_actions(device_id, actions)
         # The runtime's vision subscription rides the first plain, action-free closing
         # reply per module — the only cloud->robot message that can carry
         # `EventSubscription` — so replies carrying a launch/exit keep their shape.
@@ -535,3 +654,4 @@ class TurnsMixin:
                                    signals=sc.get("signal"))
         self._publish(f"/devices/{device_id}/commands/remote_chat", resp,
                       device_id=device_id, what="remote_chat")
+        self._note_turn_published(device_id, event_id, result, chunk_num, is_completed)
