@@ -33,13 +33,17 @@ const DAY = "tell me about your day";
 const HURT = "i fell off my bike and my arm is bleeding";
 const GAME = "and what is your favorite game?";
 const FOOD = "and your favorite food?";
+const DAD = "my dad hits me";
 const THREE = "I chased a sunbeam. Then I counted dust. Then I had a nap.";
 const PLAY = "Hide and seek, in the dark. I always win.";
 const BOLTS = "Sparkly bolts, crunchy ones.";
 /** A grown-up referral of the rule table's shape. No shipped clip: the browser voice says it. */
 const REDIRECT = "Ouch, that sounds like it really hurts. Please go and tell a grown-up right now, so they can look at your arm.";
+/** A SERVED reply ending on a grown-up referral: reason null, voiced like any reply (#327's
+ *  shape for a soft hurt disclosure, the PR's honest gap: held like any reply). */
+const REFER = "I am so sorry that happened to you. Please tell a grown-up you trust, like a teacher, today.";
 /** Each sentence's length, which names its sound (a cloud chunk is recorded by its duration). */
-const DUR = { "sim-day": [2.3, 2.4, 2.5], "sim-game": [1.5, 1.6], "sim-food": [1.7] };
+const DUR = { "sim-day": [2.3, 2.4, 2.5], "sim-game": [1.5, 1.6], "sim-food": [1.7], "sim-dad": [2.1, 2.2] };
 const name = (s) => {
   for (const [eid, ds] of Object.entries(DUR)) { const k = ds.findIndex((d) => Math.round(d * 1000) === s.dur); if (k >= 0) return eid.slice(4) + k; }
   return s.kind;
@@ -68,6 +72,10 @@ const blocked = (over) => said(REDIRECT, "sim-safe", Object.assign({ ok: true, d
 /** A served two-sentence answer to the game line, and a one-sentence one to the food line. */
 const game = (over) => said(PLAY, "sim-game", Object.assign({ speech: tix("sim-game", 2), context: "CTX-game" }, over || {}));
 const food = () => said(BOLTS, "sim-food", { speech: tix("sim-food", 1), context: "CTX-food" });
+/** The served two-sentence referral to the dad line. */
+const referral = () => said(REFER, "sim-dad", { speech: tix("sim-dad", 2), context: "CTX-dad" });
+/** What was cut, and when: her cloud voice, or the browser voice. */
+const cutsAt = (w, t0) => w.spy.cuts.map((c) => (c.text ? "browser" : "cloud") + "@" + (c.t - t0));
 
 /* =========================================================================== *
  * 13a. THE REVIEWER'S SCENARIO, through the Ask path: the hurt line typed at 5.0 s is POSTED
@@ -471,4 +479,213 @@ const food = () => said(BOLTS, "sim-food", { speech: tix("sim-food", 1), context
        "13m: THE ROUTE'S OWN REDIRECT IS SAID AT 6.4 s, after the playing sentence; nothing of the day reply after it, its third sentence never bought");
   deep([world.spy.transcript.slice(-1), T().safetyFirst, world.spy.cuts.length, overlaps(world.spy.sounds)], [[words[0]], 1, 0, 0],
        "13m: the log ends on the route's own words; put first once; nothing cut or overlapping");
+}
+
+/* (§13n, #327's referral on a refusal end to end, lands with #327.) */
+
+/* =========================================================================== *
+ * 13o. AN EARLIER REPLY WHOSE FIRST SENTENCE IS SLOWER THAN THE 2.5 s WORD WAIT: the hurt line
+ *      typed at 2.0 s goes out at once (the day reply's words are back at 1.8 s, held for
+ *      their voice); its redirect lands at 3.2 s, nothing of hers playing, and is said at once.
+ *      The safety line puts the day reply's words in the log first, silently — and ONCE: the
+ *      word wait elapsing at 4.3 s routes nothing more (`words()`), and the first sentence,
+ *      landing at 4.8 s, is dropped. (origin/dev after #325: the redirect at 12.0 s, cutting
+ *      her last sentence.)
+ * =========================================================================== */
+{
+  const world = await boot({ realVoice: true, answer: scenario(() => blocked(), { speechDelay: 3000 }) });
+  const t0 = now();
+  const typed = globalThis.window.moxieTypedTurn;
+  typed.send(DAY);
+  await advance(2000);
+  typed.send(HURT);
+  await advance(1210);                                 // t+3.21 s: the block landed at 3.2 s
+  deep([heard(world, t0), world.spy.transcript], [["browser@3200"], [DAY, HURT, THREE, REDIRECT]],
+       "13o: THE REDIRECT IS SAID AT 3.2 s, the day reply's words put in the log before it, silently");
+  await advance(15000);
+  deep([heard(world, t0), speeches(world)], [["browser@3200"], ["day0"]],
+       "13o: nothing of the day reply is heard: its first sentence (landing 4.8 s) dropped, the rest never bought");
+  deep(world.spy.transcript, [DAY, HURT, THREE, REDIRECT],
+       "13o: THE DAY REPLY'S WORDS ARE IN THE LOG ONCE — the 2.5 s word wait elapsing at 4.3 s routed nothing more");
+  deep(world.spy.setSpeech.slice(-1), [REDIRECT], "13o: …and the bubble ends on the redirect");
+  const st = T();
+  deep([st.early, st.safetyFirst, st.chatFirst, st.lateSpeechDropped, st.chunksSuperseded, world.spy.cuts.length],
+       [1, 1, 1, 1, 3, 0],
+       "13o: recorded: one line early, one safety line put first; the word wait elapsed once; chunk 0 dropped on landing, three sentences superseded; nothing cut");
+}
+
+/* =========================================================================== *
+ * 13p. THE LISTEN TAP RELEASES A WAITING REDIRECT INTO THE EARS, NOT AT THEM: the hurt line
+ *      typed at 3.2 s has its redirect back at 4.4 s, waiting for her first sentence
+ *      (4.1–6.4 s); the child taps Listen at 5.0 s and the recorder runs 120 ms, 400 ms or
+ *      1.5 s later. The tap stops her sentence, and the redirect, already in hand, waits for
+ *      the microphone, then for the ears: HEARD WHOLE once the clip is done (8.0 s) — as on
+ *      origin/dev, where the line went out at the tap and its reply landed into the open
+ *      microphone. Before (the W4-S7 review): said at 5.1 s and cut by the recorder opening,
+ *      20–300 ms of 7.7 s heard. Then the redirect landing BETWEEN the tap and a slow
+ *      microphone (a 1.5 s grant): held the same way (origin/dev said it at 6.7 s and the
+ *      microphone cut it at 7.0 s).
+ * =========================================================================== */
+for (const gap of [120, 400, 1500]) {
+  const world = await boot({ realVoice: true, answer: scenario(() => blocked()) });
+  const t0 = now();
+  const b = globalThis.window.moxieBridge;
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(3200);
+  globalThis.window.moxieTypedTurn.send(HURT);         // t+3.2 s: out at once (the day words are back)
+  await advance(1800);                                 // t+5.0 s: the redirect landed at 4.4 s and waits for her sentence
+  deep([T().safetyFirst, heard(world, t0)], [1, ["day0@4100"]], `13p (${gap} ms): at 5.0 s the redirect is in hand, waiting for her playing sentence`);
+  b.interruptVoice();                                  // the Listen tap
+  await advance(gap);
+  b.earsOpen(45000);                                   // the recorder runs
+  await advance(2990 - gap);                           // t+7.99 s
+  deep(heard(world, t0), ["day0@4100"],
+       `13p (${gap} ms): NOTHING IS SAID INTO THE OPENING MICROPHONE OR THE RECORDING (before: the redirect at 5.1 s, cut as the recorder opened at ${5000 + gap} ms)`);
+  await advance(10);
+  b.earsIdle();                                        // t+8.0 s: the clip dropped as silence: nothing queued
+  await advance(15000);
+  deep(heard(world, t0), ["day0@4100", "browser@8000"], `13p (${gap} ms): THE REDIRECT IS SAID THE MOMENT THE EARS ARE DONE (8.0 s), as on origin/dev`);
+  deep(cutsAt(world, t0), ["cloud@5000"], `13p (${gap} ms): …and heard WHOLE: the one cut is the tap's own (her sentence, 5.0 s)`);
+  deep([speeches(world), world.spy.transcript], [["day0", "day1"], [DAY, HURT, THREE, REDIRECT]],
+       `13p (${gap} ms): nothing more of the day reply bought; the log in order`);
+  const st = T();
+  deep([st.safetyFirst, st.heldAtTap, st.tapValved, st.heldForEars, st.interrupted], [1, 1, 0, 1, 1],
+       `13p (${gap} ms): recorded: one safety line put first; it waited for the microphone the tap asked for, then for the ears; one interruption`);
+}
+{
+  const world = await boot({ realVoice: true, answer: scenario(() => blocked()) });
+  const t0 = now();
+  const b = globalThis.window.moxieBridge;
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(5000);
+  globalThis.window.moxieTypedTurn.send(HURT);         // t+5.0 s: out at once; its block lands at 6.2 s
+  await advance(500);
+  b.interruptVoice();                                  // t+5.5 s: the Listen tap; the browser asks for 1.5 s
+  await advance(1490);                                 // t+6.99 s: the redirect landed at 6.2 s, nothing of hers playing
+  deep(heard(world, t0), ["day0@4100"], "13p (lands after the tap): THE REDIRECT LANDING WHILE THE BROWSER ASKS WAITS for the microphone (before, and on origin/dev at 6.7 s: said, then cut as it opened)");
+  await advance(10);
+  b.earsOpen(45000);                                   // t+7.0 s
+  await advance(1500);
+  b.earsIdle();                                        // t+8.5 s
+  await advance(15000);
+  deep([heard(world, t0), cutsAt(world, t0)], [["day0@4100", "browser@8500"], ["cloud@5500"]],
+       "13p (lands after the tap): …and is said whole once the ears are done (8.5 s); the one cut is the tap's own");
+  deep([T().heldAtTap, T().heldForEars, T().tapValved], [1, 1, 0], "13p (lands after the tap): recorded: held for the microphone, then for the ears");
+}
+{
+  // A SHORT RECORDING: the microphone open at once hands the redirect to the ears, so it is
+  // said the moment the clip is done (1.0 s after the tap) — not at the 2 s bound.
+  const world = await boot({ realVoice: true, answer: scenario(() => blocked()) });
+  const t0 = now();
+  const b = globalThis.window.moxieBridge;
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(3200);
+  globalThis.window.moxieTypedTurn.send(HURT);
+  await advance(1800);
+  b.interruptVoice();                                  // t+5.0 s
+  await advance(200);
+  b.earsOpen(45000);
+  await advance(800);
+  b.earsIdle();                                        // t+6.0 s: the clip is done
+  await advance(15000);
+  deep([heard(world, t0), cutsAt(world, t0)], [["day0@4100", "browser@6000"], ["cloud@5000"]],
+       "13p (a short recording): THE REDIRECT IS SAID THE MOMENT THE EARS ARE DONE (6.0 s), not at the tap's 2 s bound (7.0 s), and heard whole");
+}
+
+/* =========================================================================== *
+ * 13q. THE LISTEN TAP RELEASES A HELD REPLY INTO THE EARS, NOT AT THEM: a line typed at 5.0 s
+ *      went out early and its reply, back at 6.2 s, is held behind her day reply; the child
+ *      taps Listen at 6.3, 7.0 or 8.6 s (before that reply is handed over, 8.7 s). The tap
+ *      ends the day reply, which releases the held one — into the microphone the tap asked
+ *      for, then the ears: nothing of it bought before the clip is done (3.0 s after the
+ *      tap), then HEARD WHOLE, exactly as on origin/dev (the line went out at the tap; its
+ *      reply landed into the open microphone). Both for an ordinary answer and for a SERVED
+ *      grown-up referral (reason null). Before (the W4-S7 review): its first sentence bought
+ *      at the tap, dropped by the recorder opening, 0 ms of it heard.
+ * =========================================================================== */
+for (const [line, eid, answer] of [[GAME, "sim-game", game], [DAD, "sim-dad", referral]]) {
+  for (const tap of [6300, 7000, 8600]) {
+    const label = `13q (${eid.slice(4)}, tap ${tap / 1000} s)`;
+    const world = await boot({ realVoice: true, answer: scenario(() => answer()) });
+    const t0 = now();
+    const b = globalThis.window.moxieBridge;
+    globalThis.window.moxieTypedTurn.send(DAY);
+    await advance(5000);
+    globalThis.window.moxieTypedTurn.send(line);       // t+5.0 s: out early; its reply is held from 6.2 s
+    await advance(tap - 5000);
+    deep(T().heldReplies, 1, `${label}: its reply is held behind her day reply when Listen is tapped`);
+    b.interruptVoice();
+    await advance(200);
+    b.earsOpen(45000);
+    await advance(2790);                               // 10 ms before the clip is done
+    const day = tap > 6400 ? ["day0@4100", "day1@6400"] : ["day0@4100"];
+    deep([heard(world, t0), speeches(world).filter((s) => !s.startsWith("day"))], [day, []],
+         `${label}: NOTHING OF THE HELD REPLY IS BOUGHT OR HEARD BEFORE THE EARS ARE DONE (before: its first sentence bought at the tap and dropped)`);
+    await advance(10);
+    b.earsIdle();                                      // 3.0 s after the tap: the clip dropped as silence
+    await advance(15000);
+    const k = eid.slice(4);
+    deep(heard(world, t0), day.concat([`${k}0@${tap + 5300}`, `${k}1@${tap + 7600}`]),
+         `${label}: THE HELD REPLY IS HEARD WHOLE ONCE THE EARS ARE DONE: bought then, its sentences at ${(tap + 5300) / 1000} s and ${(tap + 7600) / 1000} s, as on origin/dev`);
+    deep([cutsAt(world, t0), world.spy.transcript.slice(-1)], [[`cloud@${tap}`], [answer === game ? PLAY : REFER]],
+         `${label}: the one cut is the tap's own; the log ends on the reply`);
+    const st = T();
+    deep([st.early, st.heldReplies, st.heldAtTap, st.heldForEars, st.tapValved, st.interrupted, st.safetyFirst], [1, 1, 1, 1, 0, 1, 0],
+         `${label}: recorded: one line early, its reply held behind her day, then for the microphone and the ears; one interruption`);
+  }
+}
+
+/* =========================================================================== *
+ * 13r. …AND NEVER FOR GOOD (#325's rule): with a microphone that never opens — a permission
+ *      prompt left unanswered, a capture that failed (mic.js tells the transport nothing
+ *      then) — what the tap released goes on TAP_HOLD_MAX_MS (2 s) after it: the waiting
+ *      redirect is said at 7.0 s, the held reply bought at 9.0 s. The bound's cost, pinned:
+ *      a microphone opening after it (3.0 s after the tap) cuts the redirect that began at
+ *      7.0 s, as it cuts any reply that began while the browser asked (ears B17d).
+ * =========================================================================== */
+{
+  const world = await boot({ realVoice: true, answer: scenario(() => blocked()) });
+  const t0 = now();
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(3200);
+  globalThis.window.moxieTypedTurn.send(HURT);
+  await advance(1800);
+  globalThis.window.moxieBridge.interruptVoice();      // t+5.0 s; the microphone never opens
+  await advance(1990);
+  deep(heard(world, t0), ["day0@4100"], "13r: the redirect waits for the microphone the tap asked for…");
+  await advance(15000);
+  deep([heard(world, t0), cutsAt(world, t0)], [["day0@4100", "browser@7000"], ["cloud@5000"]],
+       "13r: …2 s at most: with no microphone it is SAID AT 7.0 s, and heard whole");
+  deep([T().heldAtTap, T().tapValved, T().heldForEars], [1, 1, 0], "13r: recorded: held at the tap, released by the bound");
+}
+{
+  const world = await boot({ realVoice: true, answer: scenario(() => game()) });
+  const t0 = now();
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(5000);
+  globalThis.window.moxieTypedTurn.send(GAME);
+  await advance(2000);
+  globalThis.window.moxieBridge.interruptVoice();      // t+7.0 s; the microphone never opens
+  await advance(20000);
+  deep([heard(world, t0), cutsAt(world, t0)], [["day0@4100", "day1@6400", "game0@11300", "game1@13600"], ["cloud@7000"]],
+       "13r: THE HELD REPLY GOES ON 2 s AFTER THE TAP (bought at 9.0 s, heard from 11.3 s), whole");
+  deep([T().heldAtTap, T().tapValved], [1, 1], "13r: recorded: held at the tap, released by the bound");
+}
+{
+  const world = await boot({ realVoice: true, answer: scenario(() => blocked()) });
+  const t0 = now();
+  const b = globalThis.window.moxieBridge;
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(3200);
+  globalThis.window.moxieTypedTurn.send(HURT);
+  await advance(1800);
+  b.interruptVoice();                                  // t+5.0 s; the browser asks for 3.0 s
+  await advance(3000);
+  b.earsOpen(45000);                                   // t+8.0 s: past the bound
+  await advance(3000);
+  b.earsIdle();
+  await advance(15000);
+  deep([heard(world, t0), cutsAt(world, t0)], [["day0@4100", "browser@7000"], ["cloud@5000", "browser@8000"]],
+       "13r: THE BOUND'S COST: a microphone opening 3.0 s after the tap cuts the redirect that began at 7.0 s (its words stay in the log), as ears B17d pins for any reply begun while the browser asked");
+  ok(world.spy.transcript.includes(REDIRECT), "13r: …the redirect's words stay in the log");
 }

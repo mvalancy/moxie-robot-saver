@@ -35,7 +35,9 @@
  * (`interruptVoice`, `earsOpen` / `earsIdle`, driven by mic.js): the Listen tap is a
  * deliberate interruption — every open pipeline ends through rule 6's path and voice/ is
  * stopped — and from the microphone OPENING until the ears are done with the clip nothing of
- * hers (a reply landing, a stub line, a queued line) starts. A turn in flight is settled by
+ * hers (a reply landing, a stub line, a queued line) starts; what the tap itself RELEASES (a
+ * reply held behind the one it ended, a safety line waiting for her sentence) first waits for
+ * that microphone to open, `TAP_HOLD_MAX_MS` at most (W4-S7). A turn in flight is settled by
  * `TURN_MAX_MS` at the latest, and the ears' hold ends at its bound (the record cap plus
  * mic.js's 30 s upload valve, told to `earsOpen`; `EARS_HOLD_MAX_MS` when nothing is told)
  * even if nothing ever closes it, so the queue can never be held for good.
@@ -88,6 +90,8 @@
     early: 0,                // control lines sent while an earlier reply was still being voiced (its words back)
     heldReplies: 0,          // …of their replies, those held behind an earlier reply's voice
     safetyFirst: 0,          // safety lines of an early line said next: every earlier reply ended after its playing sentence
+    heldAtTap: 0,            // lines the Listen tap released (a held reply, a waiting safety line) that waited for its microphone to open
+    tapValved: 0,            // …waits ended by TAP_HOLD_MAX_MS with no microphone open (the line then went on)
     heldForEars: 0,          // replies and page-composed lines that waited for the ears to finish a clip
     interrupted: 0,          // the Listen tap landed on a reply: its voice stopped and its pipeline ended on purpose
     earsValved: 0,           // holds the transport ended itself: `earsOpen` with no `earsIdle` by its bound
@@ -249,7 +253,20 @@
    * words put in the log first if they are not yet, silently, and a reply still held never
    * voiced; the sentence now playing plays out, and the safety line is said next, its words
    * with its voice. A line sent with nothing in flight, and `sendUserTurn`, behave exactly
-   * as before. */
+   * as before.
+   *
+   * WHAT THE LISTEN TAP RELEASES GOES INTO THE EARS, NOT AT THEM (W4-S7). The tap ends the
+   * reply a held line waits behind and stops the sentence a safety line waits for: it
+   * RELEASES them, their reply already in hand — where, with the POST held (#325), the line
+   * went out at the tap and its reply landed a chat round trip later, into the open
+   * microphone, and was heard after the recording. Released at once it started before the
+   * microphone opened, and the recorder's own stop (`earsOpen`) cut it: the W4-S7 review
+   * heard 0 ms of a held reply at each of 10 tap times, and 100 ms of a 7.7 s redirect at
+   * each of 5 (20-300 ms with the microphone 120-400 ms slow to open). So such a line waits
+   * for the microphone the tap asked for (`whenMicOpen`), then for the ears: heard whole
+   * after the recording, nothing of it bought before. For TAP_HOLD_MAX_MS at most: a prompt
+   * left unanswered never holds it (#325's rule), and a microphone opening later still cuts
+   * it, as it cuts any reply that began while the browser asked (ears B17d). */
   var waiting = [];        // {text, resolve}: control lines waiting for the turn in flight
   var inflight = 0;        // live turns POSTed and not yet settled
   var awaitingChat = 0;    // …of those, the ones whose reply is not back yet: a waiting line waits for these
@@ -257,6 +274,8 @@
   var earsBusy = false;    // mic.js: recording, or still transcribing the clip
   var earsWaiters = [];    // what is held for the ears: resolved, in order, by earsIdle()
   var earsValve = null;    // the hold's own bound here: mic.js's valve is the first line, this the second
+  var tapHold = null;      // a Listen tap's bound while the microphone it asked for opens (W4-S7)
+  var tapWaiters = [];     // …what the tap released, waiting for that microphone: resolved, in order, by earsOpen() or the bound
 
   function once(fn) {
     var done = false;
@@ -270,13 +289,37 @@
     return new Promise(function (resolve) { earsWaiters.push(resolve); });
   }
 
+  /** Resolves once the microphone a Listen tap asked for is open, or TAP_HOLD_MAX_MS has
+   *  passed without it — at once with no tap pending. Only for what a tap RELEASES (an early
+   *  line's reply, its safety line: `heldBehind`, `chatPost`); what follows is the ears'. */
+  function whenMicOpen() {
+    if (tapHold === null) return Promise.resolve();
+    stats.heldAtTap++;
+    return new Promise(function (resolve) { tapWaiters.push(resolve); });
+  }
+
+  /** The microphone the tap asked for is open (`earsOpen`), or will not be in time: what the
+   *  tap released goes on, in order — into the ears' hold, when they opened. */
+  function endTapHold() {
+    if (tapHold !== null) { clearTimeout(tapHold); tapHold = null; }
+    var rs = tapWaiters.splice(0);
+    for (var i = 0; i < rs.length; i++) rs[i]();
+  }
+
   /** The child interrupts her (Listen tapped): the playing clip and every queued chunk stop,
    *  every open pipeline ends through rule 6's path, and nothing more of any reply is paid
-   *  for. Nothing is held. */
+   *  for. Nothing new is held; what the tap releases waits for its microphone, for
+   *  TAP_HOLD_MAX_MS at most (`whenMicOpen`, W4-S7). */
   function interruptVoice() {
     var a = window.moxieAudio, speaking = false;
     try { speaking = !!(a && a.isMoxieSpeaking && a.isMoxieSpeaking()); } catch (e) {}
     if (pipelines.length || speaking) stats.interrupted++;
+    if (tapHold !== null) clearTimeout(tapHold);
+    tapHold = setTimeout(function () {
+      tapHold = null;
+      if (tapWaiters.length) stats.tapValved++;
+      endTapHold();
+    }, TAP_HOLD_MAX_MS);
     stopVoice();
   }
 
@@ -291,13 +334,15 @@
    *  asked; the tap already counted the interruption) and what follows is held until
    *  `earsIdle` — or for `holdMs` at most (mic.js names its record cap plus its 30 s upload
    *  valve; EARS_HOLD_MAX_MS when nothing is named), after which the ears are idle here
-   *  whatever the caller did. */
+   *  whatever the caller did. What the tap released stops waiting for the microphone and
+   *  waits for the ears like the rest. */
   function earsOpen(holdMs) {
     earsBusy = true;
     stopVoice();
     if (earsValve !== null) clearTimeout(earsValve);
     var ms = Number(holdMs);
     earsValve = setTimeout(function () { earsValve = null; stats.earsValved++; earsIdle(); }, ms > 0 ? ms : EARS_HOLD_MAX_MS);
+    endTapHold();
   }
 
   /** The ears are done with the clip: what waited for them may go, in order. */
@@ -366,6 +411,11 @@
    *  the speech route's character cap; 20 s is past it. */
   var QUIET_POLL_MS = 100;
   var QUIET_MAX_MS = 20000;
+  /** The longest what a Listen tap released waits for the microphone the tap asked for: past
+   *  the 20 ms-1.5 s grants the W4-S7 review probed, and short enough that a microphone that
+   *  never opens (a prompt left unanswered, a capture that failed: mic.js tells this file
+   *  nothing then) delays a redirect by 2 s at most. */
+  var TAP_HOLD_MAX_MS = 2000;
 
   /** Resolves once her SERVER voice is off the speakers — at once, when it is. The narrow
    *  predicate on purpose: what a held line must not cut is a chunk of a reply it went out
@@ -388,15 +438,16 @@
    *  settle (its reply wholly handed to the speakers), then — for words that would start a
    *  local voice (`local`: no ticket, a stub line) — her playing sentence to end, so the
    *  earlier reply is heard whole and never cut, as when the POST itself waited. A ticketed
-   *  reply needs no second wait: its chunk 0 queues behind the playing one in voice/. With
-   *  no `turn` (a waiting line nothing live can take) the hold is on every open turn. A line
-   *  that went out with nothing in flight waits for nothing. */
+   *  reply needs no second wait: its chunk 0 queues behind the playing one in voice/. Last,
+   *  the microphone a Listen tap asked for, when the tap is what released it (`whenMicOpen`).
+   *  With no `turn` (a waiting line nothing live can take) the hold is on every open turn. A
+   *  line that went out with nothing in flight waits for nothing. */
   function heldBehind(turn, local) {
     if (turn ? !turn.early : !inflight) return Promise.resolve();
     var earlier = [];
     for (var i = 0; i < openTurns.length && openTurns[i] !== turn; i++) earlier.push(openTurns[i].done);
     if (turn && earlier.length) stats.heldReplies++;
-    return Promise.all(earlier).then(function () { return local ? whenQuiet() : undefined; });
+    return Promise.all(earlier).then(function () { return local ? whenQuiet() : undefined; }).then(whenMicOpen);
   }
 
   /** A waiting line nothing live can take, answered from `stub.js` behind every open turn:
@@ -796,10 +847,11 @@
         // A line with no voice coming speaks as soon as the ears allow: this turn's voice is
         // starting. The route's own words on a reason body are its SAFETY LINE, never held
         // behind an earlier reply: that reply ends, and this line follows the sentence now
-        // playing rather than cutting it (W4-S7).
+        // playing rather than cutting it — or, the Listen tap having stopped that sentence,
+        // the microphone it opens (W4-S7).
         if (body.messages && body.messages.length) {
           if (turn.early) endEarlier(turn, seq);
-          return (turn.early ? whenQuiet() : Promise.resolve()).then(whenEarsIdle).then(function () {
+          return (turn.early ? whenQuiet().then(whenMicOpen) : Promise.resolve()).then(whenEarsIdle).then(function () {
             supersedeVoices(seq);
             routeAll(body.messages, "chat");
             settle();
