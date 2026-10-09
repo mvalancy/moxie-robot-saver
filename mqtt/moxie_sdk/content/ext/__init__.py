@@ -45,7 +45,7 @@ from .grammar import (ACTION_WORDS, BREACH_WORDS, CAPABILITY_WORDS, DEFAULT_BUDG
     _is_p1, is_error, normal_name, normal_op)  # noqa: F401
 from .values import (_format)  # noqa: F401
 from .validate import (capabilities_of, grant_list, validate)  # noqa: F401
-from .explain import (explain)  # noqa: F401
+from .explain import (explain, written_effects)  # noqa: F401
 from .machine import (_Breach, _Machine, evaluate)  # noqa: F401
 
 # Private names re-exported above (`_Machine`, `_Breach`, `_format`, `_is_p1`) are for the

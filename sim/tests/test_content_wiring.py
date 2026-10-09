@@ -111,10 +111,16 @@ def test_earmuffs_promises_only_what_it_actually_does():
 
 # --- No shipped global may fire and do nothing ---
 # A matched global with no way to act falls through to free chat, indistinguishable from
-# never matching — so this guard is structural.
+# never matching — so this guard is structural. Every shipped module, not just the starter.
+SHIPPED_MODULES = [STARTER, os.path.join(REPO, "mqtt", "content_modules", "memory_chat.json")]
+
+
 def _shipped_globals():
-    with open(STARTER) as fh:
-        return json.load(fh)["globals"]
+    out = []
+    for path in SHIPPED_MODULES:
+        with open(path) as fh:
+            out += json.load(fh).get("globals", [])
+    return out
 
 
 def test_every_shipped_global_can_actually_do_something():

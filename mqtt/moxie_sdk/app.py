@@ -74,9 +74,10 @@ class MoxieApp:
     def on_session_end(self, robot: RobotContext, history: list,
                        reason: str = "") -> None:
         """Called when a conversation *finishes* — the module exited (`<exit>` / an EXIT
-        action), the robot switched to another module, or it went offline.
+        action), Moxie went to sleep (`<sleep>` / a SLEEP action), the robot switched to
+        another module, or it went offline.
 
         The contract's `complete_handler` moment (content-module-contract.md): the last
         point the whole transcript exists, so long-term memory is written here. `reason`
-        is "exit" / "module_switch" / "disconnect". Runs off the MQTT loop; exceptions are
-        swallowed."""
+        is "exit" / "sleep" / "module_switch" / "disconnect". Runs off the MQTT loop;
+        exceptions are swallowed."""
