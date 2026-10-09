@@ -42,6 +42,7 @@
    * it, and the same beat covers the 2-3 s a clip is being transcribed. */
   var VOICE_WAIT_MS = 2000;
   var thinkTimer = null, thinkStage = 0;
+  var thinkingOn = false;  // a turn's thinking cue is armed (`thinking()`), not yet ended
   var answered = false;    // the chat response is in: no spoken filler from here
   var pose = null;         // what the body holds: "listening", "thinking", "voice-wait", "transcribing", or nothing
   var lastPick = {};
@@ -69,6 +70,7 @@
   function clearThink() {
     if (thinkTimer !== null) { clearTimeout(thinkTimer); thinkTimer = null; }
     thinkStage = 0;
+    thinkingOn = false;
     answered = false;
     pose = null;
   }
@@ -77,7 +79,6 @@
    *  VOICE_WAIT_MS until `settled()` — or until a new cue (`listening`, `thinking`) takes over. */
   function quietBeat() {
     thinkTimer = null;
-    if (!pose) pose = "voice-wait";
     try { if (window.moxie) B.set(5, pickDifferent("waitYaw", [17200, 15600])); } catch (e) {}
     thinkTimer = setTimeout(quietBeat, VOICE_WAIT_MS);
   }
@@ -105,6 +106,7 @@
      *  the quiet beat takes over after beat 1. */
     thinking: function () {
       clearThink();
+      thinkingOn = true;
       var beat = function () {
         thinkStage++;
         try {
@@ -137,16 +139,19 @@
       thinkTimer = setTimeout(beat, THINK_DELAY_MS);
     },
 
-    /** The brain has answered and her voice is on its way (a reply holding voice tickets):
-     *  no spoken filler from here — her voice is imminent, and a filler it cut short was the
-     *  double voice — but she keeps visibly working: the thinking face and pose stay, and the
-     *  quiet beat moves her every VOICE_WAIT_MS until `settled()`. Beat 1 still due fires
-     *  first (a fast brain never flashes a pose), then the quiet beat follows it. */
+    /** The brain has answered and her voice is on its way (a reply holding voice tickets,
+     *  told at chat return): no spoken filler from here — her voice is imminent, and a filler
+     *  it cut short was the double voice — but she keeps visibly working: the thinking face
+     *  and pose stay, and the quiet beat moves her every VOICE_WAIT_MS until `settled()`. Beat
+     *  1 still due fires first (a fast brain never flashes a pose), then the quiet beat follows
+     *  it. Only a turn's thinking cue is carried on: with none armed (the ears took the body,
+     *  or the turn armed none) there is nothing to quiet and nothing moves. */
     answered: function () {
+      if (!thinkingOn) return;
       answered = true;
       if (thinkStage === 0 && thinkTimer !== null) return;
       if (thinkTimer !== null) clearTimeout(thinkTimer);
-      if (thinkStage > 0) pose = "voice-wait";
+      pose = "voice-wait";
       thinkTimer = setTimeout(quietBeat, VOICE_WAIT_MS);
     },
 

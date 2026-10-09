@@ -19,6 +19,8 @@
  *   12i      THE NEXT LINE'S CUE IS ITS OWN: a reply's cue ends before its turn settles and
  *            clears only the voice-wait line, so the line queued behind it keeps its status
  *            and its thinking beat.
+ *   12j      THE FILLER IS KEYED TO THE CHAT RESPONSE: a reply held after its chat returned
+ *            (the ears) passes the 3.5 s filler beat over during the hold.
  */
 import {
   advance, boot, chunkOf, chunked, deep, envelope, eq, live, now, ok, said, serve, ticket, tickets, voiced, voicedChunk,
@@ -325,4 +327,31 @@ const send = (text) => globalThis.window.moxieBridge.sendUserTurn(text);
   await advance(2000);                                 // t+4.31 s: chunk 1 routed at 4.3 s, A settled, B sent
   deep([T().chunksRouted, chats(), status()], [1, ["tell me two things", "and then?"], "thinking…"],
        "12i(b): …until B goes out behind A's whole voice, thinking");
+}
+
+/* =========================================================================== *
+ * 12j. THE FILLER IS KEYED TO THE CHAT RESPONSE, NOT TO THE REPLY'S RELEASE. A reply held
+ *      after its chat returned — here for the ears, through the bridge's own seam, with
+ *      nothing else taking her body (W4-S7's 13b drives the same seam) — tells the body at
+ *      chat return, so the 3.5 s filler beat is passed over during the hold. (A draft of this
+ *      slice told it only when the reply was released, and the filler spoke at 3.5 s.)
+ * =========================================================================== */
+{
+  const world = await boot({ answer: serve({
+    "/api/chat": Object.assign(said(TWO, "sim-held", { speech: ticket("sim-held") }), { delayMs: 1800 }),
+    "/api/speech": voiced("sim-held", { delayMs: 2000 }),
+  }) });
+  const n = watchAlive(), a = alive(), b = globalThis.window.moxieBridge;
+  send("tell me about your day");
+  await advance(1200);
+  b.earsOpen(45000);                                   // t+1.2 s: the recorder runs (the seam mic.js drives)
+  await advance(2400);                                 // t+3.6 s: the reply landed at 1.8 s and waits; the filler beat was due at 3.5 s
+  deep([T().heldForEars, n.answered, n.settled, a.stats.spoke, a.stats.held, world.spy.said.filter((s) => s.who === "ambient").length, status()],
+       [1, 1, 0, 0, 0, 0, "thinking…"],
+       "12j: A REPLY HELD FOR THE EARS (landed 1.8 s) TOLD THE BODY AT CHAT RETURN: the 3.5 s filler beat is passed over during the hold, and nothing settles yet");
+  b.earsIdle();                                        // t+3.6 s: the ears are done; the reply is released
+  await advance(10);
+  deep([status(), n.settled], [VOICE_WAIT, 0], "12j: released: the voice-wait line, still no settle");
+  await advance(2100);                                 // chunk 0 requested at 3.6 s lands at 5.6 s
+  deep([n.settled, status(), T().voiceFirst, a.stats.spoke], [1, "", 1, 0], "12j: …her voice settles it (5.6 s), and no filler was ever spoken");
 }

@@ -712,9 +712,13 @@
     return post("/api/chat", payload, CHAT_FETCH_MS).then(function (res) {
       // The wait is over for every refusal and error, and for a reply with no voice coming:
       // their words go out here. A reply holding voice tickets keeps the cue until her voice
-      // starts — `cueDone`, through `voiceFirst` (see there).
+      // starts — `cueDone`, through `voiceFirst` (see there) — and from NOW no spoken filler
+      // may start (`answered`), however long the reply is then held (the ears, a turn before it).
       var voiceComing = !!(res.body && !res.body.reason && ticketsOf(res.body.speech).length);
-      if (window.moxieAlive && !voiceComing) window.moxieAlive.settled();
+      if (window.moxieAlive) {
+        if (!voiceComing) window.moxieAlive.settled();
+        else if (window.moxieAlive.answered) window.moxieAlive.answered();
+      }
       if (!res.body) {
         stats.chatErrors++;
         noteTransportError();
@@ -785,10 +789,8 @@
           return;
         }
         stats.tickets += tickets.length;
-        // Her voice is on its way: the line says so, and the body keeps working, quietly
-        // (no spoken filler from here: her voice is imminent).
+        // Her voice is on its way: the line says so (the body was told at chat return).
         status(VOICE_WAIT_LINE);
-        if (window.moxieAlive && window.moxieAlive.answered) window.moxieAlive.answered();
         return voiceFirst(body.messages, tickets, eventOf(body.messages, body.speech), seq, settle, cueDone);
       });
     });
