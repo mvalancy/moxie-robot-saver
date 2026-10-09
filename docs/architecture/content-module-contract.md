@@ -46,7 +46,9 @@ A module is JSON with three optional sections:
   *empty* `prompt` does, so a typed or spoken first line still reaches the brain, as do `continue`
   and `reprompt`. A robot hears the first alternative first, and after that never the same line
   twice in a row. `<opener>` is stripped; `<exit>`, `<sleep>` and `<launch:XX>` become actions, as
-  in a model's line. A conversation with no opener asks the brain, as before. Only a `|` outside
+  in a model's line (so an imported opener's tags act with no review sentence: the opener is outside
+  the guarantee an extension's line is under, see "What a line's action tags may do" under
+  [extensions](#extensions-a-pack-that-can-do-something)). A conversation with no opener asks the brain, as before. Only a `|` outside
   `{{ }}`, `{% %}` and `{# #}` separates alternatives; inside them it is a Jinja filter
   (`{{ volley.config.child_pii.nickname | upper }}`) or comment text. OpenMoxie splits on every `|`
   (`conversations.py`:218), but it never templates an opener (:56-57). The split is one pass, and
@@ -837,7 +839,9 @@ by construction rather than by reading the program cleverly:
   on. A tag that forms only once the robot's own parse has lifted the tags that stay
   (`<ex<sleep>it>` with its sleep written whole would be spoken as `<exit>`, which that
   one-pass parse never acts on) is cut out with the pieces it is made of, so the child
-  never hears a tag of ours. The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
+  never hears a tag of ours. The line's markup, which the robot speaks when it is given
+  one, goes through the same pass with nothing kept, so it holds no tag of ours either
+  (never counted: markup acts on nothing). The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
   answers without asking the AI; then the conversation ends."* and sends its `<exit>` as
   before, because its rule writes it. A taken-out tag is counted, and the parent is told
   once per robot, program and reason through the same `ext_events` ring a breach uses
@@ -846,16 +850,31 @@ by construction rather than by reading the program cleverly:
   so it never counts towards quarantine. The tags a program writes are read once per
   program, by its digest, so a turn pays a set lookup and one more pass over its line: on
   the shipped `Goodbye` the difference is within the noise of a turn that takes about
-  0.4 ms in all, and reading the set costs about 0.06 ms once, measured.
+  0.4 ms in all, and reading the set costs about 0.06 ms once, measured. That first read
+  covers every string the program writes, in a branch taken or not, with the GIL held, and
+  is linear in the program's text (the tag parse's fields are greedy and run up to the `>`
+  itself, so no two neighbouring repeats can take the same character): a branch never
+  taken that holds `<exit:` and 64,000 spaces reads in 2 ms on the first turn, and the
+  largest string a pack can carry, `<exit:` and a megabyte of spaces, in 16 ms. Before,
+  with lazy fields, that read was quadratic on a run of spaces (0.35 s at 16,000, about
+  four times longer per doubling, still running after 8 s at a megabyte) and every thread
+  of the supervisor waited on it. The pass over the line is bounded by the line (1,000
+  characters) and takes at least six characters out each time it repeats: the worst line,
+  165 nested `<ex … it>` around a malformed tag, costs 7.6 ms a turn, measured.
 - **The sentence names every tag written whole in the rule's text,** at least as
   *"sometimes"* (*"…; then sometimes Moxie starts the DRAW activity."*). So for every
   program and every run-time input, the actions the robot is sent from a rule's line are
   among the effects the rule's sentence names. A tag is lifted out of the quote of a line
   Moxie says; a quote that is not said, such as a test on what the child said, shows a tag
-  as written (*"When what your child said is '<exit>'"*). A module that is not an id is
-  quoted (*"Moxie starts the 'Draw now' activity"*), so author text never reads as part
-  of the sentence. One sentence names at most 16 activities, the rest as *"sometimes Moxie
-  starts an activity it works out"*, which stands for any launch past those.
+  as written (*"When what your child said is '<exit>'"*). A module that is not an id, or
+  is not shown exactly as written, is quoted (*"Moxie starts the 'Draw now' activity"*);
+  a straight quote in author text is written curly (’), so it cannot close the quote and
+  read as part of the sentence; and the format and control characters a parent cannot
+  see (a bidi override, a zero-width space) are dropped from what is shown, so `DRAW`
+  with a zero-width space after it reads *"the 'DRAW' activity"*, quoted, while the robot
+  is sent the id as written. One sentence names at most 16 activities, the rest as
+  *"sometimes Moxie starts an activity it works out"*, which stands for any launch past
+  those.
 
 The reading ahead (`explain.py`'s `_read_ahead`) decides only the wording. It follows
 `if`, `and`/`or`, `concat`, `let` names, `random.pick`, the case ops and any part made only
@@ -881,15 +900,27 @@ What the wording means to a parent. *"sometimes"* says the program writes the ta
 reading ahead cannot say the line carries it every time — or, when the line can only carry
 a changed copy of it (a lowered launch), that it never will. A tag quoted in pieces
 (*'<ex … it>Bye! …'*) is one split around another part: the pieces are author text the
-child may hear as written, and when they do meet, the host takes the tag out. A pack cannot
-start an activity, end the chat or put Moxie to sleep from run-time text, however it is
-built: a child-facing robot acts only on what the parent's review named.
+child may hear as written, and when they do meet, the host takes the tag out. An extension's
+line cannot start an activity, end the chat or put Moxie to sleep from run-time text,
+however it is built: from a program's line, a child-facing robot acts only on what the
+parent's review named.
+
+**A conversation's opener is not under this guarantee.** It is rendered as a template on an
+empty `prompt`, and its `<exit>`, `<sleep>` and `<launch:…>` act as in a model's line (the
+`opener` field above). So an imported conversation's opener (`opener` is a pack field) can
+end the chat, put Moxie to sleep or start an activity, written plainly or built as it renders
+(`{{ '<la' ~ 'unch:DRAW>' }}`), while the pack review shows it only as a raw diff row: no
+sentence, no warning, and the row ticked by default. Whether to hold the opener to the same
+rule (act only on a tag written whole in its unrendered text, and name it in the review) is an
+open decision; until it is taken, an imported opener is text the parent must read as code.
 
 `sim/tests/test_ext_say_tags.py` holds the invariant as a property over random programs
 (every op above over literal pieces of tags and non-tags, with what the child said, a
 memory and an `input_vars` value holding tag pieces or whole tags), through the real
-`ContentApp` and the pack review, and pins the host's parse and `explain.py`'s restatement
-of the grammar to each other on 20,000 random lines; `test_leave_taking.py` runs every
+`ContentApp` and the pack review, pins the host's parse and `explain.py`'s restatement
+of the grammar to each other on 20,000 random lines, and holds the first read of a program's
+text to linear time (200,000 spaces after `<exit:` in a branch never taken, a megabyte at the
+pack cap); `test_leave_taking.py` runs every
 shape the five review rounds found, each against what the robot is sent, also as read past
 the budget, including a sweep of every tag split at every point around a part worked out
 at run time or a trimmed part.

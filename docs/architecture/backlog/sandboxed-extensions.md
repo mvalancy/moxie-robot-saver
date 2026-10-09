@@ -57,7 +57,9 @@ may act only on an action tag written whole in its rule's own text (a `say` or `
 the host takes any other `<exit>`, `<sleep>` or `<launch:…>` out of the line and tells the parent
 (§4.5, §6.4), so the review's sentence for the rule (§5.4) names everything its line can make the
 robot do ([content-module-contract.md](../content-module-contract.md), "What a line's action tags
-may do").
+may do"). A conversation's `opener` is not an extension and is outside this: rendered as a
+template, its tags act with no review sentence (the contract says so; holding it to the same rule
+is an open decision).
 
 ### 2.2 The pack format it rides in
 
@@ -281,8 +283,8 @@ effect is applied. A breach anywhere discards the list whole (X11), so nothing i
 
 | Statement | What the host does |
 |---|---|
-| `say` | Acts only on the action tags written whole in the rule's own text (`literal_actions`, read with the robot's own parse): any other `<exit>`, `<sleep>` or `<launch:…>` the line carries is taken out first (`actions.drop_action_tags`), counted and reported (§6.4), never said or acted on; so is a tag that would only form once the tags that stay are lifted (`<ex<sleep>it>` with its sleep kept would be spoken as `<exit>`). Then `volley.set_output`, after the output-side safety classifier (a blocked line becomes a redirect) and after `annotate` if no markup was authored |
-| `markup` | Checked tag by tag against `vocab.py`. Unknown ids and malformed tags are dropped and counted, never passed through |
+| `say` | Acts only on the action tags written whole in the rule's own text (`literal_actions`, read with the robot's own parse): any other `<exit>`, `<sleep>` or `<launch:…>` the line carries is taken out first (`actions.drop_action_tags`), counted and reported (§6.4), never said or acted on; so is a tag that would only form once the tags that stay are lifted (`<ex<sleep>it>` with its sleep kept would be spoken as `<exit>`). The line's markup loses every tag of ours first (`_no_action_tags`, never counted: the robot speaks its markup, and markup acts on nothing). Then `volley.set_output`, after the output-side safety classifier (a blocked line becomes a redirect) and after `annotate` if no markup was authored. The set a rule may act on is read once per program, linearly in its text (a megabyte of spaces after `<exit:` in 16 ms, measured) |
+| `markup` | Every tag of ours taken out first (`_no_action_tags`), then checked tag by tag against `vocab.py`. Unknown ids and malformed tags are dropped and counted, never passed through |
 | `remember` / `forget` | `MemoryStore.merge` on `(device_id, namespace)`, both supplied by the host. Dropped at the store under `NO_DATA` |
 | `scratch` | `volley.local_data`, per turn, never persisted |
 | `act` | One `add_execution_action(name, args)`. `execution_actions_of` turns it into an `execute` `RemoteChatAction` with `function_id`/`function_args`. The name must be in `ACTION_WORDS`, checked at load **and** at the host boundary, and individually granted |
