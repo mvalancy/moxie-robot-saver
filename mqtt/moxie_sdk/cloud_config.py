@@ -446,7 +446,7 @@ def _name_safety_refusal(name: str) -> str:
     try:
         classifier = safety.default_classifier()
         verdict = classifier.assess(name, role=safety.CHILD)
-    except Exception:                    # noqa: BLE001 \u2014 a table that cannot be read
+    except Exception:                    # noqa: BLE001 (a table that cannot be read)
         return NAME_UNCHECKED
     if not verdict:
         return ""
@@ -461,7 +461,7 @@ def check_name(name: str, *, refusal: str = NAME_RULE) -> str:
     the Try it card (`tryit._try_name`) alike, so the two can never drift apart.
 
     `name` is one line with its whitespace already collapsed. It is NFC-normalized first
-    (a decomposed `Jos\u00e9` is the same name as a composed one, and is kept composed), then
+    (a decomposed `José` is the same name as a composed one, and is kept composed), then
     it is at most `NAME_MAX_CHARS` characters of the shape `_name_shape_ok` checks, then
     nothing Moxie's safety table blocks or flags (`_name_safety_refusal`). Returns the NFC
     name, else ValueError: `refusal` for the shape, the table's sentence for safety;
@@ -507,7 +507,7 @@ _LATIN_ACCENTS = _re.compile("[\u0300-\u036f]")
 def _name_forms(name: str) -> set:
     """The spellings of `name` a line may carry: the whole name, each part of it of two
     characters or more (split at spaces, periods, apostrophes and hyphens: `Mary-Kate`
-    is also `Mary` and `Kate`), and each of those without its Latin accents (`Jos\u00e9` is
+    is also `Mary` and `Kate`), and each of those without its Latin accents (`José` is
     also `Jose`). NFC; the generic `friend` is never one."""
     import unicodedata
     whole = unicodedata.normalize("NFC", " ".join(str(name).split()))
