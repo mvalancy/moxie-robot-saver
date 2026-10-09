@@ -165,10 +165,10 @@ REVIEWED: dict = {
         "20 KB), also enforced by a hard alarm per match: load multiplies a linear match, "
         "while an ambiguous pattern grows 2^n or faster and is past the ceiling by n=25."),
     "sim/tests/test_content_app.py::test_a_huge_opener_takes_one_pass_and_one_render": (
-        ("time.perf_counter",), "RELATIVE — 1.0 s for two empty prompts, 20x the measured "
-        "0.01-0.04 s: load multiplies one linear split, one render and one linear lift, "
-        "while the quadratic split, a render per alternative or a lift pass by pass took "
-        "2.4-10.5 s on the same openers."),
+        ("time.perf_counter",), "RELATIVE — 1.0 s for two empty prompts, 13x the measured "
+        "0.01-0.07 s: load multiplies one linear split, one render and one linear lift, "
+        "while the quadratic split, a render per alternative, or a lift that reads the line "
+        "again per level or per `>` took 2.4-10.5 s on the same openers."),
     "sim/tests/test_ext_say_tags.py::test_the_tags_a_program_writes_are_read_in_time_linear_in_its_text": (
         ("time.perf_counter",), "RELATIVE — 0.5 s for a first turn measured at 2 ms, also "
         "enforced by a hard 5 s alarm: load multiplies a linear parse, while the lazy "

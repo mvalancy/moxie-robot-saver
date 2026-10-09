@@ -239,8 +239,10 @@ def test_only_the_alternative_said_is_rendered(monkeypatch):
 #: quadratic split), 4.5 s for the closed one (a quadratic membership test, then a render
 #: per alternative) and 1.3 s for 7000 plain lines (a render per alternative). And a nest of
 #: tag pieces around a malformed tag (48 KB), whose every level an opener lifts so none is
-#: said: lifted pass by pass, once per level, two empty prompts took 7.4 s (43 ms in one
-#: pass).
+#: said: lifted pass by pass, once per level, two empty prompts took 7.4 s (43-74 ms in one
+#: pass). And a tag that is not ours followed by a run of `>` (48 KB), which the lift reads
+#: once only because nothing before such a tag can start one of ours (7.2 s when it read the
+#: line again at each `>`, 38 ms in one pass).
 HUGE_OPENERS = {
     "unclosed {{": "{{ x |" * 16667,
     "unclosed {%": "{% x |" * 16667,
@@ -248,6 +250,7 @@ HUGE_OPENERS = {
     "closed {{ }}": "Hi {{ x }}|" * 9091,
     "7000 lines": "|".join(f"Line number {i}!" for i in range(7000)),
     "a nest of tag pieces": "<ex" * 8000 + "<exit:now>" + "it>" * 8000 + "Hi!",
+    "a tag not ours, then a run of >": "Hi <b>" + "x>" * 24000,
 }
 
 
