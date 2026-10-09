@@ -13,7 +13,7 @@ not the module — so locally, at least, `_lib/` is not routed. Nothing here exp
 | [`limits.js`](limits.js) | Request admission in one function, `admit()`: origin pin → per-IP windows → unit budget → concurrency ceiling → the bounded FIFO, and the granted slot's refund/release rules. Re-exports the four modules below, so every importer still reads one surface. |
 | [`counters.js`](counters.js) | The one in-process `state` object and the minute/hour/day ledgers `limits.js` and `sharedtier.js` both charge. **Best-effort and per-isolate — not a global ceiling.** |
 | [`sharedtier.js`](sharedtier.js) | The Cache API tier: every per-IP window (minute, hour, day) and both unit-budget ceilings (hour, day), per-colo, defeated by a burst, and **fail open by construction** — every error is an undercount. The concurrency ceiling is deliberately *not* here: a lost write would leak a slot and fail closed. |
-| [`clientip.js`](clientip.js) | `clientIp` / `ipKey` (IPv6 collapsed to its /64) and `checkOrigin`, the origin pin. `curl` forges `Origin` trivially — it is a cost control, not a bot control. |
+| [`clientip.js`](clientip.js) | `clientIp` / `ipKey` (IPv6 collapsed to its /56) and `checkOrigin`, the origin pin. `curl` forges `Origin` trivially — it is a cost control, not a bot control. |
 | [`body.js`](body.js) | The bounded JSON and audio body readers. |
 | [`upstream.js`](upstream.js) | What the three spending routes share around their one gateway `fetch()` (which stays in each route): `redirect: "manual"`'s argument, the 429/3xx mapping, the fetch-failure mapping and the refusal envelope. |
 | [`prompt.js`](prompt.js) | `buildUpstreamBody` — the server-built chat request (fixed model, `max_tokens`, message array); the client's fields are never forwarded. |

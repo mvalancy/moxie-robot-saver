@@ -94,6 +94,27 @@ text's 40 of 44. A candidate that misses one of these does not ship. The instrum
 `*.pages.dev` host without `--production`: the project's alias serves production, and a preview spends
 the same key when its environment has one.
 
+### Her voice and her ears
+
+Two more settings decide what she sounds like and how she hears:
+
+| Setting | Production (2026-10-08) | Why |
+|---|---|---|
+| `DEMO_TTS_MODEL` | `tts-piper-kristin` | Picked by ear from 18 gateway voices. Every one of her pre-recorded clips (`sim/web/audio/`) is in this voice too, so her scripted lines and her live replies sound like one Moxie. Change it only together with a re-render of every clip (`sim/tools/prerender_audio.py --engine gateway`). |
+| `DEMO_STT_MODEL` | `stt-whisper-small` | Word-perfect and the quickest of four speech-to-text aliases on a 2026-10-08 spot check (one clip each). A burst of four utterances queued for about 10 s on 2026-10-08. |
+
+**Every model named here is a gateway alias.** What serves an alias is the gateway's business, and
+this repo never names it. Two things follow:
+
+- **Provision before you switch.** A gateway that scopes a key to a list of models refuses the
+  others, so put the new alias on the production key's list first. A model the key may not call
+  fails on the live site as `upstream_down` (or `rate_limited`, if the gateway answers 429), even
+  though the same alias answers your own key. Then change the variable, make a new deployment (a
+  change applies only to the next one; see section 7), and listen to one real turn.
+- **A fallback is the gateway's, not this code's.** The reference gateway falls back from
+  `moxie-brain-dense` to `moxie-brain` when the first errors. Nothing here can see which one
+  answered, which is why both were measured.
+
 ## 4. Caps
 
 A public demo that proxies a paid gateway needs limits. Each is a `DEMO_*` variable; defaults are in
@@ -111,16 +132,19 @@ A public demo that proxies a paid gateway needs limits. Each is a `DEMO_*` varia
 | `DEMO_STT_PER_MIN` / `_HOUR` / `_DAY` | 10 / 60 / 225 | Per visitor IP; a `_DAY` of `0` removes that day window |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | Matched to the upstream key's parallel limit; raise the queue, not these |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | 2500 / 8 | At the ceiling a request waits briefly instead of being refused; `0` disables |
-| `DEMO_CACHE_COUNTER` | on | Counts the per-minute limits per colo (Cache API) instead of per isolate; fails open |
+| `DEMO_CACHE_COUNTER` | on | Also counts every per-IP window and both unit-budget ceilings per colo (Cache API), on top of each isolate's own count; fails open. `0` counts per isolate only |
 | `DEMO_TTS_CACHE` / `_TTL_S` | on / 86400 | Caches synthesized speech per colo; a hit costs no upstream call |
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | 600 / 4000 | Request units (chat 3, speech 2, transcribe 2) |
 | `DEMO_CHAT_TIMEOUT_MS` | 10000 | A fast degrade beats a slow success; about 3x the brain's measured p99 |
 | `DEMO_SERVE_HOSTS` | unset | Hostnames that may spend, comma separated, exact match; any other host answers `gateway_not_configured`. On Production set it to the canonical host only (for the reference deployment, `moxie.mattvalancy.com`), so the `pages.dev` alias and old deployment URLs cannot spend |
 | `DEMO_TICKET_TTL_S` | 60 | Lifetime of a speech ticket |
 
-These counters are **best effort**: most live in one isolate's memory and the per-minute window is per
-colo. They are not a global spending ceiling; that needs a budget at the gateway (or a Durable Object,
-which is not built).
+These counters are **best effort**. Each isolate counts in its own memory; with `DEMO_CACHE_COUNTER` on,
+every per-IP window and both unit-budget ceilings are also counted per colo in the Cache API, a tier
+that loses updates in a burst and admits whenever it fails. The concurrency ceiling and its queue are
+per isolate only. So the unit budget is a ceiling per colo at best, never per deployment, and none of
+this is a global spending ceiling: that needs a budget on the gateway key (or a Durable Object, which is
+not built). [Spec §4.6](../architecture/backlog/live-sim-demo.md) has the details.
 
 ## 5. Platform behavior worth knowing
 
@@ -139,10 +163,12 @@ curl -s https://YOUR-DOMAIN/api/health
 
 | `mode` | Meaning |
 |---|---|
-| `live` | Configured; visitors get a real brain. |
-| `busy` | At the concurrency ceiling. |
-| `degraded` | Not configured, switched off, over budget, or upstream down; `reason` says which. |
-| `offline` | No API at all (plain static hosting); behaves like the static demo. |
+| `live` | Configured, switched on, and no spent budget this isolate can see; visitors get a real brain. |
+| `degraded` | `reason` says which: `gateway_not_configured` (a required variable is missing, half of an Access or Turnstile pair is set, `DEMO_ENABLED=0`, or `DEMO_SERVE_HOSTS` is set and does not list this host) or `budget_exhausted` (the unit budget, as this isolate counts it). |
+| `offline` | The page's own verdict when no answer comes: `/api/health` is absent or not this API's JSON (plain static hosting), so the page is the static demo. Health itself never says it. |
+
+There is no `busy` mode. `load.level` (`ok`, `busy`, `full`) is this isolate's count against the chat
+ceiling, and the page shows `HOSTED DEMO · BUSY` from it while it stays `live`.
 
 **Health reads configuration only and never calls the gateway**, so it is free to poll but cannot see
 an upstream outage: it can say `live` while chat fails with `upstream_down`. To test the brain, spend a
@@ -155,12 +181,65 @@ curl -s -X POST https://YOUR-DOMAIN/api/chat \
 ```
 
 The field is `text` (an OpenAI `messages` array is ignored and gives `too_short`), and the `origin`
-header is required (otherwise `forbidden_origin`).
+header is required (otherwise `forbidden_origin`). A `403` whose body is `error code: 1010` with no
+`reason` field never reached the Function: Cloudflare's browser integrity check refused the client's
+user agent at the edge. A default Python `urllib` request is refused that way; curl's default was not,
+on `GET /api/health` (2026-10-08). Send a browser `User-Agent` if you meet it
+([spec §10, assumption 30](../architecture/backlog/live-sim-demo.md)).
 
 `node sim/check_deployed.mjs <url>` checks a deployment in a phone-sized browser without spending
 anything; `node sim/check_live_turn.mjs <url>` is the request above as a check (one chat turn, the
 daily canary in `deployed.yml`); `node sim/check_hosted_mic.mjs` exercises the microphone path and does
 spend.
+
+## 7. Incident: stop the spending, then recover
+
+Pages applies a variable or secret change only to the **next** deployment
+([Cloudflare: secrets](https://developers.cloudflare.com/pages/functions/bindings/#secrets)). The
+deployment serving now keeps the values it was built with, and so does every superseded production
+deployment, each of which still answers on its own `https://<hash>.<project>.pages.dev` URL. Measured
+2026-10-08, before a cleanup: all 25 listed production deployments of the reference project answered
+`/api/health` with `mode: "live"`. So, fastest first:
+
+1. **Revoke or rotate the key at the gateway**, and any older key a deployment may still hold. The only
+   step that reaches every deployment at once, old ones included, with no redeploy: a key the gateway
+   refuses spends nothing, the turns answer `upstream_down`, and the page falls back to her scripted
+   lines. To come back, store the new key (`npx wrangler pages secret put DEMO_GATEWAY_API_KEY
+   --project-name <your-project>`) and make a new deployment (**Retry deployment** or a push, as in
+   step 2). Unless `DEMO_TICKET_SECRET` is set, the key also signs the speech tickets and the
+   conversation blobs, so after that deployment an open tab's next turn is answered from her recorded
+   lines once and the conversation starts over.
+2. **`DEMO_ENABLED=0`, then a new deployment.** Every route answers `gateway_not_configured` with no
+   upstream call, and the secret stays where it is. Only a new production deployment applies it:
+   **Retry deployment** on the current one in the dashboard, or a push to the production branch. It
+   reaches the custom domain and `<project>.pages.dev`, which follow the newest production deployment.
+   It never reaches an old deployment's own URL, which was built with the switch on: that is what
+   steps 1 and 4 are for.
+3. **Roll back** when a change caused it: **Deployments**, then a known-good production deployment's
+   menu, **Rollback to this deployment**. It is instant, with no build
+   ([Cloudflare: rollbacks](https://developers.cloudflare.com/pages/configuration/rollbacks/)), and it
+   serves that deployment as it was built, its variables and secrets included. Rolling back past a key
+   rotation or a `DEMO_ENABLED=0` brings the old value back along with the old code.
+4. **Delete superseded deployments.** Keep the live one and one or two known-good rollback targets, and
+   delete the rest, because each still holds the secrets it was built with:
+
+   ```sh
+   npx wrangler pages deployment list --project-name <your-project> --environment production
+   npx wrangler pages deployment delete <deployment-id> --project-name <your-project>
+   ```
+
+   The active production deployment cannot be deleted this way, and a deleted one is no longer a
+   rollback target.
+
+Check each step where it bites. After step 2, `/api/health` says `degraded` with
+`gateway_not_configured`. After step 1 it still says `live`, because it never calls the gateway, so
+spend one turn (`node sim/check_live_turn.mjs <url>`) and expect `upstream_down`.
+
+**A misbehaving model rather than a dead gateway.** A gateway can fall back to a second model when the
+first errors: the reference gateway falls back from `moxie-brain-dense` to `moxie-brain`. That covers a
+model that fails, not one that answers badly. For that, roll back to a deployment built with the
+previous model, or switch `DEMO_CHAT_MODEL` (with its `DEMO_PROMPT_LAYOUT`) to a measured alternative,
+provisioned on the key first, and make a new deployment.
 
 ## Known gaps
 

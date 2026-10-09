@@ -199,7 +199,7 @@ export async function verify(cfg, request, token, route) {
   form.set("secret", cfg.turnstileSecret);
   form.set("response", response);
   // `remoteip` is read from the header directly, not from `clientip.js::clientIp()`, which
-  // returns a rate-limit KEY (an IPv6 /64 prefix), not an address.
+  // returns a rate-limit KEY (an IPv6 /56 prefix), not an address.
   const ip = request && request.headers ? request.headers.get("CF-Connecting-IP") : null;
   if (ip) form.set("remoteip", ip);
 
