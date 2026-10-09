@@ -103,7 +103,7 @@ MUTATIONS = [
      "  if (false) {",
      SUITE, "internal-error: the turn is still served"),
     # A siteverify that never answers holds a CONCURRENCY SLOT. With no deadline the route
-    # hangs until its own 20 s upstream timeout, so this row is caught by HANGING — which
+    # hangs until its own 10 s upstream timeout, so this row is caught by HANGING — which
     # the runner reports as caught and says so, because "it never finished" is a different
     # fact from "it went red" and the next reader should not have to guess which.
     ("D3e no deadline on the siteverify call at all (a hung endpoint holds a slot)", LIB,

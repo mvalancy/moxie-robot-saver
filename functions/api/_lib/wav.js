@@ -17,8 +17,8 @@
  * Under `pcm`, "is this audio?" is undecidable: an odd length or mostly-printable body is
  * refused, but a short binary error blob would pass. That is why `wav` is the default.
  *
- * 16-bit only: `audio.js` decodes with `getInt16` and no width branch, so an 8/24-bit WAV
- * would play as garbage. It is refused, not converted.
+ * 16-bit only: `sim/web/voice/cloud.js::decodeCloudTTS` decodes with `getInt16` and no width
+ * branch, so an 8/24-bit WAV would play as garbage. It is refused, not converted.
  */
 
 /** The one error this module raises. `message` is server-side only and never reaches a
@@ -157,7 +157,7 @@ export function pcmFromAudio(raw, fallback) {
   }
 
   const channels = Math.max(1, Math.min(8, fmt.channels || ch));
-  // The header's own rate, clamped to the window `audio.js` accepts.
+  // The header's own rate, clamped to the window `voice/cloud.js::decodeCloudTTS` accepts.
   const sampleRate = Math.max(3000, Math.min(384000, fmt.sampleRate || rate));
   return {
     pcm: bytes.subarray(data.at, data.at + data.size),

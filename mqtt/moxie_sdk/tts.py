@@ -16,6 +16,8 @@ Wire shapes from embodied/unity/CloudTTS.proto:
 from __future__ import annotations
 import base64
 import re
+import threading
+import time
 from typing import Optional
 
 _MARK_RE = re.compile(r"<mark\b[^>]*/?>", re.I)     # <mark name="cmd:..."/> behavior tags
@@ -135,15 +137,23 @@ class OpenAIVoiceSynthesizer(Synthesizer):
     """
     name = "openai-voice"
 
+    #: Seconds one speech request may take (config: MOXIE_TTS_TIMEOUT_S); the SDK's own
+    #: default was 600 s, and the standby voice is waiting behind it. Chosen, not measured.
+    TIMEOUT_S = 15.0
+
     def __init__(self, base_url: str, api_key: str, voice: Optional[str] = None,
                  model: str = "tts-1", response_format: str = "wav",
                  sample_rate: int = 22050, *, client=None, max_retries: int = 4,
-                 channels: int = 1, pacer=None, sleep=None):
+                 channels: int = 1, pacer=None, sleep=None,
+                 timeout_s: Optional[float] = None):
+        from .chat import Pacer, timeout_seconds
+        # None = `TIMEOUT_S`; 0 or less is refused here, never read as "no bound".
+        self._timeout_s = timeout_seconds(timeout_s, default=self.TIMEOUT_S)
         if client is None:
             from openai import OpenAI      # lazy
+            from .chat import client_timeout
             client = OpenAI(base_url=base_url, api_key=api_key or "sk-local",
-                            max_retries=0)
-        from .chat import Pacer
+                            max_retries=0, timeout=client_timeout(self._timeout_s))
         self._client = client
         self._model, self._fmt = model, response_format
         self._voice = (voice or "").strip() or voice_for_model(model)
@@ -166,7 +176,7 @@ class OpenAIVoiceSynthesizer(Synthesizer):
             return resp.content
         kw = {} if self._sleep is None else {"sleep": self._sleep}
         raw = call_with_backoff(_once, max_retries=self._max_retries,
-                                pacer=self._pacer, **kw)
+                                pacer=self._pacer, deadline_s=self._timeout_s, **kw)
         pcm, rate, channels = pcm_from_audio(raw, sample_rate=self._sample_rate,
                                              channels=self._channels)
         self.sample_rate, self.channels = rate, channels
@@ -269,16 +279,31 @@ def make_piper_synthesizer(model_path: str, config_path: Optional[str] = None,
 class FallbackSynthesizer(Synthesizer):
     """A primary voice with a standby behind it — so a child never hears silence.
 
-    Any primary failure downgrades to the standby for the rest of the run. Reported once
-    and latched, so a dead endpoint does not cost every later turn its timeout. `failed` /
+    Any primary failure downgrades to the standby. Reported once and latched, so a dead
+    endpoint does not cost every later turn its timeout — but not for the rest of the
+    run: after `retry_s` (config: MOXIE_ENGINE_RETRY_S) the next line tries the primary
+    again, and an answer clears the latch with one recovery line. `failed` /
     `voice_name` say which voice is talking.
     """
     name = "fallback"
 
-    def __init__(self, primary: Synthesizer, standby: Synthesizer, *, log=None):
+    #: Seconds a latched standby holds before the next line tries the primary again.
+    #: 0 = try the primary on every line (no latch). Chosen, not measured.
+    RETRY_S = 60.0
+
+    def __init__(self, primary: Synthesizer, standby: Synthesizer, *, log=None,
+                 retry_s: Optional[float] = None, clock=time.time):
         self._primary, self._standby = primary, standby
         self._log = log if log is not None else _warn
+        self._retry_s = max(0.0, float(self.RETRY_S if retry_s is None else retry_s))
+        self._clock = clock                     # wall clock: `describe()` names the time
+        # The latch is `failed_at`: the instant it (last) closed, None while healthy;
+        # `failed` is the public flag beside it. Both move under `_lock`, and every
+        # reader takes ONE snapshot of `failed_at` — `synthesize()` runs on turn workers
+        # and filler timers at once, `describe()` on the status thread.
+        self._lock = threading.Lock()
         self.failed = False
+        self.failed_at: Optional[float] = None
         self.sample_rate, self.channels = primary.sample_rate, primary.channels
 
     @property
@@ -286,28 +311,78 @@ class FallbackSynthesizer(Synthesizer):
         """Which backend is speaking right now."""
         return (self._standby if self.failed else self._primary).name
 
+    def retry_at(self) -> Optional[float]:
+        """When the primary is tried again (wall clock), or None while it is healthy."""
+        at = self.failed_at
+        return None if at is None else at + self._retry_s
+
     def describe(self) -> str:
-        if self.failed:
-            return f"{self._standby.name} (standby — {self._primary.name} failed)"
-        return f"{self._primary.name} (standby: {self._standby.name})"
+        at = self.failed_at
+        if at is None:
+            return f"{self._primary.name} (standby: {self._standby.name})"
+        # Past the window the time has gone by: say what happens instead of when it was.
+        when = ("on the next line" if self._clock() >= at + self._retry_s
+                else f"at {_hhmm(at + self._retry_s)}")
+        return (f"{self._standby.name} (standby since {_hhmm(at)} — "
+                f"{self._primary.name} failed; retrying the primary {when})")
 
     def _adopt(self, engine: Synthesizer) -> None:
         self.sample_rate, self.channels = engine.sample_rate, engine.channels
 
+    def _try_primary(self) -> bool:
+        """Whether THIS line goes to the primary: always while healthy; once the window
+        has passed, for the one caller that claims the retry — the window moves at
+        once, so a line racing it on another thread (a filler timer beside a turn
+        worker) stays on the standby instead of spending a second timeout."""
+        with self._lock:
+            at = self.failed_at
+            if at is None:
+                return True
+            if self._clock() >= at + self._retry_s:
+                self.failed_at = self._clock()
+                return True
+            return False
+
+    def _latch(self, exc: Exception) -> None:
+        with self._lock:
+            first = self.failed_at is None
+            self.failed_at = self._clock()
+            self.failed = True
+        if first:
+            self._log(f"[voice] {self._primary.name} failed ({type(exc).__name__}: "
+                      f"{exc}); speaking with {self._standby.name} until it answers "
+                      f"again (next try in {self._retry_s:g}s)")
+        else:
+            self._log(f"[voice] {self._primary.name} still failing "
+                      f"({type(exc).__name__}); speaking with {self._standby.name}, "
+                      f"next try in {self._retry_s:g}s")
+
+    def _release(self) -> None:
+        with self._lock:
+            was_latched = self.failed_at is not None
+            self.failed, self.failed_at = False, None
+        if was_latched:
+            self._log(f"[voice] {self._primary.name} is back; speaking with it again")
+
     def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
-        if not self.failed:
+        if self._try_primary():
             try:
                 audio = self._primary.synthesize(text, voice=voice)
+            except Exception as exc:                # noqa: BLE001 — any failure downgrades
+                self._latch(exc)
+            else:
+                self._release()
                 self._adopt(self._primary)
                 return audio
-            except Exception as exc:                # noqa: BLE001 — any failure downgrades
-                self.failed = True
-                self._log(f"[voice] {self._primary.name} failed "
-                          f"({type(exc).__name__}: {exc}); speaking with "
-                          f"{self._standby.name} for the rest of this run")
         audio = self._standby.synthesize(text, voice=voice)
         self._adopt(self._standby)
         return audio
+
+
+def _hhmm(t: Optional[float]) -> str:
+    """A wall-clock instant as `HH:MM ZONE` (the supervisor's local zone — UTC in the
+    container) for a startup/status line."""
+    return time.strftime("%H:%M %Z", time.localtime(t or 0))
 
 
 def _warn(message: str) -> None:

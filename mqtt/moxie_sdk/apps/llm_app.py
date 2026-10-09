@@ -218,13 +218,25 @@ class LLMApp(MoxieApp):
     def __init__(self, base_url: str, api_key: str, model: str = "gpt-4o-mini",
                  persona: str = DEFAULT_PERSONA, max_tokens: int = 200,
                  temperature: float = 0.8, max_history: int = 12,
-                 expressive: bool = True, *, client=None):
+                 expressive: bool = True, *, client=None, timeout_s=None, clock=None):
+        # `timeout_s` (config: MOXIE_BRAIN_TIMEOUT_S; None = the SDK default, 0 or less
+        # refused — `chat.timeout_seconds`) bounds every request this brain makes and the
+        # whole of one turn's calls, streamed open and fallback together
+        # (`_stream_chunks`). `clock` is the test seam for that shared deadline.
+        from ..chat import Pacer, client_timeout, timeout_seconds
+        import threading
+        import time
+        self._timeout_s = timeout_seconds(timeout_s)
+        self._clock = clock if clock is not None else time.monotonic
+        # What `_stream_chunks` leaves `respond()` of the turn's bound, per thread (one
+        # app serves every robot; each turn runs on its own worker), so `respond(turn)`
+        # keeps the MoxieApp signature an app or a test may stand in for.
+        self._fallback = threading.local()
         # Inject `client` and openai is never imported (tests run without it).
         if client is None:
             from openai import OpenAI      # lazy import so the SDK has no hard dep
             client = OpenAI(base_url=base_url, api_key=api_key or "sk-local",
-                            max_retries=0)
-        from ..chat import Pacer
+                            max_retries=0, timeout=client_timeout(self._timeout_s))
         self._client = client
         self._pacer = Pacer()             # adaptive backoff owns retries, not openai
         self._model = model
@@ -336,15 +348,19 @@ class LLMApp(MoxieApp):
         return self._stream_chunks(turn)
 
     def _stream_chunks(self, turn: Turn):
-        from ..chat import stream_completion
+        from ..chat import is_timeout_error, stream_completion
         messages = self._messages(turn)
         seg = SentenceSegmenter(min_chars=self.stream_min_chars)
         says = SayStream(self._expressive)
         carry, spoken = [], 0            # actions with no chunk yet; chunks published
+        # One deadline for the open AND its `respond()` fallback: a hung open spends the
+        # bound, so the fallback is skipped rather than hanging a second time.
+        started = self._clock()
         try:
             for delta in stream_completion(
                     self._client, self._model, messages, max_tokens=self._max_tokens,
-                    temperature=self._temperature, pacer=self._pacer):
+                    temperature=self._temperature, pacer=self._pacer,
+                    deadline_s=self._timeout_s, clock=self._clock):
                 words = says.feed(delta)
                 if not words:
                     continue
@@ -364,9 +380,22 @@ class LLMApp(MoxieApp):
             raise
         except Exception as e:
             if spoken == 0:
+                remaining = self._timeout_s - (self._clock() - started)
+                if is_timeout_error(e) or remaining <= 0:
+                    # The open ran out the turn's whole bound: a second request would
+                    # hang just as long. One offline reply, no fallback call.
+                    print(f"[llm] stream timed out ({type(e).__name__}) inside the "
+                          f"{self._timeout_s:g}s bound; answering offline", flush=True)
+                    yield ReplyChunk.from_reply(Reply.offline())
+                    return
                 print(f"[llm] stream unavailable ({type(e).__name__}); "
                       f"falling back to a single reply", flush=True)
-                yield ReplyChunk.from_reply(self.respond(turn))
+                self._fallback.budget_s = remaining
+                try:
+                    reply = self.respond(turn)
+                finally:
+                    self._fallback.budget_s = None
+                yield ReplyChunk.from_reply(reply)
                 return
             print(f"[llm] stream died mid-answer ({type(e).__name__}); "
                   f"closing with what we have", flush=True)
@@ -387,7 +416,14 @@ class LLMApp(MoxieApp):
         yield ReplyChunk(text=text, markup=markup, actions=actions, final=True)
 
     def respond(self, turn: Turn) -> Reply:
+        """One non-streamed answer. As the streaming fallback it gets what is left of
+        the turn's bound (`_fallback.budget_s`, set by `_stream_chunks`): when shorter
+        than the client's own timeout it also caps this one request, so open + fallback
+        end inside one `timeout_s` together."""
         messages = self._messages(turn)
+        budget_s = getattr(self._fallback, "budget_s", None)
+        budget = self._timeout_s if budget_s is None else min(float(budget_s), self._timeout_s)
+        request_kw = {"timeout": budget} if budget < self._timeout_s else {}
         try:
             from ..chat import call_with_backoff, note_model_call
             def _once():
@@ -395,9 +431,11 @@ class LLMApp(MoxieApp):
                 note_model_call("chat")
                 r = self._client.chat.completions.create(
                     model=self._model, messages=messages,
-                    max_tokens=self._max_tokens, temperature=self._temperature)
+                    max_tokens=self._max_tokens, temperature=self._temperature,
+                    **request_kw)
                 return (r.choices[0].message.content or "").strip()
-            raw = call_with_backoff(_once, pacer=self._pacer)
+            raw = call_with_backoff(_once, pacer=self._pacer, deadline_s=budget,
+                                    clock=self._clock)
         except Exception as e:
             # Unreachable → ERROR_OFFLINE (robot falls back on-device, ai-seam.md §2);
             # any other error → a friendly retry line.

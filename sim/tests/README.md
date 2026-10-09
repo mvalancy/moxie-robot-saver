@@ -66,7 +66,7 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 |---|---|
 | `test_sil.py`, `test_sil_child_voice.py` | Playwright: every page at every resolution, expression chips, motor sliders, ALIVE loop, speech path; the child's clips reaching `ctx.destination` |
 | `test_sil_*.py` (others) | Real mosquitto + supervisor: durable telemetry across a restart, SUBACK handshake both ends, performance fields on the wire, presence, brains/extensions |
-| `test_runtime_turn`, `test_streaming`, `test_segment`, `test_brain_*`, `test_brains`, `test_backoff`, `test_connect_readiness`, `test_connection_resilience`, `test_clean_shutdown` | The supervisor turn loop, streaming chunks, fillers, reconnects |
+| `test_runtime_turn`, `test_streaming`, `test_segment`, `test_brain_*`, `test_brains`, `test_backoff`, `test_gateway_timeouts`, `test_connect_readiness`, `test_connection_resilience`, `test_clean_shutdown` | The supervisor turn loop, streaming chunks, fillers, bounded gateway calls and the standby's retry window, reconnects |
 | `test_action_*`, `test_actions_reach_the_robot`, `test_webhook_actions`, `test_launch_*` | `response_actions` from brain to robot; launch cards and sheet |
 | `test_content*`, `test_render_*`, `test_automarkup`, `test_performance`, `test_faces` | Content packs, template sandbox and parity, markup floor, behavior planner |
 | `test_ext*.py` | Sandboxed extensions: escapes X1–X12, conformance T1–T18, `act`/`subscribe` |
@@ -81,6 +81,7 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 | `test_compose`, `test_broker_acl`, `test_package_contents`, `test_render_container_deps` | Compose parity, broker ACL, what the wheel ships |
 | `test_ci_*`, `test_clock_dependence`, `test_mutation_tables`, `test_readiness_guards_are_checked`, `test_harness_readiness`, `test_node_global_stubs`, `test_page_teeth_slow_mode`, `test_promotion_guard` | Guards on CI itself: workflows mirror `sim/ci/`, every `sim/test_*.mjs` is run by a tier, reviewed wall-clock reads |
 | `test_csp_hashes`, `test_no_offsite_images`, `test_shared_ceilings`, `test_sim_client_parity`, `test_safety`, `test_sdk` | Static-site CSP, images, shared rate-limit tier, SDK and safety floor |
+| `test_hosted_docs_truth` | The hosted demo's docs say what its code does: no retired claim made as a live statement (a global spend ceiling, the kill switch as the fastest response), the deploy guide's modes are `modeOf`'s, nothing cites a deleted file |
 | `test_live_*.py`, `test_smoke_live_brain` | Real gateway completions, TTS, STT, hosted ears, voice round trip; skip without credentials |
 | `test_robot_lifecycle` | Unpair and factory reset: account record, permit revoke, voided pairing codes, the `restore_factory` code (need `fastapi` + `httpx`) |
 | `test_robot_claim`, `test_wifi_first_qr` | Bench-day pairing: the Wi-Fi-only first code, Add to my account (the claim), `/local/state`'s lists of robots, and one robot per account on Simulate robot scan too (need `fastapi` + `httpx`); `test_sil_robot_claim` (SIL group) runs the claim against real mosquitto and the real supervisor |

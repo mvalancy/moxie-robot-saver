@@ -12,10 +12,10 @@ the numbering is stable. When this page and the code disagree, the code wins. Fi
 ## 1. What it is
 
 Three same-origin Cloudflare Pages Functions turn a typed or spoken sentence into the two JSON payloads
-`bridge.js` `route()` already renders: a `remote_chat` reply and a `CloudTTSResponse`. The avatar then
-answers in the gateway voice with face, gestures and lip-sync. `bridge.js` and `audio.js` are not
-modified. Around this sit caps that stop a stranger from spending more than a bounded amount. There is
-also an honest fallback to the scripted Sim.
+the Sim's `route()` already renders: a `remote_chat` reply and a `CloudTTSResponse`. The avatar then
+answers in the gateway voice with face, gestures and lip-sync, through the same renderer the
+supervisor's payloads use (`sim/web/bridge/` and `sim/web/voice/`). Around this sit caps that stop a
+stranger from spending more than a bounded amount. There is also an honest fallback to the scripted Sim.
 
 > **Definition of done:** a stranger opens the production domain, types or speaks a sentence, and Moxie
 > answers in her gateway voice. The browser never holds the gateway key. No visitor can spend more than a
@@ -773,6 +773,7 @@ clamped. `_lib/env.js::DEFAULTS` is the source of truth.
 | `DEMO_MAX_RECORD_MS` | 15000 | 1000..600000 |
 | `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500000 / 2000 | 1..5e7 / 0..5e7 |
 | `DEMO_TRUST_XFF` | off | **leave unset in production** |
+| `DEMO_SERVE_HOSTS` | none (every host) | comma-separated hostnames that may spend, matched exactly; any other host reads as unconfigured (§4.1). Set but with no usable hostname, no host is served |
 | `DEMO_PERSONA` | built-in (v2, §4.11) | the system prompt; the built-in text is the measured one, an override is not |
 | `DEMO_DEVICE_ID` | `d_sim` | topic segment |
 | `DEMO_ALLOWED_ORIGINS` | none (the request's own origin) | comma-separated extra origins |
@@ -785,14 +786,14 @@ clamped. `_lib/env.js::DEFAULTS` is the source of truth.
 | `DEMO_TURN_SHAPE` / `DEMO_REROLL` | on / on | §4.10 / §4.9 |
 | `DEMO_PROMPT_LAYOUT` | `anchor` | `anchor` · `single` (§3.3); an unknown value falls back to `anchor` with a note; measure a model on `single` before switching production to it |
 | `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | ≥ 1 |
-| `DEMO_SPEECH_PER_MIN` / `_HOUR` | 10 / 80 | ≥ 1 |
-| `DEMO_STT_PER_MIN` / `_HOUR` | 10 / 60 | ≥ 1 |
+| `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY` | 10 / 80 / 300 | ≥ 1 / ≥ 1 / 0..10 000 000; a `_DAY` of 0 means no day window |
+| `DEMO_STT_PER_MIN` / `_HOUR` / `_DAY` | 10 / 60 / 225 | ≥ 1 / ≥ 1 / 0..10 000 000; a `_DAY` of 0 means no day window |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | 1..10000; transcribe uses chat's |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_DEPTH` | 2500 / 8 | 0..10000 / 0..1000; 0 disables the queue |
 | `DEMO_CACHE_COUNTER` / `DEMO_CACHE_TIMEOUT_MS` | on / 250 | timeout 10..2000 |
 | `DEMO_TTS_CACHE` / `_TTL_S` / `_TIMEOUT_MS` | on / 86400 / 1000 | 60..604800 / 50..5000 |
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | 600 / 4000 | 0 means uncapped |
-| `DEMO_CHAT_TIMEOUT_MS` / `_SPEECH_` / `_STT_` | 20000 / 12000 / 12000 | 1000..120000 |
+| `DEMO_CHAT_TIMEOUT_MS` / `_SPEECH_` / `_STT_` | 10000 / 12000 / 12000 | 1000..120000 |
 | `DEMO_TURNSTILE_SECRET` (secret) / `_SITEKEY` | none | **both or neither**; leave unset on Preview |
 | `DEMO_TURNSTILE_HOSTS` | the request's own hostname | exact match |
 | `DEMO_TURNSTILE_TIMEOUT_MS` | 2000 | 100..10000; a slow answer fails open |
@@ -822,9 +823,11 @@ scripted child line on any refusal, and shows the reason.
   so the random bag cannot reach it. Its clip is in the manifest's `moxie` group. `ambient.js` speaks it
   **once, on entering `degraded` only**, not `offline`. If autoplay is locked, the tab is hidden or
   liveness is off, it arms and speaks on the next unlock.
-- **The 1.4 s Piper probe is skipped when `degraded`** (`audio.js::skipProbe`). It still runs in
-  `offline`, where a self-hoster's local Piper is the reason it exists. An explicit `moxie.ttsBase`
-  wins in every state.
+- **The 1.4 s Piper probe is skipped when `degraded`** (`voice/local.js::skipProbe`). It still runs
+  in `offline`, where a self-hoster's local Piper is the reason it exists. An explicit `moxie.ttsBase`
+  wins over the mode. A page served from a public origin never probes at all: the sidecar's port is a
+  localhost port and the CSP's `connect-src 'self'` would refuse the request, so only localhost, LAN,
+  `*.local`, `*.lan` and `file://` pages probe.
 - `sim/test_fallback_coverage.mjs` inventories every line a degraded page can say and requires a clip
   for each.
 
@@ -904,7 +907,7 @@ suite is split into modules under `sim/tests/edge/<suite>/`.
 |--:|---|---|
 | 1 | `sim/test_demo_proxy.mjs` | Unknown keys dropped; the upstream body uses the configured model and `max_tokens`; `too_long`; origin refusal with zero upstream calls; upstream 429/500 sanitized (no model or key text in any response); `budget_exhausted`; `X-RateLimit-*` on success; the §2.2 field set with no `chunk_num`, `consistency_control` or `emotion`. Also the queue (block 13), shared tier (§15), TTS cache (§16), re-roll and turn shape, the goodbye close and the prompt layouts (§19–22: persona once, anchor last, no non-first system message outside `anchor`, no brace ever in the spoken text or the tickets), one ticket per sentence (§10f: the measured 311-char reply yields 2–3 tickets that join back to the whole reply, every one redeemable with its `chunk_num`; the three-chunk cap; a word-bounded cut; a three-chunk turn is 9 units), API headers, and a fail on any `.json` import under `functions/`. |
 | 2 | `sim/test_demo_tickets.mjs` | Forged, expired, over-length, replayed or tampered ticket or context; round-trip; constant-time compare; the sentence splitter (numbers, abbreviations, initials, ellipses and mermaid fences never split; chunks join back to the reply; the cap and the word-bounded cut) and `mintTickets`. |
-| 3 | `sim/test_wav_decode.mjs` | The RIFF walker uses the header's own rate and channels, refuses 8- and 24-bit and JSON, and agrees sample-for-sample with `audio.js`'s decoder; `wavDurationMs`. |
+| 3 | `sim/test_wav_decode.mjs` | The RIFF walker uses the header's own rate and channels, refuses 8- and 24-bit and JSON, and agrees sample-for-sample with `voice/cloud.js::decodeCloudTTS`; `wavDurationMs`. |
 | 4 | `sim/test_mode.mjs` | The state machine, backoff, hidden-tab rule, `offline` never polls; env defaults and envelope. |
 | 5 | `sim/test_cloud_transport.mjs` | Seven members intact; TTS routed before chat; chat lands by the 2.5 s wait; delegation when not live; the naive ordering proven to double-voice; one ticket per sentence (§4b–4h: chunks redeemed one at a time and routed in order behind chunk 0, a later chunk's failure ends the voice with no local stand-in, a hanging chunk given up at the deadline, three chunks heard in order on the real `voice/`); overlapping turns (§4i–4k, on the real `voice/`: two typed turns 200 ms apart, three chunks each — once the newer chunk 0 is routed nothing more of the older reply is requested and no sentence of it is heard after the newer reply; an older chunk 0 still in flight is dropped with no local stand-in; a stub answer to the newer turn ends the older pipeline too). |
 | 6 | `sim/test_fallback_coverage.mjs` | Every line the degraded page can utter has a clip on disk; the prerender tool keeps every manifest group. |
@@ -921,7 +924,7 @@ parity), `sim/test_api_headers.mjs` (real socket and Chrome), `sim/tests/helpers
 ### 8.2 What only a real deploy settles
 
 Previews carry no secrets, so they prove routing, envelopes and headers but nothing past the config
-gate. Production-only questions: Pages CPU, wall-clock and body limits against a 20 s chat timeout
+gate. Production-only questions: Pages CPU, wall-clock and body limits against a 10 s chat timeout
 (assumption 10); whether Production and Preview variables are truly separate (assumption 11); plan
 features (assumption 13); the gateway key budget (assumption 14). `sim/tests/test_live_hosted_ears.py`
 exercises the real route (assumption 29).
@@ -964,19 +967,19 @@ These numbers are stable, and code cites them.
 
 | # | Assumption | State |
 |--:|---|---|
-| 1–2 | `route()` is the only ingress; `bridge.js` and `audio.js` need no change | proven (test 5) |
+| 1–2 | `route()` is the only ingress; the Sim's renderer (`sim/web/bridge/`, `sim/web/voice/`) needs no second path for the hosted payloads | proven (test 5) |
 | 3 | `build_chat_response`'s field set is the whole chat contract | proven |
 | 4 | Omitting `chunk_num`/`consistency_control` is byte-identical to the pre-streaming wire | proven |
 | 5 | The Sim ignores `result` | proven (`stub.js` sends `"OK"`) |
 | 6–7 | Raw s16 PCM at the header's rate plays; empty `marks` still lip-sync | proven (test 3) |
 | 8 | `functions/` at the repo root is routed with output dir `sim/web` | **settled true** by a preview `curl` |
 | 9 | `functions/api/_lib/` is not routable | **settled true**: it serves the static HTML fallback (200, not 404; check the content type) |
-| 10 | Pages allows a 20 s wall clock and a ~500 KB body | unverified; every timeout is a variable |
+| 10 | Pages allows a 10 s wall clock (20 s before 2026-10-08) and a ~500 KB body | unverified; every timeout is a variable |
 | 11 | Production and Preview variables are separate | partial: previews hold only Pages' own 5 env keys, but separation is unproven until Production holds secrets |
 | 12 | Free-tier Functions limits (requests, CPU) | unverified; nowhere in the repo |
 | 13 | KV / Durable Objects / WAF rate limiting exist on this plan | split. The runtime has **no** stateful binding configured, and whether the plan offers one is a dashboard question. The Cache API needs no binding, so §4.6.1 did not depend on this. |
 | 14 | The gateway can mint a budget-scoped virtual key | unverified; **check first** |
-| 15 | The gateway accepts webm/Opus for STT | **settled false**: it returns 500 to webm/ogg/mp4 and transcribes 16 kHz mono WAV. So `DEMO_STT_FORMATS=wav`, and `mic.js` encodes WAV in the browser. |
+| 15 | The gateway accepts webm/Opus for STT | **settled false**, but it is not WAV-only either. Measured 2026-10-08 (18 calls across `stt-whisper`, `stt-whisper-base` and `graphling-stt`): WAV (16 and 22.05 kHz), MP3 and FLAC all transcribe the test line word for word; webm/Opus, ogg/Opus and mp4/AAC answer HTTP 500, and three of those within seconds put the model into a 60 s cooldown at the gateway (429 for every caller). `DEMO_STT_FORMATS` stays `wav`: `mic.js` encodes WAV in the browser, and WAV is the one container whose duration the server can read (§4.1), so adding `mp3` or `flac` would buy the page nothing and lose the duration cap for them. |
 | 16 | `MediaRecorder` defaults and mic sample rate | moot for the hosted path, which no longer uses `MediaRecorder`; the encoder writes the true rate |
 | 17 | An `https://` page cannot open `ws://` | inferred; irrelevant to the HTTP path |
 | 18 | A robot plays chunk 1+ of an event | unverified on a robot. The SIM does: the hosted turn is up to three chunks and `voice/cloud.js` plays them in order (test_cloud_transport §4b–4g; measured live 2026-10-08 over 20 turns, 11 of them chunked: 12 gaps between chunks, 8–139 ms). |
@@ -989,7 +992,7 @@ These numbers are stable, and code cites them.
 | 27 | `_headers` applies to Function responses | **settled false**; §4.7.1 |
 | 28 | A bounded queue beats a higher ceiling | proven by test (block 13); the ~1.2 s turn premise is not re-measured, so re-derive the depth if turns slow |
 | 29 | `/api/transcribe` returns the spoken words | **settled true** (`test_live_hosted_ears.py`); the route only, not a real microphone |
-| 30 | Non-browser clients reach `/api/*` in production | **settled false**. Cloudflare's browser integrity check returns 403 `error_code: 1010` at the edge, as RFC-7807 JSON **without** our `reason` field. A missing `reason` is the tell. Clients need a real `User-Agent`. |
+| 30 | Non-browser clients reach `/api/*` in production | **depends on the user agent**, not on being a browser. Cloudflare's browser integrity check refuses some agents at the edge with 403 `error code: 1010` (plain text, or RFC-7807 JSON), before the Function runs: a default Python `urllib` request was refused while `test_live_hosted_ears.py` was built (2026-09-05), and again on `GET /api/health` (2026-10-08). The body never has our `reason` field, so a missing `reason` is the tell. The same day `GET /api/health` answered 200 to `curl`, `node`, `python-requests` and Go. A `POST` from those agents is unmeasured, so the repo's spending tools send a browser `User-Agent`. |
 
 ---
 
