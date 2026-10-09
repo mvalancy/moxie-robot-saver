@@ -377,7 +377,7 @@
          engineering control, it is not how a visitor talks to her, and it STAYS exactly
          where and what it is. These are the opposite thing: a tap sends the VISITOR's
          words down the same path a typed line takes — `hud.js`'s `wireOpeners` ->
-         `moxieTypedTurn.send` -> `moxieBridge.sendUserTurn` — so an opener spends, queues,
+         `moxieTypedTurn.send` -> `moxieBridge.queueUserTurn` — so an opener spends, queues,
          is rate-limited, is refused and is answered exactly as if it had been typed.
          Nothing here is canned: the reply is whatever the brain says, in her real voice.
 
