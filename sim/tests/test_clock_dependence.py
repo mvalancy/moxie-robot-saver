@@ -173,6 +173,10 @@ REVIEWED: dict = {
         ("time.perf_counter",), "RELATIVE — 1.0 s for a read measured at 12-16 ms, also "
         "enforced by a hard 5 s alarm: the lazy parse had not finished a megabyte of spaces "
         "after 8 s."),
+    "sim/tests/test_ext_say_tags.py::test_four_markups_at_the_cap_are_cleared_in_time_linear_in_their_text": (
+        ("time.perf_counter",), "RELATIVE — 0.5 s for a turn measured at 1.5-2.4 ms, also "
+        "enforced by a hard 5 s alarm: load multiplies three linear passes, while the "
+        "fixpoint pass took 2.1-3.7 s on the same four 8 KB nests."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}
