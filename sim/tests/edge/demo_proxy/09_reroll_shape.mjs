@@ -45,8 +45,8 @@ import {
 
   // 2. The latency bound is DEMO_CHAT_TIMEOUT_MS: a slow first call cancels the re-roll.
   const cfg = wire2.readConfig(FULL);
-  eq(cfg.chatTimeoutMs, 20000, "the timeout this bound is built on");
-  for (const [first, want] of [[0, 20000], [2000, 18000], [10000, 10000], [10001, 0], [19999, 0]]) {
+  eq(cfg.chatTimeoutMs, 10000, "the timeout this bound is built on");
+  for (const [first, want] of [[0, 10000], [2000, 8000], [5000, 5000], [5001, 0], [9999, 0]]) {
     eq(chat.rerollBudgetMs(cfg, first), want, `a ${first} ms first call leaves ${want} ms for a re-roll (never past half)`);
     ok(first + chat.rerollBudgetMs(cfg, first) <= cfg.chatTimeoutMs, `a re-rolled turn never outlasts DEMO_CHAT_TIMEOUT_MS (first ${first} ms)`);
   }

@@ -377,6 +377,9 @@ jobs:
         # teeth block rebuilds the old producer shape and requires the growth to reappear.
         # Guarded by sim/tests/test_ci_test_coverage.py.
         run: node sim/test_bg_perf.mjs
+      - name: Hub weight (first-load bytes; the hero preloaded as AVIF, one copy on the wire)
+        # A 1.08 MB PNG hero was 81 % of a phone's first visit. Teeth rebuild it and must redden.
+        run: node sim/test_hub_weight.mjs
       - name: Parent console — 📈 Insights + the two-click Erase history button
         # The parent console's browser coverage: `serveStatic` serves `server/static`
         # and every `/local/*` XHR is answered at the browser (no fastapi, no
