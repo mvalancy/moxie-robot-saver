@@ -182,8 +182,9 @@ REVIEWED: dict = {
         ("time.perf_counter",), "RELATIVE — 0.5 s for five turns measured at 7-31 ms, also "
         "enforced by a hard 5 s alarm: load multiplies linear passes, while with any one of "
         "round 9's bounds undone the same five turns took 0.94-6.8 s, and the fixpoint pass "
-        "took 2.1-3.7 s a turn on the nests. With round 10's mark rule undone the review's "
-        "shape took 0.33-0.48 s, under the bound, and the test fails it on what it sends."),
+        "took 2.1-3.7 s a turn on the nests. Without round 10's mark rule (round 9's code) "
+        "the review's shape took 0.33-0.48 s, under the bound; the test fails that on what "
+        "it sends."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}

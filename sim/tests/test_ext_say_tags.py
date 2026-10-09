@@ -599,11 +599,11 @@ def test_four_markups_at_the_cap_are_cleared_in_time_linear_in_their_text(shape)
     takes 0.4-0.7 s on one `<usel genre="` run unless an opening left open drops the
     markup first, measured. With one of round 9's bounds undone (the tag search stopped at
     the last `>`, a markup with a tag left open dropped, a tag holding another `<`
-    refused) the five turns take 0.94-6.8 s. With round 10's undone (a mark the catalogue's
-    pattern does not read whole is dropped), the review's shape takes 0.33-0.48 s, under
-    the bound, and this test fails it on what reaches the robot instead: the whole markup,
-    kept. The alarm turns a super-linear pass red at 5 s rather than later; the 0.5 s bound
-    is what fails one on a quiet host."""
+    refused) the five turns take 0.94-6.8 s. Without round 10's (a mark the catalogue's
+    pattern does not read whole is dropped), round 9's code took 0.33-0.48 s on the
+    review's shape, under the bound, so this test fails that on what reaches the robot
+    instead: the whole markup, kept. The alarm turns a super-linear pass red at 5 s rather
+    than later; the 0.5 s bound is what fails one on a quiet host."""
     markup, (clean, dropped) = BOUNDED_MARKUPS[shape]
     assert len(markup) <= E.MAX_MARKUP_CHARS
     program = {"ext_format": 1, "capabilities": ["handled", "markup", "say"], "on": "global",
