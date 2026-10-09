@@ -93,8 +93,8 @@ for a routine promotion or a version bump.
 ## Cutting a release
 
 1. Open the `dev` → `main` PR; deep CI must pass.
-2. Check the PR already carries the `__version__` you will tag (bumped on `dev` first; see Versions),
-   then merge.
+2. Check the PR already carries the `__version__` you will tag (bumped on `dev` first; see Versions);
+   if not, bump on `dev` first and re-cut the `promote/*` snapshot. Then merge.
 3. With the owner's approval: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 4. Check `docker pull ghcr.io/mvalancy/moxie-robot-saver/supervisor:X.Y.Z` works.
 5. Reconcile `dev` (above).
