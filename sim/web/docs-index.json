@@ -180,7 +180,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM, STT and TTS interface contract",
    "section": "architecture",
-   "bytes": 36282,
+   "bytes": 41377,
    "mermaid": 1,
    "headings": [
     "The three seams",
@@ -878,7 +878,7 @@
    "path": "architecture/backlog/community-signals.md",
    "title": "Community signals — what owners of real robots report",
    "section": "architecture",
-   "bytes": 8364,
+   "bytes": 9278,
    "mermaid": 0,
    "headings": [
     "1. Where owner reports live",

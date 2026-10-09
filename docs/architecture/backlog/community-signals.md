@@ -31,6 +31,16 @@ period — so our firmware corpus is not stale.
 | C8 | The first boot into OpenMoxie is slow — up to ~10 min on the "spinning e", ~5 min after | issue #43 (maintainer) | One sentence in [`revive-your-moxie.md`](../../guides/revive-your-moxie.md) | **Open** |
 | C9 | Triage by screen: 801 and 803 both show the word **OpenMoxie** on the QR-scan screen, so its absence means pre-801 | issue #57 (maintainer) | A troubleshooting row in the revive guide and `live-hardware-debug.md` | **Open.** We have not seen this screen ourselves |
 
+**Beside C4: ears that hear what nobody said.** C4 is a robot that cannot hear. Its mirror image has no
+owner report yet, but it is a known Whisper behaviour our own hosted ears measured: the STT answers
+silence and room noise with "you", "Thank you." or "(machine whirring)" (six no-speech clips out of six
+came back as text; [`06_no_speech.mjs`](../../../sim/tests/edge/ears/06_no_speech.mjs)), and OpenMoxie
+publishes `whisper-1`'s text verbatim (`site/hive/mqtt/zmq_stt_handler.py:57-69`). On a robot a
+phantom "Bye." would end a child's activity. **Built, unverified on hardware** (2026-10-08): the robot
+path drops digital silence, a sound label alone, and one of Whisper's silence phrases on a quiet or
+short clip ([AI seam §① "What the ears refuse to hear"](../ai-seam.md#what-the-ears-refuse-to-hear)).
+On bench day, watch the console feed's "heard nothing" lines: they carry the levels to tune from.
+
 C9 and C5 together make a triage table for a robot that never connects:
 
 | What you see | What it means |

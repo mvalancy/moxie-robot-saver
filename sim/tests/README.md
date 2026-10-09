@@ -76,6 +76,7 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 | `test_telehealth*`, `test_presence*`, `test_fleet*`, `test_cloud_config`, `test_device_permits`, `test_roster`, `test_why_no_config` | Config push, fleet defaults, pairing gate, telehealth |
 | `test_console_*`, `test_parent_api`, `test_brain_console` | Parent console ⇄ supervisor contract (need `fastapi` + `httpx`) |
 | `test_tts`, `test_stt*`, `test_voice_*`, `test_sim_tts_playback`, `test_speech_guard` | Voice engines, gateway STT, the tone-vs-speech guard |
+| `test_honest_ears` | What the ears refuse to hear: digital silence and sub-120 ms clips reach no engine, a sound label alone is silence, Whisper's "Bye." on room tone is dropped, local whisper's `vad_filter`, the kill switch |
 | `test_config_*`, `test_assemble`, `test_dotenv_cannot_perturb_the_suite`, `test_env_hygiene_live_suites`, `test_no_deployment_defaults` | Config precedence and the dotenv fence |
 | `test_compose`, `test_broker_acl`, `test_package_contents`, `test_render_container_deps` | Compose parity, broker ACL, what the wheel ships |
 | `test_ci_*`, `test_clock_dependence`, `test_mutation_tables`, `test_readiness_guards_are_checked`, `test_harness_readiness`, `test_node_global_stubs`, `test_page_teeth_slow_mode`, `test_promotion_guard` | Guards on CI itself: workflows mirror `sim/ci/`, every `sim/test_*.mjs` is run by a tier, reviewed wall-clock reads |
