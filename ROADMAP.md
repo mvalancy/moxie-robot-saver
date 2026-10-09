@@ -50,9 +50,12 @@ release tags, with a no-clone compose file ([guide](docs/guides/one-command-stac
 
 **Simulator and hosted demo** — `sim/`, `functions/`
 - A 3D Moxie in the browser that speaks the real protocol, plus a virtual robot for tests.
-- A static hosted version on Cloudflare Pages with a real brain, voice and ears, per-visitor and
-  global rate limits, a capacity indicator, and a scripted fallback when the gateway is down
-  ([deploy guide](docs/guides/deploy-cloudflare.md)).
+- A static hosted version on Cloudflare Pages with a real brain, voice and ears, a capacity
+  indicator, and a scripted fallback when the gateway is down
+  ([deploy guide](docs/guides/deploy-cloudflare.md)). Spending is held back by per-visitor rate
+  limits and a request-unit budget, all best effort: each server isolate counts in its own memory,
+  and each Cloudflare location (colo) also shares a count in a cache that admits whenever it fails.
+  None of them is a global ceiling; only a budget on the gateway key can be one.
 - Setup page, example parent console and a docs explorer, all served from the same site.
 
 ## Unproven: needs a real robot
@@ -74,18 +77,43 @@ Ordered by priority.
 
 1. **First visit to the hosted Sim.** Walk the full path (instructions, microphone permission or
    refusal, waiting, reply, interruption, second turn, goodbye, degraded mode) and fix the worst
-   stranger-facing defect.
-2. **Spending protection.** The edge rate-limit counters are per-colo and fail open, so they are not a
-   global ceiling. Confirm a hard budget at the gateway before claiming one.
+   stranger-facing defect. Shipped so far:
+   - **Personality:** persona v2 (identity first, the child as her mentor, the habits of her
+     self-talk, honest senses), sent once instead of again after the child's line, so she answers
+     the newest line ([spec §4.11](docs/architecture/backlog/live-sim-demo.md)).
+   - **Goodbye:** a goodbye closes the turn with a sign-off wave instead of a new question.
+   - **Voice:** one voice per reply, never the browser's voice cut off by hers; her first sentence
+     plays as soon as it is synthesized and the rest follow in order; every pre-recorded clip is
+     in that same voice.
+   - **Ears:** a tap with nothing said is never sent as a turn, and one turn is heard at a time.
+   - **Stub and degraded states:** when the brain is away the scripted stub answers in character,
+     with clips, and never shows a scripted line as the child's words; the page says honestly
+     whether the brain is down, busy or resting.
+   - **First screen:** a tappable Moxie and "Talk to Moxie" on a hub that loads about a quarter
+     of its old weight on a phone; the Sim opens as a toy, not a console.
+   - **Ambient:** creepy-cute self-talk between turns, one row at a time, now with seasonal lines
+     (an October set), a rare glitch, and an aside after goodbye.
+
+   Still open: two turns in flight and talking over her (barge-in); a check on what she says as
+   well as on what she is told; and, on the robot path, a goodbye that ends a content module's chat.
+2. **Spending protection.** The rate limits and the unit budget are counted per isolate and per
+   colo and fail open, so they are not a global ceiling. Confirm a hard budget on the gateway key
+   before claiming one. Shipped: a per-visitor day for the voice and the ears, IPv6 keyed by its
+   /56 rather than its /64 (one home holds many), one log line per refusal, and a host allow-list
+   (`DEMO_SERVE_HOSTS`): a deployment built with it set spends only on the listed host, so neither
+   the `pages.dev` alias nor that deployment's own URL can spend once it is superseded. Still open:
+   setting it on the reference deployment, and the bot check (built, and off there).
 3. **Answer quality on the hosted demo.** Run the grounding check with a real negative control
    ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
-4. **A second brain for the demo.** Today one gateway outage silences it. Needs a second credential
-   and an owner cost decision ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
+4. **A second brain for the demo.** Today one gateway outage silences it. (A failing model does
+   not: the reference gateway falls back from one model alias to a second when the first errors.)
+   Needs a second credential and an owner cost decision ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
 5. **Parent app depth.** Partly done: unpair and factory reset are in the web app, behind a typed
    confirmation ([what is built](docs/features/robot-lifecycle.md#built-here-unpair-and-factory-reset)).
-   Still open: a robot paired by scanning the QR gets no account record, so its robot card and
-   Unpair button do not appear (for it, unpair is Revoke in Robot access today), and no physical
-   robot has been reset this way.
+   A robot paired by scanning the codes now joins the account with one click, **Add to my
+   account**, which gives it the robot card and Unpair; the Wi-Fi tab's first code is Wi-Fi only
+   ([bench runbook](docs/guides/bench-runbook.md)). Still open: all of it is tested against the
+   simulator and hermetic doubles only; no physical robot has been added, unpaired or reset this way.
 6. **Storage.** Per-robot state is JSON files. That is fine for one home; move to a database only if
    multi-process access needs it.
 

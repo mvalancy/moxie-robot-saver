@@ -23,7 +23,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap",
    "section": "_root",
-   "bytes": 6894,
+   "bytes": 9424,
    "mermaid": 0,
    "headings": [
     "Definition of done",
@@ -99,7 +99,7 @@
    "path": "architecture/agent-workflow.md",
    "title": "Agent and contributor workflow",
    "section": "architecture",
-   "bytes": 6941,
+   "bytes": 7561,
    "mermaid": 0,
    "headings": [
     "Goals, in priority order",
@@ -134,7 +134,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT and conversation contract (the robot cloud)",
    "section": "architecture",
-   "bytes": 54183,
+   "bytes": 54468,
    "mermaid": 0,
    "headings": [
     "0. The mechanism in five lines",
@@ -180,7 +180,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM, STT and TTS interface contract",
    "section": "architecture",
-   "bytes": 40031,
+   "bytes": 45126,
    "mermaid": 1,
    "headings": [
     "The three seams",
@@ -400,7 +400,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 74037,
+   "bytes": 77941,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -877,7 +877,7 @@
    "path": "architecture/backlog/community-signals.md",
    "title": "Community signals — what owners of real robots report",
    "section": "architecture",
-   "bytes": 8364,
+   "bytes": 9278,
    "mermaid": 0,
    "headings": [
     "1. Where owner reports live",
@@ -1067,7 +1067,7 @@
    "path": "features/robot-lifecycle.md",
    "title": "Map 11 — Robot Lifecycle (pairing / unpair / FACTORY RESET / restore / reboot / OTA / state model)",
    "section": "features",
-   "bytes": 29974,
+   "bytes": 30519,
    "mermaid": 0,
    "headings": [
     "Built here: unpair and factory reset",
@@ -1117,7 +1117,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 1367,
+   "bytes": 1558,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -1126,7 +1126,7 @@
    "path": "guides/revive-your-moxie.md",
    "title": "Revive your Moxie",
    "section": "guides",
-   "bytes": 5978,
+   "bytes": 6682,
    "mermaid": 1,
    "headings": [
     "Which path are you on?",
@@ -1165,15 +1165,32 @@
    "path": "guides/first-time-setup.md",
    "title": "First-time setup",
    "section": "guides",
-   "bytes": 2016,
+   "bytes": 3059,
    "mermaid": 0,
    "headings": [
     "1. Start the server",
     "2. Open the web app from your phone",
     "3. Set up the child + Wi-Fi",
-    "4. Pair Moxie",
+    "4. Show Moxie the code",
     "No robot handy?",
     "What happens next"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/bench-runbook.md",
+   "title": "Bench runbook: bring a real Moxie onto your server",
+   "section": "guides",
+   "bytes": 11489,
+   "mermaid": 0,
+   "headings": [
+    "Before you start",
+    "1. The Wi-Fi code (Wi-Fi only)",
+    "2. The server code",
+    "3. Read the Connection monitor",
+    "4. Add it to your account",
+    "Afterwards",
+    "Code reference"
    ],
    "kind": "md"
   },
@@ -1225,7 +1242,7 @@
    "path": "guides/permitting-a-robot.md",
    "title": "Letting a robot in — \"pending\" and how to permit it",
    "section": "guides",
-   "bytes": 5145,
+   "bytes": 7280,
    "mermaid": 0,
    "headings": [
     "The one-paragraph version",
@@ -1291,16 +1308,18 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 9753,
+   "bytes": 16625,
    "mermaid": 0,
    "headings": [
     "1. Deploy",
     "2. What works with no configuration",
     "3. Make it live",
     "Which model, which layout, which persona",
+    "Her voice and her ears",
     "4. Caps",
     "5. Platform behavior worth knowing",
     "6. Which mode am I in?",
+    "7. Incident: stop the spending, then recover",
     "Known gaps"
    ],
    "kind": "md"

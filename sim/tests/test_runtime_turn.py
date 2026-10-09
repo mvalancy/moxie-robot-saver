@@ -460,6 +460,12 @@ def test_the_connect_settle_timer_never_holds_a_shutdown_open():
 # Speech-to-text frames
 # --------------------------------------------------------------------------- #
 
+#: 0.1 s at speech level. The honest ears send no clip under 120 ms (or at digital
+#: silence) to the engine (test_honest_ears.py), so an utterance here is two or three.
+from helpers_audio import tone_pcm as _tone                # noqa: E402
+_SPEECH = _tone(100, amplitude=0.3)
+
+
 def _stt_rt(text_fn):
     from moxie_sdk.stt import Transcriber
 
@@ -486,19 +492,19 @@ def test_stt_frames_through_runtime_publish_transcript():
     """VAD frames accumulate and, on END_OF_SPEECH, publish a FINAL zmqSTTResponse frame."""
     rt = _stt_rt(lambda pcm: f"heard {len(pcm)}b")
     did = "d_stt"
-    assert rt.feed_stt(did, 1, b"aa", uuid="u1") is None        # START_OF_SPEECH
-    assert rt.feed_stt(did, 2, b"bb") is None                    # SPEECH
-    assert rt.feed_stt(did, 3, b"cc") == "heard 6b"              # END_OF_SPEECH
+    assert rt.feed_stt(did, 1, _SPEECH, uuid="u1") is None      # START_OF_SPEECH
+    assert rt.feed_stt(did, 2, _SPEECH) is None                  # SPEECH
+    assert rt.feed_stt(did, 3, _SPEECH) == "heard 9600b"         # END_OF_SPEECH
     final = _final(rt, did)
     assert final.type == final.FINAL
-    assert final.speech == "heard 6b" and final.uuid == "u1"
+    assert final.speech == "heard 9600b" and final.uuid == "u1"
 
 
 def test_handle_zmq_json_audio_frame_drives_stt():
     """events/zmq → handle_zmq JSON bridge → feed_stt → published transcript."""
     rt = _stt_rt(lambda pcm: "hello moxie")
     did = "d_zmq"
-    a = base64.b64encode(b"xy").decode()
+    a = base64.b64encode(_SPEECH).decode()
     rt.handle_zmq(did, json.dumps({"vad": 1, "audio_content": a, "uuid": "u9"}))
     assert rt.handle_zmq(did, json.dumps({"vad": 3, "audio_content": a, "uuid": "u9"})) \
         == "hello moxie"
@@ -510,10 +516,10 @@ def test_handle_zmq_real_protobuf_frame_drives_stt():
     from helpers_audio import pb_zmq_stt_frame as _frame
     rt = _stt_rt(lambda pcm: f"pb {len(pcm)}b")
     did = "d_pb"
-    rt.handle_zmq(did, _frame(1, b"aa", "u5"))                    # START
-    assert rt.handle_zmq(did, _frame(3, b"bb", "u5")) == "pb 4b"   # END → transcribe
+    rt.handle_zmq(did, _frame(1, _SPEECH, "u5"))                  # START
+    assert rt.handle_zmq(did, _frame(3, _SPEECH, "u5")) == "pb 6400b"   # END → transcribe
     final = _final(rt, did)
-    assert final.speech == "pb 4b" and final.uuid == "u5"
+    assert final.speech == "pb 6400b" and final.uuid == "u5"
 
 
 def test_no_transcriber_ignores_audio():

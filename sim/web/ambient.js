@@ -8,11 +8,19 @@
  * ambient.json's `degraded` entry is NOT a quip: it is the one sentence she says when the
  * deployment has no live brain, kept outside `lines[]` (see the bottom of this file;
  * docs/architecture/backlog/live-sim-demo.md §6.2).
+ *
+ * Two optional fields on a line (sim/test_ambient.mjs checks them):
+ *   "months": [10]       in the bag only in those months (1-12) of the VISITOR'S local
+ *                        calendar: the October set;
+ *   "beat": "glitch"     never in the bag; the rare glitch beat (THE GLITCH, below);
+ *   "beat": "signoff"    never in the bag; one aside after a goodbye (AFTER A GOODBYE).
  */
 (function () {
   "use strict";
   var lines = null, bag = [], timer = 0, relax = 0, gt = [], running = false, started = false;
+  var bagMonth = 0;                         // the month the bag was filled in (see nextLine)
   var lastTurnAt = 0;                       // when the visitor last exchanged a real turn
+  var visitorTurns = 0;                     // the visitor's own rows seen (a goodbye that did not stick)
   var watching = false;                     // the transcript observer is attached once
   var holdTimer = 0;                        // repaints the paused hint when the hold lapses
   var loading = null;                       // the single in-flight ambient.json fetch
@@ -31,7 +39,11 @@
     tilt:      [ {4: 19600, 5: 17400} ],
     point:     [ {2: 27000, 3: 15000} ],
     peek:      [ {5: 20800, 4: 18000}, {5: 12200} ],
-    slump:     [ {0: 13200, 2: 13200, 4: 13600, 6: 15600} ]
+    slump:     [ {0: 13200, 2: 13200, 4: 13600, 6: 15600} ],
+    // ghost hands up, then a lean in for the "boo" (the October set)
+    boo:       [ {0: 28500, 1: 17800, 2: 28500, 3: 17800}, {6: 20400, 4: 18200, 0: 30500, 2: 30500} ],
+    // the glitch: a small stutter of the head, side to side, then level again
+    twitch:    [ {5: 18200, 4: 15200}, {5: 14600, 4: 17400}, {5: 17600, 4: 15800}, {5: 16384, 4: 16384} ]
   };
   function clearGesture() { gt.forEach(clearTimeout); gt = []; }
   function playGesture(name) {
@@ -65,10 +77,35 @@
     }
     return a;
   }
+  /** In season: a line without `months` is for every month; one with it, for those months of
+   *  the visitor's local calendar (1 = January). */
+  function inSeason(ln, month) {
+    return !Array.isArray(ln.months) || ln.months.indexOf(month) !== -1;
+  }
+  /** The random bag: every line in season that is not a beat (a glitch or a post-goodbye
+   *  aside waits for its moment). The month is read at EVERY pick and a new month refills
+   *  the bag, so a page left open over the last night of October stops saying October
+   *  things at midnight, and starts on the first. */
   function nextLine() {
     if (!lines || !lines.length) return null;
-    if (!bag.length) bag = shuffle(lines.slice());
-    return bag.pop();
+    var month = new Date().getMonth() + 1;
+    if (!bag.length || month !== bagMonth) {
+      bag = shuffle(lines.filter(function (l) { return !l.beat && inSeason(l, month); }));
+      bagMonth = month;
+    }
+    return bag.pop() || null;
+  }
+  var lastBeat = {};
+  /** One of the `"beat": kind` lines in season, never the one this beat said last. */
+  function pickBeat(kind) {
+    if (!lines) return null;
+    var month = new Date().getMonth() + 1;
+    var pool = lines.filter(function (l) { return l.beat === kind && inSeason(l, month); });
+    var fresh = pool.filter(function (l) { return l !== lastBeat[kind]; });
+    if (fresh.length) pool = fresh;
+    var ln = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+    if (ln) lastBeat[kind] = ln;
+    return ln;
   }
   function livenessOn() {
     var c = document.getElementById("idle-on");
@@ -95,12 +132,19 @@
    *  box, so "focused" stayed true after the conversation and she never spoke again on a
    *  desktop until they clicked somewhere else. */
   function composing() {
-    if (document.body && document.body.getAttribute("data-mic") === "on") return true;
+    if (making()) return true;
     var box = document.getElementById("speech-input");
     if (!box) return false;
-    if (box.value && String(box.value).trim()) return true;
     if (document.activeElement !== box) return false;
     return lastTurnAt === 0 || (Date.now() - composeAt) < CHAT_QUIET_MS;
+  }
+
+  /** The narrow half of composing(): words in the box, or the mic open. Focus alone is not
+   *  a line being made, and after a goodbye the box usually still has it. */
+  function making() {
+    if (document.body && document.body.getAttribute("data-mic") === "on") return true;
+    var box = document.getElementById("speech-input");
+    return !!(box && box.value && String(box.value).trim());
   }
 
   /** True while a conversation is live enough that a quip would be an interruption. */
@@ -119,8 +163,10 @@
     if (hint) hint.hidden = !held;
   }
 
-  function noteTurn() {
+  /** A real turn landed in the log; `fromVisitor` when it is the visitor's own row. */
+  function noteTurn(fromVisitor) {
     lastTurnAt = Date.now();
+    if (fromVisitor === true) visitorTurns++;
     reflectHold();
     // Repaint when the hold LAPSES, not at the next tick (up to 24 s later).
     clearTimeout(holdTimer);
@@ -150,7 +196,7 @@
         for (var j = 0; j < added.length; j++) {
           var n = added[j];
           if (n && n.nodeType === 1 && n.classList && n.classList.contains("turn")) {
-            noteTurn();
+            noteTurn(n.classList.contains("user"));     // bridge/'s "turn user" row
             return;
           }
         }
@@ -199,7 +245,7 @@
     if (!running) return;
     var d = initial ? (5000 + Math.random() * 4000)     // first quip: let the scene settle
                     : (11000 + Math.random() * 13000);  // then every ~11–24s
-    timer = setTimeout(tick, d);
+    timer = setTimeout(function () { tick(true); }, d);  // only the timer's tick may glitch
   }
 
   /** Say one line with her whole body (face, LED, icons, gesture, bubble, clip), then
@@ -241,21 +287,138 @@
    * BROAD predicate (isSpeaking() misses clips); SPEAK_GRACE_MS leaves a beat after the
    * audio ends. A refusal re-arms, so a long answer costs at most one skipped quip. */
   var SPEAK_GRACE_MS = 1600;
-  function moxieBusy() {
+  /** Her voice is on the speakers, or ended less than `graceMs` (default SPEAK_GRACE_MS)
+   *  ago; `moxieBusy(0)` is the bare "is she speaking". */
+  function moxieBusy(graceMs) {
+    var a = window.moxieAudio, g = graceMs === undefined ? SPEAK_GRACE_MS : graceMs;
+    try { return !!(a && a.isMoxieBusy && a.isMoxieBusy(g)); } catch (e) { return false; }
+  }
+  /** Server-voice chunks waiting their turn: no speaking predicate sees them yet. */
+  function voiceQueued() {
     var a = window.moxieAudio;
-    try { return !!(a && a.isMoxieBusy && a.isMoxieBusy(SPEAK_GRACE_MS)); } catch (e) { return false; }
+    try { return !!(a && a.ttsPending && a.ttsPending() > 0); } catch (e) { return false; }
+  }
+  function degradedPage() {
+    try { return !!(window.moxieMode && window.moxieMode.state() === "degraded"); }
+    catch (e) { return false; }
   }
 
-  function tick() {
+  /* THE GLITCH: rarely, in place of a quip, a "reboot" that ends fine. Her face flickers,
+   * the heart LED stutters green, then a twitch and one of ambient.json's `"beat": "glitch"`
+   * lines. Only the TIMER's tick may glitch (moxieAmbient.say() and the tests' pokes never
+   * do), so it has every guard a quip has (hidden tab, liveness off, the conversation hold,
+   * an open mic, her own voice), checked again at every flicker frame: a reply or a keystroke
+   * mid-flicker ends it, and the face is put back only if no turn has taken it. At most one
+   * per GLITCH_EVERY_MS, none before her GLITCH_AFTER_QUIPS-th quip (she sounds like herself
+   * first), none on a degraded page ("rebooting... I am back" would read as the brain
+   * coming back). */
+  var GLITCH_EVERY_MS = 10 * 60 * 1000;
+  var GLITCH_AFTER_QUIPS = 3;
+  var GLITCH_CHANCE = 0.1;                  // per eligible quip: one in ten, so not clockwork
+  var GLITCH_FLICKER = ["sleep", "surprised", "sleep", "confused", "sleep", "surprised"];
+  var GLITCH_FRAME_MS = 140;                // the face eases in ~110 ms (face.js): a real flicker
+  var GLITCH_LED = "#39ff14";
+  var quips = 0, glitchAt = -Infinity, ft = [];
+
+  function glitchDue() {
+    return quips >= GLITCH_AFTER_QUIPS && Date.now() - glitchAt >= GLITCH_EVERY_MS &&
+           !degradedPage() && Math.random() < GLITCH_CHANCE;
+  }
+  function clearFlicker() { ft.forEach(clearTimeout); ft = []; }
+
+  /** Play the glitch beat. False when there is no glitch line (or no avatar). */
+  function glitch() {
+    var m = window.moxie, ln = pickBeat("glitch");
+    if (!m || !ln) return false;
+    glitchAt = Date.now();                  // an interrupted glitch still spends the ten minutes
+    var led = document.getElementById("led-on"), hadHeart = led ? led.checked : false;
+    var turnAt = lastTurnAt;
+    var stopped = function () {
+      return !running || document.hidden || !livenessOn() || conversing() || moxieBusy() ||
+             lastTurnAt !== turnAt;
+    };
+    var abort = function () {
+      clearFlicker();
+      try {
+        m.setHeartLED(hadHeart);
+        if (lastTurnAt === turnAt && !moxieBusy()) m.setFace("neutral");   // else a reply owns it
+      } catch (e) {}
+    };
+    clearFlicker();
+    GLITCH_FLICKER.forEach(function (face, i) {
+      ft.push(setTimeout(function () {
+        if (stopped()) { abort(); return; }
+        try { m.setFace(face); m.setHeartLED(i % 2 === 0, GLITCH_LED); } catch (e) {}
+      }, i * GLITCH_FRAME_MS));
+    });
+    ft.push(setTimeout(function () {
+      if (stopped()) { abort(); return; }
+      ft = [];
+      try { m.setHeartLED(hadHeart); } catch (e) {}   // perform() restores what it finds
+      perform(ln, "ambient");
+    }, GLITCH_FLICKER.length * GLITCH_FRAME_MS));
+    return true;
+  }
+
+  /* AFTER A GOODBYE: one dry aside to herself once the goodbye is over (ambient.json's
+   * `"beat": "signoff"` lines). bridge/actions.js fires `moxie-signoff` when a reply closes
+   * the conversation: an `exit_module` action on the robot path, `end_turn: true` from the
+   * hosted brain (functions/api/chat.js sends no actions). Never over her own words: it
+   * waits until her voice has been heard since the sign-off and has then been quiet for
+   * SIGNOFF_GAP_MS (no voice at all, e.g. muted: SIGNOFF_VOICE_WAIT_MS). One aside per
+   * sign-off however many signals a reply carries; a new line from the visitor means they
+   * did not leave, and it is dropped. Not held by the conversation hold (the conversation is
+   * over) or by focus alone (Enter leaves the box focused), only by a line being made. */
+  var SIGNOFF_GAP_MS = 3500;                // "a few seconds" after her last syllable
+  var SIGNOFF_VOICE_WAIT_MS = 16000;        // past cloud-transport.js's 15 s voice deadline,
+                                            // after which the goodbye is spoken locally
+  var SIGNOFF_GIVE_UP_MS = 60000;           // no good moment within a minute: let it go
+  var SIGNOFF_POLL_MS = 400;
+  var signoff = null;                       // {at, voiced, visitorTurns} while one is owed
+  var signoffTimer = 0;
+
+  function onSignoff() {
+    if (signoff || !running) return;        // one per sign-off; liveness off means quiet
+    signoff = { at: Date.now(), voiced: false, visitorTurns: visitorTurns };
+    loadOnce();
+    pollSignoff();
+  }
+
+  function pollSignoff() {
+    clearTimeout(signoffTimer);
+    var s = signoff;
+    if (!s) return;
+    var since = Date.now() - s.at;
+    if (!running || visitorTurns !== s.visitorTurns || since > SIGNOFF_GIVE_UP_MS) {
+      signoff = null;
+      return;
+    }
+    if (moxieBusy(0)) s.voiced = true;
+    if ((s.voiced || since >= SIGNOFF_VOICE_WAIT_MS) && since >= SIGNOFF_GAP_MS &&
+        !moxieBusy(SIGNOFF_GAP_MS) && !voiceQueued() && !document.hidden && livenessOn() &&
+        !making()) {
+      signoff = null;
+      var ln = pickBeat("signoff");
+      if (ln) perform(ln, "ambient");
+      return;
+    }
+    signoffTimer = setTimeout(pollSignoff, SIGNOFF_POLL_MS);
+  }
+
+  function tick(scheduled) {
     if (!running) return;
     reflectHold();
     if (document.hidden || !livenessOn()) { schedule(false); return; }
     // Conversation in progress: re-arm, never stop.
     if (conversing()) { schedule(false); return; }
     if (moxieBusy()) { schedule(false); return; }
-    var m = window.moxie, ln = nextLine();
+    if (signoff) { schedule(false); return; }       // a post-goodbye aside is owed first
+    var m = window.moxie;
+    if (m && scheduled === true && glitchDue() && glitch()) { schedule(false); return; }
+    var ln = nextLine();
     if (!m || !ln) { schedule(false); return; }
     perform(ln, "ambient");
+    quips++;
     schedule(false);
   }
 
@@ -268,6 +431,7 @@
   function stop() {
     running = false;
     clearTimeout(timer); clearTimeout(relax); clearTimeout(holdTimer); clearGesture();
+    clearFlicker(); clearTimeout(signoffTimer); signoff = null;
     reflectHold();   // liveness off: the paused hint must not outlive the feature
   }
 
@@ -318,6 +482,7 @@
       if (!document.hidden && degradedPending) sayDegraded();
     });
   } catch (e) {}
+  try { window.addEventListener("moxie-signoff", onSignoff); } catch (e) {}   // AFTER A GOODBYE
 
   function boot() {
     var idle = document.getElementById("idle-on");
@@ -336,8 +501,8 @@
   // expose for tests / manual poking
   window.moxieAmbient = { start: function () { start(false); }, stop: stop,
                           gesture: playGesture,
-                          say: function () { running = true; started = true;
-                            (lines ? Promise.resolve() : loadOnce()).then(tick); },
+                          say: function () { running = true; started = true;   // never a glitch
+                            (lines ? Promise.resolve() : loadOnce()).then(function () { tick(false); }); },
                           // for tests and manual poking: the degraded line's state
                           degradedState: function () {
                             return { text: degraded && degraded.text ? degraded.text : null,
@@ -345,15 +510,18 @@
                           } };
 
   /* TEST SEAM, not an API: test_liveliness.mjs shortens the quiet period and reads the
-   * recorded state. Nothing in the page calls it. */
+   * recorded state; test_ambient.mjs reads the beats' state and stands in for the
+   * transcript observer (`noteTurn(true)` = a visitor's row). Nothing in the page calls it. */
   window.__ambient = {
     quietMs: function (ms) { if (typeof ms === "number" && ms >= 0) CHAT_QUIET_MS = ms; return CHAT_QUIET_MS; },
     state: function () {
       return { running: running, conversing: conversing(), composing: composing(),
-               livenessOn: livenessOn(), lastTurnAt: lastTurnAt, watching: watching };
+               livenessOn: livenessOn(), lastTurnAt: lastTurnAt, watching: watching,
+               quips: quips, glitchAt: glitchAt, signoff: !!signoff, visitorTurns: visitorTurns };
     },
     noteTurn: noteTurn,
-    say: function (text) { logMutter(text); }
+    say: function (text) { logMutter(text); },
+    glitch: function () { return glitch(); }        // the glitch beat now, for a manual look
   };
 
   /** Repaint the hold as the visitor starts or stops writing — the next tick can be 24 s

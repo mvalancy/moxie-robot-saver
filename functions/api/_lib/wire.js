@@ -5,7 +5,7 @@
  * `automarkup.annotate`).
  *
  * The SIM front end is a PROTOCOL client: `bridge.js::route(topic, payloadString)` parses
- * the JSON itself and `audio.js` decodes `CloudTTSResponse` itself. So the hosted brain
+ * the JSON itself and `voice/cloud.js` decodes `CloudTTSResponse` itself. So the hosted brain
  * must produce the same JSON strings the supervisor does. This is a cited transcription
  * of `mqtt/moxie_sdk/wire.py::build_chat_response` and
  * `mqtt/moxie_sdk/tts.py::build_cloud_tts_response` (a Function cannot import Python).
@@ -89,7 +89,7 @@ export function chatMessage(deviceId, response) {
  * ---------------------------------------------------------------------------- */
 
 /**
- * `tts.build_cloud_tts_response`'s output — the inverse of `audio.js::decodeCloudTTS`.
+ * `tts.build_cloud_tts_response`'s output — the inverse of `voice/cloud.js::decodeCloudTTS`.
  * `buffer` is base64 of RAW little-endian 16-bit PCM, not a container. `marks` is `[]`:
  * with no marks the mouth follows the audio envelope, so lip-sync still happens.
  */

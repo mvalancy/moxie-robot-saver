@@ -24,11 +24,24 @@ streams its microphone only after the cloud asks with a `ProtoSubscribe` naming
 (mqtt-and-conversation.md §3.4, §4.3). The encoders below write that framing with no
 protobuf runtime, mirroring the reader `decode_zmq_stt_frame`; the committed
 `tools/robot-toolkit` pb2 files are the oracle the tests check them against.
+
+Honest ears (ai-seam.md §1 "What the ears refuse to hear"): Whisper answers silence and room
+noise with words ("Bye.", "Thank you.", "you") or sound labels ("(machine whirring)",
+"[BLANK_AUDIO]"), and the robot would take them as the child's turn. `SttSession` sends
+digital silence and sub-120 ms clips to no engine, strips sound labels, and drops one of
+Whisper's known silence phrases (`PHANTOM_CANON`) when the clip is quiet or short; local
+whisper runs its own voice detector. `MOXIE_STT_PHANTOM_GATE=off` restores the ears as they
+were, local whisper included.
 """
 from __future__ import annotations
+import math
+import operator
+import os
+import re
 import struct
 import threading
 import time
+from array import array
 from enum import IntEnum
 from typing import Iterable, Optional
 
@@ -61,16 +74,176 @@ class Transcriber:
         return True
 
 
+# ---- honest ears: what the ears refuse to hear ----
+# Levels are the RMS of the whole clip as a fraction of int16 full scale. LOUD_RMS and
+# ROOM_TONE_RMS come from the hosted page's browser microphones (sim/web/mic.js: room tone
+# ~0.005, speech 0.05+, with automatic gain, judged per block rather than per clip), not
+# from Moxie's far-field, echo-cancelled microphone: they are unverified on a robot. Every
+# drop SttSession makes is reported with its numbers so they can be tuned; what local
+# whisper's own voice detector removes is inside the engine and comes back as no text.
+
+#: Below this a clip is digital silence: nothing to hear, so no engine is asked.
+SILENCE_RMS = 0.001
+#: Shortest clip worth transcribing: the gateway engine's own floor
+#: (`OpenAITranscriber.MIN_MS`, door slams and breaths), applied to every engine.
+MIN_UTTERANCE_MS = 120
+#: At or above this a clip is loud, and a loud clip is never dropped on its text.
+LOUD_RMS = 0.05
+#: Defaults of `MOXIE_STT_ROOM_TONE_RMS` and `MOXIE_STT_MIN_SPEECH_MS`: one of Whisper's
+#: silence phrases on a clip quieter or shorter than these is not the child's word.
+ROOM_TONE_RMS = 0.01
+MIN_SPEECH_MS = 250.0
+
+#: Whisper's known outputs for silence and room noise that would do harm as a child's turn,
+#: normalised by `canon_phrase` (lower case, punctuation as spaces). A lone farewell can end
+#: the activity (the llm brain is taught to answer a goodbye with `<exit>`, and Whisper
+#: spells a real "bye" as "By."); "you", the thanks and the caption credit are what it
+#: writes for room tone and the end of a video. Matched against the WHOLE transcript only,
+#: so a sentence that merely contains one ("I don't want to play anymore, bye") is kept.
+#: Never a word a child uses as a real short answer (okay, yes, no, hmm, uh). Pinned as a
+#: set by sim/tests/test_honest_ears.py (OQ2).
+PHANTOM_CANON = frozenset({
+    "bye", "by", "bye bye", "goodbye", "you", "thank you", "thanks",
+    "thanks for watching", "the end", "subtitles by the amara org community",
+})
+
+#: Whisper's labels for sounds: one parenthesised or bracketed run, "(machine whirring)"
+#: or "[BLANK_AUDIO]" (the hosted ears' SOUND_LABEL, functions/api/transcribe.js:207).
+_SOUND_LABEL = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+_NOT_WORD = re.compile(r"[^\w\s]|_")
+_OFF = ("0", "off", "false", "no")
+
+
+def clean_transcript(text) -> str:
+    """The words a child could have said: control characters removed, Whisper's sound
+    labels removed ("(laughs) hi Moxie" -> "hi Moxie"), whitespace collapsed. A transcript
+    with no letter or digit left ("(machine whirring)", "[BLANK_AUDIO]", "♪ ♪") is ""."""
+    flat = _CONTROL.sub(" ", str(text or ""))
+    prev = None
+    while prev != flat:                      # a label inside a label: one level a pass
+        prev, flat = flat, _SOUND_LABEL.sub(" ", flat)
+    flat = " ".join(flat.split())
+    return flat if any(ch.isalnum() for ch in flat) else ""
+
+
+def canon_phrase(text) -> str:
+    """The `PHANTOM_CANON` entry this whole transcript is ("Bye-bye!" -> "bye bye"), else
+    "". Only an entry of the fixed list is ever returned, never the transcript itself."""
+    key = " ".join(_NOT_WORD.sub(" ", clean_transcript(text).lower()).split())
+    return key if key in PHANTOM_CANON else ""
+
+
+def audio_stats(pcm: bytes, sample_rate: int = 16000) -> tuple:
+    """`(duration in ms, RMS level as a fraction of int16 full scale)` of 16-bit
+    little-endian mono PCM, in the standard library (no numpy; `audioop` left the stdlib
+    in 3.13). A trailing odd byte is ignored by the level."""
+    import sys
+    data = bytes(pcm or b"")
+    ms = (len(data) / 2.0) / float(sample_rate or 1) * 1000.0
+    n = len(data) // 2
+    if not n:
+        return ms, 0.0
+    samples = array("h")
+    samples.frombytes(data[:2 * n])
+    if sys.byteorder == "big":
+        samples.byteswap()
+    return ms, math.sqrt(sum(map(operator.mul, samples, samples)) / n) / 32768.0
+
+
+def phantom_reason(pcm: bytes, sample_rate: int, text, *,
+                   room_tone_rms: float = ROOM_TONE_RMS,
+                   min_speech_ms: float = MIN_SPEECH_MS, stats=None) -> str:
+    """Why this transcript of this clip is not the child's word, or "" to keep it.
+
+    `label_only`: the engine wrote something, and nothing with a letter or digit is left
+    once its sound labels are gone, at any level. `quiet_short_hallucination`: the whole
+    transcript is a `PHANTOM_CANON` phrase and the clip is not loud and either quieter
+    than `room_tone_rms` or shorter than `min_speech_ms`. A loud clip is never dropped on
+    its text, and a transcript that is not word for word a canon phrase is never dropped.
+    `stats` reuses an `audio_stats` result."""
+    if not str(text or "").strip():
+        return ""                            # the engine heard nothing: nothing to drop
+    if not clean_transcript(text):
+        return "label_only"
+    if not canon_phrase(text):
+        return ""
+    ms, rms = stats if stats is not None else audio_stats(pcm, sample_rate)
+    if rms >= LOUD_RMS:
+        return ""
+    if rms < room_tone_rms or ms < min_speech_ms:
+        return "quiet_short_hallucination"
+    return ""
+
+
+def _env_number(name: str, default: float) -> float:
+    """`float(os.environ[name])`, else `default` (unset, empty, or not a number): the
+    parse `mqtt/config.py::_env_float` applies to the same variables."""
+    try:
+        return float(os.environ.get(name) or default)
+    except ValueError:
+        return float(default)
+
+
+def ears_knobs() -> dict:
+    """The honest-ears knobs from the environment, read when a listening session starts
+    (the runtime never imports `config`, which names the same three variables):
+    `MOXIE_STT_PHANTOM_GATE` (on unless 0/off/false/no; unset, empty or blank is on),
+    `MOXIE_STT_ROOM_TONE_RMS`, `MOXIE_STT_MIN_SPEECH_MS`. config.py spells the gate with
+    this same expression, and a test pins that the two agree."""
+    gate = (os.environ.get("MOXIE_STT_PHANTOM_GATE") or "").strip().lower() or "on"
+    return {"phantom_gate": gate not in _OFF,
+            "room_tone_rms": _env_number("MOXIE_STT_ROOM_TONE_RMS", ROOM_TONE_RMS),
+            "min_speech_ms": _env_number("MOXIE_STT_MIN_SPEECH_MS", MIN_SPEECH_MS)}
+
+
+#: What a drop says in the console feed: fixed words and numbers, never the transcript.
+_DROP_LINES = {
+    "silence": "digital silence, not sent to the ears",
+    "too_short": "too short to be a word, not sent to the ears",
+    "label_only": "only a sound label, no words",
+}
+
+
+def describe_drop(drop: dict) -> str:
+    """One line for a drop ("dropped a phantom 'bye' (0.60 s, level 0.004)"): the canon
+    phrase (an entry of the fixed list), the duration and the level, nothing else."""
+    numbers = (f"({float(drop.get('ms') or 0) / 1000.0:.2f} s, "
+               f"level {float(drop.get('rms') or 0):.3f})")
+    if drop.get("reason") == "quiet_short_hallucination":
+        return f"dropped a phantom '{drop.get('phrase', '')}' {numbers}"
+    return f"{_DROP_LINES.get(drop.get('reason'), 'dropped')} {numbers}"
+
+
 class SttSession:
     """Accumulate one utterance's audio across VAD-tagged frames, then transcribe.
 
     feed(vad, audio) returns None while speech is ongoing, and the final transcript
-    string when END_OF_SPEECH arrives (then resets for the next utterance)."""
+    string when END_OF_SPEECH arrives (then resets for the next utterance).
 
-    def __init__(self, transcriber: Transcriber, sample_rate: int = 16000):
+    The honest ears, on unless `phantom_gate` is off (`MOXIE_STT_PHANTOM_GATE`): a clip
+    at digital silence or shorter than 120 ms answers "" with no engine call (no gateway
+    spend, no latency); otherwise the transcript is cleaned (`clean_transcript`) and
+    `phantom_reason` decides. A drop answers "" (still a FINAL on the wire) and is kept in
+    `last_drop` (reason, canon phrase, ms, rms) for the runtime's console note;
+    `last_stats` is the last clip's `(ms, rms)`. The knobs default to `ears_knobs()`."""
+
+    def __init__(self, transcriber: Transcriber, sample_rate: int = 16000, *,
+                 phantom_gate: Optional[bool] = None,
+                 room_tone_rms: Optional[float] = None,
+                 min_speech_ms: Optional[float] = None):
         self._t = transcriber
         self._sr = sample_rate
         self._buf = bytearray()
+        knobs = ears_knobs()
+        self.phantom_gate = (knobs["phantom_gate"] if phantom_gate is None
+                             else bool(phantom_gate))
+        self.room_tone_rms = float(knobs["room_tone_rms"] if room_tone_rms is None
+                                   else room_tone_rms)
+        self.min_speech_ms = float(knobs["min_speech_ms"] if min_speech_ms is None
+                                   else min_speech_ms)
+        self.last_stats: Optional[tuple] = None
+        self.last_drop: Optional[dict] = None
 
     def reset(self) -> None:
         self._buf = bytearray()
@@ -89,22 +262,56 @@ class SttSession:
                 self._buf.extend(audio)
             pcm = bytes(self._buf)
             self.reset()
+            self.last_stats = self.last_drop = None
             if not pcm:
                 return ""
-            return (self._t.transcribe(pcm, self._sr) or "").strip()
+            if not self.phantom_gate:                # the ears as they were before the gate
+                return (self._t.transcribe(pcm, self._sr) or "").strip()
+            return self._hear(pcm)
         return None
+
+    def _hear(self, pcm: bytes) -> str:
+        ms, rms = self.last_stats = audio_stats(pcm, self._sr)
+        if rms < SILENCE_RMS:
+            return self._drop("silence", ms, rms)
+        if ms < MIN_UTTERANCE_MS:
+            return self._drop("too_short", ms, rms)
+        text = self._t.transcribe(pcm, self._sr) or ""
+        reason = phantom_reason(pcm, self._sr, text, room_tone_rms=self.room_tone_rms,
+                                min_speech_ms=self.min_speech_ms, stats=(ms, rms))
+        if reason:
+            return self._drop(reason, ms, rms, canon_phrase(text))
+        return clean_transcript(text)
+
+    def _drop(self, reason: str, ms: float, rms: float, phrase: str = "") -> str:
+        self.last_drop = {"reason": reason, "phrase": phrase, "ms": round(ms, 1),
+                          "rms": round(rms, 4)}
+        return ""
 
 
 class WhisperTranscriber(Transcriber):
     """Local STT via faster-whisper (CPU/GPU), imported lazily; `available()` is False
-    without it or numpy. `MOXIE_STT=whisper` selects it even with a gateway configured."""
+    without it or numpy. `MOXIE_STT=whisper` selects it even with a gateway configured.
+
+    The honest ears' half inside the engine, on unless `phantom_gate` is off (default: the
+    `MOXIE_STT_PHANTOM_GATE` knob, read when the engine is built): faster-whisper's own
+    voice detector, and the cut of a segment rated as silence (`NO_SPEECH_PROB`). Off, the
+    model is called exactly as before the gate and every segment is kept."""
     name = "faster-whisper"
 
+    #: A segment Whisper itself rates as more likely silence than speech is not the child's.
+    #: Stricter than Whisper's own rule, which skips one only when its average log
+    #: probability is also below -1 (faster-whisper applies that by default): a confident
+    #: short word rated above this is cut too, at any level (ai-seam.md §1).
+    NO_SPEECH_PROB = 0.6
+
     def __init__(self, model: str = "base.en", device: str = "auto",
-                 compute_type: str = "int8"):
+                 compute_type: str = "int8", *, phantom_gate: Optional[bool] = None):
         from faster_whisper import WhisperModel   # lazy
         self.model = model                        # public: a console model picker reads it
         self._model = WhisperModel(model, device=device, compute_type=compute_type)
+        self.phantom_gate = (ears_knobs()["phantom_gate"] if phantom_gate is None
+                             else bool(phantom_gate))
 
     def describe(self) -> str:
         return f"{self.name} ({self.model})"
@@ -122,8 +329,17 @@ class WhisperTranscriber(Transcriber):
         import numpy as np
         # 16-bit little-endian PCM → float32 in [-1, 1]
         audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-        segments, _ = self._model.transcribe(audio, language="en", beam_size=1)
-        return " ".join(s.text for s in segments).strip()
+        if not self.phantom_gate:                    # the engine as it was before the gate
+            segments, _ = self._model.transcribe(audio, language="en", beam_size=1)
+            return " ".join(s.text for s in segments).strip()
+        # vad_filter: faster-whisper's own voice detector cuts the silence out before
+        # decoding, where Whisper invents "Thank you." (as the SIL STT service does,
+        # sim/stt/server.py); a segment it still rates as silence is dropped.
+        segments, _ = self._model.transcribe(audio, language="en", beam_size=1,
+                                             vad_filter=True)
+        return " ".join(s.text for s in segments
+                        if (getattr(s, "no_speech_prob", 0.0) or 0.0)
+                        <= self.NO_SPEECH_PROB).strip()
 
 
 class SttServerError(RuntimeError):

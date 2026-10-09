@@ -12,10 +12,10 @@ the numbering is stable. When this page and the code disagree, the code wins. Fi
 ## 1. What it is
 
 Three same-origin Cloudflare Pages Functions turn a typed or spoken sentence into the two JSON payloads
-`bridge.js` `route()` already renders: a `remote_chat` reply and a `CloudTTSResponse`. The avatar then
-answers in the gateway voice with face, gestures and lip-sync. `bridge.js` and `audio.js` are not
-modified. Around this sit caps that stop a stranger from spending more than a bounded amount. There is
-also an honest fallback to the scripted Sim.
+the Sim's `route()` already renders: a `remote_chat` reply and a `CloudTTSResponse`. The avatar then
+answers in the gateway voice with face, gestures and lip-sync, through the same renderer the
+supervisor's payloads use (`sim/web/bridge/` and `sim/web/voice/`). Around this sit caps that stop a
+stranger from spending more than a bounded amount. There is also an honest fallback to the scripted Sim.
 
 > **Definition of done:** a stranger opens the production domain, types or speaks a sentence, and Moxie
 > answers in her gateway voice. The browser never holds the gateway key. No visitor can spend more than a
@@ -295,23 +295,27 @@ rule rules out model substitution, `n`/`tools` amplification and system-prompt o
 | `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500 000 / 2 000 | a **size** cap, not a duration cap. 500 KB is about 15 s at 16 kHz s16, but over 60 s at 8 kHz 8-bit. The floor answers `too_short` for free. |
 | `DEMO_MAX_RECORD_MS` | 15 000 | **The real ceiling on STT cost.** `mic.js` hard-stops the recorder. The server reads a WAV header's own `rate × channels × bits` against the data size (`_lib/wav.js::wavDurationMs`) and refuses `too_long` with zero upstream calls. Compressed containers cannot be measured without a decoder. The WAV-only default for `DEMO_STT_FORMATS` is what makes the cap total. Widening that list re-opens the gap. |
 | Per-IP chat | 5/min · 40/hour · 150/day | generous for a person, cheap for us |
-| Per-IP speech | 10/min · 80/hour | no day window (the unit budget's day covers it). Sized for **two** voice chunks per chat turn at full pace (5/min, 40/hour). With three-sentence replies the window fills at about **4 typed turns a minute, or about 27 in an hour**: earlier turns' later chunks spend it, so first a later chunk is refused `rate_limited` (that reply's voice ends there, the words stay on screen), and then the **next turn's chunk 0** is refused too, which makes that whole reply speak in the browser voice (the chunk-0 rule of §3.4). Unreachable before 2026-10-08 (one ticket a turn, so at most 5 speech a minute). Raising them is a `DEFAULTS` change in `env.js` — owner call. |
-| Per-IP transcribe | 10/min · 60/hour | no day window |
+| Per-IP speech | 10/min · 80/hour · 300/day | Sized for **two** voice chunks per chat turn at full pace (5/min, 40/hour). With three-sentence replies the window fills at about **4 typed turns a minute, or about 27 in an hour**: earlier turns' later chunks spend it, so first a later chunk is refused `rate_limited` (that reply's voice ends there, the words stay on screen), and then the **next turn's chunk 0** is refused too, which makes that whole reply speak in the browser voice (the chunk-0 rule of §3.4). Unreachable before 2026-10-08 (one ticket a turn, so at most 5 speech a minute). Raising them is a `DEFAULTS` change in `env.js` — owner call. The day is chat's day at the hour caps' ratio, 2 a reply (1.6 measured with one ticket per sentence), so a visitor at that pace meets chat's day first (every reply at the three-chunk maximum spends it by turn 100). Without it one address could spend a colo's whole day alone (§4.6). `DEMO_SPEECH_PER_DAY=0` removes it. |
+| Per-IP transcribe | 10/min · 60/hour · 225/day | 1.5 uploads a spoken turn over chat's day, the hour caps' ratio again. `DEMO_STT_PER_DAY=0` removes it. One address at every per-IP day maximum spends 150×3 + 300×2 + 225×2 = 1 500 units, under half the 4 000-unit day. |
 | Concurrency | chat 4 · speech 8 | `transcribe` **shares chat's ceiling**. Matched to the upstream key's parallel limit, which protects a neighbouring service. Deliberately not raised. |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_DEPTH` | 2 500 ms / 8 | At the ceiling a request waits in a bounded FIFO. Past the depth, or when the wait expires, it is refused `at_capacity`. **Either set to 0** gives instant refusal. |
-| Timeouts, chat / speech / STT | 20 000 / 12 000 / 12 000 ms | Chat is below the 45 s worst case on purpose: a fast honest degrade beats a slow success. |
+| Timeouts, chat / speech / STT | 10 000 / 12 000 / 12 000 ms | Chat measured 2026-10-08 on `moxie-brain-dense` + `single` (169 turns): p50 1.7 s, p99 3.4 s, max 4.7 s. 10 s is about 3× that p99 and still holds the gateway's fallback (a first model failing as late as its slowest turn, then `moxie-brain`'s p99 of 4.1 s). A fast honest degrade beats a slow success. |
 | Unit budget | 600/hour · 4 000/day | **Request units**, not dollars, because no price sheet exists (assumption 19). chat = 3, speech = 2, transcribe = 2 (`_lib/counters.js::UNITS`). A turn is 3 + 2 per voice chunk: 5 units with one chunk (120 turns an hour, 800 a day), 9 with the three-chunk maximum (66 an hour, 444 a day); measured 2026-10-08, ten typed turns made 16 chunks, 6.2 units a turn on average (about 96 turns an hour, 645 a day). |
 | `DEMO_TICKET_TTL_S` | 60 | long enough for a slow client, short enough that a leaked ticket is useless |
 | `DEMO_ENABLED` | on | kill switch: `0` forces `gateway_not_configured` without deleting the secret |
+| `DEMO_SERVE_HOSTS` | unset (every host) | the hostnames that may spend, comma separated, matched exactly. Any other host answers `gateway_not_configured` before anything is charged, and `/api/health` says so. On production, list only the canonical host, so the platform alias and every superseded deployment's own URL cannot spend with the key. Set but unusable, it serves no host. |
 
 **What "per-IP" keys on** (`_lib/clientip.js`). The key is `CF-Connecting-IP`, with IPv6 truncated to
-its **/64**, so one subscriber is one bucket. `::ffff:a.b.c.d` is unmapped to the v4 address. It is not
-truncated, which would collapse all of IPv4 into one bucket. `X-Forwarded-For` is honoured only with
+its **/56**, the prefix a residential line is commonly delegated, so one subscriber is one bucket. Keyed
+by the /64, one such line held 256 buckets, and two /64s of one /56 spent a colo's whole day in the
+hermetic grief simulation. Neighbours who share a /56 share a bucket, as IPv4 NAT already does.
+`::ffff:a.b.c.d` is unmapped to the v4 address. It is not truncated, which would collapse all of IPv4
+into one bucket. `X-Forwarded-For` is honoured only with
 `DEMO_TRUST_XFF`, which must stay **unset in production**. Callers who cannot be identified share one
 `unknown` bucket.
 
-**Admission order** (`_lib/limits.js::admit`) is origin pin, then per-IP windows, then unit budget, then
-concurrency (with the FIFO), then the shared tier. Every free refusal happens before any expensive one.
+**Admission order** (`_lib/limits.js::admit`) is the served host (`DEMO_SERVE_HOSTS`), then origin pin,
+then per-IP windows, then unit budget, then concurrency (with the FIFO), then the shared tier. Every free refusal happens before any expensive one.
 The concurrency slot, the only thing that must be given back, is taken last and released in a `finally`.
 Inside the FIFO, `release()` **hands the slot to the longest waiter** without decrementing, so a late
 arrival cannot overtake.
@@ -333,7 +337,9 @@ arrival cannot overtake.
 `CF-Access-*` pair when configured. An unfollowed 3xx answers `gateway_unreachable_or_gated`: a door
 problem such as an Access login, a moved endpoint or an `http://` base, rather than `upstream_down`.
 Write the `https://` URL. An Access login page served at 200 is recognised as the same reason. An
-upstream 429 becomes our 429, with `Retry-After` taken from the gateway, clamped to 300, default 10.
+upstream 429 becomes our 429, with `Retry-After` taken from the gateway, clamped to 300. When the
+gateway names none it is 10, except on `/api/transcribe`: 60, because the speech-to-text group answers
+429 with no header through a measured 60 s cooldown.
 
 **Pre-inference safety** (`_lib/safety.js` + `safety.rules.js`, a plain JS module because the Pages build
 rejects JSON import attributes, assumption 26). A hard block returns `reason: "blocked"`, 200,
@@ -401,11 +407,11 @@ The `/api/*` routes write nothing durable anywhere.
 
 | Status | `reason` | `Retry-After` | The Sim |
 |---|---|---|---|
-| 429 | `rate_limited` (per-IP window, or the gateway's own 429) | window reset / upstream value | Answers this turn from `stub.js` and suppresses live turns until `Retry-After`. Up to 60 s (the minute window) it stays `live` with the *slow down* chip; longer (such as the hour or day cap) it **rests**: `degraded`, a `RESTING` badge and the minutes left, `live` again when the window lifts. |
+| 429 | `rate_limited` (per-IP window, or the gateway's own 429) | window reset / upstream value (none named: 10, or 60 on `/api/transcribe`) | Answers this turn from `stub.js` and suppresses live turns until `Retry-After`. Up to 60 s (the minute window) it stays `live` with the *slow down* chip; longer (such as the hour or day cap) it **rests**: `degraded`, a `RESTING` badge and the minutes left, `live` again when the window lifts. |
 | 503 | `at_capacity` (ceiling reached and queue full or wait expired) | 15 | Busy pill, answers from the stub. |
 | 503 | `budget_exhausted` | seconds to the window reset | Full degrade. Next health poll at `Retry-After`. |
 | 503 | `upstream_down`, `gateway_unreachable_or_gated` | 60 | Full degrade, ended only by a clean turn (§6.3). |
-| 503 | `gateway_not_configured` | none | Full degrade for the session. |
+| 503 | `gateway_not_configured` (also any host `DEMO_SERVE_HOSTS` does not list) | none | Full degrade for the session. |
 | 503 | `turnstile_misconfigured` | 60 | Degraded, scripted copy. |
 | 504 | `timeout` (our own `AbortSignal`) | 10 | Answers from the stub. Full degrade on the **first**: every turn into a hung gateway waits the whole deadline. Ended only by a clean turn; its trial turns back off (§6.3). |
 | 400 | `bad_request`, `too_long`, `too_short`, `bad_ticket` | none | Plain reason inline. Mode does **not** change. |
@@ -421,6 +427,14 @@ A spend refusal opens no client-side suppression window. `budget_exhausted` leav
 which is stronger. Recovery is gated by the server's `Retry-After`, clamped by `mode.js`'s
 `POLL_MAX_MS` (5 min). The page reads only the body's `retry_after_s`, which is `0` for
 `upstream_down` and `timeout` (their header values never reach it).
+
+**Every refusal writes one log line** (`_lib/envelope.js::logRefusal`, called once per refusal envelope
+by `_lib/upstream.js::refusal`), readable in the Pages real-time logs:
+`{"evt":"refusal","route":"chat","reason":"rate_limited","status":429,"colo":"SJC"}`. Four closed
+fields and nothing else: never the visitor's text, address or rate-limit key, a header, a ticket or a
+context blob. `colo` is `""` for a refusal made before admission saw the request. A served turn, a
+`blocked` turn and `/api/health` write nothing. `sim/tests/edge/demo_proxy/12_spend_ops.mjs` §24f
+sends a canary as the chat text through every path and finds it in no console output.
 
 ### 4.6 Counters, honestly
 
@@ -759,6 +773,7 @@ clamped. `_lib/env.js::DEFAULTS` is the source of truth.
 | `DEMO_MAX_RECORD_MS` | 15000 | 1000..600000 |
 | `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500000 / 2000 | 1..5e7 / 0..5e7 |
 | `DEMO_TRUST_XFF` | off | **leave unset in production** |
+| `DEMO_SERVE_HOSTS` | none (every host) | comma-separated hostnames that may spend, matched exactly; any other host reads as unconfigured (§4.1). Set but with no usable hostname, no host is served |
 | `DEMO_PERSONA` | built-in (v2, §4.11) | the system prompt; the built-in text is the measured one, an override is not |
 | `DEMO_DEVICE_ID` | `d_sim` | topic segment |
 | `DEMO_ALLOWED_ORIGINS` | none (the request's own origin) | comma-separated extra origins |
@@ -771,14 +786,14 @@ clamped. `_lib/env.js::DEFAULTS` is the source of truth.
 | `DEMO_TURN_SHAPE` / `DEMO_REROLL` | on / on | §4.10 / §4.9 |
 | `DEMO_PROMPT_LAYOUT` | `anchor` | `anchor` · `single` (§3.3); an unknown value falls back to `anchor` with a note; measure a model on `single` before switching production to it |
 | `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | ≥ 1 |
-| `DEMO_SPEECH_PER_MIN` / `_HOUR` | 10 / 80 | ≥ 1 |
-| `DEMO_STT_PER_MIN` / `_HOUR` | 10 / 60 | ≥ 1 |
+| `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY` | 10 / 80 / 300 | ≥ 1 / ≥ 1 / 0..10 000 000; a `_DAY` of 0 means no day window |
+| `DEMO_STT_PER_MIN` / `_HOUR` / `_DAY` | 10 / 60 / 225 | ≥ 1 / ≥ 1 / 0..10 000 000; a `_DAY` of 0 means no day window |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | 1..10000; transcribe uses chat's |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_DEPTH` | 2500 / 8 | 0..10000 / 0..1000; 0 disables the queue |
 | `DEMO_CACHE_COUNTER` / `DEMO_CACHE_TIMEOUT_MS` | on / 250 | timeout 10..2000 |
 | `DEMO_TTS_CACHE` / `_TTL_S` / `_TIMEOUT_MS` | on / 86400 / 1000 | 60..604800 / 50..5000 |
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | 600 / 4000 | 0 means uncapped |
-| `DEMO_CHAT_TIMEOUT_MS` / `_SPEECH_` / `_STT_` | 20000 / 12000 / 12000 | 1000..120000 |
+| `DEMO_CHAT_TIMEOUT_MS` / `_SPEECH_` / `_STT_` | 10000 / 12000 / 12000 | 1000..120000 |
 | `DEMO_TURNSTILE_SECRET` (secret) / `_SITEKEY` | none | **both or neither**; leave unset on Preview |
 | `DEMO_TURNSTILE_HOSTS` | the request's own hostname | exact match |
 | `DEMO_TURNSTILE_TIMEOUT_MS` | 2000 | 100..10000; a slow answer fails open |
@@ -808,9 +823,11 @@ scripted child line on any refusal, and shows the reason.
   so the random bag cannot reach it. Its clip is in the manifest's `moxie` group. `ambient.js` speaks it
   **once, on entering `degraded` only**, not `offline`. If autoplay is locked, the tab is hidden or
   liveness is off, it arms and speaks on the next unlock.
-- **The 1.4 s Piper probe is skipped when `degraded`** (`audio.js::skipProbe`). It still runs in
-  `offline`, where a self-hoster's local Piper is the reason it exists. An explicit `moxie.ttsBase`
-  wins in every state.
+- **The 1.4 s Piper probe is skipped when `degraded`** (`voice/local.js::skipProbe`). It still runs
+  in `offline`, where a self-hoster's local Piper is the reason it exists. An explicit `moxie.ttsBase`
+  wins over the mode. A page served from a public origin never probes at all: the sidecar's port is a
+  localhost port and the CSP's `connect-src 'self'` would refuse the request, so only localhost, LAN,
+  `*.local`, `*.lan` and `file://` pages probe.
 - `sim/test_fallback_coverage.mjs` inventories every line a degraded page can say and requires a clip
   for each.
 
@@ -890,7 +907,7 @@ suite is split into modules under `sim/tests/edge/<suite>/`.
 |--:|---|---|
 | 1 | `sim/test_demo_proxy.mjs` | Unknown keys dropped; the upstream body uses the configured model and `max_tokens`; `too_long`; origin refusal with zero upstream calls; upstream 429/500 sanitized (no model or key text in any response); `budget_exhausted`; `X-RateLimit-*` on success; the §2.2 field set with no `chunk_num`, `consistency_control` or `emotion`. Also the queue (block 13), shared tier (§15), TTS cache (§16), re-roll and turn shape, the goodbye close and the prompt layouts (§19–22: persona once, anchor last, no non-first system message outside `anchor`, no brace ever in the spoken text or the tickets), one ticket per sentence (§10f: the measured 311-char reply yields 2–3 tickets that join back to the whole reply, every one redeemable with its `chunk_num`; the three-chunk cap; a word-bounded cut; a three-chunk turn is 9 units), API headers, and a fail on any `.json` import under `functions/`. |
 | 2 | `sim/test_demo_tickets.mjs` | Forged, expired, over-length, replayed or tampered ticket or context; round-trip; constant-time compare; the sentence splitter (numbers, abbreviations, initials, ellipses and mermaid fences never split; chunks join back to the reply; the cap and the word-bounded cut) and `mintTickets`. |
-| 3 | `sim/test_wav_decode.mjs` | The RIFF walker uses the header's own rate and channels, refuses 8- and 24-bit and JSON, and agrees sample-for-sample with `audio.js`'s decoder; `wavDurationMs`. |
+| 3 | `sim/test_wav_decode.mjs` | The RIFF walker uses the header's own rate and channels, refuses 8- and 24-bit and JSON, and agrees sample-for-sample with `voice/cloud.js::decodeCloudTTS`; `wavDurationMs`. |
 | 4 | `sim/test_mode.mjs` | The state machine, backoff, hidden-tab rule, `offline` never polls; env defaults and envelope. |
 | 5 | `sim/test_cloud_transport.mjs` | Seven members intact; TTS routed before chat; chat lands by the 2.5 s wait; delegation when not live; the naive ordering proven to double-voice; one ticket per sentence (§4b–4h: chunks redeemed one at a time and routed in order behind chunk 0, a later chunk's failure ends the voice with no local stand-in, a hanging chunk given up at the deadline, three chunks heard in order on the real `voice/`); overlapping turns (§4i–4k, on the real `voice/`: two typed turns 200 ms apart, three chunks each — once the newer chunk 0 is routed nothing more of the older reply is requested and no sentence of it is heard after the newer reply; an older chunk 0 still in flight is dropped with no local stand-in; a stub answer to the newer turn ends the older pipeline too). |
 | 6 | `sim/test_fallback_coverage.mjs` | Every line the degraded page can utter has a clip on disk; the prerender tool keeps every manifest group. |
@@ -907,7 +924,7 @@ parity), `sim/test_api_headers.mjs` (real socket and Chrome), `sim/tests/helpers
 ### 8.2 What only a real deploy settles
 
 Previews carry no secrets, so they prove routing, envelopes and headers but nothing past the config
-gate. Production-only questions: Pages CPU, wall-clock and body limits against a 20 s chat timeout
+gate. Production-only questions: Pages CPU, wall-clock and body limits against a 10 s chat timeout
 (assumption 10); whether Production and Preview variables are truly separate (assumption 11); plan
 features (assumption 13); the gateway key budget (assumption 14). `sim/tests/test_live_hosted_ears.py`
 exercises the real route (assumption 29).
@@ -950,19 +967,19 @@ These numbers are stable, and code cites them.
 
 | # | Assumption | State |
 |--:|---|---|
-| 1–2 | `route()` is the only ingress; `bridge.js` and `audio.js` need no change | proven (test 5) |
+| 1–2 | `route()` is the only ingress; the Sim's renderer (`sim/web/bridge/`, `sim/web/voice/`) needs no second path for the hosted payloads | proven (test 5) |
 | 3 | `build_chat_response`'s field set is the whole chat contract | proven |
 | 4 | Omitting `chunk_num`/`consistency_control` is byte-identical to the pre-streaming wire | proven |
 | 5 | The Sim ignores `result` | proven (`stub.js` sends `"OK"`) |
 | 6–7 | Raw s16 PCM at the header's rate plays; empty `marks` still lip-sync | proven (test 3) |
 | 8 | `functions/` at the repo root is routed with output dir `sim/web` | **settled true** by a preview `curl` |
 | 9 | `functions/api/_lib/` is not routable | **settled true**: it serves the static HTML fallback (200, not 404; check the content type) |
-| 10 | Pages allows a 20 s wall clock and a ~500 KB body | unverified; every timeout is a variable |
+| 10 | Pages allows a 10 s wall clock (20 s before 2026-10-08) and a ~500 KB body | unverified; every timeout is a variable |
 | 11 | Production and Preview variables are separate | partial: previews hold only Pages' own 5 env keys, but separation is unproven until Production holds secrets |
 | 12 | Free-tier Functions limits (requests, CPU) | unverified; nowhere in the repo |
 | 13 | KV / Durable Objects / WAF rate limiting exist on this plan | split. The runtime has **no** stateful binding configured, and whether the plan offers one is a dashboard question. The Cache API needs no binding, so §4.6.1 did not depend on this. |
 | 14 | The gateway can mint a budget-scoped virtual key | unverified; **check first** |
-| 15 | The gateway accepts webm/Opus for STT | **settled false**: it returns 500 to webm/ogg/mp4 and transcribes 16 kHz mono WAV. So `DEMO_STT_FORMATS=wav`, and `mic.js` encodes WAV in the browser. |
+| 15 | The gateway accepts webm/Opus for STT | **settled false**, but it is not WAV-only either. Measured 2026-10-08 (18 calls across `stt-whisper`, `stt-whisper-base` and `graphling-stt`): WAV (16 and 22.05 kHz), MP3 and FLAC all transcribe the test line word for word; webm/Opus, ogg/Opus and mp4/AAC answer HTTP 500, and three of those within seconds put the model into a 60 s cooldown at the gateway (429 for every caller). `DEMO_STT_FORMATS` stays `wav`: `mic.js` encodes WAV in the browser, and WAV is the one container whose duration the server can read (§4.1), so adding `mp3` or `flac` would buy the page nothing and lose the duration cap for them. |
 | 16 | `MediaRecorder` defaults and mic sample rate | moot for the hosted path, which no longer uses `MediaRecorder`; the encoder writes the true rate |
 | 17 | An `https://` page cannot open `ws://` | inferred; irrelevant to the HTTP path |
 | 18 | A robot plays chunk 1+ of an event | unverified on a robot. The SIM does: the hosted turn is up to three chunks and `voice/cloud.js` plays them in order (test_cloud_transport §4b–4g; measured live 2026-10-08 over 20 turns, 11 of them chunked: 12 gaps between chunks, 8–139 ms). |
@@ -975,7 +992,7 @@ These numbers are stable, and code cites them.
 | 27 | `_headers` applies to Function responses | **settled false**; §4.7.1 |
 | 28 | A bounded queue beats a higher ceiling | proven by test (block 13); the ~1.2 s turn premise is not re-measured, so re-derive the depth if turns slow |
 | 29 | `/api/transcribe` returns the spoken words | **settled true** (`test_live_hosted_ears.py`); the route only, not a real microphone |
-| 30 | Non-browser clients reach `/api/*` in production | **settled false**. Cloudflare's browser integrity check returns 403 `error_code: 1010` at the edge, as RFC-7807 JSON **without** our `reason` field. A missing `reason` is the tell. Clients need a real `User-Agent`. |
+| 30 | Non-browser clients reach `/api/*` in production | **depends on the user agent**, not on being a browser. Cloudflare's browser integrity check refuses some agents at the edge with 403 `error code: 1010` (plain text, or RFC-7807 JSON), before the Function runs: a default Python `urllib` request was refused while `test_live_hosted_ears.py` was built (2026-09-05), and again on `GET /api/health` (2026-10-08). The body never has our `reason` field, so a missing `reason` is the tell. The same day `GET /api/health` answered 200 to `curl`, `node`, `python-requests` and Go. A `POST` from those agents is unmeasured, so the repo's spending tools send a browser `User-Agent`. |
 
 ---
 
