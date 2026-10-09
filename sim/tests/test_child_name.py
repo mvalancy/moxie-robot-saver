@@ -119,7 +119,9 @@ def test_the_try_it_card_and_the_childs_name_share_one_rule():
     assert cloud_config.NAME_RE.pattern == r"^[\w .'\-]+$"
     assert tryit.TRY_MAX_NAME_CHARS == cloud_config.NAME_MAX_CHARS == 40
     assert tryit._try_name("") == "" and tryit._try_name("Sam\nB") == "Sam B"
-    for raw in ("Sam", " José ", "Zoë", "Moxie Kid", "x" * 40, "J.R. O'Neil-Ng"):
+    # The allowed names punctuated: a period, an apostrophe and a hyphen, each of which the
+    # two sides must treat alike (a fixture with none lets six such divergences pass).
+    for raw in ("Sam", " José ", "Zoë", "Moxie Kid", "x" * 40, "Sam. Zoë-José O'Sam"):
         assert tryit._try_name(raw) == cloud_config.clean_child_name(raw)
     for raw in ("<exit>", "{{ x }}", "x" * 41, "Sam!"):
         with pytest.raises(ValueError):
