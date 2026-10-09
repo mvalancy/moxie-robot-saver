@@ -436,9 +436,21 @@
            and `env.js`'s; `#chat-status` is injected here by `cloud-transport.js`. They
            are bounded in CSS so a two-line hosted-demo warning can never push the box
            itself off the bottom of the screen — which would recreate this whole bug in
-           miniature. -->
-      <p id="mic-status" class="hint">Tap Listen and talk &mdash; I'll know when you're done.</p>
+           miniature.
+           `#mic-status` is a polite STATUS region, like `#chat-status`: "listening…",
+           "transcribing…", what she heard and every mic error are the answer to a tap on
+           Listen, and without it a screen reader said none of them (only #transcript was
+           live). Polite, so a status never talks over the log. -->
+      <p id="mic-status" class="hint" role="status" aria-live="polite">Tap Listen and talk &mdash; I'll know when you're done.</p>
     </section>
+
+    <!-- WHAT SHE KEEPS, said where the chat is. Her memory of this chat is the signed
+         context `cloud-transport.js` holds in this page's memory, so it dies with the page
+         (a reload, a closed tab); the only line that said so sat in the banner, which a live
+         page hides (style.css). `env.js` reveals this on a hosted page with a live brain, the
+         one place it is exactly true (a self-hosted robot may have a memory of its own). Text
+         only, never focusable: the tab order is unchanged. -->
+    <p id="memory-hint" class="hint" hidden>Moxie remembers this chat only while this page is open.</p>
   </div>
 
 </div>

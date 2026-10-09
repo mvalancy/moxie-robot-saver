@@ -1,7 +1,8 @@
 // Moxie robot simulator — visual front-end (three.js r160, via sim.html's importmap).
 // Exposes window.moxie = { setMotor, getMotor, getAnimationStepCount, setFace, setSpeech,
 //   setHeartLED, setMouthOpen, getMouthOpen, showIcons, clearIcons, centerAll, setIdle,
-//   setShowAxes, setSceneLight, isAlive, isUserHeld } and fires `moxie-ready`.
+//   setShowAxes, setSceneLight, isAlive, isUserHeld, tapStats } and fires `moxie-ready`.
+// A tap on her says hello once, then reacts with her face (A TAP ON HER, below).
 //
 // Anatomy (docs/architecture/sil-and-cicd.md "Visual reference"): a large egg-shaped HEAD
 // on a pear-shaped BODY; curved arm-shell pads hug the flanks, each a shoulder + spring
@@ -20,13 +21,16 @@ import { liveness, noteCommand, updateLiveness } from './moxie/liveness.js';
 import { showSpeech, updateBubbleAnchor } from './moxie/bubble.js';
 import { installStageFraming } from './moxie/stage.js';
 import { buildPanel, syncSlider, markFaceButton } from './moxie/panel.js';
-import { renderer, scene, camera, controls, sceneLight, applySceneLight } from './moxie/scene.js';
+import { renderer, scene, camera, controls, sceneLight, applySceneLight, onStageTap, hitsAt } from './moxie/scene.js';
 import {
   head, headTiltG, yawG, breatheG, leanG, armL, armR, screenMat, faceLight, faceHalo,
   heartState, heartMat, heartLight, setShowAxes,
 } from './moxie/rig.js';
 
 const faceLighting = { screenMat, faceLight, faceHalo };
+
+// A TAP ON HER's record (the section is at the bottom of this file).
+const tapRecord = { taps: 0, misses: 0, hellos: 0, faces: 0, said: '', last: '' };
 
 // ---------------------------------------------------------------------------
 // Motor state
@@ -138,6 +142,9 @@ const api = {
     if (!Number.isFinite(level)) return;
     sceneLight.level = Math.min(1, Math.max(0, level));
   },
+
+  // What taps on her did, recorded as they happened (A TAP ON HER). Tests read this.
+  tapStats() { return { ...tapRecord }; },
 };
 
 window.moxie = api;
@@ -217,3 +224,103 @@ window.__moxieProject = function (x, y, z) {
 };
 
 installStageFraming(camera, renderer);
+
+// ---------------------------------------------------------------------------
+// A TAP ON HER: a hello the first time, a face after that
+// ---------------------------------------------------------------------------
+/* Tapping Moxie herself did nothing (the stage's only input was OrbitControls): her first
+ * sound came 6.3 s (desktop) or 9.5 s (phone) after a first tap, from ambient.js's first
+ * quip. Now the FIRST tap on her says hello: Bht_Gesture_Greet (bridge/body.js: a happy face
+ * and a wave) and one of the three greetings that ship as clips (audio/index.json, `moxie`
+ * group), through the normal local voice path: no gateway, no turn, nothing in the log. Every
+ * later tap is a FACE (a blink, and a smile when nothing else owns her face), never a sound.
+ *
+ * The hello is for somebody who has not started talking to her yet. It is never said:
+ *   · over her voice, its last syllable, or a reply queued for the speakers (speak() would
+ *     stop them);
+ *   · once a conversation exists: a `.turn` in the log (a line sent, in flight or answered)
+ *     or Listen pressed (a clip may be on its way up);
+ *   · into an open microphone (body[data-mic]);
+ *   · on a page whose brain is out: ambient.js's one degraded line is her hello there, and it
+ *     is said on this same unlock (both would play at once);
+ *   · with ALIVE off (the visitor asked to drive her by hand: no wave).
+ * A tap refused for one of these does not spend it. */
+const GREETINGS = [
+  'Hi! I am Moxie. It is nice to meet you.',
+  'Hello there! I am so happy to see you.',
+  "Hi there! It's so good to see you.",
+];
+const greeting = GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
+const VOICE_TAIL_MS = 500;                  // a tap as a line ends waits out its last syllable
+const LINE_FACE_MS = 4000;                  // a reply's face is its own this long (life.js)
+const TAP_SLOP_PX = { touch: 14, mouse: 4 };  // around the tap point, still "on her"
+const rig = yawG.parent || yawG;            // the whole robot: base, body, arms, head
+
+function voiceBusy() {
+  try {
+    const a = window.moxieAudio;
+    return !!(a && ((a.isMoxieBusy && a.isMoxieBusy(VOICE_TAIL_MS)) || (a.ttsPending && a.ttsPending() > 0)));
+  } catch { return false; }
+}
+const micOpen = () => document.body.getAttribute('data-mic') === 'on';
+let listened = false;                       // Listen was pressed on this page
+function talking() {
+  if (listened || document.querySelector('#transcript .turn')) return true;
+  try {
+    const m = window.moxieMic;
+    return !!(m && ((m.isRecording && m.isRecording()) || (m.stats && m.stats().starts > 0)));
+  } catch { return false; }
+}
+function brainOut() {
+  try {
+    const s = window.moxieAmbient && window.moxieAmbient.degradedState && window.moxieAmbient.degradedState();
+    return !!(s && s.text && (s.pending || s.said));
+  } catch { return false; }
+}
+const aliveOn = () => { const c = document.getElementById('idle-on'); return !c || c.checked; };
+
+/** Why the hello may not be said now, or '' when it may. */
+function helloRefused() {
+  if (tapRecord.hellos) return 'said';
+  if (!aliveOn()) return 'alive-off';
+  if (micOpen()) return 'mic';
+  if (talking()) return 'talking';
+  if (voiceBusy()) return 'speaking';
+  if (brainOut()) return 'brain-out';
+  return '';
+}
+
+function hello() {
+  tapRecord.hellos++;
+  tapRecord.said = greeting;
+  const B = window.__moxieBridge;           // bridge/body.js plays the Bht_* trees
+  if (B && typeof B.behaviourTree === 'function') B.behaviourTree('Bht_Gesture_Greet');
+  else api.setFace('happy');
+  api.setSpeech(greeting);
+  try { if (window.moxieAudio) window.moxieAudio.speak(greeting, 'moxie'); } catch {}
+}
+
+/** A blink, and a smile when her face is free: not while a voice of hers or a reply's face
+ *  owns it (life.js's rule), with the mic open, or while the visitor's line awaits her answer. */
+function faceOnly() {
+  tapRecord.faces++;
+  let free = !voiceBusy() && !micOpen();
+  try {
+    const b = window.moxieBridge;
+    if (b && b.msSinceLine && b.msSinceLine() < LINE_FACE_MS) free = false;
+    const rows = document.querySelectorAll('#transcript .turn');
+    if (rows.length && rows[rows.length - 1].classList.contains('user')) free = false;
+  } catch {}
+  if (free) api.setFace('happy');
+  api.setFace('blink');
+}
+
+onStageTap((t) => {
+  if (!hitsAt(t.x, t.y, rig, t.touch ? TAP_SLOP_PX.touch : TAP_SLOP_PX.mouse)) { tapRecord.misses++; return; }
+  tapRecord.taps++;
+  const why = helloRefused();
+  tapRecord.last = why || 'hello';
+  if (why) faceOnly(); else hello();
+});
+const micBtn = document.getElementById('mic-btn');
+if (micBtn) micBtn.addEventListener('click', () => { listened = true; });

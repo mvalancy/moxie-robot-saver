@@ -19,11 +19,12 @@ function mountEnv(snapshot) {
   globalThis.document = {
     body,
     getElementById: (id) => (["tts-test", "speech-btn", "mic-btn", "bus-connect", "mic-status",
-                              "bus-status", "tts-status"].includes(id) ? get(id) : null),
+                              "bus-status", "tts-status", "memory-hint"].includes(id) ? get(id) : null),
     querySelector: (sel) => (sel === "#topbar .linkstate" ? linkstate : null),
     createElement: (tag) => { const e = fakeEl(); e.tagName = String(tag).toUpperCase(); return e; },
   };
   get("bus-status").textContent = "not connected";
+  get("memory-hint").hidden = true;              // as sim.html ships it
   const hints = [];
   globalThis.window = {
     moxieAudio: { setTtsHint: (h) => hints.push(h), hasCloudVoice: () => false, isSpeaking: () => false },
@@ -66,6 +67,7 @@ const snap = (over) => Object.assign({
      "not configured: today's exact TTS wording");
   ok(/scripted child line/.test(v.el("mic-status").innerHTML), "not configured: today's mic wording");
   ok(/need a locally/.test(v.bannerText), "not configured: today's banner");
+  eq(v.el("memory-hint").hidden, true, "not configured: no memory line (a scripted page remembers nothing)");
 
   // ...then the deployment turns out to be live. Same page object, honest new words.
   v.push(snap({ state: "live", reason: null, badge: "MOXIE ONLINE", message: "",
@@ -81,7 +83,10 @@ const snap = (over) => Object.assign({
      "...but a REAL robot's broker is still not available here, in every mode");
   ok(/own voice is live/.test(v.hints[v.hints.length - 1].html), "live: the voice line is honest");
   ok(/live brain answers on this page/.test(v.bannerText), "live: the banner stops claiming otherwise");
-  ok(/forgets this conversation/.test(v.bannerText), "live: and says nothing persists");
+  // What she keeps used to end this banner, which a live hosted page hides (style.css): it is
+  // said under the composer now, where it can be read (W4-S6).
+  eq(v.el("memory-hint").hidden, false, "live: the page says what she keeps (#memory-hint shown)");
+  ok(!/forgets|remembers/.test(v.bannerText), "live: …and the hidden banner no longer carries a second copy");
 
   // ...then she gets busy.
   v.push(snap({ state: "live", reason: "at_capacity", badge: "HOSTED DEMO · BUSY",
@@ -104,6 +109,7 @@ const snap = (over) => Object.assign({
   // NOT "need a locally-run backend": this deployment HAS a brain, out until the budget resets.
   ok(/brain is resting/.test(v.bannerText) && /try again later/.test(v.bannerText) && !/locally/.test(v.bannerText),
      `budget spent: the banner says her brain is resting, not that the site needs a local backend (${v.bannerText})`);
+  eq(v.el("memory-hint").hidden, false, "budget spent: the memory line stays (still true of this page's chat)");
 }
 {
   // mode.js absent entirely (a fork that did not copy it): the page must be today's.

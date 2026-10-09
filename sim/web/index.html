@@ -84,6 +84,7 @@
   h1.hl .g{background:linear-gradient(100deg,var(--cyan),var(--mint) 60%,var(--teal));-webkit-background-clip:text;background-clip:text;color:transparent}
   .sub{color:var(--text-dim);font-size:17px;max-width:520px;margin:0}
   .cta{display:flex;gap:12px;flex-wrap:wrap;margin:4px 0 24px}
+  .keeps{margin:-12px 0 22px;font-size:13px;color:var(--muted)}
   .btn{display:inline-flex;align-items:center;gap:9px;text-decoration:none;font-weight:560;font-size:15px;
     padding:12px 20px;border-radius:11px;transition:transform .12s,box-shadow .2s,background .2s;border:1px solid transparent}
   .btn.primary{background:linear-gradient(100deg,var(--cyan),#38e8c8);color:#04121a;box-shadow:0 6px 26px #00f0ff33}
@@ -197,13 +198,13 @@
 <div class="wrap">
   <header class="top">
     <a class="logo" href="./">
-      <svg viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#0e1620"/><path d="M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z" fill="#12b5b0"/><ellipse cx="50" cy="49" rx="20" ry="18" fill="#f4feff"/><circle cx="43" cy="48" r="4.2" fill="#0a0a0f"/><circle cx="57" cy="48" r="4.2" fill="#0a0a0f"/><circle cx="44.4" cy="46.4" r="1.3" fill="#00f0ff"/><circle cx="58.4" cy="46.4" r="1.3" fill="#00f0ff"/></svg>
+      <svg aria-hidden="true" focusable="false" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#0e1620"/><path d="M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z" fill="#12b5b0"/><ellipse cx="50" cy="49" rx="20" ry="18" fill="#f4feff"/><circle cx="43" cy="48" r="4.2" fill="#0a0a0f"/><circle cx="57" cy="48" r="4.2" fill="#0a0a0f"/><circle cx="44.4" cy="46.4" r="1.3" fill="#00f0ff"/><circle cx="58.4" cy="46.4" r="1.3" fill="#00f0ff"/></svg>
       <span style="display:flex;flex-direction:column;line-height:1.05"><b>Moxie</b><span>a ghost in the shell</span></span>
     </a>
     <div class="right">
       <a href="docs.html">Docs</a>
       <a href="https://github.com/mvalancy/moxie-robot-saver" target="_blank" rel="noopener">
-        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         GitHub</a>
     </div>
   </header>
@@ -217,12 +218,16 @@
            spent before her page even starts (sim/serve.py maps it the same way locally). -->
       <div class="cta">
         <a class="btn primary" href="sim">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.7A8 8 0 1 1 21 12z"/></svg>
+          <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.7A8 8 0 1 1 21 12z"/></svg>
           Talk to Moxie</a>
         <a class="btn ghost" href="setup.html">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M20 20v.01M17 20h.01M20 17h.01"/></svg>
+          <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M20 20v.01M17 20h.01M20 17h.01"/></svg>
           Revive a robot</a>
       </div>
+      <!-- What she keeps, said before anyone talks to her: her memory of a chat lives in the
+           sim page's own memory (sim.html #memory-hint says the same thing there). Nothing
+           beyond that is claimed here. -->
+      <p class="keeps">Moxie remembers your chat only while her page is open.</p>
       <p class="sub">Embodied shut down and every Moxie went quiet. But the body — face, voice, gaze, motion —
         is just a <em>shell</em> that performs whatever brain answers one documented seam. So this is more
         than a revival: it&rsquo;s an open kit to put <b>any AI</b> inside that shell. Say hi to the 3D
@@ -256,34 +261,34 @@
   <div class="sec-h"><h2>Explore</h2><span class="rule"></span></div>
   <div class="cards" id="cards">
     <a class="card sim" href="sim">
-      <span class="ic"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="12" rx="2"/><path d="M8 21h8M12 17v4"/><circle cx="9.5" cy="11" r="1"/><circle cx="14.5" cy="11" r="1"/></svg></span>
+      <span class="ic"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="12" rx="2"/><path d="M8 21h8M12 17v4"/><circle cx="9.5" cy="11" r="1"/><circle cx="14.5" cy="11" r="1"/></svg></span>
       <h3>Simulator</h3>
       <p>A 3D Moxie — face, arms, liveness — that talks and gestures, driven by the same protocol a real robot speaks. No robot, no server needed.</p>
-      <span class="go">Open the simulator <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <span class="go">Open the simulator <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
     </a>
     <a class="card setup" href="setup.html">
-      <span class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M20 20v.01M17 20h.01M20 17h.01"/></svg></span>
+      <span class="ic"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M20 20v.01M17 20h.01M20 17h.01"/></svg></span>
       <h3>Revive a robot</h3>
       <p>Have a real Moxie? Make the two QR codes — Wi-Fi, then your server — and hold them to its camera. Phone-friendly, nothing to install.</p>
-      <span class="go">Open setup <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <span class="go">Open setup <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
     </a>
     <a class="card cloud" href="cloud.html">
-      <span class="ic"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15l3-4 3 2 4-6"/></svg></span>
+      <span class="ic"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15l3-4 3 2 4-6"/></svg></span>
       <h3>Parent console</h3>
       <p>An example of the parent dashboard: Daily Missions, rewards, conversation summaries and robot status — the shapes the real cloud used.</p>
-      <span class="go">Open the console <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <span class="go">Open the console <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
     </a>
     <a class="card docs" href="docs.html">
-      <span class="ic"><svg viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h8l4 4v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M14 3v4h4M8 13h8M8 17h5"/></svg></span>
+      <span class="ic"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h8l4 4v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M14 3v4h4M8 13h8M8 17h5"/></svg></span>
       <h3>Docs explorer</h3>
       <p>Every reverse-engineering doc in the repo, browsable in the page with Mermaid diagrams rendered — how the firmware, protocol and hardware actually work.</p>
-      <span class="go">Open the docs <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <span class="go">Open the docs <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
     </a>
     <a class="card src" href="https://github.com/mvalancy/moxie-robot-saver" target="_blank" rel="noopener">
-      <span class="ic"><svg viewBox="0 0 24 24"><path d="M9 19c-4 1.4-4-2.2-6-2.7M15 21v-3.5a3 3 0 0 0-.9-2.4c3-.3 6.1-1.5 6.1-6.6a5.1 5.1 0 0 0-1.4-3.6 4.8 4.8 0 0 0-.1-3.6s-1.1-.3-3.7 1.4a12.6 12.6 0 0 0-6.6 0C6.3 1.9 5.2 2.2 5.2 2.2a4.8 4.8 0 0 0-.1 3.6A5.1 5.1 0 0 0 3.7 9.4c0 5 3.1 6.3 6.1 6.6a3 3 0 0 0-.9 2.4V21"/></svg></span>
+      <span class="ic"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M9 19c-4 1.4-4-2.2-6-2.7M15 21v-3.5a3 3 0 0 0-.9-2.4c3-.3 6.1-1.5 6.1-6.6a5.1 5.1 0 0 0-1.4-3.6 4.8 4.8 0 0 0-.1-3.6s-1.1-.3-3.7 1.4a12.6 12.6 0 0 0-6.6 0C6.3 1.9 5.2 2.2 5.2 2.2a4.8 4.8 0 0 0-.1 3.6A5.1 5.1 0 0 0 3.7 9.4c0 5 3.1 6.3 6.1 6.6a3 3 0 0 0-.9 2.4V21"/></svg></span>
       <h3>Source on GitHub</h3>
       <p>Everything is open. The full toolkit, servers, simulator and reverse-engineering docs — clone it, self-host it, or help map the rest.</p>
-      <span class="go">View the repo <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+      <span class="go">View the repo <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
     </a>
   </div>
 
@@ -305,7 +310,7 @@
         all the <b>OpenMoxie</b> project. Go star it, run it, and help push it forward.</p>
     </div>
     <a class="btn primary" href="https://github.com/jbeghtol/openmoxie" target="_blank" rel="noopener">
-      <svg viewBox="0 0 16 16" fill="currentColor" style="width:16px;height:16px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor" style="width:16px;height:16px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
       Visit OpenMoxie</a>
   </div>
 </div>
@@ -315,7 +320,7 @@
     with a little <span class="heart">&hearts;</span> for retired robots.</p>
   <div class="links">
     <a href="https://github.com/mvalancy/moxie-robot-saver" target="_blank" rel="noopener">
-      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
       moxie-robot-saver</a>
     <a href="https://mattvalancy.com" target="_blank" rel="noopener">mattvalancy.com</a>
   </div>

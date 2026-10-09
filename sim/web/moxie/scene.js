@@ -1,5 +1,6 @@
-// The stage: renderer, camera + orbit controls, control-room lighting, the floor, and the
-// scene-light dimmer (moxie.setSceneLight). No robot here — that is rig.js.
+// The stage: renderer, camera + orbit controls, control-room lighting, the floor, the
+// scene-light dimmer (moxie.setSceneLight), and what a tap on the stage hits (onStageTap,
+// hitsAt). No robot here — that is rig.js.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { radialGlow } from './textures.js';
@@ -38,6 +39,56 @@ window.__setCam = (x, y, z, tx = 0, ty = 1.22, tz = 0) => {
   controls.target.set(tx, ty, tz);
   controls.update();
 };
+
+/* A TAP ON THE STAGE. OrbitControls owns this canvas (drag to orbit, pinch to zoom); a
+ * press by ONE pointer that ends where it began, soon, is a tap instead, and `fn({x, y,
+ * touch})` gets its client position. It is read on POINTERUP: for a finger that is an
+ * activation (for a mouse the press before it was), and the same gesture's touchend or click
+ * is what voice/index.js unlocks audio on, so whatever a tap starts may make sound. */
+const TAP_SLOP_PX = 10;     // moved further than this: a drag (an orbit), not a tap
+const TAP_MAX_MS = 700;     // held longer than this: a press-and-hold, not a tap
+export function onStageTap(fn) {
+  const el = renderer.domElement;
+  const down = new Map();   // pointerId -> where and when it went down
+  let pinch = false;        // a second pointer joined: nothing in this gesture is a tap
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button > 0) return;                  // a right or middle button is not a tap
+    if (down.size) pinch = true;
+    down.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), moved: false });
+  });
+  el.addEventListener('pointermove', (e) => {
+    const d = down.get(e.pointerId);
+    if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > TAP_SLOP_PX) d.moved = true;
+  });
+  const lift = (e, cancelled) => {
+    const d = down.get(e.pointerId);
+    down.delete(e.pointerId);
+    const many = pinch;
+    if (!down.size) pinch = false;
+    if (cancelled || !d || d.moved || many || performance.now() - d.t > TAP_MAX_MS) return;
+    if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > TAP_SLOP_PX) return;
+    try { fn({ x: e.clientX, y: e.clientY, touch: e.pointerType !== 'mouse' }); } catch (err) {}
+  };
+  el.addEventListener('pointerup', (e) => lift(e, false));
+  el.addEventListener('pointercancel', (e) => lift(e, true));
+}
+
+/* Is `object` under client point (x, y)? A ray through the camera, view offset included (the
+ * framing in stage.js), and through points `slop` px around it, so a fingertip that lands just
+ * beside her arm still counts. */
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+export function hitsAt(x, y, object, slop = 0) {
+  const r = renderer.domElement.getBoundingClientRect();
+  if (!r.width || !r.height) return false;
+  const around = slop ? [[0, 0], [slop, 0], [-slop, 0], [0, slop], [0, -slop]] : [[0, 0]];
+  for (const [dx, dy] of around) {
+    ndc.set(((x + dx - r.left) / r.width) * 2 - 1, -((y + dy - r.top) / r.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    if (raycaster.intersectObject(object, true).length) return true;
+  }
+  return false;
+}
 
 // Cool control-room lighting: white key, cold fill, cyan rim.
 const hemi = new THREE.HemisphereLight(0xdcecff, 0x10151d, 0.6);
