@@ -360,7 +360,11 @@ def test_describe_names_the_voice_that_is_actually_speaking():
     fb = FallbackSynthesizer(_Boom(), ToneSynthesizer(), log=lambda m: None)
     assert fb.describe() == "boom (standby: tone)"
     fb.synthesize("hi")
-    assert fb.describe() == "tone (standby — boom failed)"
+    # ...and once downgraded: which voice, since when, and when the gateway is tried
+    # again (the retry window is driven by an injected clock in test_gateway_timeouts.py)
+    desc = fb.describe()
+    assert desc.startswith("tone (standby since ") and desc.endswith(")")
+    assert "boom failed; retrying the primary at " in desc
 
 
 def test_fallback_is_a_passthrough_while_the_primary_works():

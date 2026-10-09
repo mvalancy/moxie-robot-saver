@@ -140,7 +140,9 @@ def test_voice_url_is_the_whole_switch_with_defaults(monkeypatch):
     assert calls == [{"base_url": "https://gateway.graphlings.net/v1",
                       "api_key": c.VOICE_API_KEY, "voice": "",
                       "model": "piper-amy", "response_format": "wav",
-                      "sample_rate": 22050}]
+                      "sample_rate": 22050,
+                      # the gateway voice's hang bound rides along (MOXIE_TTS_TIMEOUT_S)
+                      "timeout_s": 15.0}]
     from moxie_sdk.tts import FallbackSynthesizer
     assert isinstance(synth, FallbackSynthesizer)
     assert synth.voice_name == "openai-voice"      # the gateway speaks…
