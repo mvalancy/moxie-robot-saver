@@ -269,6 +269,41 @@ if STORE_LOCK_TIMEOUT_S >= BRAIN_BUDGET_S:
         f"store lock is a slice of the turn, not a claim on it. Lower "
         f"MOXIE_STORE_LOCK_TIMEOUT_S or raise MOXIE_BRAIN_BUDGET_S.")
 
+# --- bounded engine calls (production-hardening.md §4.4 "gateway hangs", §9 A27) ---
+# Seconds one request to the brain / ears / voice may take before it is an offline-class
+# error instead of a hung worker. The openai SDK's own default is 600 s per request and
+# the backoff retried it, so an endpoint that accepted connections and never answered
+# held one turn worker for 5 x 600 s. Each knob is also the deadline past which no retry
+# starts (`moxie_sdk.chat.call_with_backoff(deadline_s=...)`): a timeout is never
+# retried, so a wedged gateway costs one bound; a fast 429/5xx is retried only while
+# the retry starts inside the bound, and that retry runs its own request bound, so one
+# call costs at most just under two. Hang bounds, chosen not measured: the brain's sits
+# above the filler budget and a slow local model's whole non-streamed completion (it
+# also caps the memory summary, the longest completion); the ears' inside the broker's
+# keepalive drop (the transcript is produced on the broker thread, which an ears outage
+# stalls for up to one bound per retry window). 0 or less is REFUSED at startup, below:
+# it is not "no bound", it is the hang these knobs exist to end.
+BRAIN_TIMEOUT_S = _env_float("MOXIE_BRAIN_TIMEOUT_S", 60.0)
+STT_TIMEOUT_S = _env_float("MOXIE_STT_TIMEOUT_S", 12.0)
+TTS_TIMEOUT_S = _env_float("MOXIE_TTS_TIMEOUT_S", 15.0)
+
+for _knob, _seconds in (("MOXIE_BRAIN_TIMEOUT_S", BRAIN_TIMEOUT_S),
+                        ("MOXIE_STT_TIMEOUT_S", STT_TIMEOUT_S),
+                        ("MOXIE_TTS_TIMEOUT_S", TTS_TIMEOUT_S)):
+    if not 0 < _seconds < float("inf"):           # 0, a negative, NaN and inf
+        raise ValueError(
+            f"{_knob} ({_seconds:g}s) must be a positive number of seconds: 0 is not "
+            f"'no bound', it is the hang this knob exists to end. Unset it for the "
+            f"default, or set the seconds a slow model really needs.")
+del _knob, _seconds
+
+# Seconds a standby engine (local whisper / Piper / the tone behind a gateway) keeps the
+# turn before the next call tries the gateway again; an answer clears the latch. Before
+# this knob the first failure latched the standby for the rest of the run, and with no
+# local whisper installed that standby hears nothing. 0 = try the gateway on every call
+# (a negative value counts as 0).
+ENGINE_RETRY_S = _env_float("MOXIE_ENGINE_RETRY_S", 60.0)
+
 # --- streaming replies ---
 # Publish each finished sentence as its own REPLY_PENDING chunk (first sentence at
 # first-token latency). "0"/"off" → one reply.
@@ -306,7 +341,7 @@ def _build_llm():
     _sdk_path()
     from moxie_sdk.apps import LLMApp
     return LLMApp(base_url=require_llm_base_url("llm"), api_key=LLM_API_KEY,
-                  model=LLM_MODEL)
+                  model=LLM_MODEL, timeout_s=BRAIN_TIMEOUT_S)
 
 
 #: `{brain id: builder}` — the other half of `moxie_sdk.brains.BRAINS` (a test pins the
@@ -395,7 +430,7 @@ def build_content_app():
     module = packs.build_module(defaults, overlay)
     if overlay:
         print(f"[config] 📦 content: {len(defaults)} shipped + {len(overlay)} imported")
-    chat = make_openai_chat(base_url, LLM_API_KEY, LLM_MODEL)
+    chat = make_openai_chat(base_url, LLM_API_KEY, LLM_MODEL, timeout_s=BRAIN_TIMEOUT_S)
     return ContentApp(module, chat, persona=DEFAULT_PERSONA, content_defaults=defaults)
 
 
@@ -405,8 +440,10 @@ def _gateway_voice(model, piper):
     from moxie_sdk.tts import FallbackSynthesizer, ToneSynthesizer, make_voice_synthesizer
     voice = make_voice_synthesizer(VOICE_BASE_URL, VOICE_API_KEY, TTS_VOICE, model=model,
                                    response_format=VOICE_FORMAT,
-                                   sample_rate=VOICE_SAMPLE_RATE)
-    return None if voice is None else FallbackSynthesizer(voice, piper or ToneSynthesizer())
+                                   sample_rate=VOICE_SAMPLE_RATE,
+                                   timeout_s=TTS_TIMEOUT_S)
+    return None if voice is None else FallbackSynthesizer(voice, piper or ToneSynthesizer(),
+                                                          retry_s=ENGINE_RETRY_S)
 
 
 def _speech_for_choice(choice, piper):
@@ -480,12 +517,13 @@ def _gateway_ears(model):
     gateway model) or a `NullTranscriber` as standby. None when it cannot be built."""
     from moxie_sdk.stt import (FallbackTranscriber, NullTranscriber, WhisperTranscriber,
                                make_openai_transcriber)
-    primary = make_openai_transcriber(STT_BASE_URL, STT_API_KEY, model=model)
+    primary = make_openai_transcriber(STT_BASE_URL, STT_API_KEY, model=model,
+                                      timeout_s=STT_TIMEOUT_S)
     if primary is None:
         return None
     standby = (WhisperTranscriber(model=LOCAL_STT_MODEL)
                if WhisperTranscriber.available() else NullTranscriber())
-    return FallbackTranscriber(primary, standby)
+    return FallbackTranscriber(primary, standby, retry_s=ENGINE_RETRY_S)
 
 
 def _listening_for_choice(choice):
@@ -553,10 +591,12 @@ def build_transcriber(override=None):
 
 def gateway_model_ids():
     """Every model id the voice gateway lists (one `GET /models`); voice vs ears is decided
-    by name in `moxie_sdk/audio_models.py`."""
+    by name in `moxie_sdk/audio_models.py`. Bounded by the voice knob: the listing is the
+    voice gateway's, refreshed on a background thread that must not hang for 600 s."""
     from openai import OpenAI                 # lazy — the SDK is an optional extra
+    from moxie_sdk.chat import client_timeout
     client = OpenAI(base_url=VOICE_BASE_URL, api_key=VOICE_API_KEY or "sk-local",
-                    max_retries=0)
+                    max_retries=0, timeout=client_timeout(TTS_TIMEOUT_S))
     return [getattr(m, "id", "") for m in (client.models.list().data or [])]
 
 
