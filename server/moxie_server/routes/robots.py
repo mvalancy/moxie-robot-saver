@@ -70,20 +70,23 @@ async def update_robot(rid: str, request: Request, u=Depends(current_user)):
     return robot_document(db.q1("SELECT * FROM robots WHERE id=?", (rid,)))
 
 
-def _revoke(attrs: dict) -> dict:
+def _revoke(attrs: dict) -> tuple:
     """Stop serving the robot this record names: the very `POST /permits` the console's
     Revoke button sends, after which the supervisor re-pushes the un-paired config. Only
     the record's own `mqtt-device-id` counts — `resolve_device_id`'s sole-served guess is
-    fine for a wake-up, but revoking another child's robot is not."""
+    fine for a wake-up, but revoking another child's robot is not. `(access view, name
+    off)`: a revoke also takes the child's name off the robot's settings, and the second
+    value is the supervisor saying they hold none now (`child_cleared`)."""
     device_id = str(attrs.get("mqtt-device-id") or "").strip()
     if not device_id:
-        return lifecycle.access_view(None, revoked=False)
+        return lifecycle.access_view(None, revoked=False), False
     out, code = supervisor.post_json("/permits", {"device_id": device_id,
                                                   "permitted": False, "label": ""})
     ok = code == 200 and bool(out.get("ok"))
     return lifecycle.access_view(
         device_id, revoked=ok, open_gate=ok and bool(out.get("allow_unverified_bots")),
-        error=None if ok else (out.get("error") or f"supervisor returned {code}"))
+        error=None if ok else (out.get("error") or f"supervisor returned {code}")), \
+        ok and out.get("child_cleared") is True
 
 
 @router.delete("/api/robots/{rid}")
@@ -95,7 +98,9 @@ def delete_robot(rid: str, rfs: str = Query(None), u=Depends(current_user)):
     state, not the child's: the robot falls back to the appliance's default name), while
     the record and the permit still stand. Then one transaction takes the record off the
     account (the app's UNPAIRED: no robot in `users/me`) and voids the account's unused
-    pairing codes, and the robot's permit is revoked. The child's record is never touched
+    pairing codes, and the robot's permit is revoked, which takes the name off too, so a
+    clear that never arrived is retried by the revoke, or later by Revoke in Robot access
+    (`child_cleared` is true when either took it off). The child's record is never touched
     (§2): erasing it is the console's existing erase calls, made only when the parent
     chooses. Server-side a reset is the same unpair (the doc's cleanup is identical); what
     differs is reaching the robot, and with no recovered cloud-to-robot reset command the
@@ -114,18 +119,20 @@ def delete_robot(rid: str, rfs: str = Query(None), u=Depends(current_user)):
            if row["child_id"] else None)
     child = ({"id": kid["id"], "name": json.loads(kid["attributes"]).get("child-first-name")}
              if kid else None)
+    access, revoke_cleared = _revoke(json.loads(row["attributes"]))
     out = lifecycle.unpair_result(rid, unpaired=True, factory_reset=reset, child=child,
-                                  codes_voided=voided,
-                                  access=_revoke(json.loads(row["attributes"])))
-    out["child_cleared"] = cleared["child_cleared"]
-    out["child_clear_error"] = cleared["reason"]
+                                  codes_voided=voided, access=access)
+    out["child_cleared"] = bool(cleared["child_cleared"] or revoke_cleared)
+    out["child_clear_error"] = None if out["child_cleared"] else cleared["reason"]
     if out["child_cleared"]:
         out["details"].append({"key": "name", "text": "The robot's settings on this server "
                                                       "no longer hold your child's name."})
     elif db.device_id_of(row):
+        why = str(cleared["reason"] or "").rstrip(". ")
         out["details"].append({"key": "name", "text": (
             f"This server could not take your child's name off the robot's settings: "
-            f"{cleared['reason']}")})
+            f"{why}. To try again, revoke the robot in Robot access: a Revoke takes the "
+            f"name off too.")})
     return out
 
 

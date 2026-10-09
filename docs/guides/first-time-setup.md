@@ -22,18 +22,26 @@ interface your phone uses (LAN or VPN).
 2. In the **📶 Wi-Fi** tab, enter your child's first name. **The name you type is the name Moxie
    says**: in its hello, its opener and every answer, once the robot is on your account (step
    *What happens next*). Typing it again later renames your child; it does not add a second one.
-   Up to 40 letters, digits, spaces, periods, apostrophes or hyphens. Until your account has a
-   name for your child, Moxie says its default name (`friend`, or `MOXIE_CHILD_NICKNAME`).
+   Up to 40 letters (accents and vowel signs included), digits, spaces, periods, apostrophes or
+   hyphens. Moxie's safety rules check the name too: a name on their word list is refused, with
+   the reason, and nothing is saved. Until your account has a name for your child, Moxie says its
+   default name (`friend`, or `MOXIE_CHILD_NICKNAME`).
 3. Enter your **Wi-Fi SSID and password**. Leave the band on **2.4 GHz** — Moxie prefers it.
 4. Tap **Make the Wi-Fi code**.
 
 **Where the name goes.** It is kept in this server's database and in the robot's settings on this
 server, and it is sent to the robot. It is also in every prompt Moxie's brain gets, and in every line
 Moxie says that names your child, so it goes to whatever brain and voice endpoints you configured,
-which may be cloud services. Unpair and factory reset take it off the robot's settings; your child's
-profile stays on your account until you delete it. This server has no real sign-in yet (an account is
-just its email), so someone on your network who opens the console with your email, or reads the
-supervisor's status port, can see the name. The full list:
+which may be cloud services. The supervisor's log and its activity feed show `[child]` where a line
+said the name. Unpair and factory reset take it off the robot's settings. If the robot side could
+not be reached then, the unpair says so, and **Revoke** in Robot access takes the name off later.
+Your child's profile stays on your account until you delete it.
+
+This server has no real sign-in yet: an account is just its email, so someone on your network
+who opens the console with your email can see the name. The supervisor's status port has no
+sign-in either, and `.env.example`'s `MOXIE_BIND_HOST=0.0.0.0` puts it on your network, so anyone
+there can read the name from it. Whether to close both is an open question for the owner (OQ3).
+The full list:
 [config contract, the child's name](../architecture/config-and-telemetry-contract.md#the-childs-name-the-parents-record-per-robot).
 
 The code carries only your network name and password: it is the **Wi-Fi-only** code, the right

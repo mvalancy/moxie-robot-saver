@@ -144,10 +144,21 @@ def create_child_row(user_id: str, attrs: dict) -> str:
     return cid
 
 
+def _refuse_unsayable(name: str) -> None:
+    """A 400 carrying the supervisor's reason, in the parent's words, when it would refuse
+    `name` (the name rule and Moxie's safety table, `child_profile.refusal_for`): the
+    record is then left as it was. A supervisor that cannot be asked refuses nothing."""
+    why = child_profile.refusal_for(name)
+    if why:
+        raise HTTPException(400, why)
+
+
 @router.post("/api/children")
 async def create_child(request: Request, u=Depends(current_user)):
+    """A new child record. A name Moxie would refuse to say is a 400 and nothing is made."""
     body = await read_json(request)
     attrs = body.get("child", body)
+    _refuse_unsayable(child_profile.name_in(attrs))
     cid = create_child_row(u["id"], attrs)
     return {"data": {"id": cid, "type": "children", "attributes": attrs}}
 
@@ -155,11 +166,16 @@ async def create_child(request: Request, u=Depends(current_user)):
 @router.put("/api/children/{cid}")
 async def update_child(cid: str, request: Request, u=Depends(current_user)):
     """Update the record, then send its name to every robot of this account bound to this
-    child (the Wi-Fi tab's name field is the rename). `child_pushed` and `reason` say
-    whether the robots got it; the record is saved either way."""
+    child (the Wi-Fi tab's name field is the rename). A NEW name Moxie would refuse to say
+    is a 400 and the record is left as it was; otherwise `child_pushed` and `reason` say
+    whether the robots got it, and the record is saved either way."""
     row = _child(cid, u["id"])
     body = await read_json(request)
-    attrs = {**json.loads(row["attributes"]), **body.get("child", body)}
+    before = json.loads(row["attributes"])
+    attrs = {**before, **body.get("child", body)}
+    name = child_profile.name_in(attrs)
+    if name != child_profile.name_in(before):    # another setting never re-judges the name
+        _refuse_unsayable(name)
     db.ex("UPDATE children SET attributes=? WHERE id=?", (json.dumps(attrs), cid))
     return {"data": {"id": cid, "type": "children", "attributes": attrs},
             **child_profile.push_to_robots_of_child(u["id"], cid)}
