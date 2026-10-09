@@ -21,6 +21,7 @@ await runSections(new URL("./tests/edge/transport/", import.meta.url), [
   "04_talk_scripted.mjs",
   "05_bot_control.mjs",
   "06_voice_latch.mjs",
+  "07_turns_in_order.mjs",
 ]);
 
 if (fails.length) {
