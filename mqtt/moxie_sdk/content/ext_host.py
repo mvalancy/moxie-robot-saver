@@ -22,7 +22,8 @@ from typing import Optional
 from .. import automarkup as _automarkup
 from .. import safety as _safety
 from .. import vocab
-from ..actions import drop_action_tags, lift_action_tags, parse_action_tags, tag_names
+from ..actions import (drop_action_tags, lift_action_tags, parse_action_tags, tag_names,
+                       tidy_spoken_text)
 from ..types import Action, ActionType
 from .memory import provenance
 from .volley import Volley, Session
@@ -39,6 +40,8 @@ EXT_MAX_MEMORY_BYTES = 32768
 
 #: One `<mark …/>`, `<usel …>` or `<break …/>` tag, for the catalogue gate below.
 _EXT_TAG = re.compile(r"<(?:mark|usel|/usel|spurt|break)\b[^>]*/?>", re.I)
+#: Where one of those tags opens, closed or not.
+_EXT_OPEN = re.compile(r"<(?:mark|usel|/usel|spurt|break)\b", re.I)
 _EXT_VAR_KEY = re.compile(r"^[A-Za-z_$][A-Za-z0-9_.$-]{0,63}$")
 
 
@@ -110,28 +113,42 @@ def ext_facts(volley: Volley, session: Session, *, namespace: str = "",
 
 
 def _refused_tag(tag: str) -> bool:
-    """A catalogue tag the gate drops: one with an id outside the frozen catalogue
-    (`vocab.validate_markup`), or one cut short by a `>` inside its own quotes (an odd
-    number of `"` in what `_EXT_TAG` matched). `_EXT_TAG` ends a tag at its first `>`, so
-    `<spurt spurt_id="n>pe"/>` is read here as `<spurt spurt_id="n>`, which names no id and
-    so has nothing to refuse, while the same catalogue check over the whole markup reads a
-    spurt with the id `n>pe`, which it refuses; what the robot's own reader makes of such a
-    tag is unverified, so it goes."""
-    return bool(vocab.validate_markup(tag)) or tag.count('"') % 2 == 1
+    """A catalogue tag the gate drops: one holding another `<` (`_EXT_TAG` reads from a
+    `<mark`, `<usel`, `<spurt` or `<break` to the next `>`, so `<usel<usel…>` is one tag),
+    one cut short by a `>` inside its own quotes (an odd number of `"` in what `_EXT_TAG`
+    matched), or one with an id outside the frozen catalogue (`vocab.validate_markup`).
+    `_EXT_TAG` ends a tag at its first `>`, so `<spurt spurt_id="n>pe"/>` is read here as
+    `<spurt spurt_id="n>`, which names no id and so has nothing to refuse, while the same
+    catalogue check over the whole markup reads a spurt with the id `n>pe`, which it
+    refuses; what the robot's own reader makes of such a tag is unverified, so it goes.
+    The first two are read before the catalogue check, which is the costly one: its own
+    patterns scan from every opening inside a tag to that tag's end (the gate took 26-78 ms
+    on one 8 KB tag of `<usel` or `<spurt` openings, measured), and on a tag with one
+    opening they read it once."""
+    return "<" in tag[1:] or tag.count('"') % 2 == 1 or bool(vocab.validate_markup(tag))
+
+
+def _tags_in(markup: str):
+    """`_EXT_TAG`'s matches in `markup`. A tag ends at a `>`, so none starts after the
+    last one, and the search stops there: from an opening with no `>` after it, `[^>]*`
+    ran to the end of the markup once per opening (81-85 ms for 8 KB of `<mark`, four
+    times longer per doubling, measured), and now nothing is read past the last `>`."""
+    return _EXT_TAG.finditer(markup, 0, markup.rfind(">") + 1)
 
 
 def ext_markup(markup: str) -> tuple:
     """`(clean, dropped)` — markup filtered tag by tag through the frozen `vocab.py`
     catalogue (M3); invalid tags are dropped and counted, text survives. `markup` reaches
-    the robot's body, so it is never passed through unchecked (R4). One pass: dropping a
-    tag can make the pieces around it meet (`<spu<usel genre="nope">rt spurt_id="nope"/>`
-    leaves a spurt this pass never saw), which `robot_markup` catches."""
+    the robot's body, so it is never passed through unchecked (R4). One pass, linear in
+    the markup (`_tags_in`, `_refused_tag`): dropping a tag can make the pieces around it
+    meet (`<spu<usel genre="nope">rt spurt_id="nope"/>` leaves a spurt this pass never
+    saw), which `robot_markup` catches."""
     if not markup:
         return "", 0
     dropped = 0
     out = []
     pos = 0
-    for m in _EXT_TAG.finditer(markup):
+    for m in _tags_in(markup):
         out.append(markup[pos:m.start()])
         pos = m.end()
         tag = m.group(0)
@@ -188,34 +205,44 @@ def _action_key(action: Action) -> tuple:
 def robot_markup(markup) -> tuple:
     """`(clean, dropped)`: `markup` as it may reach the robot, or `""` when it may not.
 
-    The robot speaks its markup when it is given one (`ContentApp._reply_from_volley`
-    lifts our tags from it once, as from a line, and the runtime sends it as written), and
-    markup acts on nothing, so what reaches the robot must hold no tag of ours and nothing
-    the catalogue gate refuses: the robot's own lift and the gate must both leave it as it
-    is. Three passes, each linear in the markup: every tag with one of our names is lifted
-    as the robot's parse lifts them (`actions.lift_action_tags`, one pass, malformed ones
-    too); then the gate (`ext_markup`); then, if a tag of ours is in what is left, or the
-    gate would drop anything more, the markup is dropped whole and the runtime's markup
-    floor speaks the line. Either can be there only because a tag the gate dropped stood
-    between the pieces of another (`<ex<ex<mark name="cmd:zzz"/>it>it>` would reach the
-    robot as `<exit>`; `<spu<usel genre="nope">rt spurt_id="nope"/>` as a spurt the gate
-    never saw), and keeping any of it would need a pass the robot does not make, so nothing
-    is kept. The last pass is not skipped when the gate dropped nothing, although it could
-    be (the gate then left the markup as it was): the check must not depend on the order of
-    the two passes before it. Measured through the real app, two runs, one under other
-    load: a turn with one 8 KB nest of tag pieces around a malformed tag takes 0.4-0.7 ms,
-    with the four a turn can carry 1.5-2.4 ms, and four ordinary 3 KB markups 0.3-0.7 ms;
-    on the function, 8 KB of 130 valid marks (the densest the gate sees) 1.5 ms, half of
-    it the gate and most of the rest the last pass. Before round 8 the tags of ours were
-    taken out to a fixpoint (`actions.drop_action_tags` with nothing kept) and the gate
-    ran once after, which let a dropped tag's neighbours meet, and the fixpoint cost
-    0.6-1.0 s per 8 KB nest (2.1-3.7 s for four). `dropped` counts the tags the gate
-    dropped, and one more for a markup dropped whole. Never reported to the parent:
-    nothing in markup is acted on."""
+    The robot speaks its markup when it is given one, and markup acts on nothing, so what
+    the robot is sent must hold no tag of ours and nothing the catalogue refuses.
+    `ContentApp._reply_from_volley` sends `actions.parse_action_tags(clean)[0]`: our tags
+    lifted once, as from a line, then `tidy_spoken_text`, which takes out the space before
+    a comma and so can join a tag's pieces (`<mark name="cmd:zzz ,data:{}"/>` becomes a
+    mark with the verb `zzz`). So: every tag with one of our names is lifted as that parse
+    lifts them (`actions.lift_action_tags`, one pass, malformed ones too); then the gate
+    (`ext_markup`); then `tidy_spoken_text`, so that what is checked last is what the robot
+    is sent (the parse finds no tag of ours left to lift, and tidying twice changes
+    nothing); then the markup is dropped whole, and the runtime's markup floor speaks the
+    line, if what is left holds a tag of ours, a tag the gate would drop, a catalogue tag
+    opened with no `>` after it, or anything the catalogue's own check over the whole text
+    refuses (`vocab.validate_markup`, which reads a quoted `>` as part of the value:
+    `<spurt x" spurt_id="n>pe"/>` is a spurt with the id `n>pe`). A tag of ours or one the
+    gate would drop can be left only because a tag the gate dropped stood between the
+    pieces of another (`<ex<ex<mark name="cmd:zzz"/>it>it>` would reach the robot as
+    `<exit>`), or because tidying joined one; keeping any of it would need a pass the robot
+    does not make, so nothing is kept.
+
+    Cost: every pass is linear in the markup but the whole-text catalogue check, which is
+    `vocab.py`'s and reads on from every opening it finds: a markup with an opening left
+    open is dropped before it runs (it took 0.4-0.7 s on an 8 KB run of `<usel genre="`
+    openings), and so is one with a tag holding another `<` (`_refused_tag`). The slowest
+    markup left to it that a search of 9,000 random 8 KB markups found is a run of mark
+    openings whose data is never closed, which it reads in quadratic time: 7-14 ms on 8 KB,
+    measured, so up to about 56 ms for the four markups a turn can carry. Before
+    round 8 the tags of ours were taken out to a fixpoint (`actions.drop_action_tags` with
+    nothing kept) and the gate ran once after, which let a dropped tag's neighbours meet,
+    and the fixpoint cost 0.6-1.0 s per 8 KB nest (2.1-3.7 s for four). `dropped` counts
+    the tags the gate dropped, and one more for a markup dropped whole. Never reported to
+    the parent: nothing in markup is acted on."""
     lifted = lift_action_tags(str(markup or "")[:ext.MAX_MARKUP_CHARS])
     clean, dropped = ext_markup(lifted)
-    exposed = bool(tag_names(clean)) or any(_refused_tag(m.group(0))
-                                            for m in _EXT_TAG.finditer(clean))
+    clean = tidy_spoken_text(clean)
+    exposed = (bool(tag_names(clean))
+               or any(_refused_tag(m.group(0)) for m in _tags_in(clean))
+               or _EXT_OPEN.search(clean, clean.rfind(">") + 1) is not None
+               or bool(vocab.validate_markup(clean)))
     if exposed:
         _automarkup._drop("ext")
         return "", dropped + 1

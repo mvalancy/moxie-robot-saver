@@ -15,13 +15,17 @@ parent once; `explain()` names every tag the rule writes whole, and its reading 
 decides the wording. Before this, an exit the review did not name could happen; after it,
 it cannot. The robot's markup, which it speaks when it is given one, holds no tag of ours
 and nothing the catalogue refuses, or the line goes without markup (`ext_host.robot_markup`).
+A conversation's opener, which this PR makes speak on the robot path, is held to the same
+rule (section E): it acts only on a tag written whole in the alternative said, unrendered,
+and the pack review names each such tag in the opener's own row.
 
 Hermetic: the real `ContentApp` (`helpers_ext.app_with`; the default grants, plus `random`,
 `memory.read` and `markup` for the programs that declare them) over fake brains that count their own
-calls, a tmp store for memory and the `ext_events` ring. The property test runs larger as a
-script: `python3 sim/tests/test_ext_say_tags.py PROGRAMS SEED MODE` from the checkout root,
-MODE `literal` (tags only in the program's own text) or `runtime` (what the child said, a
-memory and an `input_vars` value hold tag pieces and whole tags too).
+calls, a tmp store for memory and the `ext_events` ring. The property tests run larger as a
+script: `python3 sim/tests/test_ext_say_tags.py COUNT SEED MODE` from the checkout root,
+MODE `literal` (tags only in the program's own text), `runtime` (what the child said, a
+memory and an `input_vars` value hold tag pieces and whole tags too) or `opener` (COUNT
+random opener templates).
 """
 import importlib
 import json
@@ -30,6 +34,7 @@ import random
 import re
 import sys
 import time
+from collections import Counter
 
 if __name__ == "__main__":                 # the script mode, from the checkout root
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "mqtt"))
@@ -37,10 +42,11 @@ if __name__ == "__main__":                 # the script mode, from the checkout 
 
 import pytest
 
+from helpers_content import free_chat_pack
 from helpers_ext import CHAT_MODULE, app_with, robot as ext_robot
 from moxie_sdk import vocab
 from moxie_sdk.actions import (_fields, _TAG_RE, drop_action_tags, lift_action_tags,
-                               parse_action_tags, tag_names)
+                               lift_every_action_tag, parse_action_tags, tag_names)
 from moxie_sdk.content import content_app as CA
 from moxie_sdk.content import ext as E
 from moxie_sdk.content import ext_host as H
@@ -417,29 +423,56 @@ MARKUPS = {
         '<spurt spurt_id="n>pe"/>Hi', 'pe"/>Hi', 1),
     "a mark cut short by a > inside its data is malformed, and goes": (
         '<mark name="cmd:playback-mood,data:{+mood+:0>,+intensity+:1}"/>Hi', ',+intensity+:1}"/>Hi', 1),
+    # Round 9, the review's six (round 8's check ran before the robot path tidied the
+    # markup, and tag by tag only). Tidying takes out the space before a comma, which joins
+    # a mark the catalogue refuses: its verb, its sound, its mood.
+    "tidying would join a mark with a verb the catalogue refuses": (
+        '<mark name="cmd:zzz ,data:{}"/>Hi', "", 1),
+    "tidying would join a mark with a sound the catalogue refuses": (
+        '<mark name="cmd:playaudio ,data:{+SoundToPlay+:+nope+}"/>Hi', "", 1),
+    "tidying would join a mark with a mood the catalogue refuses": (
+        '<mark name="cmd:playback-mood ,data:{+mood+:+nope+,+intensity+:1}"/>Hi', "", 1),
+    # A quoted `>` after an earlier unbalanced quote: tag by tag the quotes even out, while
+    # the catalogue's check over the whole text reads the `>` inside the value.
+    "a spurt id holding a quoted > after an unbalanced quote": (
+        '<spurt x" spurt_id="n>pe"/>Hi', "", 1),
+    "a mark whose quoted data holds a >": (
+        '<mark name="cmd:playback-mood,data:{"a":">"}"/>Hi', "", 1),
+    "a usel genre holding a quoted > after an unbalanced quote": (
+        '<usel x" genre="a>b">Hi</usel>', "", 1),
+    # What keeps the whole-text check off the shapes it reads in more than linear time: a
+    # catalogue tag left open (it reads on from such an opening, and passed this one), and
+    # a catalogue tag holding another `<` (it passed this one too).
+    "a catalogue tag left open goes, with the markup": ('Hi <usel genre="nope"', "", 1),
+    "a catalogue tag holding another < goes": ('<usel<usel genre="question">Hi', "Hi", 1),
 }
 
 
 @pytest.mark.parametrize("shape", sorted(MARKUPS))
 def test_the_robots_markup_holds_no_tag_of_ours_and_nothing_the_catalogue_refuses(shape):
-    """The robot speaks its markup when it is given one (`_reply_from_volley` lifts our tags
-    from it once, as from a line, and the runtime sends it as written), and markup acts on
-    nothing, so `robot_markup` lets markup reach the robot only with no tag of ours and
-    nothing outside the catalogue: every tag of ours is lifted as the robot's own parse
-    lifts them, the catalogue drops what it refuses, and if a tag of ours is then in what
-    is left (a dropped tag stood between its pieces) the markup is dropped whole and the
-    runtime's markup floor speaks the line. Before round 8 the tags were taken out to a
-    fixpoint and the catalogue checked after, so the pieces around a dropped tag met and
-    the robot was given `<exit>Hi`. Checked on the function and through the real app, for
-    a `say`'s markup and for a `markup` statement after the say; a statement before the say
-    is replaced by the say's own output, so it could never show a leak. Never counted as a
-    refusal and never a breach. The robot path annotates a markup that holds no tag at all
-    (`annotate` leaves one with a tag alone), so a surviving markup reaches the robot as
-    `annotate` leaves it: the catalogue's own marks around the same text."""
+    """The robot speaks its markup when it is given one (`_reply_from_volley` sends
+    `parse_action_tags(markup)[0]`: our tags lifted once, as from a line, then tidied), and
+    markup acts on nothing, so `robot_markup` lets markup reach the robot only with no tag
+    of ours and nothing outside the catalogue: every tag of ours is lifted as the robot's
+    own parse lifts them, the catalogue drops what it refuses, the rest is tidied as the
+    robot path tidies it, and if a tag of ours, a tag the catalogue would drop, a tag left
+    open or anything the catalogue's own whole-text check refuses is then in what is left,
+    the markup is dropped whole and the runtime's markup floor speaks the line. Before
+    round 8 the tags were taken out to a fixpoint and the catalogue checked after, so the
+    pieces around a dropped tag met and the robot was given `<exit>Hi`; before round 9 the
+    last check ran before the tidying and tag by tag only, so the robot was given marks and
+    a spurt and a usel the catalogue refuses. Checked on the function and through the real
+    app, for a `say`'s markup and for a `markup` statement after the say; a statement
+    before the say is replaced by the say's own output, so it could never show a leak.
+    Never counted as a refusal and never a breach. The robot path annotates a markup that
+    holds no tag at all (`annotate` leaves one with a tag alone), so a surviving markup
+    reaches the robot as `annotate` leaves it: the catalogue's own marks around the same
+    text."""
     markup, clean, dropped = MARKUPS[shape]
     assert H.robot_markup(markup) == (clean, dropped), shape
     assert tag_names(clean) == [] and vocab.validate_markup(clean) == [], shape
     assert lift_action_tags(clean) == clean, "the robot's own lift finds nothing left"
+    assert parse_action_tags(clean) == (clean, []), "the robot path sends what was checked"
     assert H.ext_markup(clean) == (clean, 0), "the gate would drop nothing more"
     for program in (
             _imported({"do": [{"say": "Hi", "markup": markup}, {"handled": True}]},
@@ -462,31 +495,54 @@ def test_the_robots_markup_holds_no_tag_of_ours_and_nothing_the_catalogue_refuse
     assert _run(before, "hi", grants=MARKUP)[0].markup is None, "the say replaces it"
 
 
-def test_four_markups_at_the_cap_are_cleared_in_time_linear_in_their_text():
+#: Markups at the cap that a pass of `robot_markup` once read in more than linear time.
+BOUNDED_MARKUPS = {
+    # Round 8: a nest of our tag pieces around a malformed tag, which the fixpoint pass
+    # read once per level (0.6-1.0 s per nest).
+    "a nest of tag pieces": "<ex" * 1363 + "<exit:now>" + "it>" * 1363,
+    # Round 9, the review's: `<mark` openings with no `>` after them, which `_EXT_TAG` read
+    # to the end once per opening, in the gate and again in the last pass.
+    "a run of <mark": ("<mark" * 1639)[:8192],
+    # Round 9: openings the catalogue's whole-text check reads on from, to the end (from
+    # each `genre="` again), so it is dropped as left open before that check runs ...
+    'a run of <usel genre="': ('<usel genre="' * 631)[:8192],
+    # ... and one tag holding thousands of openings, which the catalogue check reads from
+    # each, so the gate refuses it for holding a `<` before that check runs.
+    "one tag of <spurt openings": ("<spurt" * 1366)[:8191] + ">",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(BOUNDED_MARKUPS))
+def test_four_markups_at_the_cap_are_cleared_in_time_linear_in_their_text(shape):
     """A turn carries at most four spoken lines and markup statements together
     (`MAX_ACTIONS`), each with up to 8,192 characters of markup, cleared on every turn
-    with the GIL held. Before round 8 a markup went through `drop_action_tags` to a
-    fixpoint, quadratic in the markup: one 8 KB nest took 0.6-0.7 s and a turn with four
-    2.1-3.7 s on the build host, measured. `robot_markup` is three passes, each linear: the
-    same turn takes 1.5-2.4 ms (0.4-0.7 ms with one nest). The alarm turns a quadratic
-    pass red at 5 s rather than later; the 0.5 s bound is what fails it on a quiet host."""
-    nest = "<ex" * 1363 + "<exit:now>" + "it>" * 1363          # 8,188 characters
-    assert len(nest) <= E.MAX_MARKUP_CHARS
+    with the GIL held; here five turns of four, 7-17 ms in all on the build host. Before
+    round 8 a markup went through `drop_action_tags` to a fixpoint, quadratic in the markup:
+    a turn with four nests took 2.1-3.7 s. Before round 9 the gate's tag search read from
+    each opening with no `>` after it to the end of the markup, twice (a turn with four
+    `<mark` runs took 0.37-0.52 s), and the catalogue's whole-text check, which round 9
+    adds, takes 0.4-0.7 s on one `<usel genre="` run unless an opening left open drops the
+    markup first, measured. With any one of round 9's bounds undone the five turns take
+    0.94-6.8 s. The alarm turns a super-linear pass red at 5 s rather than later; the 0.5 s
+    bound is what fails one on a quiet host."""
+    markup = BOUNDED_MARKUPS[shape]
+    assert len(markup) <= E.MAX_MARKUP_CHARS
     program = {"ext_format": 1, "capabilities": ["handled", "markup", "say"], "on": "global",
-               "rules": [{"do": [{"say": "Hi", "markup": nest}] * 4 + [{"handled": True}]}]}
+               "rules": [{"do": [{"say": "Hi", "markup": markup}] * 4 + [{"handled": True}]}]}
     assert E.validate(program, grants=MARKUP) == []
     app = app_with(_module(program), chat=Brain(), ext_grants=MARKUP, clock=lambda: 1_700_000_000)
     started = time.perf_counter()
     try:
         with _hard_limit(5.0):
-            reply = app.respond(Turn(robot=ext_robot(), speech="hi"))
+            replies = [app.respond(Turn(robot=ext_robot(), speech="hi")) for _ in range(5)]
     except _Stalled:
-        pytest.fail("still clearing four 8 KB markups after 5 s")
+        pytest.fail(f"still clearing four 8 KB markups ({shape}) after 5 s")
     took = time.perf_counter() - started
-    assert reply.text == "Hi" and reply.actions == [] and reply.markup is None, reply
+    for reply in replies:
+        assert reply.text == "Hi" and reply.actions == [] and reply.markup is None, reply
     assert _refused(app) == 0 and not app._ext_breaches
-    assert took < 0.5, f"four 8 KB markups took {took:.2f} s"
-    assert H.robot_markup(nest) == ("", 1)
+    assert took < 0.5, f"five turns of four 8 KB markups ({shape}) took {took:.2f} s"
+    assert H.robot_markup(markup) == ("", 1)
     assert H.robot_markup("<ex" * 1364 + "<sleep>" + "it>" * 1364) == ("", 1)
 
 
@@ -849,10 +905,14 @@ RUNTIME = ["a", "ab", "<exit>", "it>", "<ex", "<launch:DRAW>", "DRAW", "<sleep>B
 IDX = {"%": [{"len": [_SPEECH]}, 2]}
 #: Markup pieces: the tag pieces of ours, tags the catalogue keeps and drops, and the pieces
 #: of those, so a dropped tag can stand between the pieces of a tag of ours, and a tag of
-#: ours between the pieces of a catalogue tag.
+#: ours between the pieces of a catalogue tag; and (round 9) what the robot path's tidying
+#: joins (a space before a comma), quoted `>`s after an unbalanced quote, an opening left
+#: open and a tag holding another `<`.
 MARKUP_PIECES = PIECES + [GOOD_MARK, BAD_MARK, GOOD_USEL, BAD_USEL, '<break size="1"/>',
                           "</usel>", "<m", 'ark name="cmd:zzz"/>', "<us", 'el genre="nope">',
-                          "Hi "]
+                          "Hi ", '<mark name="cmd:zzz', ' ,data:{}"/>', 'x" ', '"a":">"}"/>',
+                          '<spurt x" spurt_id="n>pe"/>', '<usel x" genre="a>b">',
+                          '<mark name="cmd:playback-mood,data:{', '<usel genre="', "<usel"]
 
 
 class _Generator:
@@ -1080,6 +1140,258 @@ def test_the_invariant_holds_on_random_programs_and_inputs(mode, seed):
     assert counts["programs"] >= 900 and counts["sent"] >= 150, counts
 
 
+# --------------------------------------------------------------------------- #
+# E. A conversation's opener acts only on the tags written whole in it
+# --------------------------------------------------------------------------- #
+
+def _opener_app(opener, chat=None, **kw):
+    """A content brain whose one conversation starts with `opener`, as an imported pack's
+    item would (no shipped baseline)."""
+    conv = dict(CHAT_MODULE["conversations"][0], opener=opener)
+    return app_with({"conversations": [conv]}, chat=chat or Brain(), **kw)
+
+
+def _started(app, nickname="Sam"):
+    """What the robot is sent for a `prompt` with no speech: the conversation starting."""
+    return app.respond(Turn(robot=ext_robot(nickname=nickname, module_id="CHAT"), speech="",
+                            command="prompt"))
+
+
+#: Openers, unrendered: `(opener, what Moxie says first, what the robot is sent with it, what
+#: the pack review's opener row names)`. The first three are the review's (round 8).
+OPENERS = {
+    "a launch a template builds": ("Let's go!{{ '<la' ~ 'unch:DRAW>' }}", "Let's go!", [], []),
+    "an exit a template builds": ("Bye!{{ '<ex' ~ 'it>' }}", "Bye!", [], []),
+    "a sleep written whole": ("Sleepy time.<sleep>", "Sleepy time.", ["Moxie goes to sleep"],
+                              ["sometimes Moxie goes to sleep"]),
+    "a sleep a set statement builds": ("{% set t = '<sl' %}{{ t }}eep>Night", "Night", [], []),
+    "an exit a filter builds": ("{{ '<exot>' | replace('o', 'i') }}Bye", "Bye", [], []),
+    "an exit joined around a comment that holds a |": ("<ex{# | #}it>Hi", "Hi", [], []),
+    "an exit split across two alternatives": ("{{ '<ex' }}|{{ 'it>' }}", "<ex", [], []),
+    "a launch one alternative builds and another writes": (
+        "{{ '<la' ~ 'unch:DRAW>' }}Go|Let's draw!<launch:DRAW>", "Go", [], [f"sometimes {DRAW}"]),
+    "an exit built around a sleep written whole": (
+        "{{ '<ex' }}<sleep>{{ 'it>' }}Hm", "Hm", ["Moxie goes to sleep"],
+        ["sometimes Moxie goes to sleep"]),
+    "a sleep written once and built once more": (
+        "<sleep>{{ '<sl' ~ 'eep>' }}Zz", "Zz", ["Moxie goes to sleep"],
+        ["sometimes Moxie goes to sleep"]),
+    "a launch written once that a loop says three times": (
+        "{% for i in range(3) %}<launch:DRAW>{% endfor %}Go", "Go", [DRAW], [f"sometimes {DRAW}"]),
+    "an exit written whole that a filter lowers": (
+        "{{ '<EXIT>' | lower }}Bye", "Bye", ["the conversation ends"],
+        ["sometimes the conversation ends"]),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(OPENERS))
+def test_an_opener_acts_only_on_a_tag_written_whole_in_it(shape):
+    """This PR makes a conversation's opener speak on the robot path (on dev it never did),
+    so an imported pack's opener is held to the rule a program's line is under: the robot
+    path parses the rendered line as a model's, and an action acts only when the same
+    action is written whole in the `|`-alternative said, unrendered, and at most as often
+    as it is written there. A tag that only forms as the template renders (an expression, a
+    filter, a `{% set %}`, pieces joined around a comment or across what reads as two
+    alternatives, a copy beyond the ones written) is lifted: never said, never acted on.
+    The pack review names every tag that can act in the opener's own row, beside the diff,
+    before the parent ticks the row; the robot path's greeting follows the same rule."""
+    opener, said, sent, named = OPENERS[shape]
+    brain = Brain()
+    app = _opener_app(opener, chat=brain, rng=random.Random(3))
+    reply = _started(app)
+    assert brain.turns == [], "an opener costs no model call"
+    assert (reply.text, _sent(reply)) == (said, sent), (shape, reply)
+    greeting = _opener_app(opener).greeting(ext_robot(module_id="CHAT"))
+    assert (greeting.text, _sent(greeting)) == (said, sent), (shape, greeting)
+    rows = P.opener_warnings({"opener": opener})
+    assert [_named_in(row) for row in rows] == ([named] if named else []), rows
+    assert all(row.startswith("When this conversation starts, Moxie says its opener; then ")
+               for row in rows), rows
+    (item,) = P.review_pack(free_chat_pack("You are Moxie.", opener=opener), {})
+    assert all(row in item["warnings"] for row in rows), item["warnings"]
+    for _ in range(4):                     # the other alternatives, as the rotation says them
+        reply = _started(app)
+        assert tag_names(reply.text) == [], (shape, reply.text)
+        assert all(any(_names(n, e) for n in named) for e in _sent(reply)), (shape, reply)
+
+
+def test_a_childs_name_that_holds_a_tag_is_never_said_or_acted_on():
+    """The rule holds for every opener, shipped ones included: a name rendered into the
+    opener is not the opener's own text, so a tag in it is lifted."""
+    app = shipped_app("starter.json", Brain())
+    for nickname in ("<exit>", "<launch:DRAW>", "<ex<sleep>it>"):
+        reply = app.respond(Turn(robot=ext_robot("d1", nickname=nickname, module_id="FREE_CHAT",
+                                                 content_id="default"),
+                                 speech="", command="prompt"))
+        assert reply.actions == [] and reply.text.startswith("Hi!"), (nickname, reply)
+        assert tag_names(reply.text) == [], reply.text
+
+
+def test_every_shipped_opener_says_and_does_what_it_did(monkeypatch):
+    """The shipped openers write no tag, so each says exactly what it said before this
+    round (the robot path's own parse of the rendered line, the rule bypassed), on four
+    empty prompts in a row, for several children, sends nothing, and gets no opener row in
+    the review."""
+    convs = [(file, c) for file in SHIPPED for c in _raw(file)["conversations"]
+             if c.get("opener")]
+    assert len(convs) == 3, [c["module_id"] for _, c in convs]
+    real = CA.said_opener
+    for file, conv in convs:
+        assert P.opener_warnings(conv) == [], conv["opener"]
+        for nickname in ("Sam", "Zoë", ""):
+            heard = []
+            for said in (real, lambda alternative, line: parse_action_tags(line)):
+                monkeypatch.setattr(CA, "said_opener", said)
+                app = shipped_app(file, Brain(), rng=random.Random(5))
+                robot = ext_robot("d1", nickname=nickname, module_id=conv["module_id"],
+                                  content_id=conv["content_id"])
+                replies = [app.respond(Turn(robot=robot, speech="", command="prompt"))
+                           for _ in range(4)]
+                heard.append([(r.text, r.actions) for r in replies])
+            assert heard[0] == heard[1], (file, conv["module_id"], nickname, heard)
+            assert all(actions == [] and text for text, actions in heard[0]), heard[0]
+
+
+#: What an opener is made of: words, whole tags (two malformed), the pieces of tags, and the
+#: text a template construct puts around them.
+_OPENER_TAGS = ["<exit>", "<sleep>", "<launch:DRAW>", "<EXIT>", "<launch:Draw>", "<exit:now>",
+                "<launch:A:B:C>", "<launch:DRAW:story>"]
+_OPENER_PIECES = ["<ex", "it>", "<sl", "eep>", "<la", "unch:DRAW>", "<", ">", "<exot>", "ex",
+                  "it", "o"]
+_OPENER_WORDS = ["Hi!", "Let's play.", " ", "Ready", ",", "<opener>"]
+
+
+class _OpenerGenerator:
+    """Random openers: one to three `|`-alternatives of one to four parts, each a word, a
+    whole tag, a piece of one, or a template construct over them: an expression, a join
+    (`~`), a filter (`upper`, `lower`, `replace`, `reverse`, `trim`), a `{% set %}` read
+    back, an `{% if %}` (on a constant or the child's name), a `{% for %}`, or a comment
+    holding a tag and a `|`."""
+
+    def __init__(self, rng):
+        self.rng = rng
+
+    def lit(self):
+        """The text of a template's string literal: whole tags and pieces of them."""
+        return "".join(self.rng.choice(_OPENER_TAGS + _OPENER_PIECES)
+                       for _ in range(self.rng.randint(1, 2)))
+
+    def plain(self):
+        return self.rng.choice(_OPENER_WORDS + _OPENER_TAGS + _OPENER_PIECES)
+
+    def part(self):
+        r = self.rng
+        k = r.randint(0, 11)
+        if k <= 3:
+            return self.plain()
+        if k == 4:
+            return "{{ '%s' }}" % self.lit()
+        if k == 5:
+            return "{{ '%s' ~ '%s' }}" % (self.lit(), self.lit())
+        if k == 6:
+            return "{{ '%s' | %s }}" % (self.lit(), r.choice(
+                ["upper", "lower", "replace('o', 'i')", "replace('a', '<')", "reverse", "trim"]))
+        if k == 7:
+            return "{%% set v = '%s' %%}{{ v }}%s" % (self.lit(), self.plain())
+        if k == 8:
+            return "{%% if %s %%}%s{%% else %%}%s{%% endif %%}" % (
+                r.choice(["true", "false", "volley.config.child_pii.nickname"]), self.plain(),
+                self.plain())
+        if k == 9:
+            return "{%% for i in range(%d) %%}%s{%% endfor %%}" % (r.randint(0, 3), self.plain())
+        if k == 10:
+            return "{# %s | %s #}" % (r.choice(_OPENER_TAGS), r.choice(_OPENER_PIECES))
+        return self.plain() + self.plain()
+
+    def opener(self):
+        r = self.rng
+        return "|".join("".join(self.part() for _ in range(r.randint(1, 4)))
+                        for _ in range(r.randint(1, 3)))
+
+
+def _opener_property(openers, seed):
+    """`openers` random openers, each through the real `ContentApp` on three empty prompts
+    (the first alternative, then two the rotation draws), watching the robot path's own
+    `said_opener`: what the robot is sent is only actions written whole in the alternative
+    said, unrendered, at most as often as they are written there; each is named by the
+    opener's review row; no tag of ours is said. Returns the counts; raises on the first
+    miss. Deterministic: fixed seeds and no clock read."""
+    rng = random.Random(seed)
+    counts = {"openers": 0, "prompts": 0, "sent": 0, "lifted": 0, "named": 0, "silent": 0}
+    real = CA.said_opener
+    for _ in range(openers):
+        opener = _OpenerGenerator(rng).opener()
+        rows = P.opener_warnings({"opener": opener})
+        named = _named_in(rows[0]) if rows else []
+        counts["openers"] += 1
+        counts["named"] += len(named)
+        seen = []
+
+        def spy(alternative, line):
+            said = real(alternative, line)
+            seen.append((alternative, line, said))
+            return said
+
+        app = _opener_app(opener, rng=random.Random(seed))
+        CA.said_opener = spy
+        try:
+            for _ in range(3):
+                seen.clear()
+                reply = _started(app)
+                counts["prompts"] += 1
+                where = (seed, opener, reply.text, _sent(reply), rows)
+                assert tag_names(reply.text) == [], where
+                if not seen:
+                    counts["silent"] += 1  # no alternative says anything: the brain answers
+                    assert reply.actions == [], where
+                    continue
+                ((alternative, line, said),) = seen
+                assert (reply.text, reply.actions) == said, where
+                written = Counter(H._action_key(a) for a in parse_action_tags(alternative)[1])
+                sent = Counter(H._action_key(a) for a in reply.actions)
+                assert all(sent[k] <= written[k] for k in sent), where
+                assert all(any(_names(n, e) for n in named) for e in _sent(reply)), where
+                counts["sent"] += len(reply.actions)
+                counts["lifted"] += len(parse_action_tags(line)[1]) - len(reply.actions)
+        finally:
+            CA.said_opener = real
+    return counts
+
+
+@pytest.mark.parametrize("seed", [21, 22])
+def test_an_opener_never_acts_on_a_tag_its_review_does_not_name(seed):
+    """Fixed seeds, 600 random openers on three empty prompts each (a few seconds on the
+    build host); the script mode runs more. Both counts are asserted, so a generator that
+    stopped building tags could not pass by acting on nothing."""
+    counts = _opener_property(600, seed)
+    assert counts["sent"] >= 500 and counts["lifted"] >= 50, counts
+
+
+def test_lifting_every_tag_of_ours_in_one_pass_leaves_what_lifting_until_nothing_moves_leaves():
+    """What an opener says (`content_app.spoken_opener`) lifts every tag of ours, and every
+    one that forms once those are lifted, in one pass (`actions.lift_every_action_tag`),
+    where repeating the robot's own one-pass lift would read a nest of pieces once per
+    level: pinned to that repetition on the nests and 20,000 random lines over the
+    grammar's characters."""
+    def lifted_until_nothing_moves(text):
+        while True:
+            lifted = lift_action_tags(text)
+            if lifted == text:
+                return text
+            text = lifted
+
+    rng = random.Random(11)
+    pool = _GRAMMAR_POOL + ["<ex", "it>", "<sl", "eep>", "<b>", "x>", "<sleep>", "<<"]
+    lines = ["<ex<sleep>it>", "<e<ex<sleep>it>xit>x", "<a><exit>", "<<exit>>", "<exit:<sleep>>",
+             "<ex<b>it>", "<la<exit>unch:DRAW>Go", "<ex<exit:now>it>", "", ">", "<"]
+    lines += ["".join(rng.choice(pool) for _ in range(rng.randint(1, 14))) for _ in range(20_000)]
+    for line in lines:
+        assert lift_every_action_tag(line) == lifted_until_nothing_moves(line), repr(line)
+
+
 if __name__ == "__main__":
     n, seed, mode = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
-    print(f"mode {mode} seed {seed}: {_property(n, seed, mode)}, misses 0")
+    if mode == "opener":
+        print(f"mode {mode} seed {seed}: {_opener_property(n, seed)}, misses 0")
+    else:
+        print(f"mode {mode} seed {seed}: {_property(n, seed, mode)}, misses 0")

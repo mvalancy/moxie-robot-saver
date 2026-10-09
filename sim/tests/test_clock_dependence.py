@@ -165,9 +165,10 @@ REVIEWED: dict = {
         "20 KB), also enforced by a hard alarm per match: load multiplies a linear match, "
         "while an ambiguous pattern grows 2^n or faster and is past the ceiling by n=25."),
     "sim/tests/test_content_app.py::test_a_huge_opener_takes_one_pass_and_one_render": (
-        ("time.perf_counter",), "RELATIVE — 1.0 s for two empty prompts, 50x the measured "
-        "0.01-0.02 s: load multiplies one linear split and one render, while the quadratic "
-        "split or a render per alternative took 2.4-10.5 s on the same openers."),
+        ("time.perf_counter",), "RELATIVE — 1.0 s for two empty prompts, 20x the measured "
+        "0.01-0.04 s: load multiplies one linear split, one render and one linear lift, "
+        "while the quadratic split, a render per alternative or a lift pass by pass took "
+        "2.4-10.5 s on the same openers."),
     "sim/tests/test_ext_say_tags.py::test_the_tags_a_program_writes_are_read_in_time_linear_in_its_text": (
         ("time.perf_counter",), "RELATIVE — 0.5 s for a first turn measured at 2 ms, also "
         "enforced by a hard 5 s alarm: load multiplies a linear parse, while the lazy "
@@ -178,9 +179,10 @@ REVIEWED: dict = {
         "enforced by a hard 5 s alarm: the lazy parse had not finished a megabyte of spaces "
         "after 8 s."),
     "sim/tests/test_ext_say_tags.py::test_four_markups_at_the_cap_are_cleared_in_time_linear_in_their_text": (
-        ("time.perf_counter",), "RELATIVE — 0.5 s for a turn measured at 1.5-2.4 ms, also "
-        "enforced by a hard 5 s alarm: load multiplies three linear passes, while the "
-        "fixpoint pass took 2.1-3.7 s on the same four 8 KB nests."),
+        ("time.perf_counter",), "RELATIVE — 0.5 s for five turns measured at 7-17 ms, also "
+        "enforced by a hard 5 s alarm: load multiplies linear passes, while with any one of "
+        "round 9's bounds undone the same five turns took 0.94-6.8 s, and the fixpoint pass "
+        "took 2.1-3.7 s a turn on the nests."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}

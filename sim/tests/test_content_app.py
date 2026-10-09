@@ -237,13 +237,17 @@ def test_only_the_alternative_said_is_rendered(monkeypatch):
 #: Openers of 100 KB or more (only the 1 MiB pack cap limits one). Measured per empty
 #: prompt before this change: 5.5 s, 7.1 s and 7.1 s for the three unclosed constructs (a
 #: quadratic split), 4.5 s for the closed one (a quadratic membership test, then a render
-#: per alternative) and 1.3 s for 7000 plain lines (a render per alternative).
+#: per alternative) and 1.3 s for 7000 plain lines (a render per alternative). And a nest of
+#: tag pieces around a malformed tag (48 KB), whose every level an opener lifts so none is
+#: said: lifted pass by pass, once per level, two empty prompts took 7.4 s (43 ms in one
+#: pass).
 HUGE_OPENERS = {
     "unclosed {{": "{{ x |" * 16667,
     "unclosed {%": "{% x |" * 16667,
     "unclosed {#": "{# x |" * 16667,
     "closed {{ }}": "Hi {{ x }}|" * 9091,
     "7000 lines": "|".join(f"Line number {i}!" for i in range(7000)),
+    "a nest of tag pieces": "<ex" * 8000 + "<exit:now>" + "it>" * 8000 + "Hi!",
 }
 
 

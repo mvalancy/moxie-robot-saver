@@ -1311,6 +1311,8 @@ PREVIEW_OPENERS = [
     "<exit>Bye for now!<opener>|See you!",
     "Okay, sleepy time.<sleep>",
     "{{ '' }}|The second one is the first heard.",
+    # an exit the template builds around a sleep: the robot path lifts every level of it
+    "{{ '<ex' }}<sleep>{{ 'it>' }}Night night.",
     # and a shipped one, which both always agreed on
     next(c for c in _raw("memory_chat.json")["conversations"]
          if c["content_id"] == "default")["opener"],
@@ -1318,7 +1320,8 @@ PREVIEW_OPENERS = [
 
 
 @pytest.mark.parametrize("opener", PREVIEW_OPENERS, ids=[
-    "filter", "if-filter", "comment-launch", "exit", "sleep", "empty-first", "shipped"])
+    "filter", "if-filter", "comment-launch", "exit", "sleep", "empty-first", "nested-pieces",
+    "shipped"])
 def test_the_content_preview_route_returns_the_line_a_robot_hears_first(tmp_path, opener):
     """The route splits and lifts tags as the robot path does (`pick_opener`), and a
     robot's rotation never leaks into it. (The console's editor card shows only the

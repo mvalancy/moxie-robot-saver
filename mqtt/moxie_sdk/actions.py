@@ -136,6 +136,43 @@ def lift_action_tags(text: str) -> str:
                        text or "")
 
 
+_ANGLE_RE = re.compile(r"[<>]")
+
+
+def lift_every_action_tag(text: str) -> str:
+    """`text` with every tag that has one of our names lifted, malformed ones too, and every
+    one that forms once those are lifted (`<ex<sleep>it>` loses its sleep, then the exit),
+    until none is left: what repeating `lift_action_tags` until nothing more comes out
+    leaves, worked out in one pass, linear in `text`. Each `>` closes the latest `<` still
+    open, and what lies between holds no `<` or `>`, so it is a tag of ours or it is not:
+    a tag of ours goes, which lets the `<` open before it close later; anything else stays,
+    and no `<` before it can start a tag of ours any more. The content brain says an
+    opener with it (`content_app.said_opener`), so no tag of ours that a template builds
+    is said."""
+    out: List[str] = []                    # pieces; a `<` is always a piece of its own
+    opens: List[int] = []                  # where each `<` still open is in `out`
+    pos = 0
+    for m in _ANGLE_RE.finditer(text or ""):
+        if m.start() > pos:
+            out.append(text[pos:m.start()])
+        pos = m.end()
+        if m.group() == "<":
+            opens.append(len(out))
+            out.append("<")
+            continue
+        if opens:
+            at = opens[-1]
+            tag = _TAG_RE.fullmatch("".join(out[at:]) + ">")
+            if tag is not None and tag.group(1).lower() in KNOWN_TAGS:
+                del out[at:]
+                opens.pop()
+                continue
+            opens.clear()
+        out.append(">")
+    out.append((text or "")[pos:])
+    return "".join(out)
+
+
 def _lift_known(text: str) -> Tuple[str, List[int]]:
     """`text` as `parse_action_tags` would speak it, every tag with one of our names lifted
     in one pass (malformed ones too), and for each character kept its index in `text`."""

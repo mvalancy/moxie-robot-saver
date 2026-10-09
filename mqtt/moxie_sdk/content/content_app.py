@@ -8,6 +8,8 @@ injected `chat(messages) -> str` brain, return a Reply. The brain is taught `<ex
 **Opener.** A `prompt` with no speech is the robot starting the conversation, and is
 answered with the conversation's `opener` instead of the brain (OpenMoxie
 `conversations.py` `handle_volley`). Any speech, `continue` and `reprompt` go to the brain.
+An opener's action tags act only when written whole in the alternative said, as the pack
+review names them, and none is said (`said_opener`).
 
 Global handlers are registered Python callables or sandboxed extensions (`ext/`); a
 module's `code` string is never executed.
@@ -29,10 +31,12 @@ import json
 import random
 import re
 import time
+from collections import Counter
 from typing import Callable, Optional
 
 from ..app import MoxieApp
-from ..actions import LEAVE_TAG_PROMPT, parse_action_tags
+from ..actions import (LEAVE_TAG_PROMPT, lift_every_action_tag, parse_action_tags,
+                       tidy_spoken_text)
 from ..automarkup import annotate, enabled as _automarkup_enabled
 from ..memory_store import MemoryStore
 from ..types import Turn, Reply, RobotContext
@@ -42,10 +46,10 @@ from .memory import default_classifier, note_used, provenance, wrap_facts
 from .render import render_prompt
 from . import ext
 from .. import presence as _presence
-from .ext_host import (apply_ext_effects, _clock_local, _ext_digest, EXT_EVENTS_CAP,
-    EXT_EVENTS_COLLECTION, ext_facts, ext_namespace, execution_actions_of, full_key_of,
-    literal_actions, REFUSED_TAG_REASON, REFUSED_TAG_WORDS, SHIPPED_EXTRA_GRANTS,
-    shipped_ext_digests, subscriptions_of)
+from .ext_host import (_action_key, apply_ext_effects, _clock_local, _ext_digest,
+    EXT_EVENTS_CAP, EXT_EVENTS_COLLECTION, ext_facts, ext_namespace, execution_actions_of,
+    full_key_of, literal_actions, REFUSED_TAG_REASON, REFUSED_TAG_WORDS,
+    SHIPPED_EXTRA_GRANTS, shipped_ext_digests, subscriptions_of)
 from .ext_host import robot_events, robot_functions  # noqa: F401  (re-exported surface)
 
 
@@ -102,6 +106,25 @@ def _shuffled(n: int, rng):
         yield order[k]
 
 
+def _pick(opener: str, context: dict, last: Optional[str] = None,
+          rng=random) -> Optional[tuple]:
+    """`(alternative, line)`: `pick_opener`'s line, and the alternative, unrendered, that it
+    was rendered from."""
+    alts, seen = [], set()
+    for alt in opener_alternatives(opener):
+        key = alt.replace("<opener>", "").strip()
+        if key and key not in seen:
+            seen.add(key)
+            alts.append(alt)
+    again = None
+    for i in (range(len(alts)) if last is None else _shuffled(len(alts), rng)):
+        line = render_prompt(alts[i], context).replace("<opener>", "").strip()
+        if line and line != last:
+            return alts[i], line
+        again = again or ((alts[i], line) if line else None)
+    return again
+
+
 def pick_opener(opener: str, context: dict, last: Optional[str] = None,
                 rng=random) -> Optional[str]:
     """The opener line to say, rendered over `context` with `<opener>` stripped and any
@@ -114,19 +137,36 @@ def pick_opener(opener: str, context: dict, last: Optional[str] = None,
     alternatives costs one render when they say something, and one more for each drawn
     alternative that says nothing (5,000 that say nothing took 0.6 s per empty prompt, and
     50,000 took 6.5-7.1 s, measured)."""
-    alts, seen = [], set()
-    for alt in opener_alternatives(opener):
-        key = alt.replace("<opener>", "").strip()
-        if key and key not in seen:
-            seen.add(key)
-            alts.append(alt)
-    again = None
-    for i in (range(len(alts)) if last is None else _shuffled(len(alts), rng)):
-        line = render_prompt(alts[i], context).replace("<opener>", "").strip()
-        if line and line != last:
-            return line
-        again = again or line
-    return again or None
+    picked = _pick(opener, context, last, rng)
+    return picked[1] if picked else None
+
+
+def spoken_opener(line: str) -> str:
+    """What a robot says for the opener `line`: every tag of ours lifted, and every one that
+    forms once those are lifted (`actions.lift_every_action_tag`), so none is said, however
+    the template built it; then tidied as a line is. The same as the robot path's own
+    one-pass parse speaks, unless a tag of ours forms only once the tags around it are
+    lifted."""
+    return tidy_spoken_text(lift_every_action_tag(line))
+
+
+def said_opener(alternative: str, line: str) -> tuple:
+    """`(text, actions)`: what a robot says and does for `line`, the opener `alternative`
+    rendered. The actions are the robot path's own parse of `line`, kept only where the same
+    action (its type and every field as parsed, `ext_host._action_key`) is written whole in
+    `alternative`'s own text, unrendered, and at most as many times as it is written there,
+    read with the same parse. So a tag that only forms as the template renders (`{{ '<la' ~
+    'unch:DRAW>' }}`, a filter, a `{% set %}`, pieces joined around a comment or across what
+    reads as two alternatives) never acts, and the pack review names every tag that can
+    (`packs.review.opener_warnings`). The text is `spoken_opener`'s."""
+    written = Counter(_action_key(a) for a in parse_action_tags(alternative)[1])
+    actions = []
+    for action in parse_action_tags(line)[1]:
+        key = _action_key(action)
+        if written[key] > 0:
+            written[key] -= 1
+            actions.append(action)
+    return spoken_opener(line), actions
 
 ChatFn = Callable[[list], str]          # messages [{role,content}] -> assistant text
 GlobalHandler = Callable[[Volley, Session], None]   # sets volley.output / actions
@@ -408,18 +448,21 @@ class ContentApp(MoxieApp):
 
         The `|`-alternatives rotate per device and never repeat back to back; a device
         hears the first alternative first (`pick_opener`). `<opener>` is stripped, and
-        `<exit>`, `<sleep>` or `<launch:…>` become actions, as in a model's line."""
+        `<exit>`, `<sleep>` or `<launch:…>` become actions only when written whole in the
+        alternative said, as its pack review names them; no tag of ours is said
+        (`said_opener`). The same for every opener, shipped or imported: the shipped ones
+        write no tag."""
         if conv is None or not conv.opener:
             return None
         context = {"volley": volley or self._volley(Turn(robot=robot, speech="")),
                    "session": Session(), "presence": presence or _presence_vars(robot)}
         device_id = getattr(robot, "device_id", "") or ""
-        line = pick_opener(conv.opener, context, self._last_opener.get(device_id),
-                           self._rng)
-        if not line:
+        picked = _pick(conv.opener, context, self._last_opener.get(device_id), self._rng)
+        if picked is None:
             return None
+        alternative, line = picked
         self._last_opener[device_id] = line
-        text, actions = parse_action_tags(line)
+        text, actions = said_opener(alternative, line)
         return Reply(text=text, actions=actions)
 
     # ---- MoxieApp ----
