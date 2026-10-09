@@ -31,7 +31,7 @@ an `onRequest` handler):
 | `ttscache.js` | Cache of synthesized audio. A hit makes no upstream call. Per-colo, fails open, off with `DEMO_TTS_CACHE=0`. |
 | `wav.js` | WAV parser that keeps the file's own sample rate. |
 | `turnstile.js` | The bot check (below). |
-| `safety.js`, `safety.rules.js` | The safety floor, both sides of a turn. A blocked child line never reaches the gateway; an unsafe completion never reaches a voice ticket (the rule's redirect line is served in its place; a diagram that trips the table is dropped); a hurt child's reply that names no trusted grown-up gets one referral sentence appended, and a hurt child whose turn is blocked or reply swapped hears a referral line, never a change of subject. |
+| `safety.js`, `safety.rules.js` | The safety floor, both sides of a turn. A blocked child line never reaches the gateway; an unsafe completion never reaches a voice ticket (the rule's redirect line is served in its place; a diagram that trips the table is dropped); a hurt child's reply that names no trusted grown-up gets one referral sentence appended, and a hurt child whose turn is blocked, whose reply is swapped, or whose gateway call fails after the check hears a referral line, never a change of subject (the refusal keeps its reason and status and carries the line in `messages`). |
 
 ## Rules
 

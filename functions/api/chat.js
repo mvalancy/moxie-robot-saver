@@ -29,15 +29,23 @@
  *    block, with no extra upstream call; a diagram that trips it is dropped. A hurt child's
  *    reply that names no trusted grown-up gets ONE referral sentence appended, spoken as
  *    its own last ticket.
- *  - A HURT CHILD IS NEVER ANSWERED WITH A CHANGE OF SUBJECT. When a line that discloses
- *    hurt is blocked, or its reply is swapped, the line spoken instead is a referral
- *    (`hurtRedirectFor`); so is the line that replaces a completion which had itself
- *    pointed the child to a grown-up. The self-harm lines already refer and keep precedence.
+ *  - A HURT CHILD IS NEVER ANSWERED WITH A CHANGE OF SUBJECT ON ANY PATH THIS ROUTE OWNS
+ *    AFTER THE CHECK. Once step 6 has read the line as a disclosure, every outcome speaks
+ *    a referral: a block and a swap serve `hurtRedirectFor`; a served reply with no
+ *    referral gets one appended; and a refusal made after the check — a failed bot check,
+ *    a gateway 5xx, 429, timeout or login page — keeps its reason and status but carries
+ *    the referral line in `messages`, which `cloud-transport.js` speaks before it would
+ *    fall back to `stub.js`. The line that replaces a swapped completion which had itself
+ *    pointed the child to a grown-up points there too (`handoffRedirectFor`). The
+ *    self-harm lines already refer and keep precedence. NOT COVERED HERE, by construction:
+ *    a refusal made before the line is read (admission, a malformed body, an expired
+ *    budget), a deployment with no gateway (the stub answers alone) and a fetch the
+ *    browser gives up on — those are `stub.js` and `cloud-transport.js`'s to close.
  */
 import { readConfig, modeOf, publicLimits, publicTurnstile, upstreamHeaders } from "./_lib/env.js";
 import { logRefusal, respond } from "./_lib/envelope.js";
-import { assess, disclosesHurt, hasReferral, hurtRedirectFor, MOXIE, withReferral } from "./_lib/safety.js";
-import { admit, coloOf, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
+import { assess, disclosesHurt, handoffRedirectFor, hasReferral, hurtRedirectFor, MOXIE, withReferral } from "./_lib/safety.js";
+import { admit, coloOf, hostRefused, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
 import { mintContext, mintTickets, verifyContext } from "./_lib/hmac.js";
 import { TOKEN_FIELD, verify as verifyTurnstile } from "./_lib/turnstile.js";
 import { lookup as lookupDocs } from "./_lib/docsearch.js";
@@ -62,9 +70,50 @@ export function __resetExpiredContexts() { stats_expiredContext = 0; }
 
 /** This route's refusal. The sitekey rides every envelope shape, not only the probe's: the
  *  envelope is one shape for every outcome, so no client has to ask which fields a given
- *  answer carries. */
-function refusal(cfg, reason, extra) {
-  return refuse(cfg, "chat", reason, extra, { turnstile: publicTurnstile(cfg) });
+ *  answer carries.
+ *
+ *  `hurt` — the child's line, once step 6 has read it as a hurt disclosure. A refusal made
+ *  AFTER that check keeps its reason, status, `Retry-After` and one log line, but
+ *  `messages` carries the referral line (`hurtRedirectFor`) in place of the empty list:
+ *  `cloud-transport.js` speaks the messages of any `reason` body before it falls back to
+ *  `stub.js`, whose lines change the subject ("School days can be big days. What happened
+ *  today?"). `upstream.js::refusal` fixes `messages: []` for the three routes, so this
+ *  envelope is built here, field for field, from the same parts. No ticket (nothing was
+ *  served) and no blob (the turn is not remembered), as for every refusal. */
+function refusal(cfg, reason, extra, hurt) {
+  const fields = { turnstile: publicTurnstile(cfg) };
+  if (!hurt) return refuse(cfg, "chat", reason, extra, fields);
+  const x = extra || {};
+  const unserved = hostRefused(cfg);
+  const res = respond(
+    {
+      ok: false,
+      degraded: true,
+      reason,
+      retry_after_s: x.retryAfterS || 0,
+      mode: "degraded",
+      load: x.load,
+      limits: publicLimits(cfg),
+      ...fields,
+      messages: [lineMessage(cfg, hurtRedirectFor(hurt)).message],
+      speech: [],
+      context: "",
+      voice: cfg.voice && !unserved,
+      ears: cfg.ears && !unserved,
+    },
+    { rateLimit: x.rateLimit || null },
+  );
+  logRefusal("chat", reason, res.status, coloOf(cfg));
+  return res;
+}
+
+/** The wire message for a line of the rule table (a redirect, a referral, a hand-off):
+ *  performed with the line's mood and gesture, under an event id the caller may mint the
+ *  line's tickets against. */
+function lineMessage(cfg, r) {
+  const eid = eventId();
+  const markup = MK.mood(r.mood) + MK.gesture(r.gesture) + r.text;
+  return { eid, message: chatMessage(cfg.deviceId, buildChatResponse({ eventId: eid, text: r.text, markup })) };
 }
 
 export async function onRequestPost(context) {
@@ -91,12 +140,17 @@ export async function onRequestPost(context) {
   }
 
   try {
+    // The child's line once step 6 has read it as a hurt disclosure, else "": every refusal
+    // made after that check speaks the referral line (`refusal`'s `hurt`), never the
+    // stub's change of subject. Empty until step 6, so the refusals before it — which
+    // never read the line — carry no message, as before.
+    let hurt = "";
     // A refusal that spends nothing upstream gives back the units `admit()` charged, or 200
     // free refusals empty the shared hourly budget (`_lib/limits.js::grantedSlot`). The
     // upstream refusal at step 8 must NOT use this: that call was really made.
     const spentNothing = (reason, extra) => {
       slot.refundBudget();
-      return refusal(cfg, reason, { load: slot.load, rateLimit: slot.rateLimit, ...(extra || {}) });
+      return refusal(cfg, reason, { load: slot.load, rateLimit: slot.rateLimit, ...(extra || {}) }, hurt);
     };
 
     // 3. The request. Exactly two keys are read.
@@ -126,6 +180,7 @@ export async function onRequestPost(context) {
       slot.refundBudget();
       return await blocked(cfg, slot, verdict, { text, refer: disclosesHurt(verdict) });
     }
+    hurt = disclosesHurt(verdict) ? text : "";
 
     // 7. The bot control, and its POSITION is the design: after every free refusal
     //    (cheapest first), after `admit()` (so the per-IP windows protect siteverify rather
@@ -151,7 +206,7 @@ export async function onRequestPost(context) {
         retryAfterS: upstream.retryAfterS,
         load: slot.load,
         rateLimit: slot.rateLimit,
-      });
+      }, hurt);
     }
 
     // 8b. The re-roll.
@@ -159,16 +214,16 @@ export async function onRequestPost(context) {
 
     // 8c. The output floor (§4.12): her own words, assessed on the Moxie side of the table
     //     BEFORE a ticket is minted or the context is signed. A hard block swaps in the
-    //     rule's redirect line — or the referral line, for a child who disclosed hurt
-    //     (step 6's verdict) and for a completion that had itself pointed the child to a
-    //     grown-up — spoken from tickets of its own, and marks the turn the way an input
-    //     block is marked. The upstream call was really made, so the units stay charged.
-    //     A soft flag changes nothing. The diagram is rendered on the page, so it is read
-    //     too: one that trips the table is dropped and the spoken reply kept.
+    //     rule's redirect line — or the referral line for a child who disclosed hurt (step
+    //     6's verdict), or the hand-off line for a completion that had itself pointed the
+    //     child to a grown-up — spoken from tickets of its own, and marks the turn the way
+    //     an input block is marked. The upstream call was really made, so the units stay
+    //     charged. A soft flag changes nothing. The diagram is rendered on the page, so it
+    //     is read too: one that trips the table is dropped and the spoken reply kept.
     const own = assess(served.text, MOXIE);
     if (own.blocked) {
       return await blocked(cfg, slot, own, {
-        speak: true, text, refer: disclosesHurt(verdict) || hasReferral(served.text, text),
+        speak: true, text, refer: !!hurt, handoff: hasReferral(served.text, text),
       });
     }
     if (served.diagram && assess(served.diagram, MOXIE).blocked) served.diagram = "";
@@ -180,7 +235,7 @@ export async function onRequestPost(context) {
     //    A hurt child's reply (step 6's flag) that names no trusted grown-up gets ONE
     //    referral sentence appended here, before the markup, the tickets and the blob,
     //    so it is shown, spoken as its own last ticket, and remembered as hers.
-    const reply = disclosesHurt(verdict) ? withReferral(served.text, text).text : served.text;
+    const reply = hurt ? withReferral(served.text, hurt).text : served.text;
     const eid = eventId();
     const wire = buildChatResponse({
       eventId: eid, text: reply, endTurn: closing,
@@ -326,10 +381,12 @@ async function callGateway(cfg, body, timeoutMs) {
  * redirect line only — the completion it replaces never reaches a ticket — so the line
  * can be spoken in her voice; the unsafe completion is in no field of the response.
  *
- * `refer` (with `text`, the child's line): the child disclosed hurt, or the swapped reply
- * had itself pointed them to a grown-up, so the line spoken is the referral
- * (`hurtRedirectFor`), never a change of subject. The self-harm lines already refer and
- * keep precedence.
+ * `refer` (with `text`, the child's line): the child disclosed hurt, so the line spoken is
+ * the referral (`hurtRedirectFor`), never a change of subject. `handoff`: the swapped
+ * reply had itself pointed the child to a grown-up, so the line spoken points there too
+ * (`handoffRedirectFor`) — without thanking a child who disclosed nothing for telling.
+ * `refer` wins when both hold; the self-harm lines already refer and keep precedence over
+ * either.
  *
  * ONE LOG LINE PER BLOCKED TURN (`envelope.js::logRefusal`, as every refusal writes one):
  * route, the closed reason `blocked`, the status and the colo — never the child's line,
@@ -339,12 +396,15 @@ async function callGateway(cfg, body, timeoutMs) {
 async function blocked(cfg, slot, verdict, o) {
   const messages = [];
   let speech = [];
-  const r = o && o.refer && verdict.phraseSet !== "self_harm" ? hurtRedirectFor(o.text) : verdict.redirect;
+  let r = verdict.redirect;
+  if (o && verdict.phraseSet !== "self_harm") {
+    if (o.refer) r = hurtRedirectFor(o.text);
+    else if (o.handoff) r = handoffRedirectFor(o.text);
+  }
   if (r) {
-    const eid = eventId();
-    const markup = MK.mood(r.mood) + MK.gesture(r.gesture) + r.text;
-    messages.push(chatMessage(cfg.deviceId, buildChatResponse({ eventId: eid, text: r.text, markup })));
-    if (o && o.speak && cfg.voice) speech = await mintTickets(cfg, { text: r.text, eventId: eid });
+    const m = lineMessage(cfg, r);
+    messages.push(m.message);
+    if (o && o.speak && cfg.voice) speech = await mintTickets(cfg, { text: r.text, eventId: m.eid });
   }
   const res = respond(
     {

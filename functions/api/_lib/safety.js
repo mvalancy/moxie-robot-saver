@@ -23,8 +23,9 @@
  * computed and allowed through (§2.6) — except `hurt_disclosure`, which the route acts
  * on: a reply to a hurt child that names no trusted grown-up gets ONE referral sentence
  * appended (`withReferral`), deterministically, where the model misses about one in ten;
- * and when such a child's turn is blocked or their reply swapped, the line spoken instead
- * is a referral (`hurtRedirectFor`), never a change of subject.
+ * and when such a child's turn is blocked, their reply swapped, or the gateway refuses
+ * after the check, the line spoken instead is a referral (`hurtRedirectFor`), never a
+ * change of subject.
  *
  * `assess()` is PURE (no network, no clock), so tests assert the exact verdict. The table
  * is a `.js` data module because the Pages bundler rejects JSON import attributes (see
@@ -269,13 +270,16 @@ export function disclosesHurt(verdict) {
 
 /* A referral is ONE SENTENCE that POINTS the child to a trusted grown-up: a direction
  * ("tell a grown-up you trust", "go find your teacher", "let a grown-up know"), a check
- * ("does a grown-up know?", "is a parent nearby?") or a nomination ("a grown-up you trust
- * is the right person", "this needs a grown-up", "a grown-up can help"). An adult merely
- * NAMED is not one: "I'm so sorry your dad hits you, I know that must feel scary" names
- * the abuser and points nowhere, and "I know grown-ups say be brave" is co-occurrence.
- * Nor is the adult the child named as the one hurting them: "tell your dad to stop" after
- * "my dad hits me" sends the child back to him (`namedAsHurting`); "tell your mom or a
- * teacher" still counts for the teacher.
+ * in the PRESENT tense ("does a grown-up know?", "is a parent nearby?", "is your mom home
+ * right now?") or a nomination ("a grown-up you trust is the right person", "this needs
+ * a grown-up", "a grown-up can help"). An adult merely NAMED is not one: "I'm so sorry
+ * your dad hits you, I know that must feel scary" names the abuser and points nowhere,
+ * "I know grown-ups say be brave" is co-occurrence, "you deserve a dad who is gentle" and
+ * "every kid needs a grown-up who keeps them safe" describe an adult the child does not
+ * have, and "was a teacher there?" asks about the past. Nor is the adult the child named
+ * as the one hurting them: "tell your dad to stop" after "my dad hits me" sends the child
+ * back to him (`namedAsHurting`); "tell your mom or a teacher" still counts for the
+ * teacher.
  *
  * DELIBERATELY STRICTER THAN THE BAKE-OFF'S `refersToAdult` (`sim/tools/model_bakeoff.mjs`),
  * which credits an adult word and a pointing word in the same sentence. That instrument
@@ -288,12 +292,18 @@ const DET = "(?:a|an|the|your|some|any|another|one of your|a trusted|your truste
 const DIRECT_RE = new RegExp("\\b(?:tell|telling|told|talk(?:ing)?\\s+(?:to|with)|speak(?:ing)?\\s+(?:to|with)|find|finding|go\\s+(?:and\\s+|to\\s+)?(?:find|tell|get|see|talk\\s+to|ask|show|wake)|get|ask|asking|call|calling|show|showing|reach\\s+out\\s+to|let|run\\s+to|wake\\s+up|wake|help\\s+from|(?:show|take|bring|give|say|mention|report)\\s+(?:\\w+\\s+){0,3}?to)\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi");
 /** "…, your dad or a teacher" after a direction: the next adult in the list counts too. */
 const LIST_RE = new RegExp("(?:\\s*,\\s*(?:or\\s+|and\\s+)?|\\s+(?:or|and)\\s+)(" + DET + ")?\\s?(" + ADULT + ")\\b", "iy");
-const CHECK_RE = new RegExp("\\b(?:does|do|is|are|has|have|can|could|will|would|was|were|did)\\s+(?:there\\s+)?(" + DET + ")?\\s?(" + ADULT + ")\\b[^.!?]*?\\b(?:know|knows|aware|nearby|near\\s+you|close\\s+by|around|there|home|at\\s+home|with\\s+you|help|right\\s+now|you\\s+can\\s+(?:tell|talk\\s+to|go\\s+to))\\b", "gi");
+/** A check is in the present tense and about NOW: "does a grown-up know?", "is there a
+ *  grown-up nearby?", "is your mom home right now?". "Was a teacher there?" and "did your
+ *  teacher hear them?" ask about the past and point nowhere. */
+const CHECK_RE = new RegExp("\\b(?:does|do|is|are|can|could)\\s+(?:there\\s+)?(" + DET + ")?\\s?(" + ADULT + ")\\b[^.!?]*?\\b(?:know|knows|aware|nearby|near\\s+you|close\\s+by|around|home|at\\s+home|with\\s+you|right\\s+now|you\\s+can\\s+(?:tell|talk\\s+to|go\\s+to))\\b", "gi");
 const NOMINATE_RES = [
   new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:you|that you|who you)\\s+trust\\s+(?:is|are|can|could|will|would|should|needs?|has|have|must)\\b", "gi"),
-  new RegExp("\\b(?:need|needs|needed|deserve|deserves)\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi"),
+  // "this needs a grown-up", "feelings this big need a grown-up": the SITUATION needs one.
+  // "You deserve a dad who is gentle" and "every kid needs a grown-up who keeps them safe"
+  // describe an adult, so `deserve` never counts and `need` takes only these subjects.
+  new RegExp("\\b(?:this|that|it|these|those|feelings?\\s+(?:this|that|so)\\s+big|(?:something|anything|a\\s+(?:problem|thing|worry|secret))\\s+(?:this|that|so)\\s+big|(?:something|things?|stuff|a\\s+problem|a\\s+worry|a\\s+secret)\\s+like\\s+(?:this|that|these|those))\\s+(?:really\\s+|always\\s+)?needs?\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi"),
   new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:is|are|would\\s+be|will\\s+be|'s)\\s+the\\s+(?:right|best|safest|perfect|good)\\s+(?:one|person|people|grown[- ]?ups?|adults?)\\b", "gi"),
-  new RegExp("\\b(?:this|that|it)\\s+(?:is|'s)\\s+(?:something|a\\s+job|a\\s+thing|a\\s+problem|a\\s+question)\\s+(?:for\\s+)?(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi"),
+  new RegExp("\\b(?:this|that|it)\\s+(?:is|'s)\\s+(?:something|one|a\\s+job|a\\s+thing|a\\s+problem|a\\s+question)\\s+(?:for\\s+)?(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi"),
   new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:can|could|should|will|would|needs?\\s+to|has\\s+to|have\\s+to|ought\\s+to|is\\s+able\\s+to|are\\s+able\\s+to|is\\s+there\\s+to|are\\s+there\\s+to)\\s+(?:really\\s+|always\\s+|definitely\\s+)?(?:help|keep\\s+you\\s+safe|make\\s+(?:it|this|him|her|them)\\s+stop|protect\\s+you|sort\\s+(?:this|it)\\s+out|fix\\s+(?:this|it)|take\\s+care\\s+of\\s+(?:this|it|you)|look\\s+after\\s+you|stop\\s+(?:this|it|him|her|them)|make\\s+sure)\\b", "gi"),
   new RegExp("\\b(" + DET + ")?\\s?(" + ADULT + ")\\s+(?:is|are)\\s+(?:nearby|near\\s+you|close\\s+by|around|with\\s+you|there|home|at\\s+home)\\b", "gi"),
   new RegExp("\\b(?:is|are)\\s+(?:for|a\\s+job\\s+for)\\s+(" + DET + ")?\\s?(" + ADULT + ")\\b", "gi"),
@@ -322,7 +332,7 @@ const ROLE = "dad|daddy|father|papa|mom|mum|mommy|mummy|mother|mama|step ?(?:dad
 const HURT_VERB = "hit|hits|hitting|punch\\w*|kick\\w*|slap\\w*|push\\w*|shov\\w*|chok\\w*|strangl\\w*|bit|bites|biting|pinch\\w*|beat\\w*|bull\\w*|hurt\\w*|grab\\w*|burn\\w*|whip\\w*|smack\\w*|spank\\w*|threaten\\w*|threw|throws|throwing|touch\\w*|lock\\w*|said|says|told|tells|asked|asks|wants|wanted|made|makes|showed|shows|sent|sends|comes|came|scares|yell\\w*|scream\\w*|tried|tries|trying";
 /** `my dad hits me` / `daddy hurts me`: the role followed within four words by a hurting
  *  or grooming verb (not a possessor: "my mom's boyfriend hits me" does not name mom). */
-const NAMED_SUBJECT_RE = new RegExp("\\b(?:(?:my|our)\\s+(?:(?:big|little|older|younger|new|old|step|half|twin|other|mean|angry|drunk)\\s+)?)?(" + ROLE + ")\\b(?!'s)\\s+(?:\\w+\\s+){0,4}?(?:" + HURT_VERB + ")\\b", "gi");
+const NAMED_SUBJECT_RE = new RegExp("\\b(?:(?:my|our)\\s+(?:(?:big|little|older|younger|new|old|step|half|twin|other|mean|angry|drunk)\\s+)?)?(" + ROLE + ")\\b\\s+(?:\\w+\\s+){0,4}?(?:" + HURT_VERB + ")\\b", "gi");
 /** `i am scared of my dad`: the feared person. */
 const NAMED_FEARED_RE = new RegExp("\\b(?:scared|afraid|frightened|terrified)\\s+of\\s+(?:my\\s+|our\\s+)?(?:(?:big|little|older|younger|new|old|step)\\s+)?(" + ROLE + ")\\b(?!'s)", "gi");
 
@@ -394,6 +404,19 @@ export function hasReferral(reply, childText) {
  */
 export function hurtRedirectFor(childText) {
   return redirectFor("hurt", childText);
+}
+
+/**
+ * What a SWAPPED turn says when the completion had itself pointed the child to a grown-up
+ * but the child disclosed nothing ("ask a grown-up to help with the folding", swapped for
+ * asking the school's name): a line that points there too (`phrases.handoff`) without
+ * assuming a disclosure — the `hurt` set thanks the child for telling, which fits nothing
+ * they said. Picked like `redirectFor`.
+ *
+ * @returns {{text: string, mood: number, gesture: string, phraseId: number}|null}
+ */
+export function handoffRedirectFor(childText) {
+  return redirectFor("handoff", childText);
 }
 
 /**
