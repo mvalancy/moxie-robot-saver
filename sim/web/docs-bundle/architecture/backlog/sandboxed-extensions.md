@@ -52,7 +52,15 @@ a registered Python handler existed, and otherwise fell through to the conversat
 that socket. Its whole output surface is a `Volley`
 ([`volley.py`](../../../mqtt/moxie_sdk/content/volley.py)): `set_output`, `add_execution_action`,
 `add_subscriptions`, module-namespaced `persist_data` and per-turn `local_data`. Handler output goes
-through the same `parse_action_tags` + `annotate` path as model output.
+through the same `parse_action_tags` + `annotate` path as model output. An extension's line, though,
+may act only on an action tag written whole in its rule's own text (a `say` or `let` string literal):
+the host takes any other `<exit>`, `<sleep>` or `<launch:…>` out of the line and tells the parent
+(§4.5, §6.4), so the review's sentence for the rule (§5.4) names every exit, sleep or launch its
+line can make the robot take ([content-module-contract.md](../content-module-contract.md), "What a
+line's action tags may do"). A conversation's `opener` is not an extension, but it is held to the
+same rule: an action tag in it acts only when written whole in the alternative said, as written
+before it is rendered, and the pack review names each such tag in the opener's own row (the
+contract's "A conversation's opener").
 
 ### 2.2 The pack format it rides in
 
@@ -276,8 +284,8 @@ effect is applied. A breach anywhere discards the list whole (X11), so nothing i
 
 | Statement | What the host does |
 |---|---|
-| `say` | `volley.set_output`, after the output-side safety classifier (a blocked line becomes a redirect) and after `annotate` if no markup was authored |
-| `markup` | Checked tag by tag against `vocab.py`. Unknown ids and malformed tags are dropped and counted, never passed through |
+| `say` | Acts only on the action tags written whole in the rule's own text (`literal_actions`, read with the robot's own parse): any other `<exit>`, `<sleep>` or `<launch:…>` the line carries is taken out first (`actions.drop_action_tags`), counted and reported (§6.4), never said or acted on; so is a tag that would only form once the tags that stay are lifted (`<ex<sleep>it>` with its sleep kept would be spoken as `<exit>`). The line's markup reaches the robot only as `robot_markup` leaves it (the `markup` row). Then `volley.set_output`, after the output-side safety classifier (a blocked line becomes a redirect) and after `annotate` if no markup was authored. The set a rule may act on is read once per program, linearly in its text (a megabyte of spaces after `<exit:` in 16 ms, measured) |
+| `markup` | A `say`'s markup and a `markup` statement reach the robot only with no tag of ours and nothing the catalogue's check refuses, or not at all (`robot_markup`), checked on exactly what the robot path sends (our tags lifted once, the rest tidied): every tag of ours is lifted as the robot's own parse lifts them (`actions.lift_action_tags`, one pass, malformed ones too); then the gate (`ext_markup`, tag by tag against `vocab.py`: a tag with an id the catalogue refuses, a mark the catalogue's own mark pattern does not read whole, a tag cut short by a `>` inside its own quotes and a tag holding another `<` are dropped and counted, the rest of the markup kept); then the robot path's tidying (`tidy_spoken_text`); then, if a tag of ours, a tag of a form the gate drops, a catalogue tag left open or anything the catalogue's whole-text check refuses is left (a dropped tag stood between the pieces of another, `<ex<ex<mark name="cmd:zzz"/>it>it>`; a quoted `>` hid a value from the tag-by-tag read, `<spurt x" spurt_id="n>pe"/>`), the markup is dropped whole and the runtime's markup floor speaks the line. A usel or a spurt whose value the catalogue's patterns do not read (single quotes, spaces around `=`) is not refused, as on dev. Never a refusal or a breach: no action tag in markup is acted on. Every pass is linear, the whole-text check (`vocab.validate_markup`) included, since it runs only on tags of a form the gate keeps with none left open (before round 10 it read on from each mark the catalogue's pattern does not read whole: 15-27 ms on one 8 KB markup of the round-9 review's shape, 0.3 ms now, measured); five turns of four 8 KB markups of the shapes that were super-linear take 7-31 ms in all (five turns of four runs of `<mark` openings took 3.5 s before round 9, the fixpoint pass 2.1-3.7 s a turn before round 8). A mark written in a `say`'s line, or in a conversation's opener, is not on this channel: the runtime's markup floor sends a line holding `<` as it is, unchecked (a follow-up) |
 | `remember` / `forget` | `MemoryStore.merge` on `(device_id, namespace)`, both supplied by the host. Dropped at the store under `NO_DATA` |
 | `scratch` | `volley.local_data`, per turn, never persisted |
 | `act` | One `add_execution_action(name, args)`. `execution_actions_of` turns it into an `execute` `RemoteChatAction` with `function_id`/`function_args`. The name must be in `ACTION_WORDS`, checked at load **and** at the host boundary, and individually granted |
@@ -352,7 +360,11 @@ Both views are pure functions of the AST ([`explain.py`](../../../mqtt/moxie_sdk
    `ACTION_WORDS` tables, never from author text: *"Can speak to your child · Can check the time"*.
 2. **`explain(ext)`.** One English sentence per rule: *"Whenever this activity is triggered: tells your
    child 'The time is …' and answers without asking the AI."* T13 requires every capability to have
-   words, so a new capability cannot ship without them.
+   words, so a new capability cannot ship without them. A rule's sentence ends with what its line's
+   action tags make happen: every tag written whole in the rule's own text, which is all the host lets
+   the line act on (§4.5), so the sentence names every exit, sleep or launch the line can send, at
+   least as *"sometimes"* (the full statement, and what the wording means, is in
+   [content-module-contract.md](../content-module-contract.md)).
 
 ---
 
@@ -406,6 +418,12 @@ too long"*). After `MOXIE_EXT_MAX_BREACHES` breaches for the same (device, exten
 **quarantined** and not evaluated again. Both counters live on the `ContentApp` instance: they last until
 the process restarts and are **not** reset per chat session (a content reload swaps the module but keeps
 the app).
+
+An action tag the host took out of a line (§4.5: one the rule's own text does not write whole) is told
+the same way, one row per (device, extension, reason `tag`), with *"it tried to make Moxie do something
+its review did not name"*. It is not a breach and does not count towards quarantine: as with a markup
+tag the catalogue drops, the line is said without it and the turn goes on. `ContentApp._ext_refusals`
+counts them apart from `_ext_breaches`.
 
 ---
 

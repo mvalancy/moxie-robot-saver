@@ -230,7 +230,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 63196,
+   "bytes": 83158,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -625,7 +625,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions",
    "section": "architecture",
-   "bytes": 39488,
+   "bytes": 43630,
    "mermaid": 0,
    "headings": [
     "0. The boundary: cloud-side only",
@@ -1262,7 +1262,7 @@
    "path": "guides/what-moxie-remembers.md",
    "title": "What Moxie remembers — and how to erase it",
    "section": "guides",
-   "bytes": 5802,
+   "bytes": 5834,
    "mermaid": 0,
    "headings": [
     "What is written down",

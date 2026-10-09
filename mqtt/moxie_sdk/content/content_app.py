@@ -2,14 +2,21 @@
 ContentApp — runs a content module through the AI seam
 (docs/architecture/content-module-contract.md). Each turn: `globals[]` first (always-on
 commands), else the active conversation — render its prompt over the volley, ask the
-injected `chat(messages) -> str` brain, return a Reply.
+injected `chat(messages) -> str` brain, return a Reply. The brain is taught `<exit>` and
+`<sleep>` only (`actions.LEAVE_TAG_PROMPT`); it is never told a module id to launch.
+
+**Opener.** A `prompt` with no speech is the robot starting the conversation, and is
+answered with the conversation's `opener` instead of the brain (OpenMoxie
+`conversations.py` `handle_volley`). Any speech, `continue` and `reprompt` go to the brain.
+An opener's action tags act only when written whole in the alternative said, as the pack
+review names them, and none is said (`said_opener`).
 
 Global handlers are registered Python callables or sandboxed extensions (`ext/`); a
 module's `code` string is never executed.
 
 **Memory.** `volley.persist_data` is loaded per turn from the durable `MemoryStore` and
-rendered into the prompt. When a conversation ends (`on_session_end`: `<exit>`, module
-switch or disconnect), a module with a declared `memory` block is summarized into its
+rendered into the prompt. When a conversation ends (`on_session_end`: `<exit>`, `<sleep>`,
+module switch or disconnect), a module with a declared `memory` block is summarized into its
 namespace with provenance — OpenMoxie's MemoryChat `complete_handler`, declared rather
 than scripted:
 
@@ -21,11 +28,15 @@ its effects — is `ext_host.py`.
 from __future__ import annotations
 import hashlib
 import json
+import random
+import re
 import time
+from collections import Counter
 from typing import Callable, Optional
 
 from ..app import MoxieApp
-from ..actions import parse_action_tags
+from ..actions import (LEAVE_TAG_PROMPT, lift_every_action_tag, parse_action_tags,
+                       tidy_spoken_text)
 from ..automarkup import annotate, enabled as _automarkup_enabled
 from ..memory_store import MemoryStore
 from ..types import Turn, Reply, RobotContext
@@ -35,8 +46,9 @@ from .memory import default_classifier, note_used, provenance, wrap_facts
 from .render import render_prompt
 from . import ext
 from .. import presence as _presence
-from .ext_host import (apply_ext_effects, _clock_local, _ext_digest, EXT_EVENTS_CAP,
-    EXT_EVENTS_COLLECTION, ext_facts, ext_namespace, execution_actions_of, full_key_of,
+from .ext_host import (_action_key, apply_ext_effects, _clock_local, _ext_digest,
+    EXT_EVENTS_CAP, EXT_EVENTS_COLLECTION, ext_facts, ext_namespace, execution_actions_of,
+    full_key_of, literal_actions, REFUSED_TAG_REASON, REFUSED_TAG_WORDS,
     SHIPPED_EXTRA_GRANTS, shipped_ext_digests, subscriptions_of)
 from .ext_host import robot_events, robot_functions  # noqa: F401  (re-exported surface)
 
@@ -45,6 +57,117 @@ def _presence_vars(robot) -> dict:
     """The presence render variable for a call that has a `RobotContext` but no `Turn`
     (the opener). Same shape `Turn.presence` carries."""
     return _presence.snapshot(getattr(robot, "extra", {}).get("presence") or {})
+
+
+#: The start of a template construct (`{{ … }}`, `{% … %}`, `{# … #}`; render.py's
+#: grammar), or an alternative separator.
+_OPENER_TOKEN = re.compile(r"\{[{%#]|\|")
+#: Where each construct ends: the first closer after its opener.
+_CLOSER = {"{{": "}}", "{%": "%}", "{#": "#}"}
+
+
+def opener_alternatives(opener: str) -> list:
+    """`opener`'s `|`-separated alternatives, unrendered. A `|` inside a template construct
+    is a Jinja filter (`{{ name | upper }}`) or comment text, not a separator, so the
+    alternatives are exactly `str.split("|")`'s unless a construct holds one.
+
+    One pass, linear in the length: a construct is skipped whole, and a closer missing
+    from the rest of the text is never searched for again. A regex over every construct
+    was quadratic on an unclosed `{{` (5 s for a 100 KB opener)."""
+    alts, start, pos, unclosed = [], 0, 0, set()
+    while True:
+        m = _OPENER_TOKEN.search(opener, pos)
+        if m is None:
+            break
+        token = m.group()
+        if token == "|":
+            alts.append(opener[start:m.start()])
+            start = pos = m.end()
+            continue
+        end = -1 if token in unclosed else opener.find(_CLOSER[token], m.end())
+        if end >= 0:
+            pos = end + 2
+        else:
+            # Plain text, as is every later one like it; its second character may still
+            # start a construct (`{{%`).
+            unclosed.add(token)
+            pos = m.start() + 1
+    alts.append(opener[start:])
+    return alts
+
+
+def _shuffled(n: int, rng):
+    """`range(n)` in a random order, drawn lazily (Fisher-Yates): a caller that stops at
+    the first draw pays for one."""
+    order = list(range(n))
+    for k in range(n):
+        j = rng.randrange(k, n)
+        order[k], order[j] = order[j], order[k]
+        yield order[k]
+
+
+def _pick(opener: str, context: dict, last: Optional[str] = None,
+          rng=random) -> Optional[tuple]:
+    """`(alternative, line)`: `pick_opener`'s line, and the alternative, unrendered, that it
+    was rendered from."""
+    alts, seen = [], set()
+    for alt in opener_alternatives(opener):
+        key = alt.replace("<opener>", "").strip()
+        if key and key not in seen:
+            seen.add(key)
+            alts.append(alt)
+    again = None
+    for i in (range(len(alts)) if last is None else _shuffled(len(alts), rng)):
+        line = render_prompt(alts[i], context).replace("<opener>", "").strip()
+        if line and line != last:
+            return alts[i], line
+        again = again or ((alts[i], line) if line else None)
+    return again
+
+
+def pick_opener(opener: str, context: dict, last: Optional[str] = None,
+                rng=random) -> Optional[str]:
+    """The opener line to say, rendered over `context` with `<opener>` stripped and any
+    `<exit>`/`<sleep>`/`<launch:…>` still in; None when no alternative says anything.
+
+    With no `last` it is the first alternative that says something: what a robot hears
+    first, and the `opener` the content preview route returns. Otherwise it is a random other
+    one, and `last` again only when nothing else says anything. Alternatives are rendered one
+    at a time, as they are drawn, until one says something: an opener with thousands of
+    alternatives costs one render when they say something, and one more for each drawn
+    alternative that says nothing (5,000 that say nothing took 0.6 s per empty prompt, and
+    50,000 took 6.5-7.1 s, measured)."""
+    picked = _pick(opener, context, last, rng)
+    return picked[1] if picked else None
+
+
+def spoken_opener(line: str) -> str:
+    """What a robot says for the opener `line`: every tag of ours lifted, and every one that
+    forms once those are lifted (`actions.lift_every_action_tag`), so none is said, however
+    the template built it; then tidied as a line is. The same as the robot path's own
+    one-pass parse speaks, unless a tag of ours forms only once the tags around it are
+    lifted."""
+    return tidy_spoken_text(lift_every_action_tag(line))
+
+
+def said_opener(alternative: str, line: str) -> tuple:
+    """`(text, actions)`: what a robot says and does for `line`, the opener `alternative`
+    rendered. The actions are the robot path's own parse of `line`, kept only where the same
+    action (its type and every field as parsed, `ext_host._action_key`) is written whole in
+    `alternative`'s own text, unrendered, and at most as many times as it is written there,
+    read with the same parse. So a tag that only forms as the template renders (`{{ '<la' ~
+    'unch:DRAW>' }}`, a filter, a `{% set %}`, pieces joined around a comment or across what
+    reads as two alternatives, a loop's copies) adds no action: what acts is at most what the
+    alternative writes whole, which the pack review names (`packs.review.opener_warnings`).
+    The text is `spoken_opener`'s."""
+    written = Counter(_action_key(a) for a in parse_action_tags(alternative)[1])
+    actions = []
+    for action in parse_action_tags(line)[1]:
+        key = _action_key(action)
+        if written[key] > 0:
+            written[key] -= 1
+            actions.append(action)
+    return spoken_opener(line), actions
 
 ChatFn = Callable[[list], str]          # messages [{role,content}] -> assistant text
 GlobalHandler = Callable[[Volley, Session], None]   # sets volley.output / actions
@@ -65,7 +188,8 @@ class ContentApp(MoxieApp):
                  global_handlers: Optional[dict] = None,
                  memory: Optional[MemoryStore] = None,
                  safety_classifier=None, content_defaults=None,
-                 ext_grants=None, ext_limits=None, clock=None, monotonic=None):
+                 ext_grants=None, ext_limits=None, clock=None, monotonic=None,
+                 rng=None):
         self.module = module
         # 📦 The shipped baseline, kept apart from `module` (= defaults ⊕ overlay) so a
         # content `undo` can restore a shipped item. None ⇒ none recorded.
@@ -95,8 +219,20 @@ class ContentApp(MoxieApp):
         self._monotonic = monotonic or time.monotonic
         #: `{(device_id, extension_id): breaches}` this session — quarantine counter (§6.4).
         self._ext_breaches: dict = {}
+        #: `{(device_id, extension_id): tags refused}`: a line's tags the review did not
+        #: name, taken out (`ext_host.apply_ext_effects`). Counted apart from breaches: a
+        #: refusal never quarantines.
+        self._ext_refusals: dict = {}
         #: Already-reported `(device_id, extension_id, reason)`: one event per problem.
         self._ext_reported: set = set()
+        #: `{digest: literal_actions(program)}`, the tags each rule of a program wrote whole,
+        #: read once per program (by its content, so a different program under the same
+        #: name never inherits them) rather than on every turn.
+        self._ext_literal: dict = {}
+        #: `{device_id: the opener line it heard last}`, so an opener never repeats back
+        #: to back; `rng` picks among the others (injectable for tests).
+        self._last_opener: dict = {}
+        self._rng = rng or random
 
     def register_global(self, name: str, handler: GlobalHandler) -> None:
         self._handlers[name] = handler
@@ -189,24 +325,59 @@ class ContentApp(MoxieApp):
         key = (device_id, ext_id)
         self._ext_breaches[key] = self._ext_breaches.get(key, 0) + 1
         count = self._ext_breaches[key]
-        seen = (device_id, ext_id, result.breach)
+        self._ext_report(device_id, ext_id, hook=hook, reason=result.breach or "invalid",
+                         sentence=result.sentence,
+                         line=f"stopped: {result.reason}; Moxie carried on without it",
+                         quarantined=count >= self._ext_max_breaches())
+
+    def _ext_refused(self, device_id: str, ext_id: str, refused: list, *,
+                     hook: str) -> None:
+        """A line carried an action tag the rule's own text does not write whole, so the
+        host took it out (`ext_host.apply_ext_effects`): count it and tell the parent
+        once, as a breach is told. Not a breach: the line was said without the tag and the
+        turn went on, as with a markup tag the catalogue drops, so it never counts towards
+        quarantine. The log names the tag's kind only, never its text, which may be what
+        the child said."""
+        key = (device_id, ext_id)
+        self._ext_refusals[key] = self._ext_refusals.get(key, 0) + len(refused)
+        kinds = ", ".join(a.type.name.lower() for a in refused)
+        self._ext_report(device_id, ext_id, hook=hook, reason=REFUSED_TAG_REASON,
+                         sentence=REFUSED_TAG_WORDS,
+                         line=f"took {len(refused)} tag(s) out of its line ({kinds}): not "
+                              f"written whole in the rule's own text, so its review names "
+                              f"no such thing; the line was said without them",
+                         quarantined=self._ext_quarantined(device_id, ext_id))
+
+    def _ext_report(self, device_id: str, ext_id: str, *, hook: str, reason: str,
+                    sentence: str, line: str, quarantined: bool) -> None:
+        """Tell the parent once per (device, extension, reason), never the child: one log
+        line, and one row in the bounded `ext_events` ring the console reads (M4)."""
+        seen = (device_id, ext_id, reason)
         if seen in self._ext_reported:
             return
         self._ext_reported.add(seen)
-        print(f"[ext] {ext_id} ({hook}) stopped: {result.reason}; "
-              f"Moxie carried on without it", flush=True)
+        print(f"[ext] {ext_id} ({hook}) {line}", flush=True)
         store = getattr(self.memory, "store", None)
         if store is None or not device_id:
             return
         try:
             store.append(device_id, EXT_EVENTS_COLLECTION, {
                 "at": int(self._clock()), "extension": ext_id, "hook": hook,
-                "reason": result.breach or "invalid",
-                "sentence": result.sentence,
-                "quarantined": count >= self._ext_max_breaches(),
+                "reason": reason, "sentence": sentence, "quarantined": quarantined,
             }, cap=EXT_EVENTS_CAP)
         except Exception as e:
             print(f"[ext] could not record the breach ({e})", flush=True)
+
+    def _ext_allowed(self, digest: str, block: dict, rule: int) -> frozenset:
+        """The actions the matched rule's spoken line may act on: the tags written whole
+        in that rule's own text (`ext_host.literal_actions`), read once per program and
+        kept by the program's digest. No rule, or none that matched: nothing."""
+        sets = self._ext_literal.get(digest)
+        if sets is None:
+            if len(self._ext_literal) >= 256:
+                self._ext_literal.clear()         # a bound, not a policy: packs are few
+            sets = self._ext_literal[digest] = literal_actions(block)
+        return sets[rule] if 0 <= rule < len(sets) else frozenset()
 
     @staticmethod
     def _ext_max_breaches() -> int:
@@ -227,8 +398,9 @@ class ContentApp(MoxieApp):
         if not block or block.get("on") != hook:
             return None
         ext_id = full_key_of(kind, key)
+        digest = _ext_digest(block)
         grants = (self._ext_shipped_grants
-                  if _ext_digest(block) in self._ext_shipped else self._ext_grants)
+                  if digest in self._ext_shipped else self._ext_grants)
         device_id = getattr(turn.robot, "device_id", "") or ""
         if self._ext_quarantined(device_id, ext_id):
             return None                       # already broken three times this session
@@ -256,27 +428,48 @@ class ContentApp(MoxieApp):
             return None
         if not result.effects and not result.handled:
             return None                       # no rule matched: a success, not a failure
-        apply_ext_effects(result.effects, volley=volley, memory=self.memory,
-                          device_id=device_id, namespace=namespace,
-                          classifier=self.classifier,
-                          module_id=getattr(turn.robot, "module_id", "") or "",
-                          content_id=getattr(turn.robot, "content_id", "") or "")
+        # A line acts only on the tags the matched rule wrote whole (the ones its review
+        # names); any other tag it carries is taken out and reported, never acted on.
+        stats = apply_ext_effects(result.effects, volley=volley, memory=self.memory,
+                                  device_id=device_id, namespace=namespace,
+                                  classifier=self.classifier,
+                                  module_id=getattr(turn.robot, "module_id", "") or "",
+                                  content_id=getattr(turn.robot, "content_id", "") or "",
+                                  allowed=self._ext_allowed(digest, block, result.rule))
+        if stats["refused"]:
+            self._ext_refused(device_id, ext_id, stats["refused"], hook=hook)
         for line in result.notes:
             print(f"[ext] {ext_id}: {line}", flush=True)
         return result
 
+    # ---- the opener ----
+    def _opener_reply(self, robot: RobotContext, conv, volley=None,
+                      presence=None) -> Optional[Reply]:
+        """`conv`'s opener as a Reply, or None when it has none. Never calls the brain.
+
+        The `|`-alternatives rotate per device and never repeat back to back; a device
+        hears the first alternative first (`pick_opener`). `<opener>` is stripped, and
+        `<exit>`, `<sleep>` or `<launch:…>` become actions only when written whole in the
+        alternative said, as its pack review names them; no tag of ours is said
+        (`said_opener`). The same for every opener, shipped or imported: the shipped ones
+        write no tag."""
+        if conv is None or not conv.opener:
+            return None
+        context = {"volley": volley or self._volley(Turn(robot=robot, speech="")),
+                   "session": Session(), "presence": presence or _presence_vars(robot)}
+        device_id = getattr(robot, "device_id", "") or ""
+        picked = _pick(conv.opener, context, self._last_opener.get(device_id), self._rng)
+        if picked is None:
+            return None
+        alternative, line = picked
+        self._last_opener[device_id] = line
+        text, actions = said_opener(alternative, line)
+        return Reply(text=text, actions=actions)
+
     # ---- MoxieApp ----
     def greeting(self, robot: RobotContext) -> Optional[Reply]:
-        conv = self._active_conversation(Turn(robot=robot, speech=""))
-        if conv and conv.opener:
-            v = self._volley(Turn(robot=robot, speech=""))
-            line = render_prompt(conv.opener.split("|")[0],
-                                 {"volley": v, "session": Session(),
-                                  "presence": _presence_vars(robot)})
-            line = line.replace("<opener>", "").strip()   # strip inline tags
-            if line:
-                return Reply(text=line)
-        return None
+        return self._opener_reply(robot,
+                                  self._active_conversation(Turn(robot=robot, speech="")))
 
     def respond(self, turn: Turn) -> Reply:
         # 1) globals first — always-on commands (timers, "stop", …)
@@ -325,6 +518,15 @@ class ContentApp(MoxieApp):
             self._save_persist_data(turn.robot.device_id, v.persist_data,
                                     json.dumps({}, sort_keys=True))
             return self._reply_from_volley(v)
+        # An empty `prompt` starts the conversation: its opener, not the model (OpenMoxie
+        # conversations.py handle_volley). A conversation with no opener still asks the model.
+        if turn.command == "prompt" and not (turn.speech or "").strip():
+            opener = self._opener_reply(turn.robot, conv, v, turn.presence)
+            if opener is not None:
+                # A `turn.before` extension's act/subscribe go out with it, as with a model line.
+                opener.actions += execution_actions_of(v)
+                opener.subscribe = subscriptions_of(v)
+                return opener
         # `presence` (read-only, vision.md) is available to the prompt template.
         system = render_prompt(conv.prompt, {"volley": v, "session": session,
                                              "presence": (turn.presence
@@ -332,6 +534,8 @@ class ContentApp(MoxieApp):
         note_used(self.memory, turn.robot.device_id, system)   # decay's clock (memory.py)
         if self._persona:
             system = f"{self._persona}\n\n{system}" if system else self._persona
+        # The leave-taking tags go last, after the module's own prompt (actions.py).
+        system = f"{system}\n\n{LEAVE_TAG_PROMPT}" if system else LEAVE_TAG_PROMPT
         messages = [{"role": "system", "content": system}]
         messages += turn.history[-conv.max_history:]
         messages.append({"role": "user", "content": turn.speech})

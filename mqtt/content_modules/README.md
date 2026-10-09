@@ -16,6 +16,19 @@ Data-driven content modules loaded by the [content engine](../moxie_sdk/content/
   written by a `complete_handler` is theirs; these prompts, the declarative `memory` block
   and the structured summary are ours.*
 
+Both files carry the same two leave-taking globals, so either one ends a chat properly. Neither
+asks the brain for its reply:
+
+- **`Goodbye`**: a whole-utterance goodbye (*"Bye, Moxie!"*, *"I gotta go"*, *"I'm done"*,
+  *"stop"*) gets one of several warm lines that start with `<exit>`. The runtime then ends the
+  conversation, and its memory summary (the brain call that writes it) runs then, not at the
+  next disconnect.
+- **`Sleep`**: *"go to sleep, Moxie"* or *"time for bed"* answers with `<sleep>`. Going to sleep
+  ends the conversation too, so its summary is written then as well.
+
+A conversation's `opener` is spoken when the robot starts it, as a `prompt` with no speech.
+See the [contract](../../docs/architecture/content-module-contract.md#conversations-llm-driven-chats).
+
 ## The `extension` block
 
 *(BEYOND #6 P0, 2026-09-03. Design:
@@ -44,6 +57,11 @@ Two things worth knowing before you author one:
 - **It reads back as English.** `ext.explain()` renders each rule as a sentence and
   `ext.grant_list()` renders each capability from a fixed table, and both appear in the
   pack review. If your rule does not read well as a sentence, a parent cannot review it.
+  A line acts only on an action tag written whole in its rule's own text (`Goodbye`'s
+  lines each start with `<exit>`); one it builds at run time is taken out and the parent
+  is told, so the sentence names every exit, sleep or launch the line can send. A catalogue
+  mark written in the line is not one of those: it is not named, and it reaches the
+  robot's markup unchecked (a follow-up).
 - **`clock` is not granted by default.** Only `{say, handled, session, child.nickname}`
   are. A *shipped* activity gets more because the wider set is anchored to the **digest of
   the program** (`content_app.SHIPPED_EXTRA_GRANTS`), so an imported pack that overrides a
@@ -66,7 +84,7 @@ memory instead of scripting it:
 
 `namespace` alone makes `{{ volley.persist_data.<namespace>.* }}` resolve in the prompt.
 With `summarize` (the default when a namespace is set), the end of the conversation —
-an `<exit>`, a module switch, or the robot going offline — asks the brain for a short
+an `<exit>` or `<sleep>`, a module switch, or the robot going offline — asks the brain for a short
 structured summary and merges it in with provenance. What is remembered is bounded,
 policy-gated (`LoggingPolicy.NO_DATA` → nothing is written) and erasable by a parent
 (`GET`/`DELETE /memory` on the supervisor's status port).

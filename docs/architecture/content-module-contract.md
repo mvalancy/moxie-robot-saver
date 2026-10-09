@@ -40,6 +40,28 @@ A module is JSON with three optional sections:
   [how a prompt is rendered](#how-a-prompt-is-rendered)). Common vars:
   `volley.config.child_pii.nickname`, `volley.persist_data.*`, `session.overflow`.
 - **`opener`** supports `|`-alternatives and inline tags (`<opener>`, `<exit>`, `<sleep>`, `<launch:XX>`).
+  It is what a conversation starts with: a `prompt` with no speech (after `extra_lines`) is answered
+  with the opener and no LLM call. That reading is OpenMoxie's: its `conversations.py`
+  `handle_volley` answers `prompt` with a random alternative from `get_opener()`. Here only an
+  *empty* `prompt` does, so a typed or spoken first line still reaches the brain, as do `continue`
+  and `reprompt`. A robot hears the first alternative first, and after that never the same line
+  twice in a row. `<opener>` is stripped. An `<exit>`, `<sleep>` or `<launch:XX>` acts only when the
+  same action is written whole in the alternative said, as written before it is rendered, and at
+  most as many times as it is written there; a tag that only forms as the template renders
+  (`{{ '<la' ~ 'unch:DRAW>' }}`) is lifted and adds no action, and the pack review names
+  every tag that can act in the opener's own row (see "A conversation's opener" under
+  [extensions](#extensions-a-pack-that-can-do-something)). A conversation with no opener asks the brain, as before. Only a `|` outside
+  `{{ }}`, `{% %}` and `{# #}` separates alternatives; inside them it is a Jinja filter
+  (`{{ volley.config.child_pii.nickname | upper }}`) or comment text. OpenMoxie splits on every `|`
+  (`conversations.py`:218), but it never templates an opener (:56-57). The split is one pass, and
+  alternatives are rendered one at a time as they are drawn until one says something: a long
+  opener costs one render per turn when its alternatives say something, and one more for each
+  drawn alternative that says nothing (50,000 that say nothing took 6.5-7.1 s per empty prompt,
+  measured). The content preview
+  route (`POST /content/render`) uses the same split and pick: its `opener` is the line a robot hears
+  first, with its tags lifted. The console's editor card shows only the rendered prompt so far, not
+  the opener. *Built to this contract and the OpenMoxie reference; no physical robot has sent us an
+  empty `prompt` yet.*
 - **`code`** is OpenMoxie's slot for Python hooks (`pre_process`, `post_process`,
   `complete_handler`, `notify_handler`, and `handle_volley` for globals). This appliance **carries it as
   data and never executes it**; runnable behavior uses [`extension`](#extensions-a-pack-that-can-do-something).
@@ -133,11 +155,13 @@ activity (timers, "stop", wake words for commands).
 
 #### The ten the real robot listened for
 
-[`runtime/content-and-conversation.md`](../reverse-engineering/runtime/content-and-conversation.md):136-138
+[`runtime/content-and-conversation.md`](../reverse-engineering/runtime/content-and-conversation.md):123-125
 recovered the always-listening set from `FlexibleGlobalCommand1`: **`Sleep`, `WakeUp`, `Hello`,
 `ListenToMe`, `Earmuffs`, `HoldOn`, `RepeatThat`, `SpeakLouder`, `SpeakSofter`, `SomethingElse`**.
-`starter.json` ships three of them — `HoldOn`, `SomethingElse`, `Earmuffs` — authored as
+`starter.json` ships four of them — `HoldOn`, `SomethingElse`, `Earmuffs`, `Sleep` — authored as
 `extension` programs (`say` + `handled`), so they cost **no LLM call** and work during any activity.
+`Sleep` answers with a line that starts with `<sleep>`, which becomes a SLEEP action. Going to sleep
+ends the conversation as an EXIT does, so its memory summary is written then.
 
 **`Hello` is deliberately not authored.** A global short-circuits *before* the brain, so matching a
 greeting would replace every "hi Moxie" with one fixed string. Free chat greets better than a canned
@@ -148,11 +172,54 @@ line does; authoring it would make her less like Moxie, not more.
 [`unity-face-animation.md`](../reverse-engineering/runtime/unity-face-animation.md):187-191). That is not
 wired here, so the line must not claim Moxie stopped listening.
 
+**`Goodbye` is authored, though it is not one of the ten.** Here a canned line is the better answer:
+both shipped prompts ask a follow-up question every turn, so on the content brain "bye Moxie" got another question, the
+conversation never ended, and its memory summary waited for the robot to disconnect. The `Goodbye`
+global answers with one of several warm lines that start with `<exit>`, picked with `random.pick`,
+so the runtime ends the conversation and writes the summary. It costs no LLM call. A good night
+gets a good-night line. `memory_chat.json` carries the same `Goodbye` and `Sleep` items.
+
+Both patterns match the **whole utterance**, because a global answers before the brain. Inside a
+sentence the words are ordinary speech: *"my dog said bye to the mailman"* must still reach the brain.
+Around the goodbye, the patterns allow what speech-to-text writes: punctuation, a leading
+*ok*/*um*/*yeah*, the name at either end, an *"I love you"* after a farewell (*"Goodbye Moxie, I love
+you"*), and two goodbyes in a row (*"I gotta go, bye!"*). The name may come out as *Moxy*, *Foxy*,
+*Boxy* or *Oxy*, the mishearings OpenMoxie's own command patterns accept
+(`content_modules/MoxieTimers.json`, `MoxieTime.json` and `MoxieGo.json`). *"By."* is how Whisper
+spells a lone *bye*, so *by* counts only alone or after *ok* or the name (*"By."*, *"Ok, by."*), as
+*"good by"*, or after another *bye* (*"bye bye by"*). *"by the way"*, *"By then."*, *"stop by"*,
+*"no, by"* and *"yes by"* still reach the brain. So do *"I love you Moxie"*, with no goodbye in it,
+and *"Stop, I love you!"*, which is play: *"I love you"* counts after a farewell, never after *stop* or
+*done*. *"See you later, alligator!"* is a goodbye. A bare *"done"* or *"night"* is not, because either
+can be a plain answer to Moxie. Every word in the pattern can be read only one way, so a transcript that
+loops (*"bye bye bye …"*) cannot make the regex backtrack exponentially. `random` is a shipped grant,
+anchored to the digest of the program (the `extension` block), not to the item's name. Editing the
+pattern, which is what the console's editor can change (it never changes a program), keeps the
+shipped goodbyes running. A different program under the name `Goodbye`, as an imported pack could
+carry, loses the grant: it does not run, and the brain answers in its place, taught the same `<exit>`
+rule.
+
+The brain is the backstop for goodbyes the pattern does not cover (*"okay I need to eat dinner now,
+bye"*). After the module's prompt, the content brain's single system message carries the `<exit>` and
+`<sleep>` rules (`actions.LEAVE_TAG_PROMPT`) and never `<launch>`. This brain is never told a module
+id, and a launch id it invented would reach the robot unchecked.
+
+*Not yet shown on a robot:* the goodbye's EXIT goes out as the recovered `ActionID` `exit_module` and
+a SLEEP as `sleep`
+([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):260
+and 264), both spelled in one place, `wire.encode_action`, to the `RemoteChatAction` contract in the
+[AI seam](ai-seam.md) §2. The spelling matters because a lenient protobuf parse reads a name it does
+not know as `UNSET_ACTION_ID`. No physical robot has yet been seen leaving the module or going to
+sleep on either action. The server-side end of the conversation and the memory write do not depend
+on the robot.
+
 > **Over-matching is the silent failure.** A global short-circuits before the brain, so a pattern one
 > word too loose quietly answers a real sentence with a canned line (a bare "something else" pattern
 > would swallow *"my mum said something else happened at work"*). Anchor a global on the request, not
 > its words, and test both directions: `sim/tests/test_content_wiring.py` checks the command fires with
 > no LLM call *and* that an ordinary sentence containing its words reaches the brain.
+> `sim/tests/test_leave_taking.py` does the same for `Goodbye` and `Sleep` on both shipped modules,
+> with two dozen everyday sentences that contain *bye*, *stop*, *night* or *done*.
 
 ### `schedules[]` — what to offer when
 ```json
@@ -473,8 +540,9 @@ MemoryChat expresses as a `complete_handler` is **declared** here instead:
 
 `namespace` alone makes `{{ volley.persist_data.<namespace>.* }}` resolve in the prompt (a
 list of facts renders as `- ` bullets in both the Jinja2 and the dependency-free renderer).
-The **end of a conversation** — an `<exit>`/EXIT action, a module switch, or the robot going
-offline — fires `MoxieApp.on_session_end(robot, history, reason)`, which summarizes the part
+The **end of a conversation** — an `<exit>`/EXIT or `<sleep>`/SLEEP action (when Moxie goes to
+sleep the session is over), a module switch, or the robot going offline — fires
+`MoxieApp.on_session_end(robot, history, reason)`, which summarizes the part
 of the transcript not yet summarized (`_meta.summarized_through`, so a switch back and forth
 never re-summarizes, or re-pays for, the same turns) and merges it in.
 
@@ -753,6 +821,178 @@ one sentence per capability from a fixed table (never author-supplied text, whic
 a place to lie); `ext.explain()` is one English sentence per rule — *"Whenever this
 activity is triggered: tells your child 'The time is …' and answers without asking the
 AI."* Both appear in the pack review beside the diff.
+
+**What a line's action tags may do, and what the review says about them.** An extension's
+line goes through the same tag parse as a model's (`actions.parse_action_tags`) with no
+grant of its own, so a rule's sentence is the only place a parent learns that its line ends
+the chat, puts Moxie to sleep or starts an activity. The guarantee has two halves, each held
+by construction rather than by reading the program cleverly:
+
+- **The host lets a line act only on an action tag written whole in its rule's own text:**
+  a string literal anywhere inside the rule's `say` statements or `let` values, read with
+  the robot's own parse (`ext_host.literal_actions`: the tag name in any case, the module
+  and content ids exactly as written). Any other tag the line carries — one built at run
+  time from pieces (`"<ex"`, what the child said, `"it>"`), one cased by `upper` or `lower`
+  (`<launch:draw>` from a written `<launch:DRAW>`), one cut out of a longer text by `get`,
+  `slice`, `split`, `replace` or `reverse`, or one read whole from what the child said, a
+  memory, a note from this turn or `input_vars` — is taken out of the line before the line
+  is kept (`actions.drop_action_tags`, repeated until nothing more comes out, since taking
+  a tag out can make the pieces around it meet), so it is never said aloud and never acted
+  on. A tag that forms only once the robot's own parse has lifted the tags that stay
+  (`<ex<sleep>it>` with its sleep written whole would be spoken as `<exit>`, which that
+  one-pass parse never acts on) is cut out with the pieces it is made of, so the child
+  never hears a tag of ours. Markup a program writes (a `say`'s markup or a `markup`
+  statement, under the `markup` grant, which only shipped programs have today) reaches
+  the robot with no tag of ours and nothing the catalogue's check refuses, or the line
+  goes without it (`ext_host.robot_markup`), checked on exactly what the robot is sent:
+  the robot speaks its markup when it is given one, and the robot path sends it through
+  the same parse as a line, our tags lifted once and the rest tidied (which takes out the
+  space before a comma and so can join a mark's pieces). So every tag of ours is lifted as
+  that parse lifts them (one pass, malformed ones too); the gate drops tag by tag, the rest
+  of the markup kept, a tag with an id the catalogue refuses, a mark the catalogue's own
+  mark pattern does not read whole (`<mark name='cmd:zzz'/>`,
+  `<mark name="cmd:zzz ,data:{}"/>`, `<mark name="cmd:a,data:{">`: the catalogue's check
+  would pass it unread), a tag cut short by a `>` inside its own quotes and a tag holding
+  another `<`;
+  the rest is tidied as the robot path tidies it; and the markup is dropped whole, and the
+  runtime's markup floor speaks the line, if what is left holds a tag of ours (a dropped
+  tag stood between the pieces of another: `<ex<ex<mark name="cmd:zzz"/>it>it>` would
+  have reached the robot as `<exit>`), a tag of a form the gate drops (one that formed
+  only once a tag between its pieces was dropped), a catalogue tag left open (no `>` after
+  it), or anything the catalogue's own check over the whole text refuses
+  (`vocab.validate_markup`, which reads a quoted `>` as part of the value:
+  `<spurt x" spurt_id="n>pe"/>` is a spurt with the id `n>pe`, which the tag-by-tag read
+  never sees).
+  Every pass is linear in the markup, that whole-text check included: it runs only when
+  every catalogue tag left has a form the gate keeps and none is left open, and then each
+  of its patterns reads a tag to its end and no further, or a usel's or a spurt's value at
+  most once past it. Measured with the 8 KB cap lifted, the whole clearing takes about
+  twice as long per doubling, up to 128 KB, on every shape tried. Before round 10 a mark
+  the catalogue's pattern does not read whole was kept, and that check read on from each
+  one: 8 KB of `<mark name="cmd:a,data:{">` tags followed by `}"`, 30 ideographic spaces
+  and `/x` over and over (the round-9 review's shape) took 15-27 ms to clear and a turn of
+  four such markups 65-112 ms; now 0.3 ms, measured. Five turns of four 8 KB markups of
+  the shapes that were super-linear take 7-31 ms in all through the real app, where five
+  turns of four runs of `<mark` openings took 3.5 s before round 9 and the fixpoint pass
+  before round 8 took 2.1-3.7 s a turn on four nests. This is the only channel on which a
+  pack's markup is checked: a mark written in a program's line, or in a conversation's
+  opener, reaches the robot's markup through the runtime's markup floor, which sends a
+  line holding `<` as it is, unchecked, under the default grants (as on dev for lines; an
+  opener is new on the robot path with this change). Gating the floor is a follow-up.
+  Never counted as a refusal: no action tag in markup is acted on. The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
+  answers without asking the AI; then the conversation ends."* and sends its `<exit>` as
+  before, because its rule writes it. A taken-out tag is counted, and the parent is told
+  once per robot, program and reason through the same `ext_events` ring a breach uses
+  (*"it tried to make Moxie do something its review did not name"*). It is not a breach: as
+  with a markup tag the catalogue drops, the line is said without it and the turn goes on,
+  so it never counts towards quarantine. The tags a program writes are read once per
+  program, by its digest, so a turn pays a set lookup and one more pass over its line: on
+  the shipped `Goodbye` the difference is within the noise of a turn that takes about
+  0.4 ms in all, and reading the set costs about 0.06 ms once, measured. That first read
+  covers every string the program writes, in a branch taken or not, with the GIL held, and
+  is linear in the program's text (the tag parse's fields are greedy and run up to the `>`
+  itself, so no two neighbouring repeats can take the same character): a branch never
+  taken that holds `<exit:` and 64,000 spaces reads in 2 ms on the first turn, and the
+  largest string a pack can carry, `<exit:` and a megabyte of spaces, in 16 ms. Before,
+  with lazy fields, that read was quadratic on a run of spaces (0.35 s at 16,000, about
+  four times longer per doubling, still running after 8 s at a megabyte) and every thread
+  of the supervisor waited on it. The pass over the line is bounded by the line (1,000
+  characters) and takes at least six characters out each time it repeats, so its cost is
+  bounded by the line's square: the worst line, 165 nested `<ex … it>` around a malformed
+  tag, costs 9-16 ms, and a turn can carry four such lines (`MAX_ACTIONS`, each filtered on
+  its own), 45-68 ms a turn, measured through the real app on two runs, one under other
+  load; an ordinary line costs a few microseconds.
+- **The sentence names every tag written whole in the rule's text,** at least as
+  *"sometimes"* (*"…; then sometimes Moxie starts the DRAW activity."*). So for every
+  program and every run-time input, the actions the robot is sent from a rule's line are
+  among the effects the rule's sentence names. A tag is lifted out of the quote of a line
+  Moxie says; a quote that is not said, such as a test on what the child said, shows a tag
+  as written (*"When what your child said is '<exit>'"*). A module that is not an id, or
+  is not shown exactly as written, is quoted (*"Moxie starts the 'Draw now' activity"*);
+  a straight quote in author text is written curly (’), so for a machine (the pack review
+  and the tests, which split a sentence at its one *"; then"*) no author text can close
+  the quote early; to a parent, though, the curly quote is the typographic close, and so
+  is a lookalike the author writes (ʼ ＇ ′ ` ´ ‘), shown as written, so quoted author text
+  can still read as the sentence's own (a module id `x’ activity and the conversation
+  ends and Moxie starts the ’y` reads as three effects while the robot is sent one
+  launch): that misreading names more effects than happen and never fewer, since the
+  sentence's own effects always follow the quote; and the format and control characters
+  a parent cannot see (a bidi override, a zero-width space) are dropped from what is
+  shown, before its 80-character cut, so they cannot fill the cut and hide the words
+  after them, so `DRAW`
+  with a zero-width space after it reads *"the 'DRAW' activity"*, quoted, while the robot
+  is sent the id as written. One sentence names at most 16 activities, the rest as
+  *"sometimes Moxie starts an activity it works out"*, which stands for any launch past
+  those.
+
+The reading ahead (`explain.py`'s `_read_ahead`) decides only the wording. It follows
+`if`, `and`/`or`, `concat`, `let` names, `random.pick`, the case ops and any part made only
+of literals (worked out by the evaluator itself) through every line the rule's last `say`
+can speak (each `say` replaces the line before it), and an effect is named without
+*"sometimes"* when that same action, module and content is on every one of those lines.
+What it finds that the rule's text does not write whole is not named, because the host
+takes it out of the line, so it never happens: a `replace` that assembles `<exit>`, a
+lowered launch, a launch whose module is worked out, a launch whose content id `upper`
+changed. One reading has one budget (four million characters, plus 16 for each line, text
+or tag it keeps, counting each line and join, each case-op copy, each value worked out, each
+text read in parts, each tag found and every `let` memo); past 256 lines a `say` is read in
+its parts, and past the budget from the program's own text in one pass. Either way the
+sentence still names every tag written whole, with nothing certain. Programs built to
+multiply what the reading builds (a thousand `let` names that each copy a million-character
+line, 400 that alternate `upper` and `lower` over one, a quoted line with 200,000 spaces
+after `<exit:`) read in 0.03 s, 0.02 s and 0.01 s (0.3 s, 0.1 s and 0.01 s with tracemalloc
+on), measured. The quotes are not under the
+budget: a `let` name is quoted again wherever it is read, so a 125 KB program that reads one
+name from 1,024 places makes a 25-million-character sentence.
+
+What the wording means to a parent. *"sometimes"* says the program writes the tag and the
+reading ahead cannot say the line carries it every time — or, when the line can only carry
+a changed copy of it (a lowered launch), that it never will. A tag quoted in pieces
+(*'<ex … it>Bye! …'*) is one split around another part: the pieces are author text the
+child may hear as written, and when they do meet, the host takes the tag out. An extension's
+line cannot start an activity, end the chat or put Moxie to sleep from run-time text,
+however it is built: from a program's line, a child-facing robot takes only the exits, sleeps
+and launches the parent's review named (a catalogue mark in the line is not one of them; see
+the markup sentence above).
+
+**A conversation's opener acts only on the action tags written whole in it.** An opener is said on
+an empty `prompt` (the `opener` field above), and `opener` is a pack field, so it is held to
+the rule a program's line is under: it is rendered as a template, the robot path parses the
+line as a model's, and an `<exit>`, `<sleep>` or `<launch:…>` in it acts only when the same
+action (its type and every field as parsed) is written whole in the `|`-alternative said, as
+written before it is rendered, and at most as many times as it is written there
+(`content_app.said_opener`). A tag that only forms as the template renders (an expression,
+`{{ '<la' ~ 'unch:DRAW>' }}`; a filter; a `{% set %}`; pieces joined around a comment or
+across what reads as two alternatives; a copy a loop adds) is lifted and adds no action:
+what acts is at most what the alternative writes whole. A tag in the child's name, as it is
+rendered into an opener, is no different. No tag of ours is said, at any depth
+(`{{ '<ex' }}<sleep>{{ 'it>' }}`: every level is lifted, in one pass, where the robot path's
+own parse of a model's line lifts one). The
+pack review names every tag written whole in any alternative in the opener's own row, beside
+the diff, before anything is applied: *"When this conversation starts, Moxie says its
+opener; then sometimes Moxie goes to sleep."* (The row does not change whether the review
+pre-ticks the item.) Each effect reads *"sometimes"*, since which
+alternative is said, and what its template leaves in, varies. The rule holds for every
+opener; the shipped ones write no tag, so they say and do what they did. A tag an opener
+lifts is not reported to the parent the way a program's is: the robot did nothing, and the
+row already named every action it can take. The rule is about our action tags only: a catalogue tag
+written in an opener (`<mark …/>`, `<usel …>`) is not ours, so it stays in the line, and
+the runtime's markup floor sends that line to the robot as its markup, unchecked and not
+named in the review, as it does a program's line (`<mark name="cmd:start-systemunpair"/>`
+is in the catalogue; whether a robot acts on it from a chat line is unverified). Gating
+catalogue tags in pack-made lines and openers at the floor is a follow-up.
+
+`sim/tests/test_ext_say_tags.py` holds the invariant as a property over random programs
+(every op above over literal pieces of tags and non-tags, with what the child said, a
+memory and an `input_vars` value holding tag pieces or whole tags), through the real
+`ContentApp` and the pack review, and the opener's rule as a property over random opener
+templates; pins the host's parse and `explain.py`'s restatement of the grammar to each other
+on 20,000 random lines, and holds the first read of a program's text to linear time (200,000
+spaces after `<exit:` in a branch never taken, a megabyte at the pack cap);
+`test_leave_taking.py` runs every
+shape the five review rounds found, each against what the robot is sent, also as read past
+the budget, including a sweep of every tag split at every point around a part worked out
+at run time or a trimmed part.
 
 **Capability escalation.** An incoming item declaring a capability the installed version
 did not is defaulted **un-ticked** whatever its state, with its own sentence — *"This

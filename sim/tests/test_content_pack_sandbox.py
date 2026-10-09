@@ -23,6 +23,7 @@ import pytest
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from helpers_content import boot_runtime, free_chat_pack, recording_brain  # noqa: E402
+from moxie_sdk.actions import LEAVE_TAG_PROMPT        # noqa: E402
 from moxie_sdk.content import packs as P              # noqa: E402
 from moxie_sdk.content import render as R             # noqa: E402
 
@@ -64,6 +65,13 @@ def assert_inert(out, label=""):
     assert "{{" not in out and "{%" not in out, \
         f"{label} left template syntax in the prompt the brain receives: {out[:200]!r}"
     assert len(out) < 400, f"{label} returned {len(out)} chars: {out[:200]!r}"
+
+
+def pack_part(system):
+    """The system message minus the fixed tags every content brain is given after the
+    module's prompt (`actions.LEAVE_TAG_PROMPT`): what the pack's template rendered to."""
+    assert system.endswith(LEAVE_TAG_PROMPT), "the leave-taking tags close the message"
+    return system[:-len(LEAVE_TAG_PROMPT)]
 
 
 # --- Fixtures — a pack built exactly the way an exporter builds one ---
@@ -156,7 +164,7 @@ def test_a_hostile_pack_reaches_the_brain_inert(tmp_path, name):
     assert applied["applied"] == [IDENT], "the hostile pack must really have installed"
 
     drive_turn(rt, device_id, "hello")
-    assert_inert(seen["system"], name)
+    assert_inert(pack_part(seen["system"]), name)
     assert (R.BLOCKED, R.STRIPPED) > before, \
         f"{name} rendered without tripping either counter — a refusal nobody can see"
 
@@ -191,7 +199,7 @@ def test_a_hostile_pack_cannot_read_a_secret_this_process_holds(tmp_path, monkey
     import_through_the_runtime(rt, hostile_pack(probe))
 
     drive_turn(rt, device_id, "hello")
-    assert_inert(seen["system"], "secrets")
+    assert_inert(pack_part(seen["system"]), "secrets")
     assert os.environ["MOXIE_LLM_API_KEY"] == SENTINEL_ENV, "the key really was set"
 
 
