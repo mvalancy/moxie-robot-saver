@@ -313,12 +313,15 @@ it, and so are the supervisor's log lines that carry something said or heard: th
 exchange (both what the child said and what Moxie answered), a queued hello, a content pack's
 answer, a rehearsal and a stale answer (in the feed also what the ears heard, a voice test and a
 telehealth line). `[child]` stands where the name was. The masked names are every name Moxie calls
-a child on this appliance: each robot's record, connected or away, and `MOXIE_CHILD_NICKNAME` (the
-generic `friend` is a word, not a name, and stays). Each is matched in any case, with or without
-its accents, whole or by part (`Mary-Kate` is also `Mary` and `Kate`). The name is masked before a
-feed line is cut short, so a cut never leaves its first letters behind. The robot still hears the
-real name: only these copies are masked. A name the supervisor has not been told (before the
-parent saves it) is not masked when the child says it. The console's brain, Try it and Today's
+a child on this appliance: each robot's record, connected or away, `MOXIE_CHILD_NICKNAME` (the
+generic `friend` is a word, not a name, and stays), and any name renamed or cleared away since the
+supervisor started, because a conversation's history can bring one back (that list is kept in RAM
+only, so a restart forgets it). Each is matched in any case, with or without its accents, whole or
+by part (`Mary-Kate` is also `Mary` and `Kate`). The name is masked before a feed line is cut
+short, so a cut never leaves its first letters behind. The robot still hears the real name: only
+these copies are masked. A name the supervisor has not been told yet (the child says it before the
+parent saves it) cannot be masked then: saving the name masks the feed's lines again, but the
+supervisor's log has already printed that line. The console's brain, Try it and Today's
 plan cards show the robot's child to anyone who can open the console on your network, as every
 console card shows the child's data today.
 

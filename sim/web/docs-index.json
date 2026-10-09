@@ -204,7 +204,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config and telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 42525,
+   "bytes": 42807,
    "mermaid": 1,
    "headings": [
     "The loop",

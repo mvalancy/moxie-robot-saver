@@ -390,12 +390,48 @@ def test_every_feed_line_masks_every_name_moxie_calls_a_child(tmp_path):
                   allow_unverified_bots=False)
     rt.set_permit("d_away", True)
     _name(rt, "d_one", "Zoë")
-    _name(rt, "d_two", "José")                 # no robot here says the appliance's 'Sam'
+    _name(rt, "d_two", "José")
     _name(rt, "d_away", "Mary-Kate")
     rt._note("chat", "ZOE met sam and jose, Mary and kate, then mary-kate; Samantha is the "
                      "same; hi friend")
     assert rt.recent[-1]["text"] == ("[child] met [child] and [child], [child] and [child], "
                                      "then [child]; Samantha is the same; hi friend")
+    # The appliance's own name, with no robot connected and no record naming anyone.
+    bare = _runtime(tmp_path / "bare", nickname="Sam")
+    bare.robots.clear()
+    bare._note("chat", "hi sam")
+    assert bare.recent[-1]["text"] == "hi [child]"
+
+
+def test_a_renamed_or_cleared_name_stays_masked_for_the_run(tmp_path, capsys):
+    """A rename (or an unpair's clear) takes a name out of force, but the conversation's
+    history can still make the brain say it: the log and the feed keep masking it for the
+    rest of the run."""
+    from helpers_runtime import drive_turn, fresh_pool
+    rt = _runtime(tmp_path, app=_app("Zoë, José: both great names!"))
+    _name(rt, "d_one", "Zoë")
+    _name(rt, "d_one", "José")                           # renamed
+    _name(rt, "d_one", None)                             # and cleared
+    assert rt.robots["d_one"].child.nickname == "friend"
+    capsys.readouterr()
+    fresh_pool(rt)
+    drive_turn(rt, "d_one", "do you remember zoe?", event_id="evt-old")
+    out = capsys.readouterr()
+    for text in (out.out + out.err, json.dumps(list(rt.recent), ensure_ascii=False)):
+        assert not _named(text, "Zoë") and not _named(text, "Zoe") and not _named(text, "José")
+    assert "Zoë, José" in rt.client.chat_replies("d_one")[-1]["output"]["text"]
+
+
+def test_a_feed_line_written_before_the_name_was_saved_is_masked_once_it_is(tmp_path):
+    """The child may say their name before the parent saves it: that feed line could not be
+    masked then. Saving the name masks the feed's lines in RAM again."""
+    from helpers_runtime import drive_turn
+    rt = _runtime(tmp_path, app=_app("Nice to meet you!"))
+    drive_turn(rt, "d_one", "my name is sam", event_id="evt-early")
+    assert any(_named(n["text"], "sam") for n in rt.recent)
+    _name(rt, "d_one", "Sam")
+    assert not any(_named(n["text"], "sam") for n in rt.recent), list(rt.recent)
+    assert any("my name is [child]" in n["text"] for n in rt.recent)
 
 
 def test_a_line_cut_for_the_feed_never_keeps_part_of_a_name(tmp_path, monkeypatch):

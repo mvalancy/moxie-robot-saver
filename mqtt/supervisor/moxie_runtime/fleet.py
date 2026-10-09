@@ -52,9 +52,10 @@ class FleetMixin:
     def child_names(self) -> set:
         """Every name Moxie may call a child on this appliance, for the log and feed mask
         (`_masked`): each connected robot's (`RobotContext.child`), each robot's saved
-        record (`child` on its layer, connected or away) and the appliance's own
-        (`MOXIE_CHILD_NICKNAME`). Raw strings, unchecked: a name the rule refuses is
-        masked too. Safe while the constructor is still loading the layers."""
+        record (`child` on its layer, connected or away), the appliance's own
+        (`MOXIE_CHILD_NICKNAME`), and any renamed or cleared away during this run (a
+        conversation's history can bring one back). Raw strings, unchecked: a name the
+        rule refuses is masked too. Safe while the constructor is still loading the layers."""
         names = {getattr(self.child, "nickname", None)}
         names.update(getattr(r.child, "nickname", None)
                      for r in list((getattr(self, "robots", None) or {}).values()))
@@ -62,6 +63,7 @@ class FleetMixin:
             record = layer.get("child") if isinstance(layer, dict) else None
             if isinstance(record, dict):
                 names.add(record.get("nickname"))
+        names.update(getattr(self, "_retired_child_names", None) or ())
         return {n for n in names if isinstance(n, str) and n.strip()}
 
     def _child_changed(self, device_id, before) -> None:
@@ -69,7 +71,10 @@ class FleetMixin:
         turn, hello, brain card and `/status` say the name in force at once. When it is
         another name (or none), the day plan's stored "why" lines, which name the child,
         are dropped (`GET /schedule` plans on the spot until the robot asks for its next
-        plan), and so is a hello queued for the next turn: it was built with the old name."""
+        plan), and so is a hello queued for the next turn: it was built with the old name.
+        The old name stays masked in the log and feed for the rest of the run, and the
+        feed's lines in RAM are masked again, so one written before the new name was known
+        (the child said it first) no longer shows it."""
         child = self.child_for(device_id)
         if device_id in self.robots:
             self.robots[device_id].child = child
@@ -77,6 +82,11 @@ class FleetMixin:
             self.store.delete(device_id, self.SCHEDULE_EXPLAIN_COLLECTION)
             with self._presence_lock:
                 self._pending_opener.pop(device_id, None)
+        if child.nickname != before.nickname:
+            self._retired_child_names.add(before.nickname)
+            for entry in list(self.recent):
+                if isinstance(entry, dict) and isinstance(entry.get("text"), str):
+                    entry["text"] = self._masked(entry["text"])
 
     def _forget_child(self, device_id) -> bool:
         """A robot this appliance no longer lets in keeps no child's name: the `child`
