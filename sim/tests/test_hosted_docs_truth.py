@@ -226,6 +226,11 @@ ROUTES = {"CHAT": "chat", "SPEECH": "speech", "STT": "transcribe"}
 SPANS = ("MIN", "HOUR", "DAY")
 WINDOWS = tuple(f"DEMO_{r}_PER_{s}" for r in ROUTES for s in SPANS)
 
+#: A window row's first cell: the config tables' `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY`,
+#: and the spec's §4.1 `Per-IP speech`.
+_ENV_CELL = re.compile(r"`DEMO_(CHAT|SPEECH|STT)_PER_MIN`((?:\s*/\s*`_(?:HOUR|DAY)`)*)")
+_PER_IP_CELL = re.compile(r"Per-IP (chat|speech|transcribe)")
+
 
 def window_defaults() -> dict:
     """What `env.js` DEFAULTS sets each window to."""
@@ -257,22 +262,24 @@ def stated_windows(text: str) -> list:
             if table is None:
                 table = f"the table at line {n}" if cells[1:2] == ["Default"] else ""
             elif table:
-                env = re.fullmatch(r"`DEMO_(CHAT|SPEECH|STT)_PER_MIN`((?:\s*/\s*`_(?:HOUR|DAY)`)*)",
-                                   cells[0])
-                per_ip = re.fullmatch(r"Per-IP (chat|speech|transcribe)", cells[0])
+                env = _ENV_CELL.fullmatch(cells[0])
+                per_ip = _PER_IP_CELL.fullmatch(cells[0])
                 if env:
                     spans = ["MIN"] + re.findall(r"`_(HOUR|DAY)`", env.group(2))
                     vals = [_number(v) for v in cells[1].split("/")]
                     vals = vals if len(vals) == len(spans) else [None] * len(spans)
-                    out += [(table, f"DEMO_{env.group(1)}_PER_{s}", v) for s, v in zip(spans, vals)]
+                    out += [(table, f"DEMO_{env.group(1)}_PER_{s}", v)
+                            for s, v in zip(spans, vals)]
                 elif per_ip:
-                    out += [(table, f"DEMO_{by_name[per_ip.group(1)]}_PER_{s.upper()}", _number(v))
+                    route = by_name[per_ip.group(1)]
+                    out += [(table, f"DEMO_{route}_PER_{s.upper()}", _number(v))
                             for v, s in re.findall(r"([\d\s]+)/(min|hour|day)\b", cells[1])]
         listing = ("Everything else has a default" in line
                    or (listing and bool(line.strip("#*/ \t"))))
         if listing:
+            assigned = re.findall(r"DEMO_(CHAT|SPEECH|STT)_PER_(MIN|HOUR|DAY)=(\d+)", line)
             out += [("the defaults paragraph", f"DEMO_{r}_PER_{s}", int(v))
-                    for r, s, v in re.findall(r"DEMO_(CHAT|SPEECH|STT)_PER_(MIN|HOUR|DAY)=(\d+)", line)]
+                    for r, s, v in assigned]
     return out
 
 
@@ -287,12 +294,13 @@ def window_problems(text: str, want: dict) -> list:
         for r in ROUTES:
             route = {f"DEMO_{r}_PER_{s}" for s in SPANS}
             if keys & route and not route <= keys:
-                bad.append(f"{where}: states {sorted(keys & route)} but not {sorted(route - keys)}")
+                bad.append(f"{where}: states {sorted(keys & route)} "
+                           f"but not {sorted(route - keys)}")
     return bad
 
 
 def test_the_window_check_has_teeth():
-    """Either side of that §5 conflict kept whole is caught; the line-by-line resolution is not."""
+    """Either side of the §5 conflict kept whole is caught; the line-by-line one is not."""
     want = dict(zip(WINDOWS, (5, 40, 150, 15, 120, 450, 10, 60, 225)))
     table = ("| Variable | Default | Range / notes |\n|---|--:|---|\n"
              "| `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | ≥ 1 |\n"
@@ -308,12 +316,15 @@ def test_the_window_check_has_teeth():
     assert window_problems(resolved, want) == []
     # The spec's §4.1 rows and the template's paragraph are read too; a table whose second
     # column is not the default (a production setting, say) states no default.
-    assert len(window_problems("| Control | Default | Why |\n|---|--:|---|\n"
-                               "| Per-IP speech | 10/min · 80/hour · 300/day | two |\n", want)) == 3
-    assert len(window_problems("# Everything else has a default: DEMO_CHAT_PER_MIN=5,\n"
-                               "# DEMO_SPEECH_PER_DAY=300 (each visitor's daily voice)\n", want)) == 1
-    assert window_problems("| Variable | Production |\n|---|---|\n"
-                           "| `DEMO_SPEECH_PER_MIN` / `_HOUR` | 99 / 99 |\n", want) == []
+    per_ip = ("| Control | Default | Why |\n|---|--:|---|\n"
+              "| Per-IP speech | 10/min · 80/hour · 300/day | two |\n")
+    listing = ("# Everything else has a default: DEMO_CHAT_PER_MIN=5,\n"
+               "# DEMO_SPEECH_PER_DAY=300 (each visitor's daily voice)\n")
+    production = ("| Variable | Production |\n|---|---|\n"
+                  "| `DEMO_SPEECH_PER_MIN` / `_HOUR` | 99 / 99 |\n")
+    assert len(window_problems(per_ip, want)) == 3, window_problems(per_ip, want)
+    assert len(window_problems(listing, want)) == 1, window_problems(listing, want)
+    assert window_problems(production, want) == []
 
 
 def test_every_default_stated_for_a_per_visitor_window_is_the_one_env_js_sets():
