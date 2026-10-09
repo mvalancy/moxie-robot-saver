@@ -201,6 +201,10 @@ class ExtResult:
     steps: int = 0
     notes: list = field(default_factory=list)
     handled: bool = False
+    #: The index of the rule that matched, whose `do` the effects come from (§4.3: the first
+    #: matching rule, and no other); -1 when none did. The host reads it to know which rule's
+    #: own text a spoken line may act on (`ext_host.apply_ext_effects`).
+    rule: int = -1
 
     #: A sentence for the parent-facing `ext_events` ring — plain language, no jargon.
     @property

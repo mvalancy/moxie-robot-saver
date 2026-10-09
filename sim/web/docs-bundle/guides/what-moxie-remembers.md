@@ -13,8 +13,9 @@ Open the **🤖 Moxie** tab in the console. Under your robot there is a card cal
 
 ## What is written down
 
-At the end of a conversation — your child says goodbye, switches activity, or the robot
-goes offline — the AI is asked for a short, structured account of what happened. Four
+At the end of a conversation — your child says goodbye, Moxie goes to sleep, your child
+switches activity, or the robot goes offline — the AI is asked for a short, structured
+account of what happened. Four
 kinds of thing come back:
 
 | Kind | What it is | Example |

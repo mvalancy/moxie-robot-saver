@@ -160,6 +160,31 @@ REVIEWED: dict = {
     _TK + "test_a_fault_before_or_after_the_turn_is_not_seen": (
         ("time.monotonic",), "RELATIVE — the window is closed before `after` is read, so "
         "delay only widens the gap."),
+    "sim/tests/test_leave_taking.py::test_a_looping_transcript_cannot_stall_the_patterns": (
+        ("time.perf_counter",), "RELATIVE — a ceiling 250x the measured worst case (2 ms on "
+        "20 KB), also enforced by a hard alarm per match: load multiplies a linear match, "
+        "while an ambiguous pattern grows 2^n or faster and is past the ceiling by n=25."),
+    "sim/tests/test_content_app.py::test_a_huge_opener_takes_one_pass_and_one_render": (
+        ("time.perf_counter",), "RELATIVE — 1.0 s for two empty prompts, 13x the measured "
+        "0.01-0.07 s: load multiplies one linear split, one render and one linear lift, "
+        "while the quadratic split, a render per alternative, or a lift that reads the line "
+        "again per level or per `>` took 2.4-10.5 s on the same openers."),
+    "sim/tests/test_ext_say_tags.py::test_the_tags_a_program_writes_are_read_in_time_linear_in_its_text": (
+        ("time.perf_counter",), "RELATIVE — 0.5 s for a first turn measured at 2 ms, also "
+        "enforced by a hard 5 s alarm: load multiplies a linear parse, while the lazy "
+        "parse took about a minute on the same 200,000 spaces (2.7 s at 64,000, x4 per "
+        "doubling)."),
+    "sim/tests/test_ext_say_tags.py::test_a_literal_at_the_pack_cap_is_read_in_bounded_time": (
+        ("time.perf_counter",), "RELATIVE — 1.0 s for a read measured at 12-16 ms, also "
+        "enforced by a hard 5 s alarm: the lazy parse had not finished a megabyte of spaces "
+        "after 8 s."),
+    "sim/tests/test_ext_say_tags.py::test_four_markups_at_the_cap_are_cleared_in_time_linear_in_their_text": (
+        ("time.perf_counter",), "RELATIVE — 0.5 s for five turns measured at 7-31 ms, also "
+        "enforced by a hard 5 s alarm: load multiplies linear passes, while with any one of "
+        "round 9's bounds undone the same five turns took 0.94-6.8 s, and the fixpoint pass "
+        "took 2.1-3.7 s a turn on the nests. Without round 10's mark rule (round 9's code) "
+        "the review's shape took 0.33-0.48 s, under the bound; the test fails that on what "
+        "it sends."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}

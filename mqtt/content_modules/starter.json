@@ -57,6 +57,132 @@
       }
     },
     {
+      "name": "Goodbye",
+      "source_version": 1,
+      "pattern": "^\\W*(?:(?:o\\W*k(?:ay)?|mox(?:ie|y)|foxy|boxy|oxy)\\W+)*by\\W*$|^\\W*(?:(?:o\\W*k(?:ay)?|um+|uh+|hm+|oh|well|alright|all\\W*right|so|yeah|yes|yep|no|hey|please|anyways?|actually|sorry|thanks|thank\\W+you|mox(?:ie|y)|foxy|boxy|oxy)\\W+)*(?:(?:(?:(?:good\\W*)?bye+(?:bye+)?(?:\\W+for\\W+now)?(?:\\W+by(?=\\W*$))?|good\\W*by(?=\\W*$)|good\\W*night|night\\W*night|nighty\\W*night|see\\W+(?:you|ya)(?:\\W+(?:later(?:\\W+alligator)?|soon|tomorrow|again|next\\W+time))?|talk\\W+to\\W+you\\W+(?:later|soon|tomorrow)|(?:i(?:['’]?ve|\\W+have)?\\W+)?(?:gotta|got\\W+to|have\\W+to|need\\W+to)\\W+go(?:\\W+(?:home|to\\W+bed|to\\W+sleep))?|i['’]?m\\W+leaving)(?:\\W+(?:mox(?:ie|y)|foxy|boxy|oxy|then|now|friend|buddy|everyone|everybody|(?:i\\W+)?love\\W+(?:you|ya)(?:\\W+so\\W+much)?))*|(?:(?:i['’]?m|i\\W+am|we['’]?re|we\\W+are)\\W+(?:all\\W+)?(?:done|finished)(?:\\W+(?:talking|for\\W+(?:now|today)))?|stop(?:\\W+(?:it|please|talking))?)(?:\\W+(?:mox(?:ie|y)|foxy|boxy|oxy|then|now|friend|buddy|everyone|everybody))*)(?:\\W+(?:(?:o\\W*k(?:ay)?|um+|uh+|so|well|alright|anyways?)\\W+)*(?=\\w)|\\W*$))+$",
+      "entity_groups": "",
+      "_comment": [
+        "Ours, not one of the ten recovered commands. Both shipped prompts ask a follow-up",
+        "question every turn, so on the content brain 'bye Moxie' got another question, the",
+        "conversation never ended, and its memory summary waited for a disconnect. The line",
+        "starts with <exit>, which becomes an EXIT action (content_app._reply_from_volley):",
+        "the runtime ends the conversation and writes the summary. No LLM call.",
+        "",
+        "THE PATTERN IS THE WHOLE UTTERANCE (^...$), because a global answers BEFORE the brain:",
+        "'my dog said bye to the mailman' must still reach it. It allows what speech-to-text",
+        "writes around a goodbye -- punctuation, a leading ok/um/yeah, the name at either end,",
+        "an 'I love you' after a farewell ('Goodbye Moxie, I love you'; not after 'stop' or",
+        "'done': 'Stop, I love you!' is play) -- and two goodbyes in a row ('I gotta go,",
+        "bye!'). The name includes Moxy/Foxy/Boxy/Oxy, the mishearings OpenMoxie's own globals",
+        "allow (its content_modules/MoxieTimers.json, MoxieTime.json, MoxieGo.json). 'By' is",
+        "how Whisper spells a lone 'bye', so it counts alone or after ok or the name ('By.',",
+        "'Ok, by.'), as 'good by', or after another bye ('bye bye by'); never in 'by the way',",
+        "'stop by' or 'no, by'.",
+        "Every word can be read only one way, so a transcript that loops ('bye bye bye ...')",
+        "cannot make the regex backtrack.",
+        "A bare 'done' or 'night' is not a goodbye: either can be a plain answer to Moxie.",
+        "Both directions are tested in sim/tests/test_leave_taking.py.",
+        "",
+        "`random` is not a default grant. This runs because it ships: the wider grant set is",
+        "anchored to the digest of this program (the extension block), so a changed program",
+        "does not run, and the brain answers instead, taught the same <exit> rule",
+        "(moxie_sdk/actions.py LEAVE_TAG_PROMPT). A changed pattern keeps it running."
+      ],
+      "extension": {
+        "ext_format": 1,
+        "capabilities": [
+          "handled",
+          "random",
+          "say"
+        ],
+        "on": "global",
+        "rules": [
+          {
+            "when": {
+              "or": [
+                {
+                  "contains": [
+                    {
+                      "lower": [
+                        {
+                          "var": "speech"
+                        }
+                      ]
+                    },
+                    "night"
+                  ]
+                },
+                {
+                  "contains": [
+                    {
+                      "lower": [
+                        {
+                          "var": "speech"
+                        }
+                      ]
+                    },
+                    "bed"
+                  ]
+                },
+                {
+                  "contains": [
+                    {
+                      "lower": [
+                        {
+                          "var": "speech"
+                        }
+                      ]
+                    },
+                    "sleep"
+                  ]
+                }
+              ]
+            },
+            "do": [
+              {
+                "say": {
+                  "random.pick": [
+                    {
+                      "lit": [
+                        "<exit>Good night! Sweet dreams.",
+                        "<exit>Night night! Sleep tight.",
+                        "<exit>Good night! I'll see you tomorrow."
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "handled": true
+              }
+            ]
+          },
+          {
+            "do": [
+              {
+                "say": {
+                  "random.pick": [
+                    {
+                      "lit": [
+                        "<exit>Bye bye! That was so much fun.",
+                        "<exit>Okay, goodbye! I loved talking with you.",
+                        "<exit>See you later! Thanks for hanging out with me.",
+                        "<exit>Bye for now! I'll be right here when you come back.",
+                        "<exit>Goodbye! You made my circuits happy today."
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "handled": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "name": "Hold On",
       "source_version": 1,
       "pattern": "\\b(hold on|hang on|wait a (?:second|minute|sec)|give me a (?:second|minute|sec)|just a (?:second|minute|sec))\\b",
@@ -84,6 +210,40 @@
             "do": [
               {
                 "say": "Okay! I'll wait right here. Tell me when you're ready."
+              },
+              {
+                "handled": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "Sleep",
+      "source_version": 1,
+      "pattern": "^\\W*(?:(?:o\\W*k(?:ay)?|um+|uh+|hm+|oh|well|alright|all\\W*right|so|yeah|yes|yep|no|hey|please|anyways?|actually|sorry|thanks|thank\\W+you|mox(?:ie|y)|foxy|boxy|oxy)\\W+)*(?:good\\W*night(?:\\W+(?:mox(?:ie|y)|foxy|boxy|oxy|then|now|friend|buddy|everyone|everybody))*\\W+)?(?:(?:you\\W+(?:can|should)\\W+)?go\\W+(?:to\\W+)?(?:sleep|bed)|(?:it['’]?s\\W+|it\\W+is\\W+)?(?:time\\W+(?:to|for)\\W+(?:go\\W+to\\W+)?(?:sleep|bed)|bed\\W*time|sleep\\W*time))(?:\\W+(?:mox(?:ie|y)|foxy|boxy|oxy|then|now|friend|buddy|everyone|everybody))*\\W*$",
+      "entity_groups": "",
+      "_comment": [
+        "Sleep, from the same recovered command list as Hold On",
+        "(docs/reverse-engineering/runtime/content-and-conversation.md:123-125). <sleep>",
+        "becomes a SLEEP action; no LLM call. Anchored on the whole utterance like Goodbye, so",
+        "'my cat likes to sleep' still reaches the brain. 'I have to go to sleep' is the child",
+        "leaving, so it belongs to Goodbye. The name at either end allows the same mishearings",
+        "as Goodbye's (Moxy/Foxy/Boxy/Oxy)."
+      ],
+      "extension": {
+        "ext_format": 1,
+        "capabilities": [
+          "handled",
+          "say"
+        ],
+        "on": "global",
+        "rules": [
+          {
+            "do": [
+              {
+                "say": "<sleep>Okay, sleepy time! Good night."
               },
               {
                 "handled": true

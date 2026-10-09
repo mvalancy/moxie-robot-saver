@@ -438,7 +438,11 @@ def test_a_block_using_module_reaches_the_brain_as_english(tmp_path):
     assert not leak, f"template source reached the brain: {leak.group(0)!r} in {body!r}"
     assert "Sam" in body, f"the fallback lost the nickname: {body!r}"
     assert '{"mood":"happy"}' in body, "the fallback ate the prompt's JSON example"
-    assert body.strip().endswith("if asked."), f"trailing text lost: {body!r}"
+    # The module's prompt is followed only by the fixed leave-taking tags (actions.py).
+    from moxie_sdk.actions import LEAVE_TAG_PROMPT
+    assert body.endswith("\n\n" + LEAVE_TAG_PROMPT), body
+    prompt = body[:-len(LEAVE_TAG_PROMPT)]
+    assert prompt.strip().endswith("if asked."), f"trailing text lost: {body!r}"
 
 
 def test_the_fallback_is_what_a_security_error_falls_back_to():

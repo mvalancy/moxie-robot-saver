@@ -31,6 +31,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 from helpers_runtime import LatchClient, drive_once, make_runtime              # noqa: E402
 from helpers_web import script_group                                         # noqa: E402
 from moxie_sdk import automarkup, vocab                                       # noqa: E402
+from moxie_sdk.actions import parse_action_tags, tag_names                    # noqa: E402
 from moxie_sdk.app import MoxieApp                                            # noqa: E402
 from moxie_sdk.automarkup import annotate                                     # noqa: E402
 from moxie_sdk.filler import FILLERS                                          # noqa: E402
@@ -53,6 +54,8 @@ def _content_lines():
     out, root = [], os.path.join(REPO, "mqtt", "content_modules")
     def walk(node):
         if isinstance(node, str):
+            if tag_names(node):      # `<exit>Bye!` is spoken as `Bye!` (moxie_sdk/actions.py)
+                node = parse_action_tags(node)[0]
             if 3 < len(node) < 400 and " " in node and "{" not in node:
                 out.append(node)
         elif isinstance(node, dict):
