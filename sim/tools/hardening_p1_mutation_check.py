@@ -302,10 +302,10 @@ MUTATIONS = [
      '                "seen_since_connect": True,',
      T_ROSTER, "status_labels"),
     ("O5  the returning robot gets a fresh context (its conversation is lost)", RT_CONNECTION,
-     "        else:\n            robot = RobotContext(device_id=device_id, child=self.child)\n"
-     "            self.robots[device_id] = robot",
-     "        if True:\n            robot = RobotContext(device_id=device_id, child=self.child)\n"
-     "            self.robots[device_id] = robot",
+     "        else:\n            robot = RobotContext(device_id=device_id,"
+     " child=self.child_for(device_id))\n            self.robots[device_id] = robot",
+     "        if True:\n            robot = RobotContext(device_id=device_id,"
+     " child=self.child_for(device_id))\n            self.robots[device_id] = robot",
      T_ROSTER, "keeps_its_history"),
     ("V1  a broker outage leaves the vision latch set (eyes go silent)", RT_CONNECTION,
      "        self._forget_robot_state()\n        if self._stopping:",
