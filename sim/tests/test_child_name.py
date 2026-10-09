@@ -105,12 +105,17 @@ def test_the_whitelist_keeps_a_childs_name_and_refuses_what_is_not_one():
 
 def test_the_try_it_card_and_the_childs_name_share_one_rule():
     """The rule moved from the Try it card to the SDK and is imported back: the same
-    object, the same pattern byte for byte, and the card's behaviour unchanged (a blank
-    try names no one; a line break typed for a try folds into a space). A child's name is
-    stricter in exactly those two places."""
+    pattern byte for byte, and the card's behaviour unchanged (a blank try names no one;
+    a line break typed for a try folds into a space). A child's name is stricter in
+    exactly those two places. `is` alone cannot tell the import from a copy (`re.compile`
+    hands an identical pattern its cached object), so the source is checked for a copy."""
+    import inspect
     from moxie_sdk import cloud_config
     from moxie_runtime import tryit
-    assert tryit._NAME_RE is cloud_config.NAME_RE
+    assert tryit._NAME_RE is cloud_config.NAME_RE                 # a drifted copy fails
+    source = inspect.getsource(tryit)
+    assert "_NAME_RE = " not in source and "TRY_MAX_NAME_CHARS = " not in source, \
+        "tryit keeps its own copy of the name rule: import it from moxie_sdk.cloud_config"
     assert cloud_config.NAME_RE.pattern == r"^[\w .'\-]+$"
     assert tryit.TRY_MAX_NAME_CHARS == cloud_config.NAME_MAX_CHARS == 40
     assert tryit._try_name("") == "" and tryit._try_name("Sam\nB") == "Sam B"

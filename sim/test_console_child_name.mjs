@@ -315,9 +315,14 @@ const TEETH = [
   ["the mismatch never said", "N4", (s) => s.replace("if(want && want!==r.child){", "if(false){")],
   ["the rename's reason dropped", "N4",
    (s) => s.replace("(CHILD_PUSH && CHILD_PUSH.name===want && CHILD_PUSH.reason)", "(null)")],
+  /* A row for any robot the view names, rendered without crashing: dropping `!rec` alone
+   * would throw on `rec.child_id`, and a page that stops drawing reddens N6 for the wrong
+   * reason. */
   ["a row for a robot not on this account", "N6",
    (s) => s.replace("if(!rec || typeof r.child!=='string' || !r.child) return '';",
-                    "if(typeof r.child!=='string' || !r.child) return '';")],
+                    "if(typeof r.child!=='string' || !r.child) return '';"
+                    + " if(!rec) return `<div class=\"k name-row\"><span>Moxie calls your child</span>"
+                    + "<b>${escapeHtml(r.child)}</b></div>`;")],
   ["the placeholder taken for a name", "N7",
    (s) => s.replace("return n.toLowerCase()===PLACEHOLDER_CHILD.toLowerCase() ? '' : n;", "return n;")],
 ];
