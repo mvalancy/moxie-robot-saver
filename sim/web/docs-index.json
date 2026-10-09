@@ -23,7 +23,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap",
    "section": "_root",
-   "bytes": 7053,
+   "bytes": 9424,
    "mermaid": 0,
    "headings": [
     "Definition of done",
@@ -99,7 +99,7 @@
    "path": "architecture/agent-workflow.md",
    "title": "Agent and contributor workflow",
    "section": "architecture",
-   "bytes": 6941,
+   "bytes": 7561,
    "mermaid": 0,
    "headings": [
     "Goals, in priority order",
@@ -400,7 +400,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 76342,
+   "bytes": 77941,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -1308,16 +1308,18 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 10205,
+   "bytes": 16625,
    "mermaid": 0,
    "headings": [
     "1. Deploy",
     "2. What works with no configuration",
     "3. Make it live",
     "Which model, which layout, which persona",
+    "Her voice and her ears",
     "4. Caps",
     "5. Platform behavior worth knowing",
     "6. Which mode am I in?",
+    "7. Incident: stop the spending, then recover",
     "Known gaps"
    ],
    "kind": "md"

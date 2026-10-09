@@ -98,9 +98,11 @@ DECOY_CEIL = 0.35
 UPLOAD_RATE = A.ROBOT_SAMPLE_RATE
 
 #: Not cosmetic: a default `Python-urllib` request never reaches the Function — the edge
-#: answers 403 "error code: 1010" (browser integrity check), as RFC-7807 JSON with no
-#: `reason` field. Any non-browser client of a deployment needs a real User-Agent. No
-#: cookies or forged `Sec-Fetch-*`; the `Origin` is honestly the deployment's own.
+#: answers 403 "error code: 1010" (browser integrity check, plain text or RFC-7807 JSON),
+#: never with our `reason` field. The check refuses some user agents, not every non-browser
+#: one (spec §10, assumption 30), and a `POST` from the others is unmeasured, so this test
+#: sends a browser User-Agent. No cookies or forged `Sec-Fetch-*`; the `Origin` is honestly
+#: the deployment's own.
 BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
               "Chrome/124.0.0.0 Safari/537.36")
 
