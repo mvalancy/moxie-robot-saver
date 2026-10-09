@@ -516,7 +516,7 @@ BOUNDED_MARKUPS = {
 def test_four_markups_at_the_cap_are_cleared_in_time_linear_in_their_text(shape):
     """A turn carries at most four spoken lines and markup statements together
     (`MAX_ACTIONS`), each with up to 8,192 characters of markup, cleared on every turn
-    with the GIL held; here five turns of four, 7-17 ms in all on the build host. Before
+    with the GIL held; here five turns of four, 7-30 ms in all on the build host. Before
     round 8 a markup went through `drop_action_tags` to a fixpoint, quadratic in the markup:
     a turn with four nests took 2.1-3.7 s. Before round 9 the gate's tag search read from
     each opening with no `>` after it to the end of the markup, twice (a turn with four

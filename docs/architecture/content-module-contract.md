@@ -863,7 +863,7 @@ by construction rather than by reading the program cleverly:
   run of `<usel genre="` openings), and the slowest markup left to it that a search of
   9,000 random 8 KB markups found, mark openings whose data is never closed, takes it
   7-14 ms on 8 KB, quadratic in the markup, measured. Five turns of four 8 KB markups of
-  the shapes that were super-linear take 7-17 ms in all through the real app, where a turn
+  the shapes that were super-linear take 7-30 ms in all through the real app, where a turn
   with four runs of `<mark` openings took 0.37-0.52 s before round 9 and the fixpoint pass
   before round 8 took 2.1-3.7 s a turn on four nests. Never counted as a refusal: nothing
   in markup is acted on. The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
