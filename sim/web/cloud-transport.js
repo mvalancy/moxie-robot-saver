@@ -134,18 +134,27 @@
    * and settles it ONCE at the body's point, the first of: chunk 0 routed, the words
    * released at SPEECH_WAIT_MS, chunk 0 given up, or a newer reply superseding this one
    * (`voiceFirst`'s `cue`). Never at `close()`, which fires only once the whole reply is
-   * handed over: that would hold the thinking pose through her speech. A refusal, an
-   * error, `blocked`, a reply with no voice coming and a stub answer settle at chat
-   * return, as before: their words go out there. */
+   * handed over: that would hold the thinking pose through her speech. The voice-wait line
+   * lasts while chunk 0 is in flight — through words released silently at SPEECH_WAIT_MS
+   * too, since her voice is still on its way (measured on a local copy, 2026-10-09: chunk 0
+   * landing just after that release left 130-330 ms with nothing to see but the words) —
+   * and clears when her voice is routed, on time or late, or is not coming. A
+   * refusal, an error, `blocked`, a reply with no voice coming and a stub answer settle at
+   * chat return, as before: their words go out there. */
   var VOICE_WAIT_LINE = "warming up my voice…";
 
-  /** The reply is starting: the body is handed back, and the voice-wait line clears — that
-   *  line only: a line written since (a refusal's, "will answer that next", the next turn's
-   *  "thinking…") is not this reply's to clear. */
+  /** The reply is starting: the body is handed back (`settled()` sets no face: the reply's
+   *  own markup is about to). */
   function cueDone() {
+    if (window.moxieAlive) window.moxieAlive.settled();
+  }
+
+  /** Her voice is on its way to the speakers, or is not coming: the voice-wait line clears —
+   *  that line only: a line written since (a refusal's, "will answer that next", the next
+   *  turn's "thinking…") is not this reply's to clear. */
+  function voiceLineDone() {
     var el = document.getElementById("chat-status");
     if (el && el.textContent === VOICE_WAIT_LINE) status("");
-    if (window.moxieAlive) window.moxieAlive.settled();
   }
 
   /* ---- reporting back to the mode machine (§4.5) -------------------------- */
@@ -474,8 +483,10 @@
     /** The reply STARTS — chunk 0 routed, or the words released at SPEECH_WAIT_MS — or its
      *  voice is given up (refused, past the deadline, superseded): the thinking cue is over,
      *  once (`cueDone`), before the words and before the turn settles, so the next line's
-     *  own cue is never the one cleared. */
+     *  own cue is never the one cleared. The voice-wait line ends with chunk 0's flight:
+     *  routed (on time or late), or given up — also before the turn settles. */
     var cueOver = once(function () { if (cue) cue(); });
+    var lineOver = once(voiceLineDone);
 
     /** Nothing left to redeem or route: no newer reply can end this one any more, and the
      *  turn is SETTLED — the next waiting line may go. */
@@ -491,6 +502,7 @@
       if (over) return;
       over = true;
       cueOver();
+      lineOver();
       for (var j = next; j < n; j++) if (landed[j]) { stats.chunksDropped++; landed[j] = null; }
       close();
     }
@@ -574,6 +586,7 @@
         // older reply still being assembled ends here.
         supersedeVoices(seq);
         cueOver();
+        lineOver();
         routeAll(landed[0], "tts");
         routeAll(chatMessages, "chat");
         stats.voiceFirst++;
@@ -588,7 +601,8 @@
         routeAll(chatMessages, "chat");
         return;
       }
-      // No voice yet: the words go out now, silently, still expecting their own voice.
+      // No voice yet: the words go out now, silently, still expecting their own voice (the
+      // body is handed to their markup; the voice-wait line stays until the voice).
       cueOver();
       routeAll(chatMessages, "chat");
       stats.chatFirst++;
@@ -597,6 +611,7 @@
           // However late it is, nothing local has said this line: play it, and any older
           // reply still being assembled ends here.
           supersedeVoices(seq);
+          lineOver();
           routeAll(landed[0], "tts");
           stats.lateSpeechPlayed++;
           voiced = true;

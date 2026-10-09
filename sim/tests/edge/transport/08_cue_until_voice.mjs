@@ -10,7 +10,8 @@
  *            0 times at chat return and exactly once at the first of chunk 0 routed, the words
  *            released at SPEECH_WAIT_MS, chunk 0 given up, or a newer reply superseding it;
  *            a refusal, a block, an error and a reply with no voice coming settle at chat
- *            return as before.
+ *            return as before. The voice-wait line lasts while chunk 0 is in flight — through
+ *            a silent release of the words too — and clears when her voice is routed or given up.
  *   12f-12h  THE FILLER STAYS KEYED TO THE CHAT NOT YET RETURNED: once the brain has answered
  *            no spoken filler starts however late the voice; before it answers the filler
  *            still fires at 3.5 s and is withheld while she is busy; a quiet beat (a small
@@ -101,24 +102,46 @@ const send = (text) => globalThis.window.moxieBridge.sendUserTurn(text);
 }
 
 /* =========================================================================== *
- * 12c. CHUNK 0 HANGING: the words are released at SPEECH_WAIT_MS (2.5 s after the speech
- *      request) still expecting their voice; the body settles there, once; the voice given up
- *      at the client's 15 s deadline settles nothing again.
+ * 12c. CHUNK 0 LATE OR HANGING: the words are released at SPEECH_WAIT_MS (2.5 s after the
+ *      speech request) still expecting their voice; the body settles there, once (their markup
+ *      takes it), but the voice-wait line stays while chunk 0 is in flight — until her voice
+ *      is routed, or given up at the client's 15 s deadline. (On a local copy, 2026-10-09,
+ *      chunk 0 landing just after the release left 130-330 ms with nothing to see but the
+ *      words: the line used to clear with the body.)
  * =========================================================================== */
 {
+  // (i) late by 200 ms, as measured: the words at 2.8 s, her voice at 3.0 s.
+  await boot({ answer: serve({
+    "/api/chat": Object.assign(said(TWO, "sim-cue3", { speech: ticket("sim-cue3") }), { delayMs: 300 }),
+    "/api/speech": voiced("sim-cue3", { delayMs: 2700 }),
+  }) });
+  const n = watchAlive();
+  send("what do you see?");
+  await advance(2790);                                 // the wait runs from the speech POST at 300 ms: the words at 2.8 s
+  deep([n.settled, status(), T().order], [0, VOICE_WAIT, []], "12c(i): chunk 0 late: at 2.79 s the cue still holds");
+  await advance(20);                                   // t+2.81 s
+  deep([n.settled, status(), T().chatFirst, T().order], [1, VOICE_WAIT, 1, ["chat"]],
+       "12c(i): THE WORDS RELEASED AT SPEECH_WAIT_MS: the body settles there, once, as they go out — and the voice-wait line STAYS, her voice still on its way");
+  await advance(200);                                  // t+3.01 s: chunk 0 landed at 3.0 s
+  deep([n.settled, status(), T().lateSpeechPlayed, T().order], [1, "", 1, ["chat", "tts"]],
+       "12c(i): HER VOICE ROUTED (3.0 s): the line clears there; nothing settles again");
+}
+{
+  // (ii) hanging: given up at the client's 15 s deadline.
   await boot({ answer: serve({
     "/api/chat": Object.assign(said(TWO, "sim-cue3", { speech: ticket("sim-cue3") }), { delayMs: 300 }),
     "/api/speech": voiced("sim-cue3", { delayMs: 20000 }),
   }) });
   const n = watchAlive();
   send("what do you see?");
-  await advance(2790);                                 // the wait runs from the speech POST at 300 ms: the words at 2.8 s
-  deep([n.settled, status(), T().order], [0, VOICE_WAIT, []], "12c: chunk 0 hanging: at 2.79 s the cue still holds");
-  await advance(20);                                   // t+2.81 s
-  deep([n.settled, status(), T().chatFirst, T().order], [1, "", 1, ["chat"]],
-       "12c: THE WORDS RELEASED AT SPEECH_WAIT_MS: the body settles there, once, as they go out");
-  await advance(13000);                                // t+15.8 s: the 15 s deadline gave the voice up at 15.3 s
-  deep([n.settled, T().voiceFallbacks], [1, 1], "12c: …and the voice given up at the deadline settles nothing again");
+  await advance(2810);                                 // t+2.81 s: the words went out at 2.8 s
+  deep([n.settled, status(), T().chatFirst], [1, VOICE_WAIT, 1],
+       "12c(ii): chunk 0 hanging: the body settled at the words (2.8 s), the line stays");
+  await advance(12480);                                // t+15.29 s: the deadline is 15 s after the speech POST at 300 ms
+  eq(status(), VOICE_WAIT, "12c(ii): …through the voice's whole wait (15.29 s)");
+  await advance(20);                                   // t+15.31 s
+  deep([n.settled, status(), T().voiceFallbacks], [1, "", 1],
+       "12c(ii): THE VOICE GIVEN UP AT THE DEADLINE (15.3 s): the line clears as the words are spoken locally; nothing settles again");
 }
 
 /* =========================================================================== *
@@ -193,13 +216,13 @@ const send = (text) => globalThis.window.moxieBridge.sendUserTurn(text);
   deep([n.answered, aliveState().pose, aliveState().answered], [1, "voice-wait", true],
        "12f: at 2 s the brain has answered (1.0 s): the body holds a voice-wait pose and knows no filler may start");
   await advance(1600);                                 // t+3.6 s: the words went out at 3.5 s, where the filler beat was due
-  deep([n.settled, status(), T().chatFirst, a.stats.spoke, a.stats.held, world.spy.said.filter((s) => s.who === "ambient").length], [1, "", 1, 0, 0, 0],
-       "12f: ONCE THE BRAIN HAS ANSWERED NO SPOKEN FILLER STARTS: the 3.5 s beat is passed over (not held), and the body settles there as the words go out");
+  deep([n.settled, status(), T().chatFirst, a.stats.spoke, a.stats.held, world.spy.said.filter((s) => s.who === "ambient").length], [1, VOICE_WAIT, 1, 0, 0, 0],
+       "12f: ONCE THE BRAIN HAS ANSWERED NO SPOKEN FILLER STARTS: the 3.5 s beat is passed over (not held), and the body settles there as the words go out (the line waits on with her voice)");
   deep(motors.filter(([i, , t]) => i === 5 && t - t0 > 1000 && t - t0 < 3500).map(([, , t]) => t - t0), [3000],
        "12f: …while the quiet beat (a small turn, no sound) 2 s after the answer kept her visibly working until the words");
   await advance(2900);                                 // t+6.5 s: her voice landed at 6.0 s
-  deep([world.spy.sounds.map((s) => [s.kind, s.t - t0]), aliveState().pose, n.settled, a.stats.spoke], [[["cloud", 6000]], null, 1, 0],
-       "12f: the only sound of the turn is her answer, however late (6.0 s); nothing settled again, nothing was said meanwhile");
+  deep([world.spy.sounds.map((s) => [s.kind, s.t - t0]), status(), aliveState().pose, n.settled, a.stats.spoke], [[["cloud", 6000]], "", null, 1, 0],
+       "12f: the only sound of the turn is her answer, however late (6.0 s), and the line cleared with it; nothing settled again, nothing was said meanwhile");
 }
 
 /* =========================================================================== *
