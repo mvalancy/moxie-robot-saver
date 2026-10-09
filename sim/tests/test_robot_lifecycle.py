@@ -8,6 +8,8 @@ server, and what each test below pins:
   stays (§2, "Child data on server: not deleted");
 * the robot stops being served: its permit is revoked through the supervisor's EXISTING
   `POST /permits` (the console's Revoke button), which re-pushes the un-paired config;
+  first, the robot's own copy of the child's name is cleared (`POST /config` with
+  `{"child": null}`): robot state, not the child's record;
 * a pairing code made before the unpair cannot pair the robot back (the stale-QR case);
 * unpair is idempotent, and auth and scoping are the neighbours' (bearer token, own robots);
 * a factory reset does the same server-side, then hands back the `restore_factory` setup
@@ -81,8 +83,20 @@ def _calls(supervisor):
             len(supervisor.config_posts), len(supervisor.wakeups))
 
 
+#: What an unpair adds to `_calls`: one config post, the name clear (`_name_cleared`).
+NAME_CLEAR = (0, 0, 1, 0)
+
+
+def _name_cleared(supervisor, calls) -> bool:
+    """Since `calls`, the only supervisor call besides the permit list was clearing the
+    robot's copy of the child's name: no erase, no wake-up, no other config."""
+    now = _calls(supervisor)
+    return (tuple(b - a for a, b in zip(calls, now)) == NAME_CLEAR
+            and supervisor.config_posts[-1] == (DEVICE, json.dumps({"child": None})))
+
+
 def test_unpair_takes_the_robot_off_the_account_and_keeps_the_child(client, supervisor):
-    auth, rid, prep = _paired(client, "unpair@lifecycle.lan", child="Ada")
+    auth, rid, prep = _paired(client, "unpair@lifecycle.lan", child="Sam")
     posts, calls = len(supervisor.permit_posts), _calls(supervisor)
     r = client.delete(f"/api/robots/{rid}", headers=auth)
     assert r.status_code == 200, r.text
@@ -101,13 +115,14 @@ def test_unpair_takes_the_robot_off_the_account_and_keeps_the_child(client, supe
     kids = _state(client, auth)["children"]
     assert [k["id"] for k in kids] == [prep["child_id"]]
     assert body["child_id"] == prep["child_id"] and body["child_kept"] is True
-    assert any("Ada" in d["text"] for d in body["details"] if d["key"] == "child")
+    assert any("Sam" in d["text"] for d in body["details"] if d["key"] == "child")
 
-    # The robot stops being served, through the supervisor's existing revoke and nothing
-    # else: unpairing never erases what Moxie remembers or the activity history.
+    # The robot stops being served, through the supervisor's existing revoke, after its
+    # own copy of the child's name is cleared; nothing else: unpairing never erases what
+    # Moxie remembers or the activity history.
     assert supervisor.permit_posts[posts:] == [REVOKE]
     assert body["access"]["revoked"] is True and body["access"]["device_id"] == DEVICE
-    assert _calls(supervisor) == calls
+    assert _name_cleared(supervisor, calls) and body["child_cleared"] is True
 
 
 def test_unpair_sends_exactly_what_the_consoles_revoke_button_sends(client, supervisor):
@@ -161,7 +176,7 @@ def test_factory_reset_unpairs_and_hands_back_the_restore_factory_code(client, s
     """§2: a reset's server-side cleanup is the unpair's (child kept); what differs is the
     wipe reaching the robot, which here is the setup code — nothing is published."""
     from moxie_server import db
-    auth, rid, prep = _paired(client, "reset@lifecycle.lan", child="Bo")
+    auth, rid, prep = _paired(client, "reset@lifecycle.lan", child="José")
     client.put("/api/secret-key-collection", headers=auth, json={
         "secret_key_collection": {"secret-keys-indexed-by-public-keys": {"pub": "sealed"}}})
     spare = _prepare(client, auth)
@@ -186,8 +201,9 @@ def test_factory_reset_unpairs_and_hands_back_the_restore_factory_code(client, s
     assert [k["id"] for k in _state(client, auth)["children"]] == [prep["child_id"]]
     assert db.q("SELECT 1 FROM secret_keys WHERE user_id=?", (uid,))
     assert client.get("/api/users/me", headers=auth).status_code == 200
-    # No MQTT reset, no config push, no erase: the permit was the only supervisor call.
-    assert _calls(supervisor) == calls
+    # No MQTT reset and no erase: besides the permit, the only supervisor call cleared the
+    # robot's copy of the child's name.
+    assert _name_cleared(supervisor, calls) and body["child_cleared"] is True
 
 
 def test_the_reset_code_is_exactly_the_restore_factory_debug_command(client):
@@ -269,7 +285,7 @@ def test_the_childs_profile_can_be_deleted_once_the_robot_is_unpaired(client):
     """The doc's order (§2): unpair the robot, then the child may go — through the
     existing `DELETE /api/children/{id}`, which is what the console calls when the parent
     ticks the box. The unpair itself never deletes it."""
-    auth, rid, prep = _paired(client, "child-after@lifecycle.lan", child="Cy")
+    auth, rid, prep = _paired(client, "child-after@lifecycle.lan", child="Zoë")
     body = client.delete(f"/api/robots/{rid}", headers=auth).json()
     assert body["child_id"] == prep["child_id"]
     assert [k["id"] for k in _state(client, auth)["children"]] == [prep["child_id"]]
@@ -280,7 +296,7 @@ def test_the_childs_profile_can_be_deleted_once_the_robot_is_unpaired(client):
 def test_the_console_state_names_each_robots_child(client):
     """The confirmation sheet words its erase choice with the child's name, so the robot
     row in `/local/state` carries the child it is bound to."""
-    auth, rid, prep = _paired(client, "names@lifecycle.lan", child="Dee")
+    auth, rid, prep = _paired(client, "names@lifecycle.lan", child="Sam")
     robot = _state(client, auth)["robots"][0]
     assert robot["id"] == rid and robot["child_id"] == prep["child_id"]
     assert robot["mqtt-device-id"] == DEVICE

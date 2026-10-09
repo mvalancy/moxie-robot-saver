@@ -36,7 +36,9 @@ def test_fleet_normalizes_the_supervisors_snapshot(client):
     f = r.json()
     assert f["ok"] is True and f["app"] == "content" and f["robot_count"] == 1
     robot = f["robots"][0]
-    assert robot["device_id"] == DEVICE and robot["child"] == "Sam"
+    # The child's name is personal: this caller is not signed in to the account that has
+    # the robot, so the view does not name the child (test_console_child_name.py).
+    assert robot["device_id"] == DEVICE and robot["child"] is None
     assert robot["online"] is True and robot["firmware"] == "3.6.4"
     assert robot["battery_level"] == 91 and robot["wifi_ssid"] == "Home"
     assert robot["telemetry_count"] == 2 and robot["summary"]
@@ -217,22 +219,46 @@ def test_a_per_robot_override_beats_the_fleet_default_through_the_console(client
 # Moxie's look — face customization
 # --------------------------------------------------------------------------- #
 
-def test_a_face_edit_round_trips_and_changes_the_texture_key(client, supervisor):
+@pytest.fixture
+def owner(client):
+    """The bearer header of an account whose record names `DEVICE`. The fleet view gives a
+    robot's texture key (a UUIDv5 of its child's name and its look, so a list of first
+    names recovers the name) only to the account that has the robot
+    (`child_profile.redact_status`), so a look's round trip is read as its owner. The
+    record is made in the database alone (no supervisor call) and removed afterwards; like
+    the other console modules' tests, it starts from no record naming `DEVICE` (the
+    database is shared by every console module in a run)."""
+    from moxie_server import db
+    for r in db.q("SELECT id, attributes FROM robots"):
+        if json.loads(r["attributes"]).get("mqtt-device-id") == DEVICE:
+            db.ex("DELETE FROM robots WHERE id=?", (r["id"],))
+    auth = quicklogin(client, "look-owner@local")
+    uid = db.user_by_token(auth["Authorization"].split()[-1])["id"]
+    outcome, row = db.claim_robot(uid, DEVICE, {"name": "Moxie"}, {},
+                                  {"child-first-name": "Sam"})
+    assert outcome == "created", outcome
+    yield auth
+    db.ex("DELETE FROM robots WHERE id=?", (row["id"],))
+
+
+def test_a_face_edit_round_trips_and_changes_the_texture_key(client, supervisor, owner):
     """A picked look reaches the supervisor, comes back in the effective config, and
     moves the cache-buster the robot keys its texture on."""
-    before = client.get("/local/fleet").json()["robots"][0]["face_cache_id"]
+    before = client.get("/local/fleet", headers=owner).json()["robots"][0]["face_cache_id"]
     r = client.post(f"/local/robots/{DEVICE}/config",
                     json={"face": {"eye_color": "teal", "face_color": "pink"}})
     assert r.status_code == 200, r.text
     assert r.json()["applied"]["face"] == {"eye_color": "teal", "face_color": "pink"}
     assert json.loads(supervisor.config_posts[-1][1])["face"]["eye_color"] == "teal"
-    robot = client.get("/local/fleet").json()["robots"][0]
+    robot = client.get("/local/fleet", headers=owner).json()["robots"][0]
     assert robot["config_effective"]["face"]["face_color"] == "pink"
     assert robot["face_cache_id"] and robot["face_cache_id"] != before
+    # without the owner's token the view keeps the look but not the key (K7)
+    assert client.get("/local/fleet").json()["robots"][0]["face_cache_id"] == ""
 
     # a *different* look must not reuse the same texture key
     client.post(f"/local/robots/{DEVICE}/config", json={"face": {"eye_color": "gold"}})
-    after = client.get("/local/fleet").json()["robots"][0]["face_cache_id"]
+    after = client.get("/local/fleet", headers=owner).json()["robots"][0]["face_cache_id"]
     assert after != robot["face_cache_id"]
 
 
@@ -253,14 +279,14 @@ def test_a_fleet_face_is_the_house_look_and_one_robot_can_restyle_a_layer(client
                                                 "face_color": "pink"}
 
 
-def test_reset_to_default_clears_the_look_and_the_texture_key(client):
+def test_reset_to_default_clears_the_look_and_the_texture_key(client, owner):
     client.post(f"/local/robots/{DEVICE}/config", json={"face": {"eye_color": "gold"}})
-    assert client.get("/local/fleet").json()["robots"][0]["face_cache_id"]
+    assert client.get("/local/fleet", headers=owner).json()["robots"][0]["face_cache_id"]
     r = client.post(f"/local/robots/{DEVICE}/config", json={"face": None})
     assert r.status_code == 200, r.text
     assert r.json()["applied"]["face"] is None
     client.post("/local/fleet/config", json={"face": None})
-    robot = client.get("/local/fleet").json()["robots"][0]
+    robot = client.get("/local/fleet", headers=owner).json()["robots"][0]
     assert robot["config_effective"]["face"] is None
     assert robot["face_cache_id"] == ""
 

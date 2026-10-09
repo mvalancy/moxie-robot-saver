@@ -398,3 +398,5 @@ jobs:
         run: node sim/test_console_tryit.mjs
       - name: Parent console — Add to my account (one click, one claim; never automatic)
         run: node sim/test_robot_claim.mjs
+      - name: Parent console — the child's name (the Wi-Fi tab renames; Moxie calls your child)
+        run: node sim/test_console_child_name.mjs

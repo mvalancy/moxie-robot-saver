@@ -40,8 +40,22 @@ class FleetMixin:
             return ""
         if not labels:
             return ""
-        child = (self.robots[device_id].child if device_id in self.robots else self.child)
-        return face_child_id(labels, child_key=child.nickname)
+        return face_child_id(labels, child_key=self.child_for(device_id).nickname)
+
+    def child_for(self, device_id):
+        """The child this robot's config, brains, hello, `/status` and day plan name: the
+        parent's record saved on this robot's own layer (`child`, which a house rule never
+        carries), else the appliance's profile (`MOXIE_CHILD_NICKNAME`)."""
+        from moxie_sdk.cloud_config import child_profile_for
+        return child_profile_for(self._config_overrides.get(device_id), self.child)
+
+    def configurable(self, device_id) -> bool:
+        """May a parent's setting be saved for this robot now? A connected robot, or one
+        this appliance knows while it is away: on the permit list or in the roster. Its
+        saved settings reach it on its next connect (`_device_connect`'s settle)."""
+        device_id = str(device_id or "")
+        return bool(device_id) and (self._is_known(device_id)
+                                    or device_id in self.permits()["devices"])
 
     def update_fleet_config(self, **overrides):
         """Fleet config edit: merge into the appliance-wide defaults, persist, and re-push
@@ -239,9 +253,11 @@ class FleetMixin:
                                             build_unpaired_cloud_config,
                                             robot_config_kwargs)
         if self.is_permitted(device_id):
-            # `robot_config_kwargs` drops server-only keys (today: `brain`).
+            # `robot_config_kwargs` drops the keys that are no builder kwargs (`brain`,
+            # `child`); the child rides in as `child_pii`, from the parent's record.
             cfg = build_robot_cloud_config(
-                self.child, **robot_config_kwargs(self.effective_config(device_id)))
+                self.child_for(device_id),
+                **robot_config_kwargs(self.effective_config(device_id)))
         else:
             cfg = build_unpaired_cloud_config()
             self._note("permit", f"⛔ {device_id} is not permitted — pending "
@@ -355,8 +371,11 @@ class FleetMixin:
     def update_config(self, device_id, **overrides):
         """Per-robot config edit: merge overrides into this device's RobotCloudConfig,
         save the parent's settings so they survive a restart (`_save_config_overrides`)
-        and re-publish it. Overrides persist across re-pushes."""
+        and re-publish it. Overrides persist across re-pushes; a robot that is away hears
+        nothing now (QoS 0) and gets them from the settle on its next connect. Logs and
+        the feed name the keys, never a value: `child` is the child's name."""
         self._note("config", f"⚙️  config updated: {', '.join(overrides)}")
+        before = self.child_for(device_id) if "child" in overrides else None
         # One transaction on the robot's record across the merge, the snapshot and the
         # write: two edits at once reach the disk in the order they changed RAM, so the
         # file never ends up holding the older one (`_settings_record`).
@@ -364,16 +383,31 @@ class FleetMixin:
             layer = self._config_overrides.setdefault(device_id, {})
             ends_fail_closed = (self.failed_closed(device_id)
                                 and bool(self._storable_settings(overrides)[0]))
-            if ends_fail_closed:
+            if ends_fail_closed and "logging_policy" not in overrides:
                 # A parent's save ends `_fail_closed`: data sharing is this save's own
                 # choice again, or the layer underneath (house rule, default).
-                self._settings_unreadable.discard(device_id)
-                if "logging_policy" not in overrides:
-                    layer.pop("logging_policy", None)
+                layer.pop("logging_policy", None)
             layer.update(overrides)
+            if "child" in overrides and overrides["child"] is None:
+                layer.pop("child", None)     # a cleared name leaves no trace in the record
+            if ends_fail_closed:
+                # Only once the layer holds the parent's choice: a transcript save landing
+                # between the two would otherwise read the fail-closed NO_DATA as a
+                # parent's, and erase the transcript failing closed exists to keep.
+                self._settings_unreadable.discard(device_id)
             # Saved before the purge and the push: a crash after this line still boots
             # with the parent's choice, so a NO_DATA that was set is swept at the next start.
             self._save_config_overrides(device_id, held)
+        if before is not None:
+            child = self.child_for(device_id)
+            if device_id in self.robots:
+                # The next turn, hello, brain card and /status say the new name at once.
+                self.robots[device_id].child = child
+            if (child.nickname, child.birthday_iso) != (before.nickname, before.birthday_iso):
+                # The day plan's stored "why" lines name the child too (`build_schedule_for`):
+                # a changed or cleared name must not linger there. `GET /schedule` plans on
+                # the spot until the robot asks for its next plan.
+                self.store.delete(device_id, self.SCHEDULE_EXPLAIN_COLLECTION)
         if "logging_policy" in overrides or ends_fail_closed:
             # The privacy switch moved (a parent's choice, or a parent's choice back in force
             # after failing closed): under NO_DATA erase transcript + activity record now.
