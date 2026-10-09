@@ -14,7 +14,7 @@
  * take went to bridge/'s own echo + stub, whose 450 ms beat started the stub's clip into a
  * microphone opened 100 ms after the line.
  */
-import { bootPage, deep, eq, fails, page } from "./harness.mjs";
+import { bootPage, deep, eq, fails, ok, page } from "./harness.mjs";
 
 const { advance, envelope, now, said, voicedChunk } = page;
 const T = () => globalThis.window.moxieBridge.transportStats();
@@ -102,6 +102,28 @@ for (const [label, typedAt] of [["typed after the tap", 1000], ["typed before th
   await advance(1300);
   deep([chats(w), w.spy.transcript.includes(REDIRECT), redirectSpokenAt(w, t0).length, T().blocked, p.attrs["data-mic"]], [[HURT], true, 1, 1, undefined],
        `B17c (${label}): THE GROWN-UP REDIRECT IS SHOWN AND SPOKEN within 1.3 s of the line (never, before: the line was held, or its reply was)`);
+  foldTransportFails();
+}
+{
+  // B17d. The prompt is answered 3 s after the tap (the review's probe C): a reply that began
+  //       while the browser asked plays — the tap holds nothing — and is cut the instant the
+  //       capture opens, so the recording never holds her voice. Its words stay in the log.
+  //       (The cut part is not re-spoken: an honest gap, stated in the PR.) Pinned: the
+  //       review's mutant N4 removed this second stop and survived.
+  const p = await bootPage({ answer: hosted((path) => (path === "/api/chat" ? redirect({ delayMs: 1200 }) : { status: 404, text: "" })) });
+  const w = p.world, t0 = now();
+  globalThis.window.moxieTypedTurn.send(HURT);
+  await advance(300);
+  p.mic.setCapture(() => new Promise((res) => globalThis.setTimeout(() => res({ recorder: p.rec, stream: { getTracks: () => [] } }), 3000)));
+  p.mic.toggle();                                      // the browser asks; the visitor answers at 3.3 s
+  await advance(1000);                                 // t+1.3 s: the redirect landed at 1.2 s
+  deep([redirectSpokenAt(w, t0), w.spy.cuts.length, T().interrupted, T().heldForEars, p.attrs["data-mic"]], [[1200], 0, 0, 0, undefined],
+       "B17d: a reply landing while the browser asks is spoken (the tap holds nothing; she was silent at the tap, so nothing was interrupted)");
+  await advance(2050);                                 // t+3.35 s: the capture opened at 3.3 s
+  deep([p.mic.isRecording(), w.spy.cuts.map((c) => [c.text === REDIRECT, c.t - t0]), globalThis.window.moxieAudio.isMoxieSpeaking(), p.attrs["data-mic"]],
+       [true, [[true, 3300]], false, "on"],
+       "B17d: THE CAPTURE OPENING CUTS HER AT ONCE (3.3 s, 2.1 s into the redirect): the recording never holds her voice, and the ears are working");
+  ok(w.spy.transcript.includes(REDIRECT), "B17d: the redirect's words stay in the log");
   foldTransportFails();
 }
 
@@ -221,5 +243,30 @@ for (const [label, typedAt] of [["typed after the tap", 1000], ["typed before th
   await advance(3700);                                 // t+8.15 s
   deep([chats(w)[0], p.attrs["data-mic"], p.mic.stats().posts], ["typed during two clips", undefined, 2],
        "B19b: …until this recording's clip is done (8.05 s): then the ears are idle and the waiting lines go, in order");
+  foldTransportFails();
+}
+{
+  // B19c. …and not until then even once the second recording has ENDED and its clip is still
+  //       uploading when the first clip's transcript lands: each recording has its own number,
+  //       so the earlier clip cannot declare the ears idle (a guard on "is a recording open"
+  //       would have, with the second clip still in the air).
+  let uploads = 0;
+  const p = await bootPage({ answer: hosted((path) => (path === "/api/transcribe"
+    ? { status: 200, json: { transcript: "hello" }, delayMs: ++uploads === 1 ? 6000 : 6000 }
+    : path === "/api/chat" ? Object.assign(said("Hi.", "sim-hi"), { delayMs: 100 }) : { status: 404, text: "" })) });
+  const w = p.world;
+  await p.speak();                                     // clip 1 sent at 1.45 s, its transcript due at 7.45 s
+  await advance(500);                                  // t+2.0 s
+  p.mic.start();                                       // a second recording opens during the upload…
+  await advance(50);
+  globalThis.window.moxieTypedTurn.send("typed during two uploads");
+  for (let i = 0; i < 2; i++) { p.level(0.09); await advance(400); }
+  p.level(0.001);                                      // …and the auto-stop sends clip 2 at 3.95 s; its transcript is due at 9.95 s
+  await advance(5150);                                 // t+8.0 s: clip 1's transcript landed at 7.45 s, clip 2 is still uploading
+  deep([p.mic.isRecording(), p.mic.stats().posts, chats(w), p.attrs["data-mic"], T().queued], [false, 2, [], "on", 2],
+       "B19c: THE FIRST CLIP'S TRANSCRIPT (7.45 s) DID NOT DECLARE THE EARS IDLE while the second clip is still uploading: the typed line and that transcript both wait, body[data-mic] stays on");
+  await advance(2050);                                 // t+10.05 s
+  deep([chats(w)[0], p.attrs["data-mic"], T().queued], ["typed during two uploads", undefined, 3],
+       "B19c: …until this recording's clip is done (9.95 s): then the ears are idle and the waiting lines go, in order");
   foldTransportFails();
 }

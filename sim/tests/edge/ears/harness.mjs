@@ -343,6 +343,12 @@ export const page = transport;
 export async function bootPage(opts) {
   const o = opts || {};
   const world = await transport.boot(Object.assign({ realVoice: true }, o));
+  // A browser always has `navigator` (Node 20 does not; Node 21+'s has no `mediaDevices`):
+  // mic.js reads `navigator.mediaDevices` when a capture fails (`captureFailure`), so the
+  // copy a section pins must not depend on the Node version or on Part B having run first.
+  if (!globalThis.navigator || !globalThis.navigator.mediaDevices) {
+    Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: { mediaDevices: {} } });
+  }
   const attrs = {};
   globalThis.document.body = {
     setAttribute: (k, v) => { attrs[k] = String(v); },

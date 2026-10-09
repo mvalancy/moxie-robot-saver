@@ -35,7 +35,9 @@
  * deliberate interruption — every open pipeline ends through rule 6's path and voice/ is
  * stopped — and from the microphone OPENING until the ears are done with the clip nothing of
  * hers (a reply landing, a stub line, a queued line) starts. A turn in flight is settled by
- * `TURN_MAX_MS` at the latest, so the queue can never be held for good.
+ * `TURN_MAX_MS` at the latest, and the ears' hold ends at its bound (the record cap plus
+ * mic.js's 30 s upload valve, told to `earsOpen`; `EARS_HOLD_MAX_MS` when nothing is told)
+ * even if nothing ever closes it, so the queue can never be held for good.
  *
  * No secret and no hostname here: the base is `moxieMode.apiBase()` (= location.origin).
  * `ticket` and `context` are opaque, signed server-side, and die with the tab (§2.6).
@@ -84,6 +86,7 @@
     queued: 0,               // control lines that waited for the turn in flight (or the ears) before going out
     heldForEars: 0,          // replies and page-composed lines that waited for the ears to finish a clip
     interrupted: 0,          // the Listen tap landed on a reply: its voice stopped and its pipeline ended on purpose
+    earsValved: 0,           // holds the transport ended itself: `earsOpen` with no `earsIdle` by its bound
     turnsValved: 0,          // live turns settled by TURN_MAX_MS, their pipeline never having closed on its own
     blocked: 0,
     botTokens: 0,            // sends that carried a fresh Turnstile token
@@ -219,12 +222,17 @@
    * its upload settled): a reply that lands meanwhile, a stub line and the next queued line
    * all wait. Never from the tap: the browser may be asking for the microphone, and a prompt
    * left unanswered never settles — a hold taken at the tap kept a typed line, and a safety
-   * redirect already on its way, from ever reaching the child (measured 2026-10-08).
-   * ambient.js reads the same fact from body[data-mic]. */
+   * redirect already on its way, from ever reaching the child (measured 2026-10-08). And
+   * never for good: mic.js releases the hold on every way a recording can end and bounds
+   * it itself, and `earsOpen` bounds it here too, in the state this file keeps, by the
+   * number mic.js names (its record cap plus 30 s) or EARS_HOLD_MAX_MS — a caller that
+   * never says `earsIdle` cannot hold her for ever. ambient.js reads the same fact from
+   * body[data-mic]. */
   var waiting = [];        // {text, resolve}: control lines waiting for the turn in flight
   var inflight = 0;        // live turns POSTed and not yet settled
   var earsBusy = false;    // mic.js: recording, or still transcribing the clip
   var earsWaiters = [];    // what is held for the ears: resolved, in order, by earsIdle()
+  var earsValve = null;    // the hold's own bound here: mic.js's valve is the first line, this the second
 
   function once(fn) {
     var done = false;
@@ -257,14 +265,20 @@
 
   /** The microphone is OPEN: she is stopped again (a reply may have begun while the browser
    *  asked; the tap already counted the interruption) and what follows is held until
-   *  `earsIdle`. */
-  function earsOpen() {
+   *  `earsIdle` — or for `holdMs` at most (mic.js names its record cap plus its 30 s upload
+   *  valve; EARS_HOLD_MAX_MS when nothing is named), after which the ears are idle here
+   *  whatever the caller did. */
+  function earsOpen(holdMs) {
     earsBusy = true;
     stopVoice();
+    if (earsValve !== null) clearTimeout(earsValve);
+    var ms = Number(holdMs);
+    earsValve = setTimeout(function () { earsValve = null; stats.earsValved++; earsIdle(); }, ms > 0 ? ms : EARS_HOLD_MAX_MS);
   }
 
   /** The ears are done with the clip: what waited for them may go, in order. */
   function earsIdle() {
+    if (earsValve !== null) { clearTimeout(earsValve); earsValve = null; }
     if (!earsBusy) return;
     earsBusy = false;
     var rs = earsWaiters.splice(0);
@@ -373,8 +387,10 @@
   /** More tickets than any reply is worth. A server that minted them is misconfigured, and
    *  nothing past this many is redeemed: each costs the visitor's speech window. */
   var MAX_TICKETS = 8;
-  /** The longest the ears can hold a landed reply: mic.js's default record cap (15 s) plus
-   *  its own 30 s valve on an upload that never answers. */
+  /** The longest the ears can hold a landed reply when mic.js names no bound of its own:
+   *  its default record cap (15 s) plus its 30 s valve on an upload that never answers.
+   *  `earsOpen` bounds the hold by it (or by the number mic.js passes: the served cap plus
+   *  30 s), so it is a bound, not only a term in TURN_MAX_MS. */
   var EARS_HOLD_MAX_MS = 45000;
   /** The longest a turn can honestly be in flight: the chat deadline, the ears' hold, then
    *  up to MAX_TICKETS sentences each at the speech deadline, one at a time. Past it the
@@ -776,8 +792,8 @@
     queueUserTurn: queueUserTurn,
 
     /** The ears' three moments, told by mic.js (additive): Listen was tapped — stop her, on
-     *  purpose, holding nothing — the microphone is open (hold what follows), and the ears
-     *  are done with the clip. */
+     *  purpose, holding nothing — the microphone is open (hold what follows, for the bound
+     *  in ms it names at most), and the ears are done with the clip. */
     interruptVoice: interruptVoice,
     earsOpen: earsOpen,
     earsIdle: earsIdle,

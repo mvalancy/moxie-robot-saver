@@ -292,15 +292,26 @@ stopped — the playing clip and every queued chunk; the interrupted reply's tex
 tap HOLDS NOTHING: the browser may now be asking for the microphone, and a permission prompt left
 unanswered need never settle, so a hold taken at the tap kept a typed line, and a safety redirect already
 on its way, from ever reaching the child (the W3-S16 review's probes, 2026-10-08; origin/dev answered in
-every case). The hold starts once the microphone is OPEN — `mic.js` calls `earsOpen` as the capture
-starts, and she is stopped again then, so the recording never holds her own voice — and lasts until the
-ears are done with the clip (dropped unsent, or its upload settled): a reply that lands meanwhile is
+every case). The hold starts once the recorder is RUNNING — `mic.js` calls `earsOpen` only after
+`rec.start()` has returned, and she is stopped again in the same tick, so the recording never holds her
+own voice; a recorder that will not start holds nothing (taken before `start()`, a `NotSupportedError`
+from a MediaRecorder on an inactive stream held a typed line, and a hurt child's line, for good: the
+review's probe A, 2026-10-08) — and lasts until the ears are done with the clip (dropped unsent, or its
+upload settled), whichever way the recording ended: `stop()`, a recorder that cannot stop, or one that
+stopped by itself when its tracks ended (`onstop` with no `stop()` of ours; left as "recording", it held
+the spoken line and the next typed one for half an hour, probe B). Each recording has its own number,
+so an earlier clip settling after a new recording opened cannot end it. A reply that lands meanwhile is
 held (its context kept, its synthesis not yet bought), and so are a stub line and the next queued line;
 a line nothing live can take is answered from `stub.js` by the transport itself for the same reason
 (bridge/'s own 450 ms beat cannot be held, and spoke into a microphone opened just after the line).
-Every leg is bounded: an upload that never answers releases the ears after 30 s (`mic.js`'s valve), and
-a turn whose pipeline never closes is settled by `TURN_MAX_MS` (190 s: the chat deadline, the ears'
-hold, eight sentences at the speech deadline; `transportStats().turnsValved`). `mic.js` keeps
+Every leg is bounded: an upload that never answers releases the ears after 30 s (`mic.js`'s valve); the
+hold itself ends at the record cap plus those 30 s after the recorder ran, whatever the recorder did
+(45 s by default, 90 s under a served 60 s cap — a legitimate long recording is never released early;
+`mic.js`'s `holdValved`), and `cloud-transport.js` bounds `earsBusy` by the same number itself, or by
+`EARS_HOLD_MAX_MS` (45 s) when no number is named, so a caller that never says `earsIdle` cannot hold
+her for ever (`transportStats().earsValved`); and a turn whose pipeline never closes is settled by
+`TURN_MAX_MS` (190 s: the chat deadline, the ears' hold, eight sentences at the speech deadline;
+`transportStats().turnsValved`). `mic.js` keeps
 `body[data-mic]` set from the capture opening through the upload, which is the fact `ambient.js` reads,
 so a mutter cannot start during the 2-3 s a clip is being transcribed either. Without the transport (a
 fork with `bridge/` and `voice/` only) `mic.js` stops her voice itself (`transportStats().interrupted`,
@@ -957,7 +968,7 @@ suite is split into modules under `sim/tests/edge/<suite>/`.
 | 4 | `sim/test_mode.mjs` | The state machine, backoff, hidden-tab rule, `offline` never polls; env defaults and envelope; the ears apart (§9: an ears 429 opens the ears' window and leaves typed turns spendable, a chat 429 still pauses chat, ears reasons and transport errors never move the brain, a clean transcript never recovers it; the ears' default windows, 10 s and 15 s, and a clean transcript lifting one). |
 | 5 | `sim/test_cloud_transport.mjs` | Seven members intact; TTS routed before chat; chat lands by the 2.5 s wait; delegation when not live; the naive ordering proven to double-voice; one ticket per sentence (§4b–4h: chunks redeemed one at a time and routed in order behind chunk 0, a later chunk's failure ends the voice with no local stand-in, a hanging chunk given up at the deadline, three chunks heard in order on the real `voice/`); overlapping turns (§4i–4k, on the real `voice/`: two typed turns 200 ms apart, three chunks each — once the newer chunk 0 is routed nothing more of the older reply is requested and no sentence of it is heard after the newer reply; an older chunk 0 still in flight is dropped with no local stand-in; a stub answer to the newer turn ends the older pipeline too); one line at a time from the controls (§11: two lines 300 ms apart through the Ask path are sent in turn, the second carrying the first reply's context, both heard whole in order on the real `voice/`, the third turn holding both exchanges; the mic's transcript takes the same queue; a waiting line is re-decided when its turn comes; `sendUserTurn` still sends at once; a turn whose pipeline never closes is settled by `TURN_MAX_MS`, §11e). |
 | 6 | `sim/test_fallback_coverage.mjs` | Every line the degraded page can utter has a clip on disk; the prerender tool keeps every manifest group. |
-| 6b | `sim/test_demo_ears.mjs` | `/api/transcribe`: byte caps, windows, budget, timeout, format allowlist returning 400 with no call, the upstream status table, secret sweeps. Plus the real `mic.js`: 15 s hard stop, target selection, browser WAV encoder read back by the server walker. Plus the whole page (§B11–B16, the real `cloud-transport.js`, `mode.js` and `voice/` with `mic.js`): barge-in cuts the playing sentence at the tap and buys no further ticket, a reply landing into an open mic is held, `body[data-mic]` lasts through the upload; four refused uploads on a chat-only deployment leave the brain live while three chat errors still degrade it, transcribe refusals stay the ears' own, an STT 429 holds the mic and says how long while typed lines go out; the tap holds nothing (§B17–B19: a permission prompt left unanswered still lets a typed line out and a reply in flight through, the grown-up redirect included; a redirect and stub lines landing mid-recording wait; a hung upload releases the ears at 30 s). |
+| 6b | `sim/test_demo_ears.mjs` | `/api/transcribe`: byte caps, windows, budget, timeout, format allowlist returning 400 with no call, the upstream status table, secret sweeps. Plus the real `mic.js`: 15 s hard stop, target selection, browser WAV encoder read back by the server walker. Plus the whole page (§B11–B16, the real `cloud-transport.js`, `mode.js` and `voice/` with `mic.js`): barge-in cuts the playing sentence at the tap and buys no further ticket, a reply landing into an open mic is held, `body[data-mic]` lasts through the upload; four refused uploads on a chat-only deployment leave the brain live while three chat errors still degrade it, transcribe refusals stay the ears' own, an STT 429 holds the mic and says how long while typed lines go out; the tap holds nothing (§B17–B19: a permission prompt left unanswered still lets a typed line out and a reply in flight through, the grown-up redirect included; a redirect and stub lines landing mid-recording wait; a hung upload releases the ears at 30 s; a reply that began while the browser asked is cut the instant the capture opens); the recorder's own endings on the local path (§B20–B23: a `start()` that throws holds nothing, a recorder that stops by itself is stopped and its clip sent, one that cannot stop ends the ears at once, and the hold is bounded at the record cap plus 30 s whatever the recorder did — 45 s by default, 90 s under a served 60 s cap). |
 | 7 | `sim/test_env_hosted.mjs` | Zero `:8081`/`:8082` probes on a hosted host; badge per mode in Chrome. |
 | 8 | `sim/tests/test_ci_workflows.py` | The node tests are wired into `sim/ci/ci.yml`. |
 | 9 | repo lint (`sim/tests/edge/demo_proxy/04_deploy_only.mjs`) | No key, gateway host or account id under `functions/` or `sim/web/`; no `[vars]` in `wrangler.toml`. |

@@ -209,3 +209,49 @@ const soundName = (t0) => (s) => {
   eq(T().turnsValved, 1, "11e: recorded as one turn settled by the valve");
   process.off("unhandledRejection", swallow);
 }
+
+/* =========================================================================== *
+ * 11f. THE EARS CANNOT BE HELD OPEN FOR EVER. `earsOpen()` with no `earsIdle()` ever (a
+ *      mic.js whose recorder never ended, a fork that forgot) would hold every control line
+ *      and every reply for good: 45 s after they opened (EARS_HOLD_MAX_MS: the 15 s record
+ *      cap plus mic.js's 30 s upload valve) the transport declares the ears idle itself.
+ *      mic.js has its own, cap-aware valve first (ears §B23); this is the transport's own
+ *      bound on `earsBusy`, the state it keeps.
+ * =========================================================================== */
+{
+  const world = await boot({ realVoice: true, answer: live(answerLines) });
+  const b = globalThis.window.moxieBridge, typed = globalThis.window.moxieTypedTurn;
+  if (typeof b.earsOpen === "function") b.earsOpen();  // the microphone opened; nothing ever says it closed
+  typed.send("what is your favorite color?");
+  await advance(10);
+  deep([chats(world).map((c) => c.text), T().queued, status()], [[], 1, "Moxie will answer that next."],
+       "11f: a line typed while the ears are open waits for them");
+  await advance(44_900);
+  deep(chats(world).map((c) => c.text), [], "11f: …44.9 s on, still (the hold was never bounded here: it waited for good)");
+  await advance(200);
+  deep([chats(world).map((c) => c.text), T().earsValved], [["what is your favorite color?"], 1],
+       "11f: THE EARS' OWN VALVE: 45 s after `earsOpen` with no `earsIdle` the transport declares them idle, and the line goes out");
+}
+
+/* =========================================================================== *
+ * 11g. THE BOUND mic.js NAMES WINS (it knows the served record cap: a 60 s cap is 90 s), and
+ *      `earsIdle` clears it, so a hold that ended on its own never fires a stale valve.
+ * =========================================================================== */
+{
+  const world = await boot({ realVoice: true, answer: live(answerLines) });
+  const b = globalThis.window.moxieBridge, typed = globalThis.window.moxieTypedTurn;
+  if (typeof b.earsOpen === "function") b.earsOpen(90_000);
+  typed.send("what is your favorite color?");
+  await advance(45_100);
+  deep([chats(world).map((c) => c.text), T().earsValved], [[], 0],
+       "11g: told 90 s, the transport holds past its own 45 s default (a legitimate 60 s recording is never released early)");
+  await advance(45_000);                               // 90.1 s
+  deep([chats(world).map((c) => c.text), T().earsValved], [["what is your favorite color?"], 1], "11g: …and releases at 90 s");
+  await advance(20_000);                               // the colour reply (two sentences) is over
+  if (typeof b.earsOpen === "function") { b.earsOpen(5000); b.earsIdle(); }   // a clip dropped at once
+  typed.send("and your favorite food?");
+  await advance(10);
+  deep([chats(world).map((c) => c.text).length, T().earsValved], [2, 1], "11g: `earsIdle` lifts the hold at once: the next line goes out");
+  await advance(6000);
+  eq(T().earsValved, 1, "11g: …and cleared the valve with it (nothing fired at 5 s)");
+}

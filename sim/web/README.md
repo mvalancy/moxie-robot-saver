@@ -29,7 +29,7 @@ because Pages answers `sim.html` with a 308), and so does the Docker stack's ngi
 | `env.js` | env badge, capacity pill, `needs-backend` marks and the hosted banner, painted from the mode |
 | `cloud-transport.js` | the live turn: `sendUserTurn` → `/api/chat` + `/api/speech`; `sendScriptedTurn`; `queueUserTurn` (one line at a time from the controls); `interruptVoice`, `earsOpen` / `earsIdle` (the Listen tap stops her; the open mic holds what follows, bounded) |
 | `turnstile.js` | `window.moxieTurnstile.getToken(action)`; inert unless `/api/health` reports a sitekey; failures resolve `null` |
-| `mic.js` | records and posts to `/api/transcribe` (hosted) or the local STT sidecar; falls back to a scripted line; the Listen tap stops her speech on purpose (a prompt left unanswered holds nothing); what the ears report never strikes the brain |
+| `mic.js` | records and posts to `/api/transcribe` (hosted) or the local STT sidecar; falls back to a scripted line; the Listen tap stops her speech on purpose (a prompt left unanswered, or a recorder that will not start, holds nothing; every ending of a recording releases the hold, and a valve bounds it); what the ears report never strikes the brain |
 | `ambient.js` / `ambient.json` | her self-talk between turns (never over a live answer) |
 | `life.js` | ALIVE mode: idle beats through the real motor targets, backing off joints a user holds |
 | `diagram.js` | renders a mermaid diagram she drew into the log (lazy, `securityLevel: strict`) |
