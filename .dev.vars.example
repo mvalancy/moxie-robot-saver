@@ -92,13 +92,22 @@ DEMO_STT_MODEL=your-stt-model
 
 # Trust `X-Forwarded-For` when `CF-Connecting-IP` is absent. LEAVE THIS UNSET IN
 # PRODUCTION. Every per-IP window is keyed on `CF-Connecting-IP` (IPv6 truncated to its
-# /64), the one address header Cloudflare sets itself and overwrites on the way in.
+# /56), the one address header Cloudflare sets itself and overwrites on the way in.
 # `X-Forwarded-For` is a string the CALLER types, so wherever this fallback is reachable
 # the per-IP limits are not limits: one process rotates the header and holds an unbounded
 # supply of buckets. It exists for `wrangler pages dev`, where there is no Cloudflare in
 # front. Unset, a caller we cannot identify keys as `unknown` — ONE BUCKET SHARED BY ALL
 # OF THEM, which is the conservative direction and is the intent.
 # DEMO_TRUST_XFF=1
+
+# Optional. The hostnames this deployment may SPEND on, comma separated, matched exactly
+# (no wildcards; a pasted URL is reduced to its hostname). UNSET MEANS EVERY HOST, which is
+# right for local development, forks and previews. On a PRODUCTION deployment, list the
+# canonical hostname only: every other host — the `<project>.pages.dev` alias, each old
+# deployment's own `<hash>.<project>.pages.dev` URL — then answers `gateway_not_configured`
+# with no upstream call, and /api/health says so. Set but with no usable hostname in it,
+# it serves NO host, so a typo cannot quietly lift the restriction.
+# DEMO_SERVE_HOSTS=demo.example.com
 
 # ---------------------------------------------------------------------------
 # A gateway behind a CLOUDFLARE TUNNEL
@@ -195,9 +204,11 @@ DEMO_STT_MODEL=your-stt-model
 
 # Everything else has a default: DEMO_MAX_TOKENS=160, DEMO_MAX_INPUT_CHARS=500,
 # DEMO_MAX_TTS_CHARS=300, DEMO_CHAT_PER_MIN=5, DEMO_MAX_CONCURRENT_CHAT=4,
-# DEMO_UNIT_BUDGET_HOUR=600, DEMO_CHAT_TIMEOUT_MS=20000, DEMO_TICKET_TTL_S=60,
+# DEMO_UNIT_BUDGET_HOUR=600, DEMO_CHAT_TIMEOUT_MS=10000, DEMO_TICKET_TTL_S=60,
 # DEMO_MAX_AUDIO_BYTES=500000, DEMO_MIN_AUDIO_BYTES=2000, DEMO_STT_PER_MIN=10,
 # DEMO_STT_PER_HOUR=60, DEMO_STT_TIMEOUT_MS=12000,
+# DEMO_SPEECH_PER_DAY=300, DEMO_STT_PER_DAY=225 (each visitor's daily voice and ears; 0
+#   removes that day window),
 # DEMO_QUEUE_MAX_WAIT_MS=2500, DEMO_QUEUE_MAX_DEPTH=8 (the bounded wait behind the
 #   concurrency ceiling — set either to 0 to refuse instantly instead of queueing),
 # DEMO_TURNSTILE_TIMEOUT_MS=2000 (the deadline on the one siteverify call; a slow

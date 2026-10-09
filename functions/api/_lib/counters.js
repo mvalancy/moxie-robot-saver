@@ -90,10 +90,13 @@ export const state = {
   stats: freshStats(),
 };
 
+/** Every route has a DAY window too: without one, a single address could spend the voice and
+ *  the ears around the clock and drain a colo's daily unit budget alone (`env.js` DEFAULTS
+ *  says how each day is sized). A 0 or absent value leaves that scale uncapped. */
 export function windowLimits(cfg, route) {
   if (route === "chat") return { min: cfg.chatPerMin, hour: cfg.chatPerHour, day: cfg.chatPerDay };
-  if (route === "speech") return { min: cfg.speechPerMin, hour: cfg.speechPerHour, day: 0 };
-  return { min: cfg.sttPerMin, hour: cfg.sttPerHour, day: 0 };
+  if (route === "speech") return { min: cfg.speechPerMin, hour: cfg.speechPerHour, day: cfg.speechPerDay };
+  return { min: cfg.sttPerMin, hour: cfg.sttPerHour, day: cfg.sttPerDay };
 }
 
 /* ---------------------------------------------------------------------------- *

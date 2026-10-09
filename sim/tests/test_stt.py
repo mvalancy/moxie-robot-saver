@@ -11,6 +11,11 @@ from moxie_sdk.stt import (  # noqa: E402
     PROTO_SUBSCRIBE, ZMQ_STT_REQUEST, ZMQ_STT_RESPONSE,
 )
 from helpers_runtime import parse_zmq_frame, toolkit_pb2   # noqa: E402
+from helpers_audio import tone_pcm                          # noqa: E402
+
+#: Distinct speech-level chunks (each its own pitch, so order shows): the honest ears send
+#: no clip under 120 ms or at digital silence to the engine (test_honest_ears.py).
+A, B, C, D = (tone_pcm(50, amplitude=0.3, freq=f) for f in (200, 300, 400, 500))
 
 
 class _FakeTranscriber(Transcriber):
@@ -31,29 +36,29 @@ def test_vad_states_match_proto():
 def test_accumulates_until_end_of_speech():
     t = _FakeTranscriber()
     s = SttSession(t)
-    assert s.feed(VADState.START_OF_SPEECH, b"aa") is None
-    assert s.feed(VADState.SPEECH, b"bb") is None
-    assert s.feed(VADState.SPEECH, b"cc") is None
-    out = s.feed(VADState.END_OF_SPEECH, b"dd")
-    assert out == "heard 8 bytes"
-    assert t.got == b"aabbccdd"        # everything concatenated, in order
+    assert s.feed(VADState.START_OF_SPEECH, A) is None
+    assert s.feed(VADState.SPEECH, B) is None
+    assert s.feed(VADState.SPEECH, C) is None
+    out = s.feed(VADState.END_OF_SPEECH, D)
+    assert out == f"heard {len(A + B + C + D)} bytes"
+    assert t.got == A + B + C + D      # everything concatenated, in order
 
 
 def test_int_vad_values_accepted():
     s = SttSession(_FakeTranscriber())
-    assert s.feed(1, b"x") is None     # START_OF_SPEECH as int
-    assert s.feed(3, b"y") == "heard 2 bytes"
+    assert s.feed(1, A + B) is None    # START_OF_SPEECH as int
+    assert s.feed(3, C + D) == f"heard {len(A + B + C + D)} bytes"
 
 
 def test_new_utterance_resets_buffer():
     t = _FakeTranscriber()
     s = SttSession(t)
-    s.feed(VADState.START_OF_SPEECH, b"first")
+    s.feed(VADState.START_OF_SPEECH, A + B + C)
     s.feed(VADState.END_OF_SPEECH, b"")
     # a fresh utterance must not carry the previous audio
-    s.feed(VADState.START_OF_SPEECH, b"NEW")
+    s.feed(VADState.START_OF_SPEECH, D + C + B)
     s.feed(VADState.END_OF_SPEECH, b"")
-    assert t.got == b"NEW"
+    assert t.got == D + C + B
 
 
 def test_empty_utterance_yields_empty_string():

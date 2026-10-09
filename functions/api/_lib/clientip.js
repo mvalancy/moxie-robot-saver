@@ -5,22 +5,24 @@
  * Normalize an address into a RATE-LIMIT KEY — not a canonical IP.
  *
  * IPv4 gives a subscriber one address, so `ip -> bucket` is `person -> bucket`. IPv6 does
- * not: a residential allocation is at least a /64, so keyed on the raw string one visitor
+ * not: a subscriber is delegated a whole prefix, so keyed on the raw string one visitor
  * could rotate source addresses per request and make every per-IP window infinite. The key
- * is therefore the /64 (first four hextets) — the one boundary every RFC 4291 deployment
- * agrees on. Coarser than an address, so a household shares a bucket, exactly as IPv4 NAT
- * already does; that is the conservative direction. (Widening to a /48 is a one-line change
- * if an attack ever spans many /64s of one allocation.)
+ * is therefore the /56 (three hextets and the high byte of the fourth), the prefix a
+ * residential line is commonly delegated: keyed by the /64, one such line held 256 buckets,
+ * and the hermetic grief simulation spent a colo's whole day budget from two /64s of one
+ * /56. Coarser than an address, so a household — or neighbours who share a /56 — share a
+ * bucket, exactly as IPv4 NAT already does; that is the conservative direction.
  *
- *   `203.0.113.9`            IPv4                  -> unchanged
- *   `1.2.3.4:5678`           IPv4 with a port      -> `1.2.3.4`
- *   `2001:db8:1:2:3:4:5:6`   full IPv6             -> `2001:db8:1:2`
- *   `2001:db8::1`            elided IPv6           -> `2001:db8:0:0`
- *   `::1`                    loopback              -> `0:0:0:0`
- *   `fe80::1%eth0`           a zone index          -> `fe80:0:0:0`
- *   `[2001:db8::1]:443`      bracketed, with port  -> `2001:db8:0:0`
- *   `::ffff:1.2.3.4`         IPv4-MAPPED           -> `1.2.3.4`   (NOT a /64)
- *   `::ffff:102:304`         the same address      -> `1.2.3.4`
+ *   `203.0.113.9`              IPv4                  -> unchanged
+ *   `1.2.3.4:5678`             IPv4 with a port      -> `1.2.3.4`
+ *   `2001:db8:1:2:3:4:5:6`     full IPv6             -> `2001:db8:1:0::/56`
+ *   `2001:db8:1:2ff:3:4:5:6`   the same /56          -> `2001:db8:1:200::/56`
+ *   `2001:db8::1`              elided IPv6           -> `2001:db8:0:0::/56`
+ *   `::1`                      loopback              -> `0:0:0:0::/56`
+ *   `fe80::1%eth0`             a zone index          -> `fe80:0:0:0::/56`
+ *   `[2001:db8::1]:443`        bracketed, with port  -> `2001:db8:0:0::/56`
+ *   `::ffff:1.2.3.4`           IPv4-MAPPED           -> `1.2.3.4`   (NOT a /56)
+ *   `::ffff:102:304`           the same address      -> `1.2.3.4`
  *
  * The IPv4-mapped rows matter most: every mapped address shares the `0:0:0:ffff` prefix,
  * so truncating would collapse the whole IPv4 internet into one bucket. They are unmapped
@@ -52,8 +54,10 @@ export function ipKey(raw) {
       groups[4] === 0 && groups[5] === 0xffff) { // IPv4-mapped: unmap, do not truncate
     return [groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff].join(".");
   }
-  // The /64. Lower-case hex, no leading zeros — one address has exactly one key.
-  return groups.slice(0, 4).map((g) => g.toString(16)).join(":");
+  // The /56: three hextets, and the fourth with its low byte cleared. Lower-case hex, no
+  // leading zeros, a fixed `::/56` tail — one address has exactly one key, and no IPv4 key
+  // (dotted) or the `unknown` bucket can spell one.
+  return [groups[0], groups[1], groups[2], groups[3] & 0xff00].map((g) => g.toString(16)).join(":") + "::/56";
 }
 
 /** Expand an IPv6 literal to eight 16-bit groups, or `null`. Hand-written rather than

@@ -36,7 +36,7 @@ import pytest
 from helpers_runtime import (REPO, FakeClient, FakeInfo, deliver, http_json,  # noqa: E402
                              loopback, make_runtime, parse_zmq_frame, split_zmq_frame,
                              status_server, toolkit_pb2)
-from helpers_audio import pb_zmq_stt_frame                          # noqa: E402
+from helpers_audio import pb_zmq_stt_frame, stt_frames, tone_pcm      # noqa: E402
 from moxie_sdk.app import MoxieApp                                  # noqa: E402
 from moxie_sdk.store import JsonStore                               # noqa: E402
 from moxie_sdk import stt                                           # noqa: E402
@@ -230,9 +230,15 @@ def test_without_a_transcriber_nobody_is_asked(timers, tmp_path):
 # 2. the transcript goes back as the frame the robot parses
 # --------------------------------------------------------------------------- #
 
+#: One utterance's audio in two 200 ms frames at speech level: long and loud enough for the
+#: honest ears to send it to the engine (a clip under 120 ms or at digital silence reaches
+#: none; test_honest_ears.py).
+SPEECH_FRAMES = (tone_pcm(200, amplitude=0.3), tone_pcm(200, amplitude=0.3))
+
+
 def _speak(rt, device_id, uuid, *frames_audio):
     """Stream one utterance at the runtime through `events/zmq` as the robot does."""
-    frames_audio = frames_audio or (b"aa", b"bb")
+    frames_audio = frames_audio or SPEECH_FRAMES
     deliver(rt, f"/devices/{device_id}/events/zmq",
             pb_zmq_stt_frame(1, frames_audio[0], uuid))
     for chunk in frames_audio[1:]:
@@ -257,14 +263,19 @@ def test_a_final_transcript_is_a_frame_the_robot_can_parse(tmp_path):
 
 def test_an_empty_transcription_is_still_a_final(tmp_path):
     """Silence or a breath transcribes to '': the robot still needs its FINAL, or its
-    turn never closes."""
+    turn never closes. Room tone reaches the engine, which hears nothing; digital silence
+    reaches no engine at all (the honest ears) and is the same FINAL."""
     rt, dev = make_runtime(EchoApp(), device_id=DEV, store=JsonStore(str(tmp_path)))
     ears = Ears("")
     rt.set_transcriber(ears)
-    _speak(rt, dev, "utt-quiet", b"\x00\x00" * 4)
+    _speak(rt, dev, "utt-quiet", tone_pcm(500, rms=0.004))
     resp = parse_zmq_frame(_zmq(rt, dev)[-1], zmqSTT_pb2.zmqSTTResponse)
     assert ears.calls == 1
     assert resp.type == resp.FINAL and resp.speech == "" and resp.uuid == "utt-quiet"
+    _speak(rt, dev, "utt-zeros", b"\x00\x00" * 4)
+    resp = parse_zmq_frame(_zmq(rt, dev)[-1], zmqSTT_pb2.zmqSTTResponse)
+    assert ears.calls == 1
+    assert resp.type == resp.FINAL and resp.speech == "" and resp.uuid == "utt-zeros"
 
 
 class FlakyEars(Transcriber):
@@ -823,17 +834,27 @@ def test_the_card_tells_the_time_of_the_ask_in_the_robots_own_zone():
 class RobotDouble:
     """The least a robot needs here: it streams its microphone ONLY once asked (a
     `ProtoSubscribe` naming `zmqSTTRequest`) and keeps every `zmqSTTResponse` it is
-    handed. Everything it reads is decoded with the pb2 oracles."""
+    handed. Everything it reads is decoded with the pb2 oracles.
 
-    def __init__(self, device_id, utterance_frames):
+    With `echo=True` it also acts on what it heard: a FINAL with speech goes back as the
+    child's turn (a `prompt` on `events/remote-chat`, kept in `prompts`) and a FINAL with
+    no speech sends nothing. That is this double's model of a robot, not a measured one:
+    what a real Moxie sends after an empty FINAL is unverified. Replies are kept in
+    `replies`."""
+
+    def __init__(self, device_id, utterance_frames, *, echo=False):
         self.device_id, self._frames = device_id, list(utterance_frames)
         self.client = None                     # set by `loopback`
         self.asked, self.heard, self.config = [], [], []
         self.configs_when_asked = None
+        self.echo, self.prompts, self.replies = echo, [], []
 
     def _on_message(self, c, u, msg):
         if msg.topic == f"/devices/{self.device_id}/config":
             self.config.append(json.loads(msg.payload))
+            return
+        if msg.topic == f"/devices/{self.device_id}/commands/remote_chat":
+            self.replies.append(json.loads(msg.payload))
             return
         if msg.topic != f"/devices/{self.device_id}/commands/zmq":
             return
@@ -850,14 +871,20 @@ class RobotDouble:
             resp = zmqSTT_pb2.zmqSTTResponse()
             resp.ParseFromString(body)
             self.heard.append(resp)
+            if self.echo and resp.type == resp.FINAL and resp.speech:
+                self.prompts.append(resp.speech)
+                self.client.publish(f"/devices/{self.device_id}/events/remote-chat",
+                                    json.dumps({"command": "prompt", "backend": "router",
+                                                "event_id": f"evt-{resp.uuid}",
+                                                "speech": resp.speech}))
 
 
 def test_loopback_a_robot_streams_only_once_asked_and_hears_its_transcript(timers, tmp_path):
     """Robot double ↔ real runtime, in process, on the real topics: the double says
     nothing until the ask arrives (after its config), then streams one utterance and is
     answered with a FINAL it can parse. On a runtime that never asks, it never speaks."""
-    frames = [pb_zmq_stt_frame(1, b"\x01\x02" * 8, "utt-loop"),
-              pb_zmq_stt_frame(2, b"\x03\x04" * 8, "utt-loop"),
+    frames = [pb_zmq_stt_frame(1, SPEECH_FRAMES[0], "utt-loop"),
+              pb_zmq_stt_frame(2, SPEECH_FRAMES[1], "utt-loop"),
               pb_zmq_stt_frame(3, b"", "utt-loop")]
     robot = RobotDouble(DEV, frames)
     rt = _runtime(tmp_path, ears=False)
@@ -875,3 +902,107 @@ def test_loopback_a_robot_streams_only_once_asked_and_hears_its_transcript(timer
     final = robot.heard[0]
     assert final.type == final.FINAL
     assert final.speech == "I want to draw a dragon" and final.uuid == "utt-loop"
+
+
+def _shipped_content_brain(brain):
+    """The content brain as `config.build_content_app()` builds it over the shipped
+    starter.json (memory off), thinking with the fake `brain`."""
+    from moxie_sdk.apps.llm_app import DEFAULT_PERSONA
+    from moxie_sdk.content import ContentApp, packs
+    with open(os.path.join(REPO, "mqtt", "content_modules", "starter.json")) as fh:
+        defaults = packs.shipped_items(json.load(fh))
+    return ContentApp(packs.build_module(defaults, {}), brain, persona=DEFAULT_PERSONA,
+                      content_defaults=defaults, memory=False, safety_classifier=False)
+
+
+def _exits(robot) -> list:
+    """Every EXIT the robot was handed, read the way the robot reads it: the ActionID name
+    `exit_module` (RemoteChat.proto:260; `ActionType.EXIT`) in a reply's
+    `response_actions`. The enum's own name, "EXIT", never appears on the wire."""
+    return [a for r in robot.replies for a in (r.get("response_actions") or [])
+            if a.get("action") == "exit_module"]
+
+
+def _goodbye_loopback(tmp_path, timers, pcm, uuid):
+    """A robot that acts on its FINALs (`echo=True`), streaming one utterance whose engine
+    answers 'Bye.', against the shipped content brain. Its fake model answers a goodbye
+    the way the llm brain is taught to (`<exit>` first, llm_app.py), and the content brain
+    lifts that tag into an EXIT (actions.py): the harm a phantom 'Bye.' does on a tree
+    without #312's Goodbye global, which ends the session the same way without the model.
+    Returns what each side saw."""
+    seen = {"brain": [], "respond": [], "ended": []}
+
+    def brain(messages):
+        seen["brain"].append(messages)
+        if "bye" in str(messages[-1].get("content", "")).lower():
+            return "<exit>Bye bye! That was so much fun."
+        return "That sounds fun! What else did you do today?"
+
+    app = _shipped_content_brain(brain)
+    respond, end = app.respond, app.on_session_end
+    app.respond = lambda turn: seen["respond"].append(turn.speech) or respond(turn)
+    app.on_session_end = lambda robot, history, reason="": (
+        seen["ended"].append(reason) or end(robot, history, reason))
+    robot = RobotDouble(DEV, stt_frames(pcm, uuid), echo=True)
+    rt = _runtime(tmp_path, ears=False, app=app)
+    rt.brain_budget_s = 0                      # no filler timer: every answer is instant
+    loopback(rt, robot)
+    ears = Ears("Bye.")
+    rt.set_transcriber(ears)
+    _connect(rt)
+    timers.fire()
+    rt._pool.shutdown(wait=True)               # the turn the prompt started, if any
+    return robot, ears, seen
+
+
+def test_loopback_a_phantom_bye_on_room_tone_never_becomes_the_childs_turn(timers, tmp_path):
+    """Whisper writes 'Bye.' for room tone, and a goodbye ends the activity (the llm brain
+    is taught <exit> for one; K5's content-brain Goodbye, #312, accepts a lone 'By.'/'Bye.').
+    Now the robot is told the child said nothing, so it sends no turn: the shipped content
+    brain is never asked, nothing at all is sent back (so no `exit_module`) and the
+    conversation does not end. `test_loopback_with_the_gate_off_a_phantom_bye_ends_the_activity`
+    is the same clip with the gate off: there every one of these checks reads the harm."""
+    robot, ears, seen = _goodbye_loopback(tmp_path, timers, tone_pcm(1500, rms=0.004),
+                                          "utt-quiet")
+    assert ears.calls == 1, "room tone is not digital silence: the engine was asked"
+    final = robot.heard[-1]
+    assert (final.type, final.speech, final.uuid) == (final.FINAL, "", "utt-quiet")
+    assert robot.prompts == [], "the robot sent the phantom back as the child's turn"
+    assert seen["respond"] == [] and seen["brain"] == []
+    assert _exits(robot) == [], "the phantom goodbye ended the activity"
+    assert robot.replies == [], "the robot was answered although the child said nothing"
+    assert seen["ended"] == []
+
+
+def test_loopback_with_the_gate_off_a_phantom_bye_ends_the_activity(timers, tmp_path,
+                                                                     monkeypatch):
+    """The kill switch end to end, and the proof that the quiet loopback's checks can fail:
+    with `MOXIE_STT_PHANTOM_GATE=off` the same room-tone 'Bye.' is the child's FINAL again,
+    the robot sends it as the turn, an `exit_module` goes out and the conversation ends,
+    read with the same `_exits`. Holds with and without #312: there K5's Goodbye global
+    answers instead of the model, with the same EXIT."""
+    monkeypatch.setenv("MOXIE_STT_PHANTOM_GATE", "off")
+    robot, ears, seen = _goodbye_loopback(tmp_path, timers, tone_pcm(1500, rms=0.004),
+                                          "utt-quiet")
+    final = robot.heard[-1]
+    assert (final.type, final.speech, final.uuid) == (final.FINAL, "Bye.", "utt-quiet")
+    assert robot.prompts == ["Bye."] and seen["respond"] == ["Bye."]
+    assert len(_exits(robot)) == 1, robot.replies
+    assert seen["ended"] == ["exit"]
+
+
+def test_loopback_a_loud_bye_is_still_the_childs_word(timers, tmp_path):
+    """The same 'Bye.' on speech-level audio is the child's: the FINAL carries it, the robot
+    sends it as the turn, the answer carries an `exit_module` and the conversation ends
+    (here the model's `<exit>`; with #312, K5's Goodbye global without the model, as
+    test_leave_taking.py pins for typed goodbyes)."""
+    robot, ears, seen = _goodbye_loopback(tmp_path, timers, tone_pcm(800, amplitude=0.3),
+                                          "utt-loud")
+    final = robot.heard[-1]
+    assert (final.type, final.speech, final.uuid) == (final.FINAL, "Bye.", "utt-loud")
+    assert robot.prompts == ["Bye."]
+    assert seen["respond"] == ["Bye."], "the child's goodbye never reached the brain"
+    answered = [r for r in robot.replies if r.get("event_id") == "evt-utt-loud"]
+    assert answered and (answered[-1].get("output") or {}).get("text"), robot.replies
+    assert len(_exits(robot)) == 1, robot.replies
+    assert seen["ended"] == ["exit"], "the child's goodbye did not end the conversation"
