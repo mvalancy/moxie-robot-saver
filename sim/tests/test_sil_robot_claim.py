@@ -4,8 +4,10 @@
 same path with `mqtt/run.py` behind it, its allowlist closed as on a parent's appliance
 (`MOXIE_ALLOW_UNVERIFIED_BOTS=0`), and a paho client wearing a `d_<uuid>` id standing in
 for the robot: it is pending and gets the child-free config; the claim lists it as
-unclaimed, puts it on the account and permits it, and the next config carries the child;
-Wake reaches it; Unpair sends it back to pending and the child-free config.
+unclaimed, puts it on the account and permits it, and a config then carries the name the
+account typed for the child; Wake reaches it; Unpair clears the robot's copy of the child's
+name (a config with the default name), then sends it back to pending and the child-free
+config.
 
 A paho client is not a Moxie. What a physical robot does with these messages is still
 unmeasured (`docs/guides/bench-runbook.md`).
@@ -120,18 +122,27 @@ def test_a_pending_robot_is_added_served_woken_and_unpaired_through_the_real_sup
         tok = console.post("/local/quicklogin", json={"email": "sil@claim.lan"}).json()["token"]
         auth = {"Authorization": f"Bearer {tok}"}
         assert console.get("/local/state", headers=auth).json()["unclaimed"] == [DEVICE]
+        assert console.post("/api/children", headers=auth,         # the Wi-Fi tab's name
+                            json={"child": {"child-first-name": "Sam"}}).status_code == 200
 
         pushed = len(robot.configs())
         claim = console.post(f"/local/robots/{DEVICE}/claim", headers=auth)
         assert claim.status_code == 200, claim.text
         assert claim.json()["created"] is True and claim.json()["permitted"] is True
+        assert claim.json()["child_pushed"] is True, claim.json()
         view = http_json(f"{status}/permits")
         assert [(p["device_id"], p["label"]) for p in view["permits"]] == [
             (DEVICE, "added to a parent account")]
         assert view["pending"] == []
-        served = _wait(lambda: robot.configs()[pushed:], what="a config push after the claim")
-        assert served[-1]["pairing_status"] == "paired" and "child_pii" in served[-1]
+        # The permit's push, then the name's: wait for the one that names the child.
+        served = _wait(lambda: [c for c in robot.configs()[pushed:]
+                                if (c.get("child_pii") or {}).get("nickname") == "Sam"],
+                       what="the child's name in a config push after the claim")
+        assert served[-1]["pairing_status"] == "paired"
         assert [r["pending"] for r in console.get("/local/fleet").json()["robots"]] == [False]
+        assert [r["child"] for r in console.get("/local/fleet", headers=auth).json()[
+            "robots"]] == ["Sam"]
+        assert [r["child"] for r in console.get("/local/fleet").json()["robots"]] == [None]
         assert console.get("/local/state", headers=auth).json()["unclaimed"] == []
 
         rid = claim.json()["robot_id"]
@@ -143,8 +154,15 @@ def test_a_pending_robot_is_added_served_woken_and_unpaired_through_the_real_sup
         pushed = len(robot.configs())
         gone = console.delete(f"/api/robots/{rid}", headers=auth).json()
         assert gone["unpaired"] is True and gone["access"]["revoked"] is True
-        back = _wait(lambda: robot.configs()[pushed:], what="a config push after the unpair")
-        assert back[-1]["pairing_status"] == "unpairing" and "child_pii" not in back[-1]
+        # The unpair clears the robot's copy of the child's name first (one paired push,
+        # the default name), then the revoke sends the child-free document: wait for that.
+        back = _wait(lambda: [c for c in robot.configs()[pushed:]
+                              if c.get("pairing_status") == "unpairing"],
+                     what="the child-free config after the unpair")
+        assert "child_pii" not in back[-1]
+        after = robot.configs()[pushed:]
+        assert [c["child_pii"]["nickname"] for c in after
+                if c.get("pairing_status") == "paired"] == ["friend"], after
         assert http_json(f"{status}/permits")["pending"] == [DEVICE]
     finally:
         robot.stop()

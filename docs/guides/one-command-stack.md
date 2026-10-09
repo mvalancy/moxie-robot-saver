@@ -74,6 +74,7 @@ documents every one. Never commit a key. The important ones:
 |---|---|---|
 | `MOXIE_LLM_BASE_URL`, `_API_KEY`, `_MODEL` | **none** | Any OpenAI-compatible endpoint: Ollama (`http://host.docker.internal:11434/v1`), vLLM, LM Studio, LiteLLM, a hosted proxy. Required for `content` and `llm`. Without a key, Moxie gives a "my brain got fuzzy" line when the endpoint refuses. |
 | `MOXIE_APP` | `content` | The brain: `content` (data-driven modules), `llm` (free chat), `echo` (no LLM), `webhook` (your own service). |
+| `MOXIE_CHILD_NICKNAME` | `friend` | The name Moxie says to a robot that no account names a child for. The name a parent types in the web app's Wi-Fi tab wins for that parent's robot ([where it goes](../architecture/config-and-telemetry-contract.md#the-childs-name-the-parents-record-per-robot)). |
 | `MOXIE_BROKER_HOST` | `127.0.0.1` | The address a **real robot** uses to reach the broker. It goes into the endpoint QR and the broker certificate, so set it to this machine's LAN IP before the first `up`. |
 | `MOXIE_BIND_HOST` | `0.0.0.0` | Interface the public ports bind to. |
 | `MOXIE_BIND_HOST_PLAIN` | `127.0.0.1` | Interface for plain MQTT (`1883`). Robots never use it; open it only to drive the Sim from another machine. |

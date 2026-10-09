@@ -84,7 +84,7 @@ function enterApp(){
 // one Simulate robot scan completes; it also makes the recovery phrase.
 $('#btn-qr').onclick = async () => {
   const name=$('#child-name').value.trim();
-  if(name){ await api('/api/children',{method:'POST',body:{child:{'child-first-name':name}}}); }
+  if(name){ await saveChildName(name); }
   const body={ ssid:$('#ssid').value.trim(), password:$('#wifipass').value,
                band:$('#band').value, hidden:$('#hidden').checked };
   if(!body.ssid){ alert('Enter your Wi-Fi network name'); return; }
@@ -105,6 +105,31 @@ $('#btn-qr').onclick = async () => {
   $('#wifi-qr-card').scrollIntoView({behavior:'smooth'});
   startPolling();
 };
+
+// ---- the child's name ----
+// The name field names the account's child: a new child the first time, then the SAME
+// child renamed (PUT /api/children/{id}), which also sends the name to every robot bound to
+// that child. The live box says what the robot calls the child ('Moxie calls your child').
+const PLACEHOLDER_CHILD='Moxie Kid';   // what pairing names a child nobody named: never said
+let CHILD_PUSH=null;                    // the last rename's answer: {name, reason}
+/** The name a child record gives Moxie, or '' (none, or the pairing placeholder). */
+function childName(kid){
+  const n=String((kid&&(kid.nickname||kid['child-first-name']))||'').split(/\s+/).filter(Boolean).join(' ');
+  return n.toLowerCase()===PLACEHOLDER_CHILD.toLowerCase() ? '' : n;
+}
+/** The account's child: the one its robot is bound to, else the active one, else the first. */
+function accountChild(st){
+  const kids=st.children||[];
+  const want=(st.robots||[]).map(r=>r.child_id).find(Boolean) || (st.user||{})['active-child-id'];
+  return kids.find(k=>k.id===want) || kids[0] || null;
+}
+async function saveChildName(name){
+  const kid=accountChild(await api('/local/state'));
+  if(!kid){ await api('/api/children',{method:'POST',body:{child:{'child-first-name':name}}}); return; }
+  const r=await api('/api/children/'+encodeURIComponent(kid.id),
+                    {method:'PUT',body:{child:{'child-first-name':name}}});
+  CHILD_PUSH={name:childName((r.data||{}).attributes), reason:r.child_pushed ? '' : (r.reason||'')};
+}
 
 // Only a robot record that appears after the code was made counts as connected: one the
 // account already had (an earlier Simulate robot scan, say) is not the robot on the bench.
@@ -153,7 +178,8 @@ async function loadEndpointQR(){
 
 // ---- connection monitor ----
 async function pollMonitor(){
-  let s; try{ s=await api('/local/broker/status',{auth:false}); }catch(e){ return; }
+  // With the token: the status names a robot's child only to the account that has it.
+  let s; try{ s=await api('/local/broker/status'); }catch(e){ return; }
   let summaryHtml, ok=false;
   if(!s.ok){ summaryHtml='⚠️ MQTT supervisor not running (start it in mqtt/).'; }
   else if(s.robots && s.robots.length){
@@ -177,9 +203,10 @@ function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;',
 // broker that no account has added (`unclaimed`), whether that list could be checked at
 // all (`known`), and the robots on the broker that another account has (`elsewhere`).
 // 🔐 Robot access reads it too.
-let ACCOUNT={robots:[], unclaimed:[], known:true, elsewhere:[]};
+let ACCOUNT={robots:[], unclaimed:[], known:true, elsewhere:[], children:[]};
 const accountOf=st=>({robots:st.robots||[], unclaimed:st.unclaimed||[],
-                      known:st.unclaimed_known!==false, elsewhere:st.on_other_accounts||[]});
+                      known:st.unclaimed_known!==false, elsewhere:st.on_other_accounts||[],
+                      children:st.children||[]});
 async function refreshMoxie(){
   try{
     const st=await api('/local/state');
@@ -273,7 +300,7 @@ async function claimRobot(deviceId, statusSel){
 let liveDevice=null;
 async function refreshLive(){
   const box=$('#robot-live'); if(!box) return;
-  let f; try{ f=await api('/local/fleet',{auth:false}); }catch(e){ return; }
+  let f; try{ f=await api('/local/fleet'); }catch(e){ return; }   // with the token: nameRow
   renderPermits(f);
   // A *pending* robot (reached the broker, not on the permit list) is deliberately NOT
   // the live robot: it has no child config to show and no settings to edit. It lives in
@@ -316,7 +343,7 @@ async function refreshLive(){
     const ov=Object.keys(r.config_overrides||{});
     const ovHtml = ov.length? `<div class="k"><span>Config overrides</span><b>${escapeHtml(ov.join(', '))}</b></div>`:'';
     return `<div class="live-hd">● Live${r.ota_reboot_required?' · <span class="warn">OTA reboot pending</span>':''}</div>
-            <div class="livegrid">${rows}${ovHtml}</div>`;
+            <div class="livegrid">${nameRow(r)}${rows}${ovHtml}</div>`;
   }).join('');
   refreshInsights(liveDevice);
   refreshSafety(liveDevice);
@@ -327,6 +354,24 @@ async function refreshLive(){
   refreshVoice(liveDevice);
   refreshBrain(liveDevice);
   refreshContent(liveDevice);
+}
+
+/** 'Moxie calls your child': the name the robot has now (the fleet view names it only to
+ *  the account that has the robot), and what is wrong when the account's record says
+ *  another one. Nothing for a robot that is not on this account. */
+function nameRow(r){
+  const rec=ACCOUNT.robots.find(x=>x['mqtt-device-id']===r.device_id);
+  if(!rec || typeof r.child!=='string' || !r.child) return '';
+  const want=childName((ACCOUNT.children||[]).find(k=>k.id===rec.child_id));
+  let note='';
+  if(want && want!==r.child){
+    const why=(CHILD_PUSH && CHILD_PUSH.name===want && CHILD_PUSH.reason)
+      || 'Moxie has not received it yet: save the name again in the Wi-Fi tab.';
+    note=`<div class="warn name-note">“${escapeHtml(want)}” not sent yet (${escapeHtml(why)})</div>`;
+  } else if(!want){
+    note='<div class="muted name-note">Your child\u2019s name goes in the Wi-Fi tab.</div>';
+  }
+  return `<div class="k name-row"><span>Moxie calls your child</span><b>${escapeHtml(r.child)}</b>${note}</div>`;
 }
 
 // ---- 🔐 Robot access (the device allowlist / pairing gate) ----

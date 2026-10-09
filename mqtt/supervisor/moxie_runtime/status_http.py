@@ -264,23 +264,32 @@ class _Handler(BaseHTTPRequestHandler):
     def _config(self, query):
         """Whitelisted overrides for one robot, or `?scope=fleet` for the appliance-wide
         defaults (a per-robot override still wins); both re-push. A robot's answer says
-        `saved: false` when the edit applies but its record does not hold it."""
+        `saved: false` when the edit applies but its record does not hold it. A robot that
+        is away but known (permitted, or in the roster) has its settings saved and pushed
+        on its next connect: `online: false, pushed: false`. A house rule names no child."""
         from moxie_sdk.cloud_config import sanitize_config_overrides
         rt = self.rt
         q = parse_qs(query)
         device_id = _first(q, "device_id")
         try:
-            overrides = sanitize_config_overrides(json.loads(self._raw() or b"{}"))
-            if _first(q, "scope", "robot") == "fleet":
+            body = json.loads(self._raw() or b"{}")
+            fleet_scope = _first(q, "scope", "robot") == "fleet"
+            if fleet_scope and isinstance(body, dict) and "child" in body:
+                raise ValueError("A house rule has no child: a child's name is saved for "
+                                 "one robot (POST /config?device_id=…).")
+            overrides = sanitize_config_overrides(body)
+            if fleet_scope:
                 fleet = rt.update_fleet_config(**overrides)
                 out = {"ok": True, "scope": "fleet", "applied": overrides,
                        "fleet_config": fleet, "robots": list(rt.robots)}
             else:
-                if not device_id or device_id not in rt.robots:
+                if not rt.configurable(device_id):
                     raise ValueError(f"unknown device_id {device_id!r}")
                 rt.update_config(device_id, **overrides)
+                online = device_id in rt.robots
                 out = {**self._robot_config(device_id), "applied": overrides,
-                       "saved": rt.settings_saved(device_id)}
+                       "saved": rt.settings_saved(device_id), "online": online,
+                       "pushed": online and rt._broker_connected()}
         except Exception as e:
             return self._refuse(e, reason=False)
         return self._json_out(out)
