@@ -139,7 +139,8 @@ const ticketText = async (r) => {
 
 /* 21. THE LAYOUTS (`DEMO_PROMPT_LAYOUT`, §3.3). The persona is sent ONCE in every layout;
  * only `anchor` may emit a system message that is not first (some chat templates reject or
- * drop one); our text is last in `anchor`; the child's line is last in `single`. */
+ * drop one); our text is last in `anchor`; the child's turn is last in `single`, their line
+ * untouched and followed only by the cue (§23i says why). */
 {
   deep(LAYOUTS, ["anchor", "single"], "the two layouts, as a closed set — nothing unmeasured ships");
   eq(wire2.DEFAULTS.DEMO_PROMPT_LAYOUT, "anchor", "the default is `anchor`");
@@ -205,7 +206,8 @@ const ticketText = async (r) => {
         deep(systems, [0], `${tag}: EXACTLY ONE system message, and it is first`);
         const last = b.messages[b.messages.length - 1];
         eq(last.role, "user", `${tag}: the last message is the user turn`);
-        eq(last.content, text, `${tag}: the child's line is the last message, untouched`);
+        eq(last.content, [text, turnshape.shapeCue(isGoodbye(text) ? CLOSE : turnshape.nextShape(turns))].join("\n\n"),
+           `${tag}: the last message is the child's line, untouched, then the cue`);
         ok(b.messages[0].content.includes(anchorOf(layout)), `${tag}: the restatement rides the one system message`);
         // persona, restatement, passage, diagram cue, format rule, re-roll — in that order.
         const passage = docs ? docs.excerpt : "", drawing = chat.wantsDiagram(text) ? "DRAW A DIAGRAM" : "", again = avoid ? "already said this, word for word" : "";

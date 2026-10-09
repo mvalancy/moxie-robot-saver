@@ -13,7 +13,8 @@
  * the TEXT, so they fail by name on the old persona instead of in a live probe. */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { FULL, chat, deep, eq, execFileSync, join, ok, prompt, readFileSync, repo, turnshape, web0, wire2 } from "./harness.mjs";
+import { FULL, P as stub, call, chat, deep, eq, execFileSync, fresh, join, ok, prompt, readFileSync, repo, sent, turnshape, web0,
+         wire2 } from "./harness.mjs";
 
 const P = wire2.DEFAULT_PERSONA;
 const at = (s) => P.indexOf(s);
@@ -200,6 +201,43 @@ const rule = (n) => P.split("\n").find((l) => l.startsWith(n + ". ")) || "";
   ok(rule(3).includes("a bit of robot life"), "rule 3 offers 'a bit of robot life' among her contributions");
   ok(P.split("\n")[0].endsWith(". The child you are talking to is your mentor."),
      "the mentor line ends 'is your mentor.': the trim of 'they teach you how humans work' is deliberate, pinned rather than silent");
+}
+
+/* 23i. IN `single` THE CUE CLOSES THE CHILD'S TURN. Read inside the one system message,
+ * before the whole conversation, it was ignored on the production pair (W4-S3's probe: 0 of
+ * 12 replies cued to ask asked a question; at the end of the child's turn 2 of 2 did), so in
+ * `single` it is the last paragraph of the child's turn. `anchor` already reads it after the
+ * child's line and is unchanged. */
+{
+  const HIST = [{ role: "user", content: "hi moxie" }, { role: "assistant", content: "I polished my buttons this morning." }];
+  const single = wire2.readConfig({ ...FULL, DEMO_PROMPT_LAYOUT: "single" });
+  const CUES = [...turnshape.SHAPES, turnshape.CLOSE].map((m) => turnshape.shapeCue(m));
+  for (const [turns, text, move] of [[[], "hi moxie", "tell"], [HIST, "ok", "ask"], [HIST, "okay bye moxie!", turnshape.CLOSE]]) {
+    const b = chat.buildUpstreamBody(single, turns, text);
+    const sys = b.messages[0].content, last = b.messages[b.messages.length - 1];
+    eq(last.content, text + "\n\n" + turnshape.shapeCue(move), `[single] ${move}: the child's line, untouched, then the ${move} cue: the last paragraph the model reads`);
+    ok(!CUES.some((c) => sys.includes(c)), `[single] ${move}: …and no cue in the system message`);
+    ok(sys.startsWith(P) && sys.includes(SAFETY_BLOCK), `[single] ${move}: the persona, its safety block included, stays in the one system message`);
+    deep(b.messages.slice(1, -1), turns, `[single] ${move}: the history is the signed turns, untouched`);
+  }
+  const off = chat.buildUpstreamBody(wire2.readConfig({ ...FULL, DEMO_PROMPT_LAYOUT: "single", DEMO_TURN_SHAPE: "0" }), HIST, "ok");
+  eq(off.messages[off.messages.length - 1].content, "ok", "[single] DEMO_TURN_SHAPE=0: the child's turn is their line alone");
+  const anchored = chat.buildUpstreamBody(wire2.readConfig({ ...FULL, DEMO_PROMPT_LAYOUT: "anchor" }), HIST, "ok");
+  const n = anchored.messages.length;
+  ok(anchored.messages[n - 1].role === "system" && anchored.messages[n - 1].content.includes(turnshape.shapeCue("ask")),
+     "[anchor] unchanged: the cue rides the trailing anchor…");
+  eq(anchored.messages[n - 2].content, "ok", "[anchor] …and the child's line is untouched");
+
+  // Through the route: the context the page keeps signs the child's line, never the cue, so
+  // the next turn's history carries no old cue.
+  fresh();
+  const env = { ...FULL, DEMO_PROMPT_LAYOUT: "single" };
+  stub.plan = { chat: { contents: ["I polished my buttons this morning.", "What is your favourite colour?"] } };
+  const r1 = await call(chat, "/api/chat", { text: "hi moxie" }, null, env);
+  await call(chat, "/api/chat", { text: "ok", context: r1.body.context }, null, env);
+  deep(JSON.parse(sent[sent.length - 1].opt.body).messages.slice(1).map((m) => m.content),
+       ["hi moxie", "I polished my buttons this morning.", "ok\n\n" + turnshape.shapeCue("ask")],
+       "through the route: turn 2's history is turn 1's line and reply as said, and only the newest line carries a cue");
 }
 
 /* 23j. THE INSTRUMENT THAT MEASURES THIS PERSONA SCORES THE MODEL'S OWN WORDS, AND COUNTS WHAT

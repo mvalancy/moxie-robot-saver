@@ -26,6 +26,7 @@
  * `sim/test_demo_proxy.mjs` §21 pins the sizes.
  * Some chat templates (the Qwen3 family under llama.cpp, for one) reject a system message
  * that is not first with HTTP 500 or silently drop it: the `single` layout exists for them.
+ * There the move for this turn closes the child's own turn instead (`buildUpstreamBody`).
  */
 import { turnShapeInstruction } from "./turnshape.js";
 import { expressiveVocab } from "./wire.js";
@@ -168,8 +169,9 @@ function docsInstruction(docs) {
  * THE PERSONA IS FIRST AND OUR ANCHOR IS LAST (§3.3) so the final instruction the model
  * reads is ours, whatever a visitor put in the middle — in the `anchor` layout. The
  * `single` layout gives that up for templates that honour only a leading system message
- * (§3.3 says what defends it instead). Reference material and the diagram cue go BEFORE
- * the child's turn in both.
+ * (§3.3 says what defends it instead), and keeps only the per-turn cue after the child's
+ * line, as the last paragraph of their turn. Reference material and the diagram cue go
+ * BEFORE the child's turn in both.
  *
  * @param {string} [avoid] a line the model must not repeat; set only by the re-roll.
  * @param {{title:string, path:string, excerpt:string}|null} [docs] a passage from our own
@@ -183,35 +185,42 @@ export function buildUpstreamBody(cfg, turns, text, avoid, docs) {
   const drawing = wantsDiagram(text) ? DIAGRAM_INSTRUCTION : "";
   /* The cue is built from the roles/shapes of signed history plus ONE bit of the child's
    * line (a leave-taking or not) and is one of four fixed strings; with `DEMO_TURN_SHAPE`
-   * off it is empty and the block is unchanged. It sits in the SAME block as the
-   * restatement — measured, as a separate message the shapes varied but the words collapsed
-   * into repeats — and the format rule is last because a format rule is most obeyed when
-   * read last. */
+   * off it is empty and the body is unchanged. Under `anchor` it sits in the SAME block as
+   * the restatement — measured, as a separate message the shapes varied but the words
+   * collapsed into repeats — and the format rule is last because a format rule is most
+   * obeyed when read last. Under `single` it closes the child's turn (below). */
   const cue = turnShapeInstruction(turns, cfg.turnShape, text);
-  const lead = anchorInstruction(layout) + (cue ? "\n\n" + cue : "");
+  const anchor = anchorInstruction(layout);
   const format = expressiveInstruction();
   // The re-roll sentence is built from our own completion and no request body can cause it
-  // to exist or shape a character of it. It is always the last of our instructions.
+  // to exist or shape a character of it. It is always the last of our system instructions.
   const again = avoid ? rerollInstruction(avoid) : "";
   const join = (parts) => parts.filter(Boolean).join("\n\n");
 
   let messages;
   if (layout === "single") {
     /* ONE system message, first. Everything we would otherwise say after the child's line is
-     * said before the conversation instead, and the child's line is the LAST message. */
+     * said before the conversation instead — except the cue, which is the LAST paragraph of
+     * the child's turn, after their line. Inside the system message it is read before the
+     * whole conversation, and measured on the production pair (W4-S3's probe) the model
+     * ignored it there: 0 of 12 replies cued to ask asked a question; at the end of the
+     * child's turn 2 of 2 did. Only our fixed cue text joins the line; the signed history
+     * keeps the child's words alone (`chat.js` signs `text`), so no earlier turn carries an
+     * old cue. */
     messages = [
-      { role: "system", content: join([cfg.persona, lead, reference, drawing, format, again]) },
+      { role: "system", content: join([cfg.persona, anchor, reference, drawing, format, again]) },
       ...history,
-      { role: "user", content: text },
+      { role: "user", content: join([text, cue]) },
     ];
   } else {
     /* `anchor`, the default: persona first; reference material and the diagram cue before
-     * the child's line; the anchor straight after it; the re-roll sentence last. */
+     * the child's line; the anchor (restatement, cue, format rule) straight after it; the
+     * re-roll sentence last. */
     messages = [{ role: "system", content: cfg.persona }, ...history];
     if (reference) messages.push({ role: "system", content: reference });
     if (drawing) messages.push({ role: "system", content: drawing });
     messages.push({ role: "user", content: text });
-    messages.push({ role: "system", content: join([lead, format]) });
+    messages.push({ role: "system", content: join([anchor, cue, format]) });
     if (again) messages.push({ role: "system", content: again });
   }
   return {
