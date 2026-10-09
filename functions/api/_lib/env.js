@@ -55,15 +55,23 @@ export const DEFAULTS = Object.freeze({
   DEMO_CHAT_PER_MIN: 5,
   DEMO_CHAT_PER_HOUR: 40,
   DEMO_CHAT_PER_DAY: 150,
-  DEMO_SPEECH_PER_MIN: 10,
-  DEMO_SPEECH_PER_HOUR: 80,
+  // The voice's per-IP windows are chat's times MAX_SPEECH_CHUNKS (3, `hmac.js`): a reply is
+  // spoken as up to three tickets, one `/api/speech` call each, so at chat's full pace with
+  // every reply at three chunks the speech window fills on the same turn as chat's, and the
+  // voice is never the one refused first (bar a reply straddling a window boundary,
+  // live-sim-demo.md §4.1). Sized for two chunks (10/min, 80/hour), it filled at about the
+  // 4th typed turn in a minute or the 27th in an hour, and that reply's voice stopped.
+  // Raised on the owner's decision, 2026-10-08.
+  DEMO_SPEECH_PER_MIN: 15,
+  DEMO_SPEECH_PER_HOUR: 120,
   // The voice's and the ears' per-IP DAY: chat's day (150 turns) at each hour cap's own
-  // ratio to chat's hour (speech 80/40 = 2 a reply, against 1.6 measured with one ticket per
-  // sentence; ears 60/40 = 1.5 uploads a spoken turn), so a visitor meets chat's day first.
-  // One address then spends at most 150x3 + 300x2 + 225x2 = 1 500 units a day, under half
-  // of DEMO_UNIT_BUDGET_DAY; with no day window it alone could spend the colo's whole day.
+  // ratio to chat's hour (speech 120/40 = 3 a reply, the three-chunk maximum, against 1.6
+  // measured with one ticket per sentence; ears 60/40 = 1.5 uploads a spoken turn), so a
+  // visitor meets chat's day first. One address then spends at most 150x3 + 450x2 + 225x2 =
+  // 1 800 units a day, under half of DEMO_UNIT_BUDGET_DAY; with no day window it alone could
+  // spend the colo's whole day.
   // 0 = no day window for that route (the behaviour before 2026-10-08).
-  DEMO_SPEECH_PER_DAY: 300,
+  DEMO_SPEECH_PER_DAY: 450,
   DEMO_STT_PER_MIN: 10,
   DEMO_STT_PER_HOUR: 60,
   DEMO_STT_PER_DAY: 225,

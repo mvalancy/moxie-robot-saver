@@ -1,12 +1,12 @@
 /* test_demo_proxy §24: spend protection and ops. The voice's and the ears' per-IP DAY, the
  * /56 visitor and what one prefix can spend in a UTC day, the measured chat timeout, the
- * transcribe route's 60 s default retry, the DEMO_SERVE_HOSTS allowlist, and the one log line
- * per refusal. Run via the entry file.
+ * transcribe route's 60 s default retry, the DEMO_SERVE_HOSTS allowlist, the one log line
+ * per refusal, and the voice's windows sized for three chunks a reply. Run via the entry file.
  *
  * Every window here is driven with an EXPLICIT clock (`nowS` into `admit()`). Where a real
  * route reads its own clock, the assertion holds at every minute and hour of the day. */
 import {
-  FULL, FORBIDDEN, KEY, ORIGIN, P, call, chat, deep, eq, fresh, limits, ok,
+  FULL, FORBIDDEN, KEY, ORIGIN, P, call, chat, deep, eq, fresh, hmac, limits, ok,
   speech, upstreamCalls, wire2, env0,
 } from "./harness.mjs";
 import { api, jsonOf, leakSweep, wavBytes } from "../common.mjs";
@@ -47,11 +47,11 @@ const admitAt = (cfg, request, route, nowS) => limits.admit({ request, cfg, rout
  * has the prose; pinned here as arithmetic so changing one knob alone fails by name). */
 {
   const d = wire2.readConfig(FULL);
-  deep([d.speechPerDay, d.sttPerDay, d.chatTimeoutMs], [300, 225, 10000],
-       "the defaults: DEMO_SPEECH_PER_DAY 300, DEMO_STT_PER_DAY 225, DEMO_CHAT_TIMEOUT_MS 10000");
+  deep([d.speechPerDay, d.sttPerDay, d.chatTimeoutMs], [450, 225, 10000],
+       "the defaults: DEMO_SPEECH_PER_DAY 450, DEMO_STT_PER_DAY 225, DEMO_CHAT_TIMEOUT_MS 10000");
   deep([wire2.DEFAULTS.DEMO_SPEECH_PER_DAY, wire2.DEFAULTS.DEMO_STT_PER_DAY, wire2.DEFAULTS.DEMO_CHAT_TIMEOUT_MS],
-       [300, 225, 10000], "…as rows of the DEFAULTS table");
-  for (const [name, field, dflt] of [["DEMO_SPEECH_PER_DAY", "speechPerDay", 300], ["DEMO_STT_PER_DAY", "sttPerDay", 225]]) {
+       [450, 225, 10000], "…as rows of the DEFAULTS table");
+  for (const [name, field, dflt] of [["DEMO_SPEECH_PER_DAY", "speechPerDay", 450], ["DEMO_STT_PER_DAY", "sttPerDay", 225]]) {
     for (const [v, want, why] of [
       ["0", 0, "0 = no day window for this route (the behaviour before)"],
       ["40", 40, "a lower day is honoured"],
@@ -64,13 +64,13 @@ const admitAt = (cfg, request, route, nowS) => limits.admit({ request, cfg, rout
   deep(Object.keys(wire2.publicLimits(d)), [...wire2.PUBLIC_LIMIT_KEYS], "the day windows are server-side: not published to the browser");
 
   ok(d.speechPerDay >= (d.chatPerDay * d.speechPerHour) / d.chatPerHour,
-     "a visitor inside the speech HOUR's ratio to chat's (2 a reply) meets chat's day before the speech day");
+     "a visitor inside the speech HOUR's ratio to chat's (3 a reply, the three-chunk maximum) meets chat's day before the speech day");
   ok(d.sttPerDay >= (d.chatPerDay * d.sttPerHour) / d.chatPerHour,
      "…and one inside the ears' hour ratio (1.5 uploads a turn) meets chat's day before the ears' day");
   ok(d.speechPerDay >= d.chatPerDay * 1.6, "…above the 1.6 speech calls a reply measured with one ticket per sentence");
   const U = limits.UNITS;
   const prefixDay = U.chat * d.chatPerDay + U.speech * d.speechPerDay + U.transcribe * d.sttPerDay;
-  eq(prefixDay, 1500, "ONE prefix at every per-IP day maximum spends 150x3 + 300x2 + 225x2 = 1 500 units");
+  eq(prefixDay, 1800, "ONE prefix at every per-IP day maximum spends 150x3 + 450x2 + 225x2 = 1 800 units");
   ok(prefixDay * 2 <= d.unitBudgetDay, "…under HALF of DEMO_UNIT_BUDGET_DAY: one prefix cannot drain a colo's day");
 
   // The chat timeout, from the measurement (moxie-brain-dense + single, 169 turns: p99 3 447 ms,
@@ -171,9 +171,9 @@ const admitAt = (cfg, request, route, nowS) => limits.admit({ request, cfg, rout
       }
     }
   }
-  deep(units, { chat: 450, speech: 600, transcribe: 450 },
-       "a /56 at every route's per-minute maximum all day is held to chat 150, speech 300, transcribe 225");
-  eq(units.chat + units.speech + units.transcribe, 1500, "…1 500 units: under half of the colo's 4 000");
+  deep(units, { chat: 450, speech: 900, transcribe: 450 },
+       "a /56 at every route's per-minute maximum all day is held to chat 150, speech 450, transcribe 225");
+  eq(units.chat + units.speech + units.transcribe, 1800, "…1 800 units: under half of the colo's 4 000");
   deep(Object.keys(refused), ["rate_limited"],
        "…and every refusal it met was its OWN per-IP window: it never once reached the colo's unit budget");
   const visitor = await admitAt(d, at(ORIGIN, "/api/chat", {}, { "CF-Connecting-IP": "192.0.2.201" }), "chat", DAY + 86399);
@@ -434,4 +434,105 @@ const admitAt = (cfg, request, route, nowS) => limits.admit({ request, cfg, rout
       { evt: "refusal", route: "speech", reason: "at_capacity", status: 503, colo: "LHR" },
     ], "logRefusal coerces every field into its closed set: no caller-chosen string reaches a log");
   }
+}
+
+/* 24g. THE VOICE'S WINDOWS ARE SIZED FOR THREE CHUNKS A REPLY (DEMO_SPEECH_PER_MIN / _HOUR /
+ * _DAY; the owner's decision, 2026-10-08). A reply is spoken as up to
+ * `hmac.js::MAX_SPEECH_CHUNKS` (3) tickets, one /api/speech call each. Sized for two (10/min,
+ * 80/hour, a 300 day), a child typing at chat's own full pace lost a later chunk's voice from
+ * the 4th turn in a minute, or about the 27th in an hour, and then the next reply's chunk 0,
+ * which speaks that whole reply in the browser voice (live-sim-demo.md §3.4). Each window is
+ * now chat's times three. The DEFAULT configuration throughout: `FULL` sets no window. */
+{
+  const d = wire2.readConfig(FULL);
+  const CHUNKS = hmac.MAX_SPEECH_CHUNKS;
+  eq(CHUNKS, 3, "the premise: a reply is spoken as up to three speech tickets");
+  deep([d.speechPerMin, d.speechPerHour, d.speechPerDay], [15, 120, 450],
+       "the defaults: DEMO_SPEECH_PER_MIN 15, DEMO_SPEECH_PER_HOUR 120, DEMO_SPEECH_PER_DAY 450");
+  deep([d.speechPerMin, d.speechPerHour, d.speechPerDay], [d.chatPerMin, d.chatPerHour, d.chatPerDay].map((n) => n * CHUNKS),
+       "…each one chat's window (5 / 40 / 150) times MAX_SPEECH_CHUNKS, so moving either side alone fails here");
+
+  // Through the routes: chat's whole minute, five typed turns, each answered in three
+  // sentences. Like the page, a reply's first refused chunk ends that reply's voice. The
+  // routes read the real clock, so only admissions are asserted here: a window boundary
+  // inside the run spreads its calls over two windows, which can only admit more.
+  fresh();
+  const THREE = "I counted every blink you made today. The toaster sent a beep from the kitchen. " +
+    "My favourite colour is still infrared.";
+  eq(hmac.splitForSpeech(THREE, { maxChars: d.maxTtsChars }).length, CHUNKS, "the fixture reply is three chunks");
+  P.plan = { chat: { content: THREE } };
+  const heard = [];
+  for (let n = 1; n <= d.chatPerMin; n++) {
+    const c = await call(chat, "/api/chat", { text: "and then what happens? part " + n });
+    const tickets = c.body.speech || [];
+    eq(`${c.res.status} ${tickets.length}`, `200 ${CHUNKS}`, `typed turn ${n} is served live with three speech tickets`);
+    for (const s of tickets) {
+      const r = await call(speech, "/api/speech", { ticket: s.ticket });
+      heard.push(`turn ${n} chunk ${s.chunk_num}: ${r.res.status}${r.body.reason ? " " + r.body.reason : ""}`);
+      if (r.res.status !== 200) break;
+    }
+  }
+  deep(heard.filter((h) => !h.endsWith(": 200")), [],
+       "A CHILD AT CHAT'S FULL PACE KEEPS MOXIE'S VOICE: no chunk of five three-chunk replies is refused");
+  eq(heard.filter((h) => h.endsWith(": 200")).length, d.chatPerMin * CHUNKS, "…all 15 chunks were redeemed and voiced");
+
+  // On an explicit clock, to the call. A visitor at chat's full pace (5 turns a minute, 40 an
+  // hour, 150 a day) whose every reply is three chunks has every call admitted, and one more
+  // speech call in each window is refused `rate_limited` until that window's end, as is one
+  // more chat turn. Each turn is admitted the way the page spends it: the chat call, then
+  // its three chunks.
+  fresh();
+  const IP = "198.51.100.71";
+  const asks = {
+    chat: at(ORIGIN, "/api/chat", {}, { "CF-Connecting-IP": IP }),
+    speech: at(ORIGIN, "/api/speech", {}, { "CF-Connecting-IP": IP }),
+  };
+  /** One admission at `nowS`, released at once: `ok reason retryAfterS`. */
+  const once = async (route, nowS) => {
+    const s = await admitAt(d, asks[route], route, nowS);
+    s.release();
+    return `${s.ok} ${s.reason} ${s.retryAfterS}`;
+  };
+  let turns = 0;
+  let voiced = 0;
+  const refused = [];
+  /** The next `count` turns at chat's full pace: turn t (from 0) in hour t / 40 of the day and
+   *  minute (t % 40) / 5 of that hour. */
+  const pace = async (count) => {
+    for (let i = 0; i < count; i++, turns++) {
+      const nowS = DAY + Math.floor(turns / d.chatPerHour) * 3600 +
+        Math.floor((turns % d.chatPerHour) / d.chatPerMin) * 60 + 1;
+      const c = await once("chat", nowS);
+      if (!c.startsWith("true")) refused.push(`turn ${turns + 1} chat: ${c}`);
+      for (let k = 0; k < CHUNKS; k++) {
+        const s = await once("speech", nowS);
+        if (s.startsWith("true")) voiced += 1;
+        else refused.push(`turn ${turns + 1} chunk ${k}: ${s}`);
+      }
+    }
+  };
+  const tally = () => `${voiced} voiced, ${refused.length} refused` + (refused.length ? ` (first: ${refused[0]})` : "");
+
+  await pace(d.chatPerMin);
+  eq(tally(), "15 voiced, 0 refused", "THE MINUTE: 5 turns of 3 chunks in one minute, every call admitted");
+  eq(await once("speech", DAY + 30), "false rate_limited 30",
+     "…and a 16th speech call in that minute is refused rate_limited, until the minute's end");
+  eq(await once("chat", DAY + 30), "false rate_limited 30", "…as is a 6th chat turn, by chat's own minute");
+
+  await pace(d.chatPerHour - d.chatPerMin);
+  eq(tally(), "120 voiced, 0 refused", "THE HOUR: 40 turns of 3 chunks over eight minutes, every call admitted");
+  const minute8 = DAY + 8 * 60 + 1;   // a fresh minute of the same hour
+  eq(await once("speech", minute8), `false rate_limited ${3600 - 8 * 60 - 1}`,
+     "…and a 121st speech call, in a FRESH minute, is refused by the HOUR window, until the hour's end");
+  eq(await once("chat", minute8), `false rate_limited ${3600 - 8 * 60 - 1}`, "…as is a 41st chat turn, by chat's own hour");
+
+  await pace(d.chatPerDay - d.chatPerHour);
+  eq(tally(), "450 voiced, 0 refused", "THE DAY: 150 turns of 3 chunks over four hours, every call admitted");
+  const hour5 = DAY + 5 * 3600 + 1;   // a fresh hour and minute of the same UTC day
+  eq(await once("speech", hour5), `false rate_limited ${86400 - 5 * 3600 - 1}`,
+     "…and a 451st speech call, in a fresh hour and minute, is refused by the DAY window, until the UTC day's end");
+  eq(await once("chat", hour5), `false rate_limited ${86400 - 5 * 3600 - 1}`,
+     "…as is a 151st chat turn, by chat's own day: at three chunks a reply her voice never runs out before her words");
+  eq((await once("speech", DAY + 86400 + 1)).split(" ")[0], "true", "…and the next UTC day her voice is admitted again");
+  eq(st().stats.upstreamCalls, 0, "…every verdict here was admission's alone: nothing reached upstream");
 }
