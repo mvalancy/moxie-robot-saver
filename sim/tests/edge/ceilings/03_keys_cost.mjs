@@ -54,7 +54,7 @@ section("H");
   ok((await keyFor("203.0.113.99", T1)) !== wideKey,
      "…and the next DAY keys a different entry, so the widest bucket still rotates the key");
   ok((await keyFor("203.0.113.98", T0)) !== wideKey, "a DIFFERENT visitor keys a different wide entry");
-  ok(!(await keyFor("2001:db8:1:2:3:4:5:6", T0)).includes("2001"), "an IPv6 /64 is not in the wide key either");
+  ok(!(await keyFor("2001:db8:1:2:3:4:5:6", T0)).includes("2001"), "an IPv6 /56 is not in the wide key either");
 
   fresh();
   const c6 = fakeCache();
@@ -130,12 +130,23 @@ section("J");
   deep(st().unitsDay, { pending: 0, bucket: -1 },
        "…and the DAY ledger never accrued a unit either: an uncapped scale banks nothing to publish");
 
-  // `speech` has an hour cap and NO day cap, so its wide entry carries one scale.
+  // A route with an hour cap and NO day cap (`DEMO_SPEECH_PER_DAY=0`, the old default) keeps
+  // one scale in its wide entry.
   fresh();
   const c2 = fakeCache();
-  (await admitWith(cfgOf({ DEMO_SPEECH_PER_MIN: "60", DEMO_SPEECH_PER_HOUR: "1000" }), c2, "198.51.100.41", T0, "speech")).release();
+  (await admitWith(cfgOf({ DEMO_SPEECH_PER_MIN: "60", DEMO_SPEECH_PER_HOUR: "1000", DEMO_SPEECH_PER_DAY: "0" }),
+    c2, "198.51.100.41", T0, "speech")).release();
   const k = c2.log.keys.find((x) => x.indexOf("/speech/") >= 0 && x.indexOf("/w") >= 0);
   deep(c2.body(k), { h: 1, hb: 2 }, "a route with an hour cap and no day cap stores the hour and nothing else");
+
+  // …and by default every route now has a day, in the SAME entry: one round trip still.
+  for (const route of ["speech", "transcribe"]) {
+    fresh();
+    const c3 = fakeCache();
+    (await admitWith(cfgOf({ DEMO_STT_MODEL: "test-ears-model" }), c3, "198.51.100.42", T0, route)).release();
+    const kw = c3.log.keys.find((x) => x.indexOf("/" + route + "/") >= 0 && x.indexOf("/w") >= 0);
+    deep(c3.body(kw), { h: 1, hb: 2, d: 1, db: 0 }, `by default /${route}'s wide entry counts the hour AND the day, in one entry`);
+  }
 }
 
 /* K. WHICH DIRECTION EACH REFUSAL ERRS IN. The tier rests on "every error is an

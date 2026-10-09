@@ -180,7 +180,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM, STT and TTS interface contract",
    "section": "architecture",
-   "bytes": 36282,
+   "bytes": 41377,
    "mermaid": 1,
    "headings": [
     "The three seams",
@@ -400,7 +400,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo: the hosted Sim with a real brain, voice and ears",
    "section": "architecture",
-   "bytes": 74037,
+   "bytes": 76342,
    "mermaid": 2,
    "headings": [
     "1. What it is",
@@ -877,7 +877,7 @@
    "path": "architecture/backlog/community-signals.md",
    "title": "Community signals — what owners of real robots report",
    "section": "architecture",
-   "bytes": 8364,
+   "bytes": 9278,
    "mermaid": 0,
    "headings": [
     "1. Where owner reports live",
@@ -1308,7 +1308,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploy the simulator to Cloudflare Pages",
    "section": "guides",
-   "bytes": 9753,
+   "bytes": 10205,
    "mermaid": 0,
    "headings": [
     "1. Deploy",
