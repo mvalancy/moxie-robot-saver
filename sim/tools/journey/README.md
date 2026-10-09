@@ -54,10 +54,16 @@ durable file when the production cap must hold across reboots), `JOURNEY_TAG` (n
 ## Reading the cue report
 
 Each turn's `cue` is `{longest_ms, total_ms, runs, until_is, first_cue_ms}`: the samples between the
-send (a typed turn) or the recorder's auto-stop (a mic turn) and her first word. A sample is **cued**
+send (a typed turn: the page's own click on Ask, `sendTime`, since the probe's clock reading precedes
+its tap's round trips) or the recorder's auto-stop (a mic turn) and her first word. A sample is **cued**
 when `#chat-status` has text, `moxieAlive.__state().stage > 0` or `.pose` is set, `body[data-mic]` is
 on, a Web Audio buffer is playing, or the browser voice is speaking. `longest_ms` is the widest gap
 between two cued samples (50 ms resolution). The gate W4-S1 set: at most 300 ms on every turn.
+
+Each turn's `cuts` (`audioCuts`) lists every Web Audio play that was stopped before it ran out, with
+`filler: true` for one of her thinking fillers (named by the clip's byte length) and `by_voice: true`
+when her gateway voice started within 100 ms of the stop. A filler cut by her own voice within 1 s of
+its start is the one-voice defect the filler's timing exists to prevent (`fillersCutByVoice`).
 
 Numbers from these probes name the copy they ran on, the N and the raw dump; a run against the
 site's own origin is a spend and is ledgered as one.

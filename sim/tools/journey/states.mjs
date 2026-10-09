@@ -18,7 +18,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { browserFor, visitor, shot, sleep, simReady, pnow, waitTurnDone, turnSummary, turnCues,
-         recorderStopT, PHONE, IOS_UA, OUT, PROD } from "./lib.mjs";
+         recorderStopT, audioCuts, fillersCutByVoice, sendTime, PHONE, IOS_UA, OUT, PROD } from "./lib.mjs";
 
 const flag = (n, d) => { const h = process.argv.find((a) => a.startsWith("--" + n + "=")); return h ? h.slice(n.length + 3) : d; };
 const base = String(flag("base", "")).replace(/\/$/, "");
@@ -97,8 +97,11 @@ async function step(name, t0, extra = {}, waitOpts = {}) {
     st.recorder_stop_at = stopT != null ? Math.round(stopT - t0) : null;
     if (stopT != null) st.cue = turnCues(d.state, stopT, t0 + (w.waited || 0));
   } else {
-    st.cue = turnCues(d.state, t0, t0 + (w.waited || 0));
+    // From the moment the page saw the tap (the probe's own `t0` precedes the tap's round trips).
+    st.cue = turnCues(d.state, sendTime(d.state, t0), t0 + (w.waited || 0));
   }
+  // Every sound of the turn stopped before it ran out (a filler cut by her voice is the bar).
+  st.cuts = audioCuts(d.state, t0);
   R.steps.push(st);
   save();
   console.log(JSON.stringify({ name, reply: rest.reply, reason: rest.reason, api: rest.api, click_to_reply_row: rest.click_to_reply_row, click_to_first_sound: rest.click_to_first_sound,
@@ -237,6 +240,18 @@ if (scenario === "minute") {
   }
   if (mic) for (let k = 1; k <= micTurnsWanted; k++) { await sleep(1000); await micTurn(`m${k}-mic`); }
   const typed = R.steps.filter((s) => s.kind !== "mic" && s.cue), mics = R.steps.filter((s) => s.kind === "mic" && s.cue);
+  // A typed line after the mic turns: the "heard: …" line under Listen steps aside for the
+  // hint the page booted with (it used to stay for the rest of the visit).
+  let heardLine = null;
+  if (mics.length) {
+    const before = await page.evaluate(() => (document.getElementById("mic-status") || {}).textContent || "");
+    const tA7 = await ask("one more thing");
+    await sleep(300);
+    const after = await page.evaluate(() => (document.getElementById("mic-status") || {}).textContent || "");
+    heardLine = { before, after, hint: R.boot_surface.mic_status, reset: after === R.boot_surface.mic_status };
+    await step(`${R.steps.length + 1}-typed-after-mic`, tA7, { line: "one more thing", heard_line: heardLine }, { quietMs: 1500 });
+  }
+  const all = R.steps.filter((s) => s.cuts);
   R.cue_summary = {
     typed_turns: typed.length,
     typed_longest_cue_free_ms: typed.map((s) => s.cue.longest_ms),
@@ -246,6 +261,9 @@ if (scenario === "minute") {
     mic_longest_cue_free_ms: mics.map((s) => s.cue.longest_ms),
     mic_first_cue_after_stop_ms: mics.map((s) => s.cue.first_cue_ms),
     mic_stop_to_first_voice_ms: mics.map((s) => s.cue.until - s.cue.from),
+    heard_line_after_typed: heardLine,
+    sounds_cut: all.reduce((n, s) => n + s.cuts.length, 0),
+    fillers_cut_by_voice_within_1000ms: all.reduce((n, s) => n + fillersCutByVoice(s.cuts), 0),
   };
   console.log("cue summary:", JSON.stringify(R.cue_summary));
   await ctl("chatDelay=300&speechDelay=250");

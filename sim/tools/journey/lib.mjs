@@ -17,11 +17,11 @@
  * `<tmpdir>/moxie-journey/out`). The site's origin is read from sim/web/index.html's
  * canonical link (`browser_harness.mjs::canonicalOrigin`), never typed here.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { requireBrowser, launchBrowser, instrumentWebAudio, recordCspViolations, canonicalOrigin,
-         PHONE, IOS_UA } from "../../browser_harness.mjs";
+         PHONE, IOS_UA, web } from "../../browser_harness.mjs";
 
 export const PROD = canonicalOrigin();
 export const PROD_CHAT_CAP = 5;
@@ -419,6 +419,15 @@ export function turnSummary(state, sinceT, untilT = Infinity) {
   };
 }
 
+/** When the page itself saw the send: the first click on Ask / Listen / an opener after
+ *  `sinceT` (the capture-phase `click` the timeline logs), else `sinceT`. A probe's own clock
+ *  reading is taken BEFORE its tap's round trips to the browser, which on a loaded host can
+ *  take a second; the page was not waiting for anything until it saw the click. */
+export function sendTime(state, sinceT) {
+  const c = (state.tl || []).find((e) => e.t >= sinceT && e.k === "click" && /#speech-btn|#mic-btn|\.opener/.test(String(e.v)));
+  return c ? c.t : sinceT;
+}
+
 /**
  * The cue report of one turn from the dumped state: the longest cue-free interval between
  * `sinceT` (the send, or the auto-stop of a mic turn) and her first word (the first pcm play
@@ -432,6 +441,42 @@ export function turnCues(state, sinceT, fallbackUntil) {
   return { ...g, until_is: firstPcm ? "first voice" : plays[0] ? "first sound" : "no sound",
            samples_cued: (state.cue || []).filter((s) => s.t >= sinceT && s.t <= until && cued(s)).length };
 }
+
+/** The byte lengths of the thinking-filler clips (`bridge/alive.js`'s FILLERS, played from
+ *  the clip manifest's "ambient" group), so a Web Audio play can be named a filler. */
+export const FILLER_BYTES = (() => {
+  try {
+    const src = readFileSync(join(web, "bridge", "alive.js"), "utf8");
+    const list = /var FILLERS = \[([\s\S]*?)\];/.exec(src);
+    const texts = list ? [...list[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`)) : [];
+    const amb = JSON.parse(readFileSync(join(web, "audio", "index.json"), "utf8")).ambient || {};
+    return new Set(texts.filter((t) => amb[t]).map((t) => statSync(join(web, "audio", amb[t])).size));
+  } catch (e) { return new Set(); }
+})();
+
+/**
+ * Every Web Audio play that started in `[sinceT, untilT]` and was STOPPED before it ran out
+ * (`instrumentWebAudio`'s plays and stops): `{src, filler, ran_ms, by_voice}`, where `filler`
+ * says the clip is one of her thinking fillers and `by_voice` that her own gateway voice
+ * started within 100 ms of the stop (voice/ gives the speakers to her answer). The W4-S1 bar:
+ * no filler cut by her own voice within 1000 ms of its start.
+ */
+export function audioCuts(state, sinceT, untilT = Infinity) {
+  const A = (state && state.audio) || { plays: [], stops: [] };
+  const plays = (A.plays || []).filter((p) => p.t >= sinceT && p.t <= untilT);
+  const cuts = [];
+  for (const p of plays) {
+    const s = (A.stops || []).find((x) => x.id === p.id && x.t >= p.t && x.t < p.t + p.dur - 1);
+    if (!s) continue;
+    const by = (A.plays || []).some((q) => q.src === "pcm" && q.id !== p.id && Math.abs(q.t - s.t) <= 100);
+    cuts.push({ t: Math.round(p.t - sinceT), src: p.src, bytes: p.bytes, filler: p.src === "clip" && FILLER_BYTES.has(p.bytes),
+                ran_ms: Math.round(s.t - p.t), of_ms: Math.round(p.dur), by_voice: by });
+  }
+  return cuts;
+}
+
+/** Fillers cut by her own voice within `ms` of their start: the one-voice defect W4-S1 must not bring back. */
+export const fillersCutByVoice = (cuts, ms = 1000) => cuts.filter((c) => c.filler && c.by_voice && c.ran_ms < ms).length;
 
 /** When a mic turn's recorder stopped, from the tracker's `rec` samples (the first sample
  *  after `sinceT` that reads false once one has read true), or null. */

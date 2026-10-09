@@ -9,7 +9,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { browserFor, visitor, shot, sleep, simReady, pnow, waitTurnDone, turnSummary, turnCues,
-         recorderStopT, PROD, PHONE, IOS_UA, DESKTOP, DESKTOP_UA, OUT, prodChatSpent } from "./lib.mjs";
+         recorderStopT, audioCuts, fillersCutByVoice, sendTime, PROD, PHONE, IOS_UA, DESKTOP, DESKTOP_UA,
+         OUT, prodChatSpent } from "./lib.mjs";
 
 const flag = (n, d) => { const h = process.argv.find((a) => a.startsWith("--" + n + "=")); return h ? h.slice(n.length + 3) : d; };
 const base = String(flag("base", PROD || "")).replace(/\/$/, "");
@@ -51,10 +52,12 @@ async function record(name, t0, extra = {}) {
   const step = { name, ...extra, ...s };
   const stopT = extra.kind === "mic" ? recorderStopT(d.state, t0) : null;
   step.recorder_stop_at = stopT != null ? Math.round(stopT - t0) : null;
-  step.cue = turnCues(d.state, stopT != null ? stopT : t0, t0 + ((extra.waited && extra.waited.waited) || 0));
+  step.cue = turnCues(d.state, stopT != null ? stopT : sendTime(d.state, t0), t0 + ((extra.waited && extra.waited.waited) || 0));
+  step.cuts = audioCuts(d.state, t0);
   results.steps.push(step);
   const { timeline, ...rest } = s;
-  const brief = { name, ...extra, ...rest, cue: { longest_ms: step.cue.longest_ms, total_ms: step.cue.total_ms, until_is: step.cue.until_is, runs: step.cue.runs } };
+  const brief = { name, ...extra, ...rest, cue: { longest_ms: step.cue.longest_ms, total_ms: step.cue.total_ms, until_is: step.cue.until_is, runs: step.cue.runs },
+                  cuts: step.cuts };
   console.log(JSON.stringify(brief));
   writeFileSync(join(OUT, `${run}-results.json`), JSON.stringify(results, null, 1));
   return step;
@@ -121,6 +124,12 @@ if (want(5)) {
 }
 
 await v.dump(`${run}-final`);
+results.summary = {
+  longest_cue_free_ms: results.steps.map((s) => [s.name, s.cue.longest_ms]),
+  sounds_cut: results.steps.reduce((n, s) => n + s.cuts.length, 0),
+  fillers_cut_by_voice_within_1000ms: results.steps.reduce((n, s) => n + fillersCutByVoice(s.cuts), 0),
+};
+console.log("summary:", JSON.stringify(results.summary));
 writeFileSync(join(OUT, `${run}-results.json`), JSON.stringify(results, null, 1));
 if (isProd) console.log(`production chat turns spent now: ${prodChatSpent()} / 5`);
 await browser.close();

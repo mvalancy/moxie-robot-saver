@@ -16,14 +16,31 @@ const ctl = { chat: "ok", speech: "ok", stt: "ok", chatDelay: 300, speechDelay: 
 const log = (o) => appendFileSync(logfile, JSON.stringify({ at: new Date().toISOString(), ...o }) + "\n");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* Two sentences each, as her real replies usually are (two voice tickets). */
+const OTHER = [
+  "Ooh, I love that! Tell me more about it. I am all ears, well, all microphones.",
+  "Wow, that sounds amazing! What happened next?",
+  "Hmm, that is a great thing to wonder about. What do you think?",
+  "I like that a lot! Can you tell me one more thing about it?",
+  "Oh, how fun! That makes my circuits feel all sparkly.",
+  "That is so interesting. I never thought about it that way!",
+];
+const norm = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/** Her line for the child's `lastUser`. Never one she already said in this conversation: a
+ *  reply that repeats an earlier line word for word is re-rolled by the chat route
+ *  (`DEMO_REROLL`), a second call that would double this mock's delay — and a real model
+ *  rarely repeats itself. */
 function reply(lastUser, history) {
   const u = String(lastUser || "").toLowerCase();
-  if (/\b(bye|goodbye|good night|see you|gotta go|have to go)\b/.test(u))
-    return "Bye bye! That was so much fun. Come back soon, okay?";
-  if (/joke/.test(u)) return "Why did the robot go to school? To get a little brighter! Beep.";
-  if (/remember|my name/.test(u)) return "Hmm, let me check my memory chip. I think you told me your name is Sam!";
-  if (/happy/.test(u)) return "You make me happy! Also sunshine on my sensors. Tell me what makes you happy.";
-  return "Ooh, I love that! Tell me more about it. I am all ears, well, all microphones.";
+  const said = new Set((history || []).filter((m) => m && m.role === "assistant").map((m) => norm(m.content)));
+  let keyed = null;
+  if (/\b(bye|goodbye|good night|see you|gotta go|have to go)\b/.test(u)) keyed = "Bye bye! That was so much fun. Come back soon, okay?";
+  else if (/joke/.test(u)) keyed = "Why did the robot go to school? To get a little brighter! Beep.";
+  else if (/remember|my name/.test(u)) keyed = "Hmm, let me check my memory chip. I think you told me your name is Sam!";
+  else if (/happy/.test(u)) keyed = "You make me happy! Also sunshine on my sensors. Tell me what makes you happy.";
+  for (const line of [keyed, ...OTHER]) if (line && !said.has(norm(line))) return line;
+  return OTHER[0].replace("!", ` ${said.size + 1} times!`);
 }
 
 /** 16-bit mono WAV at 22050 Hz: a syllable-like tone, ~62 ms per character (cap 12 s). */
