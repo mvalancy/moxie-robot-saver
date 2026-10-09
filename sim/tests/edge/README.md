@@ -21,6 +21,9 @@ file imports its harness, then runs the sections in order and prints one summary
   the browser (voice-first ordering, every degraded path, the Turnstile send seam).
 - [`fallback/`](fallback/README.md) — run by `node sim/test_fallback_coverage.mjs`: every line the
   degraded page can utter has a clip; the child's voice is clip-or-nothing.
+- [`ambient/`](ambient/README.md) — run by `node sim/test_ambient.mjs`: the real `sim/web/ambient.js`
+  on a virtual clock (the October set, the glitch beat, the post-goodbye aside) and the bridge's
+  sign-off seam.
 
 Assertion labels are load-bearing: `sim/tools/turnstile_mutation_check.py` and
 `unit_budget_mutation_check.py` match substrings of failing labels, so rename one only together
