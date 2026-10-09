@@ -36,8 +36,15 @@
  * and a Function only sees a finished upload (live-sim-demo.md §4.1); `DEMO_MAX_RECORD_MS`
  * arrives in `/api/health`'s `limits`.
  *
+ * THE RECORDING'S END IS NOT THE END OF THE WORK: `stop()` hands the body to a working cue
+ * (`moxieAlive.transcribing()`, the listening face held) for the 2-3 s the clip uploads,
+ * never to rest — a still robot through the upload was measured on production (2026-10-08);
+ * the body is handed back when the ears are done with the clip (`earsDone`), in the same
+ * tick as the transcript's send arms `thinking()`. And a typed line puts the Listen hint
+ * back under the composer in place of the last "heard: …" (`typedLine`).
+ *
  * Exposes window.moxieMic = { start, stop, toggle, isRecording, setSttBase, getSttBase,
- *                             sttTarget, maxRecordMs, stats, setCapture, encodeWav }.
+ *                             sttTarget, maxRecordMs, stats, setCapture, encodeWav, typedLine }.
  */
 (function () {
   "use strict";
@@ -170,6 +177,10 @@
     if (gen !== clipSeq) return;
     if (holdValve !== null) { clearTimeout(holdValve); holdValve = null; }
     try { document.body.removeAttribute("data-mic"); } catch (e) {}
+    // The work on the clip is over: the body is handed back. A transcript's send arms
+    // `thinking()` in this same tick (the bridge's `earsIdle` drains the queued line); a
+    // dropped clip or a scripted line leaves her at rest until the reply's own markup.
+    if (window.moxieAlive) window.moxieAlive.settled();
     var b = window.moxieBridge;
     if (b && typeof b.earsIdle === "function") { try { b.earsIdle(); } catch (e) {} }
   }
@@ -272,9 +283,32 @@
     return { url: STT_BASE.replace(/\/$/, "") + "/stt", kind: "local" };
   }
 
+  /* The line under Listen when nothing of ours is showing — sim.html's hint, or whatever
+   * env.js wrote for this deployment — kept the moment our own line first replaces it (any
+   * text that is not the last line `status()` wrote), so `typedLine` can put it back. */
+  var idleHint = "";
+  var lastOwn = null;      // the last line `status()` wrote
+
   function status(t) {
-    var el = document.getElementById("mic-status"); if (el) el.textContent = t;
+    var el = document.getElementById("mic-status");
+    if (el) {
+      if (el.textContent !== lastOwn) idleHint = el.textContent;
+      el.textContent = t;
+    }
+    lastOwn = t;
     var b = document.getElementById("bus-status"); if (b && t) b.textContent = t;
+  }
+
+  /** A typed line went out: the "heard: …" line of the last mic turn has done its job and
+   *  steps aside for the idle hint (it used to stay for the rest of the visit, measured on
+   *  production 2026-10-08: 60 s and two typed turns on). A line written since by anyone
+   *  else, or any other line of ours (a rest, a recording), stays. Called by
+   *  cloud-transport.js's typed path. */
+  function typedLine() {
+    var el = document.getElementById("mic-status");
+    if (!el || el.textContent !== lastOwn || !/^heard: /.test(lastOwn || "")) return;
+    el.textContent = idleHint;
+    lastOwn = idleHint;
   }
 
   /** The topic a child's utterance rides, exactly as `bridge/` publishes it. */
@@ -718,7 +752,11 @@
   function ended() {
     clearSilence();
     // Whatever comes next owns her face; `thinking()` is armed by the SEND, not the stop.
-    if (window.moxieAlive) window.moxieAlive.settled();
+    // Until then she is still WORKING on the clip (its upload is 2-3 s): the body goes to
+    // that cue, never to rest — `settled()` here left a still robot through the upload,
+    // measured on production (2026-10-08). `earsDone` hands it back.
+    var a = window.moxieAlive;
+    if (a) { if (typeof a.transcribing === "function") a.transcribing(); else a.settled(); }
     recording = false;
     stats.stops++;
     clearCap();
@@ -768,6 +806,7 @@
     // Swap the capture source (tests); nothing restores the real microphone.
     setCapture: function (fn) { capture = typeof fn === "function" ? fn : null; },
     encodeWav: encodeWav,                 // parsed by test_demo_ears with the server's RIFF walker
+    typedLine: typedLine,                 // a typed line went out: the heard line steps aside
   };
 
   // wire the HUD button if present
