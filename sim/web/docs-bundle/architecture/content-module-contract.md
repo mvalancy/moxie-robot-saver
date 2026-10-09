@@ -48,8 +48,8 @@ A module is JSON with three optional sections:
   twice in a row. `<opener>` is stripped. An `<exit>`, `<sleep>` or `<launch:XX>` acts only when the
   same action is written whole in the alternative said, as written before it is rendered, and at
   most as many times as it is written there; a tag that only forms as the template renders
-  (`{{ '<la' ~ 'unch:DRAW>' }}`) is lifted, never said and never acted on, and the pack review
-  names every tag that can act in the opener's own row (see "A conversation's opener" under
+  (`{{ '<la' ~ 'unch:DRAW>' }}`) is lifted and adds no action, and the pack review names
+  every tag that can act in the opener's own row (see "A conversation's opener" under
   [extensions](#extensions-a-pack-that-can-do-something)). A conversation with no opener asks the brain, as before. Only a `|` outside
   `{{ }}`, `{% %}` and `{# #}` separates alternatives; inside them it is a Jinja filter
   (`{{ volley.config.child_pii.nickname | upper }}`) or comment text. OpenMoxie splits on every `|`
@@ -949,13 +949,15 @@ action (its type and every field as parsed) is written whole in the `|`-alternat
 written before it is rendered, and at most as many times as it is written there
 (`content_app.said_opener`). A tag that only forms as the template renders (an expression,
 `{{ '<la' ~ 'unch:DRAW>' }}`; a filter; a `{% set %}`; pieces joined around a comment or
-across what reads as two alternatives; a copy a loop adds) is lifted: never said and never
-acted on. So is a tag in the child's name as it is rendered into an opener, and a tag that
-forms only once the tags around it are lifted (`{{ '<ex' }}<sleep>{{ 'it>' }}`: every level
-is lifted, in one pass, where the robot path's own parse of a model's line lifts one). The
+across what reads as two alternatives; a copy a loop adds) is lifted and adds no action:
+what acts is at most what the alternative writes whole. A tag in the child's name, as it is
+rendered into an opener, is no different. No tag of ours is said, at any depth
+(`{{ '<ex' }}<sleep>{{ 'it>' }}`: every level is lifted, in one pass, where the robot path's
+own parse of a model's line lifts one). The
 pack review names every tag written whole in any alternative in the opener's own row, beside
-the diff, before the parent ticks the row: *"When this conversation starts, Moxie says its
-opener; then sometimes Moxie goes to sleep."* Each effect reads *"sometimes"*, since which
+the diff, before anything is applied: *"When this conversation starts, Moxie says its
+opener; then sometimes Moxie goes to sleep."* (The row does not change whether the review
+pre-ticks the item.) Each effect reads *"sometimes"*, since which
 alternative is said, and what its template leaves in, varies. The rule holds for every
 opener; the shipped ones write no tag, so they say and do what they did. A tag an opener
 lifts is not reported to the parent the way a program's is: the robot did nothing, and the

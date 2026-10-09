@@ -1192,9 +1192,10 @@ def test_an_opener_acts_only_on_a_tag_written_whole_in_it(shape):
     action is written whole in the `|`-alternative said, unrendered, and at most as often
     as it is written there. A tag that only forms as the template renders (an expression, a
     filter, a `{% set %}`, pieces joined around a comment or across what reads as two
-    alternatives, a copy beyond the ones written) is lifted: never said, never acted on.
+    alternatives, a copy beyond the ones written) is lifted: never said, and it adds no
+    action, since what acts is at most what the alternative writes whole.
     The pack review names every tag that can act in the opener's own row, beside the diff,
-    before the parent ticks the row; the robot path's greeting follows the same rule."""
+    before anything is applied; the robot path's greeting follows the same rule."""
     opener, said, sent, named = OPENERS[shape]
     brain = Brain()
     app = _opener_app(opener, chat=brain, rng=random.Random(3))

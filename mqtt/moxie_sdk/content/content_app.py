@@ -157,8 +157,9 @@ def said_opener(alternative: str, line: str) -> tuple:
     `alternative`'s own text, unrendered, and at most as many times as it is written there,
     read with the same parse. So a tag that only forms as the template renders (`{{ '<la' ~
     'unch:DRAW>' }}`, a filter, a `{% set %}`, pieces joined around a comment or across what
-    reads as two alternatives) never acts, and the pack review names every tag that can
-    (`packs.review.opener_warnings`). The text is `spoken_opener`'s."""
+    reads as two alternatives, a loop's copies) adds no action: what acts is at most what the
+    alternative writes whole, which the pack review names (`packs.review.opener_warnings`).
+    The text is `spoken_opener`'s."""
     written = Counter(_action_key(a) for a in parse_action_tags(alternative)[1])
     actions = []
     for action in parse_action_tags(line)[1]:
