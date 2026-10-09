@@ -234,6 +234,8 @@ installStageFraming(camera, renderer);
  * and a wave) and one of the three greetings that ship as clips (audio/index.json, `moxie`
  * group), through the normal local voice path: no gateway, no turn, nothing in the log. Every
  * later tap is a FACE (a blink, and a smile when nothing else owns her face), never a sound.
+ * The greeting holds the speakers from the tap, before its clip has loaded (voice/local.js,
+ * THE CLAIM): an ambient tick in that window waits, and a newer reply takes them over.
  *
  * The hello is for somebody who has not started talking to her yet. It is never said:
  *   · over her voice, its last syllable, or a reply queued for the speakers (speak() would
@@ -241,8 +243,11 @@ installStageFraming(camera, renderer);
  *   · once a conversation exists: a `.turn` in the log (a line sent, in flight or answered)
  *     or Listen pressed (a clip may be on its way up);
  *   · into an open microphone (body[data-mic]);
- *   · on a page whose brain is out: ambient.js's one degraded line is her hello there, and it
- *     is said on this same unlock (both would play at once);
+ *   · before /api/health has answered (mode.js `boot`): the page cannot know yet whether her
+ *     brain is out, and when it was, the degraded line the answer brought cut the greeting a
+ *     second in;
+ *   · on a page whose brain is out: ambient.js's one degraded line is her hello there, said on
+ *     this same unlock (it would stop a hello, or, said after it, she would greet twice);
  *   · with ALIVE off (the visitor asked to drive her by hand: no wave).
  * A tap refused for one of these does not spend it. */
 const GREETINGS = [
@@ -271,6 +276,11 @@ function talking() {
     return !!(m && ((m.isRecording && m.isRecording()) || (m.stats && m.stats().starts > 0)));
   } catch { return false; }
 }
+/** No answer from /api/health yet: mode.js is still in `boot`. A page without mode.js has
+ *  nothing to wait for. */
+function booting() {
+  try { const m = window.moxieMode; return !!(m && m.state && m.state() === 'boot'); } catch { return false; }
+}
 function brainOut() {
   try {
     const s = window.moxieAmbient && window.moxieAmbient.degradedState && window.moxieAmbient.degradedState();
@@ -286,6 +296,7 @@ function helloRefused() {
   if (micOpen()) return 'mic';
   if (talking()) return 'talking';
   if (voiceBusy()) return 'speaking';
+  if (booting()) return 'booting';
   if (brainOut()) return 'brain-out';
   return '';
 }

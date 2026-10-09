@@ -17,7 +17,13 @@
  *   E. a tap while a typed turn is in flight: no sound, and her reply still plays whole;
  *   F. a tap with the microphone open: no sound, and the recording goes on;
  *   G. every greeting moxie.js can say has its clip in the manifest's `moxie` group;
- *   H. a quick tap on a busy page (900 ms of main-thread work between press and lift) is a tap.
+ *   H. a quick tap on a busy page (900 ms of main-thread work between press and lift) is a tap;
+ *   I. ONE VOICE AT A TIME: the hello holds the speakers from the tap, before its clip has
+ *      loaded, so an ambient tick inside that load waits, a stub answer takes over cleanly and
+ *      the mic opening stops it; a line she cannot say at all lets the speakers go;
+ *   J. a page whose brain is out: the first tap says no hello over ambient's degraded line,
+ *      and still gets a face (no gateway, a dead one, the hour's cap);
+ *   K. a tap before /api/health has answered: a face, and the hello waits for the next tap.
  * No gateway and no network: `/api/*` is answered at the browser (openSim).
  *
  *   node sim/test_first_tap.mjs [--report]   (--report prints the measured times)
@@ -48,6 +54,19 @@ for (const g of GREETINGS) {
   if (rel && existsSync(join(web, "audio", rel))) greetingBySize[statSync(join(web, "audio", rel)).size] = g;
   else if (rel) ok(false, `G: …and its file ships (${rel})`);
 }
+const GREETING_FILES = GREETINGS.map((g) => (MANIFEST.moxie || {})[g]).filter(Boolean);
+/* J, K. ambient.json's degraded line: her one sentence on a page whose brain is out, and so
+ * her hello there. Told apart from the greetings by size, like them. */
+const DEGRADED_TEXT = (JSON.parse(readFileSync(join(web, "ambient.json"), "utf8")).degraded || {}).text || "";
+const degradedRel = (MANIFEST.moxie || {})[DEGRADED_TEXT];
+const DEGRADED_BYTES = degradedRel && existsSync(join(web, "audio", degradedRel)) ? statSync(join(web, "audio", degradedRel)).size : null;
+ok(!!DEGRADED_BYTES, "J: ambient.json's degraded line has its clip in the manifest's moxie group");
+ok(!(DEGRADED_BYTES in greetingBySize), "J: …a clip no greeting shares, so the two are told apart by size");
+/* I. The scripted answer to "tell me a joke" (stub.js), heard as its own clip. */
+const STUB_JOKE = "Why did the robot cross the road? To recharge on the other side!";
+const stubRel = (MANIFEST.moxie || {})[STUB_JOKE];
+const STUB_BYTES = stubRel && existsSync(join(web, "audio", stubRel)) ? statSync(join(web, "audio", stubRel)).size : null;
+ok(!!STUB_BYTES, "I: the stub joke has its clip in the manifest's moxie group");
 
 const site = await serveWeb();
 const HOSTED = `http://moxie.hosted.test:${site.port}/sim.html`;
@@ -85,18 +104,66 @@ async function gestureFree(page) {
   return { read, until, json: async (expr) => JSON.parse(await read(`JSON.stringify(${expr})`)) };
 }
 
-/** A fresh hosted page, live, every backend answered at the browser; NOT settled with
- *  evaluate (that would activate it). */
+/** A fresh hosted page, every backend answered at the browser; NOT settled with evaluate
+ *  (that would activate it). Live unless `o.health` says otherwise; `o.ready` is what
+ *  "booted" means (default: live), `o.boot` runs in the page before its own scripts. */
 async function open(label, o = {}) {
   const v = await openSim(browser, HOSTED, {
-    health: FX.health, viewport: o.viewport || PHONE, settle: false, route: o.route,
-    beforeLoad: async (p) => { await p.evaluateOnNewDocument(instrumentWebAudio); await p.evaluateOnNewDocument(recordPage); },
+    health: o.health === undefined ? FX.health : o.health, viewport: o.viewport || PHONE, settle: false, route: o.route,
+    beforeLoad: async (p) => {
+      await p.evaluateOnNewDocument(instrumentWebAudio); await p.evaluateOnNewDocument(recordPage);
+      if (o.boot) await p.evaluateOnNewDocument(o.boot);
+    },
   });
   const g = await gestureFree(v.page);
-  ok(await g.until("!!window.moxie && !!window.moxieAudio && !!window.moxieMode && " +
-                   "document.readyState === 'complete' && window.moxieMode.canSpendLiveTurn() === true", 30000),
-     `${label}: the hosted page booted live`);
+  ok(await g.until("!!window.moxie && !!window.moxieAudio && !!window.moxieMode && !!window.moxieAmbient && " +
+                   "document.readyState === 'complete' && " + (o.ready || "window.moxieMode.canSpendLiveTurn() === true"), 30000),
+     `${label}: the hosted page booted ${o.ready ? "(" + o.ready + ")" : "live"}`);
   return { ...v, g };
+}
+
+/** Node-side wait: until `fn()` holds, polled every 50 ms. */
+const waitFor = async (fn, timeout = 5000) => {
+  for (let i = 0; i < timeout / 50; i++, await sleep(50)) if (fn()) return true;
+  return false;
+};
+/** Holds every request for a greeting's clip while `stall` is set, until `free()`: the
+ *  hello's load window, as long as a block needs it on any runner. (Request interception
+ *  turns the page's cache off, so every fetch of a clip comes through here.) */
+function greetingNet() {
+  const net = { stall: false, held: [] };
+  net.route = (r, u) => (net.stall && GREETING_FILES.some((f) => u.endsWith("/audio/" + f)) ? (net.held.push(r), true) : false);
+  net.free = () => {
+    net.stall = false;
+    for (const r of net.held.splice(0)) { try { r.continue(); } catch (e) {} }
+  };
+  return net;
+}
+/** The longest stretch, in ms, during which two of her voices played at once: each runs from
+ *  its start to its end, or to the stop() that cut it (the review's probe Z4). */
+function overlapMs(s) {
+  const runs = s.plays.map((p) => {
+    const cut = s.stops.filter((x) => x.id === p.id && x.t >= p.t).map((x) => x.t);
+    return { t: p.t, end: Math.min(p.t + p.dur, ...cut) };
+  });
+  let worst = 0;
+  for (let i = 0; i < runs.length; i++) for (let j = i + 1; j < runs.length; j++)
+    worst = Math.max(worst, Math.min(runs[i].end, runs[j].end) - Math.max(runs[i].t, runs[j].t));
+  return worst;
+}
+/** `stop()` calls that cut `p` more than 50 ms before its audio ran out. */
+const cutsOf = (s, p) => s.stops.filter((x) => x.id === p.id && x.t < p.t + p.dur - 50);
+/** Her bubble's text, and every face and Bht_* tree played from here on: RECORDED, never
+ *  sampled mid-motion (A). */
+const spyOnHer = (g) => g.read("(() => { const B = window.__moxieBridge, bt = B.behaviourTree, m = window.moxie, sf = m.setFace; " +
+  "window.__trees = []; window.__faces = []; " +
+  "B.behaviourTree = function (n) { window.__trees.push(n); return bt.apply(this, arguments); }; " +
+  "m.setFace = function (f) { window.__faces.push(f); return sf.apply(this, arguments); }; return 1; })()");
+/** Her idle quips stopped once the unlock has started them (`ambient.js` starts on the
+ *  unlock): the blocks below measure taps, and a quip 5-9 s on would be one more voice. */
+async function quipsOff(g) {
+  await g.until("window.moxieAudio.isUnlocked() && window.__ambient.state().running", 5000);
+  await g.read("(() => { try { window.moxieAmbient.stop(); } catch (e) {} return 1; })()");
 }
 
 /* A TAP TIMED LIKE A FINGER. puppeteer's touchscreen.tap / mouse.click send the lift only once
@@ -385,6 +452,241 @@ try {
     deep(h.stats && r.stats && [h.stats.taps, h.stats.misses], r.stats && [r.stats.taps, r.stats.misses],
          `H: …and a held press is no tap (nor a miss), however late it is handled (tapStats ${JSON.stringify(h.stats)})`);
     eq(notable(errs, aborted).length, 0, `H: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+
+  /* =======================================================================
+   * I. ONE VOICE AT A TIME: the hello holds the speakers from the tap, before its clip has
+   * loaded (the W4-S6 review's probe Z4). On a page another gesture had unlocked, a tap on her
+   * and then ONE ambient tick while the greeting was still loading: the tick asked "is she
+   * speaking?", heard no (nothing had started yet), and its quip and the greeting played
+   * together: 3.1 s of two voices in the probe, 3.7 s in this block before the fix. The
+   * greeting's fetch is HELD so the tick lands inside the load window on any runner;
+   * `moxieAmbient.say()` runs the same tick() a timer would.
+   * ===================================================================== */
+  {
+    const net = greetingNet();
+    const { page, g, errs, aborted } = await open("I", { route: net.route });
+    await unlockWithAMiss(page, g, "I");
+    ok(await g.until("!window.moxieAudio.isMoxieBusy(1700)", 15000), "I: precondition — she is quiet");
+    const t1 = await g.read("Math.round(performance.now())");
+    net.stall = true;
+    const at = await her(g);
+    await fingerTap(page, at.x, at.y);
+    ok(await recorded(g, 2), "I: the tap on her is recorded");
+    ok(await waitFor(() => net.held.length >= 1), "I: precondition — the greeting is still loading (its fetch is held)");
+    const tick = await g.json("(() => { const busy = window.moxieAudio.isMoxieBusy(1600); window.moxieAmbient.say(); return { busy }; })()");
+    await sleep(1500);                                  // a quip the tick let through loads and starts here
+    net.free();
+    ok(await g.until(`window.__audio.plays.some((p) => p.src === 'clip' && p.t >= ${t1})`, 8000), "I: a clip plays");
+    ok(await g.until("!window.moxieAudio.isMoxieBusy(300)", 15000), "I: …and she falls quiet");
+    await g.read("(() => { try { window.moxieAmbient.stop(); } catch (e) {} return 1; })()");
+    const s = await state(g, t1);
+    eq(overlapMs(s), 0, `I: one voice at a time — no two of her voices overlap (${JSON.stringify(s.plays)})`);
+    eq(tick.busy, true, "I: the tick found her busy: the hello held the speakers from the tap, before its clip had loaded");
+    deep(clipsOf(s).map((p) => !!greetingBySize[p.bytes]), [true], "I: …so the greeting is the one voice heard, once");
+    eq(clipsOf(s).filter((p) => cutsOf(s, p).length).length, 0, "I: …and whole");
+    deep(s.stats && [s.stats.hellos, s.stats.last], [1, "hello"], "I: tapStats — the hello");
+    // A line she has no way to say at all (no clip, no browser voice) lets the speakers go:
+    // held, she would read as speaking for good, and no quip or child line would start again.
+    await g.read(`(() => { Object.defineProperty(window, "speechSynthesis", { value: undefined, configurable: true });
+      window.__said = null;
+      window.moxieAudio.speak("A line with no clip and no voice to say it.").then((ok) => {
+        window.__said = { ok, speaking: window.moxieAudio.isMoxieSpeaking() }; });
+      return 1; })()`);
+    ok(await g.until("window.__said !== null", 8000), "I: a line she cannot say settles");
+    deep(await g.json("window.__said"), { ok: false, speaking: false },
+         "I: …unsaid, and it lets the speakers go (she does not read as speaking for good)");
+    eq(notable(errs, aborted).length, 0, `I: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+  /* I2. A STUB LINE inside the same window: the visitor sends a line while the greeting is
+   * still loading, and the turn's refusal (429) is answered from her recorded lines. The newer
+   * reply takes the speakers, as it does from a greeting already playing: the answer is heard
+   * once, and the greeting, still loading under it, never starts on top of it. */
+  {
+    const net = greetingNet();
+    const { page, g, errs, aborted } = await open("I2", {
+      route: (r, u) => {
+        if (net.route(r, u)) return true;
+        if (/\/api\/chat\b/.test(u)) {
+          json(r, FX.env({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 1, mode: "live" }), 429);
+          return true;
+        }
+        return false;
+      },
+    });
+    await unlockWithAMiss(page, g, "I2");
+    ok(await g.until("!window.moxieAudio.isMoxieBusy(1700)", 15000), "I2: precondition — she is quiet");
+    const t1 = await g.read("Math.round(performance.now())");
+    net.stall = true;
+    const at = await her(g);
+    await fingerTap(page, at.x, at.y);
+    ok(await recorded(g, 2), "I2: the tap on her is recorded");
+    ok(await waitFor(() => net.held.length >= 1), "I2: precondition — the greeting is still loading (its fetch is held)");
+    await g.read("(() => { window.moxieTypedTurn.send('tell me a joke'); return 1; })()");
+    ok(await g.until(`window.__audio.plays.some((p) => p.bytes === ${STUB_BYTES} && p.t >= ${t1})`, 8000),
+       "I2: the stub answer plays while the greeting is still loading");
+    net.free();
+    await sleep(1500);                                  // the released greeting decodes here
+    ok(await g.until("!window.moxieAudio.isMoxieBusy(300)", 15000), "I2: …and she falls quiet");
+    const s = await state(g, t1);
+    eq(overlapMs(s), 0, `I2: one voice at a time — the stub answer and the greeting never overlap (${JSON.stringify(s.plays)})`);
+    deep(clipsOf(s).map((p) => p.bytes), [STUB_BYTES],
+         "I2: the newer reply has the speakers: the answer heard once, and no greeting started under it");
+    eq(clipsOf(s).filter((p) => cutsOf(s, p).length).length, 0, "I2: …the answer whole");
+    aborted.refused++;                                  // the 429 is the fixture's
+    eq(notable(errs, aborted).length, 0, `I2: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+  /* I3. THE MIC OPENS inside the same window (Listen, right after the tap): opening it stops
+   * her, and the greeting still loading is stopped with her, so nothing plays into the open
+   * microphone (F's rule, from the other side). */
+  {
+    const net = greetingNet();
+    const { page, g, errs, aborted } = await open("I3", { route: net.route });
+    await unlockWithAMiss(page, g, "I3");
+    ok(await g.until("!window.moxieAudio.isMoxieBusy(1700)", 15000), "I3: precondition — she is quiet");
+    const t1 = await g.read("Math.round(performance.now())");
+    net.stall = true;
+    const at = await her(g);
+    await fingerTap(page, at.x, at.y);
+    ok(await recorded(g, 2), "I3: the tap on her is recorded");
+    ok(await waitFor(() => net.held.length >= 1), "I3: precondition — the greeting is still loading (its fetch is held)");
+    await g.read(`(() => {
+      window.moxieMic.setCapture(() => Promise.resolve({ stream: null, recorder: {
+        state: "inactive", mimeType: "audio/wav", ondataavailable: null, onstop: null,
+        start() { this.state = "recording"; },
+        stop() { if (this.state === "inactive") return; this.state = "inactive"; if (this.onstop) this.onstop(); } } }));
+      window.moxieMic.start(); return 1; })()`);
+    ok(await g.until("document.body.getAttribute('data-mic') === 'on'", 5000), "I3: precondition — the microphone is open");
+    net.free();
+    await sleep(1500);                                  // the released greeting decodes here
+    const s = await state(g, t1);
+    deep(await g.json("[window.moxieMic.isRecording(), document.body.getAttribute('data-mic')]"), [true, "on"],
+         "I3: …the microphone is still open");
+    eq(s.plays.length, 0, `I3: nothing plays into the open microphone — the greeting was stopped with her (${JSON.stringify(s.plays)})`);
+    eq(notable(errs, aborted).length, 0, `I3: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+
+  /* =======================================================================
+   * J. A PAGE WHOSE BRAIN IS OUT. ambient.js arms its one degraded line before any gesture
+   * and says it on the unlock: that line is her hello there. So the FIRST tap on her, which
+   * is the unlock, says no hello over it, and still gets its face. Three ways out: no gateway
+   * (from /api/health), a dead one (upstream_down) and the hour's cap (RESTING), the last two
+   * as a turn would report them to the mode machine. Before this pin, removing the refusal
+   * (`brainOut()`) reddened no suite. J1b: unlocked by a miss, her line said, then a tap on
+   * her: still no hello, which without the refusal would greet a second time.
+   * ===================================================================== */
+  for (const [label, how] of [
+    ["J1 gateway_not_configured", { health: FX.bareHealth }],
+    ["J2 upstream_down", { note: { status: 503, reason: "upstream_down", retry_after_s: 0 } }],
+    ["J3 resting (the hour's cap)", { note: { status: 429, reason: "rate_limited", retry_after_s: 1020 } }],
+  ]) {
+    const { page, g, errs, aborted } = await open(label, how.health ? { health: how.health, ready: "window.moxieMode.state() === 'degraded'" } : {});
+    if (how.note) await g.read(`(() => { window.moxieMode.note(${JSON.stringify(how.note)}); return 1; })()`);
+    ok(await g.until("window.moxieMode.state() === 'degraded' && window.moxieAmbient.degradedState().pending === true && " +
+                     "!window.moxieAudio.isUnlocked()", 15000),
+       `${label}: precondition — the page is degraded, audio still locked, and her degraded line armed for the unlock`);
+    await spyOnHer(g);
+    const t1 = await g.read("Math.round(performance.now())");
+    const at = await her(g);
+    await fingerTap(page, at.x, at.y);
+    ok(await recorded(g, 1), `${label}: the tap on her is recorded`);
+    ok(await g.until(`window.__audio.plays.some((p) => p.bytes === ${DEGRADED_BYTES})`, 8000),
+       `${label}: her degraded line plays on the unlock`);
+    await quipsOff(g);
+    ok(await g.until("!window.moxieAudio.isMoxieBusy(300)", 15000), `${label}: …and she falls quiet`);
+    const s = await state(g, t1);
+    deep(s.stats && [s.stats.taps, s.stats.hellos, s.stats.faces, s.stats.last], [1, 0, 1, "brain-out"],
+         `${label}: the first tap is refused for that: no hello, a face`);
+    const seen = await g.json("({ trees: window.__trees, faces: window.__faces })");
+    ok(seen.faces.includes("blink"), `${label}: …the face-only response still happens (setFace recorded ${JSON.stringify(seen.faces)})`);
+    ok(!seen.trees.includes("Bht_Gesture_Greet"), `${label}: …and no wave (played ${JSON.stringify(seen.trees)})`);
+    deep(clipsOf(s).map((p) => p.bytes), [DEGRADED_BYTES], `${label}: her degraded line is the one voice heard, once`);
+    eq(clipsOf(s).filter((p) => cutsOf(s, p).length).length, 0, `${label}: …whole`);
+    eq(overlapMs(s), 0, `${label}: …with nothing over it (${JSON.stringify(s.plays)})`);
+    eq(notable(errs, aborted).length, 0, `${label}: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+  {
+    const { page, g, errs, aborted } = await open("J1b", { health: FX.bareHealth, ready: "window.moxieMode.state() === 'degraded'" });
+    await unlockWithAMiss(page, g, "J1b");
+    ok(await g.until("window.moxieAmbient.degradedState().said === true", 8000), "J1b: precondition — the unlock said her degraded line");
+    ok(await g.until(`window.__audio.plays.some((p) => p.bytes === ${DEGRADED_BYTES})`, 8000) &&
+       await g.until("!window.moxieAudio.isMoxieBusy(1700)", 15000), "J1b: …and it is over");
+    const t1 = await g.read("Math.round(performance.now())");
+    const at = await her(g);
+    await fingerTap(page, at.x, at.y);
+    ok(await recorded(g, 2), "J1b: the tap on her is recorded");
+    await sleep(1500);                                  // and nothing sounds after it
+    const s = await state(g, t1);
+    eq(s.plays.length, 0, `J1b: a tap after her degraded line says no second hello (${JSON.stringify(s.plays)})`);
+    deep(s.stats && [s.stats.hellos, s.stats.faces, s.stats.last], [0, 1, "brain-out"], "J1b: …it is a face");
+    eq(notable(errs, aborted).length, 0, `J1b: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+
+  /* =======================================================================
+   * K. A TAP BEFORE /api/health HAS ANSWERED (the review's probe Z3). Until then the page
+   * cannot know whether her brain is out, so whether ambient's degraded line is about to be
+   * her hello: such a tap said hello, and the degraded line, once the answer came, cut the
+   * greeting about a second in. Now it is a face, and the hello stays for the next tap once
+   * the page knows it is live. The answer is HELD until the tap is recorded (the probe's own
+   * 6 s abort is lifted, so a slow runner cannot turn the wait into `offline`), then given:
+   * K1 no gateway, K2 live.
+   * ===================================================================== */
+  for (const [label, body] of [["K1 no gateway", FX.bareHealth], ["K2 live", FX.health]]) {
+    const hold = { held: [], body: null };
+    const { page, g, errs, aborted } = await open(label, {
+      ready: "window.moxieMode.state() === 'boot'",
+      boot: () => { if (typeof AbortSignal !== "undefined") AbortSignal.timeout = () => new AbortController().signal; },
+      route: (r, u) => {
+        if (!/\/api\/health\b/.test(u)) return false;
+        if (hold.body) json(r, hold.body); else hold.held.push(r);
+        return true;
+      },
+    });
+    ok(await waitFor(() => hold.held.length >= 1, 10000), `${label}: precondition — /api/health was asked, and has not answered`);
+    ok(!(await g.read("window.moxieAudio.isUnlocked()")), `${label}: precondition — audio still locked: this tap is the first gesture`);
+    await spyOnHer(g);
+    const t1 = await g.read("Math.round(performance.now())");
+    const at = await her(g);
+    await fingerTap(page, at.x, at.y);
+    ok(await recorded(g, 1), `${label}: the tap on her is recorded`);
+    const tapped = await g.json("({ mode: window.moxieMode.state(), stats: window.moxie.tapStats() })");
+    eq(tapped.mode, "boot", `${label}: precondition — the tap landed before the answer`);
+    deep(tapped.stats && [tapped.stats.taps, tapped.stats.hellos, tapped.stats.faces, tapped.stats.last], [1, 0, 1, "booting"],
+         `${label}: a tap before the page knows her state is refused for that: no hello, a face`);
+    ok((await g.json("window.__faces")).includes("blink"), `${label}: …the face-only response`);
+    await sleep(1200);                                  // a hello it let through would load and start here
+    hold.body = body;
+    for (const r of hold.held.splice(0)) json(r, body);
+    if (label.startsWith("K1")) {
+      ok(await g.until(`window.__audio.plays.some((p) => p.bytes === ${DEGRADED_BYTES})`, 8000),
+         "K1: the answer says her brain is out, and her degraded line plays");
+      await quipsOff(g);
+      ok(await g.until("!window.moxieAudio.isMoxieBusy(300)", 15000), "K1: …and she falls quiet");
+      const s = await state(g, t1);
+      deep(clipsOf(s).map((p) => p.bytes), [DEGRADED_BYTES], "K1: her degraded line is the one voice heard: no greeting before it");
+      eq(clipsOf(s).filter((p) => cutsOf(s, p).length).length, 0, `K1: …whole (${JSON.stringify(s.stops)})`);
+      eq(overlapMs(s), 0, `K1: …with nothing over it (${JSON.stringify(s.plays)})`);
+    } else {
+      ok(await g.until("window.moxieMode.canSpendLiveTurn() === true", 8000), "K2: the answer says she is live");
+      await quipsOff(g);
+      ok(await g.until("!window.moxieAudio.isMoxieBusy(300)", 15000), "K2: she is quiet");
+      eq(clipsOf(await state(g, t1)).length, 0, "K2: nothing has sounded since the refused tap");
+      const t2 = await g.read("Math.round(performance.now())");
+      const at2 = await her(g);
+      await fingerTap(page, at2.x, at2.y);
+      ok(await g.until(`window.__audio.plays.some((p) => p.src === 'clip' && p.t >= ${t2})`, 8000),
+         "K2: once the page knows she is live, the next tap on her makes a sound");
+      const s = await state(g, t2);
+      ok(clipsOf(s).length === 1 && !!greetingBySize[clipsOf(s)[0].bytes], "K2: …the hello the refused tap did not spend");
+      deep(s.stats && [s.stats.taps, s.stats.hellos, s.stats.last], [2, 1, "hello"], "K2: tapStats — the second tap's hello");
+    }
+    eq(notable(errs, aborted).length, 0, `${label}: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
     await page.close();
   }
 } catch (e) {
