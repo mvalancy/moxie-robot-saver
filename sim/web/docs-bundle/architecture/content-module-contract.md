@@ -841,32 +841,45 @@ by construction rather than by reading the program cleverly:
   on. A tag that forms only once the robot's own parse has lifted the tags that stay
   (`<ex<sleep>it>` with its sleep written whole would be spoken as `<exit>`, which that
   one-pass parse never acts on) is cut out with the pieces it is made of, so the child
-  never hears a tag of ours. The robot's markup (a `say`'s or a `markup` statement's,
-  under the `markup` grant, which only shipped programs have today) holds no tag of ours
-  and nothing the catalogue refuses, or the line goes without it
-  (`ext_host.robot_markup`), checked on exactly what the robot is sent: the robot speaks
-  its markup when it is given one, and the robot path sends it through the same parse as a
-  line, our tags lifted once and the rest tidied (which takes out the space before a comma
-  and so can join a mark's pieces). So every tag of ours is lifted as that parse lifts
-  them (one pass, malformed ones too); the gate drops tag by tag what the catalogue
-  refuses, a tag cut short by a `>` inside its own quotes and a tag holding another `<`;
+  never hears a tag of ours. Markup a program writes (a `say`'s markup or a `markup`
+  statement, under the `markup` grant, which only shipped programs have today) reaches
+  the robot with no tag of ours and nothing the catalogue's check refuses, or the line
+  goes without it (`ext_host.robot_markup`), checked on exactly what the robot is sent:
+  the robot speaks its markup when it is given one, and the robot path sends it through
+  the same parse as a line, our tags lifted once and the rest tidied (which takes out the
+  space before a comma and so can join a mark's pieces). So every tag of ours is lifted as
+  that parse lifts them (one pass, malformed ones too); the gate drops tag by tag, the rest
+  of the markup kept, a tag with an id the catalogue refuses, a mark the catalogue's own
+  mark pattern does not read whole (`<mark name='cmd:zzz'/>`,
+  `<mark name="cmd:zzz ,data:{}"/>`, `<mark name="cmd:a,data:{">`: the catalogue's check
+  would pass it unread), a tag cut short by a `>` inside its own quotes and a tag holding
+  another `<`;
   the rest is tidied as the robot path tidies it; and the markup is dropped whole, and the
   runtime's markup floor speaks the line, if what is left holds a tag of ours (a dropped
   tag stood between the pieces of another: `<ex<ex<mark name="cmd:zzz"/>it>it>` would
-  have reached the robot as `<exit>`), a tag the gate would drop (the tidying joined one:
-  `<mark name="cmd:zzz ,data:{}"/>`), a catalogue tag left open, or anything the
-  catalogue's own check over the whole text refuses (`vocab.validate_markup`, which reads
-  a quoted `>` as part of the value: `<spurt x" spurt_id="n>pe"/>` is a spurt with the id
-  `n>pe`, which the tag-by-tag read never sees). Every pass is linear in the markup but
-  that whole-text check, which reads on from every opening it finds: a markup with a tag
-  left open or holding another `<` is dropped before it runs (it took 0.4-0.7 s on an 8 KB
-  run of `<usel genre="` openings), and the slowest markup left to it that a search of
-  9,000 random 8 KB markups found, mark openings whose data is never closed, takes it
-  7-14 ms on 8 KB, quadratic in the markup, measured. Five turns of four 8 KB markups of
-  the shapes that were super-linear take 7-30 ms in all through the real app, where a turn
-  with four runs of `<mark` openings took 0.37-0.52 s before round 9 and the fixpoint pass
-  before round 8 took 2.1-3.7 s a turn on four nests. Never counted as a refusal: nothing
-  in markup is acted on. The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
+  have reached the robot as `<exit>`), a tag of a form the gate drops (one that formed
+  only once a tag between its pieces was dropped), a catalogue tag left open (no `>` after
+  it), or anything the catalogue's own check over the whole text refuses
+  (`vocab.validate_markup`, which reads a quoted `>` as part of the value:
+  `<spurt x" spurt_id="n>pe"/>` is a spurt with the id `n>pe`, which the tag-by-tag read
+  never sees).
+  Every pass is linear in the markup, that whole-text check included: it runs only when
+  every catalogue tag left has a form the gate keeps and none is left open, and then each
+  of its patterns reads a tag to its end and no further, or a usel's or a spurt's value at
+  most once past it. Measured with the 8 KB cap lifted, the whole clearing takes about
+  twice as long per doubling, up to 128 KB, on every shape tried. Before round 10 a mark
+  the catalogue's pattern does not read whole was kept, and that check read on from each
+  one: 8 KB of `<mark name="cmd:a,data:{">` tags followed by `}"`, 30 ideographic spaces
+  and `/x` over and over (the round-9 review's shape) took 15-27 ms to clear and a turn of
+  four such markups 65-112 ms; now 0.3 ms, measured. Five turns of four 8 KB markups of
+  the shapes that were super-linear take 7-31 ms in all through the real app, where five
+  turns of four runs of `<mark` openings took 3.5 s before round 9 and the fixpoint pass
+  before round 8 took 2.1-3.7 s a turn on four nests. This is the only channel on which a
+  pack's markup is checked: a mark written in a program's line, or in a conversation's
+  opener, reaches the robot's markup through the runtime's markup floor, which sends a
+  line holding `<` as it is, unchecked, under the default grants (as on dev for lines; an
+  opener is new on the robot path with this change). Gating the floor is a follow-up.
+  Never counted as a refusal: no action tag in markup is acted on. The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
   answers without asking the AI; then the conversation ends."* and sends its `<exit>` as
   before, because its rule writes it. A taken-out tag is counted, and the parent is told
   once per robot, program and reason through the same `ext_events` ring a breach uses
@@ -961,7 +974,12 @@ pre-ticks the item.) Each effect reads *"sometimes"*, since which
 alternative is said, and what its template leaves in, varies. The rule holds for every
 opener; the shipped ones write no tag, so they say and do what they did. A tag an opener
 lifts is not reported to the parent the way a program's is: the robot did nothing, and the
-row already named all it can do.
+row already named all it can do. The rule is about our action tags only: a catalogue tag
+written in an opener (`<mark …/>`, `<usel …>`) is not ours, so it stays in the line, and
+the runtime's markup floor sends that line to the robot as its markup, unchecked and not
+named in the review, as it does a program's line (`<mark name="cmd:start-systemunpair"/>`
+is in the catalogue; whether a robot acts on it from a chat line is unverified). Gating
+catalogue tags in pack-made lines and openers at the floor is a follow-up.
 
 `sim/tests/test_ext_say_tags.py` holds the invariant as a property over random programs
 (every op above over literal pieces of tags and non-tags, with what the child said, a
