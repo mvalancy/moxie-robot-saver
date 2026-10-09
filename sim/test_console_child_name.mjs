@@ -16,6 +16,9 @@
  *   N6 no row for a robot that is not on this account, or whose name the view does not give
  *   N7 the pairing placeholder "Moxie Kid" is no name: the row shows what Moxie says and
  *      where to type the name, never "Moxie Kid" and never "not sent yet"
+ *   N8 for an account with several children (the old Wi-Fi tab made one per click) the
+ *      rename goes to the child the robot is bound to, not the first or active one
+ *   N9 the account's record is shown as text: markup saved in it is never drawn
  *
  * No FastAPI: `serveStatic` serves server/static and every `/local/*` and `/api/*` call is
  * answered at the browser. The fleet views come from the REAL `moxie_server.fleet`
@@ -23,8 +26,10 @@
  * of the REAL server/moxie_server/child_profile.py (its constants, parsed with `ast`: the
  * module itself opens the database). TEETH: mutated copies of js/core.js (a new child on every
  * click; no name row; the mismatch never said; the rename's reason dropped; the fleet or the
- * monitor read without the token; the placeholder taken for a name) must each redden the
- * scenario that guards it. A child's name is personal data: only 'Zoë', 'José' and 'Sam'.
+ * monitor read without the token; the placeholder taken for a name; the active child renamed
+ * instead of the robot's; the record's name drawn as markup) must each redden the scenario
+ * that guards it. A child's name is personal data: only 'Zoë', 'José' and 'Sam' (once
+ * wrapped in a tag the name rule refuses).
  *
  *   node sim/test_console_child_name.mjs
  */
@@ -185,7 +190,7 @@ const nameRow = (page) => page.evaluate(() => {
   if (!row) return null;
   return { label: row.querySelector("span").textContent, value: row.querySelector("b").textContent,
            note: (row.querySelector(".name-note") || { textContent: "" }).textContent,
-           text: row.textContent };
+           marks: row.querySelectorAll(".name-note *").length, text: row.textContent };
 });
 
 const calls = (st, call) => st.calls.filter((c) => c === call).length;
@@ -289,6 +294,36 @@ const SCENARIOS = {
       C.eq(notable(errs, aborted).length, 0, `N7: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
     } finally { await page.close(); }
   },
+
+  async N8(C, o) {
+    /* An account from before the rename can hold several children (the old Wi-Fi tab made
+     * one per click), and the first one is the active one: the rename still goes to the
+     * child the robot is bound to. */
+    const older = { id: "c-older", "child-first-name": "Zoë" };
+    const { page, st, errs, aborted } = await drive({ ...o, tab: "wifi",
+                                                      children: [older, kid("Sam")] });
+    try {
+      await makeCode(page, st, "José");
+      C.eq(calls(st, PUT), 1, "N8: the rename goes to the child the robot is bound to");
+      C.eq(calls(st, "PUT /api/children/c-older"), 0, "N8: never to the account's first child");
+      C.eq(calls(st, POST_CHILD), 0, "N8: no child is made");
+      C.eq(notable(errs, aborted).length, 0, `N8: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+    } finally { await page.close(); }
+  },
+
+  async N9(C, o) {
+    /* The account's record is whatever was saved for it (the server checks no name there),
+     * so the row shows it as text: markup in it is never drawn. */
+    const marked = "<b>Sam</b>";
+    const { page, errs, aborted } = await drive({ ...o, children: [kid(marked)] });
+    try {
+      const row = await nameRow(page);
+      C.ok(row && row.note.includes(`“${marked}” not sent yet`),
+           `N9: the record's name is shown as typed — got ${JSON.stringify(row)}`);
+      C.eq(row && row.marks, 0, "N9: and no element is made from it");
+      C.eq(notable(errs, aborted).length, 0, `N9: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+    } finally { await page.close(); }
+  },
 };
 
 async function run(C, name, o = {}) {
@@ -325,6 +360,11 @@ const TEETH = [
                     + "<b>${escapeHtml(r.child)}</b></div>`;")],
   ["the placeholder taken for a name", "N7",
    (s) => s.replace("return n.toLowerCase()===PLACEHOLDER_CHILD.toLowerCase() ? '' : n;", "return n;")],
+  ["the account's active child renamed, not the robot's", "N8",
+   (s) => s.replace("const want=(st.robots||[]).map(r=>r.child_id).find(Boolean) || (st.user||{})['active-child-id'];",
+                    "const want=(st.user||{})['active-child-id'];")],
+  ["the record's name drawn as markup", "N9",
+   (s) => s.replace("“${escapeHtml(want)}” not sent yet", "“${want}” not sent yet")],
 ];
 for (const [what, scenario, mutate] of TEETH) {
   ok(mutate(SRC) !== SRC, `teeth: the "${what}" mutation must actually change js/core.js`);

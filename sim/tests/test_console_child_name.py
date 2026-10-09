@@ -12,7 +12,8 @@ permit still stand. What each test pins:
 * the pairing placeholder "Moxie Kid" and a blank name are never sent, on any path: a
   clear (`child: null`) goes instead, so a robot joining an account never says a name an
   earlier record left on it (also when the account's name is one the rule refuses);
-* another account's child is never sent;
+* another account's child is never sent, not even to a robot another account bound to its
+  id; a child whose record is deleted leaves no name on a robot still bound to it;
 * unpair and reset clear the robot's copy first (post order), and through a REAL runtime
   the robot's saved settings then hold no name;
 * a change the supervisor applies but cannot save (`saved: false`) is never reported as
@@ -183,6 +184,22 @@ def test_another_accounts_child_is_never_sent(client, supervisor):
     assert scan.status_code == 200, scan.text
     assert scan.json()["child_pushed"] is False
     assert _named(supervisor, posts) == [] and _cleared(supervisor, posts) == 1
+    # That robot is the other account's, bound to the owner's child id: the owner's rename
+    # reaches only the owner's own robots, so it sends nothing here.
+    posts = len(supervisor.config_posts)
+    r = client.put(f"/api/children/{owners_child}", headers=owner,
+                   json={"child": {"child-first-name": "Zoë"}})
+    assert r.status_code == 200 and r.json()["child_pushed"] is False, r.text
+    assert _sent(supervisor, posts) == []
+
+
+def test_deleting_a_child_takes_its_name_off_the_robots_bound_to_it(client, supervisor):
+    """The web app unpairs before it deletes a child, but a robot still bound to a child
+    whose record goes must not keep saying that name: its copy is cleared."""
+    auth, _, cid = _claimed(client, "delete-child@child.lan", "Sam")
+    posts = len(supervisor.config_posts)
+    assert client.delete(f"/api/children/{cid}", headers=auth).status_code == 204
+    assert _sent(supervisor, posts) == [(DEVICE, {"child": None})]
 
 
 def test_a_scan_sends_the_name_of_the_account_the_code_was_made_on(client, supervisor):
