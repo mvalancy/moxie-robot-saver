@@ -12,7 +12,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from .. import db, lifecycle, supervisor
+from .. import child_profile, db, lifecycle, supervisor
 from ..auth import current_user, read_json
 from ..fleet import ota_status_view, resolve_device_id, unsupported_action
 from ..serializers import robot_document
@@ -91,25 +91,42 @@ def delete_robot(rid: str, rfs: str = Query(None), u=Depends(current_user)):
     """Unpair (`DELETE robots/{id}`) or unpair + factory reset (`?rfs=1`),
     `docs/features/robot-lifecycle.md` §1-2.
 
-    One transaction takes the record off the account (the app's UNPAIRED: no robot in
-    `users/me`) and voids the account's unused pairing codes; then the robot's permit is
-    revoked. The child is never touched (§2): erasing it is the console's existing erase
-    calls, made only when the parent chooses. Server-side a reset is the same unpair (the
-    doc's cleanup is identical); what differs is reaching the robot, and with no recovered
-    cloud-to-robot reset command the answer carries the `restore_factory` setup code.
-    Idempotent: a repeat, or another account's robot id, changes nothing (`unpaired:
-    false`). Any 2xx is success to the original app, so the body is ours to use."""
+    First the robot's own copy of the child's name is cleared on the supervisor (robot
+    state, not the child's: the robot falls back to the appliance's default name), while
+    the record and the permit still stand. Then one transaction takes the record off the
+    account (the app's UNPAIRED: no robot in `users/me`) and voids the account's unused
+    pairing codes, and the robot's permit is revoked. The child's record is never touched
+    (§2): erasing it is the console's existing erase calls, made only when the parent
+    chooses. Server-side a reset is the same unpair (the doc's cleanup is identical); what
+    differs is reaching the robot, and with no recovered cloud-to-robot reset command the
+    answer carries the `restore_factory` setup code. Idempotent: a repeat, or another
+    account's robot id, changes nothing (`unpaired: false`). Any 2xx is success to the
+    original app, so the body is ours to use."""
     reset = str(rfs or "").strip().lower() in ("1", "true", "yes")
+    mine = db.q1("SELECT * FROM robots WHERE id=? AND user_id=?", (rid, u["id"]))
+    if mine is None:
+        return lifecycle.unpair_result(rid, unpaired=False, factory_reset=reset)
+    cleared = child_profile.clear_child(db.device_id_of(mine))
     row, voided = db.unpair_robot(rid, u["id"])
-    if row is None:
+    if row is None:                       # another unpair of this robot finished first
         return lifecycle.unpair_result(rid, unpaired=False, factory_reset=reset)
     kid = (db.q1("SELECT * FROM children WHERE id=? AND user_id=?", (row["child_id"], u["id"]))
            if row["child_id"] else None)
     child = ({"id": kid["id"], "name": json.loads(kid["attributes"]).get("child-first-name")}
              if kid else None)
-    return lifecycle.unpair_result(rid, unpaired=True, factory_reset=reset, child=child,
-                                   codes_voided=voided,
-                                   access=_revoke(json.loads(row["attributes"])))
+    out = lifecycle.unpair_result(rid, unpaired=True, factory_reset=reset, child=child,
+                                  codes_voided=voided,
+                                  access=_revoke(json.loads(row["attributes"])))
+    out["child_cleared"] = cleared["child_cleared"]
+    out["child_clear_error"] = cleared["reason"]
+    if out["child_cleared"]:
+        out["details"].append({"key": "name", "text": "The robot's settings on this server "
+                                                      "no longer hold your child's name."})
+    elif db.device_id_of(row):
+        out["details"].append({"key": "name", "text": (
+            f"This server could not take your child's name off the robot's settings: "
+            f"{cleared['reason']}")})
+    return out
 
 
 @router.post("/api/robots/{rid}/wakeup")
