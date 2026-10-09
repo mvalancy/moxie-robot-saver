@@ -164,6 +164,15 @@ REVIEWED: dict = {
         ("time.perf_counter",), "RELATIVE — 1.0 s for two empty prompts, 50x the measured "
         "0.01-0.02 s: load multiplies one linear split and one render, while the quadratic "
         "split or a render per alternative took 2.4-10.5 s on the same openers."),
+    "sim/tests/test_ext_say_tags.py::test_the_tags_a_program_writes_are_read_in_time_linear_in_its_text": (
+        ("time.perf_counter",), "RELATIVE — 0.5 s for a first turn measured at 2 ms, also "
+        "enforced by a hard 5 s alarm: load multiplies a linear parse, while the lazy "
+        "parse took about a minute on the same 200,000 spaces (2.7 s at 64,000, x4 per "
+        "doubling)."),
+    "sim/tests/test_ext_say_tags.py::test_a_literal_at_the_pack_cap_is_read_in_bounded_time": (
+        ("time.perf_counter",), "RELATIVE — 1.0 s for a read measured at 12-16 ms, also "
+        "enforced by a hard 5 s alarm: the lazy parse had not finished a megabyte of spaces "
+        "after 8 s."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}

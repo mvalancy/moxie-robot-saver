@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from .grammar import (is_error, Limits, MAX_DEPTH, MAX_REPEAT, MAX_SAY_CHARS, OPS)
 from .machine import (_Breach, _Machine)
@@ -45,9 +46,10 @@ _TAG_NAMES = ("exit", "sleep", "launch", "launch_if_confirmed")
 #: or `:` and fields up to the next `>`. A parent never reads a whole one in a line Moxie
 #: says: it is lifted out of the quote, and the sentence says what it makes happen instead
 #: (`_lift_parts` says when one is left in its pieces). Linear on any text, since no two
-#: neighbouring repeats can take the same character. (`_TAG_RE`'s lazy fields followed by
-#: `\s*>` scan a run of spaces after `<exit:` again for each of its characters when no `>`
-#: follows: 0.34 s on 16,000 spaces, four times longer per doubling, measured.)
+#: neighbouring repeats can take the same character, as `_TAG_RE` is now too. (Its lazy
+#: fields followed by `\s*>` scanned a run of spaces after `<exit:` again for each of its
+#: characters when no `>` followed: 0.34 s on 16,000 spaces, four times longer per
+#: doubling, measured here in round 4 and through the extension host in round 7.)
 _LIFTED = re.compile(r"<\s*(?:%s)\s*(?::[^<>]*)?>" % "|".join(
     "".join(f"[{c.upper()}{c.lower()}]" if c.isalpha() else c for c in name)
     for name in sorted(_TAG_NAMES, key=len, reverse=True)))
@@ -66,8 +68,10 @@ _HOLE = "\ue000"
 _SEGMENT = re.compile(r"<([^<>]*)>")
 _NAME = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*")
 
-#: A module id as a robot names one. A launch's module is said bare when it is one, and
-#: quoted otherwise, so author text never reads as part of the sentence.
+#: A module id as a robot names one. A launch's module is said bare when it is one and is
+#: shown exactly as written (`_plain` changes nothing in it), and quoted otherwise, so
+#: author text never reads as part of the sentence: `DRAW` followed by a zero-width space
+#: is not the DRAW activity, and is quoted.
 _MODULE_ID = re.compile(r"[A-Za-z0-9_-]+")
 
 
@@ -110,7 +114,8 @@ def _tag_reads(text, holes: bool = True) -> list:
         elif fields and fields[0] and (len(fields) <= 2 or not sure):
             module = _plain(fields[0])
             what = ("an activity it works out" if holes and _HOLE in fields[0]
-                    else f"the {module} activity" if _MODULE_ID.fullmatch(module)
+                    else f"the {module} activity"
+                    if module == fields[0] and _MODULE_ID.fullmatch(module)
                     else f"the '{module}' activity")
             out.append((("launch", fields[0], fields[1] if len(fields) == 2 else None),
                         f"Moxie starts {what}", sure))
@@ -144,17 +149,27 @@ def _lift_parts(parts) -> list:
     return out
 
 
-#: What `_plain` makes a space: braces, double quotes and line breaks.
-_UNQUOTED = str.maketrans({c: " " for c in "{}\"\n\r\t"})
+#: What `_plain` makes a space (braces, double quotes and line breaks), and the straight
+#: quote it writes curly (’): a sentence quotes author text in straight quotes, so none
+#: inside it can close the quote early and read as part of the sentence.
+_UNQUOTED = str.maketrans({**{c: " " for c in "{}\"\n\r\t"}, "'": "\u2019"})
+
+#: Characters a parent cannot see but that reorder or hide what they read: Unicode
+#: format characters (bidi overrides, zero-width joiners, soft hyphens, …) and control
+#: characters. `_plain` drops them from the text it keeps.
+_UNSEEN = ("Cf", "Cc")
 
 
 def _plain(text, lift: bool = False) -> str:
-    """Author text made safe for a parent-facing sentence: no braces or quotes, one line,
-    ≤ 80 chars — never JSON-looking, however hostile the input (T13). A line Moxie says
-    (`lift`) loses its action tags as well: the sentence says what they do instead."""
+    """Author text made safe for a parent-facing sentence: no braces, double quotes or
+    straight quotes (a straight quote is written curly), no format or control characters,
+    one line, ≤ 80 chars — never JSON-looking, and never reading as part of the sentence
+    around it, however hostile the input (T13). A line Moxie says (`lift`) loses its
+    action tags as well: the sentence says what they do instead."""
     out = _lift(text) if lift else str(text)
     out = " ".join(out.translate(_UNQUOTED).split())
-    return out[:80] + ("…" if len(out) > 80 else "")
+    out = out[:80] + ("…" if len(out) > 80 else "")
+    return "".join(c for c in out if unicodedata.category(c) not in _UNSEEN)
 
 
 def _picked_lines(value):

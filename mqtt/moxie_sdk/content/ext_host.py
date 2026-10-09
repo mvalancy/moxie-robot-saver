@@ -170,6 +170,15 @@ def _action_key(action: Action) -> tuple:
             json.dumps(action.args, sort_keys=True, default=str))
 
 
+def _no_action_tags(markup: str) -> str:
+    """`markup` with every tag of ours taken out (`actions.drop_action_tags` with nothing
+    kept), to a fixpoint. The robot speaks its markup when it is given one, and markup acts
+    on nothing, so no tag of ours may reach it: not even one that would only form once the
+    robot's one-pass parse lifted the tags inside it (`<ex<sleep>it>Hi` read as
+    `<exit>Hi`). Never counted or reported: nothing in markup was ever acted on."""
+    return drop_action_tags(markup, lambda a: False)[0]
+
+
 def _strings_in(node, out: list) -> list:
     """Every string written in `node`, a JSON tree, map keys included, in document order."""
     if isinstance(node, str):
@@ -225,6 +234,8 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
     the default is the empty set, so a line from a caller that passes nothing acts on no
     tag at all. A line that carries only allowed tags is kept exactly as written. It then
     passes the same output safety classifier as a model line (unsafe → redirect, M2).
+    Markup (a `say`'s or a `markup` statement's) loses every tag of ours before the
+    catalogue check (`_no_action_tags`): the robot speaks it, and it acts on nothing.
     `remember`/`forget` name only a key; device and namespace come from the host (X9).
     """
     spoke = wrote = dropped = acted = subscribed = 0
@@ -247,12 +258,13 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
                     text = _safety.redirect_for(verdict, classifier=classifier).line
                     markup = None
             if markup:
-                markup, n = ext_markup(str(markup)[:ext.MAX_MARKUP_CHARS])
+                markup, n = ext_markup(_no_action_tags(str(markup)[:ext.MAX_MARKUP_CHARS]))
                 dropped += n
             volley.set_output(text, markup or None)
             spoke += 1
         elif kind == "markup":
-            clean, n = ext_markup(str(eff.get("markup") or "")[:ext.MAX_MARKUP_CHARS])
+            clean, n = ext_markup(_no_action_tags(
+                str(eff.get("markup") or "")[:ext.MAX_MARKUP_CHARS]))
             dropped += n
             volley.set_output(volley.output_text or "", clean or None)
         elif kind == "scratch":

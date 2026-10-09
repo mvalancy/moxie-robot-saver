@@ -55,8 +55,14 @@ KNOWN_TAGS = (EXIT_TAG, SLEEP_TAG, LAUNCH_TAG, LAUNCH_IF_CONFIRMED_TAG)
 LAUNCH_IF_CONFIRMED_AS = ActionType.LAUNCH
 
 # <name> or <name:field:field>, tolerant of whitespace. `[^<>]` keeps a tag from
-# swallowing the next one when the model writes two in a row.
-_TAG_RE = re.compile(r"<\s*([A-Za-z_][A-Za-z0-9_]*)\s*((?::[^<>]*?)?)\s*>")
+# swallowing the next one when the model writes two in a row. No two neighbouring repeats
+# can take the same character (the fields are greedy and run up to the `>` itself, so the
+# spaces before it are theirs and `_fields` strips them), which keeps every match linear in
+# the text: with lazy fields followed by `\s*>`, a run of spaces after `<exit:` or `<exit`
+# with no `>` after it was scanned again for each of its characters (0.35 s at 16,000
+# spaces, about four times longer per doubling, still running after 8 s at a megabyte,
+# measured through the extension host, which reads every string a pack writes).
+_TAG_RE = re.compile(r"<\s*([A-Za-z_][A-Za-z0-9_]*)\s*((?::[^<>]*)?)>")
 
 _HSPACE_RE = re.compile(r"[ \t]{2,}")
 _SPACE_BEFORE_PUNCT_RE = re.compile(r"[ \t]+([,.!?;])")
@@ -154,7 +160,8 @@ def drop_action_tags(text: str, keep) -> Tuple[str, List[Action]]:
     parses to, `keep` allowed, and what is spoken holds no tag of ours. Each pass takes at
     least one character out, so the passes are bounded by the text. The sandboxed-extension
     host uses it to let a pack's line act only on the tags written whole in the pack's own
-    text (`ext_host.apply_ext_effects`).
+    text, and with nothing kept to clear a line's markup of every tag of ours
+    (`ext_host.apply_ext_effects`).
     """
     dropped: List[Action] = []
     while text:

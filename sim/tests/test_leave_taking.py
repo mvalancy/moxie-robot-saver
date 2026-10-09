@@ -895,8 +895,8 @@ def test_a_say_built_to_multiply_is_read_in_bounded_time_and_memory(shape):
     program's own text in one pass (before it, 6.8 s and 3.9 GB, 16.5 s and 3.1 GB, and out
     of memory at 7.7 GB). A `<` followed by 992 worked-out parts is looked for in one pass (a
     regex with three neighbouring repeats that each take a worked-out part took 11.2 s on
-    it), and so is the quoted line (`_TAG_RE`'s lazy fields took 59.7 s on it, four times as
-    long per doubling). The last three are parts made of literals, which `explain()` works
+    it), and so is the quoted line (the lazy fields `actions._TAG_RE` had until round 7 took
+    59.7 s on it, four times as long per doubling). The last three are parts made of literals, which `explain()` works
     out with the evaluator: it now sizes each op before it builds anything (before, the first
     two peaked at 1 GB and the third was still reading after 120 s). All measured on the
     build host."""

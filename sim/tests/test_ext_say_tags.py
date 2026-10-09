@@ -26,7 +26,9 @@ import importlib
 import json
 import os
 import random
+import re
 import sys
+import time
 
 if __name__ == "__main__":                 # the script mode, from the checkout root
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "mqtt"))
@@ -35,7 +37,7 @@ if __name__ == "__main__":                 # the script mode, from the checkout 
 import pytest
 
 from helpers_ext import CHAT_MODULE, app_with, robot as ext_robot
-from moxie_sdk.actions import drop_action_tags, parse_action_tags, tag_names
+from moxie_sdk.actions import _fields, _TAG_RE, drop_action_tags, parse_action_tags, tag_names
 from moxie_sdk.content import content_app as CA
 from moxie_sdk.content import ext as E
 from moxie_sdk.content import ext_host as H
@@ -43,9 +45,9 @@ from moxie_sdk.content import load_modules, packs as P
 from moxie_sdk.memory_store import MemoryStore
 from moxie_sdk.store import JsonStore
 from moxie_sdk.types import Action, ActionType, Turn
-from test_leave_taking import (Brain, DRAW, GOODBYES, QUESTION, SHIPPED, SLEEPS, _imported,
-                               _named_in, _names, _pick, _raw, _says, _WANTS_DRAW, shipped_app,
-                               robot as shipped_robot)
+from test_leave_taking import (Brain, DRAW, GOODBYES, QUESTION, SHIPPED, SLEEPS, _hard_limit,
+                               _imported, _named_in, _names, _pick, _raw, _says, _Stalled,
+                               _WANTS_DRAW, shipped_app, robot as shipped_robot)
 
 #: The module itself (the package re-exports `explain`, the function, under that name).
 X = importlib.import_module("moxie_sdk.content.ext.explain")
@@ -59,14 +61,17 @@ NAMESPACE = "ext:global_probe"
 
 def _words(action) -> str:
     """What `explain()` calls an action, with the module as `_plain` writes it: bare when it
-    is an id, quoted otherwise, braces and quotes made spaces, at most 80 characters."""
+    is an id shown exactly as written, quoted otherwise, braces and double quotes made
+    spaces, a straight quote curly, format and control characters dropped, at most 80
+    characters."""
     if action.type == ActionType.EXIT:
         return "the conversation ends"
     if action.type == ActionType.SLEEP:
         return "Moxie goes to sleep"
     assert action.type == ActionType.LAUNCH, action
     module = X._plain(action.module_id)
-    return (f"Moxie starts the {module} activity" if X._MODULE_ID.fullmatch(module)
+    return (f"Moxie starts the {module} activity"
+            if module == action.module_id and X._MODULE_ID.fullmatch(module)
             else f"Moxie starts the '{module}' activity")
 
 
@@ -150,6 +155,27 @@ BUILT = {
     "a launch with its module worked out": (
         _says({"concat": ["<launch:", {"upper": [{"trim": [_SPEECH]}]}, ">Go"]}),
         "draw", {}, None, None, ""),
+    # Written whole in the rule, but not in a `say` or a `let`: the line carries the same
+    # tag from what the child said, and the host must not count these statements' text.
+    "written only in the rule's when": (
+        _imported({"when": {"!=": [_SPEECH, "<exit>"]},
+                   "do": [{"say": _SPEECH}, {"handled": True}]}),
+        "<exit>Bye", {}, None, None, ""),
+    "written only in a scratch value": (
+        _imported({"do": [{"scratch": {"key": "x", "value": "<exit>Bye"}}, {"say": _SPEECH},
+                          {"handled": True}]}),
+        "<exit>Bye", {}, None, None, ""),
+    "written only in a remember value": (
+        _imported({"do": [{"remember": {"key": "k", "value": "<exit>Bye"}}, {"say": _SPEECH},
+                          {"handled": True}]}, caps=("handled", "memory.write", "say")),
+        "<exit>Bye", {}, "", E.DEFAULT_GRANTS | {"memory.write"}, ""),
+    "written only in a log note": (
+        _imported({"do": [{"note": "<exit>Bye"}, {"say": _SPEECH}, {"handled": True}]}),
+        "<exit>Bye", {}, None, None, ""),
+    "written only in the line's markup": (
+        _imported({"do": [{"say": _SPEECH, "markup": "<exit>Bye"}, {"handled": True}]},
+                  caps=("handled", "markup", "say")),
+        "<exit>Bye", {}, None, E.DEFAULT_GRANTS | {"markup"}, ""),
 }
 
 
@@ -210,6 +236,9 @@ LITERAL = {
         [DRAW], f"; then {DRAW}."),
     "in a lit list a get reads": (
         _says({"get": [{"lit": ["<launch:DRAW>Go", "Hi"]}, 0]}), "hi", None, [DRAW],
+        f"; then {DRAW}."),
+    "as a lit map's key, read by keys": (
+        _says({"get": [{"keys": [{"lit": {"<launch:DRAW>Go": 1}}]}, 0]}), "hi", None, [DRAW],
         f"; then {DRAW}."),
     "beside what the child said": (
         _says({"concat": ["<launch:DRAW>", _SPEECH]}), "hi", None, [DRAW], f"; then {DRAW}."),
@@ -309,19 +338,26 @@ def test_a_tag_that_forms_only_once_the_kept_tags_are_lifted_is_never_spoken():
 
 def test_no_other_path_lets_a_built_tag_act():
     """A tag in a line's markup or a `markup` statement never acts (the robot path keeps
-    markup's text only), a `scratch` value is never spoken, an earlier `say`'s written exit
-    is replaced by the later line (which carries a built tag, taken out), and a
-    conversation's `turn.before` program and the `perceive` path go through the same host."""
+    markup's text only) and is never spoken either: the robot speaks its markup when it is
+    given one, so the host takes every tag of ours out of it, to a fixpoint, before the
+    catalogue check, the one the robot's one-pass parse would have exposed included
+    (`<ex<sleep>it>Hi`, which that parse spoke as `<exit>Hi`), and counts nothing (markup
+    acts on nothing). A `scratch` value is never spoken, an earlier `say`'s written exit is
+    replaced by the later line (which carries a built tag, taken out), and a conversation's
+    `turn.before` program and the `perceive` path go through the same host."""
     markup = E.DEFAULT_GRANTS | {"markup"}
-    tagged = {"concat": ["<ex", _SPEECH, ">"]}
-    for program in (
-            _imported({"do": [{"say": "Hi", "markup": tagged}, {"handled": True}]},
-                      caps=("handled", "markup", "say")),
-            _imported({"do": [{"markup": tagged}, {"say": "Hi"}, {"handled": True}]},
-                      caps=("handled", "markup", "say"))):
-        assert E.validate(program, grants=markup) == []
-        reply, app, _ = _run(program, "it", grants=markup)
-        assert reply.text == "Hi" and reply.actions == [] and "<exit>" not in (reply.markup or "")
+    for tagged in ({"concat": ["<ex", _SPEECH, ">"]}, "<ex<sleep>it>Hi",
+                   {"concat": ["<ex", _SPEECH, "it>Hi"]}):
+        for program in (
+                _imported({"do": [{"say": "Hi", "markup": tagged}, {"handled": True}]},
+                          caps=("handled", "markup", "say")),
+                _imported({"do": [{"markup": tagged}, {"say": "Hi"}, {"handled": True}]},
+                          caps=("handled", "markup", "say"))):
+            assert E.validate(program, grants=markup) == []
+            reply, app, _ = _run(program, "<exit>" if tagged == "<ex<sleep>it>Hi" else "it",
+                                 grants=markup)
+            assert reply.text == "Hi" and reply.actions == [], (tagged, reply)
+            assert tag_names(reply.markup or "") == [] and _refused(app) == 0, (tagged, reply)
     program = _imported({"do": [{"scratch": {"key": "x", "value": tagged}}, {"say": "Hi"},
                                 {"handled": True}]})
     reply, app, _ = _run(program, "it")
@@ -415,6 +451,87 @@ def test_the_tags_a_program_writes_are_read_once_per_program(monkeypatch):
 # B. The review names every tag that can act; the reading ahead decides the wording
 # --------------------------------------------------------------------------- #
 
+#: Literals built to stall the parse that reads a program's text: a run of spaces after
+#: `<exit:` or `<exit` with no `>` after it, and one closed by `x>`, 200,000 characters each.
+STALLERS = {
+    "<exit: and 200,000 spaces": "<exit:" + " " * 200_000,
+    "<exit and 200,000 spaces, no colon": "<exit" + " " * 200_000,
+    "<launch: and 200,000 spaces, then x>": "<launch:" + " " * 200_000 + "x>",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(STALLERS))
+def test_the_tags_a_program_writes_are_read_in_time_linear_in_its_text(shape):
+    """The literal set is read on the first turn any rule of a program matches, over every
+    string the rule writes, taken or not (here in an `if` branch never taken), with the
+    GIL held, and a pack may carry a megabyte of them: so the read must be linear in the
+    program's text. `_TAG_RE`'s fields are greedy and run up to the `>` itself, so no two
+    neighbouring repeats can take the same character. With lazy fields followed by
+    `\\s*>` each of these first turns took 0.35 s at 16,000 spaces through the real app,
+    about four times longer per doubling (2.7 s at 64,000; still running after 8 s at a
+    megabyte), and every thread of the supervisor waited; now each takes milliseconds.
+    The alarm turns a quadratic read red at 5 s instead of minutes later."""
+    program = _says({"if": [False, STALLERS[shape], "Hi"]})
+    assert E.validate(program, grants=E.DEFAULT_GRANTS) == []
+    app = app_with(_module(program), chat=Brain(), clock=lambda: 1_700_000_000)
+    started = time.perf_counter()
+    try:
+        with _hard_limit(5.0):
+            reply = app.respond(Turn(robot=ext_robot(), speech="hi"))
+    except _Stalled:
+        pytest.fail(f"the first turn was still reading {shape} after 5 s")
+    took = time.perf_counter() - started
+    assert reply.text == "Hi" and reply.actions == [] and _refused(app) == 0, reply
+    assert took < 0.5, f"the first turn took {took:.2f} s on {shape}"
+    # The review reads the same literal (linearly since round 4) and names what it parses
+    # to: nothing for the two unclosed ones, a launch of the module `x` for the closed one.
+    assert _named_in(E.explain(program)[0]) == [
+        f"sometimes {_words(a)}" for a in parse_action_tags(STALLERS[shape])[1]]
+
+
+def test_a_literal_at_the_pack_cap_is_read_in_bounded_time():
+    """The largest string a pack can carry, `<exit:` and a megabyte of spaces: the host's
+    read of the program and the robot's own parse of the string both finish well inside a
+    second (before, neither had finished after 8 s)."""
+    at_cap = "<exit:" + " " * 2 ** 20
+    started = time.perf_counter()
+    try:
+        with _hard_limit(5.0):
+            assert H.literal_actions(_says({"if": [False, at_cap, "Hi"]})) == (frozenset(),)
+            assert parse_action_tags(at_cap) == ("<exit:", [])
+    except _Stalled:
+        pytest.fail("still reading a megabyte of spaces after 5 s")
+    took = time.perf_counter() - started
+    assert took < 1.0, f"a megabyte of spaces took {took:.2f} s"
+
+
+#: Pieces of the tag grammar, for random lines: its characters, Unicode spaces, ı, ſ, a
+#: private-use character, braces, quotes and a 90-character module.
+_GRAMMAR_POOL = ["<", ">", ":", " ", "\t", " ", "exit", "EXIT", "eXit", "sleep", "ſleep",
+                 "launch", "_if_confirmed", "DRAW", "x", "2", "", "<exit>", "<launch:",
+                 "ı", "{", '"', "\n", "Draw now", "A" * 90]
+
+
+def test_the_tag_parse_reads_what_its_lazy_form_read():
+    """`_TAG_RE` had lazy fields followed by `\\s*>` until round 7. The greedy form matches
+    the same span with the same name and the same fields on every line (the fields run up
+    to the `>` itself, and `_fields` strips the spaces before it), so every caller reads
+    what it read: pinned on the drift corpus, the whitespace-heavy forms and 20,000 random
+    lines over the grammar's characters."""
+    lazy = re.compile(r"<\s*([A-Za-z_][A-Za-z0-9_]*)\s*((?::[^<>]*?)?)\s*>")
+    rng = random.Random(7)
+    lines = ["<exit >", "< exit>", "<exit: >", "<launch:DRAW >", "<launch: DRAW : story >",
+             "<launch:DRAW: >", "<launch: : >", "<exit:\n>", "<exit\t:now\t>", "<exit:>",
+             "<exit:  x", "<exit  ", "<launch:  x>  <exit>", "<<exit>>", "<exit:<sleep>>",
+             "<launch:DR AW>", "<launch:" + " " * 50 + "x>", "<exit" + " " * 50]
+    lines += ["".join(rng.choice(_GRAMMAR_POOL) for _ in range(rng.randint(1, 12)))
+              for _ in range(20_000)]
+    for line in lines:
+        want = [(m.span(), m.group(1), _fields(m.group(2))) for m in lazy.finditer(line)]
+        got = [(m.span(), m.group(1), _fields(m.group(2))) for m in _TAG_RE.finditer(line)]
+        assert got == want, repr(line)
+
+
 def test_explain_reads_a_written_tag_exactly_as_the_robot_parses_it():
     """`explain.py` restates the tag grammar (its package imports nothing outside itself).
     On the drift corpus and 20,000 random lines, a string read as written (no worked-out
@@ -423,9 +540,7 @@ def test_explain_reads_a_written_tag_exactly_as_the_robot_parses_it():
     what each rule may act on (`ext_host.literal_actions`) names exactly what
     `explain()`'s literal reading names for that rule: the two sides of the invariant read
     the same text the same way."""
-    pool = ["<", ">", ":", " ", "\t", " ", "exit", "EXIT", "eXit", "sleep", "ſleep",
-            "launch", "_if_confirmed", "DRAW", "x", "2", "", "<exit>", "<launch:",
-            "ı", "{", '"', "\n", "Draw now", "A" * 90]
+    pool = _GRAMMAR_POOL
     rng = random.Random(6)
     lines = ["<exit>Bye!", "< sleep >zz", "<launch : DRAW : >go", "<exit:now>hm", "<<exit>>x",
              "<launch:DR<exit>AW>x", "<exitx>no", "<exit >nb", "<opener>Hi",
@@ -447,6 +562,43 @@ def test_explain_reads_a_written_tag_exactly_as_the_robot_parses_it():
             for key, words in reads.items():
                 assert words == _words(Action(type=ActionType[key[0].upper()], module_id=key[1],
                                               content_id=key[2])), (seed, key, words)
+
+
+def test_author_text_cannot_read_as_part_of_the_sentence():
+    """A sentence quotes author text (a line Moxie says, a test on what the child said, a
+    module that is not an id) in straight quotes. A straight quote in that text is written
+    curly (’), so it cannot close the quote early: a module id `x' activity and the
+    conversation ends and Moxie starts the 'y` read as two launches and a certain exit
+    the robot was never sent. Characters a parent cannot see (bidi overrides, zero-width
+    spaces, soft hyphens and other format characters, and control characters) are dropped
+    from the quote, and a module that is not shown exactly as written is quoted: `DRAW`
+    followed by a zero-width space is not the DRAW activity, and the robot is sent the id
+    as written."""
+    module = "x' activity and the conversation ends and Moxie starts the 'y"
+    program = _says(f"<launch:{module}>Go")
+    (sentence,) = E.explain(program)
+    assert sentence.endswith("; then Moxie starts the 'x’ activity and the conversation ends "
+                             "and Moxie starts the ’y' activity."), sentence
+    assert sentence.count("; then") == 1 and "'" not in X._plain(module)
+    reply, app, _ = _run(program, "hi")
+    assert reply.actions == [Action(type=ActionType.LAUNCH, module_id=module)]
+    assert _sent(reply) == [f"Moxie starts the '{X._plain(module)}' activity"]
+    assert _refused(app) == 0
+    (sentence,) = E.explain(_says("Bye' and then the conversation ends"))
+    assert sentence == ("Whenever this activity is triggered: tells your child 'Bye’ and then "
+                        "the conversation ends' and answers without asking the AI."), sentence
+    (sentence,) = E.explain(_imported({"when": {"==": [_SPEECH, "no'; then the conversation ends"]},
+                                       "do": [{"say": "ok"}, {"handled": True}]}))
+    assert sentence.startswith("When what your child said is 'no’; then the conversation ends': ")
+    assert sentence.count("; then") == 1, sentence
+    assert X._plain("Bye‮!​­\x07\x1b[0m") == "Bye![0m"
+    program = _says("<launch:DRAW​>Go")
+    (sentence,) = E.explain(program)
+    assert sentence.endswith("; then Moxie starts the 'DRAW' activity."), sentence
+    reply, app, _ = _run(program, "hi")
+    assert reply.actions == [Action(type=ActionType.LAUNCH, module_id="DRAW​")]
+    assert _sent(reply) == ["Moxie starts the 'DRAW' activity"] and _refused(app) == 0
+    assert E.explain(_says("<launch:DRAW>Go"))[0].endswith(f"; then {DRAW}.")
 
 
 #: Round 5's shapes as the reading ahead (`_say_effects`) finds them, with the three fixes:
@@ -586,10 +738,12 @@ IDX = {"%": [{"len": [_SPEECH]}, 2]}
 class _Generator:
     """Random programs over the ops the reviews used: `concat`, `if`, `random.pick`,
     `upper`, `lower`, `trim`, `get`, `slice`, `split`, `join`, `replace`, `reverse`,
-    `repeat`, `and`/`or`, `let` and `var`, over literal pieces of tags and non-tags; one or
-    two rules, one or two `say`s each, a `when` on the first. In the `runtime` mode what
-    the child said, a value the robot sent, a memory and a note from this turn are text
-    parts too; in the `literal` mode they only pick `if` branches and `get` indexes."""
+    `repeat`, `and`/`or`, `let` and `var`, over literal pieces of tags and non-tags, and a
+    map's keys read out by `keys`; one or two rules, one or two `say`s each, a `when` on
+    the first, and in some a `scratch` statement that writes a tag whole where no `say` or
+    `let` does. In the `runtime` mode what the child said, a value the robot sent, a
+    memory and a note from this turn are text parts too; in the `literal` mode they only
+    pick `if` branches and `get` indexes."""
 
     def __init__(self, rng, mode):
         self.rng, self.mode = rng, mode
@@ -620,7 +774,7 @@ class _Generator:
 
     def text(self, d=0):
         r = self.rng
-        k = r.randint(0, 15) if d < 3 else r.randint(0, 1)
+        k = r.randint(0, 16) if d < 3 else r.randint(0, 1)
         if k <= 1:
             return self.lit()
         if k == 2:
@@ -652,6 +806,9 @@ class _Generator:
             return {r.choice(["and", "or"]): [self.text(d + 1), self.text(d + 1)]}
         if k == 14:
             return {"var": r.choice(self.names)} if self.names else self.lit()
+        if k == 15:                        # a tag as a map's key, read out by `keys`
+            return {"get": [{"keys": [{"lit": {self.lit(): 1, r.choice(WHOLE): 2}}]},
+                            r.randint(0, 1)]}
         return self.fact()
 
     def program(self):
@@ -663,8 +820,10 @@ class _Generator:
             for i in range(self.rng.randint(0, 3)):
                 let[f"v{i}"] = self.text()
                 self.names.append(f"v{i}")
-            rule = {"do": [{"say": self.text()} for _ in range(self.rng.randint(1, 2))]
-                    + [{"handled": True}]}
+            do = [{"say": self.text()} for _ in range(self.rng.randint(1, 2))]
+            if self.rng.random() < 0.3:    # a tag written whole, but not in a say or a let
+                do.insert(0, {"scratch": {"key": "x", "value": self.lit()}})
+            rule = {"do": do + [{"handled": True}]}
             if let:
                 rule["let"] = let
             if n == 0 and count == 2 and self.rng.random() < 0.6:
