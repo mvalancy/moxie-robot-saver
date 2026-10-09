@@ -118,17 +118,28 @@ function wordRe(words) {
 }
 
 /** Compile a pattern list. A bad regex must not take the route down: it is dropped and
- *  counted on `TABLE.badPatterns`, which a test pins at zero. */
+ *  counted on `TABLE.badPatterns`, which a test pins at zero. A phrase may be `{pattern, need}`:
+ *  `need` is a word the phrase cannot match without (`needOf`). */
 function phraseRes(list, flags) {
   const out = [];
   for (const p of list || []) {
     try {
-      out.push(new RegExp(p, flags || "i"));
+      const spec = typeof p === "string" ? { pattern: p } : p || {};
+      const re = new RegExp(spec.pattern, flags || "i");
+      re.need = needOf(spec);
+      out.push(re);
     } catch {
       badPatterns += 1;
     }
   }
   return out;
+}
+
+/** A pattern's `need`: a word it cannot match without, so the pattern is not run on a line that
+ *  lacks it (round 5). A speed-up, never a change of verdict: V8 compiles a regex the first time it
+ *  runs, and an isolate's first line ran — so compiled — every hurt guard and phrase, about 100 ms. */
+function needOf(spec) {
+  return spec && spec.need ? new RegExp(spec.need, "i") : null;
 }
 
 let badPatterns = 0;
@@ -146,11 +157,11 @@ function vetoRes(vetoes) {
   return out;
 }
 
-/** Compile a guard list. A guard is a pattern string, or `{pattern, veto, outside}`: a guard
+/** Compile a guard list. A guard is a pattern string, or `{pattern, veto, outside, need}`: a guard
  *  that holds only while the line carries none of the words of the named veto set — read over
  *  the whole line, or (`outside: true`) over the line with the guard's own span blanked, for a
- *  guard whose span names the hurt verb itself ("accidentally hurt me"). A bad pattern or an
- *  unknown veto name is dropped and counted on `TABLE.badPatterns`. */
+ *  guard whose span names the hurt verb itself ("accidentally hurt me"); `need` as for a phrase.
+ *  A bad pattern or an unknown veto name is dropped and counted on `TABLE.badPatterns`. */
 function guardRes(list, vetoes) {
   const out = [];
   for (const g of list || []) {
@@ -161,7 +172,7 @@ function guardRes(list, vetoes) {
       if (!veto) { badPatterns += 1; continue; }
     }
     try {
-      out.push({ re: new RegExp(spec.pattern, "gi"), veto, outside: spec.outside === true });
+      out.push({ re: new RegExp(spec.pattern, "gi"), veto, outside: spec.outside === true, need: needOf(spec) });
     } catch {
       badPatterns += 1;
     }
@@ -267,7 +278,7 @@ function matches(cat, forms, side) {
     // laughing` never counts as self-harm and `flag football` never counts as a slur.
     const t = unguarded(form, guards);
     if (cat.words && cat.words.test(t)) return true;
-    for (const p of cat.phrases) if (p.test(t)) return true;
+    for (const p of cat.phrases) if ((!p.need || p.need.test(t)) && p.test(t)) return true;
     if (side === MOXIE) for (const p of cat.phrasesMoxie) if (p.test(t)) return true;
   }
   return false;
@@ -287,6 +298,7 @@ function unguarded(form, guards) {
   const memo = new Map(); // veto source -> verdict, so the line is read once per veto set
   let any = false;
   for (const g of guards) {
+    if (g.need && !g.need.test(form)) continue; // it cannot match here, so it is not run (nor compiled)
     g.re.lastIndex = 0;
     let m;
     while ((m = g.re.exec(form))) {
@@ -520,12 +532,18 @@ const DISCOURAGE_RE = /\b(?:make|makes|making|made)\s+(?:it|things|this|everythi
 
 function negated(sentence) {
   if (OPT_OUT_RE.test(sentence) || DEFER_RE.test(sentence) || DISCOURAGE_RE.test(sentence)) return true;
-  return NEGATION_RE.test(sentence.replace(NOT_A_NEGATION_RE, " "));
+  // The whitelist only where a negation word is: most sentences have none.
+  return NEGATION_RE.test(sentence) && NEGATION_RE.test(sentence.replace(NOT_A_NEGATION_RE, " "));
 }
 
 function pointsToAdult(sentence, named) {
-  // A sentence that points away points nowhere, every form and list in it: "don't tell your mom or a teacher".
-  if (negated(sentence)) return false;
+  // A sentence that points away points nowhere, every form and list in it: "don't tell your mom or a
+  // teacher". Read only where a form points somewhere, so a sentence with no grown-up in it never
+  // runs (nor compiles) the negation patterns.
+  return pointsSomewhere(sentence, named) && !negated(sentence);
+}
+
+function pointsSomewhere(sentence, named) {
   for (const re of FORMS) {
     re.lastIndex = 0;
     let m;
