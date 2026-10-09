@@ -372,6 +372,12 @@ def test_a_telehealth_event_is_not_mistaken_for_a_query(rt):
 # --------------------------------------------------------------------------- #
 # The transcript ring: the child's side, and the privacy gate on it
 # --------------------------------------------------------------------------- #
+#: 0.3 s at speech level: the honest ears send no clip under 120 ms (or at digital silence)
+#: to the engine (test_honest_ears.py), and these tests are about what it heard.
+from helpers_audio import tone_pcm as _tone                           # noqa: E402
+_SPEECH = _tone(300, amplitude=0.3)
+
+
 class _Fixed:
     """A `moxie_sdk.stt.Transcriber` that always hears the same thing (rule 9: a `client=`
     style seam, so no optional dependency is needed to exercise the path)."""
@@ -384,8 +390,8 @@ class _Fixed:
 def test_the_childs_words_reach_the_transcript_during_a_session(rt):
     runtime, device_id = rt
     runtime.set_transcriber(_Fixed())
-    runtime.feed_stt(device_id, VADState.START_OF_SPEECH, b"\x00\x01")
-    runtime.feed_stt(device_id, VADState.END_OF_SPEECH, b"\x00\x01")
+    runtime.feed_stt(device_id, VADState.START_OF_SPEECH, _SPEECH)
+    runtime.feed_stt(device_id, VADState.END_OF_SPEECH, _SPEECH)
     lines = runtime.telehealth_view(device_id)["transcript"]
     assert [(x["who"], x["text"]) for x in lines] == [("child", "I built a rocket")]
 
@@ -394,7 +400,7 @@ def test_nothing_of_the_child_is_kept_outside_a_session(rt):
     runtime, device_id = rt
     runtime.telehealth_session(device_id, "END_SESSION")
     runtime.set_transcriber(_Fixed())
-    runtime.feed_stt(device_id, VADState.END_OF_SPEECH, b"\x00\x01")
+    runtime.feed_stt(device_id, VADState.END_OF_SPEECH, _SPEECH)
     assert runtime.telehealth_view(device_id)["transcript"] == []
 
 
@@ -406,7 +412,7 @@ def test_under_no_data_the_ring_keeps_operator_lines_only(rt):
     runtime, device_id = rt
     runtime.update_config(device_id, logging_policy=int(LoggingPolicy.NO_DATA))
     runtime.set_transcriber(_Fixed())
-    runtime.feed_stt(device_id, VADState.END_OF_SPEECH, b"\x00\x01")
+    runtime.feed_stt(device_id, VADState.END_OF_SPEECH, _SPEECH)
     runtime.telehealth_speak(device_id, "That sounds fun.")
     lines = runtime.telehealth_view(device_id)["transcript"]
     assert [x["who"] for x in lines] == ["operator"]
