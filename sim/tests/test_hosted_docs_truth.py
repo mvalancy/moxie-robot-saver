@@ -9,13 +9,18 @@ URL; the deploy guide listed a `busy` mode that `env.js::modeOf` never returns; 
 comments in `functions/` cited `sim/web/audio.js`, which was split into `sim/web/voice/` on
 2026-09-26. Every guard passed, because none of them reads what a sentence claims.
 
-Three checks, each with a control that keeps it from passing vacuously:
+Four checks, each with a control that keeps it from passing vacuously:
 
 1. A retired claim may still be MENTIONED, but only in a sentence that retires it ("they are
    not a global ceiling"), the rule `scripts/check-doc-consistency.py` applies to the RE study.
 2. The deploy guide's mode table names exactly the modes `/api/health` can answer, plus the
    page's own `offline`.
 3. Nothing cites a deleted file, except the lines pinned in `PENDING` with their reason.
+4. Every default a doc states for a per-visitor window (chat, speech, transcribe; a minute, an
+   hour, a day) is the one `env.js` sets, and a table that gives one of a route's windows gives
+   all three. Merging W3-S14 into L1 (the voice's windows raised to 15 / 120 / 450) conflicted
+   on the spec's §5 rows: keeping dev's side whole left 10 / 80 / 300 there, keeping L1's
+   dropped the transcribe day, and every other guard passed either way.
 """
 import os
 import re
@@ -211,3 +216,130 @@ def test_nothing_cites_a_deleted_file():
                 if cite.search(line) and not any(rel == f and pin in line for f, pin in PENDING):
                     bad.append(f"{rel}:{n}: {line.strip()[:120]}\n      ({gone}: {where})")
     assert not bad, "A deleted file is cited:\n  " + "\n  ".join(bad)
+
+
+# ------------------------------------------------------- 4. the per-visitor windows --
+
+#: The per-visitor windows as `env.js` DEFAULTS names them: chat turns, speech calls (one a
+#: voice chunk) and transcribe uploads, each counted a minute, an hour and a UTC day.
+ROUTES = {"CHAT": "chat", "SPEECH": "speech", "STT": "transcribe"}
+SPANS = ("MIN", "HOUR", "DAY")
+WINDOWS = tuple(f"DEMO_{r}_PER_{s}" for r in ROUTES for s in SPANS)
+
+#: A window row's first cell: the config tables' `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY`,
+#: and the spec's §4.1 `Per-IP speech`.
+_ENV_CELL = re.compile(r"`DEMO_(CHAT|SPEECH|STT)_PER_MIN`((?:\s*/\s*`_(?:HOUR|DAY)`)*)")
+_PER_IP_CELL = re.compile(r"Per-IP (chat|speech|transcribe)")
+
+
+def window_defaults() -> dict:
+    """What `env.js` DEFAULTS sets each window to."""
+    src = read("functions/api/_lib/env.js")
+    body = src[src.index("export const DEFAULTS"):]
+    body = body[:body.index("\n});")]
+    hits = {k: re.search(rf"^\s*{k}:\s*(\d+),", body, re.M) for k in WINDOWS}
+    return {k: int(m.group(1)) for k, m in hits.items() if m}
+
+
+def _number(text: str):
+    digits = re.sub(r"\s", "", text)
+    return int(digits) if digits.isdigit() else None
+
+
+def stated_windows(text: str) -> list:
+    """`(where, window, value)` for each default `text` states for a window: a row of a table
+    whose second column is `Default` (`` `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY` | 15 / 120 /
+    450 ``, or the spec's §4.1 `Per-IP speech | 15/min · 120/hour · 450/day`), or a `KEY=value`
+    in the paragraph that opens "Everything else has a default". `where` names a table by its
+    header's line, so each table is checked whole on its own."""
+    out, table, listing = [], None, False
+    by_name = {name: r for r, name in ROUTES.items()}
+    for n, line in enumerate(text.splitlines(), 1):
+        if not line.lstrip().startswith("|"):
+            table = None
+        else:
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if table is None:
+                table = f"the table at line {n}" if cells[1:2] == ["Default"] else ""
+            elif table:
+                env = _ENV_CELL.fullmatch(cells[0])
+                per_ip = _PER_IP_CELL.fullmatch(cells[0])
+                if env:
+                    spans = ["MIN"] + re.findall(r"`_(HOUR|DAY)`", env.group(2))
+                    vals = [_number(v) for v in cells[1].split("/")]
+                    vals = vals if len(vals) == len(spans) else [None] * len(spans)
+                    out += [(table, f"DEMO_{env.group(1)}_PER_{s}", v)
+                            for s, v in zip(spans, vals)]
+                elif per_ip:
+                    route = by_name[per_ip.group(1)]
+                    out += [(table, f"DEMO_{route}_PER_{s.upper()}", _number(v))
+                            for v, s in re.findall(r"([\d\s]+)/(min|hour|day)\b", cells[1])]
+        listing = ("Everything else has a default" in line
+                   or (listing and bool(line.strip("#*/ \t"))))
+        if listing:
+            assigned = re.findall(r"DEMO_(CHAT|SPEECH|STT)_PER_(MIN|HOUR|DAY)=(\d+)", line)
+            out += [("the defaults paragraph", f"DEMO_{r}_PER_{s}", int(v))
+                    for r, s, v in assigned]
+    return out
+
+
+def window_problems(text: str, want: dict) -> list:
+    """Each wrong statement in `text`: a value that is not `want`'s, or a table that gives one
+    of a route's windows and leaves out another."""
+    stated = stated_windows(text)
+    bad = [f"{where}: {key} is {val}, the default is {want[key]}"
+           for where, key, val in stated if val != want[key]]
+    for where in sorted({w for w, _, _ in stated if w.startswith("the table")}):
+        keys = {k for w, k, _ in stated if w == where}
+        for r in ROUTES:
+            route = {f"DEMO_{r}_PER_{s}" for s in SPANS}
+            if keys & route and not route <= keys:
+                bad.append(f"{where}: states {sorted(keys & route)} "
+                           f"but not {sorted(route - keys)}")
+    return bad
+
+
+def test_the_window_check_has_teeth():
+    """Either side of the §5 conflict kept whole is caught; the line-by-line one is not."""
+    want = dict(zip(WINDOWS, (5, 40, 150, 15, 120, 450, 10, 60, 225)))
+    table = ("| Variable | Default | Range / notes |\n|---|--:|---|\n"
+             "| `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | ≥ 1 |\n"
+             "| `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY` | {} | ≥ 1 / ≥ 1 / 0..10 000 000 |\n"
+             "| `DEMO_STT_PER_MIN` / `_HOUR`{} | {} | ≥ 1 |\n")
+    devs_side = table.format("10 / 80 / 300", " / `_DAY`", "10 / 60 / 225")
+    ours_side = table.format("15 / 120 / 450", "", "10 / 60")
+    resolved = table.format("15 / 120 / 450", " / `_DAY`", "10 / 60 / 225")
+    assert len(window_problems(devs_side, want)) == 3, window_problems(devs_side, want)
+    assert window_problems(ours_side, want) == [
+        "the table at line 1: states ['DEMO_STT_PER_HOUR', 'DEMO_STT_PER_MIN'] but not "
+        "['DEMO_STT_PER_DAY']"]
+    assert window_problems(resolved, want) == []
+    # The spec's §4.1 rows and the template's paragraph are read too; a table whose second
+    # column is not the default (a production setting, say) states no default.
+    per_ip = ("| Control | Default | Why |\n|---|--:|---|\n"
+              "| Per-IP speech | 10/min · 80/hour · 300/day | two |\n")
+    listing = ("# Everything else has a default: DEMO_CHAT_PER_MIN=5,\n"
+               "# DEMO_SPEECH_PER_DAY=300 (each visitor's daily voice)\n")
+    production = ("| Variable | Production |\n|---|---|\n"
+                  "| `DEMO_SPEECH_PER_MIN` / `_HOUR` | 99 / 99 |\n")
+    assert len(window_problems(per_ip, want)) == 3, window_problems(per_ip, want)
+    assert len(window_problems(listing, want)) == 1, window_problems(listing, want)
+    assert window_problems(production, want) == []
+
+
+def test_every_default_stated_for_a_per_visitor_window_is_the_one_env_js_sets():
+    want = window_defaults()
+    assert sorted(want) == sorted(WINDOWS), f"env.js DEFAULTS parsed as {want}"
+    # Not vacuous: the places that state them are still read, each still states the voice's
+    # three windows, and the spec still has its two tables (§4.1 and §5).
+    voice = {f"DEMO_SPEECH_PER_{s}" for s in SPANS}
+    for rel, tables in (("docs/architecture/backlog/live-sim-demo.md", 2),
+                        ("docs/guides/deploy-cloudflare.md", 1), (".dev.vars.example", 0)):
+        got = stated_windows(read(rel))
+        assert voice <= {k for _, k, _ in got}, f"{rel} does not state {sorted(voice)}"
+        assert len({w for w, _, _ in got if w.startswith("the table")}) >= tables, rel
+    bad = [f"{rel}, {p}" for rel in described_in() for p in window_problems(read(rel), want)]
+    assert not bad, (
+        "A doc states a per-visitor window's default that env.js DEFAULTS does not set. Make "
+        "the doc say what the code does (after a merge conflict on such a row, resolve it line "
+        "by line, never one side whole):\n  " + "\n  ".join(bad))

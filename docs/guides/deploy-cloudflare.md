@@ -128,7 +128,7 @@ A public demo that proxies a paid gateway needs limits. Each is a `DEMO_*` varia
 | `DEMO_MAX_RECORD_MS` | 15000 | Recording length ceiling |
 | `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500000 / 2000 | Below the floor, no upstream call |
 | `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | Per visitor IP |
-| `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY` | 10 / 80 / 300 | Per visitor IP; a `_DAY` of `0` removes that day window |
+| `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY` | 15 / 120 / 450 | Per visitor IP: chat's windows times three, the most voice chunks a reply is spoken in; a `_DAY` of `0` removes that day window |
 | `DEMO_STT_PER_MIN` / `_HOUR` / `_DAY` | 10 / 60 / 225 | Per visitor IP; a `_DAY` of `0` removes that day window |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | Matched to the upstream key's parallel limit; raise the queue, not these |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | 2500 / 8 | At the ceiling a request waits briefly instead of being refused; `0` disables |
@@ -168,7 +168,9 @@ curl -s https://YOUR-DOMAIN/api/health
 | `offline` | The page's own verdict when no answer comes: `/api/health` is absent or not this API's JSON (plain static hosting), so the page is the static demo. Health itself never says it. |
 
 There is no `busy` mode. `load.level` (`ok`, `busy`, `full`) is this isolate's count against the chat
-ceiling, and the page shows `HOSTED DEMO · BUSY` from it while it stays `live`.
+ceiling, and the page shows `HOSTED DEMO · BUSY` from it while it stays `live`. A `429` is not a mode
+either, and the page's pause is per route: one from `/api/chat` answers turns from her recorded lines
+until `Retry-After`, while one from `/api/transcribe` holds only the microphone and typed turns go on.
 
 **Health reads configuration only and never calls the gateway**, so it is free to poll but cannot see
 an upstream outage: it can say `live` while chat fails with `upstream_down`. To test the brain, spend a
