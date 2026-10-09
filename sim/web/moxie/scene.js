@@ -47,6 +47,10 @@ window.__setCam = (x, y, z, tx = 0, ty = 1.22, tz = 0) => {
  * is what voice/index.js unlocks audio on, so whatever a tap starts may make sound. */
 const TAP_SLOP_PX = 10;     // moved further than this: a drag (an orbit), not a tap
 const TAP_MAX_MS = 700;     // held longer than this: a press-and-hold, not a tap
+/* How long the finger was down is read off the EVENTS' own clocks, not off when their handlers
+ * ran: a slow phone's first frames can hold the main thread for most of a second, and a quick
+ * tap landing then had its lift handled 700+ ms after its press and was dropped as a hold. */
+const stamp = (e) => (e.timeStamp > 0 ? e.timeStamp : performance.now());
 export function onStageTap(fn) {
   const el = renderer.domElement;
   const down = new Map();   // pointerId -> where and when it went down
@@ -54,7 +58,7 @@ export function onStageTap(fn) {
   el.addEventListener('pointerdown', (e) => {
     if (e.button > 0) return;                  // a right or middle button is not a tap
     if (down.size) pinch = true;
-    down.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), moved: false });
+    down.set(e.pointerId, { x: e.clientX, y: e.clientY, t: stamp(e), moved: false });
   });
   el.addEventListener('pointermove', (e) => {
     const d = down.get(e.pointerId);
@@ -65,7 +69,7 @@ export function onStageTap(fn) {
     down.delete(e.pointerId);
     const many = pinch;
     if (!down.size) pinch = false;
-    if (cancelled || !d || d.moved || many || performance.now() - d.t > TAP_MAX_MS) return;
+    if (cancelled || !d || d.moved || many || stamp(e) - d.t > TAP_MAX_MS) return;
     if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > TAP_SLOP_PX) return;
     try { fn({ x: e.clientX, y: e.clientY, touch: e.pointerType !== 'mouse' }); } catch (err) {}
   };

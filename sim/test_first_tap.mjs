@@ -16,7 +16,8 @@
  *      tap says hello (the refusal did not spend it);
  *   E. a tap while a typed turn is in flight: no sound, and her reply still plays whole;
  *   F. a tap with the microphone open: no sound, and the recording goes on;
- *   G. every greeting moxie.js can say has its clip in the manifest's `moxie` group.
+ *   G. every greeting moxie.js can say has its clip in the manifest's `moxie` group;
+ *   H. a quick tap on a busy page (900 ms of main-thread work between press and lift) is a tap.
  * No gateway and no network: `/api/*` is answered at the browser (openSim).
  *
  *   node sim/test_first_tap.mjs [--report]   (--report prints the measured times)
@@ -98,6 +99,29 @@ async function open(label, o = {}) {
   return { ...v, g };
 }
 
+/* A TAP TIMED LIKE A FINGER. puppeteer's touchscreen.tap / mouse.click send the lift only once
+ * the page has handled the press, so on a loaded runner a page busy at the press made a quick
+ * tap look like a 900 ms hold, by the events' own clocks too (measured: timeStamp 911 ms apart,
+ * against 50 ms when the lift carries its own time). scene.js times a tap by those clocks, as a
+ * real phone's finger is timed, so these send the press and the lift 60 ms apart by timestamp. */
+async function fingerTap(page, x, y) {
+  const s = await page.target().createCDPSession();
+  try {
+    const t = Date.now() / 1000;
+    await s.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }], timestamp: t });
+    await s.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [], timestamp: t + 0.06 });
+  } finally { await s.detach().catch(() => {}); }
+}
+async function mouseClick(page, x, y) {
+  const s = await page.target().createCDPSession();
+  try {
+    const t = Date.now() / 1000;
+    await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, timestamp: t - 0.02 });
+    await s.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1, timestamp: t });
+    await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1, timestamp: t + 0.06 });
+  } finally { await s.detach().catch(() => {}); }
+}
+
 /** Where she is on screen (her centre, the orbit target) and what a tap there lands on. */
 const her = (g) => g.json(`(() => { const p = window.__moxieProject(0, 1.15, 0);
   const el = document.elementFromPoint(p.x, p.y);
@@ -123,7 +147,7 @@ const clipsOf = (s) => s.plays.filter((p) => p.src === "clip");
 async function unlockWithAMiss(page, g, label) {
   const off = await offHer(g);
   ok(!!off, `${label}: found a point on the stage clear of her`);
-  if (off) await page.touchscreen.tap(off.x, off.y);
+  if (off) await fingerTap(page, off.x, off.y);
   ok(await g.until("window.moxieAudio.isUnlocked()", 5000), `${label}: precondition — a tap unlocked audio`);
   await g.read("(() => { try { window.moxieAmbient.stop(); } catch (e) {} return 1; })()");
 }
@@ -140,9 +164,12 @@ try {
     // The Bht_* player, spied on: the wave is RECORDED, never sampled mid-motion.
     await g.read("(() => { const B = window.__moxieBridge, bt = B.behaviourTree; window.__trees = []; " +
                  "B.behaviourTree = function (n) { window.__trees.push(n); return bt.apply(this, arguments); }; return 1; })()");
+    // …and so is her face: a later idle drift ("curious") must not be what a slow read sees.
+    await g.read("(() => { const m = window.moxie, sf = m.setFace; window.__faces = []; " +
+                 "m.setFace = function (f) { window.__faces.push(f); return sf.apply(this, arguments); }; return 1; })()");
     const at = await her(g);
     eq(at.on, "CANVAS", `A: her centre (${at.x}, ${at.y}) is the 3-D stage, not page chrome`);
-    await page.touchscreen.tap(at.x, at.y);
+    await fingerTap(page, at.x, at.y);
     ok(await g.until("window.__audio.plays.some((p) => p.src === 'clip')", 8000), "A: a clip plays after the first tap on her");
     const a = await state(g);
     const clips = clipsOf(a);
@@ -158,8 +185,8 @@ try {
     ok(await g.read("window.moxieAudio.isUnlocked()"), "A: the tap's own gesture unlocked audio");
     const trees = await g.json("window.__trees");
     ok(trees.includes("Bht_Gesture_Greet"), `A: she waves (Bht_Gesture_Greet; played ${JSON.stringify(trees)})`);
-    eq(await g.read("(document.querySelector('#faces button.active') || { dataset: {} }).dataset.expr"), "happy",
-       "A: …with a happy face while she says it");
+    const faces = await g.json("window.__faces");
+    ok(faces.includes("happy"), `A: …with a happy face while she says it (setFace recorded ${JSON.stringify(faces)})`);
     ok(await g.until(`document.getElementById('bubble-text').textContent === ${JSON.stringify(said || "")}`, 6000),
        "A: her bubble says the greeting");
     eq(a.speech.length, 0, "A: no browser voice — the hello is her own shipped clip");
@@ -171,7 +198,7 @@ try {
     ok(await g.until("!window.moxieAudio.isMoxieBusy(600)", 12000), "B: precondition — the hello is over");
     const t1 = await g.read("Math.round(performance.now())");
     const at2 = await her(g);
-    await page.touchscreen.tap(at2.x, at2.y);
+    await fingerTap(page, at2.x, at2.y);
     await sleep(1500);
     const b = await state(g, t1);
     eq(b.plays.length, 0, `B: the second tap makes no sound (${JSON.stringify(b.plays)})`);
@@ -194,7 +221,7 @@ try {
     await sleep(800);                                   // the orbit's damping settles
     const off = await offHer(g);
     ok(!!off, "C: found a point on the stage clear of her");
-    if (off) await page.mouse.click(off.x, off.y);
+    if (off) await mouseClick(page, off.x, off.y);
     await sleep(1200);
     await g.read("(() => { try { window.moxieAmbient.stop(); } catch (e) {} return 1; })()");
     let c = await state(g);
@@ -202,7 +229,7 @@ try {
          "C: a drag across her is no tap and a click beside her is a miss — no hello");
     eq(clipsOf(c).length, 0, "C: …and no sound");
     at = await her(g);                                  // she turned with the orbit
-    await page.mouse.click(at.x, at.y);
+    await mouseClick(page, at.x, at.y);
     ok(await g.until("window.__audio.plays.some((p) => p.src === 'clip')", 8000), "C: a click ON her makes a sound");
     c = await state(g);
     deep(c.stats && [c.stats.taps, c.stats.hellos, c.stats.last], [1, 1, "hello"], "C: …the hello (a mouse is a tap too)");
@@ -224,7 +251,7 @@ try {
     const quip = clipsOf(await state(g))[0];
     const t1 = await g.read("Math.round(performance.now())");
     const at = await her(g);
-    await page.touchscreen.tap(at.x, at.y);
+    await fingerTap(page, at.x, at.y);
     await sleep(400);
     let d = await state(g, t1);
     eq(d.stats && d.stats.last, "speaking", "D: a tap while she speaks is refused for that");
@@ -234,7 +261,7 @@ try {
     eq(d.stops.filter((s) => quip && s.id === quip.id && s.t < quip.t + quip.dur - 50).length, 0,
        "D: …uncut by the tap");
     const at2 = await her(g);
-    await page.touchscreen.tap(at2.x, at2.y);
+    await fingerTap(page, at2.x, at2.y);
     ok(await g.until("window.moxie.tapStats && window.moxie.tapStats().hellos === 1", 3000) &&
        await g.until(`window.__audio.plays.filter((p) => p.src === 'clip' && p.t >= ${t1}).length === 1`, 8000),
        "D: quiet again, a tap says hello: the refusal did not spend it");
@@ -258,7 +285,7 @@ try {
     await g.read("(() => { window.moxieTypedTurn.send('tell me about rockets'); return 1; })()");
     await sleep(600);
     const at = await her(g);
-    await page.touchscreen.tap(at.x, at.y);
+    await fingerTap(page, at.x, at.y);
     await sleep(300);
     let e = await state(g, t0);
     eq(e.stats && e.stats.last, "talking", "E: a tap while her answer is on its way is refused for that");
@@ -290,7 +317,7 @@ try {
     ok(await g.until("document.body.getAttribute('data-mic') === 'on'", 5000), "F: precondition — the microphone is open");
     const t1 = await g.read("Math.round(performance.now())");
     const at = await her(g);
-    await page.touchscreen.tap(at.x, at.y);
+    await fingerTap(page, at.x, at.y);
     await sleep(800);
     const f = await state(g, t1);
     eq(f.stats && f.stats.last, "mic", "F: a tap with the mic open is refused for that");
@@ -298,6 +325,55 @@ try {
     deep(await g.json("[window.moxieMic.isRecording(), window.__recStops]"), [true, 0], "F: …and the recording goes on");
     await g.read("(() => { window.moxieMic.stop(); return 1; })()");
     eq(notable(errs, aborted).length, 0, `F: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+
+  /* =======================================================================
+   * H. A QUICK TAP ON A BUSY PAGE. A slow phone's first frames can hold the main thread for
+   * most of a second, and the first tap lands right then: the finger is down for 10 ms, but
+   * the page runs the lift's handler 900 ms after the press's. Timed by when the handlers ran,
+   * that was a press-and-hold and the tap was dropped (on a loaded runner, case A once saw its
+   * first tap counted as nothing at all); timed by the events' own clocks it is a tap. Here the
+   * lift is CREATED 10 ms after the press and DISPATCHED after 900 ms of main-thread work.
+   * Synthetic events grant no activation, so the voice is stubbed: tapStats is the record.
+   * ===================================================================== */
+  {
+    const { page, g, errs, aborted } = await open("H", { viewport: { width: 1280, height: 800 } });
+    const at = await her(g);
+    const r = await g.json(`(() => {
+      window.moxieAudio.speak = () => Promise.resolve(false);   // no activation: no sound to make
+      const c = document.elementFromPoint(${at.x}, ${at.y});
+      const o = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0, buttons: 1,
+                  clientX: ${at.x}, clientY: ${at.y}, bubbles: true, cancelable: true, composed: true };
+      const down = new PointerEvent("pointerdown", o);
+      const t0 = performance.now(); while (performance.now() - t0 < 10) {}
+      const up = new PointerEvent("pointerup", Object.assign({}, o, { buttons: 0 }));
+      c.dispatchEvent(down);
+      const t1 = performance.now(); while (performance.now() - t1 < 900) {}   // a long frame
+      c.dispatchEvent(up);
+      return { on: c.tagName, held: Math.round(up.timeStamp - down.timeStamp),
+               busy: Math.round(performance.now() - t1), stats: window.moxie.tapStats() };
+    })()`);
+    ok(r.on === "CANVAS" && r.held < 100 && r.busy >= 900,
+       `H: precondition — on the stage, the finger down ${r.held} ms, the page busy ${r.busy} ms in between`);
+    deep(r.stats && [r.stats.taps, r.stats.hellos, r.stats.last], [1, 1, "hello"],
+         `H: a quick tap on a busy page is still a tap on her — and her hello (tapStats ${JSON.stringify(r.stats)})`);
+    // The NEGATIVE CONTROL: a real 900 ms hold whose two events are then handled back to back
+    // (queued behind a long frame) is still a hold, not a tap: the clock is the events'.
+    const h = await g.json(`(() => {
+      const c = document.elementFromPoint(${at.x}, ${at.y});
+      const o = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0, buttons: 1,
+                  clientX: ${at.x}, clientY: ${at.y}, bubbles: true, cancelable: true, composed: true };
+      const down = new PointerEvent("pointerdown", o);
+      const t0 = performance.now(); while (performance.now() - t0 < 900) {}   // the finger stays down
+      const up = new PointerEvent("pointerup", Object.assign({}, o, { buttons: 0 }));
+      c.dispatchEvent(down); c.dispatchEvent(up);
+      return { held: Math.round(up.timeStamp - down.timeStamp), stats: window.moxie.tapStats() };
+    })()`);
+    ok(h.held >= 900, `H: precondition — the second press was held ${h.held} ms`);
+    deep(h.stats && r.stats && [h.stats.taps, h.stats.misses], r.stats && [r.stats.taps, r.stats.misses],
+         `H: …and a held press is no tap (nor a miss), however late it is handled (tapStats ${JSON.stringify(h.stats)})`);
+    eq(notable(errs, aborted).length, 0, `H: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
     await page.close();
   }
 } catch (e) {
