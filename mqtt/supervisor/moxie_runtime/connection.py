@@ -380,8 +380,21 @@ class ConnectionMixin:
 
     # ---- connect detection via broker log ----
     def _note(self, kind: str, text: str):
-        """Record a line for the UI's connection monitor."""
-        self.recent.append({"t": time.time(), "kind": kind, "text": text})
+        """Record a line for the UI's connection monitor, a child's name masked
+        (`_masked`): the feed is served by `/status`, which asks no one to sign in."""
+        self.recent.append({"t": time.time(), "kind": kind, "text": self._masked(text)})
+
+    def _masked(self, text, limit: int | None = None) -> str:
+        """`text` for the supervisor's log and activity feed: every name Moxie calls a child
+        on this appliance (`child_names`) is `[child]`, then it is cut to `limit` characters
+        (masked first, so a cut never leaves part of a name). The robot hears the real name:
+        only these copies are masked."""
+        from moxie_sdk.cloud_config import mask_child_names
+        try:
+            out = mask_child_names(text, self.child_names())
+        except Exception as e:           # never the raw line: a mask that failed hides it
+            out = f"[a line withheld: the name mask failed ({type(e).__name__})]"
+        return out if limit is None else out[:limit]
 
     def _on_log(self, line: str):
         # surface interesting broker activity to the UI (any sign of life)

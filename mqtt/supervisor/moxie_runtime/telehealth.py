@@ -166,7 +166,7 @@ class TelehealthMixin:
         # A real robot self-synthesizes; this gives the SIM a voice (mqtt-and-conversation §5.3).
         self._maybe_synthesize(device_id, markup, event_id=line_key, chunk_num=0)
         self._telehealth_note(device_id, telehealth_seam.OPERATOR, line)
-        self._note("telehealth", f"🎭 said '{line[:40]}'")
+        self._note("telehealth", f"🎭 said '{self._masked(line, 40)}'")
         out = self.telehealth_view(device_id)
         out["spoke"] = line
         out["markup"] = markup

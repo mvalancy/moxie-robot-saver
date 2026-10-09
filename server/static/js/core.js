@@ -84,7 +84,12 @@ function enterApp(){
 // one Simulate robot scan completes; it also makes the recovery phrase.
 $('#btn-qr').onclick = async () => {
   const name=$('#child-name').value.trim();
-  if(name){ await saveChildName(name); }
+  if(name){
+    // A name Moxie will not say (the name rule, its safety rules) is refused with the
+    // server's own sentence, and nothing is saved: say why, and make no code yet.
+    try{ await saveChildName(name); }
+    catch(e){ alert(oops(e,'The name could not be saved.')); return; }
+  }
   const body={ ssid:$('#ssid').value.trim(), password:$('#wifipass').value,
                band:$('#band').value, hidden:$('#hidden').checked };
   if(!body.ssid){ alert('Enter your Wi-Fi network name'); return; }
@@ -112,9 +117,10 @@ $('#btn-qr').onclick = async () => {
 // that child. The live box says what the robot calls the child ('Moxie calls your child').
 const PLACEHOLDER_CHILD='Moxie Kid';   // what pairing names a child nobody named: never said
 let CHILD_PUSH=null;                    // the last rename's answer: {name, reason}
-/** The name a child record gives Moxie, or '' (none, or the pairing placeholder). */
+/** The name a child record gives Moxie (NFC, as the robot keeps it), or '' (none, or the
+ *  pairing placeholder). */
 function childName(kid){
-  const n=String((kid&&(kid.nickname||kid['child-first-name']))||'').split(/\s+/).filter(Boolean).join(' ');
+  const n=String((kid&&(kid.nickname||kid['child-first-name']))||'').split(/\s+/).filter(Boolean).join(' ').normalize('NFC');
   return n.toLowerCase()===PLACEHOLDER_CHILD.toLowerCase() ? '' : n;
 }
 /** The account's child: the one its robot is bound to, else the active one, else the first. */

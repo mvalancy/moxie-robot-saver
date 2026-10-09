@@ -10,10 +10,11 @@ The FastAPI application: a clean-room reimplementation of the parent-app REST AP
 - [`fleet/`](fleet/) — pure, dependency-free card views over supervisor payloads.
 - [`lifecycle.py`](lifecycle.py) — unpair and factory reset: the answer's wording and the
   `restore_factory` setup code, shared by the routes and the browser suite (dependency-free).
-- [`child_profile.py`](child_profile.py) — the child's name Moxie says: sends the account's name
-  to the robot's supervisor (never the "Moxie Kid" placeholder: a clear instead), clears it on
-  unpair, and keeps it out of the console's status views for any caller without a token of the
-  account that has the robot.
+- [`child_profile.py`](child_profile.py) — the child's name Moxie says: asks the supervisor before
+  a typed name is saved (`refusal_for`: the name rule and Moxie's safety rules), sends the
+  account's name to the robot's supervisor (never the "Moxie Kid" placeholder: a clear instead),
+  clears it on unpair, and keeps it out of the console's status views for any caller without a
+  token of the account that has the robot.
 - [`auth.py`](auth.py) — the bearer-token dependency, token minting, JSON body reading.
 - [`crypto.py`](crypto.py) — deterministic crypto (Argon2id zero-salt seed → Ed25519/X25519/secretbox);
   reproduces the account/pairing key system without any secrets on disk.
