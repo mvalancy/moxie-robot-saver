@@ -689,3 +689,52 @@ for (const [line, eid, answer] of [[GAME, "sim-game", game], [DAD, "sim-dad", re
        "13r: THE BOUND'S COST: a microphone opening 3.0 s after the tap cuts the redirect that began at 7.0 s (its words stay in the log), as ears B17d pins for any reply begun while the browser asked");
   ok(world.spy.transcript.includes(REDIRECT), "13r: …the redirect's words stay in the log");
 }
+
+/* =========================================================================== *
+ * 13s. AN EARLY REPLY WHOSE OWN VOICE IS REFUSED NEVER CUTS HER: its stand-in (its words in
+ *      the local voice) waits for her last sentence, as its words would have (§13d). The game
+ *      answer, released when her day reply was handed over (8.7 s), has its voice refused — a
+ *      429 after 1.5 s, or after 100 ms — and the stand-in follows her last sentence (11.3 s)
+ *      instead of cutting it (the PR head before this: 10.2 s and 8.8 s, cutting; origin/dev:
+ *      11.4 s, and 10.0 s cutting). And a newer voice taking the speakers meanwhile drops it:
+ *      a hurt line typed at 10.5 s, with nothing in flight, has its redirect said at once (as
+ *      today), and the stand-in never speaks over it.
+ * =========================================================================== */
+{
+  const refused = (ms) => live((path, body) => {
+    if (path === "/api/chat") {
+      if (body.text === DAY) return Object.assign(said(THREE, "sim-day", { speech: tix("sim-day", 3), context: "CTX-day" }), { delayMs: 1800 });
+      return body.text === GAME ? Object.assign(game(), { delayMs: 1200 }) : Object.assign(blocked(), { delayMs: 200 });
+    }
+    if (path === "/api/speech") {
+      const [, eid, k] = ticketOf(body);
+      if (eid === "sim-game") return { status: 429, json: envelope({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "live" }), delayMs: ms };
+      return voicedChunk(eid, Number(k), { delayMs: 2300, seconds: DUR[eid][Number(k)] });
+    }
+    return { status: 404, text: "" };
+  });
+  const standIn = (w, t0) => w.spy.said.filter((s) => s.text === PLAY).map((s) => s.t - t0);
+  for (const ms of [1500, 100]) {
+    const world = await boot({ realVoice: true, answer: refused(ms) });
+    const t0 = now();
+    globalThis.window.moxieTypedTurn.send(DAY);
+    await advance(5000);
+    globalThis.window.moxieTypedTurn.send(GAME);
+    await advance(20000);
+    deep([heard(world, t0), standIn(world, t0), cutsAt(world, t0)], [["day0@4100", "day1@6400", "day2@8800", "browser@11300"], [11300], []],
+         `13s (a 429 after ${ms} ms): THE STAND-IN FOLLOWS HER LAST SENTENCE (11.3 s), NOTHING CUT (the PR head before this: ${ms === 1500 ? "10.2" : "8.8"} s, cutting it)`);
+    deep([T().voiceFallbacks, T().speechRefused, T().heldReplies, world.spy.transcript.slice(-1)], [1, 1, 1, [PLAY]],
+         `13s (a 429 after ${ms} ms): recorded: one stand-in for one refused voice; the reply held once; its words in the log`);
+  }
+  const world = await boot({ realVoice: true, answer: refused(1500) });
+  const t0 = now();
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(5000);
+  globalThis.window.moxieTypedTurn.send(GAME);
+  await advance(5500);
+  globalThis.window.moxieTypedTurn.send(HURT);         // t+10.5 s: the game reply settled at 10.2 s, its stand-in waiting
+  await advance(15000);
+  deep([heard(world, t0), cutsAt(world, t0), standIn(world, t0)], [["day0@4100", "day1@6400", "day2@8800", "browser@10700"], ["cloud@10700"], []],
+       "13s (a newer voice first): THE REDIRECT (10.7 s) TAKES THE SPEAKERS AND THE WAITING STAND-IN IS DROPPED, never spoken over it (the redirect cuts her sentence, as a line sent with nothing in flight does today)");
+  deep([world.spy.transcript.slice(-3), T().early], [[PLAY, HURT, REDIRECT], 1], "13s (a newer voice first): the game answer's words stay in the log, before the hurt line and its redirect");
+}

@@ -490,8 +490,22 @@
     try { if (eid && inner.expectCloudVoice) inner.expectCloudVoice(eid); } catch (e) {}
   }
 
+  /* An EARLY reply's stand-in waits for her playing sentence (W4-S7). Its voice is bought the
+   * moment the reply before it is handed over, before that reply's last sentence has played,
+   * so a refused voice said its words locally at once, over that sentence: a 429 after
+   * 1.5 s cut it at 10.2 s in the W4-S7 review's probe, where with the POST held (#325) the
+   * stand-in came at 11.4 s, uncut. Like any local voice of an early reply (`heldBehind`) it
+   * waits for her server voice instead — and is dropped, its words on screen as for any reply
+   * a newer one ended, if a newer voice or the Listen tap has the speakers by then. */
+  var quietFirst = {};     // event -> true while an early reply's voice is being decided
+  var voiceStarts = 0;     // every voice started, or stopped, through `supersedeVoices`
+
   function releaseVoice(eid) {
-    try { if (eid && inner.releaseCloudVoice) inner.releaseCloudVoice(eid); } catch (e) {}
+    if (!eid) return;
+    var say = function () { try { if (inner.releaseCloudVoice) inner.releaseCloudVoice(eid); } catch (e) {} };
+    if (!quietFirst[eid]) return say();
+    var mark = voiceStarts;
+    whenQuiet().then(function () { if (voiceStarts === mark) say(); });
   }
 
   /* The replies whose voice is still being assembled: `voiceFirst` pipelines with a chunk
@@ -510,9 +524,11 @@
   var turnSeq = 0;
 
   /** The voice of turn `seq` is starting: every open pipeline of an earlier turn is over.
-   *  A line with no turn of its own (the scripted consolation, the bot line) is the newest. */
+   *  A line with no turn of its own (the scripted consolation, the bot line) is the newest.
+   *  Counted (`voiceStarts`): a stand-in waiting its turn is said only if none started since. */
   function supersedeVoices(seq) {
     var before = seq == null ? Infinity : seq;
+    voiceStarts++;
     for (var i = pipelines.length - 1; i >= 0; i--) if (pipelines[i].seq < before) pipelines[i].supersede();
   }
 
@@ -903,7 +919,11 @@
       });
       turn.chatBack();
       drain();
-      return heldBehind(turn, !tickets.length).then(whenEarsIdle).then(function () {
+      // An early reply's stand-in voice, should its own be refused, waits for her playing
+      // sentence (`releaseVoice`): marked until this reply's voice is decided.
+      var quiet = turn.early ? eventOf(body.messages, body.speech) : "";
+      if (quiet) quietFirst[quiet] = true;
+      var reply = heldBehind(turn, !tickets.length).then(whenEarsIdle).then(function () {
         turn.mute = null;
         if (turn.silenced) { stats.tickets += tickets.length; stats.chunksSuperseded += tickets.length; settle(); return; }
         if (!tickets.length) {
@@ -916,6 +936,10 @@
         stats.tickets += tickets.length;
         return voiceFirst(body.messages, tickets, eventOf(body.messages, body.speech), seq, settle);
       });
+
+      var forget = function () { if (quiet) delete quietFirst[quiet]; };
+      reply.then(forget, forget);
+      return reply;
     });
   }
 
