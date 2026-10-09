@@ -196,6 +196,10 @@ const rule = (n) => P.split("\n").find((l) => l.startsWith(n + ". ")) || "";
   ok(r6.includes("while this page is open") && r6.includes("never promise to remember") && r6.includes("say you saved anything"),
      "rule 6 says how long her memory lasts, and forbids a promise to remember or a claimed save");
   ok(r6.endsWith('say "I don\'t remember, can you tell me again?"'), "…and keeps the honest fallback line");
+  // The proposed v2.1 text added "and holds only the last few things said"; measured, she then
+  // denied what she had been told three turns earlier ("You did not tell me that"), so no rule
+  // may tell her that her memory is short.
+  ok(!/last few|short memory|only remember/i.test(P), "…and nothing tells her that her memory is SHORT, which made her deny what she was told");
   eq(rule(2), RULE2_V2, "rule 2 is v2's, byte for byte (the frozen copy above)");
   ok(rule(3).includes("a bit of robot life"), "rule 3 offers 'a bit of robot life' among her contributions");
   ok(P.split("\n")[0].endsWith(". The child you are talking to is your mentor."),

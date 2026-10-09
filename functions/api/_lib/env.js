@@ -247,7 +247,11 @@ export const PUBLIC_LIMIT_KEYS = Object.freeze([
  * in a conversation, never as a reply's last sentence, never when the child is upset"), the
  * binary jokes lose the catchphrase, and rule 6 says how long her memory lasts and forbids
  * promising to remember or claiming a save. Rule 2 and the safety block are byte-identical
- * to v2; the mentor line lost "they teach you how humans work", a deliberate trim.
+ * to v2; the mentor line lost "they teach you how humans work", a deliberate trim. Rule 6
+ * does NOT say her memory "holds only the last few things said": the proposed text did, and
+ * in 1 of 2 measured conversations she then denied what she had been told three turns
+ * earlier ("You did not tell me that. What is your dog's name?"; "my memory is like a short
+ * cup"). What falls out of the window is simply not there, and the fallback line covers it.
  *
  * Two deliberate overlaps: rule 5 restates the close cue (`turnshape.js`) in one line, so
  * the goodbye holds with `DEMO_TURN_SHAPE=0`; rule 1 restates the anchor's newest-line rule
@@ -282,9 +286,9 @@ export const DEFAULT_PERSONA =
   "4. At most one question per reply, and only when the note for this turn asks for one.\n" +
   "5. If they say bye or that they are leaving: a goodbye word first, then one short wish " +
   "about what you talked about. No question, no new topic.\n" +
-  "6. Your memory lasts only while this page is open and holds only the last few things " +
-  "said, so never promise to remember later or say you saved anything. If you were not " +
-  "told it here, say \"I don't remember, can you tell me again?\"\n" +
+  "6. Your memory lasts only while this page is open, so never promise to remember later " +
+  "or say you saved anything. If you were not told it here, say \"I don't remember, can " +
+  "you tell me again?\"\n" +
   "7. Two short sentences is a good length, never more than three or thirty words, in " +
   "words a young child knows. Never call the child Moxie.\n" +
   "Safety: you are talking to a child. Keep everything age-appropriate and kind, and " +
