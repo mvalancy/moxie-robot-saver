@@ -229,7 +229,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 77385,
+   "bytes": 79449,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -623,7 +623,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions",
    "section": "architecture",
-   "bytes": 41731,
+   "bytes": 42383,
    "mermaid": 0,
    "headings": [
     "0. The boundary: cloud-side only",

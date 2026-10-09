@@ -839,9 +839,23 @@ by construction rather than by reading the program cleverly:
   on. A tag that forms only once the robot's own parse has lifted the tags that stay
   (`<ex<sleep>it>` with its sleep written whole would be spoken as `<exit>`, which that
   one-pass parse never acts on) is cut out with the pieces it is made of, so the child
-  never hears a tag of ours. The line's markup, which the robot speaks when it is given
-  one, goes through the same pass with nothing kept, so it holds no tag of ours either
-  (never counted: markup acts on nothing). The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
+  never hears a tag of ours. The robot's markup (a `say`'s or a `markup` statement's,
+  under the `markup` grant, which only shipped programs have today) holds no tag of ours
+  and nothing the catalogue gate refuses, or the line goes without it
+  (`ext_host.robot_markup`): the robot speaks its markup when it is given one, lifting our
+  tags from it once as from a line, and markup acts on nothing, so every tag of ours is
+  lifted as that parse lifts them (one pass, malformed ones too), the gate drops what the
+  catalogue refuses, and if a tag of ours, or a tag the gate would drop, is then in what
+  is left (a dropped tag stood between the pieces of another, so its neighbours met:
+  `<ex<ex<mark name="cmd:zzz"/>it>it>` would have reached the robot as `<exit>`), the
+  markup is dropped whole and the runtime's markup floor speaks the line. Three passes,
+  each linear in the markup: a turn with four 8 KB nests of tag pieces takes 1.5-2.4 ms
+  (0.4-0.7 ms with one), measured through the real app on two runs, one under other load,
+  where the fixpoint pass this replaced took 0.6-1.0 s per nest and 2.1-3.7 s for four.
+  A tag cut short by a `>` inside its own quotes is dropped too (read tag
+  by tag, `<spurt spurt_id="n>pe"/>` names no id, while the same check over the whole
+  markup reads a spurt the catalogue never saw). Never counted as a refusal: nothing in
+  markup is acted on. The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
   answers without asking the AI; then the conversation ends."* and sends its `<exit>` as
   before, because its rule writes it. A taken-out tag is counted, and the parent is told
   once per robot, program and reason through the same `ext_events` ring a breach uses
@@ -859,8 +873,11 @@ by construction rather than by reading the program cleverly:
   with lazy fields, that read was quadratic on a run of spaces (0.35 s at 16,000, about
   four times longer per doubling, still running after 8 s at a megabyte) and every thread
   of the supervisor waited on it. The pass over the line is bounded by the line (1,000
-  characters) and takes at least six characters out each time it repeats: the worst line,
-  165 nested `<ex … it>` around a malformed tag, costs 7.6 ms a turn, measured.
+  characters) and takes at least six characters out each time it repeats, so its cost is
+  bounded by the line's square: the worst line, 165 nested `<ex … it>` around a malformed
+  tag, costs 9-16 ms, and a turn can carry four such lines (`MAX_ACTIONS`, each filtered on
+  its own), 45-68 ms a turn, measured through the real app on two runs, one under other
+  load; an ordinary line costs a few microseconds.
 - **The sentence names every tag written whole in the rule's text,** at least as
   *"sometimes"* (*"…; then sometimes Moxie starts the DRAW activity."*). So for every
   program and every run-time input, the actions the robot is sent from a rule's line are
@@ -868,9 +885,17 @@ by construction rather than by reading the program cleverly:
   Moxie says; a quote that is not said, such as a test on what the child said, shows a tag
   as written (*"When what your child said is '<exit>'"*). A module that is not an id, or
   is not shown exactly as written, is quoted (*"Moxie starts the 'Draw now' activity"*);
-  a straight quote in author text is written curly (’), so it cannot close the quote and
-  read as part of the sentence; and the format and control characters a parent cannot
-  see (a bidi override, a zero-width space) are dropped from what is shown, so `DRAW`
+  a straight quote in author text is written curly (’), so for a machine (the pack review
+  and the tests, which split a sentence at its one *"; then"*) no author text can close
+  the quote early; to a parent, though, the curly quote is the typographic close, and so
+  is a lookalike the author writes (ʼ ＇ ′ ` ´ ‘), shown as written, so quoted author text
+  can still read as the sentence's own (a module id `x’ activity and the conversation
+  ends and Moxie starts the ’y` reads as three effects while the robot is sent one
+  launch): that misreading names more effects than happen and never fewer, since the
+  sentence's own effects always follow the quote; and the format and control characters
+  a parent cannot see (a bidi override, a zero-width space) are dropped from what is
+  shown, before its 80-character cut, so they cannot fill the cut and hide the words
+  after them, so `DRAW`
   with a zero-width space after it reads *"the 'DRAW' activity"*, quoted, while the robot
   is sent the id as written. One sentence names at most 16 activities, the rest as
   *"sometimes Moxie starts an activity it works out"*, which stands for any launch past
