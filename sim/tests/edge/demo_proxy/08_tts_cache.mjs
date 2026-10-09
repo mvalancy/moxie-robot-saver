@@ -363,7 +363,7 @@ import {
   {
     const realSetTimeout = globalThis.setTimeout;
     const realClearTimeout = globalThis.clearTimeout;
-    const REAL_MS = 2000;   // real time allowed for a route that is NOT waiting on a timer
+    const TICKS = 400;   // real 5 ms timer ticks (2 s or more) for a route NOT waiting on a timer
     const SERVED = Buffer.from(pcmBytes(200));   // the stub's synthesis, as samples
     const ticketFor = async (env) => {
       P.plan = { chat: { content: LINE }, speech: P.plan.speech };
@@ -371,8 +371,8 @@ import {
     };
     /** Redeem a ticket the way Pages calls the route: a context whose `waitUntil` records
      *  what it was handed, with every timer frozen until the response has arrived (or
-     *  REAL_MS of real time pass). The frozen timers are fired afterwards, so neither the
-     *  route nor the handed write is left pending. */
+     *  TICKS real ticks pass; no clock is read). The frozen timers are fired afterwards, so
+     *  neither the route nor the handed write is left pending. */
     async function onPages(ticket, env) {
       const handed = [];
       const timers = [];
@@ -382,8 +382,7 @@ import {
       try {
         const route = speech.onRequestPost({ request: req("/api/speech", { ticket }), env, waitUntil: (p) => { handed.push(p); } });
         route.then(() => { answered = true; }, () => { answered = true; });
-        const until = Date.now() + REAL_MS;
-        while (!answered && Date.now() < until) await new Promise((r) => realSetTimeout(r, 5));
+        for (let k = 0; k < TICKS && !answered; k++) await new Promise((r) => realSetTimeout(r, 5));
         const frozen = { answered, handed: handed.length, writePending: false, inflight: limits.__state().inflight.speech };
         if (handed.length) {
           let settled = false;
