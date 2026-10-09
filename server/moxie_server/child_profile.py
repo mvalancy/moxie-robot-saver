@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import re
-import unicodedata
 from typing import Optional
 
 from . import db, supervisor
@@ -58,12 +57,12 @@ MASK = "[name]"
 
 def name_in(attrs) -> str:
     """The name a child record's attributes give Moxie (`nickname`, else
-    `child-first-name`), NFC and whitespace-collapsed, or `""` for none (no attributes, a
-    blank name, or the pairing placeholder)."""
+    `child-first-name`), whitespace-collapsed, or `""` for none (no attributes, a blank
+    name, or the pairing placeholder)."""
     if not isinstance(attrs, dict):
         return ""
     raw = attrs.get("nickname") or attrs.get("child-first-name") or ""
-    name = unicodedata.normalize("NFC", " ".join(str(raw).split()))
+    name = " ".join(str(raw).split())
     return "" if name.casefold() == PLACEHOLDER.casefold() else name
 
 

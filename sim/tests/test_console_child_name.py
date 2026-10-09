@@ -527,6 +527,7 @@ def test_a_name_moxie_will_not_say_is_refused_before_the_record_is_saved(
     it was: no child is made, a rename keeps the old name. Another setting on the record
     never re-judges the name, and a supervisor that cannot be asked refuses nothing (the
     name is then judged when it is sent, as before)."""
+    from moxie_server import supervisor as sv
     _real_runtime(tmp_path, monkeypatch)
     auth = quicklogin(client, "unsayable@child.lan")
     word = _table_word("profanity")
@@ -544,12 +545,17 @@ def test_a_name_moxie_will_not_say_is_refused_before_the_record_is_saved(
     assert [k["child-first-name"] for k in kids] == ["Sam"]
     r = client.put(f"/api/children/{cid}", headers=auth, json={"child": {"eye-color": "teal"}})
     assert r.status_code == 200, r.text
+    real = sv.STATUS_URL
     set_status_url(DEAD, monkeypatch)
     r = client.put(f"/api/children/{cid}", headers=auth,
-                   json={"child": {"child-first-name": "José"}})
+                   json={"child": {"child-first-name": word}})
     assert r.status_code == 200, r.text                   # saved: judged when it is sent
     assert client.get("/local/state", headers=auth).json()["children"][0][
-        "child-first-name"] == "José"
+        "child-first-name"] == word
+    set_status_url(real, monkeypatch)                     # asked again: the name is not
+    r = client.put(f"/api/children/{cid}", headers=auth,  # re-judged by another setting
+                   json={"child": {"eye-color": "gold"}})
+    assert r.status_code == 200, r.text
 
 
 def test_an_unpair_whose_clear_never_arrived_is_retried_by_a_revoke(client, tmp_path,
@@ -574,8 +580,9 @@ def test_an_unpair_whose_clear_never_arrived_is_retried_by_a_revoke(client, tmp_
     monkeypatch.setattr(sv, "post_json", real)
     assert gone["unpaired"] is True and gone["child_cleared"] is False, gone
     assert gone["access"]["revoked"] is False
-    assert any(d["key"] == "name" and "revoke the robot in Robot access" in d["text"]
-               for d in gone["details"]), gone["details"]
+    named = [d["text"] for d in gone["details"] if d["key"] == "name"]
+    assert any("revoke the robot in Robot access" in t for t in named), gone["details"]
+    assert not any("Save it again" in t for t in named), named    # nothing to save on unpair
     assert json.loads(record.read_text())["child"] == {"nickname": "Zoë"}     # left behind
 
     off = client.post(f"/local/robots/{DEVICE}/permit", json={"permitted": False})

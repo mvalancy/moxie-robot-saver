@@ -123,8 +123,9 @@ def _hello(rt, device_id="d_one", event_id="evt-eye"):
 
 
 def _generic_hellos() -> set:
+    """The hellos that name no one: `pick_greeting`'s own stand-in, 'friend'."""
     from moxie_sdk import presence
-    return {g.format(name=cloud_config.GENERIC_CHILD_NAME) for g in presence.GREETINGS}
+    return {g.format(name="friend") for g in presence.GREETINGS}
 
 
 # --------------------------------------------------------------------------- #
@@ -207,6 +208,21 @@ def test_a_decomposed_name_is_kept_composed_and_marks_follow_letters(tmp_path):
     assert _pushed(rt, "d_one")["child_pii"]["nickname"] == "José"
     _name(rt, "d_one", "सैम")
     assert _pushed(rt, "d_one")["child_pii"]["nickname"] == "सैम"
+
+
+def test_a_name_is_refused_while_the_safety_rules_cannot_be_read(tmp_path, monkeypatch):
+    """A rules file that cannot be read checks nothing, so no name is taken (the reason says
+    which file to fix) and a saved one is not said: Moxie says its default meanwhile."""
+    from moxie_sdk import safety
+    from moxie_sdk.types import ChildProfile
+    broken = tmp_path / "broken_rules.json"
+    broken.write_text("{ not json")
+    monkeypatch.setenv("MOXIE_SAFETY_RULES", str(broken))
+    monkeypatch.setattr(safety, "_DEFAULT", None)            # read the rules afresh
+    with pytest.raises(ValueError, match="MOXIE_SAFETY_RULES"):
+        cloud_config.clean_child_name("Sam")
+    friend = ChildProfile(nickname="friend")
+    assert cloud_config.child_profile_for({"child": {"nickname": "Sam"}}, friend) is friend
 
 
 def test_the_try_it_card_refuses_the_same_names(tmp_path):
@@ -374,11 +390,12 @@ def test_every_feed_line_masks_every_name_moxie_calls_a_child(tmp_path):
                   allow_unverified_bots=False)
     rt.set_permit("d_away", True)
     _name(rt, "d_one", "Zoë")
+    _name(rt, "d_two", "José")                 # no robot here says the appliance's 'Sam'
     _name(rt, "d_away", "Mary-Kate")
-    rt._note("chat", "ZOE met sam, Mary and kate, then mary-kate; Samantha is the same; "
-                     "hi friend")
-    assert rt.recent[-1]["text"] == ("[child] met [child], [child] and [child], then "
-                                     "[child]; Samantha is the same; hi friend")
+    rt._note("chat", "ZOE met sam and jose, Mary and kate, then mary-kate; Samantha is the "
+                     "same; hi friend")
+    assert rt.recent[-1]["text"] == ("[child] met [child] and [child], [child] and [child], "
+                                     "then [child]; Samantha is the same; hi friend")
 
 
 def test_a_line_cut_for_the_feed_never_keeps_part_of_a_name(tmp_path, monkeypatch):
@@ -443,12 +460,12 @@ def test_a_revoke_takes_the_name_off_the_robots_settings(tmp_path):
     rt.set_permit("d_one", True)
     _name(rt, "d_one", "Zoë")
     out = rt.set_permit("d_one", False)
-    assert out["ok"] is True and out["child_cleared"] is True, out
     assert "child" not in json.loads(_record(tmp_path).read_text())
+    assert out["ok"] is True and out.get("child_cleared") is True, out
     assert rt.robots["d_one"].child.nickname == "friend"
     rt.set_permit("d_one", True)                         # Permit, no account record
     assert _pushed(rt, "d_one")["child_pii"]["nickname"] == "friend"
-    assert rt.set_permit("d_never", False)["child_cleared"] is True
+    assert rt.set_permit("d_never", False).get("child_cleared") is True
     assert not _record(tmp_path, "d_never").exists()
     assert "child_cleared" not in rt.set_permit("d_one", True)       # a permit says nothing
 
@@ -468,11 +485,11 @@ def test_a_revoke_that_cannot_save_says_so_and_can_be_repeated(tmp_path, monkeyp
         return write(device_id, collection, value)
 
     monkeypatch.setattr(rt.store, "write", refused)
-    assert rt.set_permit("d_one", False)["child_cleared"] is False
+    assert rt.set_permit("d_one", False).get("child_cleared") is False
     assert json.loads(_record(tmp_path).read_text())["child"] == {"nickname": "Zoë"}
     assert rt.robots["d_one"].child.nickname == "friend"
     monkeypatch.setattr(rt.store, "write", write)
-    assert rt.set_permit("d_one", False)["child_cleared"] is True
+    assert rt.set_permit("d_one", False).get("child_cleared") is True
     assert "child" not in json.loads(_record(tmp_path).read_text())
 
 
