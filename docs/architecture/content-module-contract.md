@@ -951,10 +951,11 @@ a changed copy of it (a lowered launch), that it never will. A tag quoted in pie
 (*'<ex … it>Bye! …'*) is one split around another part: the pieces are author text the
 child may hear as written, and when they do meet, the host takes the tag out. An extension's
 line cannot start an activity, end the chat or put Moxie to sleep from run-time text,
-however it is built: from a program's line, a child-facing robot acts only on what the
-parent's review named.
+however it is built: from a program's line, a child-facing robot takes only the exits, sleeps
+and launches the parent's review named (a catalogue mark in the line is not one of them; see
+the markup sentence above).
 
-**A conversation's opener acts only on the tags written whole in it.** An opener is said on
+**A conversation's opener acts only on the action tags written whole in it.** An opener is said on
 an empty `prompt` (the `opener` field above), and `opener` is a pack field, so it is held to
 the rule a program's line is under: it is rendered as a template, the robot path parses the
 line as a model's, and an `<exit>`, `<sleep>` or `<launch:…>` in it acts only when the same
@@ -974,7 +975,7 @@ pre-ticks the item.) Each effect reads *"sometimes"*, since which
 alternative is said, and what its template leaves in, varies. The rule holds for every
 opener; the shipped ones write no tag, so they say and do what they did. A tag an opener
 lifts is not reported to the parent the way a program's is: the robot did nothing, and the
-row already named all it can do. The rule is about our action tags only: a catalogue tag
+row already named every action it can take. The rule is about our action tags only: a catalogue tag
 written in an opener (`<mark …/>`, `<usel …>`) is not ours, so it stays in the line, and
 the runtime's markup floor sends that line to the robot as its markup, unchecked and not
 named in the review, as it does a program's line (`<mark name="cmd:start-systemunpair"/>`

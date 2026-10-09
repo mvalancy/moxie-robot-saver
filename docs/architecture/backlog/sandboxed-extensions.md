@@ -55,11 +55,12 @@ that socket. Its whole output surface is a `Volley`
 through the same `parse_action_tags` + `annotate` path as model output. An extension's line, though,
 may act only on an action tag written whole in its rule's own text (a `say` or `let` string literal):
 the host takes any other `<exit>`, `<sleep>` or `<launch:…>` out of the line and tells the parent
-(§4.5, §6.4), so the review's sentence for the rule (§5.4) names everything its line can make the
-robot do ([content-module-contract.md](../content-module-contract.md), "What a line's action tags
-may do"). A conversation's `opener` is not an extension, but it is held to the same rule: a tag in
-it acts only when written whole in the alternative said, as written before it is rendered, and the
-pack review names each such tag in the opener's own row (the contract's "A conversation's opener").
+(§4.5, §6.4), so the review's sentence for the rule (§5.4) names every exit, sleep or launch its
+line can make the robot take ([content-module-contract.md](../content-module-contract.md), "What a
+line's action tags may do"). A conversation's `opener` is not an extension, but it is held to the
+same rule: an action tag in it acts only when written whole in the alternative said, as written
+before it is rendered, and the pack review names each such tag in the opener's own row (the
+contract's "A conversation's opener").
 
 ### 2.2 The pack format it rides in
 
@@ -361,8 +362,8 @@ Both views are pure functions of the AST ([`explain.py`](../../../mqtt/moxie_sdk
    child 'The time is …' and answers without asking the AI."* T13 requires every capability to have
    words, so a new capability cannot ship without them. A rule's sentence ends with what its line's
    action tags make happen: every tag written whole in the rule's own text, which is all the host lets
-   the line act on (§4.5), so the sentence names everything the line can make the robot do, at least
-   as *"sometimes"* (the full statement, and what the wording means, is in
+   the line act on (§4.5), so the sentence names every exit, sleep or launch the line can send, at
+   least as *"sometimes"* (the full statement, and what the wording means, is in
    [content-module-contract.md](../content-module-contract.md)).
 
 ---

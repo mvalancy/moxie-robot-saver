@@ -59,7 +59,9 @@ Two things worth knowing before you author one:
   pack review. If your rule does not read well as a sentence, a parent cannot review it.
   A line acts only on an action tag written whole in its rule's own text (`Goodbye`'s
   lines each start with `<exit>`); one it builds at run time is taken out and the parent
-  is told, so the sentence names everything the line can make the robot do.
+  is told, so the sentence names every exit, sleep or launch the line can send. A catalogue
+  mark written in the line is not one of those: it is not named, and it reaches the
+  robot's markup unchecked (a follow-up).
 - **`clock` is not granted by default.** Only `{say, handled, session, child.nickname}`
   are. A *shipped* activity gets more because the wider set is anchored to the **digest of
   the program** (`content_app.SHIPPED_EXTRA_GRANTS`), so an imported pack that overrides a
