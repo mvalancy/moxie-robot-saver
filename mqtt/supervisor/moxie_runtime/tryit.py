@@ -23,6 +23,8 @@ from moxie_sdk import chat as chat_seam
 from moxie_sdk import presence as presence_seam
 from moxie_sdk import safety as safety_seam
 from moxie_sdk import vocab
+# The name rule is shared with the child's name a parent saves (`cloud_config`).
+from moxie_sdk.cloud_config import NAME_MAX_CHARS as TRY_MAX_NAME_CHARS, NAME_RE as _NAME_RE
 from moxie_sdk.types import Reply, ReplyChunk, ResultCode, RobotContext, Turn
 from moxie_sdk.wire import encode_action
 
@@ -30,7 +32,6 @@ from moxie_sdk.wire import encode_action
 TRY_MAX_CHARS = 500
 #: One line of the session the card sends back (a reply is ~200 tokens at most).
 TRY_MAX_LINE_CHARS = 2000
-TRY_MAX_NAME_CHARS = 40
 #: A request body larger than this is refused unread (413), like an oversized pack.
 TRY_MAX_BODY_BYTES = 64 * 1024
 #: Tries per rolling hour when `MOXIE_AUTHOR_TRY_BUDGET` is unset or invalid
@@ -50,7 +51,6 @@ TRY_STATUS = {
     "internal": 500,
 }
 
-_NAME_RE = re.compile(r"^[\w .'\-]+$")
 _BREAK_RE = re.compile(r"<break\b", re.I)
 #: Scrubbed before an error is shown (the console page may be screenshotted; the
 #: supervisor log keeps the full text): an endpoint's address and a bearer token always,

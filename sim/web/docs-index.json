@@ -204,7 +204,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config and telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 32535,
+   "bytes": 38305,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -214,6 +214,7 @@
     "Fleet defaults ⊕ per-robot overrides",
     "The pairing gate — permits, and what a *pending* robot is sent",
     "The child-PII encryption boundary — and the revival shortcut",
+    "The child's name: the parent's record, per robot",
     "② `/state` up — `RobotStatus` (the robot's self-report)",
     "CloudStatus.UserState` — the pairing/OTA lifecycle the console shows",
     "③ Telemetry — `Packet` envelope + the privacy gate",
@@ -1068,7 +1069,7 @@
    "path": "features/robot-lifecycle.md",
    "title": "Map 11 — Robot Lifecycle (pairing / unpair / FACTORY RESET / restore / reboot / OTA / state model)",
    "section": "features",
-   "bytes": 30519,
+   "bytes": 31291,
    "mermaid": 0,
    "headings": [
     "Built here: unpair and factory reset",
@@ -1143,7 +1144,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 10888,
+   "bytes": 11188,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -1166,7 +1167,7 @@
    "path": "guides/first-time-setup.md",
    "title": "First-time setup",
    "section": "guides",
-   "bytes": 3059,
+   "bytes": 4347,
    "mermaid": 0,
    "headings": [
     "1. Start the server",
@@ -1182,7 +1183,7 @@
    "path": "guides/bench-runbook.md",
    "title": "Bench runbook: bring a real Moxie onto your server",
    "section": "guides",
-   "bytes": 11489,
+   "bytes": 12067,
    "mermaid": 0,
    "headings": [
     "Before you start",
