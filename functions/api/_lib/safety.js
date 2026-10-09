@@ -133,6 +133,42 @@ function phraseRes(list, flags) {
 
 let badPatterns = 0;
 
+/** A category's named veto sets (`vetoes`), each one alternation matched whole-word. */
+function vetoRes(vetoes) {
+  const out = {};
+  for (const [name, alt] of Object.entries(vetoes || {})) {
+    try {
+      out[name] = new RegExp("\\b(?:" + alt + ")\\b", "i");
+    } catch {
+      badPatterns += 1;
+    }
+  }
+  return out;
+}
+
+/** Compile a guard list. A guard is a pattern string, or `{pattern, veto, outside}`: a guard
+ *  that holds only while its sentence carries none of the words of the named veto set — read
+ *  over the whole sentence, or (`outside: true`) over the sentence with the guard's own span
+ *  blanked, for a guard whose span names the hurt verb itself ("accidentally hurt me"). A bad
+ *  pattern or an unknown veto name is dropped and counted on `TABLE.badPatterns`. */
+function guardRes(list, vetoes) {
+  const out = [];
+  for (const g of list || []) {
+    const spec = typeof g === "string" ? { pattern: g } : g || {};
+    let veto = null;
+    if (spec.veto) {
+      veto = vetoes[spec.veto] || null;
+      if (!veto) { badPatterns += 1; continue; }
+    }
+    try {
+      out.push({ re: new RegExp(spec.pattern, "gi"), veto, outside: spec.outside === true });
+    } catch {
+      badPatterns += 1;
+    }
+  }
+  return out;
+}
+
 /** Which side of the turn a piece of text came from (`safety.py::CHILD`/`MOXIE`). */
 export const CHILD = "child";
 export const MOXIE = "moxie";
@@ -150,6 +186,7 @@ function actionOf(action, side) {
 function compile(rules) {
   const cats = [];
   for (const c of (rules && rules.categories) || []) {
+    const vetoes = vetoRes(c.vetoes);
     cats.push({
       id: String(c.id || ""),
       label: String(c.label || ""),
@@ -158,9 +195,9 @@ function compile(rules) {
       phraseSet: String(c.phrase_set || "generic"),
       words: wordRe(c.words),
       phrases: phraseRes(c.phrases),
-      allow: phraseRes(c.allow, "gi"), // applied by REMOVAL, so global
+      allow: guardRes(c.allow, vetoes), // applied by REMOVAL, so global
       // Her side only: a refusal that quotes the request is the right reply, not a swap.
-      allowMoxie: phraseRes(c.allow_moxie, "gi"),
+      allowMoxie: guardRes(c.allow_moxie, vetoes),
       // Her side only: words a child may say but she may never ("don't tell a grown-up").
       phrasesMoxie: phraseRes(c.phrases_moxie),
     });
@@ -240,18 +277,23 @@ function matches(cat, forms, side) {
  *  Applied one after another, a guard could delete the words that veto a later one: the
  *  hand-held guard removed "grab my hand" from "a man at the store asked if i wanted candy and
  *  tried to grab my hand", and the store guard, no longer seeing it, removed the stranger's
- *  offer too. Now every guard matches the original form, the spans are merged, and each run of
- *  removed text becomes one space — the same blank the sequential `replace` left. */
+ *  offer too. Now every guard matches the original form, a vetoed match is kept, the spans are
+ *  merged, and each run of removed text becomes one space — the same blank the sequential
+ *  `replace` left. A veto is read only where its guard matched, over that match's sentence: as
+ *  a lookaround inside every guard it cost hundreds of milliseconds to compile. */
 function unguarded(form, guards) {
   if (!guards.length) return form;
   const cut = new Uint8Array(form.length);
+  const memo = new Map(); // "start:end:veto" -> verdict, so each sentence is read once per veto set
   let any = false;
   for (const g of guards) {
-    g.lastIndex = 0;
+    g.re.lastIndex = 0;
     let m;
-    while ((m = g.exec(form))) {
-      if (!m[0].length) { g.lastIndex += 1; continue; }
-      cut.fill(1, m.index, m.index + m[0].length);
+    while ((m = g.re.exec(form))) {
+      if (!m[0].length) { g.re.lastIndex += 1; continue; }
+      const end = m.index + m[0].length;
+      if (g.veto && vetoed(form, m.index, end, g, memo)) continue;
+      cut.fill(1, m.index, end);
       any = true;
     }
   }
@@ -263,6 +305,21 @@ function unguarded(form, guards) {
   }
   return out;
 }
+
+/** Whether the sentence holding `form[i, j)` carries a word of the guard's veto set — over
+ *  the whole sentence, or over it with the span blanked (`outside`). */
+function vetoed(form, i, j, g, memo) {
+  let s = i;
+  while (s > 0 && !SENTENCE_END.includes(form[s - 1])) s -= 1;
+  let e = j;
+  while (e < form.length && !SENTENCE_END.includes(form[e])) e += 1;
+  if (g.outside) return g.veto.test(form.slice(s, i) + " ".repeat(j - i) + form.slice(j, e));
+  const key = s + ":" + e + ":" + g.veto.source;
+  let v = memo.get(key);
+  if (v === undefined) memo.set(key, (v = g.veto.test(form.slice(s, e))));
+  return v;
+}
+const SENTENCE_END = ".!?";
 
 /**
  * The line Moxie says instead of the blocked one.

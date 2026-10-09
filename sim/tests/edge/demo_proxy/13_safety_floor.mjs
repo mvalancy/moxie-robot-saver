@@ -106,7 +106,9 @@ async function withRefusalLines(fn) {
   P.plan = { chat: { content: herPhone } };
   const r2 = await call(chat, "/api/chat", { text: "what is your phone number" });
   eq(r2.body.reason, "blocked", "a completion blocked ONLY on the Moxie side is swapped at the route");
-  ok(!JSON.stringify(r2.body).includes("555"), "…and the number is in no field");
+  // The tickets are read as the words they carry: a random base64 ticket holds "555" in about
+  // one run in a thousand, which made this pin flaky (seen once in round 4's mutation runs).
+  ok(!JSON.stringify({ ...r2.body, speech: await ticketTexts(r2.body.speech) }).includes("555"), "…and the number is in no field");
 }
 
 /* 25b. A harmless completion that merely mentions a knight's sword passes untouched. */
