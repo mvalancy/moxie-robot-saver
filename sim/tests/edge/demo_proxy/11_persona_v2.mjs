@@ -1,4 +1,4 @@
-/* test_demo_proxy §23: the persona (v2) — its structure, and that every layout still emits
+/* test_demo_proxy §23: the persona (v2.1) — its structure, and that every layout still emits
  * exactly the system messages §21 pins around it. Run via the entry file.
  *
  * Written against defects measured on the production pair (2026-10-08): "I am sorry" or "Oh
@@ -8,8 +8,9 @@
  * it; and two of those rules restated what the per-turn cue already says. Then against a
  * defect of v2's first text (the review of #315): rule 2 listed "hurt" as a feelings trigger
  * and banned a fix, and a hurt child was sent to a grown-up in 1 of 4 replies against v1's
- * 3 of 4. The pins below are on the TEXT, so they fail by name on the old persona instead of
- * in a live probe. */
+ * 3 of 4. Then against v2's own tics (W4-S2, §23h): a catchphrase as the reply's last words,
+ * a habit in every other reply, and a memory she claimed to have saved. The pins below are on
+ * the TEXT, so they fail by name on the old persona instead of in a live probe. */
 import { FULL, chat, deep, eq, join, ok, prompt, readFileSync, turnshape, web0, wire2 } from "./harness.mjs";
 
 const P = wire2.DEFAULT_PERSONA;
@@ -33,6 +34,20 @@ const SAFETY_BLOCK =
   "You never ask a child for private information — address, street, school name, phone " +
   "number, passwords, full name — and you never ask them to keep a secret from their " +
   "grown-ups. You never swear.";
+
+/* Rule 2, FROZEN as v2 shipped it (the review of #315 measured it: 40 of 44 hurt replies
+ * pointed to a grown-up). v2.1 keeps it byte for byte, because the tested v2.1 text that
+ * reworded it went the wrong way on sad lines (stock and "I'm sorry" openers up). A
+ * deliberate change edits this copy too, with the reason and a new hurt replay in the
+ * commit. */
+const RULE2_V2 =
+  "2. Feelings before fixing. If they are sad, scared or left out, the reply is only about " +
+  "them: say back what happened and stay with it. No joke, no fact about yourself, no new " +
+  "topic, no \"I'm sorry\" or \"Oh no\" opener. If they are hurt or in danger, the safety " +
+  "rule below comes first: say you care and ask them to tell a grown-up they trust.";
+
+/** The numbered rule `n`, as its own line of the persona ("" when absent). */
+const rule = (n) => P.split("\n").find((l) => l.startsWith(n + ". ")) || "";
 
 /* 23a. IDENTITY AND MISSION FIRST, THE CHILD AS HER MENTOR. */
 {
@@ -123,7 +138,10 @@ const SAFETY_BLOCK =
                    "never ask a child for private information", "keep a secret from their grown-ups"]) {
     ok(at(s) > safety, `the safety block still says ${JSON.stringify(s.slice(0, 40))}`);
   }
-  ok(P.length <= 2889, `no longer than v1 (${P.length} chars of 2,889)`);
+  // v2 fitted inside v1's 2,889 chars; v2.1's rate rule and honest rule 6 take it past that.
+  // Growing it past this pin means measuring the token bar again (at most 1,300 prompt
+  // tokens at turn 1, in-process: `model_bakeoff.mjs --inproc --only=turn1`).
+  ok(P.length <= 3200, `at most 3,200 chars (${P.length})`);
 }
 
 /* 23g. EVERY LAYOUT STILL EMITS EXACTLY THE SYSTEM MESSAGES §21 PINS: the persona once,
@@ -158,4 +176,26 @@ const SAFETY_BLOCK =
       }
     }
   }
+}
+
+/* 23h. v2.1: THE HABITS ARE SEASONING, THE CATCHPHRASE IS GONE, AND HER MEMORY IS HONEST.
+ * Counted on v2 (W4-S2): "beep boop" in 6 of 32 replies, 5 of them as the reply's last
+ * words (the sheet's literal "(beep boop)"); the counting habit in 7 of 18 replies of one
+ * run; "I have saved that in my memory chip" on both production recall turns, although a
+ * reload, a new tab or an hour forgets everything she was told. */
+{
+  const RATE_RULE = "Use these habits sparingly: at most one per reply, never the same one twice in a " +
+                    "conversation, never as a reply's last sentence, never when the child is upset.";
+  const who = P.split("\n").find((l) => l.startsWith("Who you are:")) || "";
+  ok(who.endsWith(" " + RATE_RULE), "the habits carry ONE rate rule, verbatim, as the last sentence of the paragraph that lists them");
+  ok(!/beep|boop/i.test(P), "no literal catchphrase anywhere in the persona: '(beep boop)' was read as a sign-off");
+  ok(who.includes("You tell jokes in binary; nobody gets them."), "…the binary-joke motif kept, without words to recite");
+  const r6 = rule(6);
+  ok(r6.includes("while this page is open") && r6.includes("never promise to remember") && r6.includes("say you saved anything"),
+     "rule 6 says how long her memory lasts, and forbids a promise to remember or a claimed save");
+  ok(r6.endsWith('say "I don\'t remember, can you tell me again?"'), "…and keeps the honest fallback line");
+  eq(rule(2), RULE2_V2, "rule 2 is v2's, byte for byte (the frozen copy above)");
+  ok(rule(3).includes("a bit of robot life"), "rule 3 offers 'a bit of robot life' among her contributions");
+  ok(P.split("\n")[0].endsWith(". The child you are talking to is your mentor."),
+     "the mentor line ends 'is your mentor.': the trim of 'they teach you how humans work' is deliberate, pinned rather than silent");
 }
