@@ -56,7 +56,7 @@ deep(["", "999999", "1", "500"].map((v) => envlib.readConfig(Object.assign({}, A
   const elapsed = Date.now() - started;
   clearInterval(keepAlive);
   deep(facts, [200, null, 1], "a siteverify that NEVER answers still lets the turn through (fail open)");
-  ok(elapsed >= 100 && elapsed < 5000, `…after our own deadline fired, well before the route's 20 s timeout (${elapsed} ms)`);
+  ok(elapsed >= 100 && elapsed < 5000, `…after our own deadline fired, well before the route's 10 s timeout (${elapsed} ms)`);
   eq(limits.__state().inflight.chat || 0, 0, "…with the concurrency slot given back");
 }
 

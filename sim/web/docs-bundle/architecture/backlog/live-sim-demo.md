@@ -773,6 +773,7 @@ clamped. `_lib/env.js::DEFAULTS` is the source of truth.
 | `DEMO_MAX_RECORD_MS` | 15000 | 1000..600000 |
 | `DEMO_MAX_AUDIO_BYTES` / `DEMO_MIN_AUDIO_BYTES` | 500000 / 2000 | 1..5e7 / 0..5e7 |
 | `DEMO_TRUST_XFF` | off | **leave unset in production** |
+| `DEMO_SERVE_HOSTS` | none (every host) | comma-separated hostnames that may spend, matched exactly; any other host reads as unconfigured (§4.1). Set but with no usable hostname, no host is served |
 | `DEMO_PERSONA` | built-in (v2, §4.11) | the system prompt; the built-in text is the measured one, an override is not |
 | `DEMO_DEVICE_ID` | `d_sim` | topic segment |
 | `DEMO_ALLOWED_ORIGINS` | none (the request's own origin) | comma-separated extra origins |
@@ -785,14 +786,14 @@ clamped. `_lib/env.js::DEFAULTS` is the source of truth.
 | `DEMO_TURN_SHAPE` / `DEMO_REROLL` | on / on | §4.10 / §4.9 |
 | `DEMO_PROMPT_LAYOUT` | `anchor` | `anchor` · `single` (§3.3); an unknown value falls back to `anchor` with a note; measure a model on `single` before switching production to it |
 | `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | ≥ 1 |
-| `DEMO_SPEECH_PER_MIN` / `_HOUR` | 10 / 80 | ≥ 1 |
-| `DEMO_STT_PER_MIN` / `_HOUR` | 10 / 60 | ≥ 1 |
+| `DEMO_SPEECH_PER_MIN` / `_HOUR` / `_DAY` | 10 / 80 / 300 | ≥ 1 / ≥ 1 / 0..10 000 000; a `_DAY` of 0 means no day window |
+| `DEMO_STT_PER_MIN` / `_HOUR` / `_DAY` | 10 / 60 / 225 | ≥ 1 / ≥ 1 / 0..10 000 000; a `_DAY` of 0 means no day window |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | 1..10000; transcribe uses chat's |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_DEPTH` | 2500 / 8 | 0..10000 / 0..1000; 0 disables the queue |
 | `DEMO_CACHE_COUNTER` / `DEMO_CACHE_TIMEOUT_MS` | on / 250 | timeout 10..2000 |
 | `DEMO_TTS_CACHE` / `_TTL_S` / `_TIMEOUT_MS` | on / 86400 / 1000 | 60..604800 / 50..5000 |
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | 600 / 4000 | 0 means uncapped |
-| `DEMO_CHAT_TIMEOUT_MS` / `_SPEECH_` / `_STT_` | 20000 / 12000 / 12000 | 1000..120000 |
+| `DEMO_CHAT_TIMEOUT_MS` / `_SPEECH_` / `_STT_` | 10000 / 12000 / 12000 | 1000..120000 |
 | `DEMO_TURNSTILE_SECRET` (secret) / `_SITEKEY` | none | **both or neither**; leave unset on Preview |
 | `DEMO_TURNSTILE_HOSTS` | the request's own hostname | exact match |
 | `DEMO_TURNSTILE_TIMEOUT_MS` | 2000 | 100..10000; a slow answer fails open |
@@ -923,7 +924,7 @@ parity), `sim/test_api_headers.mjs` (real socket and Chrome), `sim/tests/helpers
 ### 8.2 What only a real deploy settles
 
 Previews carry no secrets, so they prove routing, envelopes and headers but nothing past the config
-gate. Production-only questions: Pages CPU, wall-clock and body limits against a 20 s chat timeout
+gate. Production-only questions: Pages CPU, wall-clock and body limits against a 10 s chat timeout
 (assumption 10); whether Production and Preview variables are truly separate (assumption 11); plan
 features (assumption 13); the gateway key budget (assumption 14). `sim/tests/test_live_hosted_ears.py`
 exercises the real route (assumption 29).
@@ -973,7 +974,7 @@ These numbers are stable, and code cites them.
 | 6–7 | Raw s16 PCM at the header's rate plays; empty `marks` still lip-sync | proven (test 3) |
 | 8 | `functions/` at the repo root is routed with output dir `sim/web` | **settled true** by a preview `curl` |
 | 9 | `functions/api/_lib/` is not routable | **settled true**: it serves the static HTML fallback (200, not 404; check the content type) |
-| 10 | Pages allows a 20 s wall clock and a ~500 KB body | unverified; every timeout is a variable |
+| 10 | Pages allows a 10 s wall clock (20 s before 2026-10-08) and a ~500 KB body | unverified; every timeout is a variable |
 | 11 | Production and Preview variables are separate | partial: previews hold only Pages' own 5 env keys, but separation is unproven until Production holds secrets |
 | 12 | Free-tier Functions limits (requests, CPU) | unverified; nowhere in the repo |
 | 13 | KV / Durable Objects / WAF rate limiting exist on this plan | split. The runtime has **no** stateful binding configured, and whether the plan offers one is a dashboard question. The Cache API needs no binding, so §4.6.1 did not depend on this. |
