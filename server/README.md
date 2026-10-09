@@ -59,7 +59,10 @@ the browser suites `sim/test_console_insights.mjs`, `sim/test_robot_lifecycle.mj
   as `on_other_accounts` ([bench runbook](../docs/guides/bench-runbook.md)).
 - **The child's name** goes to the robot from the account's child record: on the claim, on a
   rename (`PUT /api/children/{id}`, the Wi-Fi tab's name field) and on Permit (an account with no
-  name sends a clear instead); unpair clears the robot's copy. `fleet`, `broker/status` and a
+  name sends a clear instead). A typed name the supervisor refuses (the name rule and Moxie's
+  safety rules, asked with `POST /child-name`) is a `400` with its reason, and nothing is saved.
+  Unpair clears the robot's copy, and the supervisor drops it on any revoke, so Revoke in Robot
+  access retries an unpair that could not reach it. `fleet`, `broker/status` and a
   robot's config answer name a robot's child only for a token of the account that has it, which
   `quicklogin` gives for an email alone: a filter, not a lock ([where the name goes](../docs/architecture/config-and-telemetry-contract.md#the-childs-name-the-parents-record-per-robot)).
 - **`/local/*` fleet + access** (proxied to the MQTT supervisor): `fleet`, `broker/status`,

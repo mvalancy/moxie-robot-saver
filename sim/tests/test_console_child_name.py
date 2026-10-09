@@ -393,12 +393,13 @@ def test_a_claim_and_an_unpair_round_trip_through_the_real_runtime(client, tmp_p
 @pytest.mark.parametrize("name", [None, "Sam!"], ids=["placeholder", "refused"])
 def test_a_robot_that_joins_an_account_never_says_a_name_an_earlier_record_left(
         client, tmp_path, monkeypatch, name):
-    """An unpair whose clear the supervisor never got leaves the child's name in the
-    robot's saved settings (the unpair's answer says so). When that robot joins another
-    account, the account's name replaces it, or, when the account names none (the "Moxie
-    Kid" placeholder) or one the rule refuses, the claim clears it: Moxie says the
-    appliance's default, never the earlier family's child's name. (Between the permit and
-    the clear, a few milliseconds, the robot's config still carries the old name.)"""
+    """An unpair the supervisor never heard (its clear and its revoke both lost: a revoke
+    alone takes the name off, K7.1) leaves the child's name in the robot's saved settings
+    (the unpair's answer says so). When that robot joins another account, the account's
+    name replaces it, or, when the account names none (the "Moxie Kid" placeholder) or one
+    the rule refuses (a record saved while the supervisor could not be asked), the claim
+    clears it: Moxie says the appliance's default, never the earlier family's child's name.
+    (Until the claim, the robot is still let in and its config carries the old name.)"""
     pytest.importorskip("paho.mqtt.client", reason="the runtime imports paho")
     from helpers_runtime import make_runtime, status_server
     from moxie_sdk.app import MoxieApp
@@ -418,17 +419,22 @@ def test_a_robot_that_joins_an_account_never_says_a_name_an_earlier_record_left(
     assert rt.robots[DEVICE].child.nickname == "Zoë"
     real = sv.post_json
 
-    def clear_lost(path, payload, timeout=3):
-        if payload == {"child": None}:            # what `call` answers when it is down
+    def unpair_lost(path, payload, timeout=3):
+        if payload == {"child": None} or path == "/permits":   # `call`'s answer when down
             return {"ok": False, "error": sv.UNREACHABLE, "detail": "refused"}, 503
         return real(path, payload, timeout)
 
-    monkeypatch.setattr(sv, "post_json", clear_lost)
+    monkeypatch.setattr(sv, "post_json", unpair_lost)
     gone = client.delete(f"/api/robots/{claim['robot_id']}", headers=earlier).json()
     assert gone["unpaired"] is True and gone["child_cleared"] is False
     assert json.loads(record.read_text())["child"] == {"nickname": "Zoë"}     # left behind
-    monkeypatch.setattr(sv, "post_json", real)
 
+    def judge_down(path, payload, timeout=3):
+        if path == "/child-name":                 # the record is saved, unjudged
+            return {"ok": False, "error": sv.UNREACHABLE, "detail": "refused"}, 503
+        return real(path, payload, timeout)
+
+    monkeypatch.setattr(sv, "post_json", judge_down)
     later, again, _ = _claimed(client, f"later-{tag}@child.lan", name)
     assert again["permitted"] is True and again["child_pushed"] is False
     assert ("no name" if name is None else "40 letters") in again["reason"]
@@ -484,3 +490,113 @@ def test_a_change_the_supervisor_applies_but_cannot_save_is_never_called_done(
     assert joined["permitted"] is True and joined["child_pushed"] is False, joined
     assert "restart" in joined["reason"]
     assert rt.robots[DEVICE].child.nickname == "Zoë"                   # not cleared
+
+
+# --------------------------------------------------------------------------- #
+# K7.1: a name Moxie will not say is refused before it is saved; a failed unpair is
+# retried by a revoke
+# --------------------------------------------------------------------------- #
+
+def _real_runtime(tmp_path, monkeypatch):
+    """A REAL runtime's status server behind the console, `DEVICE` connected, pending."""
+    pytest.importorskip("paho.mqtt.client", reason="the runtime imports paho")
+    from helpers_runtime import make_runtime, status_server
+    from moxie_sdk.app import MoxieApp
+    from moxie_sdk.store import JsonStore
+
+    class _App(MoxieApp):
+        name = "content"
+
+    rt, _ = make_runtime(_App(), device_id=DEVICE, nickname="friend",
+                         allow_unverified_bots=False, store=JsonStore(root=str(tmp_path)))
+    set_status_url(status_server(rt) + "/status", monkeypatch)
+    return rt
+
+
+def _table_word(category):
+    """The first word Moxie's safety table lists under `category` (never written here)."""
+    with open(os.path.join(REPO, "mqtt", "moxie_sdk", "safety_rules.json")) as fh:
+        return next(c["words"][0] for c in json.load(fh)["categories"] if c["id"] == category)
+
+
+def test_a_name_moxie_will_not_say_is_refused_before_the_record_is_saved(
+        client, tmp_path, monkeypatch):
+    """The console asks the supervisor (`POST /child-name`: the name rule and Moxie's
+    safety table) before it saves a typed name. One it refuses is a 400 carrying the
+    supervisor's sentence, in plain words and without the name, and the record is left as
+    it was: no child is made, a rename keeps the old name. Another setting on the record
+    never re-judges the name, and a supervisor that cannot be asked refuses nothing (the
+    name is then judged when it is sent, as before)."""
+    _real_runtime(tmp_path, monkeypatch)
+    auth = quicklogin(client, "unsayable@child.lan")
+    word = _table_word("profanity")
+    r = client.post("/api/children", headers=auth, json={"child": {"child-first-name": word}})
+    assert r.status_code == 400, r.text
+    why = r.json()["detail"]
+    assert "Profanity" in why and word not in why.lower(), why
+    assert client.get("/local/state", headers=auth).json()["children"] == []
+    cid = _child(client, auth, "Sam")
+    for bad in (_table_word("hate"), "<exit>"):
+        r = client.put(f"/api/children/{cid}", headers=auth,
+                       json={"child": {"child-first-name": bad}})
+        assert r.status_code == 400 and bad not in r.json()["detail"], r.text
+    kids = client.get("/local/state", headers=auth).json()["children"]
+    assert [k["child-first-name"] for k in kids] == ["Sam"]
+    r = client.put(f"/api/children/{cid}", headers=auth, json={"child": {"eye-color": "teal"}})
+    assert r.status_code == 200, r.text
+    set_status_url(DEAD, monkeypatch)
+    r = client.put(f"/api/children/{cid}", headers=auth,
+                   json={"child": {"child-first-name": "José"}})
+    assert r.status_code == 200, r.text                   # saved: judged when it is sent
+    assert client.get("/local/state", headers=auth).json()["children"][0][
+        "child-first-name"] == "José"
+
+
+def test_an_unpair_whose_clear_never_arrived_is_retried_by_a_revoke(client, tmp_path,
+                                                                     monkeypatch):
+    """An unpair or reset the supervisor never heard (its clear and its revoke both lost)
+    says so and how to try again: Revoke in Robot access, which takes the name off the
+    robot's settings (`child_cleared`). Let in again with no record naming it, the robot
+    says the appliance's name, never the earlier family's. And when only the clear is lost,
+    the unpair's own revoke takes the name off: `child_cleared`, no failure reported."""
+    from moxie_server import supervisor as sv
+    rt = _real_runtime(tmp_path, monkeypatch)
+    topic, record = f"/devices/{DEVICE}/config", tmp_path / "robots" / DEVICE / "config.json"
+    auth, claim, _ = _claimed(client, "retry@child.lan", "Zoë")
+    assert rt.robots[DEVICE].child.nickname == "Zoë"
+    real = sv.post_json
+
+    def down(path, payload, timeout=3):                  # `call`'s answer when it is down
+        return {"ok": False, "error": sv.UNREACHABLE, "detail": "refused"}, 503
+
+    monkeypatch.setattr(sv, "post_json", down)
+    gone = client.delete(f"/api/robots/{claim['robot_id']}", headers=auth).json()
+    monkeypatch.setattr(sv, "post_json", real)
+    assert gone["unpaired"] is True and gone["child_cleared"] is False, gone
+    assert gone["access"]["revoked"] is False
+    assert any(d["key"] == "name" and "revoke the robot in Robot access" in d["text"]
+               for d in gone["details"]), gone["details"]
+    assert json.loads(record.read_text())["child"] == {"nickname": "Zoë"}     # left behind
+
+    off = client.post(f"/local/robots/{DEVICE}/permit", json={"permitted": False})
+    assert off.status_code == 200 and off.json()["child_cleared"] is True, off.json()
+    assert "child" not in json.loads(record.read_text())
+    assert rt.robots[DEVICE].child.nickname == "friend"
+    on = client.post(f"/local/robots/{DEVICE}/permit", json={})          # no record names it
+    assert on.status_code == 200 and "child_pushed" not in on.json()
+    assert rt.client.on(topic)[-1]["child_pii"]["nickname"] == "friend"
+
+    auth, claim, _ = _claimed(client, "retry-revoke@child.lan", "José")
+    assert rt.robots[DEVICE].child.nickname == "José"
+
+    def clear_lost(path, payload, timeout=3):
+        if payload == {"child": None}:
+            return {"ok": False, "error": sv.UNREACHABLE, "detail": "refused"}, 503
+        return real(path, payload, timeout)
+
+    monkeypatch.setattr(sv, "post_json", clear_lost)
+    gone = client.delete(f"/api/robots/{claim['robot_id']}", headers=auth).json()
+    assert gone["child_cleared"] is True and gone["child_clear_error"] is None, gone
+    assert any(d["key"] == "name" and "no longer hold" in d["text"] for d in gone["details"])
+    assert "child" not in json.loads(record.read_text())
+    assert rt.robots[DEVICE].child.nickname == "friend"

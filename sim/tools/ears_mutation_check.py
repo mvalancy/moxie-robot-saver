@@ -81,9 +81,9 @@ MUTATIONS = [
      '                robot.extra["stt_dropped"] = 0'),
     ("E17 a drop adds a second, 'heard' note", VOICE,
      "        else:\n"
-     "            self._note(\"stt\", f\"👂 heard: '{transcript[:40]}'\")",
+     "            self._note(\"stt\", f\"👂 heard: '{self._masked(transcript, 40)}'\")",
      "        if True:\n"
-     "            self._note(\"stt\", f\"👂 heard: '{transcript[:40]}'\")"),
+     "            self._note(\"stt\", f\"👂 heard: '{self._masked(transcript, 40)}'\")"),
     ("E18 /status stops reporting the drops", LIFECYCLE,
      '                "stt_dropped": int(r.extra.get("stt_dropped") or 0),',
      '                "stt_dropped": 0,'),

@@ -19,6 +19,10 @@
  *   N8 for an account with several children (the old Wi-Fi tab made one per click) the
  *      rename goes to the child the robot is bound to, not the first or active one
  *   N9 the account's record is shown as text: markup saved in it is never drawn
+ *   N10 a name the server refuses (the name rule, Moxie's safety rules: a 400 with its
+ *      sentence) is said to the parent, word for word, and no code is made
+ *   N11 names compare as the robot keeps them (NFC): a record saved decomposed is the
+ *      same name, never "not sent yet"
  *
  * No FastAPI: `serveStatic` serves server/static and every `/local/*` and `/api/*` call is
  * answered at the browser. The fleet views come from the REAL `moxie_server.fleet`
@@ -27,7 +31,8 @@
  * module itself opens the database). TEETH: mutated copies of js/core.js (a new child on every
  * click; no name row; the mismatch never said; the rename's reason dropped; the fleet or the
  * monitor read without the token; the placeholder taken for a name; the active child renamed
- * instead of the robot's; the record's name drawn as markup) must each redden the scenario
+ * instead of the robot's; the record's name drawn as markup; a refused name not said, or
+ * the code made anyway; names compared undecomposed) must each redden the scenario
  * that guards it. A child's name is personal data: only 'Zoë', 'José' and 'Sam' (once
  * wrapped in a tag the name rule refuses).
  *
@@ -70,6 +75,7 @@ def snap(child):
             "schedule_modules": [], "recent": []}
 print(json.dumps({
     "zoe": fleet.normalize_fleet(snap("Zoë")),
+    "jose": fleet.normalize_fleet(snap("José")),
     "friend": fleet.normalize_fleet(snap("friend")),
     "hidden": fleet.normalize_fleet(snap(None)),
     "profile": constants("/server/moxie_server/child_profile.py",
@@ -113,9 +119,11 @@ const until = async (done, ms) => { for (let t = 0; t < ms && !done(); t += 100)
  *  in `st.reads`. `mutate` serves a changed js/core.js. */
 async function drive({ mutate = null, tab = "moxie", children = [kid("Zoë")],
                        robots = [RECORD], live = "zoe",
-                       put = { child_pushed: true, reason: null } } = {}) {
-  const st = { calls: [], auth: {}, bodies: {}, reads: [], children: [...children] };
+                       put = { child_pushed: true, reason: null }, refuse = null } = {}) {
+  const st = { calls: [], auth: {}, bodies: {}, reads: [], children: [...children],
+               dialogs: [] };
   const page = await browser.newPage();
+  page.on("dialog", (d) => { st.dialogs.push(d.message()); d.dismiss().catch(() => {}); });
   await page.evaluateOnNewDocument(() => { try { localStorage.clear(); } catch (e) {} });
   const { errs, aborted } = watchPage(page);
   await page.setRequestInterception(true);
@@ -132,6 +140,10 @@ async function drive({ mutate = null, tab = "moxie", children = [kid("Zoë")],
     if (m !== "GET") { st.calls.push(call); st.auth[call] = auth; st.bodies[call] = r.postData(); }
     if (/\.png$/.test(p)) return r.respond({ status: 200, contentType: "image/png", body: PNG });
     if (call === WIFI) return J({ qr_payload: "WIFI-ONLY", wifi_only: true });
+    if (refuse && (call === PUT || call === POST_CHILD)) {
+      aborted.refused++;                  /* a 400 served on purpose: its console line */
+      return J({ detail: refuse }, 400);
+    }
     if (call === PUT) {
       const name = JSON.parse(r.postData()).child["child-first-name"];
       st.children = st.children.map((k) => (k.id === CID ? { ...k, "child-first-name": name } : k));
@@ -324,6 +336,39 @@ const SCENARIOS = {
       C.eq(notable(errs, aborted).length, 0, `N9: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
     } finally { await page.close(); }
   },
+  async N10(C, o) {
+    /* What the console's PUT/POST answers for a name Moxie will not say: a 400 whose
+     * `detail` is the supervisor's sentence. Said to the parent; no code is made. */
+    const reason = "Moxie will not say that name: Moxie's safety rules flag it (Profanity). " +
+                   "Please choose another name or a nickname.";
+    for (const [what, opts] of [["a rename", {}], ["a first child", { children: [], robots: [] }]]) {
+      const { page, st, errs, aborted } = await drive({ ...o, ...opts, tab: "wifi", refuse: reason });
+      try {
+        await page.type("#child-name", "Sam");
+        await page.type("#ssid", "BenchNet");
+        await page.click("#btn-qr");
+        await until(() => st.dialogs.length > 0 || st.calls.includes(WIFI), 8000);
+        await sleep(300);
+        C.ok(st.dialogs.some((d) => d.includes(reason)),
+             `N10: ${what} refused: the parent is told why — got ${JSON.stringify(st.dialogs)}`);
+        C.eq(calls(st, WIFI), 0, `N10: ${what} refused: no code is made`);
+        C.eq(notable(errs, aborted).length, 0, `N10: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+      } finally { await page.close(); }
+    }
+  },
+
+  async N11(C, o) {
+    /* A record saved decomposed (NFD) and the robot's composed copy are one name. */
+    const { page, errs, aborted } = await drive({ ...o, live: "jose",
+                                                  children: [kid("José".normalize("NFD"))] });
+    try {
+      const row = await nameRow(page);
+      C.eq(row && row.value, "José", "N11: the row names the robot's child");
+      C.ok(row && !/not sent yet/.test(row.text),
+           `N11: a decomposed record is the same name — got ${JSON.stringify(row)}`);
+      C.eq(notable(errs, aborted).length, 0, `N11: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+    } finally { await page.close(); }
+  },
 };
 
 async function run(C, name, o = {}) {
@@ -339,8 +384,8 @@ const NO_TOKEN_FLEET = (s) => s.replace("f=await api('/local/fleet'); }",
                                         "f=await api('/local/fleet',{auth:false}); }");
 const TEETH = [
   ["a new child on every click", "N1",
-   (s) => s.replace("if(name){ await saveChildName(name); }",
-                    "if(name){ await api('/api/children',{method:'POST',body:{child:{'child-first-name':name}}}); }")],
+   (s) => s.replace("try{ await saveChildName(name); }",
+                    "try{ await api('/api/children',{method:'POST',body:{child:{'child-first-name':name}}}); }")],
   ["no name row", "N3", (s) => s.replace("${nameRow(r)}${rows}", "${rows}")],
   ["the fleet read without the token", "N3", NO_TOKEN_FLEET],
   ["the fleet read without the token", "N5", NO_TOKEN_FLEET],
@@ -365,6 +410,14 @@ const TEETH = [
                     "const want=(st.user||{})['active-child-id'];")],
   ["the record's name drawn as markup", "N9",
    (s) => s.replace("“${escapeHtml(want)}” not sent yet", "“${want}” not sent yet")],
+  ["a refused name not said to the parent", "N10",
+   (s) => s.replace("catch(e){ alert(oops(e,'The name could not be saved.')); return; }",
+                    "catch(e){ return; }")],
+  ["the code made after a refused name", "N10",
+   (s) => s.replace("catch(e){ alert(oops(e,'The name could not be saved.')); return; }",
+                    "catch(e){ alert(oops(e,'The name could not be saved.')); }")],
+  ["names compared undecomposed", "N11",
+   (s) => s.replace(".join(' ').normalize('NFC');", ".join(' ');")],
 ];
 for (const [what, scenario, mutate] of TEETH) {
   ok(mutate(SRC) !== SRC, `teeth: the "${what}" mutation must actually change js/core.js`);
