@@ -168,7 +168,9 @@ curl -s https://YOUR-DOMAIN/api/health
 | `offline` | The page's own verdict when no answer comes: `/api/health` is absent or not this API's JSON (plain static hosting), so the page is the static demo. Health itself never says it. |
 
 There is no `busy` mode. `load.level` (`ok`, `busy`, `full`) is this isolate's count against the chat
-ceiling, and the page shows `HOSTED DEMO · BUSY` from it while it stays `live`.
+ceiling, and the page shows `HOSTED DEMO · BUSY` from it while it stays `live`. A `429` is not a mode
+either, and the page's pause is per route: one from `/api/chat` answers turns from her recorded lines
+until `Retry-After`, while one from `/api/transcribe` holds only the microphone and typed turns go on.
 
 **Health reads configuration only and never calls the gateway**, so it is free to poll but cannot see
 an upstream outage: it can say `live` while chat fails with `upstream_down`. To test the brain, spend a

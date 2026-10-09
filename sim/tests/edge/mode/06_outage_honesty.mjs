@@ -284,7 +284,7 @@ for (const gapS of [20, 45, 90]) {
 }
 
 // 8f. A HUNG gateway: each live turn waits out the server's deadline (DEMO_CHAT_TIMEOUT_MS,
-//     20 s by default), then 504 timeout.
+//     10 s by default), then 504 timeout.
 {
   const h = bootClock();
   await flush();
@@ -297,27 +297,28 @@ for (const gapS of [20, 45, 90]) {
     const from = h.t();
     while (!h.m.canSpendLiveTurn()) await h.advance(1000);
     armedAfter.push(h.t() - from);
-    await h.advance(20_000);
+    await h.advance(10_000);
     turn(h, TIMEOUT);
   }
   deep(armedAfter, [60, 120, 240, 300, 300], "trial turns after a timeout back off: 60 s, doubling to the 5-minute ceiling");
 }
-for (const [gapS, most, before] of [[10, 40, 60], [45, 60, 120], [90, 60, 120]]) {
-  // l7's replay: the visitor types their next line `gapS` after each answer.
+for (const [gapS, most, before] of [[10, 20, 60], [45, 30, 120], [90, 30, 120]]) {
+  // l7's replay: the visitor types their next line `gapS` after each answer. `before` is
+  // what six lines waited on origin/dev before #318, measured at the then 20 s deadline.
   const h = bootClock();
   await flush();
   let waited = 0, outOn = null;
   for (let i = 1; i <= 6; i++) {
     if (h.m.canSpendLiveTurn()) {
-      await h.advance(20_000);
-      waited += 20;
+      await h.advance(10_000);
+      waited += 10;
       turn(h, TIMEOUT);
       if (outOn === null && h.m.state() === "degraded") outOn = i;
     }
     await h.advance(gapS * 1000);
   }
   eq(outOn, 1, `a line every ${gapS} s into a hung gateway: the page degrades on the first`);
-  ok(waited <= most, `…and the visitor waits out at most ${most} s of timeouts over six lines (waited ${waited} s; ${before} s before)`);
+  ok(waited <= most, `…and the visitor waits out at most ${most} s of timeouts over six lines (waited ${waited} s at the 10 s deadline; ${before} s before #318, at 20 s)`);
 }
 
 // 8g. A turn refused by the bot check proved nothing about the brain, so an out page keeps
