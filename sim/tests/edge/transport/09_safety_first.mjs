@@ -521,10 +521,10 @@ const cutsAt = (w, t0) => w.spy.cuts.map((c) => (c.text ? "browser" : "cloud") +
  *      1.5 s later. The tap stops her sentence, and the redirect, already in hand, waits for
  *      the microphone, then for the ears: HEARD WHOLE once the clip is done (8.0 s) — as on
  *      origin/dev, where the line went out at the tap and its reply landed into the open
- *      microphone. Before (the W4-S7 review): said at 5.1 s and cut by the recorder opening,
- *      20–300 ms of 7.7 s heard. Then the redirect landing BETWEEN the tap and a slow
- *      microphone (a 1.5 s grant): held the same way (origin/dev said it at 6.7 s and the
- *      microphone cut it at 7.0 s).
+ *      microphone. Before (the W4-S7 review): said at 5.1 s and cut by the recorder opening
+ *      (20 ms of its 7.7 s heard at 120 ms, 1.4 s at 1.5 s). Then the redirect landing
+ *      BETWEEN the tap and a slow microphone (a 1.5 s grant): held the same way (before: said
+ *      at 6.2 s; origin/dev: at 6.7 s; both cut as the microphone opened at 7.0 s).
  * =========================================================================== */
 for (const gap of [120, 400, 1500]) {
   const world = await boot({ realVoice: true, answer: scenario(() => blocked()) });
@@ -540,7 +540,7 @@ for (const gap of [120, 400, 1500]) {
   b.earsOpen(45000);                                   // the recorder runs
   await advance(2990 - gap);                           // t+7.99 s
   deep(heard(world, t0), ["day0@4100"],
-       `13p (${gap} ms): NOTHING IS SAID INTO THE OPENING MICROPHONE OR THE RECORDING (before: the redirect at 5.1 s, cut as the recorder opened at ${5000 + gap} ms)`);
+       `13p (${gap} ms): NOTHING IS SAID INTO THE OPENING MICROPHONE OR THE RECORDING (before: the redirect at 5.1 s, cut as the recorder opened at ${(5000 + gap) / 1000} s)`);
   await advance(10);
   b.earsIdle();                                        // t+8.0 s: the clip dropped as silence: nothing queued
   await advance(15000);
@@ -562,7 +562,7 @@ for (const gap of [120, 400, 1500]) {
   await advance(500);
   b.interruptVoice();                                  // t+5.5 s: the Listen tap; the browser asks for 1.5 s
   await advance(1490);                                 // t+6.99 s: the redirect landed at 6.2 s, nothing of hers playing
-  deep(heard(world, t0), ["day0@4100"], "13p (lands after the tap): THE REDIRECT LANDING WHILE THE BROWSER ASKS WAITS for the microphone (before, and on origin/dev at 6.7 s: said, then cut as it opened)");
+  deep(heard(world, t0), ["day0@4100"], "13p (lands after the tap): THE REDIRECT LANDING WHILE THE BROWSER ASKS WAITS for the microphone (before: said at 6.2 s; origin/dev: at 6.7 s; both cut as it opened)");
   await advance(10);
   b.earsOpen(45000);                                   // t+7.0 s
   await advance(1500);
