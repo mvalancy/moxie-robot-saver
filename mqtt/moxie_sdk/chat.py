@@ -108,6 +108,70 @@ def is_offline_error(e: Exception) -> bool:
                                  "TimeoutError"})
 
 
+def is_timeout_error(e: Exception) -> bool:
+    """The request itself ran out its client timeout (openai's `APITimeoutError`, the
+    httpx `*Timeout` family, the stdlib's `TimeoutError`). Offline-class too, but never
+    retried within one call: the time a retry would cost has already been spent once."""
+    return bool(_mro_names(e) & {"APITimeoutError", "TimeoutException", "ReadTimeout",
+                                 "ConnectTimeout", "WriteTimeout", "PoolTimeout",
+                                 "Timeout", "TimeoutError"})
+
+
+# ---- bounded calls -------------------------------------------------------- #
+#
+# The openai SDK's own default is `Timeout(connect=5, read=600, write=600, pool=600)`,
+# so an endpoint that accepts connections and never answers held one request for ten
+# minutes, and the backoff below retried it. Every client this SDK builds is bounded by
+# an explicit per-request timeout from its knob (config.py: MOXIE_BRAIN_TIMEOUT_S,
+# MOXIE_STT_TIMEOUT_S, MOXIE_TTS_TIMEOUT_S), and `call_with_backoff` takes the same number
+# as the deadline past which no retry starts. What that buys, exactly: a timeout is never
+# retried, so a wedged gateway costs one bound; a fast failure (429/5xx) is retried only
+# while the retry would start inside the bound, and that retry runs its own per-request
+# bound, so one call costs at most just under two bounds. The defaults are a hang bound,
+# chosen not measured (production-hardening.md §9 A27). A knob of 0 or less is refused
+# (`timeout_seconds`), never read as "no bound": passed on, 0 meant `timeout=None` to the
+# SDK (no bound at all), a deadline that forbade every retry, and no budget left for the
+# streaming fallback — three meanings, all of them the hang this module exists to end.
+
+#: Seconds one chat request may take before it is an offline-class error. Above the
+#: filler budget and what a slow local model needs for a whole non-streamed completion.
+DEFAULT_TIMEOUT_S = 60.0
+
+#: The SDK's own connect bound, kept: a refused or black-holed connect fails here.
+CONNECT_TIMEOUT_S = 5.0
+
+
+def timeout_seconds(timeout_s, *, default: float = DEFAULT_TIMEOUT_S) -> float:
+    """The bound an engine is built with, validated once for every construction site:
+    `None` is `default` (the engine's documented knob), anything else must be a positive,
+    finite number of seconds. 0, a negative, NaN and inf raise `ValueError` here, at
+    construction, rather than reaching the SDK as "no bound" (config.py refuses the
+    knobs the same way at startup)."""
+    if timeout_s is None:
+        return float(default)
+    try:
+        seconds = float(timeout_s)
+    except (TypeError, ValueError):
+        seconds = float("nan")
+    if not 0 < seconds < float("inf"):           # NaN fails both comparisons too
+        raise ValueError(
+            f"timeout_s must be a positive number of seconds, not {timeout_s!r}: 0 is "
+            f"not 'no bound', it is the hang the bound exists to end (None = the "
+            f"default {default:g} s)")
+    return seconds
+
+
+def client_timeout(seconds, *, connect: float = CONNECT_TIMEOUT_S):
+    """The `timeout=` for an OpenAI client bounded to `seconds` per request: an
+    `httpx.Timeout` (httpx ships with openai) whose read/write/pool bounds are the knob
+    and whose connect bound is the SDK's 5 s, or the knob when that is shorter. `seconds`
+    goes through `timeout_seconds`: None is the default, 0 or less is refused, so no
+    client is ever built with `timeout=None` (which the SDK reads as no bound at all)."""
+    import httpx                         # lazy — the SDK has no hard dep on it
+    seconds = timeout_seconds(seconds)
+    return httpx.Timeout(seconds, connect=min(float(connect), seconds))
+
+
 def _status_code(e: Exception):
     return (getattr(e, "status_code", None)
             or getattr(getattr(e, "response", None), "status_code", None))
@@ -169,12 +233,25 @@ class Pacer:
 # ---- retry with backoff --------------------------------------------------- #
 
 def call_with_backoff(fn, *, max_retries=4, base=0.6, cap=20.0, on_backoff=None,
-                      pacer: Optional[Pacer] = None, sleep=time.sleep):
+                      pacer: Optional[Pacer] = None, sleep=time.sleep,
+                      deadline_s: Optional[float] = None, clock=time.monotonic):
     """Call `fn()`, retrying transient failures (rate-limit / 5xx / connection) with
     exponential backoff + jitter, honoring Retry-After. `on_backoff(attempt, delay,
     err)` is invoked before each wait (for clean logging/status). A non-transient
-    error, or exhausting `max_retries`, re-raises the last error."""
+    error, or exhausting `max_retries`, re-raises the last error.
+
+    Two bounds on top, so one dead endpoint cannot hold a worker for 5 x 600 s:
+    `deadline_s` decides when a retry may START — a wait that would end past it is not
+    taken and the last error is raised instead (a healthy call is still exactly one
+    attempt, with `clock` read once); it does not cut an attempt short, so a retry that
+    starts just inside it still runs its own per-request timeout and the whole call
+    costs at most just under two bounds. And a timeout (`is_timeout_error`) is never
+    retried within the same call, because the time a retry would cost has already been
+    spent once — so a wedged endpoint costs exactly one bound. `clock` is injected by
+    tests. `deadline_s=None` means no deadline (the callers in this SDK always pass
+    a validated positive bound, `timeout_seconds`)."""
     attempt = 0
+    started = clock() if deadline_s is not None else None
     while True:
         if pacer:
             pacer.before_request()
@@ -189,11 +266,14 @@ def call_with_backoff(fn, *, max_retries=4, base=0.6, cap=20.0, on_backoff=None,
             if pacer and rate_limited:
                 pacer.on_rate_limit()
             transient = rate_limited or is_server_error(e) or is_offline_error(e)
-            if not transient or attempt >= max_retries:
+            if not transient or is_timeout_error(e) or attempt >= max_retries:
                 _THREAD.error = e
                 raise
             ra = retry_after_seconds(e)
             delay = ra if ra is not None else min(cap, base * (2 ** attempt)) + random.uniform(0, base)
+            if started is not None and (clock() - started) + delay >= deadline_s:
+                _THREAD.error = e            # the retry would start past the deadline
+                raise
             if on_backoff:
                 on_backoff(attempt + 1, delay, e)
             sleep(delay)
@@ -209,16 +289,24 @@ def _default_on_backoff(attempt, delay, err):
 def make_openai_chat(base_url: str, api_key: str, model: str = "graphling-medium",
                      max_tokens: int = 200, temperature: float = 0.8, *,
                      max_retries: int = 4, on_backoff=_default_on_backoff,
-                     pacer: Optional[Pacer] = None, client=None) -> ChatFn:
+                     pacer: Optional[Pacer] = None, client=None,
+                     timeout_s: Optional[float] = None) -> ChatFn:
     """Build a chat(messages)->str over an OpenAI-compatible endpoint, with graceful
     rate-limit backoff + adaptive pacing. Raises on failure after retries (the caller
     decides offline vs rate-limited vs soft — see the is_* helpers).
 
+    `timeout_s` (default `DEFAULT_TIMEOUT_S`; config passes MOXIE_BRAIN_TIMEOUT_S; 0 or
+    less is refused, `timeout_seconds`) bounds each request through the client it builds
+    and when a retry may start through `call_with_backoff(deadline_s=...)`, so a gateway
+    that never answers costs one bound, not 5 x 600 s.
+
     `client` is the injection seam: anything exposing `.chat.completions.create(...)`, so
     a test drives this real function (counter and backoff included) with no socket."""
+    timeout_s = timeout_seconds(timeout_s)
     if client is None:
         from openai import OpenAI      # lazy import so the SDK has no hard dep
-        client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0)
+        client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0,
+                        timeout=client_timeout(timeout_s))
     _pacer = pacer if pacer is not None else Pacer()
 
     def chat(messages: list) -> str:
@@ -230,7 +318,8 @@ def make_openai_chat(base_url: str, api_key: str, model: str = "graphling-medium
                 max_tokens=max_tokens, temperature=temperature)
             return (resp.choices[0].message.content or "").strip()
         return call_with_backoff(_once, max_retries=max_retries,
-                                 on_backoff=on_backoff, pacer=_pacer)
+                                 on_backoff=on_backoff, pacer=_pacer,
+                                 deadline_s=timeout_s)
 
     return chat
 
@@ -265,11 +354,15 @@ def delta_text(event) -> str:
 def stream_completion(client, model: str, messages: list, *, max_tokens: int = 200,
                       temperature: float = 0.8, max_retries: int = 4,
                       on_backoff=_default_on_backoff,
-                      pacer: Optional[Pacer] = None) -> Iterator[str]:
+                      pacer: Optional[Pacer] = None,
+                      deadline_s: Optional[float] = None,
+                      clock=time.monotonic) -> Iterator[str]:
     """Yield the text deltas of one streaming chat completion.
 
-    Backoff wraps **opening** the stream (where 429/5xx surface and a retry is free).
-    Once open, a mid-stream error propagates; the caller falls back
+    Backoff wraps **opening** the stream (where 429/5xx surface and a retry is free),
+    inside `deadline_s` when given (the brain's bound; the client's own per-request
+    timeout bounds each attempt and, once open, each wait for the next delta). Once
+    open, a mid-stream error propagates; the caller falls back
     (`LLMApp.respond_stream`)."""
     def _open():
         # One increment per opening attempt (deltas are the same request).
@@ -279,7 +372,8 @@ def stream_completion(client, model: str, messages: list, *, max_tokens: int = 2
             temperature=temperature, stream=True)
 
     stream = call_with_backoff(_open, max_retries=max_retries,
-                               on_backoff=on_backoff, pacer=pacer)
+                               on_backoff=on_backoff, pacer=pacer,
+                               deadline_s=deadline_s, clock=clock)
     try:
         for event in stream:
             text = delta_text(event)
@@ -298,18 +392,24 @@ def stream_completion(client, model: str, messages: list, *, max_tokens: int = 2
 def make_openai_stream(base_url: str, api_key: str, model: str = "graphling-medium",
                        max_tokens: int = 200, temperature: float = 0.8, *,
                        max_retries: int = 4, on_backoff=_default_on_backoff,
-                       pacer: Optional[Pacer] = None, client=None) -> StreamFn:
-    """`make_openai_chat`'s streaming twin: `stream(messages) -> Iterator[str]`.
+                       pacer: Optional[Pacer] = None, client=None,
+                       timeout_s: Optional[float] = None) -> StreamFn:
+    """`make_openai_chat`'s streaming twin: `stream(messages) -> Iterator[str]`, bounded
+    the same way (`timeout_s` on the client it builds and as the open's deadline; 0 or
+    less refused).
 
     `client` is the same rule-9 seam, for the same reason."""
+    timeout_s = timeout_seconds(timeout_s)
     if client is None:
         from openai import OpenAI      # lazy import so the SDK has no hard dep
-        client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0)
+        client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0,
+                        timeout=client_timeout(timeout_s))
     _pacer = pacer if pacer is not None else Pacer()
 
     def stream(messages: list) -> Iterator[str]:
         return stream_completion(client, model, messages, max_tokens=max_tokens,
                                  temperature=temperature, max_retries=max_retries,
-                                 on_backoff=on_backoff, pacer=_pacer)
+                                 on_backoff=on_backoff, pacer=_pacer,
+                                 deadline_s=timeout_s)
 
     return stream

@@ -458,7 +458,9 @@ class ConnectionMixin:
                 self.app_for(device_id).on_connect(robot)
             except Exception as e:
                 print(f"[runtime] app.on_connect error: {e}", flush=True)
-        threading.Timer(1.0, _settle).start()
+        settle = threading.Timer(1.0, _settle)
+        settle.daemon = True                  # never hold a shutdown open for a settle
+        settle.start()
 
     # ---- one place that forgets what we believe about a robot's state ----
     # Cached beliefs (onboarded on this connection; vision subscribed; mic asked for) are

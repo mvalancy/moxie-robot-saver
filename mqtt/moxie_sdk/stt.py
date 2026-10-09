@@ -39,6 +39,7 @@ import operator
 import os
 import re
 import struct
+import threading
 import time
 from array import array
 from enum import IntEnum
@@ -387,14 +388,23 @@ class OpenAITranscriber(Transcriber):
     #: Shortest utterance worth a request (VAD closes on breaths and door slams).
     MIN_MS = 120
 
+    #: Seconds one transcription request may take (config: MOXIE_STT_TIMEOUT_S). The
+    #: transcript is produced on the broker thread, so this sits well inside the broker's
+    #: keepalive drop; the SDK's own default was 600 s. Chosen, not measured.
+    TIMEOUT_S = 12.0
+
     def __init__(self, base_url: str, api_key: str, model: str = "stt-whisper", *,
                  client=None, max_retries: int = 4, pacer=None, sleep=time.sleep,
-                 min_ms: int = MIN_MS, language: Optional[str] = None):
+                 min_ms: int = MIN_MS, language: Optional[str] = None,
+                 timeout_s: Optional[float] = None):
+        from .chat import Pacer, timeout_seconds
+        # None = `TIMEOUT_S`; 0 or less is refused here, never read as "no bound".
+        self._timeout_s = timeout_seconds(timeout_s, default=self.TIMEOUT_S)
         if client is None:
             from openai import OpenAI      # lazy — the module imports without openai
+            from .chat import client_timeout
             client = OpenAI(base_url=base_url, api_key=api_key or "sk-local",
-                            max_retries=0)
-        from .chat import Pacer
+                            max_retries=0, timeout=client_timeout(self._timeout_s))
         self._client = client
         #: Public: the console model picker reads it.
         self.model = model
@@ -440,7 +450,8 @@ class OpenAITranscriber(Transcriber):
                 response_format="json", **kw)
 
         resp = call_with_backoff(_once, max_retries=self._max_retries,
-                                 pacer=self._pacer, sleep=self._sleep)
+                                 pacer=self._pacer, sleep=self._sleep,
+                                 deadline_s=self._timeout_s)
         return transcript_text(resp)
 
 
@@ -454,13 +465,31 @@ class NullTranscriber(Transcriber):
 
 class FallbackTranscriber(Transcriber):
     """Primary ears with a standby — the STT twin of `tts.py::FallbackSynthesizer`: the
-    first failure is reported once and latches the standby for the rest of the run."""
+    first failure is reported once and latches the standby, so a dead gateway does not
+    cost every utterance its timeout. The latch is not for the rest of the run: after
+    `retry_s` (config: MOXIE_ENGINE_RETRY_S) the next utterance tries the primary again,
+    and an answer clears the latch with one recovery line — in the default image the
+    standby is `NullTranscriber`, so a latch that never let go left Moxie deaf until
+    someone restarted the supervisor."""
     name = "fallback"
 
-    def __init__(self, primary: Transcriber, standby: Transcriber, *, log=None):
+    #: Seconds a latched standby holds before the next call tries the primary again.
+    #: 0 = try the primary on every call (no latch). Chosen, not measured.
+    RETRY_S = 60.0
+
+    def __init__(self, primary: Transcriber, standby: Transcriber, *, log=None,
+                 retry_s: Optional[float] = None, clock=time.time):
         self._primary, self._standby = primary, standby
         self._log = log if log is not None else _warn
+        self._retry_s = max(0.0, float(self.RETRY_S if retry_s is None else retry_s))
+        self._clock = clock                     # wall clock: `describe()` names the time
+        # The latch is `failed_at`: the instant it (last) closed, None while healthy;
+        # `failed` is the public flag beside it. Both move under `_lock`, and every
+        # reader takes ONE snapshot of `failed_at` — the status page's `describe()` runs
+        # on another thread than the utterance that clears the latch.
+        self._lock = threading.Lock()
         self.failed = False
+        self.failed_at: Optional[float] = None
 
     @property
     def engine(self) -> Transcriber:
@@ -471,22 +500,71 @@ class FallbackTranscriber(Transcriber):
     def engine_name(self) -> str:
         return self.engine.name
 
+    def retry_at(self) -> Optional[float]:
+        """When the primary is tried again (wall clock), or None while it is healthy."""
+        at = self.failed_at
+        return None if at is None else at + self._retry_s
+
     def describe(self) -> str:
-        if self.failed:
-            return (f"{self._standby.describe()} (standby — "
-                    f"{self._primary.name} failed)")
-        return f"{self._primary.describe()} (standby: {self._standby.describe()})"
+        at = self.failed_at
+        if at is None:
+            return f"{self._primary.describe()} (standby: {self._standby.describe()})"
+        # Past the window the time has gone by: say what happens instead of when it was.
+        when = ("on the next utterance" if self._clock() >= at + self._retry_s
+                else f"at {_hhmm(at + self._retry_s)}")
+        return (f"{self._standby.describe()} (standby since {_hhmm(at)} — "
+                f"{self._primary.name} failed; retrying the primary {when})")
+
+    def _try_primary(self) -> bool:
+        """Whether THIS utterance goes to the primary: always while healthy; once the
+        window has passed, for the one caller that claims the retry — the window moves
+        at once, so a caller racing it on another thread stays on the standby instead
+        of spending a second timeout on the same dead gateway."""
+        with self._lock:
+            at = self.failed_at
+            if at is None:
+                return True
+            if self._clock() >= at + self._retry_s:
+                self.failed_at = self._clock()
+                return True
+            return False
+
+    def _latch(self, exc: Exception) -> None:
+        with self._lock:
+            first = self.failed_at is None
+            self.failed_at = self._clock()
+            self.failed = True
+        if first:
+            self._log(f"[stt] {self._primary.name} failed ({type(exc).__name__}: {exc}); "
+                      f"hearing with {self._standby.name} until it answers again (next "
+                      f"try in {self._retry_s:g}s)")
+        else:
+            self._log(f"[stt] {self._primary.name} still failing ({type(exc).__name__}); "
+                      f"hearing with {self._standby.name}, next try in {self._retry_s:g}s")
+
+    def _release(self) -> None:
+        with self._lock:
+            was_latched = self.failed_at is not None
+            self.failed, self.failed_at = False, None
+        if was_latched:
+            self._log(f"[stt] {self._primary.name} is back; hearing with it again")
 
     def transcribe(self, pcm: bytes, sample_rate: int = 16000) -> str:
-        if not self.failed:
+        if self._try_primary():
             try:
-                return self._primary.transcribe(pcm, sample_rate)
+                text = self._primary.transcribe(pcm, sample_rate)
             except Exception as exc:            # noqa: BLE001 — any failure downgrades
-                self.failed = True
-                self._log(f"[stt] {self._primary.name} failed "
-                          f"({type(exc).__name__}: {exc}); hearing with "
-                          f"{self._standby.name} for the rest of this run")
+                self._latch(exc)
+            else:
+                self._release()
+                return text
         return self._standby.transcribe(pcm, sample_rate)
+
+
+def _hhmm(t: Optional[float]) -> str:
+    """A wall-clock instant as `HH:MM ZONE` (the supervisor's local zone — UTC in the
+    container) for a startup/status line."""
+    return time.strftime("%H:%M %Z", time.localtime(t or 0))
 
 
 def _warn(message: str) -> None:
