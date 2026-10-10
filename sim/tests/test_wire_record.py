@@ -927,6 +927,10 @@ def test_sil_a_real_brokers_lines_are_recorded_stamped_and_shared_without_stamp_
     assert len(texts) >= 3 and all(re.match(r"\d{9,11}: ", t) for t in texts), texts
     assert any("New client connected from 127.0.0.1:" in t and f" as {device} (" in t
                for t in texts), texts
+    subscribed = [ln for ln in lines if ln.get("kind") == "msg" and ln["device"] == device
+                  and ln["topic"] == "$SYS/broker/log/M/subscribe"]
+    assert [ln["body"]["text"].split(": ", 1)[1] for ln in subscribed] == \
+        [f"{device} 0 /devices/{device}/config"], subscribed
     shared = T.share_records(lines)
     assert T.share_problems(shared) == []
     mine = [r["body"]["text"] for r in shared if r.get("kind") == "msg"
