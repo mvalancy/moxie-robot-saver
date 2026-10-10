@@ -38,10 +38,13 @@ not be reached then, the unpair says so, and **Revoke** in Robot access takes th
 Your child's profile stays on your account until you delete it.
 
 This server has no real sign-in yet: an account is just its email, so someone on your network
-who opens the console with your email can see the name. The supervisor's status port has no
-sign-in either, and `.env.example`'s `MOXIE_BIND_HOST=0.0.0.0` puts it on your network, so anyone
-there can read the name from it. Whether to close both is an open question for the owner (OQ3).
-The full list:
+who opens the console with your email can see the name. Whether the console should require a real
+sign-in is an open question for the owner (OQ3). The broker's browser port (`9001`) also lets any
+device on your network read the settings this server sends a robot as they go by, the name among
+them ([what is on your network](one-command-stack.md#what-is-on-your-network)). The supervisor's
+status port has no sign-in either, but it listens on this machine only: the one-command stack
+publishes it to `127.0.0.1` (`MOXIE_BIND_HOST_STATUS`, the default and `.env.example`'s value), and
+a supervisor run without Docker binds it there itself. The full list:
 [config contract, the child's name](../architecture/config-and-telemetry-contract.md#the-childs-name-the-parents-record-per-robot).
 
 The code carries only your network name and password: it is the **Wi-Fi-only** code, the right
