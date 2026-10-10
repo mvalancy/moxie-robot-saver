@@ -18,7 +18,11 @@ share state through `window.__moxieBridge`, which `core.js` creates fresh on eve
   one arrives), `faceEvent()` / `presenceStats()`.
 - **`activity.js`** — robot → cloud activity log (query / mentor_behavior / telehealth
   state), pinned by `sim/tests/goldens/robot_to_cloud_activity.json`.
-- **`alive.js`** — `window.moxieAlive`: listening / thinking / settled cues and fillers.
+- **`alive.js`** — `window.moxieAlive`: listening / thinking / settled cues and fillers, plus
+  `answered()` (the brain has answered and her voice is on its way: no spoken filler from
+  there, a quiet beat until she speaks) and `transcribing()` (a clip is uploading: the
+  listening face held). The transport settles a reply's cue when her voice starts, not
+  when the brain answers.
 - **`index.js`** — voice arbitration, `remote_chat` / `tts` / telehealth / child-turn /
   motor handlers, `route()`, `connect()`, record/replay, and `window.moxieBridge`.
 

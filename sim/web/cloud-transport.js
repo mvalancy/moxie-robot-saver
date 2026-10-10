@@ -39,6 +39,10 @@
  * mic.js's 30 s upload valve, told to `earsOpen`; `EARS_HOLD_MAX_MS` when nothing is told)
  * even if nothing ever closes it, so the queue can never be held for good.
  *
+ * SHE IS VISIBLY WORKING UNTIL SHE SPEAKS (W4-S1): the thinking cue a live turn arms — the
+ * status line, `moxieAlive`'s face and pose — is over when the reply STARTS, not when the
+ * brain answers (`cueDone`), so the wait for chunk 0 is never dead air.
+ *
  * No secret and no hostname here: the base is `moxieMode.apiBase()` (= location.origin).
  * `ticket` and `context` are opaque, signed server-side, and die with the tab (§2.6).
  */
@@ -115,6 +119,42 @@
   function status(text) {
     var el = document.getElementById("chat-status");
     if (el) el.textContent = text;
+  }
+
+  /* ---- the thinking cue, from the send until her voice (W4-S1) ------------- *
+   * The status line, her face and her pose are one state: armed by `liveTurn` (status
+   * "thinking…", `moxieAlive.thinking()`) and over when the reply STARTS, not when the
+   * brain answers. A reply holding voice tickets used to settle the body the moment
+   * /api/chat returned, while `voiceFirst` held its words up to SPEECH_WAIT_MS for chunk 0:
+   * measured on production (N=5 typed turns, 2026-10-08) the status cleared at chat return
+   * and her words and voice came 2.0-2.6 s later, with an empty line and arms at rest. So
+   * such a reply keeps the cue — the status line says what she is doing, and the body is
+   * told her voice is coming (`moxieAlive.answered`: no spoken filler from here, since a
+   * filler cut by her own voice is the double voice §9 of the transport suite measured) —
+   * and settles it ONCE at the body's point, the first of: chunk 0 routed, the words
+   * released at SPEECH_WAIT_MS, chunk 0 given up, or a newer reply superseding this one
+   * (`voiceFirst`'s `cue`). Never at `close()`, which fires only once the whole reply is
+   * handed over: that would hold the thinking pose through her speech. The voice-wait line
+   * lasts while chunk 0 is in flight — through words released silently at SPEECH_WAIT_MS
+   * too, since her voice is still on its way (measured on a local copy, 2026-10-09: chunk 0
+   * landing just after that release left 130-330 ms with nothing to see but the words) —
+   * and clears when her voice is routed, on time or late, or is not coming. A
+   * refusal, an error, `blocked`, a reply with no voice coming and a stub answer settle at
+   * chat return, as before: their words go out there. */
+  var VOICE_WAIT_LINE = "warming up my voice…";
+
+  /** The reply is starting: the body is handed back (`settled()` sets no face: the reply's
+   *  own markup is about to). */
+  function cueDone() {
+    if (window.moxieAlive) window.moxieAlive.settled();
+  }
+
+  /** Her voice is on its way to the speakers, or is not coming: the voice-wait line clears —
+   *  that line only: a line written since (a refusal's, "will answer that next", the next
+   *  turn's "thinking…") is not this reply's to clear. */
+  function voiceLineDone() {
+    var el = document.getElementById("chat-status");
+    if (el && el.textContent === VOICE_WAIT_LINE) status("");
   }
 
   /* ---- reporting back to the mode machine (§4.5) -------------------------- */
@@ -427,7 +467,7 @@
    * nothing later is redeemed or routed — and no local voice stands in for a later chunk:
    * the words are on screen, and her first sentence was heard in her voice (or spoken
    * locally, if chunk 0 failed). */
-  function voiceFirst(chatMessages, tickets, eid, seq, settle) {
+  function voiceFirst(chatMessages, tickets, eid, seq, settle, cue) {
     var n = tickets.length;
     var landed = [];         // chunk -> its TTS messages, once /api/speech delivered them
     var settled = [];        // chunk -> true once its request answered, failed or timed out
@@ -440,6 +480,13 @@
     var pipe = { seq: seq, supersede: supersede };
     pipelines.push(pipe);
     expectVoice(eid);
+    /** The reply STARTS — chunk 0 routed, or the words released at SPEECH_WAIT_MS — or its
+     *  voice is given up (refused, past the deadline, superseded): the thinking cue is over,
+     *  once (`cueDone`), before the words and before the turn settles, so the next line's
+     *  own cue is never the one cleared. The voice-wait line ends with chunk 0's flight:
+     *  routed (on time or late), or given up — also before the turn settles. */
+    var cueOver = once(function () { if (cue) cue(); });
+    var lineOver = once(voiceLineDone);
 
     /** Nothing left to redeem or route: no newer reply can end this one any more, and the
      *  turn is SETTLED — the next waiting line may go. */
@@ -454,6 +501,8 @@
     function giveUp() {
       if (over) return;
       over = true;
+      cueOver();
+      lineOver();
       for (var j = next; j < n; j++) if (landed[j]) { stats.chunksDropped++; landed[j] = null; }
       close();
     }
@@ -536,6 +585,8 @@
         // Voice first: bubble and audio land together, and the rest follows in order. Any
         // older reply still being assembled ends here.
         supersedeVoices(seq);
+        cueOver();
+        lineOver();
         routeAll(landed[0], "tts");
         routeAll(chatMessages, "chat");
         stats.voiceFirst++;
@@ -550,7 +601,9 @@
         routeAll(chatMessages, "chat");
         return;
       }
-      // No voice yet: the words go out now, silently, still expecting their own voice.
+      // No voice yet: the words go out now, silently, still expecting their own voice (the
+      // body is handed to their markup; the voice-wait line stays until the voice).
+      cueOver();
       routeAll(chatMessages, "chat");
       stats.chatFirst++;
       return speech0.then(function () {
@@ -558,6 +611,7 @@
           // However late it is, nothing local has said this line: play it, and any older
           // reply still being assembled ends here.
           supersedeVoices(seq);
+          lineOver();
           routeAll(landed[0], "tts");
           stats.lateSpeechPlayed++;
           voiced = true;
@@ -656,8 +710,15 @@
     if (token) payload["cf-turnstile-response"] = token;
     var seq = ++turnSeq;      // this turn's place in the conversation, whenever its reply lands
     return post("/api/chat", payload, CHAT_FETCH_MS).then(function (res) {
-      // The wait is over, whatever the outcome: every answer and refusal passes here once.
-      if (window.moxieAlive) window.moxieAlive.settled();
+      // The wait is over for every refusal and error, and for a reply with no voice coming:
+      // their words go out here. A reply holding voice tickets keeps the cue until her voice
+      // starts — `cueDone`, through `voiceFirst` (see there) — and from NOW no spoken filler
+      // may start (`answered`), however long the reply is then held (the ears, a turn before it).
+      var voiceComing = !!(res.body && !res.body.reason && ticketsOf(res.body.speech).length);
+      if (window.moxieAlive) {
+        if (!voiceComing) window.moxieAlive.settled();
+        else if (window.moxieAlive.answered) window.moxieAlive.answered();
+      }
       if (!res.body) {
         stats.chatErrors++;
         noteTransportError();
@@ -685,7 +746,7 @@
       }
 
       stats.chatOk++;
-      status("");
+      if (!voiceComing) status("");
       // She cites her source: `cited` = "<title>|<path>", linked into the docs explorer.
       if (body.cited) {
         var bar = body.cited.indexOf("|");
@@ -728,7 +789,9 @@
           return;
         }
         stats.tickets += tickets.length;
-        return voiceFirst(body.messages, tickets, eventOf(body.messages, body.speech), seq, settle);
+        // Her voice is on its way: the line says so (the body was told at chat return).
+        status(VOICE_WAIT_LINE);
+        return voiceFirst(body.messages, tickets, eventOf(body.messages, body.speech), seq, settle, cueDone);
       });
     });
   }
@@ -835,6 +898,8 @@
     }
     status(inflight || waiting.length || earsBusy ? "Moxie will answer that next." : "");
     window.moxieBridge.queueUserTurn(t);
+    // A typed line steps past the mic's last "heard: …" line (mic.js owns that line).
+    try { if (window.moxieMic && window.moxieMic.typedLine) window.moxieMic.typedLine(); } catch (e) {}
     return true;
   }
 
