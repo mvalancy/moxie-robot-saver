@@ -144,8 +144,10 @@ protected. The review state (`review._state`) is:
 | fails `validate_item` | `INVALID`, never installable, with reasons | |
 
 Only `NEW` and a clean `UPGRADE` are ever pre-ticked (`DEFAULT_ACCEPT`), and only when the digest is
-`ok` and the item's extension asks for no new capability (the escalation rule,
-[`sandboxed-extensions.md`](sandboxed-extensions.md) §7.3). `FORK` exists because authors may not bump
+`ok`, the item's extension asks for no new capability (the escalation rule,
+[`sandboxed-extensions.md`](sandboxed-extensions.md) §7.3) and no `<mark` in the item's text names a
+system command (`system_commands`; the gate never sends one, and the row names every robot command
+the text writes, the contract's "What pack content may put on the robot"). `FORK` exists because authors may not bump
 `source_version` (A1). **Re-importing a pack after a local edit never clobbers it** (test 5). Every row
 carries a field-level diff, including a `NEW` row, which shows everything it would install.
 

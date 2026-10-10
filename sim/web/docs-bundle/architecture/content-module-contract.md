@@ -874,11 +874,14 @@ by construction rather than by reading the program cleverly:
   four such markups 65-112 ms; now 0.3 ms, measured. Five turns of four 8 KB markups of
   the shapes that were super-linear take 7-31 ms in all through the real app, where five
   turns of four runs of `<mark` openings took 3.5 s before round 9 and the fixpoint pass
-  before round 8 took 2.1-3.7 s a turn on four nests. This is the only channel on which a
-  pack's markup is checked: a mark written in a program's line, or in a conversation's
-  opener, reaches the robot's markup through the runtime's markup floor, which sends a
-  line holding `<` as it is, unchecked, under the default grants (as on dev for lines; an
-  opener is new on the robot path with this change). Gating the floor is a follow-up.
+  before round 8 took 2.1-3.7 s a turn on four nests. The same gate also drops a mark whose
+  verb pack content may not send (every catalogue verb outside `vocab.EXPRESSIVE_VERBS`,
+  the system verbs first among them) and names the verb to the parent (`pack_markup`). A
+  mark written in a program's line, or in a conversation's opener, reaches the robot
+  another way: the runtime's markup floor sends a line holding `<` as it is, as the line's
+  own markup (the floor and the planner leave a line that carries a tag alone, their S1),
+  so the line is held to the same rule before it is kept, and the opener as it is said:
+  see "What pack content may put on the robot" below.
   Never counted as a refusal: no action tag in markup is acted on. The shipped `Goodbye` reads *"…: says one of 5 goodbyes (picked unpredictably) and
   answers without asking the AI; then the conversation ends."* and sends its `<exit>` as
   before, because its rule writes it. A taken-out tag is counted, and the parent is told
@@ -975,12 +978,56 @@ pre-ticks the item.) Each effect reads *"sometimes"*, since which
 alternative is said, and what its template leaves in, varies. The rule holds for every
 opener; the shipped ones write no tag, so they say and do what they did. A tag an opener
 lifts is not reported to the parent the way a program's is: the robot did nothing, and the
-row already named every action it can take. The rule is about our action tags only: a catalogue tag
-written in an opener (`<mark …/>`, `<usel …>`) is not ours, so it stays in the line, and
-the runtime's markup floor sends that line to the robot as its markup, unchecked and not
-named in the review, as it does a program's line (`<mark name="cmd:start-systemunpair"/>`
-is in the catalogue; whether a robot acts on it from a chat line is unverified). Gating
-catalogue tags in pack-made lines and openers at the floor is a follow-up.
+row already named every action it can take. The rule is about our action tags; a catalogue mark
+written in an opener, or formed as the template renders (the child's name included), is held
+to the pack gate below (`ext_host.pack_spoken`, run on what `said_opener` speaks): an
+expressive mark the catalogue reads whole stays in the line, which the runtime's markup floor
+sends to the robot as its markup; every other mark is cut; a system verb is never sent and is
+named to the parent in the conversation's own `ext_events` row (hook `opener`) and in the
+review. An opener that was only such a mark is said as nothing, as one that was only a tag of
+ours is, and costs no model call. A `<usel …>` or `<break …/>` in an opener is not a command
+and stays, as before.
+
+**What pack content may put on the robot.** Pack content reaches the robot's body three ways: a
+program's `say` line and a conversation's opener, both under the default grants, and, under the
+`markup` grant (which only shipped programs have today), a `say`'s markup or a `markup`
+statement. On all three a catalogue mark (`<mark name="cmd:…"/>`) reaches the robot only when it
+is one this appliance could have minted itself: the catalogue's own mark pattern reads it whole
+(`vocab._MARK_RE`: double quotes, no space around the `=`, data closed with no `>` inside it, the
+verb in the catalogue's own case), its verb is one of the expressive verbs
+(`vocab.EXPRESSIVE_VERBS`: `behaviour-tree`, `playback-mood`, `vocal-gesture`, `playaudio`,
+`stopaudio` and `icons-v2`, a face, a gesture or whole-body tree, a sound, the screen icons: the
+verbs the floor and the planner mint for a line), and every id in it is in the catalogue
+(`vocab.validate_markup`, the check the markup channel always made). Every other `<mark` opening,
+in any case, is cut from the line to its first `>` (to the end of the line when none follows) and
+never spoken. The catalogue's other verbs (`scripted`, `composite`, `notification`, …) are named
+to the parent, and the system verbs (`vocab.SYSTEM_VERBS`: today `start-systemunpair` and
+`start-systemsuspend`, read off the catalogue by name, so a `start-system*`, wifi, pairing, reset,
+update, suspend, shutdown, reboot or factory verb added to it later is one on its own) are never
+sent from any pack content, however the mark is written: in upper case, in single quotes, with
+spaces around the `=`, left open, with data, built from pieces at run time, read from what the
+child said, or formed only once a tag of ours between its pieces is lifted or a cut mark's
+neighbours meet (the gate alternates cutting marks and lifting tags until a round changes
+nothing, at most `ext_host.PACK_GATE_ROUNDS` rounds, each a pass over the line; a line nested
+deeper is not spoken at all). The parent is told once per robot, item and verb through the same
+`ext_events` ring a breach uses, reason `command:<verb>`, with a fixed sentence around the
+catalogue's own verb, never author text: *"it tried to send Moxie the system command
+start-systemunpair, which would unpair Moxie from this home; no activity may, so Moxie said its
+line without it"*, or for another catalogue verb *"it tried to send Moxie the robot command
+scripted, which an activity may not; Moxie said its line without it"*. It is not a breach and
+never counts towards quarantine: the line is said without the mark and the turn goes on. The
+pack review names every catalogue verb a `<mark` anywhere in an item's text asks for (its
+opener, its prompt, a program's lines) in the item's own row (*"writes robot commands in its
+text: cmd:start-systemunpair."*, then *"this appliance never sends cmd:start-systemunpair from an
+activity (cmd:start-systemunpair is a system command: it would unpair or suspend Moxie); Moxie
+says the line without them."*), counts the verbs it does not know without quoting them, and does
+not pre-tick an item that carries a system verb, whatever its state, as it does not pre-tick an
+escalation (`review_pack`'s `commands`, `system_commands` and `default`). Shipped content writes
+no mark, so it says and does what it did, walked byte for byte with the gate on and bypassed; a
+registered Python handler is ours, not a pack's, and is not gated. Whether a robot acts on
+`cmd:start-systemunpair` from a chat line is unverified without hardware; the gate treats it as
+real. `sim/tests/test_pack_markup_gate.py` holds all of it, through the real `ContentApp` and
+the real runtime.
 
 `sim/tests/test_ext_say_tags.py` holds the invariant as a property over random programs
 (every op above over literal pieces of tags and non-tags, with what the child said, a

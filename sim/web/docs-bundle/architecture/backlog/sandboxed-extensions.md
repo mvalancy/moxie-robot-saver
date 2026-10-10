@@ -60,7 +60,10 @@ line can make the robot take ([content-module-contract.md](../content-module-con
 line's action tags may do"). A conversation's `opener` is not an extension, but it is held to the
 same rule: an action tag in it acts only when written whole in the alternative said, as written
 before it is rendered, and the pack review names each such tag in the opener's own row (the
-contract's "A conversation's opener").
+contract's "A conversation's opener"). A catalogue mark in a line or an opener is held to the pack
+gate: only a mark this appliance could mint itself (an expressive verb, catalogue ids, read whole)
+reaches the robot, a system verb never does, and the parent is told (§4.5 `say`, §6.4; the
+contract's "What pack content may put on the robot").
 
 ### 2.2 The pack format it rides in
 
@@ -284,8 +287,8 @@ effect is applied. A breach anywhere discards the list whole (X11), so nothing i
 
 | Statement | What the host does |
 |---|---|
-| `say` | Acts only on the action tags written whole in the rule's own text (`literal_actions`, read with the robot's own parse): any other `<exit>`, `<sleep>` or `<launch:…>` the line carries is taken out first (`actions.drop_action_tags`), counted and reported (§6.4), never said or acted on; so is a tag that would only form once the tags that stay are lifted (`<ex<sleep>it>` with its sleep kept would be spoken as `<exit>`). The line's markup reaches the robot only as `robot_markup` leaves it (the `markup` row). Then `volley.set_output`, after the output-side safety classifier (a blocked line becomes a redirect) and after `annotate` if no markup was authored. The set a rule may act on is read once per program, linearly in its text (a megabyte of spaces after `<exit:` in 16 ms, measured) |
-| `markup` | A `say`'s markup and a `markup` statement reach the robot only with no tag of ours and nothing the catalogue's check refuses, or not at all (`robot_markup`), checked on exactly what the robot path sends (our tags lifted once, the rest tidied): every tag of ours is lifted as the robot's own parse lifts them (`actions.lift_action_tags`, one pass, malformed ones too); then the gate (`ext_markup`, tag by tag against `vocab.py`: a tag with an id the catalogue refuses, a mark the catalogue's own mark pattern does not read whole, a tag cut short by a `>` inside its own quotes and a tag holding another `<` are dropped and counted, the rest of the markup kept); then the robot path's tidying (`tidy_spoken_text`); then, if a tag of ours, a tag of a form the gate drops, a catalogue tag left open or anything the catalogue's whole-text check refuses is left (a dropped tag stood between the pieces of another, `<ex<ex<mark name="cmd:zzz"/>it>it>`; a quoted `>` hid a value from the tag-by-tag read, `<spurt x" spurt_id="n>pe"/>`), the markup is dropped whole and the runtime's markup floor speaks the line. A usel or a spurt whose value the catalogue's patterns do not read (single quotes, spaces around `=`) is not refused, as on dev. Never a refusal or a breach: no action tag in markup is acted on. Every pass is linear, the whole-text check (`vocab.validate_markup`) included, since it runs only on tags of a form the gate keeps with none left open (before round 10 it read on from each mark the catalogue's pattern does not read whole: 15-27 ms on one 8 KB markup of the round-9 review's shape, 0.3 ms now, measured); five turns of four 8 KB markups of the shapes that were super-linear take 7-31 ms in all (five turns of four runs of `<mark` openings took 3.5 s before round 9, the fixpoint pass 2.1-3.7 s a turn before round 8). A mark written in a `say`'s line, or in a conversation's opener, is not on this channel: the runtime's markup floor sends a line holding `<` as it is, unchecked (a follow-up) |
+| `say` | Acts only on the action tags written whole in the rule's own text (`literal_actions`, read with the robot's own parse): any other `<exit>`, `<sleep>` or `<launch:…>` the line carries is taken out first (`actions.drop_action_tags`), counted and reported (§6.4), never said or acted on; so is a tag that would only form once the tags that stay are lifted (`<ex<sleep>it>` with its sleep kept would be spoken as `<exit>`). The line's markup reaches the robot only as `robot_markup` leaves it (the `markup` row), and a catalogue mark in the line itself is held to the pack gate (`pack_line`: a mark stays only when this appliance could have minted it, an expressive verb with catalogue ids read whole; every other `<mark` is cut, and a system verb is never sent and is told to the parent, §6.4; the contract's "What pack content may put on the robot"). Then `volley.set_output`, after the output-side safety classifier (a blocked line becomes a redirect) and after `annotate` if no markup was authored. The set a rule may act on is read once per program, linearly in its text (a megabyte of spaces after `<exit:` in 16 ms, measured) |
+| `markup` | A `say`'s markup and a `markup` statement reach the robot only with no tag of ours and nothing the catalogue's check refuses, or not at all (`robot_markup`), checked on exactly what the robot path sends (our tags lifted once, the rest tidied): every tag of ours is lifted as the robot's own parse lifts them (`actions.lift_action_tags`, one pass, malformed ones too); then the gate (`ext_markup`, tag by tag against `vocab.py`: a tag with an id the catalogue refuses, a mark the catalogue's own mark pattern does not read whole, a tag cut short by a `>` inside its own quotes and a tag holding another `<` are dropped and counted, the rest of the markup kept); then the robot path's tidying (`tidy_spoken_text`); then, if a tag of ours, a tag of a form the gate drops, a catalogue tag left open or anything the catalogue's whole-text check refuses is left (a dropped tag stood between the pieces of another, `<ex<ex<mark name="cmd:zzz"/>it>it>`; a quoted `>` hid a value from the tag-by-tag read, `<spurt x" spurt_id="n>pe"/>`), the markup is dropped whole and the runtime's markup floor speaks the line. A usel or a spurt whose value the catalogue's patterns do not read (single quotes, spaces around `=`) is not refused, as on dev. Never a refusal or a breach: no action tag in markup is acted on. Every pass is linear, the whole-text check (`vocab.validate_markup`) included, since it runs only on tags of a form the gate keeps with none left open (before round 10 it read on from each mark the catalogue's pattern does not read whole: 15-27 ms on one 8 KB markup of the round-9 review's shape, 0.3 ms now, measured); five turns of four 8 KB markups of the shapes that were super-linear take 7-31 ms in all (five turns of four runs of `<mark` openings took 3.5 s before round 9, the fixpoint pass 2.1-3.7 s a turn before round 8). The gate also drops a mark whose verb pack content may not send (every catalogue verb outside `vocab.EXPRESSIVE_VERBS`, the system verbs `start-systemunpair` and `start-systemsuspend` first among them) and names the verb to the parent (`pack_markup`, §6.4). A mark written in a `say`'s line, or in a conversation's opener, reaches the robot as the line's own markup (the floor sends a line holding `<` as it is) and is held to the same rule before the line is kept (`pack_line`, `pack_spoken`; the contract's "What pack content may put on the robot") |
 | `remember` / `forget` | `MemoryStore.merge` on `(device_id, namespace)`, both supplied by the host. Dropped at the store under `NO_DATA` |
 | `scratch` | `volley.local_data`, per turn, never persisted |
 | `act` | One `add_execution_action(name, args)`. `execution_actions_of` turns it into an `execute` `RemoteChatAction` with `function_id`/`function_args`. The name must be in `ACTION_WORDS`, checked at load **and** at the host boundary, and individually granted |
@@ -322,7 +325,7 @@ declared set equals the used set, so the list a parent reads is exactly what the
 | `random` | `random.int`, `random.pick` from a **seeded** PRNG | refused | Entropy defeats replay (§6.1) |
 | `memory.read` / `memory.write` | Own namespace only | refused | The child's remembered life |
 | `presence` | Face present, presence line | refused | A physical-world observation |
-| `markup` | Author raw markup (catalogue-checked) | refused | Reaches the robot's body |
+| `markup` | Author raw markup (catalogue-checked; the expressive verbs only, never a system verb) | refused | Reaches the robot's body |
 | `act.<name>` | One execution action **per name** from `ACTION_WORDS` (`eb_timer_request`, `eb_enable_qr`, `eb_wake`) | refused | "Set a timer" and "turn on the camera" are different decisions |
 | `subscribe` | Robot events from `SUBSCRIBE_EVENTS` | refused | Pairs with `act` (`MoxieGo` arms the QR scanner *and* listens for it). One sentence for the whole capability (*"Can listen for things the robot notices"*), not one per event. The most privacy-adjacent grant |
 | `brain` | One model call per turn | refused, **P1** (`P1_CAPABILITIES`) | Costs money and latency; output not predictable from the AST |
@@ -424,6 +427,16 @@ the same way, one row per (device, extension, reason `tag`), with *"it tried to 
 its review did not name"*. It is not a breach and does not count towards quarantine: as with a markup
 tag the catalogue drops, the line is said without it and the turn goes on. `ContentApp._ext_refusals`
 counts them apart from `_ext_breaches`.
+
+A catalogue command the pack gate cut from a line, an opener or a markup (a mark whose verb is
+outside `vocab.EXPRESSIVE_VERBS`; the system verbs `start-systemunpair` and `start-systemsuspend`
+never reach the robot from pack content) is told the same way, one row per (device, item, reason
+`command:<verb>`), hook `opener` for an opener, with *"it tried to send Moxie the system command
+start-systemunpair, which would unpair Moxie from this home; no activity may, so Moxie said its line
+without it"* (for the catalogue's other verbs: *"it tried to send Moxie the robot command scripted,
+which an activity may not; Moxie said its line without it"*). The verb is the catalogue's own, never
+author text; a mark naming no catalogue verb is a catalogue drop, counted and not told. Not a breach
+either: `ContentApp._ext_commands_refused` counts them, and nothing here counts towards quarantine.
 
 ---
 
@@ -597,7 +610,7 @@ Still open:
 | R1 | The op table grows until it is a language | `OPS` is a frozen literal in X1, so a new op needs a test edit and a reviewer. New capabilities need parent words (T13) |
 | R2 | Authors leave rather than hand-write JSON | P1 text surface; the §8 ASTs are copy-paste starters |
 | R3 | A JS port drifts from Python | The conformance file is the contract |
-| R4 | A *valid* markup id still makes Moxie lurch or blare | `markup` is refused by default and named in review |
+| R4 | A *valid* markup id still makes Moxie lurch or blare | `markup` is refused by default and named in review; on every channel (a line, an opener, a markup) only a mark this appliance could mint itself passes, an expressive verb with catalogue ids, never a system verb, and the review names every command an item's text writes |
 | R5 | 0.25 s is a guess; slow appliances may quarantine | Env var plus the `ext_events` ring, so it is visible |
 | R6 | A pathological item `pattern` can still stall matching (stdlib regex has no timeout) | Named, not fixed; X12 marks the boundary |
 | R7 | Readers assume `code` becomes `extension` | §7.4 and the review wording |
