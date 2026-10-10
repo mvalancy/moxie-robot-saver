@@ -146,6 +146,34 @@ def test_no_data_stops_the_notify_path_too(memdir, tmp_path):
     assert _files(memdir) == [f"{did}.json"]
 
 
+def _notify(rt, did):
+    """The robot's notify for the turn just answered, as it arrives on `events/remote-chat`."""
+    rt._on_remote_chat(did, rt.robots[did], json.dumps(
+        {"command": "notify", "backend": "router", "event_id": "n1", "speech": ANSWERED,
+         "extra_lines": [{"context_type": "input", "text": SAID}]}))
+
+
+def test_a_turn_and_its_notify_are_written_once(memdir, tmp_path):
+    """The notify reports the turn the transcript already holds (test_notify_history.py):
+    reconciled, so the file holds it once, not twice."""
+    rt, did = _runtime(tmp_path)
+    _only_turn(rt, did)
+    _notify(rt, did)
+    stored = json.load(open(memdir / f"{did}.json"))
+    assert [m["content"] for m in stored] == [SAID, ANSWERED]
+
+
+def test_no_data_keeps_a_notified_turn_off_the_disk_and_once_in_memory(memdir, tmp_path):
+    """Under NO_DATA the reconciled notify still writes nothing, and the conversation
+    Moxie holds in RAM has the turn once."""
+    rt, did = _runtime(tmp_path)
+    _no_data(rt, did)
+    _only_turn(rt, did)
+    _notify(rt, did)
+    assert _files(memdir) == []
+    assert [m["content"] for m in rt.history[did]] == [SAID, ANSWERED]
+
+
 # ---------------------------------------------------------------------------
 # what happens to a file that is ALREADY there
 # ---------------------------------------------------------------------------

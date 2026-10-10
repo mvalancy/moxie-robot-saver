@@ -15,11 +15,15 @@ The protocol round-trip a real Moxie performs:
   5. Publish a ``/devices/{id}/events/remote-chat`` prompt ("hello").
   6. Assert a ``/devices/{id}/commands/remote_chat`` reply with ``output.text`` arrives.
      One turn may be several chunked responses (see ``_on_chat_reply``).
+  7. With ``--notify``: report what it said, as a real Moxie does after each utterance
+     (a ``command: "notify"`` request, mqtt-and-conversation.md §4.2), once per turn or
+     once per chunk (``--notify chunk``).
 
 Exit code 0 = the round-trip worked. Used by CI and ``sim/run_smoke.sh``.
 
 Usage:
   python3 sim/virtual_moxie.py --host 127.0.0.1 --port 1883 --timeout 15
+  python3 sim/virtual_moxie.py --notify             # ...and report what it said
   python3 sim/virtual_moxie.py --expect-unpaired    # assert the device allowlist gates us
 """
 from __future__ import annotations
@@ -62,18 +66,31 @@ ACTION_KINDS = ("launch", "exit", "exit_module", "sleep", "enable_qr", "execute"
 #: understood for older doubles.
 REPLY_PENDING = 9
 
+#: How this robot reports what it said (`--notify`): one notify per turn with every chunk
+#: it spoke, or one per spoken chunk. Which one a real Moxie uses is not captured yet
+#: (mqtt-and-conversation.md §4.2), so the cloud must survive both.
+NOTIFY_CADENCES = ("event", "chunk")
+
 
 class VirtualMoxie:
     def __init__(self, host: str, port: int, device_id: str | None = None,
                  timeout: float = 15.0, verbose: bool = True, expect_tts: bool = False,
                  expect_scored: bool = False, reject_echo: bool = False,
-                 status_url: str | None = None):
+                 status_url: str | None = None, notify: str | None = None):
         self.host, self.port, self.timeout = host, port, timeout
         self.device_id = device_id or f"d_{uuid.uuid4()}"
         self.verbose = verbose
         self.expect_tts = expect_tts        # also assert a CloudTTSResponse (audio) arrives
         self.expect_scored = expect_scored  # ...and that every response carries its score
         self.reject_echo = reject_echo      # ...and that a real brain, not `echo`, wrote it
+        if notify not in (None, *NOTIFY_CADENCES):
+            raise ValueError(f"notify must be one of {NOTIFY_CADENCES} or None, not {notify!r}")
+        #: Report what it said (`_notify_spoke`): None, "event" or "chunk".
+        self.notify = notify
+        #: The prompts this robot sent, by event_id: what each notify echoes back.
+        self._asked: dict[str, dict] = {}
+        #: Every notify this robot sent, in order.
+        self.notified: list = []
         #: The supervisor's localhost status server; used only by `_why_no_config`.
         self.status_url = status_url
         #: Set when the broker has ACKed every subscription (see `announce()`).
@@ -240,11 +257,78 @@ class VirtualMoxie:
             self.module_list = payload["query_data"].get("modules")
         if pending:
             self.log(f"← remote_chat chunk {chunk_num}: {text[:60]!r} (more to come)")
+            self._notify_spoke(event_id, text, closing=False)
             return
         self.reply_payload = payload
         self.reply_text = " ".join(parts[k] for k in sorted(parts) if parts[k]).strip()
         self.log(f"← remote_chat reply ({len(parts)} chunk(s)): {self.reply_text[:60]!r}")
+        # Before the waiter wakes, so whatever it sends next follows the report.
+        self._notify_spoke(event_id, text, closing=True)
         self.got_reply.set()
+
+    # -- notify: the robot reports what it said (mqtt-and-conversation.md §4.2) --
+    def send_prompt(self, speech: str, *, event_id: str | None = None,
+                    module_id: str = "", content_id: str = "") -> str:
+        """Publish one `remote-chat` prompt and remember it, so the notify for its answer
+        can echo the child's line back in `extra_lines`."""
+        event_id = event_id or str(uuid.uuid4())
+        payload = {"event_id": event_id, "command": "prompt", "backend": "router",
+                   "speech": speech}
+        if module_id:
+            payload["module_id"] = module_id
+        if content_id:
+            payload["content_id"] = content_id
+        self._asked[event_id] = {"speech": speech, "module_id": module_id,
+                                 "content_id": content_id, "notified": False}
+        self.client.publish(self.t_event("remote-chat"), json.dumps(payload))
+        return event_id
+
+    def _notify_spoke(self, event_id, chunk_text, closing):
+        """With `--notify`, report what was just said for one of OUR prompts: the contract's
+        notify (`speech` = what Moxie said, `extra_lines` = the child's line as an `input`
+        context), once per turn with every chunk joined ("event") or once per spoken chunk
+        ("chunk", the child's line on the first only). A module-query answer or a vision
+        reply answers no prompt of ours and is never reported."""
+        asked = self._asked.get(event_id)
+        if not self.notify or asked is None:
+            return
+        if self.notify == "chunk":
+            spoken = chunk_text
+        elif closing:
+            spoken = self.reply_text
+        else:
+            return
+        if not (spoken or "").strip():
+            return
+        payload = {"event_id": str(uuid.uuid4()), "command": "notify", "backend": "router",
+                   "speech": spoken, "software_version": FIRMWARE,
+                   "module_name": "virtual-moxie"}
+        if not asked["notified"] and asked["speech"]:
+            payload["extra_lines"] = [{"context_type": "input", "text": asked["speech"]}]
+        asked["notified"] = True
+        for key in ("module_id", "content_id"):
+            if asked[key]:
+                payload[key] = asked[key]
+        self.client.publish(self.t_event("remote-chat"), json.dumps(payload))
+        self.notified.append(payload)
+        self.log(f"→ events/remote-chat notify: {spoken[:60]!r}")
+
+    def settle_notify(self) -> bool:
+        """The barrier after a notify: a module query sent behind it is answered only once
+        the cloud has read the notify (one MQTT loop, messages in order), so whoever
+        reads the cloud's transcript next reads it settled. False (+ an error) if no
+        notify went out or the query is never answered."""
+        if not self.notified:
+            self.errors.append("--notify: the turn closed but this robot sent no notify")
+            return False
+        self.module_list = None
+        self.send_module_query()
+        if not self.got_reply.wait(self.timeout) or self.module_list is None:
+            self.errors.append("--notify: the module query sent after the notify was never "
+                               "answered, so the notify cannot be shown to have been read")
+            return False
+        self.log(f"notify read by the cloud ({len(self.notified)} sent)")
+        return True
 
     def _reset_turn(self):
         """Forget the previous turn's chunks before sending the next prompt."""
@@ -747,10 +831,7 @@ class VirtualMoxie:
                 return False
 
             # 3) send a remote-chat prompt
-            event_id = str(uuid.uuid4())
-            self.client.publish(self.t_event("remote-chat"), json.dumps(
-                {"event_id": event_id, "command": "prompt", "backend": "router",
-                 "speech": SMOKE_PROMPT}))
+            self.send_prompt(SMOKE_PROMPT)
             self.log(f"→ events/remote-chat prompt: {SMOKE_PROMPT!r}")
 
             # 4) wait for the reply, assert it has text
@@ -784,6 +865,11 @@ class VirtualMoxie:
                 if not (self.spoke and self.spoke.get("audio")):
                     self.errors.append("tts arrived but carried no audio")
                     return False
+
+            # 7) (--notify) the report went out with the reply (`_notify_spoke`); last, so
+            #    nothing above waits behind its barrier.
+            if self.notify and not self.settle_notify():
+                return False
             return True
         finally:
             self.client.loop_stop()
@@ -839,9 +925,7 @@ class VirtualMoxie:
                     continue
                 say = turn.get("say", "")
                 self._reset_turn()
-                self.client.publish(self.t_event("remote-chat"), json.dumps(
-                    {"event_id": str(uuid.uuid4()), "command": "prompt",
-                     "backend": "router", "speech": say}))
+                self.send_prompt(say)
                 if not self.got_reply.wait(self.timeout):
                     self.errors.append(f"turn {i} ({say!r}): no reply"); continue
                 text = self.reply_text or ((self.reply_payload or {}).get("output") or {}).get("text", "")
@@ -878,6 +962,15 @@ def main():
                     help="assert the reply was NOT written by the built-in echo app "
                          "(`You said: <prompt>`) — what makes a live-brain smoke a claim "
                          "about the AI seam rather than about the layers around it")
+    ap.add_argument("--notify", nargs="?", const="event", default=None,
+                    choices=NOTIFY_CADENCES,
+                    help="after each answer to one of its prompts, report what it said "
+                         "the way a real Moxie does: a remote-chat `command: notify` with "
+                         "the spoken text in `speech` and the child's line as an `input` "
+                         "extra_line (mqtt-and-conversation.md §4.2). 'event' (the default) "
+                         "sends one per turn, 'chunk' one per spoken chunk. The smoke then "
+                         "waits until the cloud has read it (a module query sent behind it "
+                         "is answered).")
     ap.add_argument("--expect-unpaired", action="store_true",
                     help="assert the server treats us as PENDING (device allowlist): a "
                          "non-'paired' pairing_status and no child_pii; prints the config")
@@ -914,7 +1007,7 @@ def main():
     vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet,
                       expect_tts=args.expect_tts, expect_scored=args.expect_scored,
                       reject_echo=args.reject_echo,
-                      status_url=args.status_url)
+                      status_url=args.status_url, notify=args.notify)
 
     if args.expect_unpaired:
         ok = False
@@ -988,7 +1081,8 @@ def main():
         turns = spec.get("turns", spec) if isinstance(spec, dict) else spec
         name = spec.get("name", args.scenario) if isinstance(spec, dict) else args.scenario
         while True:                       # --loop-seconds replays for the demo stack
-            vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet, status_url=args.status_url)
+            vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet,
+                              status_url=args.status_url, notify=args.notify)
             try:
                 passed, total = vm.run_scenario(turns)
             except Exception as e:
@@ -1011,6 +1105,7 @@ def main():
         vm.errors.append(f"exception: {e}")
     if ok:
         print("✅ SIL round-trip OK — state→config(paired)→remote-chat→reply"
+              + ("→notify" if args.notify else "")
               + (" (🧠 live brain: the reply is not the echo app's)"
                  if args.reject_echo else ""))
         sys.exit(0)

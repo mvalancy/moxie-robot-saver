@@ -189,6 +189,7 @@ class TurnsMixin:
         # §Event Handling): answered here, never sent to a brain, history or safety.
         if presence_seam.is_vision_event(speech):
             return self._on_vision_turn(device_id, robot, rcr, speech.strip())
+        self._start_turn_record(device_id, speech)   # the robot's notify reconciles against it (memory.py)
         turn = Turn(robot=robot, speech=speech, history=list(self.history.get(device_id, [])),
                     command=command, input_vars=rcr.get("input_vars", {}),
                     presence=presence_seam.snapshot(self._presence_state(robot)))

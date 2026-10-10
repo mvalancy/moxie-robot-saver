@@ -205,6 +205,12 @@ The transcript from seam ① plus conversation context, history, the current mod
 (`Recommendation{module_id, content_id, entry_line}`, `restricted_modules`, `Urgency` casual/normal/immediate).
 Deltas over the base session are in [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md).
 
+The history a brain reads (`turn.history[-max_history:]`) is the runtime's per-robot transcript:
+each turn written once when it is answered (`memory.py::_remember`), and the robot's own `notify`
+report of what it said reconciled against the turns it names rather than appended beside them
+([mqtt-and-conversation.md §4.2](mqtt-and-conversation.md)). Twenty history lines are ten real
+exchanges, for a robot that notifies and for a double that never does alike.
+
 #### Presence in the turn context
 
 A `Turn` also carries **`presence`**: what the robot's own vision has reported. The robot runs vision
