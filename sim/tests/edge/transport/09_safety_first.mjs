@@ -44,26 +44,29 @@ const REDIRECT = "Ouch, that sounds like it really hurts. Please go and tell a g
 const REFER = "I am so sorry that happened to you. Please tell a grown-up you trust, like a teacher, today.";
 /** Each sentence's length, which names its sound (a cloud chunk is recorded by its duration). */
 const DUR = { "sim-day": [2.3, 2.4, 2.5], "sim-game": [1.5, 1.6], "sim-food": [1.7], "sim-dad": [2.1, 2.2] };
-const name = (s) => {
-  for (const [eid, ds] of Object.entries(DUR)) { const k = ds.findIndex((d) => Math.round(d * 1000) === s.dur); if (k >= 0) return eid.slice(4) + k; }
+/** Production-like sentence lengths (§13t). */
+const PROD = { "sim-day": [3.1, 3.6, 4.1], "sim-game": [2.5, 2.8], "sim-dad": [2.9, 3.3] };
+const name = (s, dur = DUR) => {
+  for (const [eid, ds] of Object.entries(dur)) { const k = ds.findIndex((d) => Math.round(d * 1000) === s.dur); if (k >= 0) return eid.slice(4) + k; }
   return s.kind;
 };
-const heard = (w, t0) => w.spy.sounds.map((s) => name(s) + "@" + (s.t - t0));
+const heard = (w, t0, dur = DUR) => w.spy.sounds.map((s) => name(s, dur) + "@" + (s.t - t0));
 /** [start, end] of a recorded sound: a cloud chunk or clip lasts its `dur`, the browser voice
  *  ~70 ms a character (the harness's fake). */
 const span = (s) => [s.t, s.t + (s.kind === "browser" ? 70 * s.text.length : s.dur)];
 const overlaps = (sounds) => { let n = 0; for (let i = 1; i < sounds.length; i++) if (span(sounds[i])[0] < span(sounds[i - 1])[1]) n++; return n; };
 
 /** The day reply after 1.8 s; every /api/speech answers in `speechDelay` ms with the
- *  sentence's own length of audio; any other line gets `other(body)` after `chatDelay` ms. */
+ *  sentence's own length of audio (from `dur`); any other line gets `other(body)` after
+ *  `chatDelay` ms. */
 const scenario = (other, o) => {
-  const opt = Object.assign({ chatDelay: 1200, speechDelay: 2300 }, o || {});
+  const opt = Object.assign({ chatDelay: 1200, speechDelay: 2300, dur: DUR }, o || {});
   return live((path, body) => {
     if (path === "/api/chat") {
       if (body.text === DAY) return Object.assign(said(THREE, "sim-day", { speech: tix("sim-day", 3), context: "CTX-day" }), { delayMs: 1800 });
       return Object.assign(other(body), { delayMs: opt.chatDelay });
     }
-    if (path === "/api/speech") { const [, eid, k] = ticketOf(body); return voicedChunk(eid, Number(k), { delayMs: opt.speechDelay, seconds: DUR[eid][Number(k)] }); }
+    if (path === "/api/speech") { const [, eid, k] = ticketOf(body); return voicedChunk(eid, Number(k), { delayMs: opt.speechDelay, seconds: opt.dur[eid][Number(k)] }); }
     return { status: 404, text: "" };
   });
 };
@@ -737,4 +740,194 @@ for (const [line, eid, answer] of [[GAME, "sim-game", game], [DAD, "sim-dad", re
   deep([heard(world, t0), cutsAt(world, t0), standIn(world, t0)], [["day0@4100", "day1@6400", "day2@8800", "browser@10700"], ["cloud@10700"], []],
        "13s (a newer voice first): THE REDIRECT (10.7 s) TAKES THE SPEAKERS AND THE WAITING STAND-IN IS DROPPED, never spoken over it (the redirect cuts her sentence, as a line sent with nothing in flight does today)");
   deep([world.spy.transcript.slice(-3), T().early], [[PLAY, HURT, REDIRECT], 1], "13s (a newer voice first): the game answer's words stay in the log, before the hurt line and its redirect");
+}
+
+/* =========================================================================== *
+ * 13t. THE LISTEN TAP AFTER HER EARLIER REPLY IS HANDED OVER KEEPS AN EARLY REPLY NOT YET
+ *      HEARD (the W4-S7 review, round 2). Released the moment her day reply is handed over,
+ *      the early line's reply is bought while her last sentences play; a tap then ended it
+ *      unheard — where on origin/dev that line was only then going out, its reply landed into
+ *      the open microphone, and was heard whole after the recording. Now the tap keeps it:
+ *      nothing more of it bought, and its first sentence, in hand, said the moment the ears
+ *      are done. For an ordinary answer and a SERVED grown-up referral (reason null) alike.
+ *      (i) The review's own repro, production-like (2.0 s synthesis, sentences 3.1/3.6/4.1 s,
+ *      a 1.8 s chat): the hand-over at 7.8 s, the tap at 8.5 s while her second sentence
+ *      plays, the recorder 200 ms later, the clip dropped at 11.5 s. origin/dev: heard whole
+ *      from 13.5 s; the PR head before this: not at all (its first sentence bought, dropped).
+ * =========================================================================== */
+for (const [line, eid, answer] of [[GAME, "sim-game", game], [DAD, "sim-dad", referral]]) {
+  const k = eid.slice(4), label = `13t (${k}, production-like, tap 8.5 s)`;
+  const world = await boot({ realVoice: true, answer: scenario(() => answer(), { chatDelay: 1800, speechDelay: 2000, dur: PROD }) });
+  const t0 = now();
+  const b = globalThis.window.moxieBridge;
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(5000);
+  globalThis.window.moxieTypedTurn.send(line);         // t+5.0 s: out early; its reply is back at 6.8 s, held behind her day
+  await advance(3500);                                 // t+8.5 s
+  deep([heard(world, t0, PROD), speeches(world), T().heldReplies], [["day0@3800", "day1@6900"], ["day0", "day1", "day2", k + "0"], 1],
+       `${label}: at the tap her day reply was handed over (7.8 s), her second sentence plays, and the early reply's first sentence is being bought`);
+  b.interruptVoice();
+  await advance(200);
+  b.earsOpen(45000);
+  await advance(2790);                                 // 10 ms before the clip is done
+  deep([heard(world, t0, PROD), speeches(world)], [["day0@3800", "day1@6900"], ["day0", "day1", "day2", k + "0"]],
+       `${label}: NOTHING OF IT IS SAID INTO THE MICROPHONE OR THE RECORDING, AND NOTHING MORE OF IT IS BOUGHT (its first sentence, landed at 9.8 s, is kept)`);
+  await advance(10);
+  b.earsIdle();                                        // t+11.5 s: the clip dropped as silence
+  await advance(15000);
+  deep(heard(world, t0, PROD), ["day0@3800", "day1@6900", `${k}0@11500`, `${k}1@${k === "game" ? 14000 : 14400}`],
+       `${label}: THE EARLY REPLY IS HEARD WHOLE THE MOMENT THE EARS ARE DONE (11.5 s), its first sentence already in hand (origin/dev: whole from 13.5 s; the PR head before this: 0 ms)`);
+  deep([cutsAt(world, t0), speeches(world), world.spy.transcript.slice(-1)], [["cloud@8500"], ["day0", "day1", "day2", k + "0", k + "1"], [answer === game ? PLAY : REFER]],
+       `${label}: the one cut is the tap's own; its second sentence bought after the recording; the log ends on the reply`);
+  const st = T();
+  deep([st.early, st.heldReplies, st.parked, st.heldAtTap, st.heldForEars, st.tapValved, st.interrupted, st.lateSpeechDropped, st.chunksSuperseded],
+       [1, 1, 1, 1, 1, 0, 1, 0, 0],
+       `${label}: recorded: one early line, held behind her day; KEPT by the tap (parked), then held for the microphone and the ears; nothing dropped or superseded`);
+}
+
+/* 13t (ii). The same in §13's own timings, the tap at 9.0 s (her day reply handed over at
+ *      8.7 s, her last sentence playing): heard whole from 12.0 s, the moment the ears are
+ *      done (origin/dev: from 14.3 s; the PR head before this: not at all). */
+for (const [line, eid, answer] of [[GAME, "sim-game", game], [DAD, "sim-dad", referral]]) {
+  const k = eid.slice(4), label = `13t (${k}, §13 timings, tap 9.0 s)`;
+  const world = await boot({ realVoice: true, answer: scenario(() => answer()) });
+  const t0 = now();
+  const b = globalThis.window.moxieBridge;
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(5000);
+  globalThis.window.moxieTypedTurn.send(line);
+  await advance(4000);                                 // t+9.0 s
+  deep(speeches(world), ["day0", "day1", "day2", k + "0"], `${label}: at the tap the early reply's first sentence is being bought (since the hand-over, 8.7 s)`);
+  b.interruptVoice();
+  await advance(200);
+  b.earsOpen(45000);
+  await advance(2800);
+  b.earsIdle();                                        // t+12.0 s
+  await advance(15000);
+  deep(heard(world, t0), ["day0@4100", "day1@6400", "day2@8800", `${k}0@12000`, `${k}1@14300`],
+       `${label}: THE EARLY REPLY IS HEARD WHOLE FROM 12.0 s, the moment the ears are done (origin/dev: from 14.3 s; the PR head before this: 0 ms)`);
+  deep([cutsAt(world, t0), T().parked, T().heldForEars], [["cloud@9000"], 1, 1], `${label}: the one cut is the tap's own; kept by the tap, held for the ears`);
+}
+
+/* 13t (iii). …AND AN EARLY REPLY IS NEVER HANDED TO voice/ TO WAIT BEHIND HER, where a tap
+ *      would drop it unheard: its first sentence, landed at 9.8 s, and its second (11.8 s)
+ *      stay in hand until her last sentence ends — so a tap at 12.0 s, her last sentence
+ *      playing (10.5-14.6 s), keeps them too, and the reply is heard whole after the
+ *      recording. (The PR head before this queued both in voice/ and the tap dropped them;
+ *      origin/dev queued its own the same way and lost the reply at every tap from 9.4 s to
+ *      14.6 s.) */
+for (const [line, eid, answer] of [[GAME, "sim-game", game], [DAD, "sim-dad", referral]]) {
+  const k = eid.slice(4), label = `13t (${k}, production-like, tap 12.0 s)`;
+  const world = await boot({ realVoice: true, answer: scenario(() => answer(), { chatDelay: 1800, speechDelay: 2000, dur: PROD }) });
+  const t0 = now();
+  const b = globalThis.window.moxieBridge;
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(5000);
+  globalThis.window.moxieTypedTurn.send(line);
+  await advance(7000);                                 // t+12.0 s
+  deep([heard(world, t0, PROD), speeches(world), globalThis.window.moxieAudio.ttsPending(), world.spy.transcript],
+       [["day0@3800", "day1@6900", "day2@10500"], ["day0", "day1", "day2", k + "0", k + "1"], 0, [DAY, THREE, line]],
+       `${label}: both sentences of the early reply are in hand, NONE queued in voice/ behind her last sentence, its words not yet out`);
+  b.interruptVoice();
+  await advance(200);
+  b.earsOpen(45000);
+  await advance(2800);
+  b.earsIdle();                                        // t+15.0 s
+  await advance(15000);
+  deep(heard(world, t0, PROD), ["day0@3800", "day1@6900", "day2@10500", `${k}0@15000`, `${k}1@${k === "game" ? 17500 : 17900}`],
+       `${label}: THE EARLY REPLY IS HEARD WHOLE THE MOMENT THE EARS ARE DONE (15.0 s) — origin/dev and the PR head before this: never`);
+  deep([cutsAt(world, t0), world.spy.transcript.slice(-1), T().parked], [["cloud@12000"], [answer === game ? PLAY : REFER], 1],
+       `${label}: the one cut is the tap's own; its words go in the log with its voice; kept by the tap`);
+}
+
+/* =========================================================================== *
+ * 13u. AN EARLY REPLY'S STAND-IN IS KEPT BY THE TAP TOO: its voice refused (a 429 after
+ *      1.5 s, §13 timings), its words are said locally — after the recording, when the tap
+ *      lands (i) while its first sentence is still being bought (9.0 s: refused at 10.2 s,
+ *      during the recording) or (ii) while the stand-in waits for her last sentence (10.5 s).
+ *      Before (the PR head): dropped both times, never heard; origin/dev: said at 13.5 s at
+ *      the 9.0 s tap, never at the 10.5 s one.
+ * =========================================================================== */
+{
+  const refused = live((path, body) => {
+    if (path === "/api/chat") {
+      if (body.text === DAY) return Object.assign(said(THREE, "sim-day", { speech: tix("sim-day", 3), context: "CTX-day" }), { delayMs: 1800 });
+      return Object.assign(game(), { delayMs: 1200 });
+    }
+    if (path === "/api/speech") {
+      const [, eid, k] = ticketOf(body);
+      if (eid === "sim-game") return { status: 429, json: envelope({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "live" }), delayMs: 1500 };
+      return voicedChunk(eid, Number(k), { delayMs: 2300, seconds: DUR[eid][Number(k)] });
+    }
+    return { status: 404, text: "" };
+  });
+  for (const tap of [9000, 10500]) {
+    const label = `13u (tap ${tap / 1000} s)`;
+    const world = await boot({ realVoice: true, answer: refused });
+    const t0 = now();
+    const b = globalThis.window.moxieBridge;
+    globalThis.window.moxieTypedTurn.send(DAY);
+    await advance(5000);
+    globalThis.window.moxieTypedTurn.send(GAME);
+    await advance(tap - 5000);
+    b.interruptVoice();
+    await advance(200);
+    b.earsOpen(45000);
+    await advance(2790);
+    deep(heard(world, t0), ["day0@4100", "day1@6400", "day2@8800"], `${label}: nothing of the early reply is said into the microphone or the recording`);
+    await advance(10);
+    b.earsIdle();                                      // 3.0 s after the tap
+    await advance(15000);
+    deep([heard(world, t0), cutsAt(world, t0), world.spy.said.filter((s) => s.text === PLAY).map((s) => s.t - t0)],
+         [["day0@4100", "day1@6400", "day2@8800", "browser@" + (tap + 3000)], ["cloud@" + tap], [tap + 3000]],
+         `${label}: THE STAND-IN IS SAID WHOLE THE MOMENT THE EARS ARE DONE (${(tap + 3000) / 1000} s); the one cut is the tap's own`);
+    deep([T().voiceFallbacks, T().parked, T().heldAtTap, T().heldForEars, world.spy.transcript.slice(-1)], [1, tap === 9000 ? 1 : 0, 1, 1, [PLAY]],
+         `${label}: recorded: one stand-in; ${tap === 9000 ? "the reply kept by the tap (parked), its voice refused during the recording" : "the stand-in itself held for the microphone and the ears"}; its words in the log`);
+  }
+}
+
+/* =========================================================================== *
+ * 13v. TWO PINS ON WHAT "HER VOICE IS QUIET" MEANS (`whenQuiet`).
+ *      (i) The NARROW predicate, on purpose: her server voice only. A safety line landing while
+ *      the earlier reply is said in the LOCAL voice (here its stand-in: its voice refused)
+ *      cuts it at once, as a newer line always cut a local voice — it does not wait the
+ *      whole stand-in out (a local voice is one utterance, not a sentence).
+ * =========================================================================== */
+{
+  const world = await boot({ realVoice: true, answer: live((path, body) => {
+    if (path === "/api/chat") {
+      if (body.text === DAY) return Object.assign(said(THREE, "sim-day", { speech: tix("sim-day", 3), context: "CTX-day" }), { delayMs: 1800 });
+      return Object.assign(blocked(), { delayMs: 1200 });
+    }
+    if (path === "/api/speech") return { status: 429, json: envelope({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "live" }), delayMs: 1000 };
+    return { status: 404, text: "" };
+  }) });
+  const t0 = now();
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(2000);
+  globalThis.window.moxieTypedTurn.send(HURT);         // t+2.0 s: early (her day's voice is still being bought)
+  await advance(15000);
+  deep([world.spy.sounds.map((s) => (s.text === THREE ? "stand-in" : s.text === REDIRECT ? "redirect" : s.kind) + "@" + (s.t - t0)), cutsAt(world, t0)],
+       [["stand-in@2800", "redirect@3200"], ["browser@3200"]],
+       "13v (i): THE REDIRECT (3.2 s) CUTS HER LOCAL STAND-IN AT ONCE (said from 2.8 s, its voice refused) — the narrow predicate: it does not wait the stand-in out (6.9 s)");
+  deep([T().early, T().safetyFirst, world.spy.transcript.slice(-1)], [1, 1, [REDIRECT]], "13v (i): an early safety line, put first; the log ends on the redirect");
+}
+
+/* 13v (ii). EXACT: an early reply's voice starts the moment her last sentence ends — told by
+ *      voice/ (`moxie-tts-end`), not found by the 100 ms poll — so, held until she is quiet
+ *      rather than queued in voice/, it still follows her with no gap: here her last sentence
+ *      ends at 11.25 s, off the poll's grid (from the first sentence's landing, 11.0 s), and
+ *      the answer starts at 11.25 s, not 11.3 s. */
+{
+  const OFF = Object.assign({}, DUR, { "sim-day": [2.3, 2.4, 2.45] });
+  const world = await boot({ realVoice: true, answer: scenario(() => game(), { dur: OFF }) });
+  const t0 = now();
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(5000);
+  globalThis.window.moxieTypedTurn.send(GAME);
+  await advance(15000);
+  // (2.45 s of 22 050 Hz PCM is 54 023 samples: her sentence ends at 11 250.02 ms, hence the rounding.)
+  deep(world.spy.sounds.map((s) => name(s, OFF) + "@" + Math.round(s.t - t0)), ["day0@4100", "day1@6400", "day2@8800", "game0@11250", "game1@13300"],
+       "13v (ii): THE ANSWER FOLLOWS HER LAST SENTENCE (ending 11.25 s) WITH NO GAP — the moment voice/ says she is quiet");
+  deep([world.spy.cuts.length, overlaps(world.spy.sounds)], [0, 0], "13v (ii): nothing cut, nothing overlapping");
 }

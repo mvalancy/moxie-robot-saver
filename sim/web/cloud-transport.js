@@ -34,13 +34,15 @@
  * stays as the backstop for `sendUserTurn` itself, which still sends at once. THE EARS COME FIRST
  * (`interruptVoice`, `earsOpen` / `earsIdle`, driven by mic.js): the Listen tap is a
  * deliberate interruption — every open pipeline ends through rule 6's path and voice/ is
- * stopped — and from the microphone OPENING until the ears are done with the clip nothing of
- * hers (a reply landing, a stub line, a queued line) starts; what the tap itself RELEASES (a
- * reply held behind the one it ended, a safety line waiting for her sentence) first waits for
- * that microphone to open, `TAP_HOLD_MAX_MS` at most (W4-S7). A turn in flight is settled by
- * `TURN_MAX_MS` at the latest, and the ears' hold ends at its bound (the record cap plus
- * mic.js's 30 s upload valve, told to `earsOpen`; `EARS_HOLD_MAX_MS` when nothing is told)
- * even if nothing ever closes it, so the queue can never be held for good.
+ * stopped, all but an early line's reply not yet heard, which it keeps (`park`) — and from
+ * the microphone OPENING until the ears are done with the clip nothing of hers (a reply
+ * landing, a stub line, a queued line) starts; what the tap itself RELEASES or KEEPS (a reply
+ * held behind the one it ended, a safety line waiting for her sentence, an early reply not
+ * yet heard) first waits for that microphone to open, `TAP_HOLD_MAX_MS` at most (W4-S7). A
+ * turn in flight is settled by `TURN_MAX_MS` at the latest, and the ears' hold ends at its
+ * bound (the record cap plus mic.js's 30 s upload valve, told to `earsOpen`;
+ * `EARS_HOLD_MAX_MS` when nothing is told) even if nothing ever closes it, so the queue can
+ * never be held for good.
  *
  * No secret and no hostname here: the base is `moxieMode.apiBase()` (= location.origin).
  * `ticket` and `context` are opaque, signed server-side, and die with the tab (§2.6).
@@ -90,8 +92,9 @@
     early: 0,                // control lines sent while an earlier reply was still being voiced (its words back)
     heldReplies: 0,          // …of their replies, those held behind an earlier reply's voice
     safetyFirst: 0,          // safety lines of an early line said next: every earlier reply ended after its playing sentence
-    heldAtTap: 0,            // lines the Listen tap released (a held reply, a waiting safety line) that waited for its microphone to open
+    heldAtTap: 0,            // lines the Listen tap released or kept (a held reply, a waiting safety line, an early reply not yet heard) that waited for its microphone to open
     tapValved: 0,            // …waits ended by TAP_HOLD_MAX_MS with no microphone open (the line then went on)
+    parked: 0,               // early replies the Listen tap found not yet heard: kept, not ended, and said after the recording
     heldForEars: 0,          // replies and page-composed lines that waited for the ears to finish a clip
     interrupted: 0,          // the Listen tap landed on a reply: its voice stopped and its pipeline ended on purpose
     earsValved: 0,           // holds the transport ended itself: `earsOpen` with no `earsIdle` by its bound
@@ -215,7 +218,7 @@
    * Chrome on the shipped page, 2026-10-07). A line from a CONTROL now waits in `waiting`
    * until no live turn is in flight — POSTed and not yet SETTLED, i.e. its reply wholly handed
    * to the speakers (every chunk routed, or the voice given up) — so it carries that reply's
-   * context and its own voice queues behind the earlier one in voice/ instead of ending it.
+   * context and its own voice follows the earlier one instead of ending it.
    * Queued rather than a disabled button: the child's line is taken the moment they tap, and
    * she answers it next; a dead Send would have them re-typing (and the HUD is not this file's
    * to change). `sendUserTurn` itself still sends at once (rule 6 above is its backstop; the
@@ -243,17 +246,18 @@
    * at 9.9 s, against 6.2 s before the queue (the W3-S16 review, on the virtual clock). So a
    * waiting line goes out the moment every earlier reply's WORDS are back (`awaitingChat`):
    * its context is known then, and nothing is bought sooner than it would have been. Its
-   * reply is then held (`heldBehind`) until every turn POSTed before it has settled — and,
-   * when it would start a local voice, until her playing sentence ends — so the earlier
-   * reply is still heard whole and never cut. UNLESS it is the route's own SAFETY LINE: the
-   * words on a reason body (an input block's redirect; the output floor's swap and a hurt
-   * child's referral on a refusal ride the same shape). Then every earlier reply ends
-   * (`endEarlier`): nothing more of it redeemed, a chunk in flight dropped when it lands
-   * (rule 6's path), a sentence already queued in voice/ dropped (`dropQueuedTTS`), its
-   * words put in the log first if they are not yet, silently, and a reply still held never
-   * voiced; the sentence now playing plays out, and the safety line is said next, its words
-   * with its voice. A line sent with nothing in flight, and `sendUserTurn`, behave exactly
-   * as before.
+   * reply is then held (`heldBehind`) until every turn POSTed before it has settled, and its
+   * voice until hers is quiet (a ticketed reply's first sentence bought meanwhile:
+   * `voiceFirst`'s `ready`) — so the earlier reply is still heard whole and never cut, and
+   * nothing of the new one is handed to voice/ before it can be heard. UNLESS it is the
+   * route's own SAFETY LINE: the words on a reason body (an input block's redirect; the
+   * output floor's swap and a hurt child's referral on a refusal ride the same shape). Then
+   * every earlier reply ends (`endEarlier`): nothing more of it redeemed, a chunk in flight
+   * dropped when it lands (rule 6's path), a sentence already queued in voice/ dropped
+   * (`dropQueuedTTS`), its words put in the log first if they are not yet, silently, and a
+   * reply still held never voiced; the sentence now playing plays out, and the safety line
+   * is said next, its words with its voice. A line sent with nothing in flight, and
+   * `sendUserTurn`, behave exactly as before.
    *
    * WHAT THE LISTEN TAP RELEASES GOES INTO THE EARS, NOT AT THEM (W4-S7). The tap ends the
    * reply a held line waits behind and stops the sentence a safety line waits for: it
@@ -266,7 +270,22 @@
    * for the microphone the tap asked for (`whenMicOpen`), then for the ears: heard whole
    * after the recording, nothing of it bought before. For TAP_HOLD_MAX_MS at most: a prompt
    * left unanswered never holds it (#325's rule), and a microphone opening later still cuts
-   * it, as it cuts any reply that began while the browser asked (ears B17d). */
+   * it, as it cuts any reply that began while the browser asked (ears B17d).
+   *
+   * …AND AN EARLY REPLY THE TAP FINDS NOT YET HEARD IS KEPT (W4-S7). Released the moment the
+   * reply before it is handed over, an early line's reply was bought and handed to voice/
+   * while her last sentences still played, to queue behind them. A tap there ended it unheard
+   * — in flight, or dropped from voice/'s queue with hers — where with the POST held (#325)
+   * that line was only then going out, and its reply landed into the open microphone and was
+   * heard after the recording: with production-like timings (2.0 s synthesis, a 1.8 s chat,
+   * the microphone 200 ms after the tap) the W4-S7 review lost it at every tap from the
+   * hand-over (7.8 s) to 9.3 s that origin/dev heard whole, an ordinary answer and a served
+   * grown-up referral alike (and origin/dev lost it from 9.4 s to her last sentence's end,
+   * queued unheard the same way). So an early reply's voice starts only once hers is quiet
+   * (`ready`) — its words with it — and until then the tap KEEPS it (`park`): nothing more of
+   * it is bought, and once the microphone is open and the ears are done it is said, its first
+   * sentence or, its voice refused, its stand-in. A reply already heard is ended as any; a
+   * line sent with nothing in flight, as before. */
   var waiting = [];        // {text, resolve}: control lines waiting for the turn in flight
   var inflight = 0;        // live turns POSTed and not yet settled
   var awaitingChat = 0;    // …of those, the ones whose reply is not back yet: a waiting line waits for these
@@ -308,8 +327,9 @@
 
   /** The child interrupts her (Listen tapped): the playing clip and every queued chunk stop,
    *  every open pipeline ends through rule 6's path, and nothing more of any reply is paid
-   *  for. Nothing new is held; what the tap releases waits for its microphone, for
-   *  TAP_HOLD_MAX_MS at most (`whenMicOpen`, W4-S7). */
+   *  for — but an early reply none of which has been heard is kept (`park`). Nothing new is
+   *  held; what the tap releases or keeps waits for its microphone, for TAP_HOLD_MAX_MS at
+   *  most (`whenMicOpen`, W4-S7). */
   function interruptVoice() {
     var a = window.moxieAudio, speaking = false;
     try { speaking = !!(a && a.isMoxieSpeaking && a.isMoxieSpeaking()); } catch (e) {}
@@ -323,9 +343,10 @@
     stopVoice();
   }
 
-  /** #317's path, then voice/: nothing more of any reply is paid for, routed or heard. */
+  /** #317's path, then voice/: nothing more of any reply is paid for, routed or heard — an
+   *  early reply not yet heard aside, kept for after the recording (`park`, W4-S7). */
   function stopVoice() {
-    supersedeVoices(null);               // #317's path: nothing more of any reply is paid for
+    supersedeVoices(null, true);         // #317's path: nothing more of any reply is paid for
     var a = window.moxieAudio;
     try { if (a && a.stop) a.stop(); } catch (e) {}   // the playing clip and every queued chunk
   }
@@ -417,17 +438,29 @@
    *  nothing then) delays a redirect by 2 s at most. */
   var TAP_HOLD_MAX_MS = 2000;
 
-  /** Resolves once her SERVER voice is off the speakers — at once, when it is. The narrow
-   *  predicate on purpose: what a held line must not cut is a chunk of a reply it went out
-   *  behind (between two queued chunks it stays true); a local voice is cut by a newer line
-   *  exactly as before. */
+  /** Resolves once her SERVER voice is off the speakers — at once, when it is, and the moment
+   *  voice/ says so (`moxie-tts-end`), so what follows her last sentence follows it with no
+   *  gap, as from voice/'s own queue; the poll is the fallback. The narrow predicate on
+   *  purpose: what a held line must not cut is a chunk of a reply it went out behind (between
+   *  two queued chunks it stays true); a local voice is cut by a newer line exactly as before. */
   function whenQuiet() {
     return new Promise(function (resolve) {
-      var waited = 0;
+      var waited = 0, done = false;
+      function speaking() {
+        var a = window.moxieAudio;
+        try { return !!(a && a.isSpeaking && a.isSpeaking()); } catch (e) { return false; }
+      }
+      function quiet() {
+        if (done) return;
+        done = true;
+        try { window.removeEventListener("moxie-tts-end", ended); } catch (e) {}
+        resolve();
+      }
+      function ended() { if (!speaking()) quiet(); }
+      try { window.addEventListener("moxie-tts-end", ended); } catch (e) {}
       (function poll() {
-        var a = window.moxieAudio, speaking = false;
-        try { speaking = !!(a && a.isSpeaking && a.isSpeaking()); } catch (e) {}
-        if (!speaking || waited >= QUIET_MAX_MS) return resolve();
+        if (done) return;
+        if (!speaking() || waited >= QUIET_MAX_MS) return quiet();
         waited += QUIET_POLL_MS;
         setTimeout(poll, QUIET_POLL_MS);
       })();
@@ -438,10 +471,10 @@
    *  settle (its reply wholly handed to the speakers), then — for words that would start a
    *  local voice (`local`: no ticket, a stub line) — her playing sentence to end, so the
    *  earlier reply is heard whole and never cut, as when the POST itself waited. A ticketed
-   *  reply needs no second wait: its chunk 0 queues behind the playing one in voice/. Last,
-   *  the microphone a Listen tap asked for, when the tap is what released it (`whenMicOpen`).
-   *  With no `turn` (a waiting line nothing live can take) the hold is on every open turn. A
-   *  line that went out with nothing in flight waits for nothing. */
+   *  reply waits for her in `voiceFirst` instead (`ready`), its first sentence bought
+   *  meanwhile. Last, the microphone a Listen tap asked for, when the tap is what released
+   *  it (`whenMicOpen`). With no `turn` (a waiting line nothing live can take) the hold is on
+   *  every open turn. A line that went out with nothing in flight waits for nothing. */
   function heldBehind(turn, local) {
     if (turn ? !turn.early : !inflight) return Promise.resolve();
     var earlier = [];
@@ -495,17 +528,19 @@
    * so a refused voice said its words locally at once, over that sentence: a 429 after
    * 1.5 s cut it at 10.2 s in the W4-S7 review's probe, where with the POST held (#325) the
    * stand-in came at 11.4 s, uncut. Like any local voice of an early reply (`heldBehind`) it
-   * waits for her server voice instead — and is dropped, its words on screen as for any reply
-   * a newer one ended, if a newer voice or the Listen tap has the speakers by then. */
+   * waits for her server voice instead, then for the microphone a Listen tap asked for and the
+   * ears: a tap landing while it waits keeps it for after the recording, as it keeps the reply
+   * (`park`; dropped by the tap, it was never heard at all). It is dropped, its words on
+   * screen as for any reply a newer one ended, if a newer voice has the speakers by then. */
   var quietFirst = {};     // event -> true while an early reply's voice is being decided
-  var voiceStarts = 0;     // every voice started, or stopped, through `supersedeVoices`
+  var voiceStarts = 0;     // every voice started through `supersedeVoices` (the Listen tap starts none)
 
   function releaseVoice(eid) {
     if (!eid) return;
     var say = function () { try { if (inner.releaseCloudVoice) inner.releaseCloudVoice(eid); } catch (e) {} };
     if (!quietFirst[eid]) return say();
     var mark = voiceStarts;
-    whenQuiet().then(function () { if (voiceStarts === mark) say(); });
+    whenQuiet().then(whenMicOpen).then(whenEarsIdle).then(function () { if (voiceStarts === mark) say(); });
   }
 
   /* The replies whose voice is still being assembled: `voiceFirst` pipelines with a chunk
@@ -525,11 +560,15 @@
 
   /** The voice of turn `seq` is starting: every open pipeline of an earlier turn is over.
    *  A line with no turn of its own (the scripted consolation, the bot line) is the newest.
-   *  Counted (`voiceStarts`): a stand-in waiting its turn is said only if none started since. */
-  function supersedeVoices(seq) {
+   *  Counted (`voiceStarts`): a stand-in waiting its turn is said only if none started since.
+   *  The Listen TAP (`tap`: every pipeline) starts no voice of hers: an early reply not yet
+   *  heard is kept rather than ended (`park`), and a stand-in waiting for her sentence waits
+   *  for the ears too (`releaseVoice`, W4-S7). */
+  function supersedeVoices(seq, tap) {
     var before = seq == null ? Infinity : seq;
-    voiceStarts++;
-    for (var i = pipelines.length - 1; i >= 0; i--) if (pipelines[i].seq < before) pipelines[i].supersede();
+    if (!tap) voiceStarts++;
+    for (var i = pipelines.length - 1; i >= 0; i--)
+      if (pipelines[i].seq < before && !(tap && pipelines[i].park())) pipelines[i].supersede();
   }
 
   /** How many /api/speech redemptions of one reply are in flight at once: ONE. Chunk 1 is
@@ -582,8 +621,12 @@
    * 2 would be lost behind a fast sentence 3. The first chunk that fails ends the voice —
    * nothing later is redeemed or routed — and no local voice stands in for a later chunk:
    * the words are on screen, and her first sentence was heard in her voice (or spoken
-   * locally, if chunk 0 failed). */
-  function voiceFirst(chatMessages, tickets, eid, seq, settle) {
+   * locally, if chunk 0 failed).
+   *
+   * AN EARLY REPLY (`early`: its line went out while an earlier reply was being voiced) that
+   * the Listen tap finds not yet heard is kept for after the recording, not ended (`park`,
+   * W4-S7). */
+  function voiceFirst(chatMessages, tickets, eid, seq, settle, early) {
     var n = tickets.length;
     var landed = [];         // chunk -> its TTS messages, once /api/speech delivered them
     var settled = [];        // chunk -> true once its request answered, failed or timed out
@@ -594,7 +637,8 @@
     var superseded = false;  // …because a newer reply's voice started: its words stay silent, no stand-in
     var failedAt = -1;       // the first later chunk known to have failed, noticed in order by pump()
     var wordsOut = false;    // the chat message has been routed (once, by whichever path gets there first)
-    var pipe = { seq: seq, supersede: supersede, flushWords: words };
+    var hold = null;         // the Listen tap's hold on this early reply, none of it heard yet (`park`)
+    var pipe = { seq: seq, supersede: supersede, flushWords: words, park: park };
     pipelines.push(pipe);
     expectVoice(eid);
 
@@ -634,6 +678,38 @@
       giveUp();
     }
 
+    /** The Listen tap, before a word of this EARLY reply is heard (W4-S7): it is KEPT, not
+     *  ended. Nothing more of it is bought while the tap holds it (`fill`), and it goes on once
+     *  the microphone the tap asked for is open and the ears are done (`ready`): its first
+     *  sentence, bought already, routed then — or its stand-in said, its voice refused. False
+     *  — ended as any reply — for a reply not early, or one whose voice has started: an early
+     *  reply's first sentence is routed only once hers is quiet (`ready`), so routed is heard. */
+    function park() {
+      if (!early || over || voiced) return false;
+      if (!hold) {
+        stats.parked++;
+        var h = hold = whenMicOpen().then(whenEarsIdle).then(function () { if (hold === h) hold = null; });
+      }
+      return true;
+    }
+
+    /** Resolves once no Listen tap holds this reply — at once, with none (`park`). */
+    function unparked() {
+      return hold ? hold.then(unparked) : Promise.resolve();
+    }
+
+    /** What this reply's decision waits for, once chunk 0 has landed, failed, or kept it past
+     *  SPEECH_WAIT_MS: no Listen tap holding it (`park`) — and, to route her voice, an EARLY
+     *  reply (W4-S7) waits for hers to be quiet (`whenQuiet`). Handed to voice/ at once, it
+     *  queued behind her last sentences, inaudible, and a Listen tap then dropped it with them,
+     *  unheard (with production-like timings, at every tap from its first sentence's landing
+     *  to the end of hers). It starts the moment hers ends, as it did from voice/'s queue, its
+     *  words with its voice; meanwhile it is open, so a newer voice still ends it (rule 6). A
+     *  voice that failed is decided at once: its stand-in waits for her (`releaseVoice`). */
+    function ready() {
+      return (early && landed[0] ? whenQuiet() : Promise.resolve()).then(unparked);
+    }
+
     /** Redeem chunk `i`; resolves when it answered, failed, or passed the client's own
      *  deadline (where `AbortSignal.timeout` is missing the request has none). */
     function redeem(i) {
@@ -665,9 +741,10 @@
       });
     }
 
-    /** Start redemptions up to the parallel cap, in chunk order — never past a failure. */
+    /** Start redemptions up to the parallel cap, in chunk order — never past a failure, and
+     *  never while the Listen tap holds the reply (`park`). */
     function fill() {
-      while (!over && failedAt < 0 && started < n && inflight < SPEECH_PARALLEL) redeem(started);
+      while (!over && !hold && failedAt < 0 && started < n && inflight < SPEECH_PARALLEL) redeem(started);
     }
 
     /** Route the later chunks in order as far as they have landed; the first failure ends
@@ -696,7 +773,7 @@
     fill();
     var wait = new Promise(function (resolve) { setTimeout(resolve, SPEECH_WAIT_MS); });
 
-    return Promise.race([speech0, wait]).then(function () {
+    return Promise.race([speech0, wait]).then(ready).then(function () {
       if (landed[0]) {
         // Voice first: bubble and audio land together, and the rest follows in order. Any
         // older reply still being assembled ends here.
@@ -718,7 +795,7 @@
       // No voice yet: the words go out now, silently, still expecting their own voice.
       words();
       stats.chatFirst++;
-      return speech0.then(function () {
+      return speech0.then(ready).then(function () {
         if (landed[0] && eid) {
           // However late it is, nothing local has said this line: play it, and any older
           // reply still being assembled ends here.
@@ -934,7 +1011,7 @@
           return;
         }
         stats.tickets += tickets.length;
-        return voiceFirst(body.messages, tickets, eventOf(body.messages, body.speech), seq, settle);
+        return voiceFirst(body.messages, tickets, eventOf(body.messages, body.speech), seq, settle, turn.early);
       });
 
       var forget = function () { if (quiet) delete quietFirst[quiet]; };

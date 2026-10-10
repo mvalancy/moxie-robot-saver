@@ -14,7 +14,10 @@ Classic scripts loaded by [`../sim.html`](../sim.html) in this order, sharing
   SDK), the chunk-ordering player (ORDERING / GAP / EVENT rules), marks→mouth lip-sync,
   playback records, and ownership of `#tts-status`. `stopCloudTTS` stops the playing chunk
   and drops the queue; `dropQueuedTTS` drops only the queue, so a safety line can follow
-  the sentence now playing (`../cloud-transport.js`, W4-S7).
+  the sentence now playing (`../cloud-transport.js`, W4-S7). The `moxie-tts-start` /
+  `moxie-tts-end` window events mark her server voice starting and going quiet; the
+  transport's `whenQuiet` waits on the latter, so what follows her last sentence starts
+  with no gap.
 - **`index.js`** — the `window.moxieAudio` surface and the first-gesture unlock.
 
 Not to be confused with [`../audio/`](../audio/), the pre-rendered clip directory. Covered
