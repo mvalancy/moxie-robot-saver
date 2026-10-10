@@ -49,10 +49,19 @@ re-opened tab; and the tab notices a robot that arrives while it is open. Its te
 [`js/core.js`](js/core.js), plus one mutation each of [`index.html`](index.html) and
 [`js/settings.js`](js/settings.js).
 
+[`sim/test_console_settings.mjs`](../../sim/test_console_settings.mjs) covers ⚙️ Settings' time
+zone: the field shows the zone in force (a house rule, this robot's own, or the server's
+`MOXIE_TIMEZONE`) and the hint names which; a save sends `timezone_id` for one robot or as a house
+rule, and only when the parent changed it; while no zone is set and the browser is in another one, a
+line outside Settings names both zones and one click saves the browser's as a house rule; a save the
+supervisor could not write says so, and a refused zone is said in the server's words. Its teeth
+mutate [`js/settings.js`](js/settings.js).
+
 Every other card is asserted by Python route tests and source pins
 ([`test_console_roundtrip.py`](../../sim/tests/test_console_roundtrip.py)), which prove what the
 server answers but not that a button wires itself up. Still uncovered by any browser suite: 🔐
-Robot access's Permit, Revoke and let-any-robot switch, ⚙️ Settings, 🛡️ Safety, 🎨 Moxie's look,
+Robot access's Permit, Revoke and let-any-robot switch, ⚙️ Settings' other fields (volume,
+bedtime, wake alarm, scheduled activity), 🛡️ Safety, 🎨 Moxie's look,
 🎭 Be Moxie, 📅 Today's plan, 🧠 memory, 🎚️ Voice, 📦 Content, 🧠 Brain, and the returning-parent
 entry path.
 
