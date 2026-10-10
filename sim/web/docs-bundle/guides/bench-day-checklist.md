@@ -125,8 +125,14 @@ docker compose exec -T supervisor cat /data/wire/bench.jsonl | python3 sim/tools
 
 | Claim | Do | The timeline shows | Then update |
 |---|---|---|---|
-| A real Moxie reconnects on its own after a broker restart (A5). | Run `docker compose restart broker` during a chat. | The recorder's own `lost the broker` and `reconnected` lines, then the robot's connect line, a `config` line and the ears' ask again. | A5 in the [ledger](../architecture/backlog/production-hardening.md#9-assumption-ledger-the-rows-that-still-matter). |
-| After a supervisor restart, config is pushed again with no robot event ([§3.4](../architecture/mqtt-and-conversation.md#34-connect-and-disconnect-detection); [`connection.py`](../../mqtt/supervisor/moxie_runtime/connection.py) `resume_roster`). | Run `docker compose restart supervisor`. | A `config` line and `ears ProtoSubscribe` with no connect line before them. | §3.4: "What a physical robot does across a broker restart is unverified." |
+| A real Moxie reconnects on its own after a broker restart (A5). | Run `docker compose restart broker` during a chat. | The recorder's own `lost the broker` and `reconnected` lines, then the robot's connect line, a `config` line and, with a Listening engine, the ears' ask again. | A5 in the [ledger](../architecture/backlog/production-hardening.md#9-assumption-ledger-the-rows-that-still-matter). |
+| After a supervisor restart, config is pushed again with no robot event ([§3.4](../architecture/mqtt-and-conversation.md#34-connect-and-disconnect-detection); [`connection.py`](../../mqtt/supervisor/moxie_runtime/connection.py) `resume_roster`). | The recorder runs inside the supervisor's container and stops with it, so first start a second one in its own container (below), then run `docker compose restart supervisor`. | In the second recording: a `config` line, and `ears ProtoSubscribe` when there is a Listening engine, with no connect line before them. | §3.4: "What a physical robot does across a broker restart is unverified." |
+
+A recorder in its own container, which a supervisor restart does not stop:
+
+```bash
+docker compose run --rm --no-deps supervisor python -m moxie_sdk.wire_record --out /data/wire/bench-restart.jsonl
+```
 
 ### Lifecycle, last
 
@@ -156,7 +162,8 @@ docker compose exec -T supervisor cat /data/wire/bench.jsonl | python3 sim/tools
    feeds the robot's side of the session through a fresh supervisor with a scripted brain and
    reports every reply whose shape differs from what was recorded
    ([`wire_replay.py`](../../sim/tools/wire_replay.py) `replay`).
-4. **Delete the recording:** `docker compose exec supervisor rm /data/wire/bench.jsonl`.
+4. **Delete the recordings:** `docker compose exec supervisor rm -r /data/wire` removes every
+   recording in the supervisor's data volume, which `docker compose down` keeps.
 
 Only a `--share` copy may be pasted into an issue or committed, and a committed one goes in
 [`sim/tests/data/wire/`](../../sim/tests/data/wire/README.md), where a test checks it holds no

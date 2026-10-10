@@ -212,7 +212,7 @@ def replay(records, *, data_dir: str) -> dict:
                     if isinstance(line, dict) and line.get("context_type") == "input":
                         line["text"] = token
                 brain.script(token, [x["body"] for x in expected])
-            rows.append([device, label, [shape(x["body"]) for x in expected], event_id])
+            rows.append((device, label, [shape(x["body"]) for x in expected], event_id))
         if device not in live:
             onboardings += 1
             live.add(device)
@@ -240,11 +240,10 @@ def replay(records, *, data_dir: str) -> dict:
                     timeout=WAIT_S)
 
     published = list(client.published)
-    differences = []
-    for row in rows:
-        device, label, recorded, event_id = row
+    compared, differences = [], []
+    for device, label, recorded, event_id in rows:
         replayed = [shape(p) for p in _chat_replies(published, synthetic_id(device), event_id)]
-        row[3] = replayed
+        compared.append((device, label, recorded, replayed))
         if recorded != replayed:
             differences.append((device, label, recorded, replayed))
     other = Counter()
@@ -256,9 +255,8 @@ def replay(records, *, data_dir: str) -> dict:
             else topic.rsplit("/", 1)[-1]
         if name != "remote_chat":
             other[(name, "replayed")] += 1
-    return {"delivered": delivered, "skipped": dict(skipped),
-            "rows": [tuple(r) for r in rows], "differences": differences,
-            "other": dict(other)}
+    return {"delivered": delivered, "skipped": dict(skipped), "rows": compared,
+            "differences": differences, "other": dict(other)}
 
 
 def report(result: dict, source: str = "") -> str:

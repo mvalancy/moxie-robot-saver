@@ -1,4 +1,4 @@
-Wire timeline: 48 messages over 57.00 s, 2 robot(s). Shareable view: no identity, no words.
+Wire timeline: 49 messages over 57.00 s, 2 robot(s). Shareable view: no identity, no words.
 Recorder (no raw audio):
   0.05 s connected to the broker
   0.06 s subscribed to /devices/# and $SYS/broker/log/#
@@ -25,10 +25,11 @@ d_robot-1
     34.50 s  data       data query 5a6b7c8d: done +0.05 s (1 module)
     52.00 s  broker     New client connected from [address] as d_robot-1 (p2, c1, k30).
     52.10 s  broker     Client d_robot-1 already connected, closing old connection.
+    52.99 s  config     pushed (pairing_status paired); no /state after it
     53.00 s  broker     Socket error on client d_robot-1 [address] ([mac]), disconnecting.
     55.00 s  broker     Client d_robot-1 closed its connection.
              traffic    robot>cloud: client-service-activity-log x1, device-logs x1, remote-chat x8, state x2, telemetry x1, zmq x10
-             traffic    cloud>robot: config x1, query_result x1, remote_chat x6, tts x3, zmq x3
+             traffic    cloud>robot: config x2, query_result x1, remote_chat x6, tts x3, zmq x3
 
 d_robot-2
     40.00 s  broker     New client connected from [address] as d_robot-2 (p2, c1, k60).

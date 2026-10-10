@@ -208,6 +208,8 @@ def bench_session() -> list:
     s.append(_sys(52.00, "N", f"New client connected from {HOSTNAME}:{PORT} as {a} "
                               f"(p2, c1, k30, u'{USERNAME}')."))
     s.append(_sys(52.10, "E", f"Client {a} already connected, closing old connection."))
+    s.append(_dev(52.99, a, "config", {"pairing_status": "paired", "audio_volume": "0.6",
+                                       "child_pii": {"nickname": CHILD_NAME}}))
     s.append(_sys(53.00, "N", f"Socket error on client {a} [{IPV6}]:{PORT} ({MAC}), "
                               f"disconnecting."))
     s.append(_sys(55.00, "N", f"Client {a} closed its connection."))

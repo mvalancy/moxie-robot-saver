@@ -49,7 +49,8 @@
 {"kind":"msg","mono":50.0,"dir":"broker","device":"d_robot-2","topic":"$SYS/broker/log/N","name":"log/N","bytes":68,"as":"log","body":{"text":"Client d_robot-2 closed its connection."}}
 {"kind":"msg","mono":52.0,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/N","name":"log/N","bytes":127,"as":"log","body":{"text":"New client connected from [address] as d_robot-1 (p2, c1, k30)."}}
 {"kind":"msg","mono":52.1,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/E","name":"log/E","bytes":88,"as":"log","body":{"text":"Client d_robot-1 already connected, closing old connection."}}
+{"kind":"msg","mono":52.99,"dir":"cloud>robot","device":"d_robot-1","topic":"/devices/d_robot-1/config","name":"config","bytes":87,"as":"json","body":{"pairing_status":"paired","audio_volume":"0.6","child_pii":"[withheld]"}}
 {"kind":"msg","mono":53.0,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/N","name":"log/N","bytes":121,"as":"log","body":{"text":"Socket error on client d_robot-1 [address] ([mac]), disconnecting."}}
 {"kind":"msg","mono":55.0,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/N","name":"log/N","bytes":68,"as":"log","body":{"text":"Client d_robot-1 closed its connection."}}
 {"kind":"msg","mono":56.0,"dir":"broker","device":"","topic":"$SYS/broker/log/E","name":"log/E","bytes":69,"as":"log","body":{"text":"OpenSSL Error[0]: error:0A000418:SSL routines::tlsv1 alert unknown ca"}}
-{"kind":"stop","mono":57.0,"reason":"stopped by hand (Ctrl-C)","lines":48,"dropped":0}
+{"kind":"stop","mono":57.0,"reason":"stopped by hand (Ctrl-C)","lines":49,"dropped":0}

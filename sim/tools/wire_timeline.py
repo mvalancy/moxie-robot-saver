@@ -4,7 +4,8 @@ bench day needs to see, and a `--share` copy that holds no identity and no words
 
     python3 sim/tools/wire_timeline.py bench.jsonl                     # the timeline
     python3 sim/tools/wire_timeline.py bench.jsonl --share bench.share.jsonl
-    docker compose exec supervisor cat /data/wire/bench.jsonl | python3 sim/tools/wire_timeline.py -
+    docker compose exec -T supervisor cat /data/wire/bench.jsonl |
+        python3 sim/tools/wire_timeline.py -
 
 **The timeline**, per robot and in time order: the broker's connect lines and the first
 `/state`; each config push and the next `/state`; the ask for the microphone
@@ -57,16 +58,19 @@ BYTES_PER_MS = 32.0
 # What identity looks like
 # --------------------------------------------------------------------------- #
 #: A robot's id anywhere: any `d_` id that is not already a placeholder.
-DEVICE_ID = re.compile(r"(?<![A-Za-z0-9_])[dD]_(?!robot-\d+(?![A-Za-z0-9-]))[A-Za-z0-9][A-Za-z0-9-]*")
+DEVICE_ID = re.compile(r"(?<![A-Za-z0-9_])[dD]_(?!robot-\d+(?![A-Za-z0-9-]))"
+                       r"[A-Za-z0-9][A-Za-z0-9-]*")
 _OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
 #: An IPv4 literal, with its port when one follows.
 IPV4 = re.compile(rf"(?<!\d)(?<!\d\.){_OCTET}(?:\.{_OCTET}){{3}}(?::\d{{1,5}})?(?!\d|\.\d)")
 #: A MAC: six hex pairs with one separator, or Cisco's three dotted quads.
 MAC = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{2}([:-])(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}"
                  r"(?![0-9A-Fa-f])"
-                 r"|(?<![0-9A-Fa-f.])[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}(?![0-9A-Fa-f.])")
+                 r"|(?<![0-9A-Fa-f.])[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}"
+                 r"(?![0-9A-Fa-f.])")
 #: Text that may be an IPv6 literal (validated by `ipaddress` in `_ipv6_spans`).
-_V6_CANDIDATE = re.compile(r"\[?[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(?:%[A-Za-z0-9_.-]+)?\]?(?::\d{1,5})?")
+_V6_CANDIDATE = re.compile(r"\[?[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(?:%[A-Za-z0-9_.-]+)?\]?"
+                           r"(?::\d{1,5})?")
 #: A name on a home network.
 LAN_HOST = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\."
                       r"(?:local|lan|home|internal|localdomain|intranet|corp|home\.arpa)"
