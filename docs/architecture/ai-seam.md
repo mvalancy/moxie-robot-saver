@@ -334,16 +334,16 @@ applying [`safety_rules.json`](../../mqtt/moxie_sdk/safety_rules.json), which *i
 table and is meant to be read by a parent. Eight categories with a **per-side** policy, because
 the two sides of a conversation are not symmetric:
 
-| Category | Child says it | Moxie about to say it |
-|---|---|---|
-| `self_harm` (escalated) | **block** | **block** |
-| `violence` — weapon/harm instructions, threats | **block** | **block** |
-| `sexual` | **block** | **block** |
-| `hate` — slurs, hate speech | **block** | **block** |
-| `personal_info` — address / school / password / "don't tell your mom" | flag | **block** |
-| `dangerous` — bleach, roofs, matches, alcohol/drugs | flag | **block** |
-| `profanity` | flag | **block** |
-| `violence_talk` — "kill", "gun", "punched" in ordinary kid talk | flag | flag |
+| Category | Child says it | Moxie about to say it | Guards on her side only (`allow_moxie`) |
+|---|---|---|---|
+| `self_harm` (escalated) | **block** | **block** | 12: a story character's fall, an accident, "cut herself a slice of cake", "disappear into a good book" |
+| `violence` — weapon/harm instructions, threats | **block** | **block** | 5: "blow up the balloons", "shoot the ball", "kill the lights", "shoot you a smile", a refusal that quotes the request |
+| `sexual` | **block** | **block** | 1: "horny toad" |
+| `hate` — slurs, hate speech | **block** | **block** | 5: "spic and span", "a chink in its armor", "Maine Coon", "coon hound" |
+| `personal_info` — address / school / password / "don't tell your mom" | flag | **block** | 8: advice that quotes a groomer, "what is your school like", a story creature's address; plus 4 `phrases_moxie` she never says ("don't tell a grown-up", "our little secret", "between us", "keep it from your mom") |
+| `dangerous` — bleach, roofs, matches, alcohol/drugs | flag | **block** | 3: a warning ("never drink bleach"), a question ("did you drink bleach?"), "if you swallow" |
+| `profanity` | flag | **block** | 6: "Moby Dick", "Dick Van", "pussy willows", "pussycat", "bastard sword", "shiitake" |
+| `violence_talk` — "kill", "gun", "punched" in ordinary kid talk | flag | flag | 1: "hate to say" |
 
 **Block** means the text is never spoken and never reaches a model; **flag** means it is allowed
 through and recorded for a parent. Hard blocks are reserved for the clearly harmful; the
@@ -354,6 +354,23 @@ elongation, and each category carries **false-positive guards** whose spans are 
 is matched — "shoot a photo", "kill the lights", "my feet are killing me", "a nerf gun", "flag
 football", "shiitake mushrooms", "murder mystery", "killing myself laughing". A guard subtracts
 its own span only: a second, unexcused use of the same word in the same sentence still counts.
+
+**Which side a guard belongs to.** The `allow` guards apply to both sides. The `allow_moxie`
+guards in the last column apply only where Moxie speaks: a refusal that quotes the request ("I
+can't tell you how to make a sword"), a warning, a story character who hurt himself, an idiom. On
+the child's side such a guard would let a second, harmful clause through ("my grades fell and now
+i want to hurt myself", "let's kill the lights and kill him"), so the child's side never reads it:
+the child's self-harm check is the table's `words`, `phrases` and `allow` and nothing else. The
+weapon-noun frames ("how do I make a real sword", with an axe, a spear, a dagger, a katana, a bow
+and arrow, and an instruction, acquisition or endorsement frame) block on both sides; their own
+guards (a sword in Minecraft, of cardboard, for a costume, a blade of grass) are `allow` guards,
+since the child's line "how do i make a sword in minecraft" is not a request. This table and the
+hosted demo's floor (`functions/api/_lib/safety.rules.js`) are one vocabulary: the hosted child
+side carries the authority's words, phrases and guards for every blocking category, and its
+node suite reads this file to prove it. One consumer of her side reads it without her guards:
+the content brain's memory filter (`mqtt/moxie_sdk/content/memory.py::_safe`, `her_guards=False`)
+judges a fact about the child in her voice, and "Sam cut himself on the glass on purpose" is a
+fact the story guard must not excuse.
 
 **Limits: a rule engine is a floor, not a filter.** It cannot read context, sarcasm, or a
 harmful idea expressed in gentle words. It misses novel phrasings, deliberate obfuscation past its

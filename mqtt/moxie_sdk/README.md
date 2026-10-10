@@ -98,6 +98,14 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   whole table is the JSON file, which a parent can read — behind a `Classifier` protocol a
   local model classifier can drop into. Parent-facing summary:
   [child-safety guide](../../docs/guides/child-safety.md).
+  The table is one vocabulary with the hosted demo's floor (`functions/api/_lib/safety.rules.js`
+  carries the robot's child side, plus the weapon-noun frames both now share). Two keys belong to
+  Moxie's side only: `allow_moxie` (guards for a refusal that quotes the request, a warning, an
+  idiom, a story character) and `phrases_moxie` (words a child may say but she never does, "don't
+  tell a grown-up"). The child's side never reads either, so "my grades fell and now i want to hurt
+  myself" still blocks. `assess(text, role=MOXIE, her_guards=False)` judges her side without
+  `allow_moxie`: the content brain's memory filter (`content/memory.py::_safe`) uses it, because a
+  fact about the child ("Sam cut himself on the glass on purpose") is not her line.
 - [`brains.py`](brains.py) — 🧠 **which brain answers this child.** A closed *positive list* of the
   brains this appliance knows (`llm`, `content`, `webhook`, `echo`) — a name in it resolves to a
   builder in [`config.BRAIN_BUILDERS`](../config.py), a name that is not is **refused, never
