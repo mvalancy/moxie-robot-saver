@@ -22,9 +22,10 @@ yaml = pytest.importorskip("yaml")
 sys.path.insert(0, os.path.dirname(__file__))
 
 from helpers_compose import (BUILD_ONLY_KNOBS, IMAGE_ONLY_KNOBS,   # noqa: E402
-                             PROFILE_ONLY_KNOBS, broker_conf_drift, env_file_keys,
-                             env_parity, inlined_broker_conf, interpolated, moxie_env,
-                             shape_parity, unescaped_dollars)
+                             PROFILE_ONLY_KNOBS, broker_conf_drift, dotenv_values,
+                             env_file_keys, env_parity, inlined_broker_conf, interpolate,
+                             interpolated, moxie_env, published_binds, shape_parity,
+                             unescaped_dollars)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 COMPOSE_PATH = os.path.join(REPO, "docker-compose.yml")
@@ -649,3 +650,115 @@ def test_the_defaulted_voice_knobs_do_not_pin_the_pickers_engine(compose, images
             assert vs.pin_for_env(kind, m.group(1)) == "", (
                 f"{name}: the default {var}={m.group(1)!r} PINS the {kind} engine, so "
                 f"the picker would offer one engine out of the box")
+
+
+# ====================================================================================
+# THE STATUS PORT STAYS ON THIS MACHINE. The supervisor's status port (8931) asks no one
+# to sign in: it serves the child's name, what Moxie remembers, the safety review queue,
+# and takes settings and robot-access writes. The console reads it over the compose
+# network (`http://supervisor:8931/status`, pinned above), never through the published
+# port, so nothing needs it on the LAN. These guards resolve the real files the way
+# `docker compose up` does and assert where a port LISTENS, not how its line is spelled:
+# the line this replaced had a 127.0.0.1 default and still listened on 0.0.0.0.
+# ====================================================================================
+
+#: Both files, with short ids (the paths would put a checkout's location in every test id).
+_FILES = [pytest.param(CLONE, COMPOSE_PATH, id=CLONE),
+          pytest.param(IMAGES, IMAGES_PATH, id=IMAGES)]
+
+
+def _older_env():
+    """An `.env` copied before the status port had its own knob: today's `.env.example`
+    without that row. MOXIE_BIND_HOST=0.0.0.0 is set outright, so the case keeps its
+    teeth even if `.env.example` ever ships a narrower value."""
+    env = dotenv_values(_read(ENV_EXAMPLE))
+    env.pop("MOXIE_BIND_HOST_STATUS", None)
+    env["MOXIE_BIND_HOST"] = "0.0.0.0"
+    return env
+
+
+#: The two setups the guide documents, and the `.env` an owner who upgrades still has.
+_SETUPS = {
+    "cp .env.example .env": lambda: dotenv_values(_read(ENV_EXAMPLE)),
+    "no .env": dict,
+    "an older .env": _older_env,
+}
+
+
+@pytest.mark.parametrize("setup", list(_SETUPS))
+@pytest.mark.parametrize("name,path", _FILES)
+def test_the_status_port_stays_on_this_machine(name, path, setup):
+    """`.env.example` sets MOXIE_BIND_HOST=0.0.0.0 so a robot and a phone can reach the
+    stack; that must not carry the status port onto the LAN with it."""
+    binds = published_binds(yaml.safe_load(_read(path)), "supervisor", _SETUPS[setup]())
+    assert binds == {"8931": "127.0.0.1"}, (
+        f"{name} with `{setup}` publishes the supervisor on {binds}: its status port asks "
+        f"no one to sign in, so it must listen on 127.0.0.1 only (MOXIE_BIND_HOST_STATUS)")
+
+
+#: Where every published port listens with `cp .env.example .env`. The robot's TLS port,
+#: the browser UI's WebSocket and the console are on the LAN by design (the console's
+#: sign-in is an email alone: owner question OQ3); plain MQTT and the status port are not.
+#: docs/guides/one-command-stack.md says the same in prose: change the two together.
+_DOCUMENTED_SURFACE = {
+    "broker": {"8883": "0.0.0.0", "1883": "127.0.0.1", "9001": "0.0.0.0"},
+    "supervisor": {"8931": "127.0.0.1"},
+    "console": {"8080": "0.0.0.0"},
+}
+
+
+@pytest.mark.parametrize("name,path", _FILES)
+def test_what_the_documented_setup_puts_on_the_network(name, path):
+    """Every service, profiles included, so a port moving on or off the LAN (a console or
+    robot port falling off it, too) is a reviewed edit here, never a side effect."""
+    doc, env = yaml.safe_load(_read(path)), dotenv_values(_read(ENV_EXAMPLE))
+    surface = {svc: published_binds(doc, svc, env) for svc in doc["services"]}
+    assert {svc: b for svc, b in surface.items() if b} == _DOCUMENTED_SURFACE, \
+        f"{name}: what `cp .env.example .env` publishes has changed: {surface}"
+
+
+# ---- the readers those guards rest on, proved to bite --------------------------------
+
+def test_the_status_guard_sees_through_a_safe_looking_default():
+    """The replaced line, in miniature: its default is 127.0.0.1, so it reads as safe, and
+    is, until the documented `.env` sets the variable it shared with the LAN ports."""
+    old = _doc('services: {supervisor: {ports: '
+               '["${MOXIE_BIND_HOST:-127.0.0.1}:${MOXIE_PORT_STATUS:-8931}:8931"]}}')
+    assert published_binds(old, "supervisor", {}) == {"8931": "127.0.0.1"}
+    assert published_binds(old, "supervisor", {"MOXIE_BIND_HOST": "0.0.0.0"}) == \
+        {"8931": "0.0.0.0"}
+
+
+@pytest.mark.parametrize("value,env,expected", [
+    ("${X:-d}", {}, "d"), ("${X:-d}", {"X": ""}, "d"), ("${X:-d}", {"X": "v"}, "v"),
+    ("${X-d}", {}, "d"), ("${X-d}", {"X": ""}, ""), ("${X}", {}, ""), ("a$$b", {}, "a$b"),
+])
+def test_interpolate_resolves_as_compose_does(value, env, expected):
+    assert interpolate(value, env) == expected
+
+
+@pytest.mark.parametrize("value", ["${X:?required}", "$X", "${X:+set}", "${X:-${Y}}"])
+def test_interpolate_refuses_a_form_it_cannot_read(value):
+    with pytest.raises(ValueError):
+        interpolate(value, {"X": "v", "Y": "w"})
+
+
+@pytest.mark.parametrize("port,expected", [
+    ("127.0.0.1:8931:8931", {"8931": "127.0.0.1"}),
+    ("8931:8931", {"8931": "0.0.0.0"}),              # no interface: every interface
+    ("${EMPTY}:8931:8931", {"8931": "0.0.0.0"}),     # nor one that resolves empty
+    ("[::1]:8931:8931/tcp", {"8931": "::1"}),
+])
+def test_published_binds_reads_the_short_syntax(port, expected):
+    assert published_binds(_doc('services: {s: {ports: ["%s"]}}' % port), "s", {}) == expected
+
+
+def test_published_binds_refuses_the_long_syntax():
+    with pytest.raises(ValueError):
+        published_binds(_doc("services: {s: {ports: [{target: 8931, published: 8931}]}}"),
+                        "s", {})
+
+
+def test_dotenv_values_reads_a_file_as_compose_does():
+    text = "# a comment\n\nA=1\nB=\"two\"\nC='3'\nD=\nE=x=y\n"
+    assert dotenv_values(text) == {"A": "1", "B": "two", "C": "3", "D": "", "E": "x=y"}
