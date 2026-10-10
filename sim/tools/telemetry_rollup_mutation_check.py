@@ -16,7 +16,7 @@ MUTATIONS = [
      "                counted = self.store.write(\n"
      "                    device_id, telemetry_seam.DAILY_COLLECTION,\n"
      "                    telemetry_seam.roll_up_packet(\n"
-     "                        telemetry_seam.reconcile_rollup(stored, ring), row))\n"
+     "                        telemetry_seam.reconcile_rollup(stored, ring, tz=tz), row, tz=tz))\n"
      "                kept = self.store.append(device_id, telemetry_seam.PACKETS_COLLECTION,\n"
      "                                         row, cap=telemetry_seam.max_packets()) is not None",
      "                kept = self.store.append(device_id, telemetry_seam.PACKETS_COLLECTION,\n"
@@ -24,13 +24,13 @@ MUTATIONS = [
      "                counted = self.store.write(\n"
      "                    device_id, telemetry_seam.DAILY_COLLECTION,\n"
      "                    telemetry_seam.roll_up_packet(\n"
-     "                        telemetry_seam.reconcile_rollup(stored, ring), row))"),
+     "                        telemetry_seam.reconcile_rollup(stored, ring, tz=tz), row, tz=tz))"),
     ("M2  the two writes stop being one critical section", R_TELEMETRY,
      "            with self.store.transaction(device_id, telemetry_seam.PACKETS_COLLECTION):",
      "            if True:"),
     ("M3  the read path stops reconciling the roll-up against the ring", R_TELEMETRY,
-     "        rollup = telemetry_seam.reconcile_rollup(stored, ring)",
-     "        rollup = telemetry_seam.reconcile_rollup(stored, [])"),
+     "        rollup = telemetry_seam.reconcile_rollup(stored, ring,\n",
+     "        rollup = telemetry_seam.reconcile_rollup(stored, [],\n"),
     ("M4  a repair is answered but never written back", R_TELEMETRY,
      "        if missing:\n            try:",
      "        if False:\n            try:"),
@@ -66,9 +66,9 @@ MUTATIONS = [
      "    out = dict(pkt)"),
     ("M12 an ingest stops repairing on its way past, so only a reader can heal", R_TELEMETRY,
      "                    telemetry_seam.roll_up_packet(\n"
-     "                        telemetry_seam.reconcile_rollup(stored, ring), row))",
+     "                        telemetry_seam.reconcile_rollup(stored, ring, tz=tz), row, tz=tz))",
      "                    telemetry_seam.roll_up_packet(\n"
-     "                        stored, row))"),
+     "                        stored, row, tz=tz))"),
 ]
 
 

@@ -22,9 +22,10 @@ class FleetMixin:
         return dict(cfg) if isinstance(cfg, dict) else {}
 
     def effective_config(self, device_id) -> dict:
-        """`fleet + per-robot` override layers (builder defaults sit underneath)."""
-        from moxie_sdk.cloud_config import merge_config_layers
-        return merge_config_layers(self.fleet_config(),
+        """`fleet + per-robot` override layers (builder defaults sit underneath), over the
+        house's zone `MOXIE_TIMEZONE` names, if any (`cloud_config.env_timezone_layer`)."""
+        from moxie_sdk.cloud_config import env_timezone_layer, merge_config_layers
+        return merge_config_layers(env_timezone_layer(), self.fleet_config(),
                                    self._config_overrides.get(device_id, {}))
 
     def face_cache_id(self, device_id) -> str:
@@ -330,6 +331,9 @@ class FleetMixin:
             cfg = build_unpaired_cloud_config()
             self._note("permit", f"⛔ {device_id} is not permitted — pending "
                                  f"(minimal config, no child data)")
+        robot = self.robots.get(device_id)
+        if robot is not None:                # the zone it was told tells its time (clock.local)
+            robot.extra["timezone_id"] = cfg.get("timezone_id")
         self._publish(f"/devices/{device_id}/config", cfg,
                       device_id=device_id, what="config")
         print(f"[runtime] → pushed config to {device_id} "

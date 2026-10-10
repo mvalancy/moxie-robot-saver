@@ -48,13 +48,15 @@ class TelemetryMixin:
         The ring is the durable log; the roll-up is a view carrying `through_seq`, so an
         uncounted envelope is detectable and the repair is written back (only when
         something was missing; best effort — this may run on the MQTT thread).
-        `_persist_telemetry` bypasses this: it already holds both records.
+        `_persist_telemetry` bypasses this: it already holds both records. Days are the
+        house's (`house_zone`), as `_persist_telemetry` keys them.
         """
         stored = self.store.read(device_id, telemetry_seam.DAILY_COLLECTION,
                                  telemetry_seam.new_rollup())
         ring = self.store.read(device_id, telemetry_seam.PACKETS_COLLECTION, [])
         missing = telemetry_seam.unfolded_packets(stored, ring)
-        rollup = telemetry_seam.reconcile_rollup(stored, ring)
+        rollup = telemetry_seam.reconcile_rollup(stored, ring,
+                                                 tz=self.house_zone(device_id).tz)
         if missing:
             try:
                 self.store.write(device_id, telemetry_seam.DAILY_COLLECTION, rollup)
@@ -95,6 +97,7 @@ class TelemetryMixin:
         row = telemetry_seam.storable_packet(pkt, self.telemetry_policy(device_id))
         if row is None:                       # LoggingPolicy.NO_DATA — nothing on disk
             return False
+        tz = self.house_zone(device_id).tz    # a day is the house's day, not the container's
         try:
             with self.store.transaction(device_id, telemetry_seam.PACKETS_COLLECTION):
                 ring = self.store.read(device_id, telemetry_seam.PACKETS_COLLECTION, [])
@@ -106,7 +109,7 @@ class TelemetryMixin:
                 counted = self.store.write(
                     device_id, telemetry_seam.DAILY_COLLECTION,
                     telemetry_seam.roll_up_packet(
-                        telemetry_seam.reconcile_rollup(stored, ring), row))
+                        telemetry_seam.reconcile_rollup(stored, ring, tz=tz), row, tz=tz))
                 kept = self.store.append(device_id, telemetry_seam.PACKETS_COLLECTION,
                                          row, cap=telemetry_seam.max_packets()) is not None
         except Exception as e:
@@ -155,7 +158,8 @@ class TelemetryMixin:
                    "persisted": policy != LoggingPolicy.NO_DATA,
                    "connected": robot is not None,
                    "retention": telemetry_seam.retention(),
-                   "history": telemetry_seam.history_view(telemetry_seam.new_rollup()),
+                   "history": telemetry_seam.history_view(
+                       telemetry_seam.new_rollup(), today=self._house_today(device_id)),
                    "totals": telemetry_seam.rollup_totals(telemetry_seam.new_rollup())}
         out["erased"] = erased
         out["records"] = sorted(k for k, v in removed.items() if v)
@@ -181,6 +185,11 @@ class TelemetryMixin:
                   f"under NO_DATA", flush=True)
         return purged
 
+    def _house_today(self, device_id) -> str:
+        """Today on the house's clock (`house_now`), `YYYY-MM-DD`: where the daily history
+        ends, so the newest bar is the family's today, not the container's."""
+        return self.house_now(device_id).date().isoformat()
+
     def telemetry_view(self, device_id, limit: int = 20, days: int = 7) -> dict:
         """The per-robot insights view: the ring summarized, the newest `limit` events
         and `days` of daily history. A robot with stored history is `ok` even offline;
@@ -205,7 +214,8 @@ class TelemetryMixin:
                 "persisted": policy != LoggingPolicy.NO_DATA,
                 "connected": robot is not None,
                 "retention": telemetry_seam.retention(),
-                "history": telemetry_seam.history_view(rollup, days=days),
+                "history": telemetry_seam.history_view(rollup, days=days,
+                                                       today=self._house_today(device_id)),
                 "totals": totals}
 
     # ---- mentor behaviors (what the child has already done) ----

@@ -188,7 +188,9 @@ def parent_requests_due(effective_config, now, *, slot_count, first_slot_index=0
         if not mid or not isinstance(raw, (int, float)) or isinstance(raw, bool):
             continue
         try:
-            when = datetime.datetime.fromtimestamp(float(raw))
+            # On the plan's clock: the house's zone when `now` is aware (the runtime's
+            # `house_now`), else this process's local time, as before.
+            when = datetime.datetime.fromtimestamp(float(raw), now.tzinfo)
         except (OverflowError, OSError, ValueError):
             continue
         entry = {"module_id": mid, "scheduled_at": int(raw),
@@ -213,10 +215,11 @@ def parent_requests_due(effective_config, now, *, slot_count, first_slot_index=0
     return out
 
 
-def telemetry_signals(telemetry_summary, packets=()) -> dict:
+def telemetry_signals(telemetry_summary, packets=(), tz=None) -> dict:
     """What the recovered telemetry envelope can honestly tell a planner: packet count,
     event names, sessions, and a `recorded_at` histogram — never a module signal (see the
-    module docstring), so `carries_module_signal` is False."""
+    module docstring), so `carries_module_signal` is False. The histogram's parts of the
+    day are on `tz`'s clock (the plan's; None: this process's local time)."""
     summary = telemetry_summary if isinstance(telemetry_summary, dict) else {}
     by_event = summary.get("by_event") if isinstance(summary.get("by_event"), dict) else {}
     items = [p for p in (packets or ()) if isinstance(p, dict)]
@@ -228,7 +231,7 @@ def telemetry_signals(telemetry_summary, packets=()) -> dict:
         ts = pkt.get("recorded_at")
         if isinstance(ts, (int, float)) and not isinstance(ts, bool):
             try:
-                bucket = time_bucket(datetime.datetime.fromtimestamp(float(ts)))
+                bucket = time_bucket(datetime.datetime.fromtimestamp(float(ts), tz))
             except (OverflowError, OSError, ValueError):
                 continue
             hours[bucket] = hours.get(bucket, 0) + 1
@@ -319,7 +322,7 @@ def plan_inputs(device_id, now=None, *, mentor_behaviors=(), telemetry_summary=N
         "history": history, "completed_counts": counts,
         "ftue_skips": sorted(skips),
         "bedtime": window, "slots": slots, "parent_requests": requests,
-        "telemetry": telemetry_signals(telemetry_summary, telemetry_packets),
+        "telemetry": telemetry_signals(telemetry_summary, telemetry_packets, now.tzinfo),
     }
 
 

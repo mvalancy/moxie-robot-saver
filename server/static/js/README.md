@@ -10,7 +10,7 @@ this order** by [`../index.html`](../index.html). No build step, no dependencies
 - [`insights.js`](insights.js) — 📈 insights + the 🔌 connection strip, 🛡️ safety, and
   `armErase` (the two-click erase). `sim/test_console_insights.mjs` mutates this file.
 - [`memory.js`](memory.js) — 🧠 what Moxie remembers (read, erase, correct).
-- [`settings.js`](settings.js) — ⚙️ settings, the paired-robot card, 🎨 Moxie's look, 📅 today's plan.
+- [`settings.js`](settings.js) — ⚙️ settings (the house's time zone, and its one-click offer of the phone's), the paired-robot card, 🎨 Moxie's look, 📅 today's plan.
   The card's status line is kept through a redraw of the same robot; `sim/test_robot_claim.mjs`
   mutates that.
 - [`perform.js`](perform.js) — 🎭 Be Moxie and 🎬 rehearsal.

@@ -351,6 +351,44 @@ pushed: false`: no connected robot heard it) and the settle pushes it when the r
 > (MIT), which drives real robots, sets the same field per device from its dashboard and re-pushes the
 > config (`site/hive/views.py:186-193`).
 
+### The house's clock: `timezone_id`
+
+Every push names the house's time zone, `timezone_id` (an IANA name): this robot's own zone, else
+the house rule, else `MOXIE_TIMEZONE` (the bottom layer, for an install nobody opens the console
+on), else `America/Los_Angeles` (`cloud_config.DEFAULT_TIMEZONE_ID`). A parent sets it in ⚙️
+Settings → **Time zone**, for one robot or, with *Apply to all robots*, as a house rule; the field's
+**Use this phone's zone** button fills in the phone's own zone for *Save settings* to save. While no
+zone is set and the parent's phone is in another one, the robot card names both and offers the
+phone's zone in one click, saved as a house rule (`js/settings.js`).
+
+The whitelist (`sanitize_config_overrides` → `check_timezone`) accepts only a name this server's tz
+database knows, and forgives case (`america/new_york` is stored as `America/New_York`). A typo such
+as `Mars/Olympus` is a 400 with the reason, and is never stored or pushed. An empty value is no edit.
+A host with no tz database at all (neither the system's nor the `tzdata` package, which
+`mqtt/requirements.txt` pins for the slim image) can only check a name's shape. A robot's saved
+record holding a name the whitelist now refuses loses that key when the supervisor starts (one line).
+
+The appliance keeps time in the same zone, never on its container's clock (no compose file sets
+`TZ`, so a container runs on UTC):
+
+| What | Where |
+|---|---|
+| The hello's bedtime silence, and the Be Moxie bedtime warning | `presence.py::_in_bedtime`, on `house_now` |
+| The day plan: its date, its slots and their part of the day, bedtime per slot, which parent requests are due today | `schedule.py::plan_schedule_for` passes `now=house_now(...)` |
+| "What time is it", and any content program's `clock.local` | `ext_host.py::_clock_local(now, zone)`, in the zone the robot's last push named (`robot.extra["timezone_id"]`); the Try it card uses the same zone |
+| Insights: the day each activity is filed under, and the history's today | `telemetry.py::packet_day(..., tz=...)` and `telemetry_view` |
+| The robot card's `mic asked HH:MM ZONE` | `server/moxie_server/fleet/robots.py::_asked_at`, from `config_effective.timezone_id` (labelled UTC while no zone is chosen) |
+
+A stored zone this server cannot read (an old typo, or no tz database) runs on UTC, labelled:
+`house_zone` never raises, and the activity feed says so once per robot and name. Not in the
+house's zone yet: the `date` stamped on what Moxie remembers (`content/memory.py::provenance`) is
+still the container's date; its exact instant, `at`, is right.
+
+> **Recovered, not observed.** That a physical Moxie resolves its own wake alarms and bedtime
+> against `timezone_id` comes from the recovered protos (`TimeZoneInfo` → `UserAlarmRequest`,
+> [above](#wake-alarms-scheduled-activities-the-json-we-emit)); no robot has been watched doing
+> it. This section covers what the appliance computes and pushes.
+
 ---
 
 ## ② `/state` up — `RobotStatus` (the robot's self-report)
@@ -518,7 +556,7 @@ back in force and runs the sweep, so a parent's `NO_DATA` erases it then
 | Bedtime / quiet hours | `RobotCloudConfig` weekday/weekend bedtime windows + `privacy_mode_enabled` |
 | Volume / brightness | `audio_volume`, `screen_brightness` (down); echoed in `RobotStatus` (up) |
 | Wake alarms & wake toggles | `alarms` (`WakeSchedule`) + `wake_button_enabled`/`touch_wake_enabled`/`audio_wake_set` — weekday checkboxes + a time in the Settings form |
-| Timezone | `timezone_id` |
+| Time zone | `timezone_id` — ⚙️ Settings → **Time zone** (per robot, or a house rule; its **Use this phone's zone** button) and the one-click offer of the phone's zone; `MOXIE_TIMEZONE` underneath. The appliance keeps bedtime, the day plan, "what time is it" and the Insights days in it; see [§The house's clock](#the-houses-clock-timezone_id) |
 | Scheduled activities | `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) — module picker fed by the on-board catalog |
 | Moxie's look (the child's face) | `child_pii.face_options` (14 layers, 72 cited options across 11) + the `child_pii.id` cache-buster — the Moxie's look card; see [§Appearance](#appearance-the-childs-chosen-face) |
 | The name Moxie says | `child_pii.nickname` from the account's child record (the Wi-Fi tab's name field renames it); `MOXIE_CHILD_NICKNAME` is the fallback; the live box's "Moxie calls your child" row — see [§The child's name](#the-childs-name-the-parents-record-per-robot) |

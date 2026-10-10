@@ -94,6 +94,13 @@ your account", or "⚠️ Added to your account, but this server could not let i
 second means the robot is on your account but still pending, so it gets no child settings yet: press
 **Permit** beside it in Robot access.
 
+**Set the time zone before the first bedtime.** With none set, Moxie keeps Los Angeles time; if your
+phone is in another zone, a line above **⚙️ Settings** offers your phone's zone in one click (a
+house rule for every robot), or pick one in **⚙️ Settings → Time zone** (**Use this phone's zone**
+fills in your phone's), then **Save settings**. Bedtime, the day plan and "what time is it" follow
+it ([the house's clock](../architecture/config-and-telemetry-contract.md#the-houses-clock-timezone_id));
+that the robot's own wake alarms do is recovered, not yet observed, so check one on the bench.
+
 **Permit** on its own lets a robot in without putting it on your account, so it gets no robot card.
 Nothing is ever added to an account without the click.
 

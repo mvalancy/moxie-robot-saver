@@ -29,8 +29,12 @@ content = ["jinja2>=3.0"]             # full templating for content-module promp
 # declared dependency of the console (`server/requirements.txt`) and therefore of the test
 # environment, so the sheet adds nothing new to CI.
 cards = ["segno>=1.6"]                # printable launch-card sheets (launch_sheet.py)
+# 🕰️ The house's clock (`cloud_config`, the house's time zone): `zoneinfo` reads the system's
+# tz database first, and `tzdata` is the same database as a package, for a slim image or a
+# host without one. With neither, every zone reads as UTC, labelled as such.
+tz = ["tzdata>=2024.1"]
 all = ["openai>=1.0", "faster-whisper>=1.0", "numpy>=1.24", "piper-tts>=1.2", "jinja2>=3.0",
-       "segno>=1.6"]
+       "segno>=1.6", "tzdata>=2024.1"]
 
 [project.urls]
 Homepage = "https://github.com/mvalancy/moxie-robot-saver"

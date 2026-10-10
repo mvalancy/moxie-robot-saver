@@ -204,7 +204,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config and telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 42807,
+   "bytes": 46101,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -215,6 +215,7 @@
     "The pairing gate — permits, and what a *pending* robot is sent",
     "The child-PII encryption boundary — and the revival shortcut",
     "The child's name: the parent's record, per robot",
+    "The house's clock: `timezone_id`",
     "② `/state` up — `RobotStatus` (the robot's self-report)",
     "CloudStatus.UserState` — the pairing/OTA lifecycle the console shows",
     "③ Telemetry — `Packet` envelope + the privacy gate",
@@ -1143,7 +1144,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 11376,
+   "bytes": 12027,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -1182,7 +1183,7 @@
    "path": "guides/bench-runbook.md",
    "title": "Bench runbook: bring a real Moxie onto your server",
    "section": "guides",
-   "bytes": 12067,
+   "bytes": 12673,
    "mermaid": 0,
    "headings": [
     "Before you start",

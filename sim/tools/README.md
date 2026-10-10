@@ -38,6 +38,7 @@ python3 sim/tools/ears_mutation_check.py
 python3 sim/tools/ext_mutation_check.py
 python3 sim/tools/hardening_mutation_check.py
 python3 sim/tools/hardening_p1_mutation_check.py
+python3 sim/tools/house_clock_mutation_check.py
 python3 sim/tools/launch_card_mutation_check.py
 python3 sim/tools/performance_mutation_check.py
 python3 sim/tools/subscribe_mutation_check.py
@@ -54,6 +55,7 @@ python3 sim/tools/unit_budget_mutation_check.py
 | `ext` | extension sandbox | `ext/`, `render.py`, `ext_host.py`, `packs/` pattern cap |
 | `hardening` | P0: store lock, connection region | `moxie_sdk/store.py`, `moxie_runtime/` connection code |
 | `hardening_p1` | P1: roster, conn telemetry, shutdown | `moxie_sdk/{roster,conn_telemetry}.py`, `fleet/activity.py` |
+| `house_clock` | the house's clock: bedtime, `clock.local`, the day plan and the Insights days in the family's `timezone_id`; the whitelist's zone check and its labelled-UTC fallback | `cloud_config.py` (the house's clock), `moxie_runtime/{presence,schedule,telemetry}.py`, `ext_host._clock_local`, `schedule/signals.py` |
 | `launch_card` | launch-card QR allowlist | `moxie_sdk/launch_cards.py` |
 | `performance` | behavior planner | `moxie_sdk/performance.py` |
 | `subscribe` | `subscribe` capability | `moxie_runtime/` subscription merge, `ext.SUBSCRIBE_EVENTS` |
