@@ -10,11 +10,14 @@ Headless runner for the (retired) QR rig; writes tools/qr-rig/findings.md.
   is one of the setup app's dwell timers, not a hidden command. The 2026-08-27 snapshot
   is kept as findings-2026-08-27.md, and docs/debugging/qr-command-findings.md is the
   record of what it meant.
-- Commits and pushes the findings file periodically ONLY with --commit (default: off).
+- Commits and pushes the findings file periodically ONLY with --commit (default: off). A git
+  step that fails is printed and the run carries on; "committed" is printed only when every
+  step succeeded.
 - Runs until --until HH:MM (default 07:00), then a final snapshot.
 
-Nothing here names a bench network: --moxie-ip is required, and the rig reads the broker
-address from MOXIE_BROKER_HOST (it builds the `om` code from it).
+Nothing here names a bench network: --moxie-ip is required whenever this script launches the
+rig (--no-manage only snapshots and needs neither value), and the rig reads the broker address
+from MOXIE_BROKER_HOST (it builds the `om` code from it).
 
 Chrome (the fullscreen display Moxie scans) is launched once and left alone; its page
 polls the rig so it survives rig relaunches. Run this detached:
@@ -117,20 +120,28 @@ repeats count.
 def commit(msg):
     # Only behind --commit. Stages the findings file alone and rebase-autostashes before
     # pushing the CURRENT branch, so it coexists with other commits made during the night.
+    # Stops at the first git step that fails and says which; True only when all four ran clean.
     for args in (["add",FINDINGS],["commit","-m",msg],
                  ["pull","--rebase","--autostash"],["push","origin","HEAD"]):
-        subprocess.run(["git","-C",REPO]+args,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        r=subprocess.run(["git","-C",REPO]+args,capture_output=True,text=True)
+        if r.returncode!=0:
+            why=((r.stderr or r.stdout).strip().splitlines() or ["no output"])[-1]
+            print(f"{now()} git {args[0]} failed ({r.returncode}): {why}",flush=True)
+            return False
+    return True
 
 def main():
     ap=argparse.ArgumentParser(description="Headless runner for the retired QR rig; writes findings.md beside this script.")
-    ap.add_argument("--moxie-ip",required=True,help="the robot's address on your network (required: no bench address is hard-coded here)")
+    ap.add_argument("--moxie-ip",help="the robot's address on your network (required unless --no-manage: no bench address is hard-coded here)")
     ap.add_argument("--until",default="07:00")
     ap.add_argument("--snap",type=int,default=300); ap.add_argument("--commit-every",type=int,default=3600)
     ap.add_argument("--commit",action="store_true",help="also git-commit findings.md and push the current branch every --commit-every seconds (default: only write the file)")
     ap.add_argument("--no-manage",action="store_true",help="don't launch/keepalive chrome+rig; just snapshot")
     a=ap.parse_args()
-    if not a.no_manage and not os.environ.get("MOXIE_BROKER_HOST"):
-        sys.exit("overnight.py: set MOXIE_BROKER_HOST to your broker's address; the rig builds the om code from it and no address is hard-coded here")
+    if not a.no_manage:
+        if not a.moxie_ip: ap.error("--moxie-ip is required to launch the rig (no bench address is hard-coded here); --no-manage only snapshots")
+        if not os.environ.get("MOXIE_BROKER_HOST"):
+            sys.exit("overnight.py: set MOXIE_BROKER_HOST to your broker's address; the rig builds the om code from it and no address is hard-coded here")
     hh,mm=map(int,a.until.split(":"))
     end=datetime.datetime.now().replace(hour=hh,minute=mm,second=0,microsecond=0)
     if end<=datetime.datetime.now(): end+=datetime.timedelta(days=1)
@@ -147,11 +158,11 @@ def main():
         except Exception as e:
             print(f"{now()} findings error: {e}",flush=True)
         if a.commit and time.time()-last_commit>a.commit_every:
-            commit(f"qr-findings: snapshot {now()}"); last_commit=time.time()
-            print(f"{now()} committed",flush=True)
+            if commit(f"qr-findings: snapshot {now()}"): print(f"{now()} committed",flush=True)
+            last_commit=time.time()
         time.sleep(a.snap)
     write_findings()
-    if a.commit: commit(f"qr-findings: final {now()}")
+    if a.commit and commit(f"qr-findings: final {now()}"): print(f"{now()} committed",flush=True)
     print(f"{now()} done",flush=True)
 
 if __name__=="__main__": main()
