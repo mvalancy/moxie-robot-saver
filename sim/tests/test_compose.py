@@ -614,16 +614,15 @@ def test_the_password_is_never_a_compose_literal(raw, images_raw):
 
 def test_the_plain_listener_is_loopback_by_default(compose, images):
     """§2.4. 1883 is the one listener with a fleet-wide identity behind it, so it is not
-    a LAN door unless an owner says so. 8883 (the robot) and 9001 (the browser UI) keep
-    MOXIE_BIND_HOST — a robot and a phone are on the LAN by definition."""
+    a LAN door unless an owner says so. 8883 (the robot) keeps MOXIE_BIND_HOST: a robot is
+    on the LAN by definition. 9001 has its own knob (the browser port's guards below)."""
     for name, doc in _both(compose, images):
         ports = doc["services"]["broker"]["ports"]
         plain = [p for p in ports if p.endswith(":1883")]
         assert plain == ["${MOXIE_BIND_HOST_PLAIN:-127.0.0.1}:${MOXIE_PORT_MQTT:-1883}:1883"], \
             f"{name}: the plain listener is not loopback-bound by default"
-        for suffix in (":8883", ":9001"):
-            assert [p for p in ports if p.endswith(suffix)][0].startswith(
-                "${MOXIE_BIND_HOST:-0.0.0.0}"), f"{name}: {suffix} moved off MOXIE_BIND_HOST"
+        assert [p for p in ports if p.endswith(":8883")][0].startswith(
+            "${MOXIE_BIND_HOST:-0.0.0.0}"), f"{name}: :8883 moved off MOXIE_BIND_HOST"
 
 
 def test_the_certs_one_shot_still_owns_the_shared_volume(compose, images):
@@ -709,12 +708,12 @@ def test_the_status_port_stays_on_this_machine(name, path, setup):
         f"no one to sign in, so it must listen on 127.0.0.1 only (MOXIE_BIND_HOST_STATUS)")
 
 
-#: Where every published port listens with `cp .env.example .env`. The robot's TLS port,
-#: the browser UI's WebSocket and the console are on the LAN by design (the console's
-#: sign-in is an email alone: owner question OQ3); plain MQTT and the status port are not.
+#: Where every published port listens with `cp .env.example .env`. The robot's TLS port
+#: and the console are on the LAN by design (the console's sign-in is an email alone:
+#: owner question OQ3); plain MQTT, the browser UI's WebSocket and the status port are not.
 #: docs/guides/one-command-stack.md says the same in prose: change the two together.
 _DOCUMENTED_SURFACE = {
-    "broker": {"8883": "0.0.0.0", "1883": "127.0.0.1", "9001": "0.0.0.0"},
+    "broker": {"8883": "0.0.0.0", "1883": "127.0.0.1", "9001": "127.0.0.1"},
     "supervisor": {"8931": "127.0.0.1"},
     "console": {"8080": "0.0.0.0"},
 }

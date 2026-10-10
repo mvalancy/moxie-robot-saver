@@ -118,11 +118,13 @@ configs:
       pattern read  /devices/%c/config
       pattern read  /devices/%c/commands/#
 
-      # The browser SIM (sim/web/bridge.js) is a console-side OBSERVER as much as a robot
+      # The browser SIM (sim/web/bridge/index.js) is a console-side OBSERVER as much as a robot
       # double: it renders whichever robot is talking, so it subscribes `/devices/+/…`. A page
-      # served to a browser cannot hold a secret, so this grant is anonymous and read-only, and
-      # it is why 9001 stays the appliance's one LAN-visible bus door. It writes as the fixed
-      # SIM device id `d_sim` and never as a real robot.
+      # served to a browser cannot hold a secret, so this grant is anonymous and read-only. It
+      # hands every robot's traffic (security-broker-auth.md §2.5) to whoever reaches 1883 or
+      # 9001; compose publishes both on 127.0.0.1 unless the owner opens them
+      # (MOXIE_BIND_HOST_PLAIN, MOXIE_BIND_HOST_WS). It writes as the fixed SIM device id `d_sim`
+      # and never as a real robot.
       topic read  /devices/#
       topic write /devices/d_sim/events/#
       topic write /devices/d_sim/state
@@ -180,7 +182,11 @@ services:
       # it is the one door with a fleet-wide identity behind it. Set
       # MOXIE_BIND_HOST_PLAIN=0.0.0.0 to drive it from another machine.
       - "${MOXIE_BIND_HOST_PLAIN:-127.0.0.1}:${MOXIE_PORT_MQTT:-1883}:1883"   # SIM / tests
-      - "${MOXIE_BIND_HOST:-0.0.0.0}:${MOXIE_PORT_WS:-9001}:9001"         # browser UI (MQTT over WS)
+      # The browser UI's WebSocket is LOOPBACK-ONLY by default too (security-broker-auth.md
+      # §2.4): any client on it reads every robot's traffic, the child's name, words and
+      # microphone audio included. Set MOXIE_BIND_HOST_WS=0.0.0.0 to link the Sim from
+      # another device.
+      - "${MOXIE_BIND_HOST_WS:-127.0.0.1}:${MOXIE_PORT_WS:-9001}:9001"         # browser UI (MQTT over WS)
     configs:
       - source: mosquitto-conf
         target: /mosquitto/config/mosquitto.conf
@@ -262,7 +268,7 @@ services:
       # publishes the proxy, to THIS MACHINE ONLY by default. It asks no one to sign in
       # (the child's name, memory, the safety review, settings writes), and the console
       # reads it over the compose network, not this port. Its own bind variable, so
-      # MOXIE_BIND_HOST=0.0.0.0 (the robot, the browser UI, the console) cannot widen it.
+      # MOXIE_BIND_HOST=0.0.0.0 (the robot, the console) cannot widen it.
       - "${MOXIE_BIND_HOST_STATUS:-127.0.0.1}:${MOXIE_PORT_STATUS:-8931}:8931"
     volumes:
       - moxie-supervisor-data:/data          # conversation memory + MOXIE_DATA_DIR
