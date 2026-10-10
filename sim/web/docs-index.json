@@ -134,7 +134,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT and conversation contract (the robot cloud)",
    "section": "architecture",
-   "bytes": 60137,
+   "bytes": 60676,
    "mermaid": 0,
    "headings": [
     "0. The mechanism in five lines",

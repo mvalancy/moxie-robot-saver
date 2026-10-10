@@ -398,13 +398,15 @@ class MemoryMixin:
     #    text and is matched as such;
     #  * a report that is a turn's text, or a run inside it (one streamed chunk, "Rock
     #    and" after the child cut in), marks those words reported, on the turn it fits
-    #    best (the oldest holding them all unreported, else the oldest holding some, else
-    #    a repeat); the entry becomes what the robot says it got through only on a clean
-    #    cut (a prefix, nothing after it), never on a tail piece alone or a report with a
-    #    hole, so a line the robot may still report is never dropped and per-chunk reports
-    #    in any order re-assemble the text; a report holding a turn's whole text with
-    #    words around it marks the text and treats the rest the same way (another turn's
-    #    answer is matched, a line of the robot's own is appended);
+    #    best (holding them all unreported, else some, else a repeat), the turn the
+    #    report's child line names before any other (the robot's own tie between the line
+    #    and the words), then the oldest; the entry becomes what the robot says it got
+    #    through only on a clean cut (a prefix, nothing after it), never on a tail piece
+    #    alone or a report with a hole, so a line the robot may still report is never
+    #    dropped and per-chunk reports in any order re-assemble the text; a report holding
+    #    a turn's whole text with words around it marks the text (on the turn least
+    #    reported, the named one among equals) and treats the rest the same way (another
+    #    turn's answer is matched, a line of the robot's own is appended);
     #  * anything else (a module's own line) is appended, consecutive same-role reports
     #    joined as `add_history` joins them, never into a turn's own entry.
     # The robot speaks in order, so a report that names a turn (by the child's line or by
@@ -586,8 +588,11 @@ class MemoryMixin:
         return True
 
     def _reconcile_speech(self, device_id, h, toks, done, matched) -> bool:
-        """What the robot says Moxie said, against the turns it has not reported yet."""
+        """What the robot says Moxie said, against the turns it has not reported yet: the
+        turns this report names by the child's line first (the robot's own tie between
+        the line and the words it spoke for it), then the rest, oldest first."""
         extras = self._extras_of(done)
+        done = [r for r in done if r in matched] + [r for r in done if r not in matched]
         # The text of one turn, or a run inside it (a streamed chunk; the child cut in).
         rec = self._cover_run(toks, extras, done)
         if rec is not None:
@@ -597,8 +602,8 @@ class MemoryMixin:
             return False                          # a filler, a hello: never history
         # One turn's whole text with words around it: the text is marked, the rest is
         # reconciled on its own against the other turns (a filler there is the runtime's).
-        # The turn least reported first (as `_fit` ranks a run): a report that starts
-        # over is the next turn's, not a cut-off one's.
+        # The turn least reported first (as `_fit` ranks a run), the named one among
+        # equals: a report that starts over is the next turn's, not a cut-off one's.
         for rec in sorted(done, key=lambda r: 2 if r.reported else 1 if r.covered else 0):
             if not rec.keys:
                 continue
@@ -622,10 +627,11 @@ class MemoryMixin:
     @staticmethod
     def _cover_run(toks, extras, done):
         """The turn whose text holds the report (minus fillers and that turn's hello) as
-        a contiguous run, the one it fits best (`_fit`): the oldest with a run no word of
-        which the robot has reported, else the oldest with a run it has reported part of,
-        else the oldest with any run (a repeat report). Marks the run reported; None if
-        no turn holds it."""
+        a contiguous run, the one it fits best (`_fit`): the first in `done` with a run
+        no word of which the robot has reported, else the first with a run it has
+        reported part of, else the first with any run (a repeat report). `done` comes
+        named turns first, then oldest first. Marks the run reported; None if no turn
+        holds it."""
         best = None
         for rec in done:
             fit, run = MemoryMixin._fit(rec, toks, extras)

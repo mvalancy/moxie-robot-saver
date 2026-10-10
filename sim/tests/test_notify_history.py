@@ -919,6 +919,101 @@ def test_late_per_chunk_reports_of_two_turns_ending_alike_re_assemble_each_in_or
 
 
 # --------------------------------------------------------------------------- #
+# The report's child line says whose words they are
+# --------------------------------------------------------------------------- #
+#: A report that carries the child's line is the robot's own tie between that line and
+#: the words it spoke for it. When those words also fit an older turn the robot has not
+#: reported (one it skipped, or the unsaid tail of one the child cut off), they are the
+#: named turn's. The virtual robot's per-chunk cadence (`--notify chunk`) carries the
+#: child's line on the first chunk only, which is the shape below.
+def test_a_report_naming_a_turn_marks_that_turns_words_not_an_older_unreported_turns(
+        tmp_path):
+    """"no" is answered "Okay! Let's play a game." and never reported (the robot skipped
+    it); "yes" is answered "Okay! Sure!" in two chunks, the first reported with the
+    child's line. "Okay!" is a run in both texts; the child's line names the second turn,
+    so the words are its. (Before: the oldest turn holding the words took them, so the
+    never-spoken first turn was cut to "Okay!" and retired, and the brain read a cut
+    Moxie never made.)"""
+    rt, did = _runtime(tmp_path, _Brain(answers={"no": " ".join(GAME),
+                                                 "yes": ("Okay!", "Sure!")}))
+    _ask(rt, did, "no")
+    _ask(rt, did, "yes")
+    _notify(rt, did, "Okay!", said="yes")
+    assert _lines(rt, did) == [("user", "no"), ("assistant", " ".join(GAME)),
+                               ("user", "yes"), ("assistant", "Okay!")]
+    _notify(rt, did, "Sure!")
+    assert _lines(rt, did) == [("user", "no"), ("assistant", " ".join(GAME)),
+                               ("user", "yes"), ("assistant", "Okay! Sure!")]
+
+
+def test_a_cut_off_turn_keeps_its_cut_when_the_next_turns_first_chunk_fits_its_unsaid_tail(
+        tmp_path):
+    """The moon answer "Yes! What do you think?" is cut at "Yes!"; the stars answer opens
+    with that same question, reported with the child's line. The question is the stars
+    turn's, named by the line, and the moon turn keeps its cut. (Before: the question fit
+    the moon turn's unsaid tail first, the cut was undone and the moon turn retired holding
+    words Moxie never said; the stars turn was marked nothing.)"""
+    rt, did = _runtime(tmp_path, _Brain(answers={
+        "tell me about the moon": "Yes! What do you think?",
+        "and the stars?": ("What do you think?", "I think stars.")}))
+    _ask(rt, did, "tell me about the moon")
+    _notify(rt, did, "Yes!", said="tell me about the moon")        # the child cut in
+    _ask(rt, did, "and the stars?")
+    _notify(rt, did, "What do you think?", said="and the stars?")
+    _notify(rt, did, "I think stars.")
+    assert _lines(rt, did) == [("user", "tell me about the moon"), ("assistant", "Yes!"),
+                               ("user", "and the stars?"),
+                               ("assistant", "What do you think? I think stars.")]
+
+
+def test_a_report_naming_a_turn_takes_its_whole_text_over_an_older_turn_holding_it(
+        tmp_path):
+    """"no" is answered "Okay! Sure! Let's go." and never reported; "yes" is answered
+    "Okay! Sure!" and reported whole with the child's line. The text is a run in the older
+    turn too; the named turn takes it. (Before: the older turn took it and was cut to
+    "Okay! Sure!", dropping "Let's go." from a turn the robot never reported on.)"""
+    rt, did = _runtime(tmp_path, _Brain(answers={"no": "Okay! Sure! Let's go.",
+                                                 "yes": "Okay! Sure!"}))
+    _ask(rt, did, "no")
+    _ask(rt, did, "yes")
+    _notify(rt, did, "Okay! Sure!", said="yes")
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay! Sure! Let's go."),
+                               ("user", "yes"), ("assistant", "Okay! Sure!")]
+
+
+def test_a_report_with_words_around_a_named_turns_text_marks_that_turn_not_an_older_one(
+        tmp_path):
+    """"no" is answered "Okay!" and never reported; "yes" is answered "Okay! Sure!" and
+    reported with a line of the robot's own in the same breath and the child's line. Both
+    turns' whole texts are inside the report; the named turn is marked and only "Ready?"
+    is the robot's own. (Before: the older turn was marked first, "Sure! Ready?" became a
+    second Moxie line, and "Sure!" was in history twice.)"""
+    rt, did = _runtime(tmp_path, _Brain(answers={"no": "Okay!", "yes": "Okay! Sure!"}))
+    _ask(rt, did, "no")
+    _ask(rt, did, "yes")
+    _notify(rt, did, "Okay! Sure! Ready?", said="yes")
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay!"),
+                               ("user", "yes"), ("assistant", "Okay! Sure!"),
+                               ("assistant", "Ready?")]
+
+
+def test_a_cut_off_answer_said_again_whole_with_no_child_line_names_the_new_turn(tmp_path):
+    """"no" is answered "Okay! Let's play a game." and cut at "Okay!"; "yes" gets the same
+    scripted answer, which the robot reports whole with no child line. With no line to
+    name a turn, the words go where they fit best: on the cut-off turn they would start
+    over inside words already reported, on the new turn none are, so the new turn takes
+    them and the cut stays. (A first-run-wins rule would undo the cut.)"""
+    rt, did = _runtime(tmp_path, _Brain(answers={"no": " ".join(GAME),
+                                                 "yes": " ".join(GAME)}))
+    _ask(rt, did, "no")
+    _notify(rt, did, GAME[0], said="no")                           # the child cut in
+    _ask(rt, did, "yes")
+    _notify(rt, did, " ".join(GAME))
+    assert _lines(rt, did) == [("user", "no"), ("assistant", GAME[0]),
+                               ("user", "yes"), ("assistant", " ".join(GAME))]
+
+
+# --------------------------------------------------------------------------- #
 # A bad report fails alone
 # --------------------------------------------------------------------------- #
 #: Shapes a protobuf-serialised robot cannot send (`RemoteChat.proto`: `speech` is a
