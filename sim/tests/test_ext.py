@@ -512,6 +512,50 @@ def test_t18_a_shipped_example_activity_works_end_to_end():
     assert re.fullmatch(r"The time is (1[0-2]|[1-9]):[0-5]\d (AY M|P M)", reply.text), reply
 
 
+def test_t18_the_shipped_clock_tells_the_time_in_the_zone_the_robot_was_told(monkeypatch):
+    """K10 — `clock.local` is the house's wall clock: the zone the robot's config push named
+    (`robot.extra["timezone_id"]`), never this process's. The process runs on Asia/Kolkata
+    here (+05:30, so not even the minutes of its clock can pass for the house's): at 02:30Z
+    on 8 October 2026 a robot told Los Angeles says 7:30 P M, one told Berlin 4:30 AY M, one
+    told nothing the default zone's time, and a zone this server cannot read is UTC (the
+    runtime labels it). The program is the G1 golden, byte for byte (the fence above)."""
+    import datetime
+    import time
+    from moxie_sdk.content.ext_host import _clock_local
+    monkeypatch.delenv("MOXIE_TIMEZONE", raising=False)
+    asked = datetime.datetime(2026, 10, 8, 2, 30, tzinfo=datetime.timezone.utc).timestamp()
+    doc = json.load(open(STARTER))
+    defaults = P.shipped_items(doc)
+    app = ContentApp(P.build_module(defaults, {}), lambda m: "the model answered",
+                     default_module_id="FREE_CHAT", memory=False, safety_classifier=False,
+                     content_defaults=defaults, clock=lambda: asked)
+
+    def said(zone):
+        told = robot()
+        if zone is not None:
+            told.extra["timezone_id"] = zone
+        return app.respond(Turn(robot=told, speech="what time is it")).text
+
+    before = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Kolkata"
+    time.tzset()
+    try:
+        assert datetime.datetime.fromtimestamp(asked).strftime("%H:%M") == "08:00", \
+            "this process's own clock must disagree with every house here"
+        assert said("America/Los_Angeles") == "The time is 7:30 P M"
+        assert said("Europe/Berlin") == "The time is 4:30 AY M"
+        assert said(None) == "The time is 7:30 P M"          # the default: Los Angeles
+        assert said("Mars/Olympus") == "The time is 2:30 AY M"
+        assert _clock_local(asked, "Asia/Tokyo") == {
+            "hour": 11, "minute": 30, "weekday": 4, "iso": "2026-10-08T11:30:00"}
+    finally:
+        if before is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = before
+        time.tzset()
+
+
 def test_t18_an_imported_lookalike_does_not_inherit_the_shipped_grants():
     """T18 — the shipped grant is anchored to the program's BYTES: a different program under
     the same key gets default grants; a byte-identical copy is ours."""

@@ -63,10 +63,11 @@ _DAY_KEY_WHY = ("RELATIVE — the expected day key is `strftime(localtime(<liter
 REVIEWED: dict = {
     "sim/tests/test_telemetry_runtime.py::test_telemetry_survives_a_supervisor_restart": (
         ("datetime.now",), "RELATIVE — the tail is compared against the view's own notion "
-        "of today, so a run spanning midnight moves both sides together."),
+        "of today (the house's), so a run spanning midnight moves both sides together."),
     "sim/tests/test_telemetry_runtime.py::<module>": (
-        ("date.today",), "RELATIVE — `TODAY` is anchored at local NOON (not now): noon "
-        "exists in every zone on every DST day, so `TODAY - 30` never crosses midnight."),
+        ("datetime.now",), "RELATIVE — `TODAY` is anchored at NOON of the house's today "
+        "(not now; the house's clock keys the roll-up): noon exists in every zone on every "
+        "DST day, so `TODAY - 30` never crosses midnight."),
     "sim/test_audio.mjs": (
         ("Date.now",), "RELATIVE — the rAF shim's frame stamps are only diffed; no "
         "assertion reads a value."),
@@ -101,26 +102,30 @@ REVIEWED: dict = {
         ("time.time",), "RELATIVE — presence is scored as an AGE, so the seed is offsets "
         "from now (a pinned epoch would make every robot absent for years)."),
     _TP + "test_a_bedtime_window_that_wraps_midnight_is_understood": (
-        ("datetime.now",), "RELATIVE — only today's DATE is borrowed; hour/minute are set "
-        "explicitly (a real date surfaces DST regressions)."),
+        ("datetime.now",), "RELATIVE — only the house's today's DATE is borrowed (on the "
+        "house's clock, which bedtime is judged on); hour/minute are set explicitly (a real "
+        "date surfaces DST regressions)."),
     _TP + "test_a_content_module_prompt_can_read_presence": (
         ("time.time",), "RELATIVE — the assertion is on the rendered branch, not the stamp."),
     _TP + "test_bedtime_hours_suppress_the_hello": (
-        ("datetime.now",), "RELATIVE — `_in_bedtime` reads its own clock; now±30 min "
-        "contains now at all 1440 minutes and both weekday keys are written."),
-    _TS + "_bedtime_body": (
-        ("datetime.now",), "RELATIVE — every window is built from a `now` PARAMETER, so "
-        "fixture and assertions reason about one instant."),
+        ("datetime.now",), "RELATIVE — `_in_bedtime` reads its own clock; now (read on the "
+        "house's clock, the one it judges on) ±30 min contains now at all 1440 minutes and "
+        "both weekday keys are written."),
     _TS + "_seed_behaviors": (
         ("datetime.now",), "RELATIVE — records whole days before now; recency is an age."),
     _TS + "served": (
-        ("datetime.now",), "RELATIVE — the fixture's single clock read, passed down."),
+        ("datetime.now",), "RELATIVE — the fixture's single clock read, on the house's "
+        "clock (the day plan's), passed down: config and assertions reason about one "
+        "instant."),
     _TS + "test_a_reported_completion_reaches_the_store_and_the_next_plan": (
-        ("datetime.now",), "RELATIVE — the robot's own stamp; the assertion is its age."),
+        ("datetime.now",), "RELATIVE — the robot's own stamp; the assertion is its age. "
+        "The bedtime body is built from a read on the house's clock; the assertion is "
+        "about a played module, not the window."),
     _TS + "_request_lands_today": (
         (), "DETERMINISTIC — tombstone: it used to re-read the clock; it must not again."),
     _TS + "test_a_request_for_tomorrow_is_not_pinned_into_today": (
-        ("datetime.now",), "RELATIVE — one read; +1 day always changes the calendar date."),
+        ("datetime.now",), "RELATIVE — one read, on the house's clock; +1 day always "
+        "changes the house's calendar date."),
     "sim/tests/test_sil_durable_telemetry.py::_wait": (
         ("time.time",), "DETERMINISTIC — a bounded deadline wait."),
     _TT + "test_a_day_caps_its_distinct_event_names_without_losing_the_count": (
@@ -133,8 +138,8 @@ REVIEWED: dict = {
     "sim/tests/test_telehealth.py::test_the_timestamp_defaults_to_milliseconds": (
         ("time.time",), "RELATIVE — ms-vs-s can only be proven against a real now; 5 s slack."),
     "sim/tests/test_telehealth_runtime.py::test_the_bedtime_warning_is_reported_and_the_line_is_still_sent": (
-        ("datetime.now",), "RELATIVE — now±1h contains now at every minute; both weekday "
-        "keys are written."),
+        ("datetime.now",), "RELATIVE — now (on the house's clock, the one bedtime is "
+        "judged on) ±1h contains now at every minute; both weekday keys are written."),
     # ---- durations: a busy box must only move the answer AWAY from failure ----
     "sim/tests/helpers_audio.py::Stage.__enter__": (
         ("time.perf_counter",), "RELATIVE — a stopwatch only printed, never asserted."),

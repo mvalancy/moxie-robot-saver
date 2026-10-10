@@ -19,8 +19,94 @@ function fillModulePicker(modules){
     ids.map(m=>`<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
   if(keep) sel.value=keep;
 }
+// ---- 🕰️ the house's clock ----
+// Every config push tells the robot `timezone_id`, and the appliance keeps the house's time in
+// the same zone: bedtime's quiet hello, the day plan, "what time is it". With no zone chosen
+// that is moxie_sdk/cloud_config.py::DEFAULT_TIMEZONE_ID (sim/tests/test_house_clock.py keeps
+// the two equal); a server's MOXIE_TIMEZONE arrives in `config_effective` like a chosen one.
+const HOUSE_ZONE_DEFAULT='America/Los_Angeles';
+// Suggestions only (any IANA name can be typed): names every tz database has, which
+// test_house_clock.py checks against the server's, plus this phone's own zone.
+const COMMON_ZONES=['Pacific/Honolulu','America/Anchorage','America/Los_Angeles',
+  'America/Phoenix','America/Denver','America/Chicago','America/New_York','America/Halifax',
+  'America/St_Johns','America/Mexico_City','America/Bogota','America/Sao_Paulo',
+  'America/Argentina/Buenos_Aires','Atlantic/Reykjavik','Europe/London','Europe/Dublin',
+  'Europe/Lisbon','Europe/Madrid','Europe/Paris','Europe/Berlin','Europe/Rome',
+  'Europe/Amsterdam','Europe/Stockholm','Europe/Warsaw','Europe/Athens','Europe/Helsinki',
+  'Europe/Istanbul','Europe/Moscow','Africa/Lagos','Africa/Cairo','Africa/Johannesburg',
+  'Africa/Nairobi','Asia/Dubai','Asia/Karachi','Asia/Kolkata','Asia/Dhaka','Asia/Bangkok',
+  'Asia/Jakarta','Asia/Singapore','Asia/Shanghai','Asia/Hong_Kong','Asia/Manila',
+  'Asia/Seoul','Asia/Tokyo','Australia/Perth','Australia/Adelaide','Australia/Brisbane',
+  'Australia/Sydney','Pacific/Auckland','UTC'];
+function phoneZone(){
+  try{ return Intl.DateTimeFormat().resolvedOptions().timeZone||''; }catch(e){ return ''; }
+}
+function fillZoneList(){
+  const dl=$('#cfg-tz-list'); if(!dl || dl.dataset.built) return;
+  dl.dataset.built='1';
+  const phone=phoneZone();
+  const zones=(!phone || COMMON_ZONES.includes(phone)) ? COMMON_ZONES : [phone, ...COMMON_ZONES];
+  dl.innerHTML=zones.map(z=>`<option value="${escapeHtml(z)}">`).join('');
+}
+/** The zone this robot keeps: chosen (its own, the house rule, or MOXIE_TIMEZONE, all in
+ *  `config_effective`), else the default; `from` is the layer a parent chose it in. */
+function zoneOf(r){
+  const ov=(r&&(r.config_effective||r.config_overrides))||{};
+  return {zone: ov.timezone_id || HOUSE_ZONE_DEFAULT, chosen: !!ov.timezone_id,
+          from: ((r&&r.config_sources)||{}).timezone_id || ''};
+}
+let ZONE_SAVED='';            // the zone the offer saved: confirmed on the card until a reload
+/** While no zone is chosen and this phone is set to another one, name both and offer the
+ *  phone's as the house rule, in one click. */
+function renderZoneOffer(r){
+  const box=$('#tz-offer'); if(!box) return;
+  const {zone, chosen}=zoneOf(r), phone=phoneZone();
+  const offer=!chosen && !!phone && phone!==zone;
+  const done=chosen && ZONE_SAVED===zone;
+  const sig=offer ? `offer|${zone}|${phone}` : done ? `done|${zone}` : '';
+  box.classList.toggle('hidden', !sig);
+  if(box.dataset.sig===sig) return;          // unchanged: keep the button under the finger
+  box.dataset.sig=sig;
+  if(!offer){
+    box.textContent = done ? `✅ Moxie now uses ${zone}: a house rule for every robot.` : '';
+    return;
+  }
+  box.innerHTML=`🕰️ No time zone is set for this house yet, so Moxie uses `
+    + `<b>${escapeHtml(zone)}</b>, the default, for bedtime, wake alarms and “what time is it”. `
+    + `This phone is set to <b>${escapeHtml(phone)}</b>.`
+    + `<button type="button" class="primary" id="btn-tz-phone">Use ${escapeHtml(phone)}</button>`
+    + `<div id="tz-offer-status" class="muted"></div>`;
+  $('#btn-tz-phone').onclick=()=>useZone(phone);
+}
+async function useZone(zone){
+  const s=$('#tz-offer-status'), b=$('#btn-tz-phone');
+  if(b) b.disabled=true;
+  if(s) s.textContent='Saving…';
+  try{
+    const r=await api('/local/fleet/config',{method:'POST',auth:false,body:{timezone_id:zone}});
+    if(!r.ok) throw new Error(r.error||'failed');
+    ZONE_SAVED=zone;
+    const box=$('#tz-offer');
+    if(box){ box.dataset.sig=`done|${zone}`;
+             box.textContent=savedText(r, `✅ Moxie now uses ${zone}: a house rule for every robot.`); }
+    refreshLive();
+  }catch(e){
+    if(s) s.textContent='⚠️ '+(e.message||'save failed');
+    if(b) b.disabled=false;
+  }
+}
+
 function prefillConfig(r,f){
   buildDayBoxes();
+  fillZoneList();
+  const z=zoneOf(r), tz=$('#cfg-tz');
+  if(tz){ tz.value=z.chosen?z.zone:''; tz.dataset.was=tz.value; }
+  const hint=$('#cfg-tz-hint');
+  if(hint) hint.textContent = !z.chosen ? `Not set: Moxie uses ${HOUSE_ZONE_DEFAULT}, the default.`
+    : z.from==='robot' ? 'This robot’s own time zone.'
+    : z.from==='fleet' ? 'The house rule for every robot.'
+    : 'Set on this server (MOXIE_TIMEZONE); a zone saved here replaces it.';
+  renderZoneOffer(r);
   const ov=r.config_effective||r.config_overrides||{};   // fleet ⊕ per-robot
   if(r.audio_volume!=null) $('#cfg-vol').value=Math.round(r.audio_volume*100);
   if(ov.audio_volume!=null) $('#cfg-vol').value=Math.round(ov.audio_volume*100);
@@ -77,6 +163,10 @@ async function saveConfig(){
     schedule_preferences: (mod&&at)
       ? [{module_id:mod, scheduled_at:Math.floor(new Date(at).getTime()/1000)}] : null,
   };
+  // The time zone only when the parent changed it: an untouched field leaves the zone as it
+  // is (a house rule stays the house's, and the default stays the default).
+  const tz=$('#cfg-tz'), zone=tz ? tz.value.trim() : '';
+  if(zone && zone!==(tz.dataset.was||'')) body.timezone_id=zone;
   const url = fleet ? '/local/fleet/config'
                     : `/local/robots/${encodeURIComponent(liveDevice)}/config`;
   try{
@@ -85,6 +175,10 @@ async function saveConfig(){
       ? savedText(r, fleet ? '✅ Saved as house rules — pushed to every robot.'
                            : '✅ Saved — pushed to Moxie.')
       : `⚠️ ${r.error||'failed'}`;
+    if(r.ok && body.timezone_id){             // a zone is chosen now: no offer, nothing to resend
+      tz.dataset.was=zone;
+      const o=$('#tz-offer'); if(o){ o.classList.add('hidden'); o.dataset.sig=''; }
+    }
     refreshLive();
   }catch(e){ s.textContent='⚠️ '+(e.message||'save failed'); }
 }

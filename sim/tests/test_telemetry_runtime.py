@@ -5,6 +5,7 @@ recovered `wakeup` command honestly. Stores rooted at `tmp_path`.
 """
 import datetime
 import json
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -13,7 +14,7 @@ pytest.importorskip("paho.mqtt.client", reason="the runtime needs paho")
 from helpers_runtime import http_call, make_runtime, status_server  # noqa: E402
 from moxie_sdk import telemetry as T                # noqa: E402
 from moxie_sdk.app import MoxieApp                  # noqa: E402
-from moxie_sdk.cloud_config import LoggingPolicy    # noqa: E402
+from moxie_sdk.cloud_config import LoggingPolicy, default_timezone_id  # noqa: E402
 from moxie_sdk.store import JsonStore               # noqa: E402
 
 
@@ -26,11 +27,14 @@ def _rt(tmp_path, **kw):
     return make_runtime(_App(), store=JsonStore(str(tmp_path)), **kw)
 
 
-#: NOON TODAY, not "now": the roll-up is keyed on the local calendar day and `history_view`
-#: counts back from today, so packets must land today; from noon no ±30 s offset can cross
-#: midnight, and noon exists on every DST transition day.
+#: The house's clock: the zone a robot is told when none is chosen (here none is), which
+#: keys the roll-up's days and ends `history_view` (`house_zone`), never this process's.
+HOUSE = ZoneInfo(default_timezone_id())
+#: NOON TODAY on the house's clock, not "now": the roll-up is keyed on the house's calendar
+#: day and `history_view` counts back from the house's today, so packets must land on it;
+#: from noon no ±30 s offset can cross midnight, and noon exists on every DST transition day.
 TODAY = int(datetime.datetime.combine(
-    datetime.date.today(), datetime.time(12, 0)).timestamp())
+    datetime.datetime.now(HOUSE).date(), datetime.time(12, 0), tzinfo=HOUSE).timestamp())
 
 
 def _send(rt, device_id, name, ts=None, data=b""):
@@ -63,12 +67,13 @@ def test_telemetry_survives_a_supervisor_restart(tmp_path):
     assert [e["event_name"] for e in after["events"]] == ["wake", "conversation_start",
                                                           "wake"]
     # and the daily roll-up came back too, so "last week" is answerable
-    day = T.packet_day({"recorded_at": TODAY})
+    day = T.packet_day({"recorded_at": TODAY}, tz=HOUSE)
     today_row = [r for r in after["history"] if r["day"] == day]
     assert today_row and today_row[0]["count"] == 3
     # `history_view` counts back from today AT CALL TIME while `day` was fixed at import, so
-    # a run crossing midnight moves the window; compare the tail against the view's own today.
-    today = T.packet_day({"recorded_at": int(datetime.datetime.now().timestamp())})
+    # a run crossing midnight moves the window; compare the tail against the view's own today
+    # (the house's).
+    today = T.packet_day({"recorded_at": int(datetime.datetime.now().timestamp())}, tz=HOUSE)
     assert len(after["history"]) == 7 and after["history"][-1]["day"] == today
 
 

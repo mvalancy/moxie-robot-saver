@@ -308,12 +308,13 @@ def test_bedtime_hours_suppress_the_hello():
     """Clock-RELATIVE on purpose: `rt._in_bedtime` reads the real clock itself, so pinning
     ours would test a different function. now±30 min contains now at all 1440 minutes,
     wrap included (premise test below). Both weekday keys are written, so a midnight
-    between our read and the runtime's cannot pick the wrong one. (Outside a window the
-    hello is allowed: the arrival test above has no window at all.)"""
+    between our read and the runtime's cannot pick the wrong one. Now is read on the
+    house's clock (`house_zone`), the one bedtime is judged on, never this process's.
+    (Outside a window the hello is allowed: the arrival test above has no window at all.)"""
     rt, dev = _runtime()
     seed_absent(rt, dev, away_s=9000.0)
     import datetime
-    cur = datetime.datetime.now()
+    cur = datetime.datetime.now(rt.house_zone(dev).tz)
     start = (cur - datetime.timedelta(minutes=30)).strftime("%H:%M")
     end = (cur + datetime.timedelta(minutes=30)).strftime("%H:%M")
     rt._config_overrides[dev] = {"weekday_bedtime": [start, end],
@@ -349,14 +350,15 @@ def test_no_bedtime_configured_is_never_bedtime():
 
 
 def test_a_bedtime_window_that_wraps_midnight_is_understood():
-    """Clock-independent: only today's DATE is borrowed (hour/minute overwritten) and the
-    timestamp is passed explicitly, so 20:30-07:00 gives the same answers for 21:30 / 03:00
-    / 12:00 on any date. A real date is kept so a DST/timezone regression would surface."""
+    """Clock-independent: only the house's today's DATE is borrowed (hour/minute
+    overwritten, on the house's clock, which bedtime is judged on) and the timestamp is
+    passed explicitly, so 20:30-07:00 gives the same answers for 21:30 / 03:00 / 12:00 on
+    any date. A real date is kept so a DST/timezone regression would surface."""
     rt, dev = _runtime()
     import datetime
     for hhmm, inside in (("21:30", True), ("03:00", True), ("12:00", False)):
-        at = datetime.datetime.now().replace(hour=int(hhmm[:2]), minute=int(hhmm[3:]),
-                                             second=0, microsecond=0)
+        at = datetime.datetime.now(rt.house_zone(dev).tz).replace(
+            hour=int(hhmm[:2]), minute=int(hhmm[3:]), second=0, microsecond=0)
         key = "weekend_bedtime" if at.weekday() >= 5 else "weekday_bedtime"
         rt._config_overrides[dev] = {key: ["20:30", "07:00"]}
         assert rt._in_bedtime(dev, at.timestamp()) is inside, hhmm
