@@ -360,8 +360,8 @@ until a parent saves, except that a revoke takes its `child` out, and nothing el
 **A clear that cannot be saved is owed.** When the supervisor took the name off but could not write
 the robot's record (its store refused, or a record that failed closed cannot be read at all), the
 robot stops using the name at once, and the answer is not `child_cleared` (a clear's answer says
-`saved: false`). The supervisor keeps the clear owed: a
-note beside the record (`robots/<id>/child_clear.json`, which holds no name). While it is owed, a
+`saved: false`). The supervisor keeps the clear owed: a note beside the record
+(`robots/<id>/child_clear.json`, which holds no name). While it is owed, a
 restart loads no name from that record, and that name stays masked in the log and feed. Every
 `/config` push tries again, so the robot's next connect takes the name out of the record, and so
 does the next save of that robot's settings; either removes the note. An owed clear only ever
