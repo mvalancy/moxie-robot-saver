@@ -914,6 +914,12 @@ async function withRefusalLines(fn) {
     // a surprise holds as the secret's object, for the one it is kept from — never from a stranger, never with a dislike word
     ["my uncle told me to keep it a secret from mom because it's her birthday present", false], ["my aunt told me not to tell mom about the present we got her", false],
     ["my uncle told me not to tell mom about her birthday present and i don't like it", true], ["a man told me not to tell my mom about her present", true],
+    // …and someone's "said it was a surprise" is inert: it lifts nothing (the review's three lines, below) and is no veto
+    // either — the secret's object decides. Measured before deciding: as a veto it costs 0 of the 721 pinned harmless lines
+    // but 7 of 16 fresh everyday surprise lines ("my friend told me not to tell anyone about the party and said it was a
+    // surprise"), so a present FOR mom stays her surprise and a present TO the child from an uncle stays a disclosure.
+    ["my aunt told me not to tell mom about her present and said it was a surprise", false],
+    ["my uncle told me not to tell mom about the present he gave me and said it was a surprise", true],
     // a treat is the secret's object, within its own clause; "room", "bedtime" and "late" are no treats
     ["my dad said don't tell mom we had ice cream before dinner", false], ["my brother told me not to tell mom he broke the vase", false],
     ["my mom said the trip is a secret so don't tell dad", false], ["my grandpa said it's our secret that we had milkshakes", false],
