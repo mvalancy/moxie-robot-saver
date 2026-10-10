@@ -512,7 +512,8 @@ def test_ffmpeg_leaves_the_stdin_of_a_loop_around_the_tool_alone(tmp_path, monke
         os.dup2(saved, 0)
         os.close(saved)
         os.close(read_end)
-    assert ran.read_text().count("\n") == 1, "transcode() must have run the fake ffmpeg, once"
+    assert ran.exists() and ran.read_text().count("\n") == 1, \
+        "transcode() must have run the fake ffmpeg, once"
     eaten = lines[:len(lines) - len(left)]
     assert left == lines, \
         f"ffmpeg ate {len(eaten)} byte(s) of the caller's stdin ({eaten!r}): pass it -nostdin"
