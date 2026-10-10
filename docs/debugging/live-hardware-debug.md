@@ -1,93 +1,132 @@
 # Live hardware debugging log — reviving a real Moxie
 
-Running notes from an actual revival attempt, so the next person's agent can move fast.
-Chronological; newest findings at the bottom. **Bold = load-bearing fact.**
+For an owner whose robot reads the server code, beeps, and never connects. These are the bench notes
+from one attempt to revive a real Moxie in August 2026, kept so nobody has to re-derive them. The
+robot turned out to be older than firmware 24.10.801, and that gate decides everything below.
+**Bold = load-bearing fact.**
+
+> **Bench session, 2026-08: what it established.** Our Wi-Fi code and our server code work on real
+> hardware, and the first code must be Wi-Fi-only. A pre-801 robot reads the server code and opens no
+> connection: it talks only to Google Cloud IoT Core and validates that server's certificate, so no
+> network trick re-homes it. Each thread now has a home. The owner path is
+> [Revive your Moxie](../guides/revive-your-moxie.md) (Path C for a pre-801 unit); the QR grammar is
+> [QR commands](../reverse-engineering/protocol/qr-commands.md); the TLS reasoning is
+> [network trust](../reverse-engineering/protocol/network-trust.md#why-pre-801-is-stuck-precisely); the
+> flash route is the [flashing runbook](../reverse-engineering/firmware/flashing-runbook.md).
 
 ## Setup
-- Real Moxie robot, owner-operated. Server = a Linux box (wired `enp5s0` on 192.168.1.9, plus
-  Tailscale). Later added a USB Wi-Fi adapter (ALFA RTL8812AU, `rtl88XXau`) to host "Moxie Direct".
-- Stack: parent-app server (:8080), mosquitto broker (Docker, TLS :8883), MQTT supervisor + Moxie SDK
-  wired to a local LiteLLM gateway (model `qwen3.8-27b`).
 
-## Confirmed facts (each cost real time — don't re-derive)
-- **The robot's Wi-Fi/BT MAC is `d4:12:43:22:31:d8` (AMPAK).** Confirmed as Moxie by power-off test
-  (its IP went DOWN the instant the robot was powered off). Use this MAC to identify it on any network.
-- **Our clean-room Wi-Fi QR works on real hardware** — the robot scanned it and joined Wi-Fi.
-  IMPORTANT: the first-stage QR must be **wifi-only** (`StartPairingQR.wifi_only=true`, NO secret_key).
-  A pairing-key QR sends the robot chasing the dead Embodied cloud. Our `encode_wifi_only()` is
+- One real Moxie, owner-operated. The server was a Linux box on the home LAN, with a USB Wi-Fi adapter
+  added later to host a "Moxie Direct" hotspot.
+- The stack: parent-app server (`:8080`), mosquitto broker in Docker (TLS `:8883`), the MQTT supervisor
+  and Moxie SDK, with a local OpenAI-compatible gateway (LiteLLM) as the brain.
+
+## Confirmed facts
+
+Each of these cost real time; do not re-derive them.
+
+- **The robot's Wi-Fi/Bluetooth MAC is an AMPAK `d4:12:43:xx:xx:xx` address.** Confirmed as Moxie by a
+  power-off test: its lease went down the instant the robot was powered off. Use the AMPAK prefix to
+  pick it out on any network ([find Moxie on the LAN](../guides/find-moxie-on-lan.md)).
+- **Our clean-room Wi-Fi QR works on real hardware**: the robot scanned it and joined Wi-Fi.
+  **The first-stage QR must be wifi-only** (`StartPairingQR.wifi_only=true`, NO secret_key). A
+  pairing-key QR sends the robot chasing the dead Embodied cloud. Our `encode_wifi_only()` is
   byte-identical to OpenMoxie's `get_wifi_qr_data()` (verified).
 - **Our endpoint QR (`{"debug":{"command":"om","param":...}}`) is byte-identical to OpenMoxie's**
   `get_endpoint_qr_data()` (verified against a clone). So QR *format* is never the problem.
-- **"Moxie Direct" works**: hosting an AP on the box (nmcli hotspot, 2.4GHz) → the robot joins and
-  gets a DHCP lease (e.g. 10.42.0.79). This eliminates all router/subnet/AP-isolation variables —
-  strongly recommended for debugging. Broker reachable at the AP IP (10.42.0.1:8883).
+- **"Moxie Direct" works.** Host an access point on the server box (nmcli hotspot, 2.4GHz): the robot
+  joins and takes a DHCP lease on the hotspot subnet, and the broker is reachable at the hotspot's own
+  address on `:8883`. This eliminates every router, subnet and AP-isolation variable; strongly
+  recommended for debugging.
 
-## The wall we hit
+## The wall: the robot reads the `om` code and never connects
+
 - Shown the endpoint (`om`) QR, the robot **beeps (reads it) then returns to the QR screen asking for
-  another code. It NEVER opens a socket to the broker** (zero SYN/TLS at the broker, confirmed by
-  tcpdump on both the LAN and the AP).
+  another code. It NEVER opens a socket to the broker**: zero SYN/TLS at the broker, confirmed by
+  tcpdump on both the LAN and the hotspot.
 - **Per OpenMoxie's author: zero packets = the robot did not accept the `om` command = firmware older
-  than 24.10.801.** (An 801/803 bot gets *past* the QR screen and at least attempts a TCP/TLS
-  connection, which would show in a capture.)
-- **On-device firmware test (jbeghtol, issue #43): look UNDER the QR box on Moxie's face.** A text
-  badge **"EmbodiedProduction" or "OpenMoxie"** = firmware 801/803 (relocatable). **No badge, just a
-  Wi-Fi/robot icon = pre-801, too old for the `om` QR.** (May only show after it joins known Wi-Fi.)
+  than 24.10.801.** An 801/803 robot gets *past* the QR screen and at least attempts a TCP/TLS
+  connection, which shows in a capture.
 - Firmware thresholds: **801** = supports `om` relocation but needs a **CA-signed** broker cert;
-  **803** = also accepts **self-signed** (`disable_verify`). Recovery for <801: jbeghtol's 801→803 OTA
-  (issue #57, needs the bot already on 801) or a paid reflash service (r/MoxieRobot).
+  **803** = also accepts **self-signed** (`disable_verify`).
+- Recovery for a robot older than 801: the community 801→803 OTA is **closed**; the maintainer will not
+  distribute the image (OpenMoxie issue #57, 2026-08-29). The remaining routes are the self-flash
+  ([Revive your Moxie, Path C](../guides/revive-your-moxie.md#path-c-flash-an-older-robot-first),
+  [flashing runbook](../reverse-engineering/firmware/flashing-runbook.md#reviving-a-stranded-robot-by-flashing))
+  or a paid reflash service (r/MoxieRobot).
 
-## The smoking gun — old firmware uses Google Cloud IoT Core
-- While stuck on the QR screen, the robot (on our AP) **repeatedly connects to `172.217.116.4:443`
-  with TLS SNI `mqtt.googleapis.com`** (every ~7s). That is **Google Cloud IoT Core** — which Google
-  **shut down in Aug 2023.** So this firmware predates Embodied's migration off Google IoT *and* the
-  801 relocation feature. Independent confirmation the firmware is old.
-- No DNS query was seen for it — the robot uses a cached/hardcoded Google IP.
+## Triage by what the robot shows
 
-## The "fake their server" idea (in progress)
-Since we host the robot's network, we can intercept `mqtt.googleapis.com` and point it at our broker.
-If the robot does NOT strictly validate the server TLS cert (relying only on its device JWT), a
-self-signed cert (CN=mqtt.googleapis.com) could let a **pre-801** robot connect to us — reviving bots
-OpenMoxie can't. Google IoT Core uses the same `/devices/{id}/config|events|state` topics our
-supervisor already speaks. **Open question being tested: does the robot validate the Google server
-cert?** If yes → blocked (need the reflash/OTA path). If no → we have a new revival path.
-Method: mosquitto listener on :443 with a CN=mqtt.googleapis.com cert + iptables DNAT of the robot's
-:443 → broker + DNS spoof of mqtt.googleapis.com. Watch the broker for a TLS ClientHello from the bot.
+| What you see | What it means |
+|---|---|
+| A text badge **"EmbodiedProduction"** or **"OpenMoxie"** UNDER the QR box on Moxie's face | Firmware 801/803, relocatable (jbeghtol, OpenMoxie issue #43). The badge may only show after the robot joins a known Wi-Fi. |
+| No badge, just a Wi-Fi/robot icon | Pre-801, too old for the `om` QR. This is what this unit showed. |
+| The word **OpenMoxie** on the QR-scan screen | 801 or 803 (the maintainer, issue #57); its absence means pre-801. Not seen on this bench. |
 
-## Cert test result (fake Google IoT Core)
-- DNAT (robot :443 → broker :8883) + a self-signed cert `CN=mqtt.googleapis.com` → the robot **DOES
-  reach our broker** (DNAT works) but **rejects the cert: `tlsv1 alert unknown ca`**. So this firmware
-  **validates the server cert against its bundled Google roots** — a self-signed cert can't pass.
-- Implication: faking Google IoT Core needs a cert chaining to a root the robot trusts (can't forge
-  Google's), OR getting onto the robot to change its trust/endpoint. Next probe: **ADB** (it's an
-  Android device on our AP at 10.42.0.79).
+## Old firmware talks to Google Cloud IoT Core
 
-## ADB / on-device access
-- Port scan of the robot (10.42.0.79) — **no open ports** (5555 adb, 22, etc. all closed). ADB-over-
-  network is OFF and nothing listens. Consistent with the locked-down Android client.
-- ADB-over-USB is a separate channel (untested here) — worth trying on a locked unit but low odds.
+- Stuck on the QR screen and on our hotspot, the robot **repeatedly connected to `172.217.116.4:443`
+  with TLS SNI `mqtt.googleapis.com`** (every ~7s). That is **Google Cloud IoT Core**, which Google
+  **shut down in Aug 2023**. So this firmware predates Embodied's migration off Google IoT *and* the
+  801 relocation feature: independent confirmation that the firmware is old.
+- **No DNS query was seen for it**: the robot uses a cached/hardcoded Google IP.
+- Google IoT Core uses the same `/devices/{id}/config|events|state` topics our supervisor already
+  speaks, so a robot that reached our broker would be understood.
 
-## Honest conclusion for a pre-801 / Google-IoT robot
+## The fake-Google-IoT-Core test and its result
+
+The idea: since we host the robot's network, intercept `mqtt.googleapis.com` and point it at our
+broker. If the robot did not strictly validate the server TLS cert (relying only on its device JWT), a
+self-signed cert with `CN=mqtt.googleapis.com` could let a **pre-801** robot connect to us, reviving
+robots OpenMoxie can't. The question under test: does the robot validate the Google server cert?
+
+Method: a mosquitto listener with a `CN=mqtt.googleapis.com` cert, an iptables DNAT of the robot's
+:443 to the broker, and a DNS spoof of `mqtt.googleapis.com`; then watch the broker for a TLS
+ClientHello from the robot.
+
+Result: the robot **DOES reach our broker** (DNAT works) but **rejects the cert: `tlsv1 alert unknown
+ca`**. So this firmware **validates the server cert against its bundled Google roots**; a self-signed
+cert can't pass. Faking Google IoT Core needs a cert chaining to a root the robot trusts (can't forge
+Google's), OR getting onto the robot to change its trust/endpoint. The precise reasoning is in
+[network trust](../reverse-engineering/protocol/network-trust.md#why-pre-801-is-stuck-precisely).
+
+## Undoing the fake-Google experiment
+
+The experiment leaves three things on the server box. To return to normal Moxie-Direct/803 use:
+
+1. regenerate the broker cert for the broker's own address (`broker/gen-certs.sh <ip>`);
+2. remove the DNAT rule (`iptables -t nat -D PREROUTING ...`);
+3. remove the dnsmasq spoof file (`/etc/NetworkManager/dnsmasq-shared.d/moxie-spoof.conf`);
+4. restart the broker.
+
+## ADB and on-device access
+
+- A port scan of the robot on the hotspot found **no open ports** (5555 adb, 22, etc. all closed).
+  ADB-over-network is OFF and nothing listens, consistent with the locked-down Android client
+  ([hardware access](../reverse-engineering/hardware/hardware-access.md#adb-usb-when-booted-normally)).
+- ADB-over-USB is a separate channel (untested here); worth trying on a locked unit but low odds.
+
+## Conclusion for a pre-801 robot
+
 Software-only revival is blocked by TLS: the robot validates `mqtt.googleapis.com`'s cert against
 bundled Google roots, we can't forge that, and there's no network way onto the device to change its
-trust or endpoint. **Definitive check = the on-device badge** (§firmware). If pre-801, the path is a
-firmware bump to 803 (community OTA needs the bot already on 801; else a reflash service). Once on
-803, our stack (broker + supervisor + SDK + local LLM) is proven and ready — this is purely a
-firmware-gap problem on this specific unit, not a problem with the server side.
+trust or endpoint. **Definitive check = the on-device badge** (the triage table above). A pre-801 unit
+needs new firmware: the flash path, or a paid reflash service. Once on 803, our stack (broker +
+supervisor + SDK + local LLM) is proven and ready. This is purely a firmware-gap problem on this
+specific unit, not a problem with the server side.
 
-## State of the running stack (for whoever continues)
-- Broker cert is currently CN=mqtt.googleapis.com (SAN also 10.42.0.1) + an iptables DNAT of the
-  robot's :443→broker and a dnsmasq spoof of mqtt.googleapis.com→10.42.0.1 are ACTIVE (the fake-Google
-  experiment). To revert to normal Moxie-Direct/803 use: regenerate the broker cert for the broker IP
-  (broker/gen-certs.sh <ip>), remove the DNAT (`iptables -t nat -D PREROUTING ...`) and the
-  /etc/NetworkManager/dnsmasq-shared.d/moxie-spoof.conf file, and restart the broker.
+## The QR command surface
 
-## QR command surface (for easter-egg hunting)
-The robot's Wifi App QR handler (`RightPoint::on_QRCommand`) dispatches on `QRCommand.command` (string;
-"om" is the only known value) — there is also a `code` (field 2) and `param` (field 3) string field.
-Full QR proto message set the firmware understands: QRCommand, QRResponse, QRDiagnosticData
-{robot_uuid, rsa_pub, cloud_connected, cloud_project, software_version}, StartPairingQR,
-WifiNetworkUpdate, QRMultiDecoder{debug:QRCommand, encoded_proto}, and **QRVPNConfig**
-{command: VPN_DOWNLOAD/REVERT/CREDENTIALS/ACTIVATE/DEACTIVATE, vpn_id, url, username, password}.
-The debug command STRINGS are in the robot firmware (`bo-wifi.apk`), not the parent app. Next: find
-bo-wifi.apk / an OTA image to decompile the handler, and/or probe candidate command strings by QR.
-Note: a VPN QR routes traffic but does NOT by itself defeat the mqtt.googleapis.com cert check.
+The hunt for hidden QR commands that followed this session is closed. The grammar was read from the
+firmware: the setup app acts on exactly four debug commands, the native cloud module
+(`RightPoint::on_QRCommand`) on three codes (`report`, `endpoint_update`, `om`), plus the `PA`, `VN` and
+JSON forms ([QR commands](../reverse-engineering/protocol/qr-commands.md); the rig's measurements are in
+[QR rig findings](qr-command-findings.md)). The QR message set the firmware understands (`QRCommand`
+with its `code` and `param` fields, `QRResponse`, `QRDiagnosticData`, `StartPairingQR`,
+`WifiNetworkUpdate`, `QRMultiDecoder`, `QRVPNConfig`) is on that page and in the recovered
+[`wifiapp` schemas](../reverse-engineering/protocol/recovered-proto/embodied/wifiapp/README.md); the
+command strings live in the robot firmware (`bo-wifi.apk`), not the parent app. One fact stated nowhere
+else: **a VPN QR routes traffic but does NOT by itself defeat the mqtt.googleapis.com cert check.**
+
+---
+📖 [Bench notes](README.md) · [Revive your Moxie](../guides/revive-your-moxie.md) · [Bench runbook](../guides/bench-runbook.md) · [QR commands](../reverse-engineering/protocol/qr-commands.md) · [Network trust](../reverse-engineering/protocol/network-trust.md) · [Docs index](../README.md)
