@@ -36,6 +36,7 @@ python3 sim/tools/authoring_mutation_check.py
 python3 sim/tools/brain_mutation_check.py
 python3 sim/tools/ears_mutation_check.py
 python3 sim/tools/ext_mutation_check.py
+python3 sim/tools/gateway_bounds_mutation_check.py
 python3 sim/tools/hardening_mutation_check.py
 python3 sim/tools/hardening_p1_mutation_check.py
 python3 sim/tools/launch_card_mutation_check.py
@@ -52,6 +53,7 @@ python3 sim/tools/unit_budget_mutation_check.py
 | `brain` | brain registry | `moxie_sdk/brains.py` and its runtime |
 | `ears` | honest ears: no-call floor, label strip, phantom drop, local VAD, kill switch | `moxie_sdk/stt.py` (`SttSession`, `WhisperTranscriber`), `moxie_runtime/voice.py` `feed_stt` |
 | `ext` | extension sandbox | `ext/`, `render.py`, `ext_host.py`, `packs/` pattern cap |
+| `gateway_bounds` | gateway failures: the streaming fallback's two grounds and its backoff budget, the standby window's range and clock, each voice line's rate | `moxie_sdk/apps/llm_app.py` (`_stream_chunks`, `respond`), the fallbacks in `moxie_sdk/{stt,tts}.py`, `chat.retry_seconds`, `config.py` `MOXIE_ENGINE_RETRY_S` |
 | `hardening` | P0: store lock, connection region | `moxie_sdk/store.py`, `moxie_runtime/` connection code |
 | `hardening_p1` | P1: roster, conn telemetry, shutdown | `moxie_sdk/{roster,conn_telemetry}.py`, `fleet/activity.py` |
 | `launch_card` | launch-card QR allowlist | `moxie_sdk/launch_cards.py` |
@@ -66,6 +68,7 @@ python3 sim/tools/unit_budget_mutation_check.py
 - `turnstile` and `unit_budget` never touch the checkout: they mutate a throwaway hardlink copy, and a row counts as caught only if its selector appears in a failing check's own label. Pass row names (`U3 D4`) to re-check a few rows in seconds.
 - An anchor must match exactly once: `str.replace(old, new, 1)` would otherwise mutate whichever copy comes first and still print "caught". The runners refuse a non-unique anchor, and `test_mutation_tables.py` enforces it for every table.
 - The pytest-based tables run the repo's `.venv/bin/python`; create the venv first.
+- `gateway_bounds` deletes every `__pycache__` under `mqtt/` and `sim/` before each run (a mutant restored within the same second at the same size can be read back from stale bytecode), and ends with a control: the clean tree again, green, every mutated file byte-identical to before.
 - `ext` and the pytest-based tables revert in a `finally` and set `PYTHONDONTWRITEBYTECODE`; a killed run can leave the tree mutated, so check `git status` afterwards.
 - `page_teeth_check.py --selftest` takes about a minute; the full sweep (`--baseline-dir DIR`) takes hours and mutates `sim/web` transiently. `--check-tree --restore` undoes a breakage an interrupted run left behind.
 - The docs bundle is generated and committed; it is laid out one doc per line with no global hash so branches merge cleanly. `check_bundle_fresh.py` is the only authority on freshness.
