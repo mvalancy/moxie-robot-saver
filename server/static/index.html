@@ -192,9 +192,21 @@
         <div id="robot-live" class="livebox"></div>
         <div id="robot-insights" class="insightsbox"></div>
         <div id="robot-safety" class="insightsbox"></div>
+        <!-- The house's clock (js/settings.js renderZoneOffer): while no time zone is chosen,
+             Moxie keeps the default zone's time; when this phone is elsewhere, the card names
+             both and one click makes the phone's zone the house rule. Outside ⚙️ Settings,
+             which starts closed, because a wrong zone moves bedtime and every alarm. -->
+        <div id="tz-offer" class="cfgbox hidden" role="status" aria-live="polite"></div>
         <details class="cfgbox" id="cfg-box">
           <summary>⚙️ Settings</summary>
           <label>Volume <input id="cfg-vol" type="range" min="0" max="100" step="5"></label>
+          <label>Time zone <input id="cfg-tz" type="text" list="cfg-tz-list" autocomplete="off"
+              spellcheck="false" placeholder="e.g. America/New_York"></label>
+          <datalist id="cfg-tz-list"></datalist>
+          <!-- js/settings.js wireZoneHere: puts this phone's zone in the field, a zone chosen or
+               not; Save settings saves it (Apply to all robots: as a house rule). -->
+          <div class="row"><button type="button" id="btn-tz-here" class="ghost tiny hidden"></button></div>
+          <div id="cfg-tz-hint" class="muted"></div>
           <div class="cfg-row">
             <label>Bedtime start <input id="cfg-bed-start" type="time"></label>
             <label>Bedtime end <input id="cfg-bed-end" type="time"></label>
