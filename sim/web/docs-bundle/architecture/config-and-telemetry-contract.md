@@ -303,7 +303,7 @@ said and recorded, as a flagged answer is.
 | The robot | `child_pii.nickname` (and `birthday` when the record has one) in its `/config`, over your MQTT broker like every other setting. Pushed now if it is connected, else on its next connect. |
 | The brain | Every brain prompt for that robot: the `llm` brain's system prompt ("You are talking to …"), the `content` brain's `volley.config.child_pii` (a module's prompt renders `nickname`), the `webhook` brain's request (its `child` object, with `birthday_iso` when the record has a birthday). **These requests go to the endpoint you configured (`MOXIE_LLM_BASE_URL`, `MOXIE_WEBHOOK_ENDPOINT`), which may be a cloud service.** |
 | The voice | Any line Moxie says that contains the name (the hello, the opener, an answer) is sent to the speech endpoint you configured when this appliance synthesizes speech. |
-| The supervisor's `/status` | The robot's `child` field, its config layers and its face cache id (`child_pii.id`, a UUIDv5 of the name and the look, so a list of first names recovers the name from it). The supervisor's own status server asks no one to sign in, so it stays on the appliance: compose publishes it (`MOXIE_PORT_STATUS`, `8931`) on `MOXIE_BIND_HOST_STATUS`, `127.0.0.1` by default and in `.env.example`, and `MOXIE_BIND_HOST=0.0.0.0` does not widen it. Anyone who can run a command on the appliance can read the name there; another device on your network can only if the owner sets `MOXIE_BIND_HOST_STATUS=0.0.0.0`. |
+| The supervisor's `/status` | The robot's `child` field, its config layers and its face cache id (`child_pii.id`, a UUIDv5 of the name and the look, so a list of first names recovers the name from it). The supervisor's own status server asks no one to sign in, so it stays on the appliance: compose publishes it (`MOXIE_PORT_STATUS`, `8931`) on `MOXIE_BIND_HOST_STATUS`, `127.0.0.1` by default and in `.env.example`, and `MOXIE_BIND_HOST=0.0.0.0` does not widen it. Anyone who can run a command on the appliance can read the name there; another device on your network can only if the owner sets `MOXIE_BIND_HOST_STATUS=0.0.0.0`, or, on Docker Engine before 28.0, from the same network segment ([the guide](../guides/one-command-stack.md#what-is-on-your-network)). |
 | The console's views of `/status` | `/local/fleet`, `/local/broker/status` and a robot's config answer name a robot's child (and keep its face cache id) only for a caller with a token for the account that has that robot, and mask the other child names in the activity feed. That keeps the name off what any device on your network can poll without asking; it is not a lock, because this console gives a token to anyone who types the account's email (`POST /local/quicklogin`, no password). |
 | The safety review queue | A short excerpt of a line the safety rules flagged or blocked, its trigger words masked, kept for the parent unless data sharing is `NO_DATA`. A line the child said can carry the name there. A blocked or flagged hello is kept with the name masked. |
 
@@ -333,8 +333,9 @@ every robot's MQTT traffic as it passes, a config push with the name included
 So anyone on your network can read the child's name, from the console or from `9001`. Whether the
 console should require a real sign-in is owner question OQ3. The supervisor's status port has no
 sign-in either, but it is not on your network: compose publishes it on `MOXIE_BIND_HOST_STATUS`
-(`127.0.0.1`), and a supervisor run without Docker binds `127.0.0.1` itself. The console reaches it
-from inside the appliance either way.
+(`127.0.0.1`; Docker Engine before 28.0 lets a device on the same network segment past that,
+[the guide](../guides/one-command-stack.md#what-is-on-your-network)), and a supervisor run without
+Docker binds `127.0.0.1` itself. The console reaches it from inside the appliance either way.
 
 **Unpair and factory reset** clear the robot's copy (`child: null`) before the record is deleted and
 before the permit is revoked; the robot then falls back to `MOXIE_CHILD_NICKNAME`, and its saved
