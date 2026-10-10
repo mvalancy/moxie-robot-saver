@@ -1,6 +1,6 @@
 # Revive your Moxie
 
-For Moxie owners, and for anyone who wants to meet one without a robot. Get a Moxie that died with
+For Moxie owners, and for anyone who wants to meet Moxie without one. Get a Moxie that died with
 the cloud **talking again** on hardware you own — or, with no robot, run the
 [simulator](../../sim/README.md) and get the same experience in a browser. Robot details refer to
 firmware v3.6.4-Zephyr / OTA v24.10.803 ([reference](../reverse-engineering/firmware/firmware-803-reference.md)).
@@ -39,12 +39,12 @@ MOXIE_LLM_API_KEY=ollama
 MOXIE_LLM_MODEL=llama3.1
 ```
 
-The supervisor runs in a container, where `127.0.0.1` is the container itself. So it reaches Ollama
-at the host's LAN IP, and Ollama has to listen beyond `127.0.0.1`. If Ollama runs as a system
-service, set `OLLAMA_HOST=0.0.0.0` in that service's environment instead. Docker Desktop (Mac,
-Windows) also resolves `http://host.docker.internal:11434/v1`. The compose files do not map that
-name, so on Linux it works only after you add `extra_hosts: ["host.docker.internal:host-gateway"]`
-to the supervisor service, and Ollama must still listen beyond `127.0.0.1`.
+Inside the supervisor's container, `127.0.0.1` is the container itself. So the URL uses the host's
+LAN IP, and Ollama must listen beyond loopback (for a system service, set `OLLAMA_HOST` in the
+service's environment). Docker Desktop (Mac, Windows) also resolves
+`http://host.docker.internal:11434/v1`. The compose files do not map that name on Linux; adding
+`extra_hosts: ["host.docker.internal:host-gateway"]` to the supervisor service does, and Ollama
+must still listen beyond loopback.
 
 The brain speaks as Moxie and emits [behavior markup](../reverse-engineering/runtime/behavior-markup.md),
 so Moxie gestures and emotes while it talks. For a real voice and ears, use the compose `voice` and

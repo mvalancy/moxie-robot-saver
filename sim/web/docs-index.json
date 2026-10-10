@@ -1127,7 +1127,7 @@
    "path": "guides/revive-your-moxie.md",
    "title": "Revive your Moxie",
    "section": "guides",
-   "bytes": 8936,
+   "bytes": 8862,
    "mermaid": 1,
    "headings": [
     "Which path are you on?",
@@ -1201,7 +1201,7 @@
    "path": "guides/find-moxie-on-lan.md",
    "title": "Find your Moxie on the LAN",
    "section": "guides",
-   "bytes": 1430,
+   "bytes": 1467,
    "mermaid": 0,
    "headings": [
     "Quick method — ARP scan by vendor",

@@ -25,8 +25,9 @@ ping -c1 <ip>                 # TTL=64
 # a quick port check should show nothing listening
 ```
 
-Still unsure? Check your router's attached-devices list (often `http://192.168.1.1`) for the AMPAK
-device, or power-cycle Moxie and watch which host drops and returns.
+Still unsure? Check your router's attached-devices list (its admin page; the address is usually on
+a label on the router) for the AMPAK device, or power-cycle Moxie and watch which host drops and
+returns.
 
 ## Worked example
 On one setup, `arp-scan` listed a single AMPAK host with a `d4:12:43:xx:xx:xx` address. It answered
