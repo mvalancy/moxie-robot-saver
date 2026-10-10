@@ -203,6 +203,9 @@
           <label>Time zone <input id="cfg-tz" type="text" list="cfg-tz-list" autocomplete="off"
               spellcheck="false" placeholder="e.g. America/New_York"></label>
           <datalist id="cfg-tz-list"></datalist>
+          <!-- js/settings.js wireZoneHere: puts this phone's zone in the field, a zone chosen or
+               not; Save settings saves it (Apply to all robots: as a house rule). -->
+          <div class="row"><button type="button" id="btn-tz-here" class="ghost tiny hidden"></button></div>
           <div id="cfg-tz-hint" class="muted"></div>
           <div class="cfg-row">
             <label>Bedtime start <input id="cfg-bed-start" type="time"></label>

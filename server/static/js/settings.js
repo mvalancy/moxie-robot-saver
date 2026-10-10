@@ -95,10 +95,22 @@ async function useZone(zone){
     if(b) b.disabled=false;
   }
 }
+/** The field's own "use this phone's zone", a zone chosen or not (the offer above stands
+ *  aside once one is): puts the phone's zone in the field, and Save settings saves it, for
+ *  this robot or, with Apply to all robots, as a house rule. Hidden when the browser names
+ *  no zone. */
+function wireZoneHere(){
+  const b=$('#btn-tz-here'), tz=$('#cfg-tz'), phone=phoneZone();
+  if(!b || !tz) return;
+  b.classList.toggle('hidden', !phone);
+  b.textContent=`Use this phone’s zone (${phone})`;
+  b.onclick=()=>{ tz.value=phone; };
+}
 
 function prefillConfig(r,f){
   buildDayBoxes();
   fillZoneList();
+  wireZoneHere();
   const z=zoneOf(r), tz=$('#cfg-tz');
   if(tz){ tz.value=z.chosen?z.zone:''; tz.dataset.was=tz.value; }
   const hint=$('#cfg-tz-hint');

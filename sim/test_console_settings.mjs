@@ -17,6 +17,9 @@
  *   Z7 #309's answer rule holds for the card: a robot save the supervisor applied but could
  *      not write (`saved:false`) says it will be lost on a restart, never "Saved"
  *   Z8 a zone the server refuses (a typo) is said on the card, word for word
+ *   Z9 the field's own "use this phone's zone" button names this browser's zone even with a
+ *      zone already chosen, puts it in the field and saves nothing by itself; Save settings
+ *      then posts it for this robot, or as a house rule with "Apply to all robots" ticked
  *
  * No FastAPI: `serveStatic` serves server/static and every `/local/*` and `/api/*` call is
  * answered at the browser. The fleet views come from the REAL `moxie_server.fleet` over a
@@ -26,8 +29,8 @@
  * (`emulateTimezone`). TEETH: mutated copies of js/settings.js (the zone never sent; the
  * field not prefilled; the field reading the robot's own layer only; an untouched zone sent
  * anyway; no offer; the offer saving the default, or saving for one robot; the offer shown
- * over a chosen zone; `saved:false` ignored; a refusal not said) must each redden the
- * scenario that guards it.
+ * over a chosen zone; `saved:false` ignored; a refusal not said; the field's button hidden,
+ * or filling in the default) must each redden the scenario that guards it.
  *
  *   node sim/test_console_settings.mjs
  */
@@ -71,7 +74,8 @@ def snap(house, own, env):
 
 views = {f"{h}|{o}|{e}": fleet.normalize_fleet(snap(h, o, e)) for h, o, e in (
     ("", "", ""), ("Europe/Berlin", "", ""), ("", "America/New_York", ""),
-    ("Europe/Berlin", "America/New_York", ""), ("", "", "Europe/Berlin"))}
+    ("Europe/Berlin", "America/New_York", ""), ("", "", "Europe/Berlin"),
+    ("America/New_York", "", ""))}
 try:
     C.sanitize_config_overrides({"timezone_id": "Mars/Olympus"})
     refusal = None
@@ -176,22 +180,25 @@ async function drive({ mutate = null, phone = DEFAULT, zones = {}, saved = true 
   return { page, st, errs, aborted };
 }
 
-/** The settings card's zone field, its hint, the offer line and the save status. */
+/** The settings card's zone field, its hint, the field's own phone-zone button (`here`, null
+ *  while hidden), the offer line and the save status. */
 const card = (page) => page.evaluate(() => {
   const offer = document.querySelector("#tz-offer");
+  const here = document.querySelector("#btn-tz-here");
   return {
     field: document.querySelector("#cfg-tz").value,
     hint: document.querySelector("#cfg-tz-hint").textContent,
+    here: !here || here.classList.contains("hidden") ? null : here.textContent,
     offer: offer.classList.contains("hidden") ? null : offer.textContent,
     button: (document.querySelector("#btn-tz-phone") || { textContent: null }).textContent,
     status: document.querySelector("#cfg-status").textContent,
   };
 });
 
-/** Open ⚙️ Settings, set the zone field to `zone` (null: leave it), tick or untick "Apply to
- *  all robots", save, and wait for the answer to be written on the card. */
+/** Open ⚙️ Settings (unless it is open), set the zone field to `zone` (null: leave it), tick
+ *  or untick "Apply to all robots", save, and wait for the answer to be written on the card. */
 async function save(page, st, { zone = null, fleet = false } = {}) {
-  await page.click("#cfg-box > summary");
+  if (!(await page.$eval("#cfg-box", (el) => el.open))) await page.click("#cfg-box > summary");
   if (zone !== null) {
     await page.$eval("#cfg-tz", (el) => { el.value = ""; });
     await page.type("#cfg-tz", zone);
@@ -327,6 +334,31 @@ const SCENARIOS = {
       clean(C, "Z8", run);
     } finally { await run.page.close(); }
   },
+
+  async Z9(C, o) {
+    /* A house rule (Berlin) is already chosen, so the offer stands aside (Z6); the field's
+     * own button still offers this browser's zone (New York). */
+    for (const [fleet, call, other] of [[false, ROBOT_POST, FLEET_POST],
+                                        [true, FLEET_POST, ROBOT_POST]]) {
+      const tag = `Z9 ${fleet ? "house rule" : "this robot"}`;
+      const run = await drive({ ...o, phone: NEW_YORK, zones: { house: BERLIN } });
+      try {
+        const before = await card(run.page);
+        C.eq(before.here, `Use this phone’s zone (${NEW_YORK})`,
+             `${tag}: the field's button names this browser's zone, a zone chosen or not`);
+        C.eq(before.field, BERLIN, `${tag}: the field shows the house rule first`);
+        await run.page.click("#cfg-box > summary");
+        await run.page.click("#btn-tz-here");
+        C.eq((await card(run.page)).field, NEW_YORK, `${tag}: one click puts it in the field`);
+        C.eq(run.st.calls.length, 0, `${tag}: the button alone saves nothing`);
+        await save(run.page, run.st, { fleet });
+        C.eq((posted(run.st, call) || {}).timezone_id, NEW_YORK,
+             `${tag}: Save settings posts it ${fleet ? "as a house rule" : "for this robot"}`);
+        C.eq(run.st.calls.filter((c) => c === other).length, 0, `${tag}: and nowhere else`);
+        clean(C, tag, run);
+      } finally { await run.page.close(); }
+    }
+  },
 };
 
 async function run(C, name, o = {}) {
@@ -344,6 +376,8 @@ const once = (from, to) => (s) => {
 };
 const SENT = "if(zone && zone!==(tz.dataset.was||'')) body.timezone_id=zone;";
 const OFFER = "const offer=!chosen && !!phone && phone!==zone;";
+const HERE_SHOWN = "b.classList.toggle('hidden', !phone);";
+const HERE_FILLS = "b.onclick=()=>{ tz.value=phone; };";
 const TEETH = [
   ["the zone never sent", "Z2", once(SENT, "")],
   ["the zone never sent", "Z3", once(SENT, "")],
@@ -366,6 +400,9 @@ const TEETH = [
   ["a refusal not said", "Z8",
    once("    refreshLive();\n  }catch(e){ s.textContent='⚠️ '+(e.message||'save failed'); }\n}\nfunction renderRobot(",
         "    refreshLive();\n  }catch(e){ s.textContent='⚠️ save failed'; }\n}\nfunction renderRobot(")],
+  ["the field's button hidden", "Z9", once(HERE_SHOWN, "b.classList.toggle('hidden', true);")],
+  ["the field's button filling in the default, not this browser's zone", "Z9",
+   once(HERE_FILLS, "b.onclick=()=>{ tz.value=HOUSE_ZONE_DEFAULT; };")],
 ];
 for (const [what, scenario, mutate] of TEETH) {
   ok(mutate(SRC) !== SRC, `teeth: the "${what}" mutation must actually change js/settings.js`);
