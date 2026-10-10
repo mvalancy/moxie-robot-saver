@@ -118,7 +118,8 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    the demo's own server answers the turn.**
    If your child says a person is hurting, frightening or endangering them — hit, pushed,
    kicked, bullied, called names or a slur, touched or undressed in a way that scares them,
-   followed, grabbed by the hand or asked into a car by a stranger, told to keep a secret from you
+   followed, grabbed by the hand, pinched on the cheek, pushed into the water or asked into a car by a
+   stranger, told to keep a secret from you
    or that they are "not allowed to tell", scared to go home — and the AI's reply does not clearly point them to a
    grown-up they trust (tell one, find one, ask whether one knows *now*), one sentence is added
    at the end, in Moxie's voice, that does. Naming an adult is not enough: "I'm sorry your dad
@@ -127,7 +128,8 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    steers them away from a grown-up does not count either, wherever in the reply it does so:
    "don't tell a grown-up", "you could tell your mom, but you don't have to" (or "…your mom. But
    you don't have to."), "instead of telling your teacher, tell me", "maybe later", "once you feel
-   braver", "only if you really want to". The check reads words, not intent, so it also adds the
+   braver", "only if you really want to", "or don't", "she'll be mad", "take your time". The check reads
+   words, not intent, so it also adds the
    sentence to a good reply that happens to say "later" or "if you want" in any of its sentences,
    and a reply that steers away in words it does not know would count.
    Someone else's excuse does not hide what the check recognises: "he said it was an accident",
@@ -149,10 +151,11 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    get it, and so do they from a parent when your child adds that they did not like it or it was
    a secret. A surprise or a treat kept secret from you is ordinary family life from a parent, a
    grandparent, a brother or sister, a friend, a teacher or the babysitter ("don't tell mom about
-   her present", "don't tell mom we had ice cream"); the same words from a stranger, a coach, a
-   neighbour, a parent's partner, an uncle or an aunt, a present the grown-up gave your child
-   ("the present he gave me"), or a "treat" that is really something done ("he let me see his
-   thing", "we played doctor", "he got me drunk") get the sentence. When the check is unsure it
+   her present", "don't tell mom we had ice cream"), and so is an aunt's or an uncle's present for you
+   ("my aunt said don't tell mom about her birthday present"); the same words from a stranger, a coach,
+   a neighbour or a parent's partner, an uncle's or an aunt's "don't tell anyone about the surprise", a
+   present the grown-up gave your child ("the present he gave me"), or a "treat" that is really
+   something done ("he let me see his thing", "we played doctor", "he got me drunk") get the sentence. When the check is unsure it
    leans toward the extra sentence: "my brother pushed me on the swing so high i was scared" gets
    one too. This is a word-and-phrase check like the rest,
    so it recognises the shapes it lists, not every way a child can say it; a disclosure in other
