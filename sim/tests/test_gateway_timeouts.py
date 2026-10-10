@@ -493,6 +493,10 @@ from moxie_sdk.stt import _hhmm                                              # n
 
 T0 = 1_760_000_000.0            # a fixed wall-clock instant for the HH:MM strings
 
+# The window runs on `clock` and the times `describe()` names on `wall`. The latch tests
+# below pass ONE fake as both, so the window and the named times move together; the
+# wall-clock step test drives them apart.
+
 
 def test_a_standby_lets_go_of_a_recovered_primary():
     """Ears: the primary times out once and the standby hears; inside the retry window
