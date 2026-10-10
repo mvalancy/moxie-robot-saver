@@ -356,7 +356,8 @@ pushed: false`: no connected robot heard it) and the settle pushes it when the r
 Every push names the house's time zone, `timezone_id` (an IANA name): this robot's own zone, else
 the house rule, else `MOXIE_TIMEZONE` (the bottom layer, for an install nobody opens the console
 on), else `America/Los_Angeles` (`cloud_config.DEFAULT_TIMEZONE_ID`). A parent sets it in ⚙️
-Settings → **Time zone**, for one robot or, with *Apply to all robots*, as a house rule. While no
+Settings → **Time zone**, for one robot or, with *Apply to all robots*, as a house rule; the field's
+**Use this phone's zone** button fills in the phone's own zone for *Save settings* to save. While no
 zone is set and the parent's phone is in another one, the robot card names both and offers the
 phone's zone in one click, saved as a house rule (`js/settings.js`).
 
@@ -555,7 +556,7 @@ back in force and runs the sweep, so a parent's `NO_DATA` erases it then
 | Bedtime / quiet hours | `RobotCloudConfig` weekday/weekend bedtime windows + `privacy_mode_enabled` |
 | Volume / brightness | `audio_volume`, `screen_brightness` (down); echoed in `RobotStatus` (up) |
 | Wake alarms & wake toggles | `alarms` (`WakeSchedule`) + `wake_button_enabled`/`touch_wake_enabled`/`audio_wake_set` — weekday checkboxes + a time in the Settings form |
-| Time zone | `timezone_id` — ⚙️ Settings → **Time zone** (per robot, or a house rule) and the one-click offer of the phone's zone; `MOXIE_TIMEZONE` underneath. The appliance keeps bedtime, the day plan, "what time is it" and the Insights days in it; see [§The house's clock](#the-houses-clock-timezone_id) |
+| Time zone | `timezone_id` — ⚙️ Settings → **Time zone** (per robot, or a house rule; its **Use this phone's zone** button) and the one-click offer of the phone's zone; `MOXIE_TIMEZONE` underneath. The appliance keeps bedtime, the day plan, "what time is it" and the Insights days in it; see [§The house's clock](#the-houses-clock-timezone_id) |
 | Scheduled activities | `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) — module picker fed by the on-board catalog |
 | Moxie's look (the child's face) | `child_pii.face_options` (14 layers, 72 cited options across 11) + the `child_pii.id` cache-buster — the Moxie's look card; see [§Appearance](#appearance-the-childs-chosen-face) |
 | The name Moxie says | `child_pii.nickname` from the account's child record (the Wi-Fi tab's name field renames it); `MOXIE_CHILD_NICKNAME` is the fallback; the live box's "Moxie calls your child" row — see [§The child's name](#the-childs-name-the-parents-record-per-robot) |

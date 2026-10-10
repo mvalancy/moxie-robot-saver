@@ -204,7 +204,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config and telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 45959,
+   "bytes": 46101,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -1183,7 +1183,7 @@
    "path": "guides/bench-runbook.md",
    "title": "Bench runbook: bring a real Moxie onto your server",
    "section": "guides",
-   "bytes": 12599,
+   "bytes": 12673,
    "mermaid": 0,
    "headings": [
     "Before you start",
