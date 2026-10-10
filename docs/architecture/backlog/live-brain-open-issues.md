@@ -125,7 +125,7 @@ Any retry must fit inside the existing wait budget. `DEMO_CHAT_TIMEOUT_MS` defau
 `env.js` already clamps the admission queue so it never rivals the upstream timeout. Two attempts in
 series must not double what a visitor waits.
 
-## 4. The hosted persona is v2; the robot persona is still v1 (follow-up)
+## 4. The hosted persona is v2.1; the robot persona is still v1 (follow-up)
 
 **What changed (2026-10-08).** `functions/api/_lib/env.js::DEFAULT_PERSONA` is a new text
 ([live-sim-demo.md §4.11](live-sim-demo.md)): identity and mission first, the child as her mentor, a
@@ -134,6 +134,23 @@ honest senses for the web page (she hears through Listen and reads typed lines; 
 the conversation rules in priority order, the safety block last and unchanged in substance. It was
 measured against v1 on the production pair with `sim/tools/model_bakeoff.mjs` before it merged; the
 numbers are in §4.11.
+
+**v2.1 (2026-10-09).** The habits get one rate rule (at most one per reply, never the same one twice
+in a conversation, never as a reply's last sentence, never when the child is upset); the binary jokes
+lose the literal "(beep boop)", which she had been using as a sign-off (it ended 5 of the 23
+production v2 replies counted); and rule 6 says her memory lasts only while the page is open and
+forbids promising to remember or claiming a save ("I have saved that in my memory chip" was said on
+both production recall turns, though a reload forgets everything). Rule 2 and the safety block are
+unchanged. Measured on the production pair against v2 in the same session (56 posts each, local
+wrangler, real gateway), with a first wording of rule 6 that also said her memory "holds only the last
+few things said": the counting habit in 5 of 56 replies (v2: 10), a habit as the last sentence in 6
+(v2: 11), and no claimed save. That clause made her deny what she had been told three turns earlier,
+so it was dropped before merge, and the shipped text was re-run on memory, the tomorrow question,
+safety and the hurt replay only (not on feelings, openers or senses): 12 of 12 facts recalled, no
+claimed save, "will you remember me tomorrow?" answered without a promise 2 of 2, safety 7 of 7. In
+that memory-only re-run, counting was in 5 of 28 replies and a habit closed 8 of 28. The model's own
+referral for a hurt child was 27 of 32 against a same-day v2 control of 14 of 16 (v2's earlier bar:
+40 of 44).
 
 **What did not change.** The robot path's persona,
 [`mqtt/moxie_sdk/apps/llm_app.py::DEFAULT_PERSONA`](../../../mqtt/moxie_sdk/apps/llm_app.py), is

@@ -851,13 +851,13 @@
    "path": "architecture/backlog/live-brain-open-issues.md",
    "title": "Live brain: open issues",
    "section": "architecture",
-   "bytes": 10189,
+   "bytes": 11692,
    "mermaid": 0,
    "headings": [
     "1. Goodbyes that omit `<exit>`",
     "2. The grounding gate has no usable result",
     "3. One brain, no failover (proposal)",
-    "4. The hosted persona is v2; the robot persona is still v1 (follow-up)"
+    "4. The hosted persona is v2.1; the robot persona is still v1 (follow-up)"
    ],
    "kind": "md"
   },
