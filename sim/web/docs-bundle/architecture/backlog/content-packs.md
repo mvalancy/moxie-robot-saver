@@ -146,8 +146,10 @@ protected. The review state (`review._state`) is:
 Only `NEW` and a clean `UPGRADE` are ever pre-ticked (`DEFAULT_ACCEPT`), and only when the digest is
 `ok`, the item's extension asks for no new capability (the escalation rule,
 [`sandboxed-extensions.md`](sandboxed-extensions.md) §7.3) and no `<mark` in the item's text names a
-system command (`system_commands`; the gate never sends one, and the row names every robot command
-the text writes, the contract's "What pack content may put on the robot"). `FORK` exists because authors may not bump
+system command (`system_commands`; the gate never sends one, from a line, an opener, a markup or
+the model's line a prompt steers, and the row names every robot command the text writes; a prompt
+that asks the model for a mark in other words names nothing here, and the gate on the model's line
+is what holds then, the contract's "What pack content may put on the robot"). `FORK` exists because authors may not bump
 `source_version` (A1). **Re-importing a pack after a local edit never clobbers it** (test 5). Every row
 carries a field-level diff, including a `NEW` row, which shows everything it would install.
 

@@ -60,10 +60,12 @@ line can make the robot take ([content-module-contract.md](../content-module-con
 line's action tags may do"). A conversation's `opener` is not an extension, but it is held to the
 same rule: an action tag in it acts only when written whole in the alternative said, as written
 before it is rendered, and the pack review names each such tag in the opener's own row (the
-contract's "A conversation's opener"). A catalogue mark in a line or an opener is held to the pack
-gate: only a mark this appliance could mint itself (an expressive verb, catalogue ids, read whole)
-reaches the robot, a system verb never does, and the parent is told (§4.5 `say`, §6.4; the
-contract's "What pack content may put on the robot").
+contract's "A conversation's opener"). A catalogue mark in a line, in an opener or in the model's
+line a conversation's prompt steers is held to the pack gate: only a mark this appliance could
+mint itself (an expressive verb, catalogue ids, read whole) reaches the robot, a system verb never
+does, and the parent is told (§4.5 `say`, §6.4; the contract's "What pack content may put on the
+robot", which also says what the gate does not cover: a handler's line, the plain LLM brain, and
+the ids of an expressive verb such as a system behaviour tree).
 
 ### 2.2 The pack format it rides in
 
@@ -428,10 +430,11 @@ its review did not name"*. It is not a breach and does not count towards quarant
 tag the catalogue drops, the line is said without it and the turn goes on. `ContentApp._ext_refusals`
 counts them apart from `_ext_breaches`.
 
-A catalogue command the pack gate cut from a line, an opener or a markup (a mark whose verb is
-outside `vocab.EXPRESSIVE_VERBS`; the system verbs `start-systemunpair` and `start-systemsuspend`
-never reach the robot from pack content) is told the same way, one row per (device, item, reason
-`command:<verb>`), hook `opener` for an opener, with *"it tried to send Moxie the system command
+A catalogue command the pack gate cut from a line, an opener, a markup or the model's line under
+a conversation (a mark whose verb is outside `vocab.EXPRESSIVE_VERBS`; the system verbs
+`start-systemunpair` and `start-systemsuspend` never reach the robot through the content brain) is
+told the same way, one row per (device, item, reason `command:<verb>`), hook `opener` for an
+opener and `model` for the model's line, with *"it tried to send Moxie the system command
 start-systemunpair, which would unpair Moxie from this home; no activity may, so Moxie said its line
 without it"* (for the catalogue's other verbs: *"it tried to send Moxie the robot command scripted,
 which an activity may not; Moxie said its line without it"*). The verb is the catalogue's own, never
@@ -610,7 +613,7 @@ Still open:
 | R1 | The op table grows until it is a language | `OPS` is a frozen literal in X1, so a new op needs a test edit and a reviewer. New capabilities need parent words (T13) |
 | R2 | Authors leave rather than hand-write JSON | P1 text surface; the §8 ASTs are copy-paste starters |
 | R3 | A JS port drifts from Python | The conformance file is the contract |
-| R4 | A *valid* markup id still makes Moxie lurch or blare | `markup` is refused by default and named in review; on every channel (a line, an opener, a markup) only a mark this appliance could mint itself passes, an expressive verb with catalogue ids, never a system verb, and the review names every command an item's text writes |
+| R4 | A *valid* markup id still makes Moxie lurch or blare | `markup` is refused by default and named in review; on every channel (a line, an opener, a markup, the model's line a prompt steers) only a mark this appliance could mint itself passes, an expressive verb with catalogue ids, never a system verb, and the review names every command an item's text writes. Open: a system or test behaviour tree (`Bht_System_Suspend`, `Bht_Motor_Test`) is a catalogue id `behaviour-tree` accepts, as on dev (owner question) |
 | R5 | 0.25 s is a guess; slow appliances may quarantine | Env var plus the `ext_events` ring, so it is visible |
 | R6 | A pathological item `pattern` can still stall matching (stdlib regex has no timeout) | Named, not fixed; X12 marks the boundary |
 | R7 | Readers assume `code` becomes `extension` | §7.4 and the review wording |
