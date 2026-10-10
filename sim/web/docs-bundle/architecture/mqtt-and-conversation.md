@@ -563,10 +563,39 @@ Meanwhile the permit list (§3.7) stops an unpermitted device from being served 
 ### 4.2 "Notify" context tracking
 
 Moxie is authoritative about what it actually said. After each utterance it sends a
-`command:"notify"` request. History is rebuilt from it: `extra_lines[].text` with
-`context_type=="input"` become user turns; `speech` (minus `animation:` / `silent:` lines) becomes an
-assistant turn. This keeps the brain's context right even when the child speaks across several VAD
-windows.
+`command:"notify"` request: `extra_lines[].text` with `context_type=="input"` is what the child said,
+`speech` (minus `animation:` / `silent:` lines) is what Moxie said. OpenMoxie rebuilds history from
+exactly these two fields (`site/hive/mqtt/conversations.py:59-68`) and, for a robot, from nothing
+else: its reply-time history is only for the web client, which has no robot and no notify
+(`:115`, `:128-130`, `:187-197`). This keeps the brain's context right even when the child speaks
+across several VAD windows.
+
+**The notify is the record, not a second copy.** Our runtime also remembers each turn when it
+answers (`memory.py::_remember`), because the browser SIM and every double in this repo except
+`sim/virtual_moxie.py --notify` never notify. For a robot that does, both writers used to run, so
+every exchange was held twice: the brain's window held half the real conversation, the transcript cap
+kept half the exchanges, and the goodbye summary read a doubled transcript. Now each turn has a
+record (the child's line, the hello queued for it, and, once answered, what Moxie was told to say)
+and a notify is reconciled against it (`memory.py`, "the robot's notify"):
+
+| the notify carries | and history |
+|---|---|
+| the child line the turn answered (case and punctuation aside) | already holds it: nothing added |
+| a filler, or the hello the runtime spoke as chunk 0 | never history (it was not before either) |
+| the turn's text, or a run inside it (one streamed chunk; `Rock and` after the child cut in) | marks those words as said; the entry becomes what Moxie got through only on a clean cut (a prefix and nothing after it), so per-chunk notifies in any order re-assemble the text and a tail piece alone never drops the head |
+| a line the runtime never sent (a module's own line, a child line the turn never heard) | appended; consecutive same-role reports are joined as OpenMoxie's `add_history` joins them (`conversations.py:29-39`), never into the turn's own entry |
+
+Only the current turn's record is matched, never the whole tail, so a line the child really says
+twice is two lines. A notify that arrives while the turn is still open (the robot speaks chunk 0
+before the stream closes) is held and reconciled when the turn is remembered; if that turn never
+closes (superseded, its worker died), nothing of it reached history and the report is kept as
+reported when the next turn starts. A robot that never notifies keeps today's history byte for byte.
+
+Built to this contract and to OpenMoxie's reading of it; **unverified on our hardware**, whose notify
+cadence (one per spoken chunk or one per event, with the chunks joined) is not captured. The rule
+holds for either, and `sim/virtual_moxie.py --notify [event|chunk]` plays both. Tests:
+`sim/tests/test_notify_history.py`; the SIL smoke (`sim/run_smoke.sh`) runs the virtual robot with
+`--notify` and `sim/tests/test_sil.py` asserts the supervisor's transcript holds the turn once.
 
 ### 4.3 STT audio over ZMQ-over-MQTT
 
@@ -600,7 +629,7 @@ robot sends RemoteChatRequest{speech:"…", backend:"router"} (events/remote-cha
    → RemoteChatResponse (commands/remote_chat) {output:{text,markup}, response_actions}
    → optionally CloudTTSResponse (commands/tts) with rendered audio
 robot speaks and animates
-robot sends notify requests for what it said → history updated
+robot sends notify requests for what it said → reconciled with the turn (§4.2), never a second copy
 ```
 
 ### 4.5 Slow brain: a filler now, the real answer next (`REPLY_PENDING`)
