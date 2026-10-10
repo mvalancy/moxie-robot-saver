@@ -9,15 +9,33 @@
   V.ttsBaseExplicit = false;
   try { V.ttsBaseExplicit = !!localStorage.getItem("moxie.ttsBase"); } catch (e) {}
 
+  /* THE CLAIM — a voice of hers that takes the floor holds the speakers from the moment it is
+   * SPOKEN, not from its first sample. A local voice fetches and decodes (or waits up to 1.4 s
+   * on a Piper probe) before any node exists, and all that time `current` was empty: every
+   * "may I make a sound now?" (isMoxieBusy: an ambient tick, the thinking filler; the child
+   * prop) heard yes, and its line started on top of hers once both had loaded. Measured
+   * (W4-S6): a tap's hello and one ambient tick inside its load played two voices at once for
+   * 3.1-3.7 s. So the claim stands in `current` until her audio replaces it. Whatever would
+   * cut a voice already playing drops it instead (stop(): a newer reply, the mic opening, an
+   * interrupt; her server voice starting, voice/cloud.js), and a dropped claim abandons its
+   * load. A chain that ends with nothing playing lets it go. Ambient lines never claim: they
+   * yield the floor (THE THIRD SEAM, voice/core.js). */
+  function claimSpeakers(who) {
+    var claim = { lost: false, stop: function () { claim.lost = true; } };
+    V.current = claim; V.currentWho = who || null;
+    return claim;
+  }
+
   /* Decode fetched bytes and play them, driving the mouth from the envelope. `o.who` tags
    * the voice; `o.mouth === false` leaves the face alone (the child's clips play here too,
    * and only Moxie's own voice may move her mouth); `o.since` is the caller's floor
-   * snapshot (THE THIRD SEAM, voice/core.js). */
+   * snapshot (THE THIRD SEAM, voice/core.js), `o.claim` its claim (THE CLAIM, above). */
   function playBytes(buf, o) {
     var a = V.actx(); if (!a) return false;
     var driveMouth = o.mouth !== false;
     return a.decodeAudioData(buf.slice(0)).then(function (audio) {
       if (V.heldBy(o.who) && V.floor !== o.since) return false;   // Moxie began answering mid-load
+      if (o.claim && o.claim.lost) return false;                   // a newer voice took the speakers mid-load
       var src = a.createBufferSource(); src.buffer = audio;
       var analyser = a.createAnalyser(); analyser.fftSize = 256;
       src.connect(analyser); analyser.connect(a.destination);
@@ -60,12 +78,12 @@
   };
 
   // Play a pre-rendered clip for `text` if one exists (either speaker).
-  function playClip(text, who, since) {
+  function playClip(text, who, since, claim) {
     return V.loadClips().then(function (j) {
       if (!j) return false;
       var rel = (j[who || "moxie"] || {})[text] || (j.moxie || {})[text] || (j.child || {})[text];
       if (!rel) return false;
-      return playUrl("audio/" + rel, { who: who || "moxie", since: since });
+      return playUrl("audio/" + rel, { who: who || "moxie", since: since, claim: claim });
     });
   }
 
@@ -119,25 +137,32 @@
      * control of sim/test_ambient_guard.mjs §2. */
     if (V.heldBy(who) && V.ttsPending && V.ttsPending() > 0) return Promise.resolve(false);
     V.stop();
-    if (!V.heldBy(who)) V.takeFloor();     // a REPLY claims the speakers — THE THIRD SEAM
+    var claim = null;
+    if (!V.heldBy(who)) {
+      V.takeFloor();                       // a REPLY claims the speakers — THE THIRD SEAM
+      claim = claimSpeakers(who);          // …from now, not from its first sample — THE CLAIM
+    }
     var mine = V.floor;
-    var lostFloor = function () { return V.heldBy(who) && V.floor !== mine; };
+    var lostFloor = function () { return claim ? claim.lost : V.floor !== mine; };
     var browser = function () {
       var ok = speakBrowser(text);
       setVoiceStatus(ok ? "browser" : "none");
       return ok;
     };
     // 1) pre-cached clip (real recorded speech — works on a fully static deploy)
-    return playClip(text, who, mine).then(function (done) {
+    return playClip(text, who, mine, claim).then(function (done) {
       if (done) { setVoiceStatus("clip"); return true; }
       if (lostFloor()) return false;       // abandon; do NOT fall through
       if (skipProbe()) return browser();   // 3) where a Piper sidecar cannot exist
       // 2) live Piper service, ONLY if one is actually reachable
-      return speakLive(text, who, mine).then(function (ok) {
+      return speakLive(text, who, mine, claim).then(function (ok) {
         if (ok) { setVoiceStatus("piper"); return true; }
         if (lostFloor()) return false;     // …and again after the round-trip
         return browser();                  // 3) honest fallback: sound really plays
       });
+    }).then(function (ok) {
+      if (claim && V.current === claim) { V.current = null; V.currentWho = null; }   // nothing played
+      return ok;
     });
   }
   V.speak = speak;
@@ -208,7 +233,7 @@
 
   // A 1.4 s timeout so an unreachable sidecar falls back to the browser voice quickly
   // instead of hanging (important on the static deploy).
-  function speakLive(text, who, since) {
+  function speakLive(text, who, since, claim) {
     var url = V.ttsBase.replace(/\/$/, "") + "/tts?text=" + encodeURIComponent(text.slice(0, 1000));
     var ctl = ("AbortController" in window) ? new AbortController() : null;
     var to = ctl ? setTimeout(function () { ctl.abort(); }, 1400) : 0;
@@ -216,7 +241,7 @@
       clearTimeout(to);
       if (!r.ok) throw new Error("tts " + r.status);
       return r.arrayBuffer();
-    }).then(function (buf) { return playBytes(buf, { who: who, since: since }); })
+    }).then(function (buf) { return playBytes(buf, { who: who, since: since, claim: claim }); })
       .catch(function () {
         clearTimeout(to);
         return false;   // caller falls back to the browser voice; no scary message

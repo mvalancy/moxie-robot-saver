@@ -2,7 +2,8 @@
  *
  * Tells the visitor what this deployment can actually DO, and marks the controls that
  * need a server (live voice, mic/STT, live-robot link) with tooltips, status text, a
- * capacity pill and a one-time banner. Everything is painted from `mode.js`'s answer
+ * capacity pill and a one-time banner — and, where it is true, what she keeps of a chat
+ * (#memory-hint). Everything is painted from `mode.js`'s answer
  * (GET /api/health; live-sim-demo.md §3.2/§6.3/§7). The hostname decides one thing only:
  * whether the OPTIONAL LOCAL sidecars (:8081 Piper, :8082 STT) could be reachable.
  *   offline / boot / not-configured -> the plain page, unchanged.
@@ -92,7 +93,21 @@
     if (off) btn.setAttribute("aria-disabled", "true");
     else if (btn.removeAttribute) btn.removeAttribute("aria-disabled");
   }
-  function warn(el, html) { if (el) { el.innerHTML = html; el.classList.add("warn"); } }
+  /* #mic-status is a polite live region (sim.html): every write is read out. So this file
+   * writes its resting line only when that line CHANGES: a repaint (every mode change) is not
+   * news, and must not paint over mic.js's line about a tap in progress ("● listening…"). */
+  var micRest = null;
+  /** `line` is {text} (written as text, and not at all if the element already says it — the
+   *  markup ships the live line) or {html}. */
+  function micResting(el, line, isWarn) {
+    if (!el) return;
+    var key = line.text !== undefined ? "text:" + line.text : "html:" + line.html;
+    if (micRest === key) return;
+    micRest = key;
+    if (line.text === undefined) el.innerHTML = line.html;
+    else if (el.textContent !== line.text) el.textContent = line.text;
+    el.classList.toggle("warn", !!isWarn);
+  }
 
   // #tts-status is owned by voice/cloud.js (its live "speaking" line), and this probe is
   // async — so hand it a resting hint rather than writing it directly.
@@ -180,6 +195,27 @@
     // A same-origin transcribe route (`ears`) means the mic needs no local server.
     apply(localTts, localStt || !!(snap && snap.ears), snap);
     paintBanner(snap);
+    paintMemoryHint(snap);
+  }
+
+  /* WHAT SHE KEEPS (sim.html #memory-hint): "Moxie remembers this chat only while this page
+   * is open." Her memory of a chat is the signed context cloud-transport.js holds in this
+   * page's memory, so that is exactly true on a HOSTED page whose live brain is answering; a
+   * self-hosted robot may keep a memory of its own, and a scripted page remembers nothing.
+   * Revealed once and never hidden again (still true if the brain goes out later). The dock
+   * grew a line, so she is framed above it again (moxie/stage.js) — only before the first
+   * turn: nobody's view moves under them while they read. */
+  var memoryShown = false;
+  function paintMemoryHint(snap) {
+    if (memoryShown || isLocal || !(snap && snap.state === "live" && snap.liveTurns)) return;
+    var el = $("memory-hint");
+    if (!el) return;
+    el.hidden = false;
+    memoryShown = true;
+    try {
+      if (window.__applyStageOffset && !document.querySelector("#transcript .turn"))
+        window.__applyStageOffset();
+    } catch (e) {}
   }
 
   function apply(tts, stt, snap) {
@@ -225,19 +261,16 @@
        * themselves after a breath of silence, so a second tap re-opened the mic and uploaded
        * a second clip; a local sidecar records with MediaRecorder, which has no silence stop,
        * so there the second tap is still how a line is sent. */
-      if (micSt) {
-        micSt.textContent = earsStopThemselves(snap)
-          ? "Tap Listen and talk — I'll know when you're done."
-          : "Tap Listen, say something, then tap it again to send.";
-        micSt.classList.remove("warn");
-      }
+      micResting(micSt, { text: earsStopThemselves(snap)
+        ? "Tap Listen and talk — I'll know when you're done."
+        : "Tap Listen, say something, then tap it again to send." }, false);
       needsBackend($("mic-btn"), isLocal
         ? "Records and transcribes through the local STT server."
         : "Records and transcribes on this page — speech-to-text runs on the site's own origin.", false);
     } else {
-      warn(micSt, isLocal
+      micResting(micSt, { html: isLocal
         ? "no STT server &mdash; run <code>python3 sim/stt/server.py</code> (Listen falls back to a scripted line)"
-        : "hosted demo &mdash; Listen plays a scripted child line (no live speech&#8209;to&#8209;text)");
+        : "hosted demo &mdash; Listen plays a scripted child line (no live speech&#8209;to&#8209;text)" }, true);
       // NOT `dead`: Listen still publishes a scripted child line here.
       needsBackend($("mic-btn"), "Live speech-to-text needs the STT server (python3 sim/stt/server.py). On the hosted demo, Listen plays a scripted demo line instead.");
     }
@@ -326,10 +359,12 @@
   var BANNER_SCRIPTED =
     '<b class="eb-more">3D Moxie, gestures, expressions, Play&nbsp;demo and the QR tools work here.</b> ' +
     'Live voice, the mic and connecting a real robot need a locally&#8209;run backend.';
+  // What she keeps is said under the composer (#memory-hint, paintMemoryHint): a live hosted
+  // page hides this banner (style.css), so the sentence that used to end it was never seen.
   var BANNER_LIVE =
     '<b class="eb-more">3D Moxie, gestures, expressions, Play&nbsp;demo and the QR tools work here.</b> ' +
     'Moxie&#39;s live brain answers on this page; connecting a real robot still needs a ' +
-    'locally&#8209;run backend. She forgets this conversation when you close the tab.';
+    'locally&#8209;run backend.';
   // A transient outage: mode.js polls again within ~30 s, so "a minute" is the truth.
   var BANNER_NAPPING =
     '<b>Moxie&#39;s brain is napping</b> &mdash; she&#39;s using her recorded lines; ' +
@@ -341,7 +376,16 @@
     '<b>Moxie&#39;s brain is resting</b> &mdash; she&#39;s using her recorded lines for ' +
     'now; try again later.';
   var NAPPING = { upstream_down: true, timeout: true };
+  /* ONE SOURCE. For a spent budget the banner says mode.js's pill sentence itself, so the
+   * two can never disagree: an hourly budget read "today’s demo budget" in the pill and
+   * "try again later" here. (The hour cap keeps RESTING: its pill already says how long,
+   * and the two agree.) */
+  var SAME_AS_PILL = { budget_exhausted: true };
   var bannerEl = null;
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
 
   function paintBanner(snap) {
     if (!bannerEl) return;
@@ -351,6 +395,7 @@
     var out = !live && brainOut(snap);
     var want = live ? BANNER_LIVE
              : !out ? BANNER_SCRIPTED
+             : SAME_AS_PILL[snap.reason] && snap.message ? escapeHtml(snap.message)
              : NAPPING[snap.reason] ? BANNER_NAPPING : BANNER_RESTING;
     if (t.innerHTML !== want) t.innerHTML = want;
     // "Run it locally" is advice for a deployment with no brain, never for one that is out.

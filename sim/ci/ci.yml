@@ -350,6 +350,8 @@ jobs:
         run: node sim/test_ambient_guard.mjs
       - name: One voice per reply, on a phone (Chrome's own autoplay policy, raw touch)
         run: node sim/test_one_voice.mjs
+      - name: A tap on Moxie says hello once; no tap ever sounds over her or into the mic
+        run: node sim/test_first_tap.mjs
       # The accessibility suite, wired here for the same reason the ambient guard is: it
       # was written UNWIRED only because this job did not exist yet and its CI file was
       # held by another pass. That reason is gone, so parking it in KNOWN_UNRUN would now

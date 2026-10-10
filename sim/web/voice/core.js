@@ -22,7 +22,8 @@
   var V = window.__moxieVoice = {
     enabled: true,
     ctx: null,             // created on first user gesture (autoplay policy)
-    current: null,         // the playing HTMLAudio / AudioBufferSourceNode / utterance handle
+    current: null,         // the playing HTMLAudio / AudioBufferSourceNode / utterance handle,
+                           // or a reply's claim while its audio loads (THE CLAIM, voice/local.js)
     // Whose voice `current` is: "child" = the scripted prop voice; anything else (null
     // included) is Moxie, who is never interrupted by the prop.
     currentWho: null,
