@@ -9,12 +9,13 @@ touches the world on the evaluator's behalf. `ext/` is the pure evaluator; here:
   and lets a `say`'s markup or a `markup` statement reach the robot only with no tag of
   ours and nothing the catalogue's check refuses (`robot_markup()`).
 * The pack gate (`pack_line()`, `pack_spoken()`, `pack_markup()`): a catalogue mark pack
-  content writes, in a line, an opener or a markup, reaches the robot only when it is one
-  this appliance could have minted itself: the catalogue's own pattern reads it whole, its
-  verb is one the floor mints for a line (`vocab.EXPRESSIVE_VERBS`) and every id in it is
-  in the catalogue; every other `<mark` opening is cut, never spoken, and a catalogue verb
-  among them, the system verbs (`vocab.SYSTEM_VERBS`) first, is told to the parent once
-  per robot, item and verb (`ContentApp._ext_commands`).
+  content writes, in a line, an opener or a markup, or steers the model into writing (the
+  model's line under a conversation goes through `pack_spoken` too), reaches the robot only
+  when it is one this appliance could have minted itself: the catalogue's own pattern reads
+  it whole, its verb is one the floor mints for a line (`vocab.EXPRESSIVE_VERBS`) and every
+  id in it is in the catalogue; every other `<mark` opening is cut, never spoken, and a
+  catalogue verb among them, the system verbs (`vocab.SYSTEM_VERBS`) first, is told to the
+  parent once per robot, item and verb (`ContentApp._ext_commands`).
 * `execution_actions_of()` / `subscriptions_of()` bound what a pack may put on the wire to
   the closed robot function / event tables.
 
@@ -261,11 +262,12 @@ _MISSING = object()
 REFUSED_TAG_REASON = "tag"
 REFUSED_TAG_WORDS = "it tried to make Moxie do something its review did not name"
 
-#: What the parent is told when a line, an opener or a markup carried a catalogue command
-#: pack content may not send (`ContentApp._ext_commands`): the `ext_events` row's `reason`
-#: is `command:<verb>`, so a robot is told once per item and verb. Fixed words, never
-#: author text: the verb is the catalogue's own (`_reported_verb`). Not a breach either:
-#: the line is said without the mark and the turn goes on.
+#: What the parent is told when a line, an opener, a markup or the model's line under a
+#: conversation carried a catalogue command pack content may not send
+#: (`ContentApp._ext_commands`): the `ext_events` row's `reason` is `command:<verb>`, so a
+#: robot is told once per item and verb. Fixed words, never author text: the verb is the
+#: catalogue's own (`_reported_verb`). Not a breach either: the line is said without the
+#: mark and the turn goes on.
 REFUSED_COMMAND_REASON = "command"
 #: What a system verb would do, in a parent's words (behavior-markup.md:75-76).
 _SYSTEM_VERB_EFFECTS = {"start-systemunpair": "unpair Moxie from this home",
@@ -396,7 +398,10 @@ def _pack_mark_cuts(spoken: str) -> list:
     the catalogue's, or an opening with no `>` after it (cut to the end of the line: what a
     robot's reader makes of a mark left open is unverified, and nothing legitimate follows
     one) is cut. One pass: each `>` is found once, since the cut runs to it and the search
-    goes on after it, and a kept mark is read by the catalogue's check once, as itself."""
+    goes on after it, a kept mark is read by the catalogue's check once, as itself, and a
+    cut mark's verb is read once (`vocab.mark_verbs`, linear in the tag, a long gap after
+    `name=` included: 64 KB of spaces after a `<mark name=` cost it 16-19 s before its
+    pattern was made unambiguous, measured on the build host)."""
     cuts: list = []
     pos = 0
     while True:
@@ -479,12 +484,15 @@ def pack_line(text: str, keep) -> tuple:
 
 def pack_spoken(text: str) -> tuple:
     """`(clean, refused)`: a pack's line whose actions are already decided and whose tags of
-    ours are already lifted (an opener, `content_app.said_opener`), with every mark pack
-    content may not send cut (`_cut_pack_marks`) and every tag of ours that forms once a
-    mark is cut lifted, never acted on (`actions.lift_every_action_tag`: an opener acts only
-    on what its alternative writes whole, and a tag that forms as the gate cuts is not
-    that). The two alternate as in `pack_line`, at most `PACK_GATE_ROUNDS` rounds, each a
-    pass over the line; past them the line is not spoken."""
+    ours are already lifted (an opener, `content_app.said_opener`; the model's line under a
+    conversation after `actions.parse_action_tags`, `ContentApp.respond`), with every mark
+    pack content may not send cut (`_cut_pack_marks`) and every tag of ours that forms once
+    a mark is cut lifted, never acted on (`actions.lift_every_action_tag`: an opener acts
+    only on what its alternative writes whole, the model's line on what its own parse read,
+    and a tag that forms as the gate cuts is not that). The two alternate as in `pack_line`,
+    at most `PACK_GATE_ROUNDS` rounds, each a pass over the line; past them the line is not
+    spoken. A line with no mark to cut and no tag to lift comes back as it was, so a caller
+    can tell whether anything moved."""
     refused: list = []
     for _ in range(PACK_GATE_ROUNDS):
         before = text

@@ -195,7 +195,14 @@ REVIEWED: dict = {
         "ratio of 40x between 32 and 256 KB where linear is 8x, both also enforced by a hard "
         "5 s alarm: load multiplies a linear read, while every shape that was super-linear "
         "took 119 ms or more at 32 KB on origin/dev (7.6 s or more at 256 KB; the cubic one "
-        "20 s at 32 KB), measured on the build host."),
+        "20 s at 32 KB) or, for one tag holding a run of genre=, 11 s or more at 256 KB on "
+        "the first round of this change, measured on the build host."),
+    "sim/tests/test_pack_markup_gate.py::test_a_long_gap_after_a_mark_opening_is_read_once": (
+        ("time.perf_counter",), "RELATIVE — 2.0 s for 256 KB of gap through every reader of "
+        "pack text, measured in tens of ms, and a ratio of 40x between 64 and 256 KB where "
+        "linear is 4x, both also enforced by a hard 5 s alarm: load multiplies a linear read, "
+        "while the ambiguous pattern took 16.6 s at 64 KB in mark_verbs alone (14.6 s in the "
+        "review, 15.9 s in an opener), measured on the build host."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}

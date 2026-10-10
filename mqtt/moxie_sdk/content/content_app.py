@@ -11,6 +11,12 @@ answered with the conversation's `opener` instead of the brain (OpenMoxie
 An opener's action tags act only when written whole in the alternative said, as the pack
 review names them, and none is said (`said_opener`).
 
+**The pack gate.** A catalogue mark in an opener or in the model's line, which the
+conversation's prompt (a pack's) or the child's words can steer the model into writing, reaches
+the robot only if this appliance could have minted it; a system verb never does, and the parent
+is told in the conversation's own `ext_events` row (`ext_host.pack_spoken`, `_ext_commands`;
+hook `opener` or `model`). A registered Python handler's line is ours and is not gated.
+
 Global handlers are registered Python callables or sandboxed extensions (`ext/`); a
 module's `code` string is never executed.
 
@@ -354,15 +360,16 @@ class ContentApp(MoxieApp):
                          quarantined=self._ext_quarantined(device_id, ext_id))
 
     def _ext_commands(self, device_id: str, ext_id: str, verbs: list, *, hook: str) -> None:
-        """A line, an opener or a markup carried a catalogue command pack content may not
-        send (the system verbs first among them), so the pack gate cut it: count it and
-        tell the parent once per robot, item and verb (`reason` is `command:<verb>`), as a
-        breach is told. Not a breach: the line was said without the mark and the turn went
-        on, so it never counts towards quarantine. The verb is the catalogue's own, never
-        author text (`ext_host._reported_verb`)."""
+        """A line, an opener, a markup or the model's line under a conversation (hook
+        `model`) carried a catalogue command pack content may not send (the system verbs
+        first among them), so the pack gate cut it: count it and tell the parent once per
+        robot, item and verb (`reason` is `command:<verb>`), as a breach is told. Not a
+        breach: the line was said without the mark and the turn went on, so it never
+        counts towards quarantine. The verb is the catalogue's own, never author text
+        (`ext_host._reported_verb`)."""
         key = (device_id, ext_id)
         self._ext_commands_refused[key] = self._ext_commands_refused.get(key, 0) + len(verbs)
-        what = "says first" if hook == "opener" else "said"
+        what = {"opener": "says first", "model": "the model said for it"}.get(hook, "said")
         for verb in dict.fromkeys(verbs):
             self._ext_report(device_id, ext_id, hook=hook, reason=refused_command_reason(verb),
                              sentence=refused_command_words(verb),
@@ -588,6 +595,20 @@ class ContentApp(MoxieApp):
             return Reply(text="Hmm, my brain got fuzzy — say that again?")
         # Lift action tags out of the model's line (actions.py); speak the remainder.
         text, actions = parse_action_tags(text)
+        # The model's line is held to the pack gate as an opener is: the conversation's
+        # prompt (a pack's), or the child's words, can steer the model into writing a mark,
+        # so a mark stays only when this appliance could have minted it, a system verb never
+        # reaches the robot, a tag of ours that forms as a mark is cut is lifted and never
+        # acted on, and the parent is told in the conversation's own row (hook `model`;
+        # `ext_host.pack_spoken`). A line with no such mark is exactly what it was: the gate
+        # returns it unchanged and it is not tidied again.
+        clean, refused = pack_spoken(text)
+        if clean != text:
+            text = tidy_spoken_text(clean)
+        if refused:
+            self._ext_commands(turn.robot.device_id or "",
+                               full_key_of("conversation", f"{conv.module_id}/{conv.content_id}"),
+                               refused, hook="model")
         # A `turn.before` extension's act/subscribe still go out when the model answers.
         actions += execution_actions_of(v)
         subscribe = subscriptions_of(v)

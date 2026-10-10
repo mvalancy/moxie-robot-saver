@@ -255,8 +255,12 @@ def command_warnings(verbs, unknown: int = 0) -> list:
                 f"this appliance does not know."]
     refused = [v for v in verbs if v not in vocab.EXPRESSIVE_VERBS]
     if refused:
+        # True of every way pack content reaches the robot through the content brain: a
+        # line, an opener, a markup and the model's line its prompt steers are all held to
+        # the gate (`ext_host.pack_line`, `pack_spoken`, `pack_markup`).
         row = ("this appliance never sends " + ", ".join(f"cmd:{v}" for v in refused)
-               + " from an activity")
+               + " from an activity, whether its opener, a line or the AI's reply to its "
+               "prompt writes it")
         system = [v for v in refused if v in vocab.SYSTEM_VERBS]
         if system:
             row += (" (" + ", ".join(f"cmd:{v}" for v in system)

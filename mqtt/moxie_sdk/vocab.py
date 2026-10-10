@@ -258,14 +258,23 @@ EXPRESSIVE_VERBS = frozenset({
 #: around the `=`, data or none, a mark left open), for naming what a robot's reader might
 #: make of pack text; `_MARK_RE` below is the strict form every mark this appliance mints
 #: has. Reads from an opening to the next `<` or `>` at most, so a run of openings costs
-#: each its own gap.
-_MARK_VERB_RE = re.compile(r"<mark\b[^<>]*?\bname\s*=\s*[\"']?\s*cmd:\s*([A-Za-z0-9_-]+)", re.I)
+#: each its own gap, and no two neighbouring pieces of it can take the same character, so a
+#: gap is read once: the whitespace after the `=` is one run, then one optional quote with
+#: its own run, then `cmd:`. With two `\s*` around the optional quote (`\s*["']?\s*`) one
+#: run of whitespace could be split between them every way, and `<mark name=` followed by
+#: 64 KB of spaces cost `mark_verbs` 16-19 s (four times longer per doubling), the review of
+#: a conversation whose opener held it 14.6 s against 2 ms before, and an installed opener
+#: of ideographic spaces, which a line's tidying leaves, 15.9 s per empty prompt with the
+#: GIL held, measured on the build host; 5 ms at 64 KB now (sim/tests/test_pack_markup_gate.py
+#: section G).
+_MARK_VERB_RE = re.compile(
+    r"<mark\b[^<>]*?\bname\s*=\s*(?:[\"']\s*)?cmd:\s*([A-Za-z0-9_-]+)", re.I)
 
 
 def mark_verbs(text) -> List[str]:
     """Every verb a `<mark` in `text` names, as written, in order (`_MARK_VERB_RE`). The
     catalogue is case-sensitive, so a caller lower-cases only to ask whether a verb is a
-    system verb in any spelling."""
+    system verb in any spelling. Linear in `text`, a long gap after `name=` included."""
     return _MARK_VERB_RE.findall(str(text or ""))
 
 
@@ -366,18 +375,25 @@ def break_mark(time: str = "0.35s") -> str:
 # --------------------------------------------------------------------------- #
 #: Each pattern reads a tag from its opening to the next `<` or `>` and no further
 #: (`[^<>]`), so `validate_markup` is linear in its text: a run of openings costs each one
-#: its own gap. A mark's data holds no `<` or `>` (none this appliance mints does; one that
-#: does is not read as a mark, and the extension host drops it for its form first), while a
-#: usel's genre and a spurt's id are still read to their closing quote, a quoted `>`
-#: included (`<spurt x" spurt_id="n>pe"/>` is a spurt with the id `n>pe`), which the host's
-#: whole-text pass relies on. Before: `data:{.*?}` read on to the end of the text from every
-#: unclosed opening (11, 44 and 188 ms at 8, 16 and 32 KB), `[^>]*` from every `<usel` or
-#: `<spurt` opening (25-58 ms per 8 KB, four times longer per doubling), and a run of
-#: `<usel genre="` read on from each `genre="` found on the way back (0.35 s, 2.6 s and
-#: 20 s), measured on the build host; now 0.2-0.5 ms at 32 KB and 1.3-4.2 ms at 256 KB on
-#: every shape tried (sim/tests/test_pack_markup_gate.py).
-_MARK_RE = re.compile(r'<mark\s+name="cmd:([a-z0-9-]+)(?:,data:(\{[^<>]*\}))?"\s*/?>', re.I)
-_USEL_RE = re.compile(r'<usel\b[^<>]*genre="([^"]*)"[^<>]*>', re.I)
+#: its own gap, and inside one tag nothing is read twice. A mark's data holds no `<`, `>` or
+#: `"` (none this appliance mints does: `mark` writes `+` for a quote; one that does is not
+#: read as a mark, and the extension host drops it for its form first), while a usel's genre
+#: and a spurt's id are still read to their closing quote, a quoted `>` included (`<spurt x"
+#: spurt_id="n>pe"/>` is a spurt with the id `n>pe`), which the host's whole-text pass relies
+#: on. A usel is read to its FIRST `genre="` and no further (`(?:(?!genre=")[^<>])*`), then
+#: every genre in the tag once (`_GENRE_RE` over what `_USEL_RE` matched, so an invented one
+#: in any slot is refused whichever the robot's reader would take). Before: `data:{.*?}` read
+#: on to the end of the text from every unclosed opening (11, 44 and 188 ms at 8, 16 and
+#: 32 KB), `[^>]*` from every `<usel` or `<spurt` opening (25-58 ms per 8 KB, four times
+#: longer per doubling), and a run of `<usel genre="` read on from each `genre="` found on
+#: the way back (0.35 s, 2.6 s and 20 s); then, with `[^<>]*` before the `genre=`, ONE
+#: `<usel` tag holding a run of `genre="` and no `>` was still read from every `genre="` in
+#: it to the end of its gap (0.2-0.6 s at 32 KB, 23-28 s at 256 KB), all measured on the
+#: build host; now under a millisecond at 32 KB and a few ms at 256 KB on every shape tried
+#: (sim/tests/test_pack_markup_gate.py section F).
+_MARK_RE = re.compile(r'<mark\s+name="cmd:([a-z0-9-]+)(?:,data:(\{[^<>"]*\}))?"\s*/?>', re.I)
+_USEL_RE = re.compile(r'<usel\b(?:(?!genre=")[^<>])*genre="([^"]*)"[^<>]*>', re.I)
+_GENRE_RE = re.compile(r'genre="([^"]*)"', re.I)
 _SPURT_RE = re.compile(r'<spurt\b[^<>]*spurt_id="([^"]*)"', re.I)
 
 
@@ -394,9 +410,11 @@ def validate_markup(markup: str) -> List[str]:
 
     Returns `"<slot>=<id>"` strings (empty = only recovered ids). Checks the verb, mood/
     intensity, tree `eventName`/`behaviour`, icon values, `SoundToPlay`, `<usel genre>`
-    and `<spurt spurt_id>`. Linear in `markup` (the patterns above), so cheap enough for
-    the hot path on any text. A system verb is a catalogue verb and passes here: whether
-    pack content may send it is the extension host's gate (`SYSTEM_VERBS`,
+    and `<spurt spurt_id>`, every genre a usel tag names. Linear in `markup` (the patterns
+    above) on every shape tried: a run of openings, and one tag holding a run of `genre=`,
+    `spurt_id=` or `,data:{` (sim/tests/test_pack_markup_gate.py section F); so cheap
+    enough for the hot path on any text. A system verb is a catalogue verb and passes
+    here: whether pack content may send it is the extension host's gate (`SYSTEM_VERBS`,
     `EXPRESSIVE_VERBS`).
     """
     bad: List[str] = []
@@ -439,9 +457,10 @@ def validate_markup(markup: str) -> List[str]:
             s = data.get("spurt_id") or data.get("gesture")
             if s and s not in SPURT_SET:
                 bad.append(f"spurt_id={s}")
-    for genre in _USEL_RE.findall(markup):
-        if genre not in USEL_GENRE_SET:
-            bad.append(f"genre={genre}")
+    for tag in _USEL_RE.finditer(markup):
+        for genre in _GENRE_RE.findall(tag.group(0)):
+            if genre not in USEL_GENRE_SET:
+                bad.append(f"genre={genre}")
     for spurt in _SPURT_RE.findall(markup):
         if spurt not in SPURT_SET:
             bad.append(f"spurt_id={spurt}")
