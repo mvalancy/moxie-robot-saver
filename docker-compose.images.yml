@@ -259,8 +259,11 @@ services:
       HF_HOME: /cache/huggingface
     ports:
       # The runtime's own status server stays loopback-only inside the container; this
-      # publishes the proxy. Bind it to 127.0.0.1 unless you trust the network.
-      - "${MOXIE_BIND_HOST:-127.0.0.1}:${MOXIE_PORT_STATUS:-8931}:8931"
+      # publishes the proxy, to THIS MACHINE ONLY by default. It asks no one to sign in
+      # (the child's name, memory, the safety review, settings writes), and the console
+      # reads it over the compose network, not this port. Its own bind variable, so
+      # MOXIE_BIND_HOST=0.0.0.0 (the robot, the browser UI, the console) cannot widen it.
+      - "${MOXIE_BIND_HOST_STATUS:-127.0.0.1}:${MOXIE_PORT_STATUS:-8931}:8931"
     volumes:
       - moxie-supervisor-data:/data          # conversation memory + MOXIE_DATA_DIR
       - moxie-certs:/certs:ro                # supervisor.pass — the broker credential
