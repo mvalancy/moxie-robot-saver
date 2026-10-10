@@ -97,7 +97,7 @@ local or hosted, can be Moxie's brain.
 | [`tools/`](tools/) | Pairing and endpoint QR tools, command-line |
 | [`hardware/`](hardware/) | The physical robot: what it is made of, and firmware versions |
 | [`docs/`](docs/README.md) | Guides, architecture contracts, and the reverse-engineering study |
-| [`ai/`](ai/), [`scripts/`](scripts/), [`.claude/`](.claude/) | Where the AI adapters live (one README), the doc guards and PR helpers, and the shared Claude agents and skills |
+| [`ai/`](ai/), [`scripts/`](scripts/), [`.claude/`](.claude/) | One README pointing at the SDK's AI adapters; the doc guards and PR helpers; the shared Claude agents and skills |
 
 More detail: [`STRUCTURE.md`](STRUCTURE.md).
 

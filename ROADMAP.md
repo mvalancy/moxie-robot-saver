@@ -86,8 +86,10 @@ Ordered by priority.
 1. **First visit to the hosted Sim.** Walk the full path (instructions, microphone permission or
    refusal, waiting, reply, interruption, second turn, goodbye, degraded mode) and fix the worst
    stranger-facing defect. What has shipped is recorded in the
-   [live-sim-demo spec](docs/architecture/backlog/live-sim-demo.md) and the release notes. Still
-   open: a check on what she says, as well as on what she is told.
+   [live-sim-demo spec](docs/architecture/backlog/live-sim-demo.md), the
+   [composer-dock brief](docs/architecture/backlog/mobile-first-visit.md), the
+   [ambient clips page](sim/web/audio/ambient/README.md) and the git history. Still open: a check
+   on what she says, as well as on what she is told.
 2. **Spending protection.** The rate limits and the unit budget are counted per isolate and per
    colo and fail open, so they are not a global ceiling; confirm a hard budget on the gateway key
    before claiming one. Still open: setting the host allow-list (`DEMO_SERVE_HOSTS`) on the
