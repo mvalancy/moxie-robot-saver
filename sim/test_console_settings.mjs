@@ -277,6 +277,11 @@ const SCENARIOS = {
       await until(() => run.st.calls.length > 0, 6000);
       await run.page.waitForFunction(() => /now uses/.test(
         document.querySelector("#tz-offer").textContent), { timeout: 6000 }).catch(() => {});
+      /* The line is written as soon as the save answers; the field refills only when the
+       * fleet read the save then starts (refreshLive) answers. Wait for that redraw, never
+       * race it. */
+      await run.page.waitForFunction((zone) => document.querySelector("#cfg-tz").value === zone,
+                                     { timeout: 6000 }, BERLIN).catch(() => {});
       C.eq(JSON.stringify(run.st.calls), JSON.stringify([FLEET_POST]),
            "Z5: one click, one house rule");
       C.eq(JSON.stringify(posted(run.st, FLEET_POST)), JSON.stringify({ timezone_id: BERLIN }),
