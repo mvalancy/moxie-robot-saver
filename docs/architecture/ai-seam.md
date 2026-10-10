@@ -397,13 +397,19 @@ inside that same bound and never after a timeout — so a wedged gateway costs e
 429/5xx retried just inside it at most just under two, since the retry runs its own request bound — and a
 streamed turn's open and its single-reply fallback share one bound. So a gateway that accepts connections
 and never answers costs one `ERROR_OFFLINE` reply after one bound — not a turn worker for 5 x 600 s, the
-SDK's default read timeout times the backoff's attempts, which is what it cost before. Two more things the
-turn path promises: a prompt that waited on the worker pool behind a newer one is never sent to the brain
-(the robot has already re-prompted; measured on a one-worker pool, three prompts cost two calls — a
-re-prompt that finds a free worker, as it does on the eight-worker pool, goes to the brain at once), and a
-worker that dies after the brain answered — an app's unreadable `mood_intensity`, a `result_code` the wire
-cannot encode — logs it once and still closes the turn with the stock line, as chunk 1 with `is_completed`
-when the filler already went out, so the robot never waits on a sequence nobody will finish.
+SDK's default read timeout times the backoff's attempts, which is what it cost before. Whether a robot
+ever plays that reply is A4 ([production-hardening.md](backlog/production-hardening.md) §9), unverified
+on hardware: a robot that re-prompts after about 20 s starts a newer turn, and the late reply is dropped
+as stale. Two more things the turn path promises: a prompt that waited on the worker pool behind a newer
+one is never sent to the brain (the robot has already re-prompted; measured on a one-worker pool, three
+prompts cost two calls — a re-prompt that finds a free worker, as it does on the eight-worker pool, goes
+to the brain at once), and a worker that dies after the brain answered — an app's unreadable
+`mood_intensity`, a `result_code` the wire cannot encode — logs it once and still closes the turn with
+the stock line, as chunk 1 with `is_completed` when the filler already went out, so the robot never waits
+on a sequence nobody will finish. A streamed turn is the exception: the same failure in one of its chunks
+closes the sequence with an empty chunk, no stock line and no error note, and its one log line reads as
+the model's stream failing (a known gap; `sim/tests/test_streaming.py` pins the intended close as two
+strict xfails).
 
 #### The wire a robot can read
 
