@@ -192,6 +192,25 @@ def extension_warnings(data: dict) -> list:
     return out
 
 
+def opener_warnings(data: dict) -> list:
+    """What a parent is told about a conversation's `opener`: one sentence naming what its
+    action tags can make Moxie do as the conversation starts, or nothing when it writes
+    none whole. The robot acts on an opener's tag only when it is written whole in the
+    alternative said, unrendered (`content_app.said_opener`), so every tag written whole in
+    any alternative is named, each as "sometimes" (which alternative is said, and what its
+    template leaves in, varies); a tag that only forms as the opener renders never acts and
+    is not named."""
+    opener = (data or {}).get("opener")
+    if not isinstance(opener, str) or not opener:
+        return []
+    from ..content_app import opener_alternatives
+    effects = ext.written_effects(opener_alternatives(opener))
+    if not effects:
+        return []
+    return ["When this conversation starts, Moxie says its opener; then "
+            + " and ".join(effects) + "."]
+
+
 def extension_capabilities(data: dict) -> list:
     """The capability set an item's extension declares (compared for escalation)."""
     return ext.capabilities_of((data or {}).get("extension") or {})
@@ -204,6 +223,8 @@ def _warnings(kind: str, data: dict, *, catalog=None) -> list:
         out.append("carries a `code` block (Python), which this appliance never runs — "
                    "see `extension` for behaviour this appliance can run")
     out += extension_warnings(data)
+    if kind == "conversation":
+        out += opener_warnings(data)
     if kind == "schedule":
         unknown = unknown_schedule_modules(data, catalog=catalog)
         if unknown:

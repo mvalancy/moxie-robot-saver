@@ -55,8 +55,14 @@ KNOWN_TAGS = (EXIT_TAG, SLEEP_TAG, LAUNCH_TAG, LAUNCH_IF_CONFIRMED_TAG)
 LAUNCH_IF_CONFIRMED_AS = ActionType.LAUNCH
 
 # <name> or <name:field:field>, tolerant of whitespace. `[^<>]` keeps a tag from
-# swallowing the next one when the model writes two in a row.
-_TAG_RE = re.compile(r"<\s*([A-Za-z_][A-Za-z0-9_]*)\s*((?::[^<>]*?)?)\s*>")
+# swallowing the next one when the model writes two in a row. No two neighbouring repeats
+# can take the same character (the fields are greedy and run up to the `>` itself, so the
+# spaces before it are theirs and `_fields` strips them), which keeps every match linear in
+# the text: with lazy fields followed by `\s*>`, a run of spaces after `<exit:` or `<exit`
+# with no `>` after it was scanned again for each of its characters (0.35 s at 16,000
+# spaces, about four times longer per doubling, still running after 8 s at a megabyte,
+# measured through the extension host, which reads every string a pack writes).
+_TAG_RE = re.compile(r"<\s*([A-Za-z_][A-Za-z0-9_]*)\s*((?::[^<>]*)?)>")
 
 _HSPACE_RE = re.compile(r"[ \t]{2,}")
 _SPACE_BEFORE_PUNCT_RE = re.compile(r"[ \t]+([,.!?;])")
@@ -121,6 +127,129 @@ def parse_action_tags(text: str) -> Tuple[str, List[Action]]:
     return tidy_spoken_text(_TAG_RE.sub(_sub, text)), actions
 
 
+def lift_action_tags(text: str) -> str:
+    """`text` with every tag that has one of our names lifted out in one pass, malformed
+    ones too: what `parse_action_tags` speaks before `tidy_spoken_text`, with no action
+    read. Linear in `text`. The sandboxed-extension host clears a line's markup with it
+    (`ext_host.robot_markup`)."""
+    return _TAG_RE.sub(lambda m: "" if m.group(1).lower() in KNOWN_TAGS else m.group(0),
+                       text or "")
+
+
+_ANGLE_RE = re.compile(r"[<>]")
+
+
+def lift_every_action_tag(text: str) -> str:
+    """`text` with every tag that has one of our names lifted, malformed ones too, and every
+    one that forms once those are lifted (`<ex<sleep>it>` loses its sleep, then the exit),
+    until none is left: what repeating `lift_action_tags` until nothing more comes out
+    leaves, worked out in one pass, linear in `text`. Each `>` closes the latest `<` still
+    open, and what lies between holds no `<` or `>`, so it is a tag of ours or it is not:
+    a tag of ours goes, which lets the `<` open before it close later; anything else stays,
+    and no `<` before it can start a tag of ours any more. The content brain says an
+    opener with it (`content_app.said_opener`), so no tag of ours that a template builds
+    is said."""
+    out: List[str] = []                    # pieces; a `<` is always a piece of its own
+    opens: List[int] = []                  # where each `<` still open is in `out`
+    pos = 0
+    for m in _ANGLE_RE.finditer(text or ""):
+        if m.start() > pos:
+            out.append(text[pos:m.start()])
+        pos = m.end()
+        if m.group() == "<":
+            opens.append(len(out))
+            out.append("<")
+            continue
+        if opens:
+            at = opens[-1]
+            tag = _TAG_RE.fullmatch("".join(out[at:]) + ">")
+            if tag is not None and tag.group(1).lower() in KNOWN_TAGS:
+                del out[at:]
+                opens.pop()
+                continue
+            opens.clear()
+        out.append(">")
+    out.append((text or "")[pos:])
+    return "".join(out)
+
+
+def _lift_known(text: str) -> Tuple[str, List[int]]:
+    """`text` as `parse_action_tags` would speak it, every tag with one of our names lifted
+    in one pass (malformed ones too), and for each character kept its index in `text`."""
+    out: List[str] = []
+    origin: List[int] = []
+    pos = 0
+    for m in _TAG_RE.finditer(text):
+        if m.group(1).lower() not in KNOWN_TAGS:
+            continue
+        out.append(text[pos:m.start()])
+        origin.extend(range(pos, m.start()))
+        pos = m.end()
+    out.append(text[pos:])
+    origin.extend(range(pos, len(text)))
+    return "".join(out), origin
+
+
+def drop_action_tags(text: str, keep) -> Tuple[str, List[Action]]:
+    """`text` with every action tag whose action `keep(action)` refuses taken out, and
+    those actions in the order they appeared.
+
+    A kept tag, a malformed one and a tag that is not ours stay in the text exactly as
+    written, so `parse_action_tags` reads what is left as it always did. Taking a tag out
+    can make the pieces around it meet (`<ex<sleep>it>` loses its sleep and reads `<exit>`),
+    and so can the parse itself, which lifts every tag of ours in one pass (`<ex<sleep>it>`
+    with its sleep kept would be *spoken* as `<exit>`, and never acted on): so the pass
+    repeats until nothing more comes out and nothing of ours is left in what would be
+    spoken. A tag that forms only once the parse has lifted the tags around it is cut out
+    with the pieces it was made of, whatever `keep` says of it (the robot path would never
+    act on it), and is in the result only when `keep` refuses it. Whatever the text then
+    parses to, `keep` allowed, and what is spoken holds no tag of ours. Each pass takes at
+    least one character out, so the passes are bounded by the text, and the cost by its
+    square: the worst 1,000-character line (165 nested `<ex … it>` around a malformed
+    tag) takes 8-16 ms, and a turn can carry four such lines, each filtered on its own,
+    45-68 ms a turn through the host, measured on two runs, one under other load. The
+    sandboxed-extension host uses it to let a pack's line act only on the tags written
+    whole in the pack's own text (`ext_host.apply_ext_effects`); a line's markup, where
+    nothing is kept, is cleared in linear time instead (`ext_host.robot_markup`).
+    """
+    dropped: List[Action] = []
+    while text:
+        found: List[Action] = []
+
+        def _sub(m: re.Match) -> str:
+            name = m.group(1).lower()
+            if name not in KNOWN_TAGS:
+                return m.group(0)                   # not ours — leave it alone
+            action = _action_for(name, _fields(m.group(2)))
+            if action is None or keep(action):
+                return m.group(0)
+            found.append(action)
+            return ""
+
+        text = _TAG_RE.sub(_sub, text)
+        if found:
+            dropped += found
+            continue
+        # What the robot would speak once the tags that stay are lifted: a tag of ours that
+        # only forms there would be said aloud, so it goes, with the characters it is made
+        # of (the tags inside it stay).
+        spoken, origin = _lift_known(text)
+        cut: set = set()
+        for m in _TAG_RE.finditer(spoken):
+            name = m.group(1).lower()
+            if name not in KNOWN_TAGS:
+                continue
+            cut.update(origin[m.start():m.end()])
+            action = _action_for(name, _fields(m.group(2)))
+            if action is not None and not keep(action):
+                found.append(action)
+        if not cut:
+            break
+        dropped += found
+        text = "".join(c for i, c in enumerate(text) if i not in cut)
+    return text, dropped
+
+
 def tag_names(text: str) -> List[str]:
     """The names of the tags we recognise in `text`, lowercased, in the order they appear.
 
@@ -131,14 +260,34 @@ def tag_names(text: str) -> List[str]:
             if m.group(1).lower() in KNOWN_TAGS]
 
 
-# The paragraph that teaches the model the tags; explicit that tags are silent.
-ACTION_TAG_PROMPT = (
+# The paragraph that teaches the model the tags; explicit that tags are silent. Built one
+# line per tag, so a brain that may use only some of them (`LEAVE_TAG_PROMPT`) states each
+# rule in the same words.
+_TAG_INTRO = (
     "You can control the robot with tags. Write a tag on its own inside your spoken "
     "line and it is removed before anyone hears it — never say the tag out loud, never "
-    "mention tags to the child, and never use more than one per reply.\n"
-    "  <exit> - use when the child says goodbye, is done, or asks to stop.\n"
-    "  <sleep> - use only if the child asks you to go to sleep.\n"
+    "mention tags to the child, and never use more than one per reply.\n")
+EXIT_RULE = "  <exit> - use when the child says goodbye, is done, or asks to stop.\n"
+SLEEP_RULE = "  <sleep> - use only if the child asks you to go to sleep.\n"
+_LAUNCH_RULE = (
     "  <launch:MODULE> or <launch:MODULE:CONTENT> - start an activity, and ONLY with "
-    "a module name you have actually been told about in this conversation.\n"
-    "If none of these apply, just talk normally and use no tag at all."
+    "a module name you have actually been told about in this conversation.\n")
+_TAG_OUTRO = "If none of these apply, just talk normally and use no tag at all."
+
+ACTION_TAG_PROMPT = _TAG_INTRO + EXIT_RULE + SLEEP_RULE + _LAUNCH_RULE + _TAG_OUTRO
+
+#: The goodbye rule as an obligation, shared by both brains (llm_app.py lists it among its
+#: REQUIRED tags).
+EXIT_REQUIRED_RULE = ("  * Child says goodbye / is done / asks to stop -> your reply MUST "
+                      "begin with <exit>.\n")
+
+#: The tags for a brain that is never told any module ids (the content brain): `<exit>` and
+#: `<sleep>` only, because a `<launch:…>` it made up would reach the robot unchecked.
+#: Appended after the module's prompt, it is also what DEFAULT_PERSONA's "tags described
+#: below" refers to. A module prompt that asks for a follow-up question is overruled for
+#: the one reply that should not have one.
+LEAVE_TAG_PROMPT = (
+    "--- Robot controls ---\n" + _TAG_INTRO + EXIT_RULE + SLEEP_RULE + _TAG_OUTRO +
+    "\nThe goodbye tag is REQUIRED when it applies, not optional:\n" + EXIT_REQUIRED_RULE +
+    "Write the tag first, then a short warm goodbye. A goodbye asks no question."
 )

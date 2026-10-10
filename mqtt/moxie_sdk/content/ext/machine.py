@@ -348,8 +348,9 @@ def evaluate(ext, facts, *, grants=None, now_ms: int = 0, clock_local=None,
     effects: list = []
     notes: list = []
     handled = False
+    matched = -1
     try:
-        for rule in ext["rules"]:
+        for index, rule in enumerate(ext["rules"]):
             m.binds = {}
             m.step()
             for bname, bexpr in (rule.get("let") or {}).items():
@@ -358,6 +359,7 @@ def evaluate(ext, facts, *, grants=None, now_ms: int = 0, clock_local=None,
                 test = m.eval(rule["when"])
                 if is_error(test) or not test:
                     continue
+            matched = index
             for s in rule["do"]:
                 m.step()
                 eff = _run_stmt(m, s)
@@ -380,7 +382,7 @@ def evaluate(ext, facts, *, grants=None, now_ms: int = 0, clock_local=None,
     if over:
         return ExtResult(ok=False, reason=over, breach="output", steps=m.steps)
     return ExtResult(ok=True, effects=effects, steps=m.steps, notes=notes,
-                     handled=handled)
+                     handled=handled, rule=matched)
 
 
 def _run_stmt(m: _Machine, s: dict):
