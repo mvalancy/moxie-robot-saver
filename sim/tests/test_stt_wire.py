@@ -993,16 +993,20 @@ def test_loopback_with_the_gate_off_a_phantom_bye_ends_the_activity(timers, tmp_
 
 def test_loopback_a_loud_bye_is_still_the_childs_word(timers, tmp_path):
     """The same 'Bye.' on speech-level audio is the child's: the FINAL carries it, the robot
-    sends it as the turn, the answer carries an `exit_module` and the conversation ends
-    (here the model's `<exit>`; with #312, K5's Goodbye global without the model, as
-    test_leave_taking.py pins for typed goodbyes)."""
+    sends it as the turn, the content brain answers it, the answer carries an `exit_module`
+    and the conversation ends with `on_session_end('exit')`. Since #312 the shipped Goodbye
+    global answers a goodbye itself, so the model is never asked (K6 deferred this check to
+    #312's landing; test_leave_taking.py pins the same for typed goodbyes)."""
     robot, ears, seen = _goodbye_loopback(tmp_path, timers, tone_pcm(800, amplitude=0.3),
                                           "utt-loud")
     final = robot.heard[-1]
     assert (final.type, final.speech, final.uuid) == (final.FINAL, "Bye.", "utt-loud")
     assert robot.prompts == ["Bye."]
     assert seen["respond"] == ["Bye."], "the child's goodbye never reached the brain"
+    assert seen["brain"] == [], "the shipped Goodbye answers a goodbye without the model"
     answered = [r for r in robot.replies if r.get("event_id") == "evt-utt-loud"]
     assert answered and (answered[-1].get("output") or {}).get("text"), robot.replies
     assert len(_exits(robot)) == 1, robot.replies
+    assert [a.get("action") for r in answered for a in (r.get("response_actions") or [])] == [
+        "exit_module"], answered
     assert seen["ended"] == ["exit"], "the child's goodbye did not end the conversation"
