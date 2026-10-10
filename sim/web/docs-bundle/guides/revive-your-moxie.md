@@ -56,8 +56,8 @@ so Moxie gestures and emotes while it talks. For a real voice and ears, use the 
 docker compose -f sim/docker-compose.yml up
 ```
 
-Then open <http://localhost:8080/sim.html> (`/sim` serves the same page). You get the 3D Moxie,
-driven by the same protocol a real robot speaks. Click **Connect** for the live bus, **Listen** to
+Then open <http://localhost:8080/sim.html> (the `/sim` path serves the same page). You get the 3D
+Moxie, driven by the same protocol a real robot speaks. Click **Connect** for the live bus, **Listen** to
 talk, or **Play demo** for a canned conversation with nothing running. The simulator and a real robot
 are interchangeable clients of the backend ([why](../architecture/sim-as-a-client.md)).
 
