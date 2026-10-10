@@ -157,12 +157,20 @@ def strip_verbatim(items: list, history: list, *, span: int = VERBATIM_SPAN) -> 
 
 
 def _safe(text: str, classifier) -> bool:
-    """False when the safety classifier would BLOCK this line (never remember it)."""
+    """False when the safety classifier would BLOCK this line (never remember it).
+
+    Judged on Moxie's side, since a memory is her words in every later prompt — but
+    without her-side guards (`her_guards=False`): those excuse a story character who hurt
+    himself or an idiom she says, and "Sam cut himself on the glass on purpose" is a fact
+    about the child, not her line. A classifier without the keyword is asked plainly."""
     if classifier is None or not (text or "").strip():
         return True
     try:
         from .. import safety as safety_seam
-        verdict = classifier.assess(text, role=safety_seam.MOXIE)
+        try:
+            verdict = classifier.assess(text, role=safety_seam.MOXIE, her_guards=False)
+        except TypeError:        # a classifier that does not take the keyword
+            verdict = classifier.assess(text, role=safety_seam.MOXIE)
         return not (verdict and verdict.action == safety_seam.BLOCK)
     except Exception:
         return True              # a broken classifier must not silently eat memory

@@ -596,3 +596,73 @@ def test_shipped_modules_declare_valid_memory_blocks(path):
     for conv in module.conversations:
         # every declared namespace is actually referenced by the prompt
         assert f"persist_data.{conv.memory_namespace}" in conv.prompt
+
+
+# ---------------------------------------------------------------------------
+# the memory filter judges a fact about the child, never her own story line
+# ---------------------------------------------------------------------------
+
+#: Self-harm facts a summary could carry. Her story and accident guards (`allow_moxie`) excuse
+#: these as HER lines ("the chef cut himself on the carrot"); as facts about the child they
+#: were refused before and must stay refused: a memory is re-injected into every later prompt.
+SELF_HARM_FACTS = [
+    "Sam cut himself on the glass on purpose",
+    "Sam cut himself on a rock on purpose because he was sad",
+    "Sam hurt himself when he fell off the roof on purpose",
+    "Sam accidentally hurt himself and wants to disappear for a while",
+]
+
+
+@pytest.mark.parametrize("fact", SELF_HARM_FACTS, ids=[f[:30] for f in SELF_HARM_FACTS])
+def test_a_self_harm_fact_is_never_remembered(fact):
+    """The ratchet on `_safe`: refused before the per-side guards existed, refused now. A
+    filter that passed `her_guards=True`, or dropped the keyword, keeps every one of these."""
+    from moxie_sdk import safety as safety_seam
+    from moxie_sdk.content.memory import check_text
+    clf = safety_seam.default_classifier()
+    out = filter_summary({"facts": ["Sam has a dog", fact], "summary": fact}, classifier=clf)
+    assert out["facts"] == ["Sam has a dog"] and out["summary"] == "", fact
+    assert check_text(fact, classifier=clf) is False, fact
+    assert check_text(fact) is False, fact                     # the default classifier too
+
+
+def test_her_story_guards_would_excuse_those_facts_as_her_own_lines():
+    """Why the filter must not read her guards: as HER lines ("the chef cut himself on the
+    carrot") every fact above is excused, so the plain her-side call would remember them."""
+    from moxie_sdk import safety as safety_seam
+    clf = safety_seam.default_classifier()
+    for fact in SELF_HARM_FACTS:
+        assert clf.assess(fact, role=safety_seam.MOXIE).action == safety_seam.ALLOW, fact
+        assert clf.assess(fact, role=safety_seam.MOXIE,
+                          her_guards=False).action == safety_seam.BLOCK, fact
+
+
+def test_a_parents_edit_of_such_a_fact_is_refused(tmp_path):
+    mem, one = _one(tmp_path)
+    with pytest.raises(ValueError):
+        mem.edit_item(DEV, "mchat", one, SELF_HARM_FACTS[0])
+    assert texts(mem.load(DEV)["mchat"]["facts"]) == ["has a dog"]
+
+
+def test_a_classifier_without_the_keyword_is_still_asked():
+    """A classifier that takes `assess(text, *, role)` only: the filter falls back to the
+    plain call and honours its verdict, never failing open on the keyword it lacks."""
+    from moxie_sdk import safety as safety_seam
+    from moxie_sdk.content.memory import check_text
+
+    class Plain:
+        def __init__(self):
+            self.seen = []
+
+        def assess(self, text, *, role=safety_seam.CHILD):
+            self.seen.append((text, role))
+            if "bad" in text:
+                return safety_seam.InputSafety(is_unsafe=True, blocked_by=["x"])
+            return safety_seam.InputSafety()
+
+    clf = Plain()
+    assert check_text("a bad fact", classifier=clf) is False
+    assert check_text("a fine fact", classifier=clf) is True
+    assert clf.seen == [("a bad fact", safety_seam.MOXIE), ("a fine fact", safety_seam.MOXIE)]
+    out = filter_summary({"facts": ["a bad fact", "a fine fact"]}, classifier=clf)
+    assert out["facts"] == ["a fine fact"]
