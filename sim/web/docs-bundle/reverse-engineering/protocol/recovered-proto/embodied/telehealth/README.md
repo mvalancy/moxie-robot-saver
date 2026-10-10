@@ -1,10 +1,11 @@
-# 📁 `telehealth`
+# 📁 telehealth
 
-Recovered `.proto` schemas for the **`embodied.telehealth`** package — the wire contract this part of the robot speaks. Recovered by reverse-engineering, not vendor source; field numbers and names are what the binaries actually use.
+The [`embodied.telehealth`](../../../proto-catalog.md#embodiedtelehealth) package: remote-puppet sessions, where a remote operator replaces the on-device brain and drives what Moxie says and does.
+[Telehealth](../../../telehealth.md) explains the session flow and its MQTT transport.
 
 | File | Defines |
 |---|---|
 | [`TeleHealth.proto`](TeleHealth.proto) | `TelehealthStatus`, `Output`, `TelehealthMessage`, `TelehealthRobotCommand`, `TelehealthRobotEvent`; enums `Action`, `RobotState` |
 
 ---
-📖 [Docs index](../../../../../../docs/README.md) · [Back to top](../../../../../../README.md)
+📖 [embodied](../README.md) · [Docs index](../../../../../../docs/README.md) · [Back to top](../../../../../../README.md)

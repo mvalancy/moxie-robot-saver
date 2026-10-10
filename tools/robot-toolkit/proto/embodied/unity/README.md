@@ -1,6 +1,10 @@
-# 📁 `unity`
+# 📁 unity
 
-Recovered `.proto` schemas for the **`embodied.unity`** package — the wire contract this part of the robot speaks. Recovered by reverse-engineering, not vendor source; field numbers and names are what the binaries actually use.
+Three packages share this folder: [`embodied.unity`](../../../../../docs/reverse-engineering/protocol/proto-catalog.md#embodiedunity) (23 files), [`embodied.Robot`](../../../../../docs/reverse-engineering/protocol/proto-catalog.md#embodiedrobot) (`ConsoleCommandRequest.proto`) and [`embodied.TTSMarkupTool`](../../../../../docs/reverse-engineering/protocol/proto-catalog.md#embodiedttsmarkuptool) (`MarkUpToolMessages.proto`).
+The five files in [`wifiapp/`](../wifiapp/README.md) also declare `embodied.unity`, for 28 in all.
+Together they carry the seam between the brain logic and MAINAPP, the Unity face app.
+That covers CloudTTS audio and marks, speech and SFX playback, gaze, camera, pickup events, asset bundles, pairing and status.
+[MAINAPP interface](../../../../../docs/reverse-engineering/protocol/unity-mainapp-interface.md) explains it.
 
 | File | Defines |
 |---|---|
@@ -31,4 +35,4 @@ Recovered `.proto` schemas for the **`embodied.unity`** package — the wire con
 | [`enums.proto`](enums.proto) | enums `MpuShakeDirection` |
 
 ---
-📖 [Docs index](../../../../../docs/README.md) · [Back to top](../../../../../README.md)
+📖 [embodied](../README.md) · [Docs index](../../../../../docs/README.md) · [Back to top](../../../../../README.md)

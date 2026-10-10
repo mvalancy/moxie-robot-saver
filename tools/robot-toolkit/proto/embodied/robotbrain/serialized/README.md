@@ -1,6 +1,9 @@
-# 📁 `serialized`
+# 📁 serialized
 
-Recovered `.proto` schemas for the **`embodied.robotbrain.serialized`** package — the wire contract this part of the robot speaks. Recovered by reverse-engineering, not vendor source; field numbers and names are what the binaries actually use.
+The [`embodied.robotbrain.serialized`](../../../../../../docs/reverse-engineering/protocol/proto-catalog.md#embodiedrobotbrainserialized) package: what the robot saves to disk so it survives reboots and keeps talking offline.
+That is the offline fallback tree (`FallbackInfo`), the resume point (`CSData`) and the recommender's history (`UserRecommendationData`).
+[Offline and brain state](../../../../../../docs/reverse-engineering/protocol/offline-and-brain-state.md) explains them.
+The package's fourth file, `EventsAndHolidaysTags.proto`, sits in the parent [`robotbrain/`](../README.md) folder.
 
 | File | Defines |
 |---|---|
@@ -9,4 +12,4 @@ Recovered `.proto` schemas for the **`embodied.robotbrain.serialized`** package 
 | [`UserRecommendationData.proto`](UserRecommendationData.proto) | `UserRecommendationData`, `SparseValues`, `TagHistory`, `TagHistoryEntry`, `RandomTagState` |
 
 ---
-📖 [Docs index](../../../../../../docs/README.md) · [Back to top](../../../../../../README.md)
+📖 [robotbrain](../README.md) · [Docs index](../../../../../../docs/README.md) · [Back to top](../../../../../../README.md)

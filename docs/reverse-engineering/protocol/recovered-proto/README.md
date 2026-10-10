@@ -1,6 +1,7 @@
 # 📦 Recovered protobuf schemas
 
-**120 `.proto` files** reconstructed from Moxie's on-robot binaries (firmware `v24.10.803`): the
+**120 `.proto` files** reconstructed from Moxie's on-robot binaries (firmware `v24.10.803`), for anyone
+writing a client, server or custom firmware that speaks its protocol. They are the
 message contract between the robot's modules and much of the cloud protocol. Field numbers, enum
 values, packages and nesting are exact, so bindings generated from these files are wire-compatible
 with stock firmware. Read the [message catalog](../proto-catalog.md) for a browsable listing and
@@ -23,25 +24,26 @@ protoc --python_out=. --proto_path=. $(find . -name '*.proto')   # or --cpp_out 
 
 ## Layout
 
-The folder is not always the package: `wifiapp/` files declare `embodied.unity`, and `system/`
-holds both `embodied.sys` and `embodied.power`.
+The packages live under [`embodied/`](embodied/README.md), one folder per area; each folder's README
+lists its files and what they define. The folder is not always the package: `wifiapp/` files declare
+`embodied.unity`, and `system/` holds both `embodied.sys` and `embodied.power`.
 
 | Folder | Package(s) | What's in it | Catalog |
 |---|---|---|---|
-| `lizzerface/` | `embodied.lizzerface` | MCU protocol: motors, PID config, power rails, LED patterns, touch/switch/IMU/battery/servo events ([hardware map](../../hardware/hardware-map.md)) | [link](../proto-catalog.md#embodiedlizzerface) |
-| `wifiapp/` | `embodied.unity` | Setup app: `QRCommand` (the [QR grammar](../qr-commands.md)), status, silent boot, shutdown, bricked | [link](../proto-catalog.md#embodiedunity) |
-| `perception/audio/` | `embodied.perception.audio` | STT, wake word, DOA, XMOS config | [link](../proto-catalog.md#embodiedperceptionaudio) |
-| `perception/vision/` | `embodied.perception.vision` | Faces, people, poses, QR detection | [link](../proto-catalog.md#embodiedperceptionvision) |
-| `perception/fusion/` | `embodied.perception.fusion` | Fused people ([perception-fusion](../perception-fusion.md)) | [link](../proto-catalog.md#embodiedperceptionfusion) |
-| `robotbrain/` | `embodied.robotbrain` (+ `.serialized`, `.tags`) | ChatScript, content modules and schedules, intents, contexts, idle/mentor/STAR, remote chat, users | [link](../proto-catalog.md#embodiedrobotbrain) |
-| `robotbrain/serialized/` | `embodied.robotbrain.serialized` | Persisted brain state ([offline-and-brain-state](../offline-and-brain-state.md)) | [link](../proto-catalog.md#embodiedrobotbrainserialized) |
-| `unity/` | `embodied.unity` (+ `embodied.Robot`, `embodied.TTSMarkupTool`) | Brain to face: CloudTTS, speech/SFX playback, markup, gaze, camera, console commands, status ([MAINAPP interface](../unity-mainapp-interface.md)) | [link](../proto-catalog.md#embodiedunity) |
-| `logging/` | `embodied.logging` | Cloud config, backup/file sync, metrics, `IOTEndpoint`, SEL updates ([device config](../device-config-and-telemetry.md)) | [link](../proto-catalog.md#embodiedlogging) |
-| `system/` | `embodied.sys`, `embodied.power` | Power, time, system events ([power-and-system-events](../power-and-system-events.md)) | [sys](../proto-catalog.md#embodiedsys) · [power](../proto-catalog.md#embodiedpower) |
-| `launcher/` | `embodied.launcher` | Component state | [link](../proto-catalog.md#embodiedlauncher) |
-| `playspace/` | `embodied.playspace` | Play-space model | [link](../proto-catalog.md#embodiedplayspace) |
-| `telehealth/` | `embodied.telehealth` | Remote-puppet sessions ([telehealth](../telehealth.md)) | [link](../proto-catalog.md#embodiedtelehealth) |
-| `testing/` | `embodied.testing` | Test harness messages | [link](../proto-catalog.md#embodiedtesting) |
+| [`lizzerface/`](embodied/lizzerface/README.md) | `embodied.lizzerface` | MCU protocol: motors, PID config, power rails, LED patterns, touch/switch/IMU/battery/servo events ([hardware map](../../hardware/hardware-map.md)) | [link](../proto-catalog.md#embodiedlizzerface) |
+| [`wifiapp/`](embodied/wifiapp/README.md) | `embodied.unity` | Setup app: `QRCommand` (the [QR grammar](../qr-commands.md)), status, silent boot, shutdown, bricked | [link](../proto-catalog.md#embodiedunity) |
+| [`perception/audio/`](embodied/perception/audio/README.md) | `embodied.perception.audio` | STT, wake word, DOA, XMOS config | [link](../proto-catalog.md#embodiedperceptionaudio) |
+| [`perception/vision/`](embodied/perception/vision/README.md) | `embodied.perception.vision` | Faces, people, poses, QR detection | [link](../proto-catalog.md#embodiedperceptionvision) |
+| [`perception/fusion/`](embodied/perception/fusion/README.md) | `embodied.perception.fusion` | Fused people ([perception-fusion](../perception-fusion.md)) | [link](../proto-catalog.md#embodiedperceptionfusion) |
+| [`robotbrain/`](embodied/robotbrain/README.md) | `embodied.robotbrain` (+ `.serialized`, `.tags`) | ChatScript, content modules and schedules, intents, contexts, idle/mentor/STAR, remote chat, users | [link](../proto-catalog.md#embodiedrobotbrain) |
+| [`robotbrain/serialized/`](embodied/robotbrain/serialized/README.md) | `embodied.robotbrain.serialized` | Persisted brain state ([offline-and-brain-state](../offline-and-brain-state.md)) | [link](../proto-catalog.md#embodiedrobotbrainserialized) |
+| [`unity/`](embodied/unity/README.md) | `embodied.unity` (+ `embodied.Robot`, `embodied.TTSMarkupTool`) | Brain to face: CloudTTS, speech/SFX playback, markup, gaze, camera, console commands, status ([MAINAPP interface](../unity-mainapp-interface.md)) | [link](../proto-catalog.md#embodiedunity) |
+| [`logging/`](embodied/logging/README.md) | `embodied.logging` | Cloud config, backup/file sync, metrics, `IOTEndpoint`, SEL updates ([device config](../device-config-and-telemetry.md)) | [link](../proto-catalog.md#embodiedlogging) |
+| [`system/`](embodied/system/README.md) | `embodied.sys`, `embodied.power` | Power, time, system events ([power-and-system-events](../power-and-system-events.md)) | [sys](../proto-catalog.md#embodiedsys) · [power](../proto-catalog.md#embodiedpower) |
+| [`launcher/`](embodied/launcher/README.md) | `embodied.launcher` | Component state | [link](../proto-catalog.md#embodiedlauncher) |
+| [`playspace/`](embodied/playspace/README.md) | `embodied.playspace` | Play-space model | [link](../proto-catalog.md#embodiedplayspace) |
+| [`telehealth/`](embodied/telehealth/README.md) | `embodied.telehealth` | Remote-puppet sessions ([telehealth](../telehealth.md)) | [link](../proto-catalog.md#embodiedtelehealth) |
+| [`testing/`](embodied/testing/README.md) | `embodied.testing` | Test harness messages | [link](../proto-catalog.md#embodiedtesting) |
 
 ## Cross-validation against OpenMoxie
 
@@ -65,4 +67,4 @@ python -m moxie_toolkit.validate_protos [path/to/openmoxie/site/hive/mqtt/protos
   resolves them.
 
 ---
-📖 [IPC protocol](../robot-ipc-protocol.md) · [Reverse-engineering index](../../README.md) · [Docs index](../../../README.md)
+📖 [Protocol](../README.md) · [IPC protocol](../robot-ipc-protocol.md) · [Reverse-engineering index](../../README.md) · [Docs index](../../../README.md)

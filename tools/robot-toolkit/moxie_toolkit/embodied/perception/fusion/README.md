@@ -1,10 +1,7 @@
-# 📁 `fusion`
+# 📁 fusion — Python bindings
 
-Generated protobuf bindings for the **`fusion`** package. These are produced from the recovered `.proto` schemas — regenerate them rather than hand-editing.
-
-| File | Purpose |
-|---|---|
-| [`FusedPeople_pb2.py`](FusedPeople_pb2.py) | Generated protocol buffer code. |
+Generated `*_pb2.py` bindings, one per `.proto` in [`proto/embodied/perception/fusion/`](../../../../proto/embodied/perception/fusion/README.md) with the same base name; that README lists what each file defines.
+Regenerate them with the `grpc_tools.protoc` command in the [toolkit README](../../../../README.md); never edit them by hand.
 
 ---
-📖 [Docs index](../../../../../../docs/README.md) · [Back to top](../../../../../../README.md)
+📖 [perception](../README.md) · [Docs index](../../../../../../docs/README.md) · [Back to top](../../../../../../README.md)
