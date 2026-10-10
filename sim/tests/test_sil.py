@@ -1,7 +1,8 @@
 """Static site + browser SIM in real Chromium: every page at every resolution loads clean,
 and the SIM's controls and server voice work end to end. Pure bridge/voice logic is covered
 without a browser by test_audio.mjs and test_bridge.mjs (presence); the docs explorer and the
-SIM's per-viewport reachability by test_docs_explorer.mjs and test_responsive.mjs."""
+SIM's per-viewport reachability by test_docs_explorer.mjs and test_responsive.mjs. At the
+end, one SIL check over a real broker: the virtual robot's notify (no browser)."""
 import pytest
 
 from conftest import RESOLUTIONS, PAGES
@@ -309,3 +310,40 @@ def test_a_vision_event_never_appears_in_the_comms_log(page, server):
         """() => [...document.querySelectorAll('#transcript .turn')].map(r => r.textContent)""")
     assert not any("eb-" in r for r in rows), rows
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
+
+
+# --------------------------------------------------------------------------- #
+# SIL over a REAL broker: the robot's notify is the record, not a second copy.
+#
+# `sim/virtual_moxie.py --notify` reports what it said after the answer, as a real Moxie
+# does (mqtt-and-conversation.md §4.2), and waits until the supervisor has read it (a
+# module query sent behind it is answered). The supervisor's transcript on disk must
+# then hold the turn once: before the reconcile in memory.py it held each line twice.
+# --------------------------------------------------------------------------- #
+def test_the_virtual_robot_notifies_and_the_transcript_stays_single(tmp_path):
+    import json
+    import os
+    import subprocess
+    import sys
+    import uuid
+
+    pytest.importorskip("paho.mqtt.client", reason="the SIL robot needs paho")
+    import helpers_stack as S
+    if not S.broker_available():
+        pytest.skip("no mosquitto binary and no runnable docker")
+    memdir = tmp_path / "memory"
+    device = f"d_{uuid.uuid4()}"
+    with S.Stack(str(tmp_path / "stack"),
+                 env={"MOXIE_MEMORY_DIR": str(memdir), "MOXIE_TTS": "off"}) as stack:
+        robot = subprocess.run(
+            [sys.executable, os.path.join(S.REPO, "sim", "virtual_moxie.py"),
+             "--port", str(stack.port), "--device-id", device, "--timeout", "30",
+             "--status-url", f"http://127.0.0.1:{stack.supervisor.status_port}",
+             "--notify"],
+            capture_output=True, text=True, timeout=180)
+        assert robot.returncode == 0, robot.stdout[-2000:] + robot.stderr[-2000:]
+        assert "→notify" in robot.stdout, robot.stdout[-2000:]
+        with open(memdir / f"{device}.json") as fh:
+            stored = json.load(fh)
+    assert stored == [{"role": "user", "content": "hello Moxie"},
+                      {"role": "assistant", "content": "You said: hello Moxie"}], stored

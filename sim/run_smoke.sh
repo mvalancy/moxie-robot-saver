@@ -265,14 +265,18 @@ else
   EXPECT_SCORED="--expect-scored"
   case "${MOXIE_EXPRESSIVE:-planner}" in off) EXPECT_SCORED="";; esac
   [ "${MOXIE_AUTOMARKUP:-1}" = "0" ] && EXPECT_SCORED=""
-  echo "── virtual Moxie (SIL round-trip${EXPECT_TTS:+ + tts audio}${EXPECT_SCORED:+ + scored output}${REJECT_ECHO:+ + 🧠 live brain}) ──"
+  echo "── virtual Moxie (SIL round-trip${EXPECT_TTS:+ + tts audio}${EXPECT_SCORED:+ + scored output}${REJECT_ECHO:+ + 🧠 live brain} + notify) ──"
   # `--status-url` is NOT for driving anything here (that is --telehealth's job). It is
   # so that if the config wait expires, the robot can ASK whether the supervisor is
   # alive on a DIFFERENT transport and say which it was. `no config pushed within
   # timeout` read as "the appliance did not answer" for as long as it could not tell
   # a starved supervisor from a wedged one. See `_why_no_config`.
+  # `--notify`: the robot then reports what it said, as a real Moxie does (a remote-chat
+  # `command: notify`, mqtt-and-conversation.md §4.2), and waits until the supervisor has
+  # read it. Before this flag no double in the repo sent one, so every green run here
+  # was a shape a real robot never produces. The browser SIM still never notifies.
   python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout $CHAT_TIMEOUT \
-    --status-url "http://127.0.0.1:$STATUS_PORT" \
+    --status-url "http://127.0.0.1:$STATUS_PORT" --notify \
     $EXPECT_SCORED $EXPECT_TTS $REJECT_ECHO
   rc=$?
 fi
