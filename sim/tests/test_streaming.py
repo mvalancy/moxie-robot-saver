@@ -26,6 +26,7 @@ from helpers_runtime import (CHAT_TOPIC, CountingSynth, LatchClient,  # noqa: E4
 from moxie_sdk.app import MoxieApp                                   # noqa: E402
 from moxie_sdk.filler import FILLERS                                 # noqa: E402
 from moxie_sdk.types import Reply, ReplyChunk, ResultCode            # noqa: E402
+from moxie_runtime.turns import STOCK_REPLY                          # noqa: E402
 
 TTS_TOPIC = "/devices/{device_id}/commands/tts"
 FILLER_TEXTS = [text for (text, _markup) in FILLERS]
@@ -332,6 +333,114 @@ def test_an_app_that_streams_nothing_still_ends_the_turn():
     rt._pool.shutdown(wait=True)
     (reply,) = chats(rt, dev)
     assert reply["result"] == ResultCode.SUCCESS and "chunk_num" not in reply
+
+
+# ----------------------------------------- (v-b) our own staging fails mid-stream
+# A chunk the staging cannot read (`_stage`'s `int(mood_intensity)` on "loud") fails in
+# OUR code, not the model's stream, yet the stream's except branch takes it for a model
+# error. The fix re-raises it to `_turn_worker`'s guard (K8), which closes the turn from
+# what reached the wire; it is `_handle_stream_turn`'s hunk, deferred until K13 has
+# rewritten that file's reply paths. Strict and for the assertion only: the day the fix
+# lands these pass, strict turns that into a failure and the marker comes off with it;
+# any other error is a failure today.
+OUR_STAGING_FAILS = pytest.mark.xfail(strict=True, raises=AssertionError,
+                                      reason="K17a turns.py hunk lands after K13")
+
+
+def _parse_strictly(replies):
+    """Each reply through the committed `RemoteChatResponse` pb2, unknown fields refused."""
+    pytest.importorskip("google.protobuf")
+    from google.protobuf import json_format
+    from helpers_runtime import toolkit_pb2
+    from moxie_sdk.wire import NON_PROTO_FIELDS
+    # The pb2 imports its siblings as `embodied.…`: the package root goes on the path
+    # APPENDED (it also holds a `markup.py` that would shadow the supervisor's).
+    root = os.path.join(REPO, "tools", "robot-toolkit", "moxie_toolkit")
+    if root not in sys.path:
+        sys.path.append(root)
+    pb = toolkit_pb2("embodied.robotbrain.RemoteChat_pb2")
+    return [json_format.ParseDict({k: v for k, v in r.items() if k not in NON_PROTO_FIELDS},
+                                  pb.RemoteChatResponse(), ignore_unknown_fields=False)
+            for r in replies]
+
+
+def _errors(rt):
+    return [n for n in rt.recent if n["kind"] == "error"]
+
+
+@OUR_STAGING_FAILS
+def test_a_chunk_our_staging_cannot_read_closes_the_turn_with_the_stock_line(capsys):
+    """Nothing of the turn reached the wire, so the robot gets one plain SUCCESS with the
+    stock line, and the log and the feed say 'turn failed' once each: what the plain
+    path's worker guard already does. origin/dev: one empty SUCCESS as chunk 1 with
+    `is_completed`, no chunk 0, no stock line, nothing in the log or the feed."""
+    app = ScriptedStreamApp(plan(chunk("I am SO excited!", final=True,
+                                       mood_intensity="loud")))
+    rt, dev = stream_runtime(app, budget=0)
+    push(rt, dev, "hello", "evt-loud")
+    rt._pool.shutdown(wait=True)
+    replies = chats(rt, dev)
+    assert [r["output"]["text"] for r in replies] == [STOCK_REPLY], replies
+    assert replies[0]["result"] == ResultCode.SUCCESS and replies[0]["event_id"] == "evt-loud"
+    assert "chunk_num" not in replies[0] and "consistency_control" not in replies[0]
+    (msg,) = _parse_strictly(replies)
+    assert msg.output.text == STOCK_REPLY and msg.chunk_num == 0
+    assert capsys.readouterr().out.count("turn failed") == 1
+    assert len(_errors(rt)) == 1
+    assert app.respond_calls == 0, "our failure is not the model's: no second brain call"
+
+
+@OUR_STAGING_FAILS
+def test_after_a_filler_a_chunk_our_staging_cannot_read_closes_the_sequence(capsys):
+    """A filler (chunk 0, REPLY_PENDING) is on the wire when the chunk fails, so the stock
+    line closes the sequence as the next chunk with `is_completed`. origin/dev: an empty
+    chunk that skips a number (the failed chunk had taken it) and no stock line."""
+    app = ScriptedStreamApp(plan(chunk("I am SO excited!", final=True,
+                                       mood_intensity="loud"), ready=False))
+    rt, dev = stream_runtime(app, budget=BUDGET)
+    push(rt, dev, "tell me something", "evt-loud-late")
+    assert rt.client.wait_for(lambda pub: fillers(pub), PATIENCE), "no filler published"
+    rt.brain_budget_s = 0                        # no more fillers; just the failing chunk
+    app.plans[0].release_all()
+    rt._pool.shutdown(wait=True)
+    replies = chats(rt, dev)
+    said = len(fillers(rt.client.published))     # one, or two on a slow box
+    assert [r["output"]["text"] for r in replies[said:]] == [STOCK_REPLY], replies
+    assert [r["chunk_num"] for r in replies] == list(range(said + 1))
+    assert [r["result"] for r in replies] == [ResultCode.REPLY_PENDING] * said + [
+        ResultCode.SUCCESS]
+    assert replies[-1]["consistency_control"] == {"is_completed": True}
+    assert _parse_strictly(replies)[-1].consistency_control.is_completed is True
+    assert capsys.readouterr().out.count("turn failed") == 1
+    assert len(_errors(rt)) == 1
+
+
+class _LoudAsTheChildMovesOn:
+    """A chunk whose staging dies (`int("loud")`) at the instant a newer turn starts:
+    reading its `mood_intensity` bumps the robot's turn number first."""
+    text, markup, final, actions, end_turn, result_code = (
+        "I am SO excited!", None, True, [], True, None)
+
+    def __init__(self):
+        self.supersede = None
+
+    @property
+    def mood_intensity(self):
+        self.supersede()
+        return "loud"
+
+
+def test_a_turn_superseded_as_our_staging_fails_sends_the_robot_nothing_more():
+    """The guard's first rule holds on this path, before and after the deferred fix: a
+    turn already superseded when the failure is handled gets no closing line at all."""
+    loud = _LoudAsTheChildMovesOn()
+    app = ScriptedStreamApp(plan(loud))
+    rt, dev = stream_runtime(app, budget=0)
+    loud.supersede = lambda: rt._turn_seq.__setitem__(dev, rt._turn_seq[dev] + 1)
+    push(rt, dev, "hello", "evt-moved-on")
+    rt._pool.shutdown(wait=True)
+    assert chats(rt, dev) == []
+    assert app.respond_calls == 0
 
 
 # ------------------------------------------------------ (vi) the MOXIE_STREAMING knob
