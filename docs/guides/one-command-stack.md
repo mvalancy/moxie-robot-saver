@@ -102,7 +102,7 @@ With `.env.example`'s values, three ports listen on every interface, because oth
 | Port | For | What any device on your network can do with it |
 |---|---|---|
 | `8883` | The robot (MQTT over TLS) | Connect anonymously, as a robot does. The broker confines each client to its own device id, but cannot tell a robot from a device that copies its id ([broker security](#broker-security)). |
-| `9001` | The browser Sim and UI (MQTT over WebSocket) | Read every robot's MQTT traffic as it passes, including the settings sent to a robot, your child's name among them. It can write only as the Sim's own device id ([why](../architecture/backlog/security-broker-auth.md#25-the-browser-sim-option-a-shipped-option-b-closes-the-residual)). |
+| `9001` | The browser Sim and UI (MQTT over WebSocket) | Read every robot's MQTT traffic as it passes, including the settings sent to a robot, your child's name among them ([why](../architecture/backlog/security-broker-auth.md#25-the-browser-sim-option-a-shipped-option-b-closes-the-residual)). As on `8883`, a device that copies a robot's id is treated as that robot: it can post that robot's state and events, though never a command to it. |
 | `8080` | You, from your phone (the console) | Use the console. Its sign-in is an email address alone, and most of it asks for none: reading and erasing what Moxie remembers, reading the safety review, changing settings, permitting a robot, speaking as Moxie. Whether it should require a real sign-in is an open owner question (OQ3). |
 
 Plain MQTT (`1883`) and the supervisor's status port (`8931`) listen on this machine only. Keeping the
