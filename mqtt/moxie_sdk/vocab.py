@@ -224,6 +224,51 @@ VERBS: Tuple[str, ...] = (
 )
 VERB_SET = frozenset(VERBS)
 
+# --------------------------------------------------------------------------- #
+# What a content pack may put on the robot (content/ext_host.py's gate)
+# --------------------------------------------------------------------------- #
+#: Words that name a system flow rather than a performance: a catalogue verb holding one
+#: is a system verb, never sent from pack content however it is written (`is_system_verb`).
+#: Read off `VERBS` by name, so a verb added to the catalogue later is a system verb on
+#: its own; today exactly the two recovered ones (behavior-markup.md:75-76).
+SYSTEM_VERB_WORDS: Tuple[str, ...] = (
+    "start-system", "wifi", "pair", "reset", "update", "suspend", "shutdown", "reboot",
+    "factory",
+)
+
+
+def is_system_verb(verb) -> bool:
+    """`verb` names a system flow: it holds one of `SYSTEM_VERB_WORDS`, in any case."""
+    v = str(verb or "").lower()
+    return any(word in v for word in SYSTEM_VERB_WORDS)
+
+
+SYSTEM_VERBS = frozenset(v for v in VERBS if is_system_verb(v))
+
+#: The verbs pack content (an extension's line or markup, a conversation's opener) may send:
+#: the ones this appliance mints for a line itself (`mark`'s callers below) and whose
+#: payload `validate_markup` reads — a face, a gesture or whole-body tree, a sound, the
+#: screen icons. Every other catalogue verb is cut from pack content and named to the
+#: parent (`content/ext_host.py`); widening this is a reviewed code change.
+EXPRESSIVE_VERBS = frozenset({
+    "behaviour-tree", "playback-mood", "vocal-gesture", "playaudio", "stopaudio", "icons-v2",
+})
+
+#: A `<mark` opening and the verb it names, read tolerantly (any quoting, any case, spaces
+#: around the `=`, data or none, a mark left open), for naming what a robot's reader might
+#: make of pack text; `_MARK_RE` below is the strict form every mark this appliance mints
+#: has. Reads from an opening to the next `<` or `>` at most, so a run of openings costs
+#: each its own gap.
+_MARK_VERB_RE = re.compile(r"<mark\b[^<>]*?\bname\s*=\s*[\"']?\s*cmd:\s*([A-Za-z0-9_-]+)", re.I)
+
+
+def mark_verbs(text) -> List[str]:
+    """Every verb a `<mark` in `text` names, as written, in order (`_MARK_VERB_RE`). The
+    catalogue is case-sensitive, so a caller lower-cases only to ask whether a verb is a
+    system verb in any spelling."""
+    return _MARK_VERB_RE.findall(str(text or ""))
+
+
 #: `RemoteDialog.DialogAct` (22) — remote-chat-protocol.md:93.
 DIALOG_ACTS: Tuple[str, ...] = (
     "abandon", "apology", "apology_response", "appreciation", "backchannelling",
@@ -319,9 +364,21 @@ def break_mark(time: str = "0.35s") -> str:
 # --------------------------------------------------------------------------- #
 # Validation — the gate every generated line passes
 # --------------------------------------------------------------------------- #
-_MARK_RE = re.compile(r'<mark\s+name="cmd:([a-z0-9-]+)(?:,data:(\{.*?\}))?"\s*/?>', re.I | re.S)
-_USEL_RE = re.compile(r'<usel\b[^>]*genre="([^"]*)"[^>]*>', re.I)
-_SPURT_RE = re.compile(r'<spurt\b[^>]*spurt_id="([^"]*)"', re.I)
+#: Each pattern reads a tag from its opening to the next `<` or `>` and no further
+#: (`[^<>]`), so `validate_markup` is linear in its text: a run of openings costs each one
+#: its own gap. A mark's data holds no `<` or `>` (none this appliance mints does; one that
+#: does is not read as a mark, and the extension host drops it for its form first), while a
+#: usel's genre and a spurt's id are still read to their closing quote, a quoted `>`
+#: included (`<spurt x" spurt_id="n>pe"/>` is a spurt with the id `n>pe`), which the host's
+#: whole-text pass relies on. Before: `data:{.*?}` read on to the end of the text from every
+#: unclosed opening (11, 44 and 188 ms at 8, 16 and 32 KB), `[^>]*` from every `<usel` or
+#: `<spurt` opening (25-58 ms per 8 KB, four times longer per doubling), and a run of
+#: `<usel genre="` read on from each `genre="` found on the way back (0.35 s, 2.6 s and
+#: 20 s), measured on the build host; now 0.2-0.5 ms at 32 KB and 1.3-4.2 ms at 256 KB on
+#: every shape tried (sim/tests/test_pack_markup_gate.py).
+_MARK_RE = re.compile(r'<mark\s+name="cmd:([a-z0-9-]+)(?:,data:(\{[^<>]*\}))?"\s*/?>', re.I)
+_USEL_RE = re.compile(r'<usel\b[^<>]*genre="([^"]*)"[^<>]*>', re.I)
+_SPURT_RE = re.compile(r'<spurt\b[^<>]*spurt_id="([^"]*)"', re.I)
 
 
 def _decode(body: str):
@@ -337,7 +394,10 @@ def validate_markup(markup: str) -> List[str]:
 
     Returns `"<slot>=<id>"` strings (empty = only recovered ids). Checks the verb, mood/
     intensity, tree `eventName`/`behaviour`, icon values, `SoundToPlay`, `<usel genre>`
-    and `<spurt spurt_id>`. Cheap enough for the hot path.
+    and `<spurt spurt_id>`. Linear in `markup` (the patterns above), so cheap enough for
+    the hot path on any text. A system verb is a catalogue verb and passes here: whether
+    pack content may send it is the extension host's gate (`SYSTEM_VERBS`,
+    `EXPRESSIVE_VERBS`).
     """
     bad: List[str] = []
     if not markup:
