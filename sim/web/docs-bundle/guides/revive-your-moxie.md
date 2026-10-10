@@ -22,7 +22,8 @@ flowchart TD
   flash --> qr
 ```
 
-All three paths use the same backend, so set that up first.
+Paths B and C use the backend below. Path A's command starts its own broker and supervisor, so run
+one stack at a time: both use ports `8080`, `1883` and `9001`.
 
 ## 1. Stand up the backend
 
