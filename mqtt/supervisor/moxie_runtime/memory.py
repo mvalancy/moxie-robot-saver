@@ -1,11 +1,99 @@
-"""Conversation transcript + long-term memory: persistence, the privacy gate, parent read/erase."""
+"""Conversation transcript + long-term memory: persistence, the privacy gate, parent read/erase,
+and the robot's notify reconciled with the turn it reports (never a second copy of it)."""
 from __future__ import annotations
-import json, os
+import json, os, re, threading
 
 from moxie_sdk.types import ActionType
 from moxie_sdk.memory_store import MemoryStore
 from moxie_sdk.cloud_config import LoggingPolicy
+from moxie_sdk.filler import FILLERS
 from .constants import MEMORY_POLICY
+
+#: Guards each robot's turn record and its history list between the MQTT thread (a prompt
+#: starting a turn, a notify arriving) and the worker that finishes the turn (`_remember`).
+#: Module-level, as `turns._OPEN_TURNS_LOCK` is: one lock per process, held for list work.
+_NOTIFY_LOCK = threading.Lock()
+
+_TAG = re.compile(r"<[^>]*>")
+_NOT_WORD = re.compile(r"[\W_]+")
+
+
+def _tokens(text) -> list[tuple[str, str]]:
+    """`[(word, key), …]`: the whitespace-split words of `text` that hold a letter or digit,
+    each with the key it is compared by (markup tags out, case and punctuation ignored):
+    "Rock and dust!" -> [("Rock", "rock"), ("and", "and"), ("dust!", "dust")]."""
+    out = []
+    for word in _TAG.sub(" ", text or "").split():
+        key = _NOT_WORD.sub("", word.casefold())
+        if key:
+            out.append((word, key))
+    return out
+
+
+def _keys(text) -> list[str]:
+    return [key for _word, key in _tokens(text)]
+
+
+def _find(hay: list, needle: list, start: int = 0) -> int:
+    """Index of `needle` as a contiguous run in `hay` at or after `start`, else -1."""
+    n = len(needle)
+    if not n:
+        return -1
+    for i in range(start, len(hay) - n + 1):
+        if hay[i:i + n] == needle:
+            return i
+    return -1
+
+
+def _find_uncovered(hay: list, needle: list, covered: set) -> int:
+    """`_find`, preferring the first run with a word the robot has not reported yet, so an
+    answer that repeats a sentence ("No. No. No.") reported one chunk at a time is covered
+    chunk by chunk rather than the same run three times."""
+    first = at = _find(hay, needle)
+    while at >= 0:
+        if any(i not in covered for i in range(at, at + len(needle))):
+            return at
+        at = _find(hay, needle, at + 1)
+    return first
+
+
+def _words(toks) -> str:
+    return " ".join(word for word, _key in toks)
+
+
+#: The lines the runtime speaks around an answer and never writes in history itself: the
+#: fillers (`turns._say_filler`). The queued hello is per turn (`_TurnRecord.extras`).
+_FILLER_KEYS = tuple(_keys(text) for text, _markup in FILLERS)
+
+
+class _TurnRecord:
+    """One robot's current turn as the notify reconcile sees it (`MemoryMixin`, "the
+    robot's notify"). Open from the prompt until `_remember` completes it with what Moxie
+    was told to say; a notify that arrives while it is open is held for that moment."""
+    __slots__ = ("child", "extras", "text", "words", "keys", "lead", "covered", "entry",
+                 "held")
+
+    def __init__(self, child: str, extras=()):
+        self.child = _keys(child)                 # the child's line, as compared
+        self.extras = [k for k in (_keys(e) for e in extras) if k]   # the queued hello
+        self.text = None                          # what Moxie was told to say; None = open
+        self.words: list = []                     # its words, for a cut-off entry
+        self.keys: list = []
+        self.lead = 0                             # how many keys of a hello open `text`
+        self.covered: set = set()                 # key indices the robot has reported
+        self.entry = None                         # the history dict holding `text`
+        self.held: list = []                      # notifies that arrived while open
+
+    @property
+    def open(self) -> bool:
+        return self.text is None
+
+    def complete(self, text: str):
+        self.text = text
+        toks = _tokens(text)
+        self.words = [word for word, _key in toks]
+        self.keys = [key for _word, key in toks]
+        self.lead = next((len(e) for e in self.extras if self.keys[:len(e)] == e), 0)
 
 
 class MemoryMixin:
@@ -238,22 +326,189 @@ class MemoryMixin:
         except RuntimeError:                      # pool already shutting down
             return _run()
 
+    # ---- the robot's notify: the record, not a second copy ----
+    # A real Moxie reports what it said after each utterance: a remote-chat request with
+    # `command: "notify"`, the child's line in `extra_lines[]` (`context_type: "input"`) and
+    # Moxie's words in `speech` (mqtt-and-conversation.md §4.2; OpenMoxie
+    # conversations.py:59-68 reads the same two fields). The runtime ALSO writes each turn
+    # when it answers (`_remember`): the only writer a robot that never notifies has (the
+    # browser SIM; OpenMoxie's `_auto_history`, conversations.py:128-130, :187-197). Both
+    # wrote, so a robot's every exchange was held twice. Now each turn has a record
+    # (`_TurnRecord`): the child's line, the hello queued for it, and, once `_remember`
+    # runs, what Moxie was told to say. A notify is reconciled against it:
+    #  * a child line equal to the turn's (case and punctuation aside) is already held;
+    #  * fillers, and a hello the runtime spoke as chunk 0, are never history (they were
+    #    not before either);
+    #  * a report that is the turn's text, or a run inside it (one streamed chunk, "Rock
+    #    and" after the child cut in), marks those words reported; the entry becomes what
+    #    the robot says it got through only on a clean cut (a prefix, nothing after it),
+    #    never on a tail piece alone or a report with a hole, so a line the robot may still
+    #    report is never dropped and per-chunk reports in any order re-assemble the text;
+    #  * anything else (a module's own line, a child line the turn never heard) is
+    #    appended, consecutive same-role reports joined as OpenMoxie's `add_history` does
+    #    (conversations.py:29-39), never into the turn's own entry.
+    # Only the current turn's record is matched, never the whole tail: a line the child
+    # really says twice is two lines. A notify that arrives while the turn is open (the
+    # robot speaks chunk 0 before the stream closes) is held and reconciled when
+    # `_remember` runs; if that turn never closes (superseded, its worker died) nothing of
+    # it reached history, so what the robot reported is kept as reported when the next turn
+    # starts. Which cadence an 803 robot uses, one notify per utterance or per event, is not
+    # captured (§4.2 says each utterance); the rule holds for both. `animation:` /
+    # `silent:` lines are still dropped; one `_save_memory` per notify, as before.
+
+    def _turn_records(self) -> dict:
+        """`{device_id: _TurnRecord}`, the turn each robot is on or last finished. Created
+        on first use (held under `_NOTIFY_LOCK` by every caller)."""
+        return self.__dict__.setdefault("_notify_records", {})
+
+    def _notify_tails(self) -> dict:
+        """`{device_id: entry}`: the history entry the last unmatched report appended, the
+        one a consecutive same-role report joins. Cleared by the turn's own lines."""
+        return self.__dict__.setdefault("_notify_tail_entries", {})
+
+    def _start_turn_record(self, device_id, speech):
+        """A turn starts (`_on_remote_chat`): open its record, with the hello queued to ride
+        out as its chunk 0 (`_speak_opener`; one dict read, so no `_presence_lock`). A
+        previous turn still open with held notifies never reached history: what the robot
+        reported about it is kept as reported, before this turn's lines."""
+        with _NOTIFY_LOCK:
+            records = self._turn_records()
+            old = records.get(device_id)
+            hello = self._pending_opener.get(device_id)
+            records[device_id] = _TurnRecord(speech, [hello] if hello else ())
+            if old is not None and old.open and old.held:
+                h = self.history.setdefault(device_id, [])
+                changed = False
+                for rcr in old.held:
+                    changed |= self._reconcile_notify(device_id, rcr, h, old)
+                if changed:
+                    self._save_memory(device_id)
+
     def _remember(self, device_id, speech, text):
-        """Fold one finished turn into the robot's conversation history."""
-        h = self.history.setdefault(device_id, [])
-        if speech:
-            h.append({"role": "user", "content": speech})
-        h.append({"role": "assistant", "content": text})
-        self._save_memory(device_id)
+        """Fold one finished turn into the robot's conversation history, completing its
+        record with `text` (what Moxie was told to say). Notifies held while the turn was
+        open are reconciled first, in arrival order. A turn with no record (a direct call)
+        gets one here, so the notify that follows still reconciles.
+
+        The open record is this turn's when its child line is `speech` (the safety gate
+        remembers its redirect with no child line: that is this turn too). A record for a
+        newer turn, which a superseded worker meets when the child's next prompt lands
+        between its stale check and this call, is left open for that turn: the lines are
+        written as they always were, and the newer turn's notifies stay held for it."""
+        with _NOTIFY_LOCK:
+            h = self.history.setdefault(device_id, [])
+            records = self._turn_records()
+            rec = records.get(device_id)
+            if rec is not None and rec.open and speech and _keys(speech) != rec.child:
+                rec = None                            # a newer turn's: not ours to complete
+            elif rec is None or not rec.open:
+                rec = records[device_id] = _TurnRecord(speech)
+            if rec is not None:
+                rec.complete(text)
+                for rcr in rec.held:
+                    self._reconcile_notify(device_id, rcr, h, rec)
+                rec.held = []
+            if speech:
+                h.append({"role": "user", "content": speech})
+            entry = {"role": "assistant", "content": text}
+            h.append(entry)
+            self._notify_tails().pop(device_id, None)
+            if rec is not None:
+                rec.entry = entry
+                self._apply_coverage(rec)
+            self._save_memory(device_id)
 
     def _ingest_notify(self, device_id, rcr):
-        h = self.history.setdefault(device_id, [])
+        """The robot's report of what was said (`command: "notify"`): reconciled with the
+        turn it reports, or held until that turn completes."""
+        with _NOTIFY_LOCK:
+            h = self.history.setdefault(device_id, [])
+            rec = self._turn_records().get(device_id)
+            if rec is not None and rec.open:
+                rec.held.append(rcr)
+                return
+            self._reconcile_notify(device_id, rcr, h, rec)
+            self._save_memory(device_id)
+
+    def _reconcile_notify(self, device_id, rcr, h, rec) -> bool:
+        """Fold one notify into `h` against `rec`: the turn it may report (completed), a
+        turn that never completed (open: nothing of it is in history, so every line is
+        kept), or None (no turn). True when history changed."""
+        done = rec is not None and not rec.open
+        changed = False
         for ln in rcr.get("extra_lines", []) or []:
-            if ln.get("context_type") == "input" and ln.get("text"):
-                h.append({"role": "user", "content": ln["text"]})
-        if rcr.get("speech"):
-            spoken = "\n".join(l for l in rcr["speech"].splitlines()
-                               if not l.startswith(("animation:", "silent:")))
-            if spoken.strip():
-                h.append({"role": "assistant", "content": spoken.strip()})
-        self._save_memory(device_id)
+            if ln.get("context_type") != "input" or not ln.get("text"):
+                continue
+            if done and rec.child and _keys(ln["text"]) == rec.child:
+                continue                              # the line this turn answered
+            changed |= self._append_reported(device_id, h, "user", ln["text"])
+        said = " ".join(line for line in (rcr.get("speech") or "").splitlines()
+                        if not line.startswith(("animation:", "silent:")))
+        toks = self._without_extras(_tokens(said), rec)
+        if not toks:
+            return changed
+        if not done or not rec.keys:
+            return self._append_reported(device_id, h, "assistant", _words(toks)) or changed
+        keys = [key for _word, key in toks]
+        at = _find_uncovered(rec.keys, keys, rec.covered)
+        if at >= 0:                                   # the text, or a run inside it
+            rec.covered.update(range(at, at + len(keys)))
+            return self._apply_coverage(rec) or changed
+        at = _find(keys, rec.keys)
+        if at >= 0:                                   # the text with more around it
+            rec.covered.update(range(len(rec.keys)))
+            changed |= self._apply_coverage(rec)
+            for run in (toks[:at], toks[at + len(rec.keys):]):
+                if run:
+                    changed |= self._append_reported(device_id, h, "assistant", _words(run))
+            return changed
+        return self._append_reported(device_id, h, "assistant", _words(toks)) or changed
+
+    @staticmethod
+    def _without_extras(toks, rec):
+        """`toks` minus every run that is a filler, or the turn's queued hello, unless that
+        hello opens the turn's own text (the streamed path), where it is matched as text."""
+        extras = list(_FILLER_KEYS)
+        if rec is not None:
+            extras += [e for e in rec.extras if _find(rec.keys, e) < 0]
+        out, i = [], 0
+        while i < len(toks):
+            hit = next((len(e) for e in extras
+                        if [k for _w, k in toks[i:i + len(e)]] == e), 0)
+            if hit:
+                i += hit
+            else:
+                out.append(toks[i])
+                i += 1
+        return out
+
+    def _append_reported(self, device_id, h, role, text) -> bool:
+        """Append a reported line the turn does not hold, joining it to the previous
+        reported line of the same role (OpenMoxie conversations.py:33-35)."""
+        tails = self._notify_tails()
+        tail = tails.get(device_id)
+        if tail is not None and h and h[-1] is tail and tail["role"] == role:
+            tail["content"] = f"{tail['content']} {text}"
+        else:
+            tail = tails[device_id] = {"role": role, "content": text}
+            h.append(tail)
+        return True
+
+    @staticmethod
+    def _apply_coverage(rec) -> bool:
+        """Make the turn's entry what the robot reports having said: the whole text, or,
+        on a clean cut (its reports cover a prefix and nothing after it, past any hello),
+        that prefix. A tail piece alone or a report with a hole keeps the whole text."""
+        if rec.entry is None:
+            return False
+        n, p = len(rec.keys), 0
+        while p < n and p in rec.covered:
+            p += 1
+        if 0 < p < n and len(rec.covered) == p and p > rec.lead:
+            want = " ".join(rec.words[:p])
+        else:
+            want = rec.text
+        if rec.entry["content"] == want:
+            return False
+        rec.entry["content"] = want
+        return True
