@@ -98,8 +98,9 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   whole table is the JSON file, which a parent can read — behind a `Classifier` protocol a
   local model classifier can drop into. Parent-facing summary:
   [child-safety guide](../../docs/guides/child-safety.md).
-  The table is one vocabulary with the hosted demo's floor (`functions/api/_lib/safety.rules.js`
-  carries the robot's child side, plus the weapon-noun frames both now share). Two keys belong to
+  The table is the authority for the hosted demo's floor (`functions/api/_lib/safety.rules.js`,
+  seeded from it), and the two are kept one vocabulary: a string either side gains is mirrored
+  verbatim on the other (the weapon-noun frames here came from the floor). Two keys belong to
   Moxie's side only: `allow_moxie` (guards for a refusal that quotes the request, a warning, an
   idiom, a story character) and `phrases_moxie` (words a child may say but she never does, "don't
   tell a grown-up"). The child's side never reads either, so "my grades fell and now i want to hurt

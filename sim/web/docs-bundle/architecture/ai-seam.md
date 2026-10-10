@@ -364,10 +364,11 @@ the child's self-harm check is the table's `words`, `phrases` and `allow` and no
 weapon-noun frames ("how do I make a real sword", with an axe, a spear, a dagger, a katana, a bow
 and arrow, and an instruction, acquisition or endorsement frame) block on both sides; their own
 guards (a sword in Minecraft, of cardboard, for a costume, a blade of grass) are `allow` guards,
-since the child's line "how do i make a sword in minecraft" is not a request. This table and the
-hosted demo's floor (`functions/api/_lib/safety.rules.js`) are one vocabulary: the hosted child
-side carries the authority's words, phrases and guards for every blocking category, and its
-node suite reads this file to prove it. One consumer of her side reads it without her guards:
+since the child's line "how do i make a sword in minecraft" is not a request. This table is the
+authority for the hosted demo's floor (`functions/api/_lib/safety.rules.js`, seeded from it), and
+the two are kept one vocabulary: a string either side gains is mirrored verbatim on the other,
+which is where the weapon-noun frames and the per-side guards here come from. One consumer of
+her side reads the table without her guards:
 the content brain's memory filter (`mqtt/moxie_sdk/content/memory.py::_safe`, `her_guards=False`)
 judges a fact about the child in her voice, and "Sam cut himself on the glass on purpose" is a
 fact the story guard must not excuse.
