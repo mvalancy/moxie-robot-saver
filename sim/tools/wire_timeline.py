@@ -144,7 +144,7 @@ KEEP_STRINGS = frozenset({
     # a turn and where it runs
     "command", "backend", "event_id", "source_event_id", "module_id", "content_id",
     "query", "subtopic", "context_type", "notify_source", "content_day", "ended_reason",
-    "request_id", "event_name", "event_type", "tag", "level",
+    "request_id", "event_name", "event_type", "tag", "level", "result",
     # the reply's shape
     "output_type", "action", "function_id", "mood", "dialog_act", "emotion",
     "single_signal", "volley_signal", "request_source", "type", "state", "mode",
@@ -361,18 +361,32 @@ def _short(event_id) -> str:
     return str(event_id or "?")[:8]
 
 
+def _code(value):
+    """A reply's `result` as its code: the number our runtime sends, or the enum name an
+    older double sends; None when it is neither."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value).strip()
+    if re.fullmatch(r"-?\d+", text):
+        return int(text)
+    member = ResultCode.__members__.get(text)
+    return int(member) if member is not None else None
+
+
 def _closing(body: dict) -> bool:
-    result = body.get("result")
+    result = _code(body.get("result"))
     done = (body.get("consistency_control") or {}).get("is_completed")
-    return done is True or (result is not None and int(result) != _PENDING)
+    return done is True or (result is not None and result != _PENDING)
 
 
 def _reply_word(body: dict, t0: float, t: float) -> str:
-    result = body.get("result")
+    result = _code(body.get("result"))
     chunk = body.get("chunk_num")
     gap = _gap(t0, t)
-    if result is not None and int(result) not in (0, _PENDING):
-        word = f"result {int(result)} {_RESULT_NAMES.get(int(result), '?')}"
+    if result is not None and result not in (0, _PENDING):
+        word = f"result {result} {_RESULT_NAMES.get(result, '?')}"
         return f"{word} {gap}" if chunk is None else f"chunk {chunk} {word} {gap}"
     if chunk is None:
         return f"done {gap}"

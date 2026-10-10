@@ -620,6 +620,25 @@ def test_the_scrub_handles_identity_in_any_broker_line_and_any_body():
         "New client connected from [address] as weird-client (p2, c0, k15)."
 
 
+def test_a_result_spelled_as_a_name_is_read_as_its_code():
+    """Older doubles send `result` as the enum's name; the timeline and the share copy read
+    it as the code, never crash on it."""
+    def reply(t, result, chunk, done):
+        return {"kind": "msg", "mono": t, "dir": "cloud>robot", "device": ROBOT_A,
+                "topic": f"/devices/{ROBOT_A}/commands/remote_chat", "name": "remote_chat",
+                "bytes": 1, "as": "json",
+                "body": {"event_id": E2, "result": result, "chunk_num": chunk,
+                         "consistency_control": {"is_completed": done}}}
+    ask = {"kind": "msg", "mono": 1.0, "dir": "robot>cloud", "device": ROBOT_A,
+           "topic": f"/devices/{ROBOT_A}/events/remote-chat", "name": "remote-chat",
+           "bytes": 1, "as": "json", "body": _prompt(E2, CHILD_WORDS)}
+    records = [ask, reply(1.5, "REPLY_PENDING", 0, False), reply(2.0, "SUCCESS", 1, True)]
+    text = T.timeline(records)
+    assert "prompt 9b2d4e6f: chunk 0 pending +0.50 s · chunk 1 done +1.00 s" in text
+    assert [r["body"]["result"] for r in T.share_records(records)[1:]] == \
+        ["REPLY_PENDING", "SUCCESS"]
+
+
 def test_the_share_copy_is_its_own_share_copy(recorded):
     once = T.share_records(recorded["lines"])
     assert T.share_records(once) == once

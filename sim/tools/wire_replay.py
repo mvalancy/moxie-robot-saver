@@ -98,9 +98,14 @@ class ScriptedBrain(MoxieApp):
             return
         chunks, last = [], len(replies) - 1
         for i, body in enumerate(replies):
-            result = body.get("result")
+            result = wt._code(body.get("result"))
             default = 0 if i == last else _PENDING
-            code = None if result is None or int(result) == default else ResultCode(int(result))
+            code = None
+            if result is not None and result != default:
+                try:
+                    code = ResultCode(result)
+                except ValueError:          # a code the proto does not define: the default
+                    code = None
             actions = []
             for e in body.get("response_actions") or []:
                 if isinstance(e, dict) and e.get("action"):
