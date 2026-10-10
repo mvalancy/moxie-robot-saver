@@ -14,8 +14,10 @@ rule's text does not write whole (a string literal in a `say` or a `let` value,
 parent once; `explain()` names every tag the rule writes whole, and its reading ahead only
 decides the wording. Before this, an exit the review did not name could happen; after it,
 it cannot. A `say`'s markup or a `markup` statement, which the robot speaks when it is
-given one, reaches it with no tag of ours and nothing the catalogue's check refuses, or
-the line goes without markup (`ext_host.robot_markup`), in time linear in the markup.
+given one, reaches it with no tag of ours, nothing the catalogue's check refuses and no
+verb an activity may not send (`vocab.EXPRESSIVE_VERBS`; the system verbs are told to the
+parent, test_pack_markup_gate.py), or the line goes without markup
+(`ext_host.robot_markup`), in time linear in the markup.
 A conversation's opener, which this PR makes speak on the robot path, is held to the same
 rule (section E): it acts only on a tag written whole in the alternative said, unrendered,
 and the pack review names each such tag in the opener's own row.
@@ -454,7 +456,22 @@ MARKUPS = {
     "a catalogue tag holding another < goes": ('<usel<usel genre="question">Hi', "Hi", 1),
     "a mark whose data is never closed goes": ('<mark name="cmd:a,data:{">Hi', "Hi", 1),
     "a mark in single quotes goes": ("<mark name='cmd:zzz'/>Hi", "Hi", 1),
+    # The surviving mutant of round 11: with `re.I` dropped from `_EXT_MARK`, an upper-case
+    # mark the catalogue's pattern cannot read was not read as a mark at all, so its form
+    # went unchecked and the catalogue's check (which needs `name="`) passed it unread.
+    "a mark in upper case the pattern cannot read goes": ("<MARK name='cmd:playback-mood'/>Hi", "Hi", 1),
     "a mark with spaces around its = goes": ('<mark name = "cmd:zzz"/>Hi', "Hi", 1),
+    # K5.2: a catalogue verb an activity may not send is dropped like an id the catalogue
+    # refuses, the system verbs first among them (test_pack_markup_gate.py names them to
+    # the parent); one that forms once a lifted exit's pieces meet is seen by the gate
+    # (the lift runs first), one that forms once a dropped tag's pieces meet by the last
+    # pass, which drops the markup whole.
+    "a system verb is a catalogue verb, and goes": ('<mark name="cmd:start-systemunpair"/>Hi', "Hi", 1),
+    "a verb an activity may not send goes": ('<mark name="cmd:scripted"/>Hi', "Hi", 1),
+    "a system mark that forms once the robot lifts an exit is dropped": (
+        '<ma<exit>rk name="cmd:start-systemsuspend"/>Hi', "Hi", 1),
+    "a system mark that forms once a dropped tag's pieces meet drops the markup whole": (
+        '<ma<mark name="cmd:zzz"/>rk name="cmd:start-systemunpair"/>Hi', "", 2),
     "unclosed marks before a tail of }\" and ideographic spaces go, the tail kept": (
         '<mark name="cmd:a,data:{">' * 3 + '}"' + "　" * 30 + "/x",
         '}"' + "　" * 30 + "/x", 3),
@@ -480,10 +497,12 @@ def _marks_read_whole(markup: str) -> bool:
 
 
 def _exposed(clean, per_tag) -> bool:
-    """`robot_markup`'s last-pass decision on `clean`, reading each tag with `per_tag`."""
+    """`robot_markup`'s last-pass decision on `clean`, reading each tag with `per_tag`; the
+    verb read (a mark whose verb an activity may not send) is part of every last pass."""
     return (bool(tag_names(clean)) or any(per_tag(m.group(0)) for m in H._tags_in(clean))
             or H._EXT_OPEN.search(clean, clean.rfind(">") + 1) is not None
-            or bool(vocab.validate_markup(clean)))
+            or bool(vocab.validate_markup(clean))
+            or any(H._pack_verb_refused(m.group(0)) is not None for m in H._tags_in(clean)))
 
 
 def test_the_last_pass_reads_ids_once_and_refuses_what_a_tag_by_tag_read_would():
@@ -996,7 +1015,11 @@ MARKUP_PIECES = PIECES + [GOOD_MARK, BAD_MARK, GOOD_USEL, BAD_USEL, '<break size
                           '<spurt x" spurt_id="n>pe"/>', '<usel x" genre="a>b">',
                           '<mark name="cmd:playback-mood,data:{', '<usel genre="', "<usel",
                           '<mark name="cmd:a,data:{">', "<mark name='cmd:zzz'/>",
-                          '}"　　/>', '}" />']
+                          '}"　　/>', '}" />',
+                          # K5.2: a system verb, a verb an activity may not send, and an
+                          # upper-case opening the catalogue's pattern cannot read.
+                          '<mark name="cmd:start-systemunpair"/>', '<mark name="cmd:scripted"/>',
+                          "<MARK name='cmd:playback-mood'/>"]
 
 
 class _Generator:

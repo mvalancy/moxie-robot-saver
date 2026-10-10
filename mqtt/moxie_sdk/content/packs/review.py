@@ -5,7 +5,9 @@ import difflib
 import json
 import time
 
+from ... import vocab
 from .. import ext
+from ..ext_host import _strings_in
 from .items import (CONFLICT, DEFAULT_ACCEPT, digest_of, DOWNGRADE, DOWNGRADE_CONFLICT,
     ESCALATION_LABEL, FORK, full_key, INVALID, item_key, KEEP_LOCAL, NEW,
     normalize_data, PackError, SAME, split_key, STATE_LABEL, unknown_schedule_modules,
@@ -80,7 +82,7 @@ def review_pack(pack: dict, installed, *, digest: str = "ok", catalog=None) -> l
             "installed_version": None, "state": INVALID, "label": "",
             "default": False, "local_edited": False, "origin": "",
             "pack_id": "", "warnings": [], "reasons": reasons, "diff": [],
-            "escalation": [],
+            "escalation": [], "commands": [], "system_commands": [],
         }
         if reasons:
             row["label"] = STATE_LABEL[INVALID]
@@ -108,9 +110,14 @@ def review_pack(pack: dict, installed, *, digest: str = "ok", catalog=None) -> l
             now = set(extension_capabilities(data))
             row["escalation"] = sorted(now - was)
         row["label"] = _label(row)
-        row["warnings"] = _warnings(kind, data, catalog=catalog)
+        row["commands"], unknown = command_verbs(data)
+        row["system_commands"] = [v for v in row["commands"] if v in vocab.SYSTEM_VERBS]
+        row["warnings"] = _warnings(kind, data, catalog=catalog) + command_warnings(
+            row["commands"], unknown)
+        # A system command un-ticks the item whatever its state, as an escalation does: the
+        # gate never sends it, and a parent should still not install it unawares.
         row["default"] = bool(trusted and row["state"] in DEFAULT_ACCEPT
-                              and not row["escalation"])
+                              and not row["escalation"] and not row["system_commands"])
         if row["escalation"]:
             # §7.3: compared over the capability set, independent of versions and edits,
             # so no version bump escalates quietly. A shrinking set is always safe.
@@ -209,6 +216,58 @@ def opener_warnings(data: dict) -> list:
         return []
     return ["When this conversation starts, Moxie says its opener; then "
             + " and ".join(effects) + "."]
+
+
+def command_verbs(data: dict) -> tuple:
+    """`(known, unknown)`: the verbs every `<mark` written anywhere in an item's data (its
+    opener, prompt, a program's lines, any string at all) names, read however it is written
+    (`vocab.mark_verbs`): the catalogue's, as it spells them, a system verb lower-cased in
+    whatever case it was written, sorted and once each; and how many name no catalogue verb
+    (author text, counted and never quoted)."""
+    known: set = set()
+    unknown = 0
+    for text in _strings_in(data or {}, []):
+        for verb in vocab.mark_verbs(text):
+            if verb.lower() in vocab.SYSTEM_VERBS:
+                known.add(verb.lower())
+            elif verb in vocab.VERB_SET:
+                known.add(verb)
+            else:
+                unknown += 1
+    return sorted(known), unknown
+
+
+def command_warnings(verbs, unknown: int = 0) -> list:
+    """What a parent is told about the robot commands an item's text writes
+    (`command_verbs`): one row naming each catalogue verb, and one more when some are never
+    sent from an activity (`vocab.EXPRESSIVE_VERBS` is what may be; the system verbs among
+    the rest un-tick the item, `review_pack`). Fixed words around the catalogue's own verbs;
+    a verb the catalogue does not have is counted, never quoted."""
+    verbs = list(verbs or [])
+    if not verbs and not unknown:
+        return []
+    if verbs:
+        named = ", ".join(f"cmd:{v}" for v in verbs)
+        tail = f", and {unknown} it does not know" if unknown else ""
+        rows = [f"writes robot commands in its text: {named}{tail}."]
+    else:
+        rows = [f"writes {unknown} robot command{'s' if unknown != 1 else ''} in its text "
+                f"this appliance does not know."]
+    refused = [v for v in verbs if v not in vocab.EXPRESSIVE_VERBS]
+    if refused:
+        # True of every way pack content reaches the robot through the content brain: a
+        # line, an opener, a markup and the model's line its prompt steers are all held to
+        # the gate (`ext_host.pack_line`, `pack_spoken`, `pack_markup`).
+        row = ("this appliance never sends " + ", ".join(f"cmd:{v}" for v in refused)
+               + " from an activity, whether its opener, a line or the AI's reply to its "
+               "prompt writes it")
+        system = [v for v in refused if v in vocab.SYSTEM_VERBS]
+        if system:
+            row += (" (" + ", ".join(f"cmd:{v}" for v in system)
+                    + (" is a system command" if len(system) == 1 else " are system commands")
+                    + ": it would unpair or suspend Moxie)")
+        rows.append(row + "; Moxie says the line without them.")
+    return rows
 
 
 def extension_capabilities(data: dict) -> list:
