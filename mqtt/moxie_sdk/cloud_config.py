@@ -426,7 +426,8 @@ _APOSTROPHES = str.maketrans({"\u2019": "'", "\u02bc": "'"})
 #: bidi controls, the Hangul fillers, tag characters). A name is kept without them, so "Mia"
 #: with an emoji variation selector is "Mia", and a name of fillers alone is no name. The
 #: console keeps the same set (`server/moxie_server/child_profile.py`), so the account's
-#: record is spelled as the robot keeps it; `test_child_name_safety.py` pins the two equal.
+#: record is spelled as the robot keeps it: `test_console_child_name.py` pins the two equal,
+#: and `test_child_name_safety.py` checks this one against Unicode's own derivation.
 _DEFAULT_IGNORABLE = _re.compile(
     "[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e"
     "\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3"

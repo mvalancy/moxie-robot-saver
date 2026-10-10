@@ -60,7 +60,7 @@ NOT_SAVED_CLEAR = ("The robot stopped using the name, but this server could not 
 MASK = "[name]"
 #: A phone's apostrophes and the code points a screen shows as nothing: the supervisor's
 #: spelling of a name (`moxie_sdk.cloud_config._spelled`), kept here because this process
-#: has no `moxie_sdk`. `test_child_name_safety.py` pins the two equal, so the account's
+#: has no `moxie_sdk`. `test_console_child_name.py` pins the two equal, so the account's
 #: record is spelled as the robot keeps it and the console never calls a name "not sent".
 _APOSTROPHES = str.maketrans({"\u2019": "'", "\u02bc": "'"})
 _DEFAULT_IGNORABLE = re.compile(
