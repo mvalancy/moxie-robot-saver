@@ -241,13 +241,18 @@ def storable_packet(pkt, policy) -> Optional[dict]:
     return out
 
 
-def packet_day(pkt, *, now=None) -> str:
-    """The local calendar day a Packet belongs to, as `YYYY-MM-DD`. A missing, pre-2020 or
-    >1 day-future `recorded_at` (device clocks lie) falls back to arrival time."""
+def packet_day(pkt, *, now=None, tz=None) -> str:
+    """The calendar day a Packet belongs to, as `YYYY-MM-DD`: on the house's clock when `tz`
+    (a tzinfo: the runtime passes the house's zone, `house_zone`), else this process's local
+    time. A missing, pre-2020 or >1 day-future `recorded_at` (device clocks lie) falls back
+    to arrival time."""
     now = time.time() if now is None else float(now)
     ts = _recorded_at((pkt or {}).get("recorded_at") if isinstance(pkt, dict) else None)
     if ts is None or ts < _EPOCH_FLOOR or ts > now + 86400:
         ts = now
+    if tz is not None:
+        import datetime
+        return datetime.datetime.fromtimestamp(ts, tz).strftime("%Y-%m-%d")
     return time.strftime("%Y-%m-%d", time.localtime(ts))
 
 
@@ -293,7 +298,8 @@ def _clean_rollup(rollup) -> dict:
     return out
 
 
-def roll_up_packet(rollup, pkt, *, now=None, max_days: Optional[int] = None) -> dict:
+def roll_up_packet(rollup, pkt, *, now=None, max_days: Optional[int] = None,
+                   tz=None) -> dict:
     """Fold one Packet into the daily roll-up and return the NEW record.
 
     Shape::
@@ -305,13 +311,14 @@ def roll_up_packet(rollup, pkt, *, now=None, max_days: Optional[int] = None) -> 
 
     `total` is a **lifetime** count (stays true as the window slides). The newest
     `max_days` rows survive; a day keeps `MAX_DAY_EVENTS` names, the rest under `OTHER_EVENT`.
+    The day is `packet_day`'s, on `tz`'s clock (the house's).
     """
     now = time.time() if now is None else float(now)
     cap = max_rollup_days() if max_days is None else max(0, int(max_days))
     out = _clean_rollup(rollup)
     if not isinstance(pkt, dict):
         return out
-    day = packet_day(pkt, now=now)
+    day = packet_day(pkt, now=now, tz=tz)
     row = out["days"].get(day) or {"count": 0, "by_event": {}, "first": None, "last": None}
     name = str(pkt.get("event_name") or "event")
     by = dict(row["by_event"])
@@ -388,13 +395,13 @@ def unfolded_packets(rollup, ring) -> list:
     return [r for _, r in missing]
 
 
-def reconcile_rollup(rollup, ring, *, now=None, max_days=None) -> dict:
+def reconcile_rollup(rollup, ring, *, now=None, max_days=None, tz=None) -> dict:
     """The roll-up with everything the ring holds and it does not, folded back in — so a
     lost roll-up write is recoverable. Always returns a normalised record (usable as the
     read path). Never recomputes from scratch: the ring is capped, `total` is lifetime."""
     out = _clean_rollup(rollup)
     for row in unfolded_packets(out, ring):
-        out = roll_up_packet(out, row, now=now, max_days=max_days)
+        out = roll_up_packet(out, row, now=now, max_days=max_days, tz=tz)
     return out
 
 
@@ -407,7 +414,9 @@ def _day_before(day: str, back: int) -> str:
 
 def history_view(rollup, *, days: int = 7, today: Optional[str] = None) -> list:
     """The last `days` calendar days, oldest→newest, **zero-filled** (a quiet day is an
-    answer). Rows are `{day, count, by_event, top_event}`; ties break by name."""
+    answer). Rows are `{day, count, by_event, top_event}`; ties break by name. `today` is
+    the last day (the runtime passes the house's, from `house_now`); default: this
+    process's local date."""
     r = _clean_rollup(rollup)
     n = max(0, int(days))
     if not n:
