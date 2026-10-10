@@ -15,6 +15,7 @@ import { requireBrowser, serveWeb, makeChecks, finish, notable, launchBrowser, o
 const LABEL = "a11y";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
 const { fails, ok, eq, count } = makeChecks();
+const deep = (a, b, m) => eq(JSON.stringify(a), JSON.stringify(b), m);
 const srv = await serveWeb({ headers: true });
 
 /** A `/api/health` body that puts mode.js in `live` — the branch the hosted site is in. */
@@ -74,6 +75,14 @@ async function textOf(page, selector) {
   return h ? page.evaluate((e) => e.textContent, h) : null;
 }
 
+/** Every AX node of the page (or of `root`), flattened. */
+async function axNodes(page, root) {
+  const snap = await page.accessibility.snapshot({ interestingOnly: false, ...(root ? { root } : {}) });
+  const flat = [];
+  (function walk(n) { if (!n) return; flat.push(n); (n.children || []).forEach(walk); })(snap);
+  return flat;
+}
+
 /** Every interactive AX node with an EMPTY name, as `role=… value=…` strings. */
 async function unnamedControls(page) {
   const snap = await page.accessibility.snapshot({ interestingOnly: false });
@@ -102,6 +111,33 @@ const tabbablesOf = (page) => page.evaluate(() => {
 });
 // Controls that are genuinely INSIDE the rail, one from each of its four groups.
 const RAIL_ONLY = ["center-btn", "tts-base", "stt-base", "bus-host", "rec-toggle"];
+
+/** The REAL tab order: Tab pressed from the top until focus leaves the page or comes round
+ *  again. An element is named by id, else tag.class, else tag:its text. */
+async function tabWalk(page, max = 30) {
+  await page.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
+  const seen = [];
+  for (let i = 0; i < max; i++) {
+    await page.keyboard.press("Tab");
+    const d = await page.evaluate(() => {
+      const e = document.activeElement;
+      if (!e || e === document.body) return null;
+      const cls = typeof e.className === "string" && e.className.trim() ? e.className.trim().split(/\s+/)[0] : "";
+      return e.id || e.tagName.toLowerCase() + (cls ? "." + cls : ":" + e.textContent.replace(/\s+/g, " ").trim().slice(0, 24));
+    });
+    if (d === null) { if (seen.length) break; continue; }
+    if (seen.length && d === seen[0]) break;
+    seen.push(d);
+  }
+  return seen;
+}
+// The hosted desktop page's twelve stops, rail shut: measured before W4-S6 (the visitor-journey
+// a11y probe pressed Tab 14 times: these 12, the page itself, and round again).
+const HOSTED_STOPS = ["hub-back", "alive-toggle", "a:Matthew Valancy", "a.notice-link", "rail-toggle",
+                      "transcript", "button.opener", "button.opener", "button.opener",
+                      "speech-input", "mic-btn", "speech-btn"];
+// What she keeps, as sim.html says it under the composer (W4-S6).
+const MEMORY_LINE = "Moxie remembers this chat only while this page is open.";
 
 /* ==========================================================================
  * ONE PAGE, scripted mode (no /api/health): 1 names, 3a the scripted voice note, the
@@ -175,6 +211,10 @@ const RAIL_ONLY = ["center-btn", "tts-base", "stt-base", "bus-host", "rec-toggle
   ok(app.hidden !== "true", "the stage is NOT aria-hidden — it is the subject of the page");
   ok(/moxie/i.test(app.label || "") && /comms log/i.test(app.label || ""),
      `stage name names Moxie and points at the text log — got ${JSON.stringify(app.label)}`);
+
+  /* ---- what she keeps: said only where it is exactly true (block 4b, a hosted live page) ---- */
+  eq(await page.$eval("#memory-hint", (e) => e.hidden).catch(() => "missing"), true,
+     "a scripted local page makes no memory claim (#memory-hint stays hidden)");
 
   /* ---- <noscript> ---- */
   const ns = await page.$eval("noscript", (e) => e.textContent).catch(() => null);
@@ -375,6 +415,24 @@ const RAIL_ONLY = ["center-btn", "tts-base", "stt-base", "bus-host", "rec-toggle
   const { page, spent } = view;
   eq(await page.evaluate(() => document.body.getAttribute("data-env")), "hosted",
      "precondition: the mapped hostname reads as a hosted page");
+
+  /* WHAT SHE KEEPS (W4-S6). The one line that said it ended the banner, which a live page
+   * hides (style.css), so it was in no screen reader's tree and on nobody's screen. */
+  const keeps = await page.evaluate(() => {
+    const e = document.getElementById("memory-hint");
+    return e ? { hidden: e.hidden, text: e.textContent.trim(),
+                 shown: e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden",
+                 inDock: !!e.closest("#chat-dock") } : null;
+  });
+  ok(!!keeps && !keeps.hidden && keeps.shown && keeps.inDock,
+     `hosted live: what she keeps is SHOWN, in the dock under the composer (${JSON.stringify(keeps)})`);
+  eq(keeps && keeps.text, MEMORY_LINE, "hosted live: …in exactly these words");
+  ok((await axNodes(page)).some((n) => (n.name || "").trim() === MEMORY_LINE),
+     "hosted live: …and a screen reader reaches it (it is in Chrome's accessibility tree)");
+  // …and it added no tab stop: the REAL order, Tab by Tab, is exactly the twelve it was.
+  eq(JSON.stringify(await tabWalk(page)), JSON.stringify(HOSTED_STOPS),
+     "hosted desktop: the tab order is unchanged — the same twelve stops, in the same order");
+
   eq(await page.$eval("#rail-toggle", (e) => e.getAttribute("aria-expanded")), "false",
      "hosted desktop: the rail starts collapsed, and SAYS so");
   eq(await page.$eval("#rail-scroll", (e) => getComputedStyle(e).display), "none",
@@ -416,6 +474,83 @@ const RAIL_ONLY = ["center-btn", "tts-base", "stt-base", "bus-host", "rec-toggle
   eq(shown, "Hello there, friend.", "…and her words appear whole, with no typewriter");
   eyes("reduced motion", view);
   await view.page.close();
+}
+
+/* ==========================================================================
+ * 6. THE MIC STATUS IS ANNOUNCED (W4-S6). "listening…", "transcribing…", what she heard
+ * and the no-speech line answer a tap on Listen, but #mic-status was in no live region, so
+ * a screen reader said none of them. Driven for real on a hosted live page through a
+ * stand-in capture (no device); its one upload is answered at the browser.
+ * ======================================================================= */
+{
+  const EMPTY_TRANSCRIPT = JSON.stringify({ ok: true, degraded: false, reason: null, mode: "live", transcript: "" });
+  const view = await openSim(browser, `http://moxie.hosted.test:${srv.port}/sim.html`, {
+    viewport: { width: 390, height: 844 }, health: HEALTH_LIVE,
+    beforeLoad: (p) => p.evaluateOnNewDocument(() => {
+      window.__micLines = [];
+      const watch = () => {
+        const el = document.getElementById("mic-status");
+        if (!el) return;
+        new MutationObserver(() => window.__micLines.push(el.textContent))
+          .observe(el, { childList: true, characterData: true, subtree: true });
+      };
+      document.addEventListener("DOMContentLoaded", watch, { once: true });
+    }),
+    route: (r, u) => /\/api\/transcribe\b/.test(u)
+      ? (r.respond({ status: 200, contentType: "application/json", body: EMPTY_TRANSCRIPT }), true) : false,
+  });
+  const { page, spent } = view;
+  const mic = await page.$eval("#mic-status", (e) => ({ live: e.getAttribute("aria-live"), role: e.getAttribute("role") }));
+  deep([mic.role, mic.live], ["status", "polite"], "#mic-status is a polite status region — every mic outcome is announced");
+  const ax = await axNodes(page, await page.$("#mic-status"));
+  eq(ax.length ? ax[0].role : null, "status", "…and Chrome's accessibility tree says so");
+
+  const lines = await page.evaluate(async () => {
+    const wait = async (fn, ms = 6000) => { for (let i = 0; i < ms / 50 && !fn(); i++) await new Promise((r) => setTimeout(r, 50)); };
+    window.moxieMic.setCapture(() => Promise.resolve({ stream: null,
+      setLevelListener: (fn) => { window.__level = fn; },
+      recorder: { state: "inactive", mimeType: "audio/wav", ondataavailable: null, onstop: null,
+        start() { this.state = "recording"; },
+        stop() { if (this.state === "inactive") return; this.state = "inactive";
+                 if (this.ondataavailable) this.ondataavailable({ data: new Blob([new Uint8Array(4000)], { type: "audio/wav" }) });
+                 if (this.onstop) this.onstop(); } } }));
+    // A clip with speech in it: listening, then transcribing, then what came back.
+    await window.moxieMic.start();
+    window.__level(0.2);
+    window.moxieMic.stop();
+    await wait(() => /nothing heard/.test(document.getElementById("mic-status").textContent));
+    // …and one with none: the no-speech line, nothing sent.
+    await window.moxieMic.start();
+    window.__level(0.001);
+    window.moxieMic.stop();
+    await wait(() => /did not hear/.test(document.getElementById("mic-status").textContent));
+    return window.__micLines.slice();
+  });
+  for (const [what, rx] of [["listening…", /listening/], ["transcribing…", /transcribing/],
+                            ["the no-speech line", /did not hear anything/]])
+    ok(lines.some((l) => rx.test(l)), `${what} reaches the live region (#mic-status wrote ${JSON.stringify(lines)})`);
+  eq(spent.length, 0, "the mic block spends nothing (its one upload was answered at the browser)");
+  eyes("mic status", view);
+  await page.close();
+}
+
+/* ==========================================================================
+ * 7. THE HUB (W4-S6): no image without a name, and what she keeps, said before anyone talks.
+ * Its sixteen decorative icons (logo, arrows, card glyphs, GitHub marks) were unnamed images
+ * to a screen reader; the hero picture is the one image with something to say.
+ * ======================================================================= */
+{
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1440, height: 900 });
+  await page.goto(srv.url + "/", { waitUntil: "load" });
+  const nodes = await axNodes(page);
+  const images = nodes.filter((n) => /^(image|img|graphics-symbol|graphics-document)$/.test(n.role || ""));
+  const unnamed = images.filter((n) => !(n.name || "").trim());
+  eq(unnamed.length, 0, `the hub exposes no unnamed image (got ${unnamed.length} of ${images.length})`);
+  ok(images.some((n) => /friendly teal robot/.test(n.name || "")), "…and her picture keeps its description");
+  ok(nodes.some((n) => (n.name || "").trim() === "Moxie remembers your chat only while her page is open."),
+     "the hub says what she keeps, in the accessibility tree, next to the way in");
+  await page.close();
 }
 
 await browser.close();
