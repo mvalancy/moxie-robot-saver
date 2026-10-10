@@ -575,6 +575,49 @@ def test_each_robot_keeps_one_placeholder_on_every_line(recorded):
         "New client connected from [address] as d_robot-1 (p2, c1, k30)."]
 
 
+#: Broker lines in shapes the session does not use: a username outside a connect line, an
+#: IPv4-mapped IPv6 peer, a host with its port, a zoned IPv6, both MAC spellings, a public
+#: hostname, and a connect line whose username holds a comma.
+ODD_LOG_LINES = (
+    f"Client {ROBOT_A} (u'{USERNAME}') was refused.",
+    f"New connection from ::ffff:{ADDRESS}:{PORT} on port 1883.",
+    f"Error resolving {HOSTNAME}:{PORT}.",
+    f"Peer [fe80::1%eth0]:{PORT} closed.",
+    "Device 00-00-5e-00-53-2a seen.",
+    "Device 0000.5e00.532a seen.",
+    "Bridge to bench-gateway.example.org failed.",
+    f"New client connected from {ADDRESS}:{PORT} as weird-client (p2, c0, k15, u'x, p9').",
+)
+
+
+def test_the_scrub_handles_identity_in_any_broker_line_and_any_body():
+    records = [{"kind": "msg", "mono": float(i), "dir": "broker", "device": "",
+                "topic": "$SYS/broker/log/N", "name": "log/N", "bytes": len(line),
+                "as": "log", "body": {"text": line}} for i, line in enumerate(ODD_LOG_LINES)]
+    body = {"event_id": HOSTNAME, "module_id": ADDRESS, "command": "prompt",
+            "speech": "6", "name": CHILD_NAME, ROBOT_A: 1,
+            "input_vars": {"$eb_qr_value": f"WIFI:S:{WIFI_NAME};P:{SECRET};;"},
+            "extra_lines": [{"context_type": "input", "text": "yes"}]}
+    records.append({"kind": "msg", "mono": 9.0, "dir": "robot>cloud", "device": ROBOT_A,
+                    "topic": f"/devices/{ROBOT_A}/events/remote-chat", "name": "remote-chat",
+                    "bytes": 1, "as": "json", "body": body})
+    shared = T.share_records(records)
+    text = "".join(T.dump(r) for r in shared)
+    for value in (ADDRESS, PORT, USERNAME, HOSTNAME, "fe80", "eth0", "00-00-5e-00-53-2a",
+                  "0000.5e00.532a", "bench-gateway", CHILD_NAME, WIFI_NAME, SECRET, ROBOT_A,
+                  "p9"):
+        assert value not in text, value
+    assert T.share_problems(shared) == []
+    out = shared[-1]["body"]
+    assert (out["speech"], out["extra_lines"][0]["text"]) == ("[text]", "[text]"), \
+        "a child's one-word answer is still the child's words"
+    assert (out["event_id"], out["module_id"], out["command"]) == ("[text]", "[text]", "prompt")
+    assert out["d_robot-1"] == 1 and out["input_vars"] == {"$eb_qr_value": "[text]"}
+    assert shared[-1]["body"]["name"] == "[text]"
+    assert shared[-2]["body"]["text"] == \
+        "New client connected from [address] as weird-client (p2, c0, k15)."
+
+
 def test_the_share_copy_is_its_own_share_copy(recorded):
     once = T.share_records(recorded["lines"])
     assert T.share_records(once) == once

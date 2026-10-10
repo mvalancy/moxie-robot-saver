@@ -87,10 +87,13 @@ class ScriptedBrain(MoxieApp):
     def __init__(self):
         self.scripts: dict = {}
         self.holds: dict = {}
+        #: Set once a held turn's brain is thinking (the runtime is reading its stream).
+        self.entered: dict = {}
 
     def script(self, token: str, replies: list):
         if not replies:
             self.holds[token] = threading.Event()
+            self.entered[token] = threading.Event()
             self.scripts[token] = None
             return
         chunks, last = [], len(replies) - 1
@@ -131,6 +134,7 @@ class ScriptedBrain(MoxieApp):
     def _stream(self, token):
         chunks = self.scripts[token]
         if chunks is None:
+            self.entered[token].set()
             self.holds[token].wait(HOLD_S)
             yield ReplyChunk(text="A held answer.", final=True)
             return
@@ -221,6 +225,10 @@ def replay(records, *, data_dir: str) -> dict:
                 if dev == device:
                     brain.release(token_)
             asked = [(d, t) for d, t in asked if d != device] + [(device, token)]
+        if kind == "turn" and not expected:
+            # A turn the recording never answered: its brain was still thinking when the
+            # robot asked again, so the next request waits until this one is thinking.
+            brain.entered[token].wait(WAIT_S)
         if expected:
             want = len(expected)
             client.wait_for(lambda pubs, eid=body.get("event_id"):
