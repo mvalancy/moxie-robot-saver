@@ -1,30 +1,18 @@
 # 🔧 Firmware & older robots (research track)
 
-Reviving *every* Moxie is the mission — including units too old for the camera-QR relocation path.
-
-> ⚠️ **Reconciled with the reverse-engineering.** This page is the *owner-facing* summary; the
-> authoritative, version-stamped detail is in [`../docs/reverse-engineering/`](../docs/reverse-engineering/)
-> (firmware **v3.6.4-Zephyr / OTA v24.10.803**, which this project **has and has fully analyzed**).
-> Earlier revisions of this file predated that analysis and understated what's known — corrected below.
+Reviving *every* Moxie is the mission, including units too old for the camera-QR relocation path.
+This page is the owner-facing summary; the version-stamped detail (firmware **v3.6.4-Zephyr / OTA
+v24.10.803**, which this project has and has fully analyzed) is in
+[`../docs/reverse-engineering/`](../docs/reverse-engineering/README.md), which wins where the two differ.
 
 ## The three tiers of robot (by firmware)
 
-```mermaid
-flowchart TD
-    q{"Firmware?"}
-    q -->|"24.10.803"| a["✅ QR relocation works<br/>self-signed cert OK"]
-    q -->|"24.10.801"| b["⚠️ QR relocation works<br/>needs a signed cert, or a 1-time OTA to 803"]
-    q -->|"older than 801"| c["🔬 No custom-endpoint support<br/>→ flash/firmware-level work"]
-    classDef ok fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
-    classDef warn fill:#fff3c4,stroke:#f9a825,color:#5d4037;
-    classDef res fill:#e1bee7,stroke:#6a1b9a,color:#4a148c;
-    class a ok;
-    class b warn;
-    class c res;
-```
+**803** re-homes by QR and accepts a self-signed certificate. **801** re-homes by QR but needs a signed
+certificate. **Older than 801** has no custom-endpoint support and needs flash-level work. The decision
+tree is in [Revive your Moxie: which path are you on?](../docs/guides/revive-your-moxie.md#which-path-are-you-on).
 
 ## Why older robots are hard (the lockdown) — and the actual paths
-Moxie's OS was hardened (Lantronix: **Secure Boot + AVB + SELiniux**, signed A/B images). The current,
+Moxie's OS was hardened (Lantronix: **Secure Boot + AVB + SELinux**, signed A/B images). The current,
 RE-backed picture:
 - **No *public* root exists** — but the boot chain has a concrete bypass: on AVB failure U-Boot drops
   to **`rockusb`/`fastboot`**, and **maskrom/`rkdeveloptool`** can flash a `--disable-verification`
@@ -37,8 +25,10 @@ RE-backed picture:
   ([`firmware-image.md`](../docs/reverse-engineering/firmware/firmware-image.md)).
 - **Pre-801 firmware has no custom-endpoint support** (endpoint pinned to `mqtt.googleapis.com`, CA-
   validated — [`network-trust.md`](../docs/reverse-engineering/protocol/network-trust.md)), so software re-home
-  isn't available; those units need the **flash path** (Tier 2/3), ideally without teardown if the
-  Macro-button→rockusb + a reachable USB port pan out (open bench item, [`EXPLORATION-MAP.md`](../docs/reverse-engineering/EXPLORATION-MAP.md#open-items-need-a-bench-unit-or-an-external-artifact)).
+  isn't available; those units need the **flash path**
+  ([levels 2–3 in `hardware/README.md`](README.md#ways-in-from-least-to-most-invasive)), ideally without
+  teardown if the Macro-button→rockusb + a reachable USB port pan out (open bench item,
+  [`EXPLORATION-MAP.md`](../docs/reverse-engineering/EXPLORATION-MAP.md#open-items-need-a-bench-unit-or-an-external-artifact)).
 
 ## In-scope research directions
 - **Macro-button → bootrom-download** mapping + USB-port reachability — the potential **no-teardown**

@@ -892,7 +892,7 @@
    "path": "debugging/README.md",
    "title": "Debugging",
    "section": "debugging",
-   "bytes": 1176,
+   "bytes": 1240,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -901,32 +901,31 @@
    "path": "debugging/live-hardware-debug.md",
    "title": "Live hardware debugging log — reviving a real Moxie",
    "section": "debugging",
-   "bytes": 7133,
+   "bytes": 8990,
    "mermaid": 0,
    "headings": [
     "Setup",
-    "Confirmed facts (each cost real time — don't re-derive)",
-    "The wall we hit",
-    "The smoking gun — old firmware uses Google Cloud IoT Core",
-    "The \"fake their server\" idea (in progress)",
-    "Cert test result (fake Google IoT Core)",
-    "ADB / on-device access",
-    "Honest conclusion for a pre-801 / Google-IoT robot",
-    "State of the running stack (for whoever continues)",
-    "QR command surface (for easter-egg hunting)"
+    "Confirmed facts",
+    "The wall: the robot reads the `om` code and never connects",
+    "Triage by what the robot shows",
+    "Old firmware talks to Google Cloud IoT Core",
+    "The fake-Google-IoT-Core test and its result",
+    "Undoing the fake-Google experiment",
+    "ADB and on-device access",
+    "Conclusion for a pre-801 robot",
+    "The QR command surface"
    ],
    "kind": "md"
   },
   {
    "path": "debugging/qr-command-findings.md",
-   "title": "QR command discovery — findings log",
+   "title": "QR command rig: findings (closed 2026-08-27)",
    "section": "debugging",
-   "bytes": 10102,
+   "bytes": 3836,
    "mermaid": 0,
    "headings": [
-    "Consistent reactors (the interesting ones)",
-    "Worth watching (partial/intermittent, 20–50% rate)",
-    "Everything tried (ranked by reaction rate)"
+    "Method",
+    "What the timings mean"
    ],
    "kind": "md"
   },
@@ -934,24 +933,25 @@
    "path": "design/README.md",
    "title": "Design",
    "section": "design",
-   "bytes": 141,
+   "bytes": 246,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "design/style-guide.md",
-   "title": "Design language — Moxie web apps",
+   "title": "Design language — the static site",
    "section": "design",
-   "bytes": 4829,
+   "bytes": 5927,
    "mermaid": 0,
    "headings": [
     "Mood",
-    "Color tokens (from valpatel.com)",
+    "Color tokens",
     "Typography",
     "Layout & components",
     "Motion",
-    "Applying it"
+    "Applying it",
+    "Provenance"
    ],
    "kind": "md"
   },
@@ -973,10 +973,11 @@
    "path": "community-research.md",
    "title": "The Moxie revival community",
    "section": "docs",
-   "bytes": 6348,
+   "bytes": 7953,
    "mermaid": 0,
    "headings": [
     "Summary",
+    "Moxie died twice",
     "Two independent cloud channels (critical mental model)",
     "OpenMoxie (canonical) — https://github.com/jbeghtol/openmoxie",
     "How a robot is actually revived (mechanism)",

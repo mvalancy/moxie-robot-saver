@@ -1,16 +1,21 @@
-# Design language — Moxie web apps
+# Design language — the static site
 
-> **North star:** [`valpatel.com`](https://valpatel.com) — a dark, engineered **robot-telemetry / control-room**
-> aesthetic. Every web app in this repo (the [SIL](../../sim/web/), the [server UI](../../server/)) uses
-> this language so they read as one product. Tokens captured in-repo (self-sufficiency — the guide
-> stands even if the reference site changes).
+For anyone styling a page under [`sim/web/`](../../sim/web/): the hub, the simulator, the setup page and
+the docs explorer. **North star: the hub** ([`index.html`](../../sim/web/index.html)): a dark, engineered
+**robot-telemetry / control-room** look, so the site's pages read as one product. The tokens live
+in-repo ([`css/hud.css`](../../sim/web/css/hud.css)), so the guide stands on its own.
+
+**Scope.** This language is the static site's. The parent console ([`server/static/`](../../server/static/))
+keeps a deliberate exception: a light, rounded phone-app theme (`--bg: #f4f5fb`, `--card: #fff`,
+`--radius: 16px` in [`style.css`](../../server/static/style.css)) with a dark variant from
+`prefers-color-scheme`, because it is a parent's phone app, not a control room.
 
 ## Mood
 Dark, precise, **engineering-grade**. Think a mission-control HUD for an autonomous machine: a near-black
 "void", neon-cyan hairlines and glows, monospace telemetry readouts, generous negative space, restraint
 over decoration. Motion is subtle and purposeful (glows, fades, scan-lines) — never bouncy.
 
-## Color tokens (from valpatel.com)
+## Color tokens
 
 ```css
 :root {
@@ -53,6 +58,11 @@ over decoration. Motion is subtle and purposeful (glows, fades, scan-lines) — 
 - Backgrounds step `--void → --bg → --surface-1/2/3`; borders are `--hairline` (solid) or `--glow-*`
   (glowing). Never pure `#000` or pure `#fff`.
 
+**Known drift.** The hub and the docs explorer set `--bg: #08080e`
+([`index.html`](../../sim/web/index.html), [`docs.html`](../../sim/web/docs.html)), one step darker than
+the `#0a0a0f` above that the simulator ([`css/hud.css`](../../sim/web/css/hud.css)) and the setup page
+use. Pick one the next time either page is touched.
+
 ## Typography
 
 ```css
@@ -83,10 +93,16 @@ over decoration. Motion is subtle and purposeful (glows, fades, scan-lines) — 
   transforms; the machine is precise, not springy.
 
 ## Applying it
-- **SIL** ([`sim/web/`](../../sim/web/)) — the flagship: a Moxie **control room**. 3D Moxie in the void;
-  right rail of HUD panels (Motors as telemetry gauges, Live-bus as a connection console, Transcript as a
-  comms log, Session as record/replay controls). See the [SIL doc](../architecture/sil-and-cicd.md).
-- **Server UI** ([`server/`](../../server/)) — the same tokens/fonts for its admin/status pages.
+- **Simulator** ([`sim/web/sim.html`](../../sim/web/sim.html)) — opens as a toy ("Meet Moxie — talk with
+  a little robot"): the 3D Moxie in the void, with the HUD rail behind it (Motors as telemetry gauges,
+  Live-bus as a connection console, Transcript as a comms log, Session as record/replay controls). See
+  the [SIL doc](../architecture/sil-and-cicd.md).
+- **Hub, setup page, docs explorer** ([`sim/web/`](../../sim/web/)) — the same tokens and fonts.
+- **Parent console** ([`server/`](../../server/)) — the exception above; it does not use this language.
+
+## Provenance
+The tokens were first sampled from an external personal site, [`valpatel.com`](https://valpatel.com) (August
+2026), and captured here so the guide stands even if that site changes; the hub is the reference now.
 
 ---
 📖 [SIL simulator](../architecture/sil-and-cicd.md) · [Docs index](../README.md)
