@@ -263,8 +263,13 @@ try {
   const spent = await load(HOSTED, { health: { status: 200, body: HEALTH_SPENT }, transport: true });
   eq(`${spent.state}:${JSON.parse(HEALTH_SPENT).reason}`, "degraded:budget_exhausted",
      "the real route, budget spent, reads degraded/budget_exhausted");
-  ok(/brain is resting/.test(spent.banner) && /recorded lines/.test(spent.banner) && /try again later/.test(spent.banner),
-     `budget spent: the banner says she is resting on her recorded lines, try later (got "${spent.banner}")`);
+  // ONE SOURCE (W4-S6): the pill and the banner say the same sentence, and it says WHEN —
+  // the real budget here is the hour's, so minutes (it read "today's demo budget" in the pill
+  // and "try again later" in the banner).
+  eq(spent.banner, spent.pill, "budget spent: the banner says exactly what the pill says");
+  ok(/recorded lines/.test(spent.banner) && /back in about (a minute|\d+ minutes)\b/.test(spent.banner) &&
+     !/today/.test(spent.banner),
+     `budget spent: …that she is on her recorded lines and back in about N minutes (got "${spent.banner}")`);
   ok(!/locally/i.test(spent.banner) && !spent.bannerLink,
      `budget spent: no "locally-run backend" and no "Run it locally" (got "${spent.banner}", link ${spent.bannerLink})`);
   ok(/I'll know when you're done/.test(spent.micStatus),
