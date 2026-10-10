@@ -61,8 +61,8 @@ that hears nothing. On the first failure one line is logged, for example
 
 The standby then keeps the job for `MOXIE_ENGINE_RETRY_S` seconds (60 by default), so a dead endpoint
 costs one timeout per window, not one per turn. After the window the next call tries the gateway
-again, and when it answers one line says it is back. `0` tries the gateway on every call. `/status`
-and the startup log show which engine is really active.
+again, and when it answers one line says it is back. Setting the window to `0` tries the gateway on
+every call. `/status` and the startup log show which engine is really active.
 
 ## Quirks the client handles
 
