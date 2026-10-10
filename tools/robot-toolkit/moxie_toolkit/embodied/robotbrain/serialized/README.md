@@ -1,12 +1,7 @@
-# 📁 `serialized`
+# 📁 serialized — Python bindings
 
-Generated protobuf bindings for the **`serialized`** package. These are produced from the recovered `.proto` schemas — regenerate them rather than hand-editing.
-
-| File | Purpose |
-|---|---|
-| [`CSData_pb2.py`](CSData_pb2.py) | Generated protocol buffer code. |
-| [`FallbackInfo_pb2.py`](FallbackInfo_pb2.py) | Generated protocol buffer code. |
-| [`UserRecommendationData_pb2.py`](UserRecommendationData_pb2.py) | Generated protocol buffer code. |
+Generated `*_pb2.py` bindings, one per `.proto` in [`proto/embodied/robotbrain/serialized/`](../../../../proto/embodied/robotbrain/serialized/README.md) with the same base name; that README lists what each file defines.
+Regenerate them with the `grpc_tools.protoc` command in the [toolkit README](../../../../README.md); never edit them by hand.
 
 ---
-📖 [Docs index](../../../../../../docs/README.md) · [Back to top](../../../../../../README.md)
+📖 [robotbrain](../README.md) · [Docs index](../../../../../../docs/README.md) · [Back to top](../../../../../../README.md)

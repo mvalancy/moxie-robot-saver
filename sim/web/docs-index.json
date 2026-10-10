@@ -1554,7 +1554,7 @@
    "path": "reverse-engineering/protocol/recovered-proto/README.md",
    "title": "Recovered protobuf schemas",
    "section": "reverse-engineering",
-   "bytes": 5078,
+   "bytes": 5822,
    "mermaid": 0,
    "headings": [
     "Where they come from",
@@ -1566,148 +1566,146 @@
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/README.md",
-   "title": "embodied`",
+   "title": "embodied",
    "section": "reverse-engineering",
-   "bytes": 667,
+   "bytes": 1467,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/launcher/README.md",
-   "title": "launcher`",
+   "title": "launcher",
    "section": "reverse-engineering",
-   "bytes": 491,
+   "bytes": 662,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/lizzerface/README.md",
-   "title": "lizzerface`",
+   "title": "lizzerface",
    "section": "reverse-engineering",
-   "bytes": 909,
+   "bytes": 1347,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/logging/README.md",
-   "title": "logging`",
+   "title": "logging",
    "section": "reverse-engineering",
-   "bytes": 1512,
+   "bytes": 2375,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/README.md",
-   "title": "perception`",
+   "title": "perception",
    "section": "reverse-engineering",
-   "bytes": 314,
+   "bytes": 557,
    "mermaid": 0,
-   "headings": [
-    "Subfolders"
-   ],
+   "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/audio/README.md",
-   "title": "audio`",
+   "title": "audio",
    "section": "reverse-engineering",
-   "bytes": 1250,
+   "bytes": 1510,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/fusion/README.md",
-   "title": "fusion`",
+   "title": "fusion",
    "section": "reverse-engineering",
-   "bytes": 586,
+   "bytes": 1003,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/vision/README.md",
-   "title": "vision`",
+   "title": "vision",
    "section": "reverse-engineering",
-   "bytes": 1673,
+   "bytes": 1930,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/playspace/README.md",
-   "title": "playspace`",
+   "title": "playspace",
    "section": "reverse-engineering",
-   "bytes": 591,
+   "bytes": 1159,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/robotbrain/README.md",
-   "title": "robotbrain`",
+   "title": "robotbrain",
    "section": "reverse-engineering",
-   "bytes": 3972,
+   "bytes": 5182,
    "mermaid": 0,
    "headings": [
-    "Subfolders"
+    "Subfolder"
    ],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/robotbrain/serialized/README.md",
-   "title": "serialized`",
+   "title": "serialized",
    "section": "reverse-engineering",
-   "bytes": 757,
+   "bytes": 1059,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/system/README.md",
-   "title": "system`",
+   "title": "system",
    "section": "reverse-engineering",
-   "bytes": 891,
+   "bytes": 1233,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/telehealth/README.md",
-   "title": "telehealth`",
+   "title": "telehealth",
    "section": "reverse-engineering",
-   "bytes": 564,
+   "bytes": 639,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/testing/README.md",
-   "title": "testing`",
+   "title": "testing",
    "section": "reverse-engineering",
-   "bytes": 523,
+   "bytes": 746,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/unity/README.md",
-   "title": "unity`",
+   "title": "unity",
    "section": "reverse-engineering",
-   "bytes": 2746,
+   "bytes": 3232,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/embodied/wifiapp/README.md",
-   "title": "wifiapp`",
+   "title": "wifiapp",
    "section": "reverse-engineering",
-   "bytes": 860,
+   "bytes": 1154,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
