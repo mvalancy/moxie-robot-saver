@@ -1,22 +1,29 @@
 # Documentation
 
-Everything about Moxie, in three parts: the **robot** itself, the original **parent app** on the
-phone, and the **server** we run to replace the dead cloud.
+This documentation covers the whole Moxie system: the **robot** itself, the original **parent app**
+on the phone, and the **server** we run in place of the dead cloud. The guides are written for owners
+and parents, the architecture pages for anyone building or changing the backend, and the
+reverse-engineering study for anyone who wants to know how the original works. These are the same
+docs the hosted site's explorer serves.
 
 ## Start here
 
-| If you want to… | Read |
+| If you are… | Read |
 |---|---|
-| Understand the project | [Project README](../README.md), then the [roadmap](../ROADMAP.md) |
-| Revive a real robot | [Revive your Moxie](guides/revive-your-moxie.md) |
-| Run the backend at home | [One-command stack](guides/one-command-stack.md) |
-| Build or change the backend | [Architecture and contracts](architecture/README.md) |
-| Find your way around the repo | [`STRUCTURE.md`](../STRUCTURE.md) |
-| Dig into how the original works | [Reverse-engineering field guide](reverse-engineering/FIELD-GUIDE.md) |
+| New to the project | The [project README](../README.md), then the [roadmap](../ROADMAP.md) |
+| A parent | [Child safety](guides/child-safety.md), [what Moxie remembers](guides/what-moxie-remembers.md), [permitting a robot](guides/permitting-a-robot.md) |
+| Reviving a robot | [Revive your Moxie](guides/revive-your-moxie.md) |
+| Running the backend at home | [One-command stack](guides/one-command-stack.md) |
+| Trying Moxie with no robot | [The simulator](../sim/README.md): hosted, or on your own machine with one Docker command |
+| Deploying your own hosted simulator | [Deploy on Cloudflare](guides/deploy-cloudflare.md) |
+| Building or changing the backend | [Architecture and contracts](architecture/README.md) |
+| Contributing | [How we write docs, and the guards](../CONTRIBUTING.md); [branches, CI and releases](../RELEASING.md) |
+| Studying the original | The [reverse-engineering index](reverse-engineering/README.md), then the [field guide](reverse-engineering/FIELD-GUIDE.md) |
+| Finding your way around the repo | [`STRUCTURE.md`](../STRUCTURE.md) |
 
 ## Sections
 
-- [`guides/`](guides/README.md) — how-tos for owners and operators.
+- [`guides/`](guides/README.md) — how-tos for owners, parents and anyone running the backend.
 - [`architecture/`](architecture/README.md) — how the replacement is built, and the contracts it is built
   from.
 - [`features/`](features/README.md) — what the original parent app did, feature by feature.
@@ -27,40 +34,42 @@ phone, and the **server** we run to replace the dead cloud.
 - [`community-research.md`](community-research.md) — other revival projects (OpenMoxie and forks) and
   where this one fits.
 
-## Reverse-engineering highlights
+## The reverse-engineering study
 
-**The robot** (firmware v3.6.4-Zephyr / OTA v24.10.803):
-[firmware reference](reverse-engineering/firmware/firmware-803-reference.md) ·
-[firmware image and flashing](reverse-engineering/firmware/firmware-image.md) ·
-[hardware access](reverse-engineering/hardware/hardware-access.md) ·
-[hardware map](reverse-engineering/hardware/hardware-map.md) ·
-[boot and launcher](reverse-engineering/firmware/boot-and-launcher.md) ·
-[OTA and recovery](reverse-engineering/firmware/ota-and-recovery.md) ·
-[on-device IPC](reverse-engineering/protocol/robot-ipc-protocol.md) ·
-[perception](reverse-engineering/runtime/perception-pipeline.md)
+One index per part of the system; every page is one hop down from its index.
 
-**The parent app** (`com.embo.embodied.parent` v2.2.2):
-[REST API](reverse-engineering/phone/rest-api.md) ·
-[crypto and keys](reverse-engineering/phone/crypto-and-keys.md) ·
-[pairing](reverse-engineering/phone/pairing-and-robot.md) ·
-[QR format](reverse-engineering/phone/qr-format.md) ·
-[app structure](reverse-engineering/phone/app-structure.md)
-
-**The cloud protocol:**
-[cloud protocol](reverse-engineering/protocol/cloud-protocol.md) ·
-[network trust](reverse-engineering/protocol/network-trust.md) ·
-[content and conversation](reverse-engineering/runtime/content-and-conversation.md) ·
-[behavior markup](reverse-engineering/runtime/behavior-markup.md) ·
-[QR commands](reverse-engineering/protocol/qr-commands.md) ·
-[recovered protobufs](reverse-engineering/protocol/proto-catalog.md)
+- [FIELD-GUIDE](reverse-engineering/FIELD-GUIDE.md) — the facts organized by goal: revive a robot, put
+  any AI inside, write custom firmware.
+- [EXPLORATION-MAP](reverse-engineering/EXPLORATION-MAP.md) — the status board: what is covered, and
+  the open items.
+- [`phone/`](reverse-engineering/phone/README.md) — the parent app (`com.embo.embodied.parent` v2.2.2):
+  REST API, crypto and keys, pairing, QR format, app structure.
+- [`protocol/`](reverse-engineering/protocol/README.md) — the cloud protocol, network trust, on-device
+  IPC, QR commands and the recovered protobufs.
+- [`runtime/`](reverse-engineering/runtime/README.md) — the brain and face at run time: content and
+  conversation, behavior markup, perception.
+- [`firmware/`](reverse-engineering/firmware/README.md) — the robot's firmware (v3.6.4-Zephyr / OTA
+  v24.10.803): the image, boot and launcher, OTA and recovery, flashing.
+- [`hardware/`](reverse-engineering/hardware/README.md) — the board: hardware access and the hardware
+  map.
 
 ## Maintaining these docs
 
-- Every docs folder with two or more pages has a `README.md` that lists them in reading order; the docs
-  explorer follows that order.
-- When a finding changes the story, fix every page that states the old belief in the same change.
-- Robot-side reverse-engineering pages carry the firmware stamp `v24.10.803`.
-- Before committing: `python3 sim/tools/build_docs_bundle.py`, `node sim/test_docs.mjs`,
-  `python3 scripts/check-doc-links.py`, `python3 scripts/check-doc-consistency.py`.
+Three rules, and the guards that enforce them:
 
-Research method: [`reverse-engineering/PLAYBOOK.md`](reverse-engineering/PLAYBOOK.md).
+- Every folder has a `README.md` that indexes its pages and links its parent. The explorer orders a
+  section by its section README's link list (`sim/tools/build_docs_bundle.py`); subfolder READMEs
+  index for readers. A finding that changes the story is fixed on every page that states the old
+  belief, in the same change.
+- Robot-side reverse-engineering pages carry the firmware stamp `v24.10.803`.
+- Before committing, run the guards and commit the rebuilt bundle with the doc:
+  `python3 sim/tools/build_docs_bundle.py && python3 sim/tools/check_bundle_fresh.py &&
+  node sim/test_docs.mjs && python3 scripts/check-doc-links.py &&
+  python3 scripts/check-doc-consistency.py &&
+  python3 -m pytest -q sim/tests/test_hosted_docs_truth.py sim/tests/test_no_offsite_images.py`
+
+The full Style Card and procedure: [`CONTRIBUTING.md`](../CONTRIBUTING.md). Research method:
+[`reverse-engineering/PLAYBOOK.md`](reverse-engineering/PLAYBOOK.md).
+
+---
+[Project README](../README.md) · [Contributing](../CONTRIBUTING.md)

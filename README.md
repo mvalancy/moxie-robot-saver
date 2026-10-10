@@ -35,8 +35,9 @@ configuration, so you can deploy your own ([guide](docs/guides/deploy-cloudflare
 
 A robot can be pointed at a new server by showing it QR codes **only on firmware 24.10.801/803**.
 Most robots sold second-hand run older firmware, whose cloud address is fixed and cannot be changed
-by QR. Those units need a firmware reflash, which is documented but not yet proven end to end. Full
-decision tree: [revival path](docs/architecture/revival-path.md).
+by QR. Those units need a firmware reflash, which is documented but not yet proven end to end. Start
+with the owner guide, [revive your Moxie](docs/guides/revive-your-moxie.md); the full decision tree
+is the [revival path](docs/architecture/revival-path.md).
 
 ## Quick start
 
@@ -48,20 +49,22 @@ cd moxie-robot-saver
 docker compose -f sim/docker-compose.yml up
 ```
 
-Open <http://localhost:8080/sim.html> and click **Connect**. See [`sim/`](sim/README.md) for voice
-and demo options.
+Open <http://localhost:8080/sim.html> (the `/sim` path serves the same page) and click
+**Connect**. See [`sim/`](sim/README.md) for voice and demo options.
 
 **The whole backend** (broker, supervisor and parent console), using prebuilt images for
 `amd64` and `arm64` (a Raspberry Pi 4/5 works):
 
 ```bash
 curl -O https://raw.githubusercontent.com/mvalancy/moxie-robot-saver/main/docker-compose.images.yml
-docker compose -f docker-compose.images.yml up
+MOXIE_APP=echo docker compose -f docker-compose.images.yml up
 ```
 
-Or `docker compose up` from a clone to build locally. Then open `http://<this-computer's-ip>:8080`
-on your phone. Next steps: [one-command stack](docs/guides/one-command-stack.md) and
-[first-time setup](docs/guides/first-time-setup.md).
+`MOXIE_APP=echo` runs the stack without a brain: Moxie echoes you, but every other part works. For a
+real brain, set `MOXIE_LLM_BASE_URL` in a `.env` beside that file instead; with neither, only the
+broker starts. Or `docker compose up` from a clone to build locally. Then open
+`http://<this-computer's-ip>:8080` on your phone. Next steps: [one-command stack](docs/guides/one-command-stack.md)
+and [first-time setup](docs/guides/first-time-setup.md).
 
 ## How it fits together
 
@@ -92,10 +95,17 @@ local or hosted, can be Moxie's brain.
 | [`sim/`](sim/) | Browser simulator, virtual robot, and most of the test suite |
 | [`functions/`](functions/) | Cloudflare Pages functions behind the hosted demo |
 | [`tools/`](tools/) | Pairing and endpoint QR tools, command-line |
-| [`hardware/`](hardware/) | The physical robot: OS, firmware, finding it on your network |
+| [`hardware/`](hardware/) | The physical robot: what it is made of, and firmware versions |
 | [`docs/`](docs/README.md) | Guides, architecture contracts, and the reverse-engineering study |
+| [`ai/`](ai/), [`scripts/`](scripts/), [`.claude/`](.claude/) | Where the AI adapters live (one README), the doc guards and PR helpers, and the shared Claude agents and skills |
 
 More detail: [`STRUCTURE.md`](STRUCTURE.md).
+
+## Contributing
+
+How we write docs, and the guards that check them: [`CONTRIBUTING.md`](CONTRIBUTING.md). Branches,
+CI and releases: [`RELEASING.md`](RELEASING.md). The hard rules every change follows:
+[agent workflow](docs/architecture/agent-workflow.md).
 
 ## Credits
 

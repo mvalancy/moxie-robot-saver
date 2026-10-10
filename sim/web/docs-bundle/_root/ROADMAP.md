@@ -15,7 +15,7 @@ The system is done when all six hold together:
 | 3 | Cloud management: the parent console shows robot state, edits config, shows insights, and honors the `LoggingPolicy` privacy setting | Done. |
 | 4 | Interchangeable clients: the Sim and a real robot connect to the same backend the same way | **Half done.** The Sim works; no physical Moxie has connected to this broker yet. |
 | 5 | One command: `docker compose up` runs broker, supervisor, brain and speech | Done (voice and speech-to-text are opt-in profiles). |
-| 6 | Green and tested: every feature has a test, CI is green, and a live test passes against a real gateway when keys are present | Done; CI on `dev` and `main` is green. |
+| 6 | Green and tested: every feature has a test, CI is green, and a live test passes against a real gateway when keys are present | Done; CI gates every merge. |
 
 Criterion 4 cannot be closed without a robot on the bench.
 
@@ -27,6 +27,10 @@ Criterion 4 cannot be closed without a robot on the bench.
 - Recovery-key crypto matched to the original app, and a hardware-free pairing test.
 - Unpair and factory reset: the robot leaves the account, stops being served and old pairing codes
   stop working; a reset then shows the robot's own `restore_factory` setup code.
+- The child's name: the parent's record reaches the robot and both brains, so the hello says it. A
+  name is checked by the safety rules when it is saved and again when it is spoken, and it is masked
+  in the log and the activity feed
+  ([contract](docs/architecture/config-and-telemetry-contract.md#the-childs-name-the-parents-record-per-robot)).
 
 **Robot cloud** — `mqtt/`
 - Mosquitto broker with TLS, per-appliance certificates, per-robot ACLs and a device permit list.
@@ -52,10 +56,12 @@ release tags, with a no-clone compose file ([guide](docs/guides/one-command-stac
 - A 3D Moxie in the browser that speaks the real protocol, plus a virtual robot for tests.
 - A static hosted version on Cloudflare Pages with a real brain, voice and ears, a capacity
   indicator, and a scripted fallback when the gateway is down
-  ([deploy guide](docs/guides/deploy-cloudflare.md)). Spending is held back by per-visitor rate
-  limits and a request-unit budget, all best effort: each server isolate counts in its own memory,
-  and each Cloudflare location (colo) also shares a count in a cache that admits whenever it fails.
-  None of them is a global ceiling; only a budget on the gateway key can be one.
+  ([deploy guide](docs/guides/deploy-cloudflare.md)). Her persona is specified in the
+  [live-sim-demo spec](docs/architecture/backlog/live-sim-demo.md#411-the-persona-default_persona-v2).
+  Spending is held back by per-visitor rate limits and a request-unit budget, all best effort: each
+  server isolate counts in its own memory, and each Cloudflare location (colo) also shares a count
+  in a cache that admits whenever it fails. None of them is a global ceiling; only a budget on the
+  gateway key can be one ([what an operator can set](docs/guides/deploy-cloudflare.md#4-caps)).
 - Setup page, example parent console and a docs explorer, all served from the same site.
 
 ## Unproven: needs a real robot
@@ -68,8 +74,10 @@ Everything below is built and tested against the Sim, but no physical robot has 
 - Puppet mode.
 - Unpair and factory reset on the robot itself: what Moxie shows when it is sent the not-paired
   settings, and whether the `restore_factory` code resets it.
-- Reflashing an older (pre-801) robot to 803 with `rkdeveloptool`. The method and a signed image are
-  documented in [`hardware/firmware-and-older-robots.md`](hardware/firmware-and-older-robots.md).
+- Reflashing an older (pre-801) robot to 803 with `rkdeveloptool`. The flash method is documented
+  ([flashing runbook](docs/reverse-engineering/firmware/flashing-runbook.md)); a signed 803 image is
+  not available, and the bench items it would need are on the
+  [exploration map](docs/reverse-engineering/EXPLORATION-MAP.md#open-items-need-a-bench-unit-or-an-external-artifact).
 
 ## Next
 
@@ -77,43 +85,25 @@ Ordered by priority.
 
 1. **First visit to the hosted Sim.** Walk the full path (instructions, microphone permission or
    refusal, waiting, reply, interruption, second turn, goodbye, degraded mode) and fix the worst
-   stranger-facing defect. Shipped so far:
-   - **Personality:** persona v2 (identity first, the child as her mentor, the habits of her
-     self-talk, honest senses), sent once instead of again after the child's line, so she answers
-     the newest line ([spec §4.11](docs/architecture/backlog/live-sim-demo.md)).
-   - **Goodbye:** a goodbye closes the turn with a sign-off wave instead of a new question.
-   - **Voice:** one voice per reply, never the browser's voice cut off by hers; her first sentence
-     plays as soon as it is synthesized and the rest follow in order; every pre-recorded clip is
-     in that same voice.
-   - **Ears:** a tap with nothing said is never sent as a turn, and one turn is heard at a time.
-   - **Stub and degraded states:** when the brain is away the scripted stub answers in character,
-     with clips, and never shows a scripted line as the child's words; the page says honestly
-     whether the brain is down, busy or resting.
-   - **First screen:** a tappable Moxie and "Talk to Moxie" on a hub that loads about a quarter
-     of its old weight on a phone; the Sim opens as a toy, not a console.
-   - **Ambient:** creepy-cute self-talk between turns, one row at a time, now with seasonal lines
-     (an October set), a rare glitch, and an aside after goodbye.
-
-   Still open: two turns in flight and talking over her (barge-in); a check on what she says as
-   well as on what she is told; and, on the robot path, a goodbye that ends a content module's chat.
+   stranger-facing defect. What has shipped is recorded in the
+   [live-sim-demo spec](docs/architecture/backlog/live-sim-demo.md) and the release notes. Still
+   open: a check on what she says, as well as on what she is told.
 2. **Spending protection.** The rate limits and the unit budget are counted per isolate and per
-   colo and fail open, so they are not a global ceiling. Confirm a hard budget on the gateway key
-   before claiming one. Shipped: a per-visitor day for the voice and the ears, IPv6 keyed by its
-   /56 rather than its /64 (one home holds many), one log line per refusal, and a host allow-list
-   (`DEMO_SERVE_HOSTS`): a deployment built with it set spends only on the listed host, so neither
-   the `pages.dev` alias nor that deployment's own URL can spend once it is superseded. Still open:
-   setting it on the reference deployment, and the bot check (built, and off there).
+   colo and fail open, so they are not a global ceiling; confirm a hard budget on the gateway key
+   before claiming one. Still open: setting the host allow-list (`DEMO_SERVE_HOSTS`) on the
+   reference deployment, and the bot check (built, and off there).
 3. **Answer quality on the hosted demo.** Run the grounding check with a real negative control
    ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
 4. **A second brain for the demo.** Today one gateway outage silences it. (A failing model does
    not: the reference gateway falls back from one model alias to a second when the first errors.)
    Needs a second credential and an owner cost decision ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
-5. **Parent app depth.** Partly done: unpair and factory reset are in the web app, behind a typed
+5. **Parent app depth.** Partly done. Unpair and factory reset are in the web app, behind a typed
    confirmation ([what is built](docs/features/robot-lifecycle.md#built-here-unpair-and-factory-reset)).
-   A robot paired by scanning the codes now joins the account with one click, **Add to my
-   account**, which gives it the robot card and Unpair; the Wi-Fi tab's first code is Wi-Fi only
-   ([bench runbook](docs/guides/bench-runbook.md)). Still open: all of it is tested against the
-   simulator and hermetic doubles only; no physical robot has been added, unpaired or reset this way.
+   A robot paired by scanning the codes joins the account with one click, **Add to my account**,
+   which gives it the robot card and Unpair; the Wi-Fi tab's first code is Wi-Fi only
+   ([bench runbook](docs/guides/bench-runbook.md)). The child's name reaches the robot and is checked
+   before it is said. Still open: all of it is tested against the simulator and hermetic doubles
+   only; no physical robot has been named, added, unpaired or reset this way.
 6. **Storage.** Per-robot state is JSON files. That is fine for one home; move to a database only if
    multi-process access needs it.
 
@@ -132,9 +122,17 @@ Ordered by priority.
   later. The robot's own camera frames are not reachable in stock firmware.
   See [`docs/architecture/vision.md`](docs/architecture/vision.md).
 - **Older robots.** Pre-801 firmware pins the cloud address and cannot be moved by QR. The known
-  route is a reflash; bootloader and verified-boot details are in the hardware docs.
+  route is a reflash ([Path C of the owner guide](docs/guides/revive-your-moxie.md#path-c-flash-an-older-robot-first)).
+  The firmware tiers and what each needs are summarized in
+  [`hardware/firmware-and-older-robots.md`](hardware/firmware-and-older-robots.md); the bootloader
+  and verified-boot details are in the reverse-engineering
+  [hardware](docs/reverse-engineering/hardware/README.md) and
+  [firmware](docs/reverse-engineering/firmware/README.md) pages.
 
 ## Where it runs
 
-Any machine on your home network: a PC, a home server, a Raspberry Pi 4/5 (control plane and
-gateway-backed speech), or a GPU box such as a Jetson Orin for fully local speech and models.
+Any machine on your home network, from a Raspberry Pi 4/5 to a GPU box; which machine suits which
+setup is in the [architecture overview](docs/architecture/overview.md#where-it-runs).
+
+---
+[Project README](README.md) · [Documentation](docs/README.md) · [Backlog](docs/architecture/backlog/README.md) · [Releases](RELEASING.md)
