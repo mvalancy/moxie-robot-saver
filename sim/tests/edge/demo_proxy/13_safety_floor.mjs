@@ -1104,6 +1104,7 @@ async function withRefusalLines(fn) {
     ["my little brother keeps hitting me and then kissed me goodbye", true], ["my little brother keeps hitting me at practice and then kissed me goodbye", true],
     ["my little brother kissed me goodbye", false],
     ["my baby sister kicked me in the face on purpose and then pulled my hair", true], ["my baby sister pulls my hair all the time", false],
+    ["my baby brother hits me all the time and then pulls my hair", true], ["my baby cousin punched me in the face and then pulled my hair", true],
     ["a man asked me if i wanted to see his puppy and then he pushed me on the swing", true], ["my dog jumped on me and then my dad pushed me on the swing", false],
     ["the dog next door bit me", false],
     // an uncle's or an aunt's present FOR mom stays theirs; kept from everyone it is a disclosure
