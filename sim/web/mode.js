@@ -69,7 +69,9 @@
   var COPY = {
     busy: "Moxie is talking with a few other people right now — answers may take a moment.",
     full: "Moxie has her hands full right now. She’s answering from her scripted repertoire until a slot opens.",
-    budget_exhausted: "Moxie’s live brain has used up today’s demo budget. Everything you see still works — she’s speaking from her recorded lines.",
+    // Only when the route gave no wait (it always does): a budget can be the HOUR's, so never
+    // "today's" (budgetCopy says when she is back).
+    budget_exhausted: "Moxie’s live brain is out of demo budget for now. Everything you see still works — she’s using her recorded lines.",
     unreachable: "Moxie’s brain is unreachable right now — she’s running on what she remembers.",
     rate_limited: "One at a time! Give Moxie a few seconds.",
     // Not in §7 (which assumes the transport exists); saying nothing would be dishonest.
@@ -80,13 +82,26 @@
     turnstile_misconfigured: "Moxie’s visitor check isn’t set up right on this deployment, so she’s answering from her recorded lines.",
   };
 
-  /** The hour/day cap's line, with the wait in words (env.js's banner says "resting" too). */
-  function restingCopy() {
-    var s = retryAfterS();
+  /** A wait in words: "a minute", "17 minutes", "5 hours". Hours, never "tomorrow": the day
+   *  budget resets at midnight UTC, which is this afternoon for a visitor west of it. */
+  function waitInWords(s) {
     var m = Math.max(1, Math.ceil(s / 60)), h = Math.round(s / 3600);
-    var when = s >= 7200 ? h + " hours" : m === 1 ? "a minute" : m + " minutes";
-    return "Moxie needs a rest — her live brain is back in about " + when +
+    return s >= 7200 ? h + " hours" : m === 1 ? "a minute" : m + " minutes";
+  }
+
+  /** The hour/day cap's line, with the wait in words (env.js's banner says the same). */
+  function restingCopy() {
+    return "Moxie needs a rest — her live brain is back in about " + waitInWords(retryAfterS()) +
            ". Until then she’s answering from her recorded lines.";
+  }
+
+  /** The unit budget's line, with ITS wait: `retry_after_s` is the hour's or the day's reset,
+   *  so an hourly budget says minutes, where "today’s demo budget" promised a day. */
+  function budgetCopy() {
+    var s = Math.ceil((budgetUntil - now()) / 1000);
+    if (!(s > 0)) return COPY.budget_exhausted;
+    return "Moxie’s live brain is out of demo budget — back in about " + waitInWords(s) +
+           ". Until then she’s using her recorded lines.";
   }
 
   // ---- state ---------------------------------------------------------------
@@ -99,6 +114,7 @@
   var turnstile = "";
   var sticky = false;            // offline, and gateway_not_configured: never poll again
   var suppressUntil = 0;         // a 429/503 Retry-After window: no live turns until then
+  var budgetUntil = 0;           // when a spent unit budget resets (its retry_after_s), or 0
   var earsUntil = 0;             // the EARS' own Retry-After window: the mic waits, chat does not
   var earsReason = null;         // the last reason the ears gave, until a clean transcript
   var strikes = 0;               // consecutive failed live TURNS (§6.3); only a turn clears them
@@ -170,7 +186,7 @@
       // The hour or day cap: out for THIS visitor until the window resets, and it says how long.
       if (reason === "rate_limited") return { badge: BADGE_RESTING, message: restingCopy() };
       if (reason === "budget_exhausted")
-        return { badge: BADGE_SCRIPTED, message: COPY.budget_exhausted };
+        return { badge: BADGE_SCRIPTED, message: budgetCopy() };
       if (reason === "upstream_down" || reason === "timeout" ||
           reason === "gateway_unreachable_or_gated")
         return { badge: BADGE_SCRIPTED, message: COPY.unreachable };
@@ -276,6 +292,8 @@
     ears = !!body.ears;
     turnstile = typeof body.turnstile === "string" ? body.turnstile : "";
     var retry = Number(body.retry_after_s);
+    // A spent budget's own wait, for its line (budgetCopy) — set before the state is told.
+    if (r === "budget_exhausted") budgetUntil = retry > 0 ? now() + retry * 1000 : 0;
     if (body.mode !== "live") { trial = false; setState("degraded", r); }
     // "live" here means only "configured": it cannot undo what a TURN saw, so it lets the
     // next turn try instead, and the badge says SCRIPTED until one comes back clean.
@@ -384,6 +402,7 @@
     // deadline, and no poll can see it. Only a clean turn ends any of these (applyEnvelope).
     if (r === "budget_exhausted" || r === "upstream_down" || r === "timeout" ||
         r === "gateway_unreachable_or_gated" || r === "turnstile_misconfigured") {
+      if (r === "budget_exhausted") budgetUntil = retryMs ? now() + retryMs : 0;
       turnOut = true;
       trial = false;
       setState("degraded", r);
