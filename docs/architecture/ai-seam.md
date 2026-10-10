@@ -207,7 +207,7 @@ Deltas over the base session are in [`remote-chat-protocol.md`](../reverse-engin
 
 The history a brain reads (`turn.history[-max_history:]`) is the runtime's per-robot transcript:
 each turn written once when it is answered (`memory.py::_remember`), and the robot's own `notify`
-report of what it said reconciled against that turn rather than appended beside it
+report of what it said reconciled against the turns it names rather than appended beside them
 ([mqtt-and-conversation.md §4.2](mqtt-and-conversation.md)). Twenty history lines are ten real
 exchanges, for a robot that notifies and for a double that never does alike.
 

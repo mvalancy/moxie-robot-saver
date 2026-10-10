@@ -79,28 +79,48 @@ def _runtime(tmp_path, app, **kw):
     return rt, did
 
 
-def _push(rt, did, speech, event_id=None):
+def _push(rt, did, speech, event_id=None, **fields):
     """One prompt, as the robot's `events/remote-chat` arrives; does not wait."""
     rt._on_remote_chat(did, rt.robots[did], json.dumps(
         {"command": "prompt", "backend": "router", "event_id": event_id or str(uuid.uuid4()),
-         "speech": speech}))
+         "speech": speech, **fields}))
 
 
-def _ask(rt, did, speech, event_id=None):
+def _ask(rt, did, speech, event_id=None, **fields):
     """One whole turn: pushed, answered and remembered (the pool drained, then re-armed)."""
-    _push(rt, did, speech, event_id)
+    _push(rt, did, speech, event_id, **fields)
     rt._pool.shutdown(wait=True)
     fresh_pool(rt)
 
 
+def _in(text):
+    """One child line as a notify (or a prompt) carries it in `extra_lines`."""
+    return {"context_type": "input", "text": text}
+
+
+def _notify_raw(rt, did, **fields):
+    """A notify with exactly these fields (a malformed one included), through
+    `_on_remote_chat` as `_on_message` hands it on."""
+    rt._on_remote_chat(did, rt.robots[did], json.dumps(
+        {"command": "notify", "backend": "router", "event_id": str(uuid.uuid4()), **fields}))
+
+
 def _notify(rt, did, speech=None, said=None):
     """The contract's notify (mqtt-and-conversation.md §4.2) through `_on_remote_chat`."""
-    payload = {"command": "notify", "backend": "router", "event_id": str(uuid.uuid4())}
+    fields = {}
     if speech is not None:
-        payload["speech"] = speech
+        fields["speech"] = speech
     if said is not None:
-        payload["extra_lines"] = [{"context_type": "input", "text": said}]
-    rt._on_remote_chat(did, rt.robots[did], json.dumps(payload))
+        fields["extra_lines"] = [_in(said)]
+    _notify_raw(rt, did, **fields)
+
+
+def _published(rt, did, n, how_many=1):
+    """Wait until `how_many` more replies than `n` have been published to this robot."""
+    topic = CHAT_TOPIC.format(device_id=did)
+    assert rt.client.wait_for(
+        lambda pubs: sum(t == topic for t, _ in pubs) >= n + how_many, PATIENCE), \
+        "the runtime published nothing in time"
 
 
 def _lines(rt, did):
@@ -387,17 +407,31 @@ def test_a_line_the_child_really_said_twice_is_kept_twice(tmp_path):
     assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay!")] * 2
 
 
-def test_a_child_line_the_turn_never_heard_as_its_prompt_is_kept(tmp_path):
-    """The robot's report names a child line the runtime did not answer (an earlier
-    speech window): it is the child's, so it is kept, once."""
+@pytest.mark.parametrize("lines, child", [
+    ([_in("um, Moxie?"), _in(PROMPT)], f"um, Moxie? {PROMPT}"),
+    ([_in(PROMPT), _in("wait, what?")], f"{PROMPT} wait, what?"),
+], ids=["said-before", "said-after"])
+def test_a_child_line_the_turn_never_heard_as_its_prompt_joins_the_childs_line(
+        tmp_path, lines, child):
+    """The robot's report lists a child line the runtime did not answer (a speech window
+    the prompt did not carry) beside the one it did: the child said both before hearing
+    Moxie, so it joins the turn's child line in the order reported, as OpenMoxie joins
+    consecutive child lines (conversations.py:29-39). Never filed after Moxie's answer,
+    where the brain would read it as a line still waiting for one; never twice when the
+    robot lists it again."""
     rt, did = _runtime(tmp_path, _Brain())
     _ask(rt, did, PROMPT)
-    rt._on_remote_chat(did, rt.robots[did], json.dumps(
-        {"command": "notify", "speech": ANSWER,
-         "extra_lines": [{"context_type": "input", "text": "um, Moxie?"},
-                         {"context_type": "input", "text": PROMPT}]}))
-    assert _lines(rt, did) == [("user", PROMPT), ("assistant", ANSWER),
-                               ("user", "um, Moxie?")]
+    for _ in range(2):
+        _notify_raw(rt, did, speech=ANSWER, extra_lines=lines)
+        assert _lines(rt, did) == [("user", child), ("assistant", ANSWER)]
+
+
+def test_child_lines_reported_with_no_turn_of_ours_are_appended_as_reported(tmp_path):
+    """A module's own conversation (nothing the runtime answered): the child's lines and
+    Moxie's are kept as the robot reports them."""
+    rt, did = _runtime(tmp_path, _Brain())
+    _notify_raw(rt, did, speech="Welcome!", extra_lines=[_in("hi"), _in("hello?")])
+    assert _lines(rt, did) == [("user", "hi hello?"), ("assistant", "Welcome!")]
 
 
 def test_a_notify_never_brings_back_a_line_the_safety_gate_kept_out(tmp_path):
@@ -412,14 +446,20 @@ def test_a_notify_never_brings_back_a_line_the_safety_gate_kept_out(tmp_path):
 
 
 class _GatedStream(MoxieApp):
-    """Streams its first sentence, then waits for the test before the rest."""
+    """`PROMPT`: streams its first sentence, then waits for the test before the rest. Any
+    other line: a plain answer (`answers`, else "Okay!"), held back until `release` when
+    one is given."""
     name = "gated"
 
-    def __init__(self):
+    def __init__(self, answers=None, release=None):
         self.gate = threading.Event()
+        self.answers = dict(answers or {})
+        self.release = release
 
     def respond(self, turn):
-        return Reply(text="Okay!")
+        if self.release is not None:
+            assert self.release.wait(PATIENCE), "the test never released the plain answer"
+        return Reply(text=self.answers.get(turn.speech, "Okay!"))
 
     def respond_stream(self, turn):
         if turn.speech != PROMPT:
@@ -464,8 +504,300 @@ def test_a_superseded_worker_past_its_stale_check_leaves_the_next_turns_record_o
     _notify(rt, did, "Two.", said="second")               # the new turn, still open
     assert _lines(rt, did) == [("user", "first"), ("assistant", "One.")]
     rt._remember(did, "second", "Two.")
-    assert _lines(rt, did) == [("user", "first"), ("assistant", "One."),
-                               ("user", "second"), ("assistant", "Two.")]
+    both = [("user", "first"), ("assistant", "One."), ("user", "second"), ("assistant", "Two.")]
+    assert _lines(rt, did) == both
+    _notify(rt, did, "One.", said="first")                # the old worker's turn, reported late
+    assert _lines(rt, did) == both
+
+
+def test_a_chunk_reported_before_the_stream_closed_cuts_the_entry_until_the_rest_is_reported(
+        tmp_path):
+    """The robot reports chunk 0 while the stream is still open: held, then applied as the
+    turn is remembered, so the entry is what the robot has said so far (a clean cut), and
+    the whole text once the rest is reported."""
+    app = _GatedStream()
+    rt, did = _runtime(tmp_path, app)
+    _push(rt, did, PROMPT)
+    _published(rt, did, 0)
+    _notify(rt, did, SENTENCES[0], said=PROMPT)
+    app.gate.set()
+    rt._pool.shutdown(wait=True)
+    assert _lines(rt, did) == [("user", PROMPT), ("assistant", SENTENCES[0])]
+    _notify(rt, did, SENTENCES[1])
+    assert _lines(rt, did) == [("user", PROMPT),
+                               ("assistant", f"{SENTENCES[0]} {SENTENCES[1]}")]
+
+
+def test_what_a_superseded_turn_reported_reaches_the_disk_as_the_next_turn_starts(
+        tmp_path, monkeypatch):
+    """Kept in RAM by the next turn's start (above) and saved right then, not left for that
+    turn's own save, which is a whole brain call away."""
+    memdir = tmp_path / "memory"
+    monkeypatch.setenv("MOXIE_MEMORY_DIR", str(memdir))
+    app = _GatedStream(release=threading.Event())
+    rt, did = _runtime(tmp_path, app)
+    rt.brain_budget_s = 0
+    _push(rt, did, PROMPT)
+    _published(rt, did, 0)
+    _notify(rt, did, SENTENCES[0], said=PROMPT)
+    _push(rt, did, "never mind")                   # its plain answer waits on `release`
+    assert json.loads(_on_disk(memdir, did)) == [
+        {"role": "user", "content": PROMPT}, {"role": "assistant", "content": SENTENCES[0]}]
+    app.release.set()
+    app.gate.set()
+    rt._pool.shutdown(wait=True)
+    assert _lines(rt, did) == [("user", PROMPT), ("assistant", SENTENCES[0]),
+                               ("user", "never mind"), ("assistant", "Okay!")]
+
+
+def test_a_superseded_turns_own_hello_reported_is_still_never_history(tmp_path):
+    """The hello the runtime spoke as the superseded turn's chunk 0, reported by the robot
+    and held: dropped with that turn's record as the next turn starts, while the sentence
+    the robot got through is kept as reported."""
+    app = _GatedStream()
+    rt, did = _runtime(tmp_path, app)
+    rt._pending_opener[did] = HELLO
+    _push(rt, did, PROMPT)
+    _published(rt, did, 0, how_many=2)
+    assert _said(rt, did) == [HELLO, SENTENCES[0]]
+    _notify(rt, did, HELLO, said=PROMPT)
+    _notify(rt, did, SENTENCES[0])
+    _push(rt, did, "never mind")
+    assert _lines(rt, did)[:2] == [("user", PROMPT), ("assistant", SENTENCES[0])]
+    app.gate.set()
+    rt._pool.shutdown(wait=True)
+    assert _lines(rt, did) == [("user", PROMPT), ("assistant", SENTENCES[0]),
+                               ("user", "never mind"), ("assistant", "Okay!")]
+
+
+# --------------------------------------------------------------------------- #
+# Several speech windows, one report
+# --------------------------------------------------------------------------- #
+#: Two of the child's speech windows, each answered as its own turn (the robot sent two
+#: prompts), then one report naming both: OpenMoxie's reading of the notify, which is what
+#: keeps its context right "even when the user provides input in multiple speech windows
+#: before hearing a response" (moxie_remote_chat.py:8-11; conversations.py:63-65 adds
+#: every input line).
+WINDOWS = {"P one": "A one.", "P two": "A two."}
+BOTH = [("user", "P one"), ("assistant", "A one."), ("user", "P two"), ("assistant", "A two.")]
+
+
+def test_a_report_naming_the_windows_of_turns_already_answered_adds_no_line(tmp_path):
+    """Each window's line is already held by the turn that answered it, so the report adds
+    nothing. (Matched against the current turn alone, the earlier window went in again,
+    after Moxie's second answer.)"""
+    rt, did = _runtime(tmp_path, _Brain(answers=WINDOWS))
+    _ask(rt, did, "P one")
+    _ask(rt, did, "P two")
+    assert _lines(rt, did) == BOTH
+    _notify_raw(rt, did, speech="A two.", extra_lines=[_in("P one"), _in("P two")])
+    assert _lines(rt, did) == BOTH
+
+
+def test_a_report_joining_both_answers_marks_both_turns(tmp_path):
+    """A robot that spoke both answers as one utterance: each turn's text is found in the
+    report and marked, nothing is appended."""
+    rt, did = _runtime(tmp_path, _Brain(answers=WINDOWS))
+    _ask(rt, did, "P one")
+    _ask(rt, did, "P two")
+    _notify_raw(rt, did, speech="A one. A two.", extra_lines=[_in("P one"), _in("P two")])
+    assert _lines(rt, did) == BOTH
+
+
+def test_the_earlier_window_of_one_prompt_is_joined_before_the_childs_line(tmp_path):
+    """One prompt carrying both windows (`_on_remote_chat` answers the last): the report
+    lists both, and the earlier one joins the child's line before it, as OpenMoxie joins
+    consecutive child lines, never filed after Moxie's answer. A robot that lists its
+    windows again (per chunk) joins nothing twice."""
+    rt, did = _runtime(tmp_path, _Brain(answers=WINDOWS))
+    _ask(rt, did, "P two", extra_lines=[_in("P one"), _in("P two")])
+    assert _lines(rt, did) == [("user", "P two"), ("assistant", "A two.")]
+    for _ in range(2):
+        _notify_raw(rt, did, speech="A two.", extra_lines=[_in("P one"), _in("P two")])
+        assert _lines(rt, did) == [("user", "P one P two"), ("assistant", "A two.")]
+
+
+def test_a_completed_turns_report_landing_after_the_next_prompt_adds_nothing(tmp_path):
+    """The robot reports the first turn only after the child's next prompt has opened the
+    second (a slow report; a child who barges in): held for the open turn, then matched to
+    the turn it names, not appended beside the new one."""
+    app = _GatedStream(answers=WINDOWS)
+    rt, did = _runtime(tmp_path, app)
+    _ask(rt, did, "P one")
+    first = [("user", "P one"), ("assistant", "A one.")]
+    assert _lines(rt, did) == first
+    _push(rt, did, PROMPT)                          # streamed: open after chunk 0
+    _published(rt, did, 1)
+    _notify(rt, did, "A one.", said="P one")        # the late report, held
+    assert _lines(rt, did) == first
+    app.gate.set()
+    rt._pool.shutdown(wait=True)
+    assert _lines(rt, did) == first + [("user", PROMPT),
+                                       ("assistant", f"{SENTENCES[0]} {SENTENCES[1]}")]
+
+
+def test_each_turns_own_report_consumes_its_record_so_a_real_repeat_stays_two_lines(
+        tmp_path):
+    """Both reports arrive late, after both turns were answered: the first names the first
+    "no" and retires nothing, the second names the second; "Okay!" twice stays two lines,
+    not one turn marked twice and the other appended."""
+    rt, did = _runtime(tmp_path, _Brain())
+    _ask(rt, did, "no")
+    _ask(rt, did, "no")
+    for _ in range(2):
+        _notify(rt, did, "Okay!", said="no")
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay!")] * 2
+
+
+def test_a_window_joins_the_turn_its_report_names_not_an_earlier_one_already_reported(
+        tmp_path):
+    """Two turns with the same child line, both reported late: the second report's extra
+    window joins the second turn's line (the first is fully reported), in the order
+    reported."""
+    rt, did = _runtime(tmp_path, _Brain())
+    _ask(rt, did, "no")
+    _ask(rt, did, "no")
+    _notify(rt, did, "Okay!", said="no")
+    _notify_raw(rt, did, speech="Okay!", extra_lines=[_in("wait"), _in("no")])
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay!"),
+                               ("user", "wait no"), ("assistant", "Okay!")]
+
+
+def test_a_turn_the_robot_has_reported_past_no_longer_absorbs_a_new_line(tmp_path):
+    """Once the robot reports a later turn, an earlier one it accounted for is dropped from
+    the records, so the child saying the same words again where no turn of ours answers
+    (a module's own conversation) is a new line, not one already held."""
+    rt, did = _runtime(tmp_path, _Brain(answers={"yes": "Sure!"}))
+    _ask(rt, did, "no")
+    _notify(rt, did, "Okay!", said="no")
+    _ask(rt, did, "yes")
+    _notify(rt, did, "Sure!", said="yes")
+    _notify_raw(rt, did, speech="Welcome to the dance party!", extra_lines=[_in("no")])
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay!"),
+                               ("user", "yes"), ("assistant", "Sure!"),
+                               ("user", "no"), ("assistant", "Welcome to the dance party!")]
+
+
+def test_a_robot_that_never_notifies_keeps_a_bounded_set_of_records(tmp_path):
+    """The records wait for reports that never come: `UNREPORTED_TURNS` of them at most,
+    while history itself is untouched."""
+    from moxie_runtime.memory import UNREPORTED_TURNS
+    rt, did = _runtime(tmp_path, _Brain())
+    turns = UNREPORTED_TURNS * 2 + 1
+    for n in range(turns):
+        _ask(rt, did, f"line {n}")
+    assert len(rt._turn_records()[did]) == UNREPORTED_TURNS
+    assert len(rt.history[did]) == 2 * turns
+
+
+# --------------------------------------------------------------------------- #
+# A bad report fails alone
+# --------------------------------------------------------------------------- #
+#: Shapes a protobuf-serialised robot cannot send (`RemoteChat.proto`: `speech` is a
+#: string, `extra_lines` repeated contexts whose `text` is a string), as `_on_remote_chat`
+#: hands them on.
+MALFORMED = {
+    "speech-not-a-string": {"speech": 5},
+    "extra_lines-not-a-list": {"extra_lines": "oops"},
+    "text-not-a-string": {"extra_lines": [{"context_type": "input", "text": 7}],
+                          "speech": ANSWER},
+}
+BAD = pytest.mark.parametrize("bad", list(MALFORMED.values()), ids=list(MALFORMED))
+
+
+@BAD
+def test_a_malformed_notify_with_no_turn_open_is_dropped_with_one_line(tmp_path, bad, capsys):
+    """origin/dev: `_ingest_notify` raised and `_on_message` dropped that one message with
+    an "error handling" line. The same, one level down: dropped on arrival, nothing raised,
+    history as it was, and the next good report still reconciles."""
+    rt, did = _runtime(tmp_path, _Brain())
+    _ask(rt, did, PROMPT)
+    _notify_raw(rt, did, **bad)
+    assert _lines(rt, did) == [("user", PROMPT), ("assistant", ANSWER)]
+    assert "dropped a malformed notify" in capsys.readouterr().out
+    _notify(rt, did, ANSWER, said=PROMPT)
+    assert _lines(rt, did) == [("user", PROMPT), ("assistant", ANSWER)]
+
+
+@BAD
+def test_a_malformed_notify_held_while_a_plain_turn_is_open_never_costs_the_turn(tmp_path, bad):
+    """A bad report arriving while the brain is still thinking. The first version of this
+    branch held it unchecked and `_remember` raised on it before the turn's lines were
+    written: the worker guard spoke the stock line and the turn vanished from history
+    (origin/dev had dropped only the message). The answer is published and the turn is
+    remembered once, whatever the robot sent."""
+    app = _SlowBrain()
+    rt, did = _runtime(tmp_path, app)
+    rt.brain_budget_s = 0                          # no filler: the answer is the only line
+    _push(rt, did, PROMPT)                         # the record opens before the worker runs
+    _notify_raw(rt, did, **bad)
+    app.release.set()
+    rt._pool.shutdown(wait=True)
+    assert _said(rt, did) == [ANSWER]
+    assert _lines(rt, did) == [("user", PROMPT), ("assistant", ANSWER)]
+
+
+@BAD
+def test_a_malformed_notify_held_while_a_stream_is_open_never_costs_the_turn(tmp_path, bad):
+    """The streamed path remembers after publishing, so the first version lost the turn from
+    history (and K5's goodbye summary never ran). Remembered once."""
+    app = _GatedStream()
+    rt, did = _runtime(tmp_path, app)
+    _push(rt, did, PROMPT)
+    _published(rt, did, 0)
+    _notify_raw(rt, did, **bad)
+    app.gate.set()
+    rt._pool.shutdown(wait=True)
+    assert _said(rt, did) == [SENTENCES[0], SENTENCES[1]]
+    assert _lines(rt, did) == [("user", PROMPT),
+                               ("assistant", f"{SENTENCES[0]} {SENTENCES[1]}")]
+
+
+@BAD
+def test_a_malformed_notify_held_by_a_superseded_turn_never_costs_the_next_prompt(
+        tmp_path, bad):
+    """Held by a turn the child then moves on from: replayed as the next turn starts, on the
+    MQTT thread, before the pool is asked to answer. The first version raised there, so the
+    child's next prompt went unanswered."""
+    app = _GatedStream()
+    rt, did = _runtime(tmp_path, app)
+    _push(rt, did, PROMPT)
+    _published(rt, did, 0)
+    _notify_raw(rt, did, **bad)
+    _push(rt, did, "never mind")                   # raised here before the fix
+    app.gate.set()
+    rt._pool.shutdown(wait=True)
+    assert "Okay!" in _said(rt, did)
+    assert _lines(rt, did) == [("user", "never mind"), ("assistant", "Okay!")]
+
+
+def test_a_report_the_reconcile_cannot_handle_fails_alone(tmp_path, monkeypatch, capsys):
+    """Behind the arrival check: a held report that makes the reconcile itself raise is
+    logged and dropped, and the turn's lines are still written, on the worker
+    (`_remember`) and on the MQTT thread (`_start_turn_record`) alike."""
+    app = _SlowBrain()
+    rt, did = _runtime(tmp_path, app)
+    rt.brain_budget_s = 0
+
+    def boom(*_args, **_kw):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(rt, "_reconcile_notify", boom)
+    _push(rt, did, PROMPT)
+    _notify(rt, did, ANSWER, said=PROMPT)          # held, well formed
+    app.release.set()
+    rt._pool.shutdown(wait=True)
+    fresh_pool(rt)
+    first = [("user", PROMPT), ("assistant", ANSWER)]
+    assert _said(rt, did) == [ANSWER]
+    assert _lines(rt, did) == first
+    app.release.clear()
+    _push(rt, did, "second")                       # open, its answer held back
+    _notify(rt, did, ANSWER, said="second")        # held
+    _push(rt, did, "third")                        # replays the held report: boom, contained
+    app.release.set()
+    rt._pool.shutdown(wait=True)
+    assert _lines(rt, did) == first + [("user", "third"), ("assistant", ANSWER)]
+    assert capsys.readouterr().out.count("dropped a notify") == 2
 
 
 # --------------------------------------------------------------------------- #
