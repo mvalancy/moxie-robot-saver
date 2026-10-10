@@ -20,7 +20,8 @@
  *   H. a quick tap on a busy page (900 ms of main-thread work between press and lift) is a tap;
  *   I. ONE VOICE AT A TIME: the hello holds the speakers from the tap, before its clip has
  *      loaded, so an ambient tick inside that load waits, a stub answer takes over cleanly and
- *      the mic opening stops it; a line she cannot say at all lets the speakers go;
+ *      the mic opening stops it, and the greeting it drops never falls back to the browser
+ *      voice; a line she cannot say at all lets the speakers go; I4, the same on the Piper path;
  *   J. a page whose brain is out: the first tap says no hello over ambient's degraded line,
  *      and still gets a face (no gateway, a dead one, the hour's cap), even while that line
  *      is still loading;
@@ -71,11 +72,23 @@ ok(!!STUB_BYTES, "I: the stub joke has its clip in the manifest's moxie group");
 
 const site = await serveWeb();
 const HOSTED = `http://moxie.hosted.test:${site.port}/sim.html`;
+const LOCAL = `${site.url}/sim.html`;   // I4: a self-hoster's page, which may reach a local Piper
 // Chrome's own autoplay policy: no `--autoplay-policy=no-user-gesture-required`.
 const browser = await launchBrowser(puppeteer, chrome, { autoplay: false, hosts: { "moxie.hosted.test": site.port } });
 
 const TONE = pcmToneBase64({ seconds: 1.5, rate: 22050, freq: 440, amp: 0.6 });
 const FX = await liveFixture({ eid: "sim-firsttap-1", reply: "Rockets are loud and fast!", tone: TONE });
+/** I4: what a Piper sidecar answers, a RIFF/WAVE of the same tone (as in test_typed_turn.mjs),
+ *  for a line no clip covers. */
+const WAV = (() => {
+  const pcm = Buffer.from(TONE.base64, "base64"), h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + pcm.length, 4); h.write("WAVE", 8);
+  h.write("fmt ", 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(TONE.rate, 24); h.writeUInt32LE(TONE.rate * 2, 28);
+  h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write("data", 36); h.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([h, pcm]);
+})();
+const PIPER_LINE = "A line no clip covers, so the Piper sidecar says it.";
 
 /** PAGE-SIDE: the browser voice as a recorder, and when each pointer lifted. */
 function recordPage() {
@@ -105,11 +118,11 @@ async function gestureFree(page) {
   return { read, until, json: async (expr) => JSON.parse(await read(`JSON.stringify(${expr})`)) };
 }
 
-/** A fresh hosted page, every backend answered at the browser; NOT settled with evaluate
- *  (that would activate it). Live unless `o.health` says otherwise; `o.ready` is what
+/** A fresh hosted page (or `o.url`), every backend answered at the browser; NOT settled with
+ *  evaluate (that would activate it). Live unless `o.health` says otherwise; `o.ready` is what
  *  "booted" means (default: live), `o.boot` runs in the page before its own scripts. */
 async function open(label, o = {}) {
-  const v = await openSim(browser, HOSTED, {
+  const v = await openSim(browser, o.url || HOSTED, {
     health: o.health === undefined ? FX.health : o.health, viewport: o.viewport || PHONE, settle: false, route: o.route,
     beforeLoad: async (p) => {
       await p.evaluateOnNewDocument(instrumentWebAudio); await p.evaluateOnNewDocument(recordPage);
@@ -536,6 +549,7 @@ try {
     deep(clipsOf(s).map((p) => p.bytes), [STUB_BYTES],
          "I2: the newer reply has the speakers: the answer heard once, and no greeting started under it");
     eq(clipsOf(s).filter((p) => cutsOf(s, p).length).length, 0, "I2: …the answer whole");
+    deep(s.speech, [], "I2: …and the greeting it dropped never falls back to the browser voice under it");
     aborted.refused++;                                  // the 429 is the fixture's
     eq(notable(errs, aborted).length, 0, `I2: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
     await page.close();
@@ -567,7 +581,52 @@ try {
     deep(await g.json("[window.moxieMic.isRecording(), document.body.getAttribute('data-mic')]"), [true, "on"],
          "I3: …the microphone is still open");
     eq(s.plays.length, 0, `I3: nothing plays into the open microphone — the greeting was stopped with her (${JSON.stringify(s.plays)})`);
+    deep(s.speech, [], "I3: …nor in the browser voice: the greeting it dropped never falls back to it");
     eq(notable(errs, aborted).length, 0, `I3: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+
+  /* I4. THE SAME RULE ON THE PIPER PATH. On a self-hoster's page (sim/serve.py: no
+   * /api/health, so `offline`) a line no clip covers goes to the local Piper sidecar and holds
+   * the speakers while Piper renders it (voice/local.js waits up to 1.4 s). A newer line in that
+   * wait takes the speakers, and the first line, its audio arriving late, neither plays under
+   * it nor falls back to the browser voice. The newer line is spoken 50 ms after the page asks
+   * Piper, and Piper's answer is HELD until the newer line plays. */
+  {
+    const hold = { held: [] };
+    const { page, g, errs, aborted } = await open("I4", {
+      url: LOCAL, health: null, ready: "window.moxieMode.state() === 'offline'",
+      route: (r, u) => (/:8081\/tts\b/.test(u) ? (hold.held.push(r), true) : false),
+    });
+    await unlockWithAMiss(page, g, "I4");
+    ok(await g.until("!window.moxieAudio.isMoxieBusy(1700)", 15000), "I4: precondition — she is quiet");
+    const t1 = await g.read("Math.round(performance.now())");
+    await g.read(`(() => {
+      window.__i4 = { asked: 0, busy: null };
+      const f = window.fetch;
+      window.fetch = function (url) {
+        if (String(url).indexOf(":8081/tts") !== -1 && !window.__i4.asked++) setTimeout(() => {
+          window.__i4.busy = window.moxieAudio.isMoxieSpeaking();
+          window.moxieAudio.speak(${JSON.stringify(STUB_JOKE)});
+        }, 50);
+        return f.apply(this, arguments);
+      };
+      window.moxieAudio.speak(${JSON.stringify(PIPER_LINE)});
+      return 1; })()`);
+    ok(await waitFor(() => hold.held.length >= 1), "I4: precondition — the line went to Piper, and its answer is held");
+    ok(await g.until(`window.__audio.plays.some((p) => p.bytes === ${STUB_BYTES} && p.t >= ${t1})`, 8000),
+       "I4: the newer line plays while Piper is still rendering the first");
+    for (const r of hold.held.splice(0)) {
+      try { r.respond({ status: 200, contentType: "audio/wav", headers: { "Access-Control-Allow-Origin": "*" }, body: WAV }); } catch (e) {}
+    }
+    await sleep(1500);                                  // Piper's late answer decodes here
+    ok(await g.until("!window.moxieAudio.isMoxieBusy(300)", 15000), "I4: …and she falls quiet");
+    const s = await state(g, t1);
+    eq(await g.json("window.__i4.busy"), true, "I4: the first line held the speakers while Piper rendered it");
+    eq(overlapMs(s), 0, `I4: one voice at a time — Piper's late answer never plays under the newer line (${JSON.stringify(s.plays)})`);
+    deep(clipsOf(s).map((p) => p.bytes), [STUB_BYTES], "I4: the newer line is the one voice heard");
+    deep(s.speech, [], "I4: …and the line it dropped never falls back to the browser voice");
+    eq(notable(errs, aborted).length, 0, `I4: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
     await page.close();
   }
 
