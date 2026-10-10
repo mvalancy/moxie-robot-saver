@@ -28,13 +28,17 @@ await withZone("America/Los_Angeles", async () => {
                `(${OCTOBER.length} of ${OCTOBER.length + yearRound.length} bag lines)`);
   }
 
-  /* 1b. September and November: none, and the year-round lines all still come up. */
-  for (const [label, start] of [["15 September", at(2026, 9, 15, 12)], ["15 November", at(2026, 11, 15, 12)]]) {
+  /* 1b. September and November: none, and every line in season still comes up. The expected
+   *     bag is computed for THAT month (the year-round lines plus any set with that month, as
+   *     November's), so the gate is proved to take out exactly the lines out of season. */
+  for (const [label, start, month] of [["15 September", at(2026, 9, 15, 12), 9], ["15 November", at(2026, 11, 15, 12), 11]]) {
     const t = await ambientPage({ start, random: seeded(2) }, (t) => t.advance(3 * HOUR));
     const q = quipsOf(t);
+    const inSeason = LINES.filter((l) => !l.beat && (!Array.isArray(l.months) || l.months.includes(month)));
     eq(q.filter((s) => october.has(s.text)).length, 0, `${label}: no October line comes up`);
-    eq(new Set(q.map((s) => s.text)).size, yearRound.length,
-       `${label}: every year-round line still comes up (the gate takes nothing else out)`);
+    eq(new Set(q.map((s) => s.text)).size, inSeason.length,
+       `${label}: every line in season still comes up and nothing else (${inSeason.length} bag lines, ` +
+       `${inSeason.length - yearRound.length} of them this month's own)`);
   }
 
   /* 1c. The last evening of October: until local midnight and not a quip after it. */
