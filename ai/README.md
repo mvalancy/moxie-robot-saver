@@ -17,8 +17,8 @@ markup (`automarkup.py`, `performance.py`) that makes Moxie move and emote while
 Unverified on a physical robot: [sim-as-a-client.md](../docs/architecture/sim-as-a-client.md#the-one-divergence-text-to-speech)
 says a real robot synthesizes on-device from text and markup, while the firmware study
 ([perception pipeline](../docs/reverse-engineering/runtime/perception-pipeline.md)) says the server
-renders the audio and on-device CereVoice is the fallback. The two pages disagree and the owner has not
-ruled; treat the on-robot path as unverified.
+renders the audio and on-device CereVoice is the fallback. The two pages disagree; until it is measured
+on a real robot, treat the on-robot path as unverified.
 
 All settings are listed in [`../mqtt/.env.example`](../mqtt/.env.example). Local engines and gateways
 are both first-class: everything can run on your own machine with no internet, any OpenAI-compatible

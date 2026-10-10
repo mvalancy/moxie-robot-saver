@@ -18,7 +18,7 @@ duplicating. For a feature-by-feature comparison with OpenMoxie, see the
 
 ## Moxie died twice
 
-Embodied, Inc. shut down in December 2024 and sanctioned OpenMoxie as the off-ramp. Moxie Robots, Inc.
+Embodied, Inc. shut down in December 2024; OpenMoxie (below) is the revival that followed. Moxie Robots, Inc.
 relaunched the product on 2025-12-06 as a paid subscription, and its servers closed on 2026-06-30
 (robotsaroundthehouse.com forum threads 1432 and 1565, recorded as C2 in
 [community signals](architecture/backlog/community-signals.md)). No firmware newer than 24.10.803
