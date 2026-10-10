@@ -261,10 +261,10 @@ fixed SIM id `d_sim`. It cannot publish into a real robot's `commands/` or read 
 plaintext in `supervisor.pass` (mode 0600) on the shared volume. The supervisor reads it via
 `MOXIE_MQTT_PASSWORD_FILE`, never from a compose `environment:` literal.
 
-**Ports.** `1883` binds `127.0.0.1` by default (`MOXIE_BIND_HOST_PLAIN`); `8883` and `9001` use
-`MOXIE_BIND_HOST`, since robots and phones are on the LAN. Keys live in `mqtt/broker/keys/`, generated
-per appliance ([`gen-certs.sh`](../../mqtt/broker/gen-certs.sh)) and never committed. The broker is
-upstream `eclipse-mosquitto:2.0.20` plus config.
+**Ports.** In compose, `1883` and `9001` bind `127.0.0.1` by default (`MOXIE_BIND_HOST_PLAIN`, `MOXIE_BIND_HOST_WS`).
+An anonymous client on either reads every robot's traffic ([broker auth §2.5](backlog/security-broker-auth.md#25-the-browser-sim-option-a-shipped-option-b-closes-the-residual)); `MOXIE_BIND_HOST_WS=0.0.0.0` links a browser SIM on another device.
+`8883` uses `MOXIE_BIND_HOST`, since robots are on the LAN. Keys live in `mqtt/broker/keys/`, generated per appliance
+([`gen-certs.sh`](../../mqtt/broker/gen-certs.sh)) and never committed. The broker is upstream `eclipse-mosquitto:2.0.20` plus config.
 
 ### 3.2 Topic structure
 

@@ -134,7 +134,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT and conversation contract (the robot cloud)",
    "section": "architecture",
-   "bytes": 54468,
+   "bytes": 54738,
    "mermaid": 0,
    "headings": [
     "0. The mechanism in five lines",
@@ -204,7 +204,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config and telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 43771,
+   "bytes": 44689,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -532,7 +532,7 @@
    "path": "architecture/backlog/security-broker-auth.md",
    "title": "Broker authentication: containment now, device identity later",
    "section": "architecture",
-   "bytes": 18112,
+   "bytes": 19927,
    "mermaid": 0,
    "headings": [
     "0. What our corpus establishes",
@@ -545,7 +545,7 @@
     "2.1 A `%c` ACL, in two files",
     "2.2 The supervisor's credential",
     "2.3 The permit-derived ACL: generated, inert until P1",
-    "2.4 The plain listener is loopback-only by default",
+    "2.4 The plain and websocket listeners are loopback-only by default",
     "2.5 The browser SIM: option (a) shipped, option (b) closes the residual",
     "2.6 Known consequences of P0",
     "3. P1 proposal: device credentials the broker verifies",
@@ -1143,7 +1143,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 13876,
+   "bytes": 14860,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -1167,7 +1167,7 @@
    "path": "guides/first-time-setup.md",
    "title": "First-time setup",
    "section": "guides",
-   "bytes": 5341,
+   "bytes": 5471,
    "mermaid": 0,
    "headings": [
     "1. Start the server",

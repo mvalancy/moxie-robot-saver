@@ -60,7 +60,7 @@ through `RPTokenURL::post_diagnostics`. Our corpus does **not** say where that P
 |---|---|---|---|
 | `8883` TLS | real robots | `allow_anonymous true`; **no** `password_file` | [`acl-robot`](../../../mqtt/broker/acl-robot): the `%c` floor only |
 | `1883` plain | supervisor, SIL, tests | anonymous **or** `password_file` | [`acl`](../../../mqtt/broker/acl): floor, SIM observer, `user supervisor` |
-| `9001` websockets | browser SIM, console live view | anonymous **or** `password_file` | `acl` |
+| `9001` websockets | the browser SIM | anonymous **or** `password_file` | `acl` |
 
 `per_listener_settings true` makes security settings apply per listener. The config appears three times,
 and all three are kept in step:
@@ -152,26 +152,50 @@ compiles.** It is reachable today only from the CLI
 yet. Wiring it to the permit writers, with a SIGHUP to the broker, belongs to P1, when it becomes the
 enforcement point.
 
-### 2.4 The plain listener is loopback-only by default
+### 2.4 The plain and websocket listeners are loopback-only by default
 
-Both compose files publish `1883` on `${MOXIE_BIND_HOST_PLAIN:-127.0.0.1}`. To drive it from another
-machine, set `MOXIE_BIND_HOST_PLAIN=0.0.0.0`. `sim/compose-smoke.env` pins it to `127.0.0.1` explicitly.
-`9001` stays on `MOXIE_BIND_HOST`, because that is how a phone or tablet loads the browser SIM.
+Both compose files publish `1883` on `${MOXIE_BIND_HOST_PLAIN:-127.0.0.1}` and `9001` on
+`${MOXIE_BIND_HOST_WS:-127.0.0.1}`. `MOXIE_BIND_HOST`, which puts the robot's `8883` and the console's
+`8080` on the LAN, widens neither. On Docker Engine before 28.0 a device on the same network segment can
+still reach a port published to `127.0.0.1`
+([the guide](../../guides/one-command-stack.md#what-is-on-your-network)).
+
+- **`1883`:** to drive it from another machine, set `MOXIE_BIND_HOST_PLAIN=0.0.0.0`.
+  `sim/compose-smoke.env` pins it to `127.0.0.1` explicitly.
+- **`9001`:** the browser SIM's link to the bus, and whoever reaches it reads every robot's traffic
+  (§2.5). To link a SIM on another device, such as a phone or a tablet, set `MOXIE_BIND_HOST_WS=0.0.0.0`.
+  A SIM on this machine links at `127.0.0.1`. A page opened by the machine's LAN address pre-fills that
+  address in its host box; change the box to `127.0.0.1`.
+
+The bare-metal `mosquitto.conf` binds `1883` to `127.0.0.1` itself; its `9001` listener still binds
+every interface.
 
 ### 2.5 The browser SIM: option (a) shipped, option (b) closes the residual
 
-`bridge.js` is a console-side observer as well as a robot double. It subscribes to `/devices/+/…`
-wildcards, which the `%c` floor denies. There were two options:
+The browser SIM's bridge ([`sim/web/bridge/index.js`](../../../sim/web/bridge/index.js)) is a
+console-side observer as well as a robot double. It subscribes to `/devices/+/…` wildcards, which the
+`%c` floor denies. There were two options:
 
 - **(a)** A fleet-wide *read* for the websocket listener. **This shipped.** `acl` grants anonymous
   `topic read /devices/#`, plus writes only as the fixed SIM id `d_sim`. A credential embedded in a page
-  served to a browser would not be a secret, so the grant is anonymous. `bridge.js` is unchanged.
+  served to a browser would not be a secret, so the grant is anonymous. The bridge is unchanged.
 - **(b)** The SIM subscribes only to its own `d_sim` subtree, and real-robot mirroring moves to the
   console's HTTP API (`/local/*`). **Not built.** This is what closes the residual below.
 
-**Residual exposure (deliberate and documented):** a LAN client on `1883` or `9001` can read
-`/devices/#`, including a config push going by. The robot listener does not grant this. Until (b)
-exists, the honest mitigation is to publish `9001` only when you use the browser SIM.
+**Residual exposure (deliberate and documented):** any client that reaches `1883` or `9001` can read
+`/devices/#` with no sign-in. That is every robot's traffic:
+
+| Topic under `/devices/<id>/` | What it carries |
+|---|---|
+| `config` | The settings sent to the robot. A permitted robot's carry `child_pii`: the child's name, plus the birthday and the chosen look when the record has them |
+| `events/remote-chat` | What the child said, each turn's words |
+| `events/zmq`, `commands/zmq` | A robot's microphone audio and its transcript, while this appliance transcribes for that robot |
+| `commands/remote_chat`, `commands/tts` | Moxie's replies, and the audio of her voice when this appliance renders it |
+
+The robot listener does not grant this read. In compose both ports listen on this machine by default
+(§2.4), so a device on the network reads none of it unless the owner opens one. Until (b) exists, set
+`MOXIE_BIND_HOST_WS=0.0.0.0` only while you link a SIM from another device. The microphone row follows
+the recovered protocol; no physical robot has streamed audio to this appliance yet.
 
 ### 2.6 Known consequences of P0
 
@@ -250,7 +274,7 @@ beside Permitted and Pending.
 | File | Asserts |
 |---|---|
 | [`sim/tests/test_broker_acl.py`](../../../sim/tests/test_broker_acl.py) | `render_acl` is exactly the four-line floor; no bare `topic` grant before the first `user`; `$SYS` is supervisor-only; one block per permitted device; output byte-stable and sorted; hostile ids cannot forge a line; shipped `acl-robot` equals the rendered floor; shipped `acl` is the floor plus the named observer grant; every listener loads an ACL; a `user` block is reachable only behind a password file; the robot listener never carries one; the plain listener is loopback on bare metal; credential loading (unset → anonymous, file read, literal wins, never echoed); `_build_client` authenticates only when configured |
-| [`sim/tests/test_compose.py`](../../../sim/tests/test_compose.py) | The inlined broker config and ACLs match the files; `$` escaping in the inlined copy; both compose files mount the ACLs and the credential |
+| [`sim/tests/test_compose.py`](../../../sim/tests/test_compose.py) | The inlined broker config and ACLs match the files; `$` escaping in the inlined copy; both compose files mount the ACLs and the credential; `1883` and `9001` listen on `127.0.0.1` with `.env.example`'s values or no `.env`, whatever `MOXIE_BIND_HOST` says, and `MOXIE_BIND_HOST_WS=0.0.0.0` opens `9001` alone |
 | [`sim/run_acl_proof.sh`](../../../sim/run_acl_proof.sh) + [`prove_broker_acl.py`](../../../sim/tools/prove_broker_acl.py) | Delivery-based checks against real `eclipse-mosquitto:2.0.20`: the supervisor authenticates and sees `/devices/#` and `$SYS`; wrong or missing passwords are refused; an anonymous robot connects and is confined; `username=supervisor` buys nothing on the robot listener; the SIM keeps its observer read and `d_sim` writes but cannot drive a robot |
 | [`sim/run_compose_smoke.sh`](../../../sim/run_compose_smoke.sh) | The full stack comes up with the minted credential, in both compose modes |
 
