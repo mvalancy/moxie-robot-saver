@@ -9,7 +9,7 @@ recording. A raw recording holds the child's words and name and the robot's addr
   the module list, the recorder losing the broker), recorded through
   [`wire_record.py`](../../../../mqtt/moxie_sdk/wire_record.py) on a fake client and shared with
   [`wire_timeline.py --share`](../../../tools/wire_timeline.py). The robot ids are placeholders,
-  and every address, hostname, username and word is gone.
+  and every address, hostname, username, word and broker time stamp is gone.
 - [`bench-session.timeline.txt`](bench-session.timeline.txt) — the timeline of that copy: the
   golden [`test_wire_record.py`](../../test_wire_record.py) compares with what the tool prints today.
 

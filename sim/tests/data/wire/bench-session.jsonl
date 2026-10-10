@@ -1,8 +1,10 @@
 {"kind":"banner","format":"moxie-wire/1","share":true,"mono":0.0,"note":"A --share copy of a wire recording: no robot id, address, hostname, username, and no words (every free-text field is [text]). Safe to paste into an issue."}
 {"kind":"note","mono":0.05,"text":"connected to the broker"}
 {"kind":"note","mono":0.06,"text":"subscribed to /devices/# and $SYS/broker/log/#"}
-{"kind":"msg","mono":0.4,"dir":"broker","device":"","topic":"$SYS/broker/log/N","name":"log/N","bytes":53,"as":"log","body":{"text":"New connection from [address] on port [port]."}}
-{"kind":"msg","mono":0.41,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/N","name":"log/N","bytes":123,"as":"log","body":{"text":"New client connected from [address] as d_robot-1 (p2, c1, k30)."}}
+{"kind":"msg","mono":0.4,"dir":"broker","device":"","topic":"$SYS/broker/log/N","name":"log/N","bytes":65,"as":"log","body":{"text":"New connection from [address] on port [port]."}}
+{"kind":"msg","mono":0.41,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/N","name":"log/N","bytes":135,"as":"log","body":{"text":"New client connected from [address] as d_robot-1 (p2, c1, k30)."}}
+{"kind":"msg","mono":0.42,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/M/subscribe","name":"log/M/subscribe","bytes":107,"as":"log","body":{"text":"d_robot-1 0 /devices/d_robot-1/config"}}
+{"kind":"msg","mono":0.43,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/M/subscribe","name":"log/M/subscribe","bytes":111,"as":"log","body":{"text":"d_robot-1 0 /devices/d_robot-1/commands/#"}}
 {"kind":"msg","mono":0.61,"dir":"robot>cloud","device":"d_robot-1","topic":"/devices/d_robot-1/state","name":"state","bytes":226,"as":"json","body":{"software_version":"24.10.803","state":"config","battery_level":0.82,"mac":"[text]","wifi_ssid":"[text]","embodied_robot_id":"[text]","timestamp":0}}
 {"kind":"msg","mono":1.62,"dir":"cloud>robot","device":"d_robot-1","topic":"/devices/d_robot-1/config","name":"config","bytes":201,"as":"json","body":{"pairing_status":"paired","audio_volume":"0.6","timezone_id":"[text]","child_pii":"[withheld]","settings":{"props":{"stt":"4","local_stt":"on"}}}}
 {"kind":"msg","mono":1.63,"dir":"cloud>robot","device":"d_robot-1","topic":"/devices/d_robot-1/commands/zmq","name":"zmq","bytes":80,"as":"zmq","body":{"proto":"embodied.logging.ProtoSubscribe","protos":["embodied.perception.audio.zmqSTTRequest"]}}
@@ -40,17 +42,17 @@
 {"kind":"msg","mono":34.55,"dir":"cloud>robot","device":"d_robot-1","topic":"/devices/d_robot-1/commands/remote_chat","name":"remote_chat","bytes":434,"as":"json","body":{"command":"remote_chat","result":0,"backend":"data","event_id":"5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d","output":{"text":"","markup":""},"response_action":{"output_type":"GLOBAL_RESPONSE"},"response_actions":[{"output_type":"GLOBAL_RESPONSE"}],"query_data":{"version":"mrs-20ae19d7f8dc","modules":[{"info":{"id":"FREE_CHAT"},"rules":"RANDOM","source":"REMOTE_CHAT","content_infos":[{"id":"default"}]}]}}}
 {"kind":"msg","mono":35.0,"dir":"robot>cloud","device":"d_robot-1","topic":"/devices/d_robot-1/events/telemetry","name":"telemetry","bytes":59,"as":"json","body":{"event_name":"SESSION_START","timestamp":0}}
 {"kind":"msg","mono":35.5,"dir":"robot>cloud","device":"d_robot-1","topic":"/devices/d_robot-1/events/device-logs","name":"device-logs","bytes":123,"as":"json","body":{"tag":"WifiApp","message":"[text]"}}
-{"kind":"msg","mono":40.0,"dir":"broker","device":"d_robot-2","topic":"$SYS/broker/log/N","name":"log/N","bytes":125,"as":"log","body":{"text":"New client connected from [address] as d_robot-2 (p2, c1, k60)."}}
+{"kind":"msg","mono":40.0,"dir":"broker","device":"d_robot-2","topic":"$SYS/broker/log/N","name":"log/N","bytes":137,"as":"log","body":{"text":"New client connected from [address] as d_robot-2 (p2, c1, k60)."}}
 {"kind":"msg","mono":40.3,"dir":"robot>cloud","device":"d_robot-2","topic":"/devices/d_robot-2/state","name":"state","bytes":52,"as":"json","body":{"software_version":"24.10.801","state":"config"}}
 {"kind":"msg","mono":41.31,"dir":"cloud>robot","device":"d_robot-2","topic":"/devices/d_robot-2/config","name":"config","bytes":28,"as":"json","body":{"pairing_status":"paired"}}
 {"kind":"note","mono":44.0,"text":"lost the broker (connection lost); reconnecting"}
 {"kind":"note","mono":46.1,"text":"reconnected to the broker"}
 {"kind":"note","mono":46.11,"text":"subscribed to /devices/# and $SYS/broker/log/#"}
-{"kind":"msg","mono":50.0,"dir":"broker","device":"d_robot-2","topic":"$SYS/broker/log/N","name":"log/N","bytes":68,"as":"log","body":{"text":"Client d_robot-2 closed its connection."}}
-{"kind":"msg","mono":52.0,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/N","name":"log/N","bytes":127,"as":"log","body":{"text":"New client connected from [address] as d_robot-1 (p2, c1, k30)."}}
-{"kind":"msg","mono":52.1,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/E","name":"log/E","bytes":88,"as":"log","body":{"text":"Client d_robot-1 already connected, closing old connection."}}
+{"kind":"msg","mono":50.0,"dir":"broker","device":"d_robot-2","topic":"$SYS/broker/log/N","name":"log/N","bytes":80,"as":"log","body":{"text":"Client d_robot-2 closed its connection."}}
+{"kind":"msg","mono":52.0,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/N","name":"log/N","bytes":139,"as":"log","body":{"text":"New client connected from [address] as d_robot-1 (p2, c1, k30)."}}
+{"kind":"msg","mono":52.1,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/E","name":"log/E","bytes":100,"as":"log","body":{"text":"Client d_robot-1 already connected, closing old connection."}}
 {"kind":"msg","mono":52.99,"dir":"cloud>robot","device":"d_robot-1","topic":"/devices/d_robot-1/config","name":"config","bytes":87,"as":"json","body":{"pairing_status":"paired","audio_volume":"0.6","child_pii":"[withheld]"}}
-{"kind":"msg","mono":53.0,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/N","name":"log/N","bytes":121,"as":"log","body":{"text":"Socket error on client d_robot-1 [address] ([mac]), disconnecting."}}
-{"kind":"msg","mono":55.0,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/N","name":"log/N","bytes":68,"as":"log","body":{"text":"Client d_robot-1 closed its connection."}}
-{"kind":"msg","mono":56.0,"dir":"broker","device":"","topic":"$SYS/broker/log/E","name":"log/E","bytes":69,"as":"log","body":{"text":"OpenSSL Error[0]: error:0A000418:SSL routines::tlsv1 alert unknown ca"}}
-{"kind":"stop","mono":57.0,"reason":"stopped by hand (Ctrl-C)","lines":49,"dropped":0}
+{"kind":"msg","mono":53.0,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/N","name":"log/N","bytes":133,"as":"log","body":{"text":"Socket error on client d_robot-1 [address] ([mac]), disconnecting."}}
+{"kind":"msg","mono":55.0,"dir":"broker","device":"d_robot-1","topic":"$SYS/broker/log/N","name":"log/N","bytes":80,"as":"log","body":{"text":"Client d_robot-1 closed its connection."}}
+{"kind":"msg","mono":56.0,"dir":"broker","device":"","topic":"$SYS/broker/log/E","name":"log/E","bytes":81,"as":"log","body":{"text":"OpenSSL Error[0]: error:0A000418:SSL routines::tlsv1 alert unknown ca"}}
+{"kind":"stop","mono":57.0,"reason":"stopped by hand (Ctrl-C)","lines":51,"dropped":0}

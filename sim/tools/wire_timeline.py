@@ -7,12 +7,13 @@ bench day needs to see, and a `--share` copy that holds no identity and no words
     docker compose exec -T supervisor cat /data/wire/bench.jsonl |
         python3 sim/tools/wire_timeline.py -
 
-**The timeline**, per robot and in time order: the broker's connect lines and the first
-`/state`; each config push and the next `/state`; the ask for the microphone
-(`ProtoSubscribe`) and the first audio frame after it; each utterance's length, loudness and
-transcript (its latency after END_OF_SPEECH, or none); each turn's request, its reply chunks,
-whether the robot asked again before the turn closed (a re-prompt, with the gap), how many
-`notify` reports followed, the actions it carried and the next request's `module_id`; every
+**The timeline**, per robot and in time order: the broker's lines that name it (connects,
+disconnects, each topic it subscribes to) and the first `/state`; each config push and the
+next `/state`; the ask for the microphone (`ProtoSubscribe`) and the first audio frame after
+it; each utterance's length, loudness and transcript (its latency after END_OF_SPEECH, or
+none); each turn's request, its reply chunks, whether the robot asked again before the turn
+closed (a re-prompt, with the gap), how many `notify` reports followed, the actions it carried
+and the next request's `module_id`; each vision event's reply and actions the same way; every
 other message counted by name. It is always computed from the `--share` view, so it is safe
 to paste into an issue.
 
@@ -23,10 +24,11 @@ connect line; a body keeps numbers, booleans and the strings named in `KEEP_STRI
 module ids, commands, result shapes, proto names), and every other string, which is where
 speech, transcripts, names, markup and log text live, becomes `"[text]"` (an empty one stays
 empty). The child's record (`child_pii`) is withheld whole, audio and public keys are removed,
-and wall-clock times are dropped (`mono`, seconds since the recorder started, stays). Before
-anything is written the copy is checked again for a `d_` id, an address, a MAC, a hostname or a
-username (`identity_problems`); if one is left the tool refuses and names the kind, never the
-value. Only this copy may be committed (`sim/tests/data/wire/`) or pasted into an issue.
+and wall-clock times are dropped, including the broker's own stamp at the head of each log line
+(`mono`, seconds since the recorder started, stays). Before anything is written the copy is
+checked again for a `d_` id, an address, a MAC, a hostname, a username (`identity_problems`) or
+a broker stamp; if one is left the tool refuses and names the kind, never the value. Only this
+copy may be committed (`sim/tests/data/wire/`) or pasted into an issue.
 """
 from __future__ import annotations
 
@@ -82,6 +84,10 @@ DOTTED = re.compile(r"(?<![A-Za-z0-9_.-])[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\.?(?:
 HOST_PORT = re.compile(r"(?<![A-Za-z0-9_.-])[A-Za-z][A-Za-z0-9-]*:\d{2,5}(?![\d.])")
 #: The username slot of mosquitto's connect line (`u'name'`).
 USERNAME = re.compile(r"\bu'[^']*'?")
+#: The broker's own clock at the head of a `$SYS/broker/log` line: `<epoch seconds>: ` by
+#: default (`log_timestamp`), or a date and time when `log_timestamp_format` is set.
+BROKER_STAMP = re.compile(r"^\s*(?:\d{9,11}|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?"
+                          r"(?:Z|[+-]\d{2}:?\d{2})?):\s+")
 _CONNECT = re.compile(r"^(?P<head>.*?connected from )(?P<addr>.*?)(?P<as> as )(?P<cid>\S+)"
                       r"(?P<tail>.*)$")
 _CONNECT_FLAG = re.compile(r"[pck]\d+")
@@ -198,9 +204,9 @@ class Share:
         return DEVICE_ID.sub(lambda m: self.device(m.group(0)), text)
 
     def log_line(self, text: str) -> str:
-        """A broker line (or a note) with every address, port, MAC, hostname and username
-        gone, and its d_ ids replaced."""
-        text = self.ids_in(text)
+        """A broker line (or a note) with the broker's time stamp and every address, port,
+        MAC, hostname and username gone, and its d_ ids replaced."""
+        text = self.ids_in(BROKER_STAMP.sub("", text, count=1))
         m = _CONNECT.match(text)
         if m:
             cid = m.group("cid")
@@ -303,7 +309,8 @@ def share_records(records) -> list:
 
 
 def share_problems(records) -> list:
-    """`[(line number, kind)]` of identity left in a --share copy (empty means safe)."""
+    """`[(line number, kind)]` of identity, or a broker's wall-clock stamp, left in a
+    --share copy (empty means safe)."""
     problems = []
     for n, rec in enumerate(records, 1):
         for kind in identity_problems(dump(rec)):
@@ -312,6 +319,8 @@ def share_problems(records) -> list:
             text = (rec.get("body") or {}).get("text", "")
             for kind in identity_problems(text, broker_line=True):
                 problems.append((n, kind))
+            if BROKER_STAMP.match(text):
+                problems.append((n, "a wall-clock time"))
     return problems
 
 
@@ -507,6 +516,22 @@ def _robot_lines(dev: str, msgs: list) -> list:
             owner = earlier[-1] if earlier else None
         if owner is not None:
             notifies[id(owner)] += 1
+
+    def acted(replies) -> str:
+        """`; actions a, b; next request +N s in module X` for replies that carried actions
+        (a goodbye's exit_module, a launch card's launch), else ""."""
+        acts = [a for r in replies for a in _actions(r["body"])]
+        if not acts:
+            return ""
+        last = next(r for r in reversed(replies) if _actions(r["body"]))
+        nxt = next((x for x, kk in kinds if x["mono"] > last["mono"] and kk != "notify"), None)
+        if nxt is None:
+            where = "no request after it"
+        else:
+            where = (f"next request {_gap(last['mono'], nxt['mono'])} in module "
+                     f"{nxt['body'].get('module_id') or '(none)'}")
+        return f"; actions {', '.join(dict.fromkeys(acts))}; {where}"
+
     for m, k in kinds:
         if k == "notify":
             continue
@@ -526,7 +551,7 @@ def _robot_lines(dev: str, msgs: list) -> list:
             continue
         if k == "vision":
             out.append((m["mono"], "vision", f"{body.get('speech')}{module}: "
-                        + (" · ".join(words) or "no reply")))
+                        + (" · ".join(words) or "no reply") + acted(mine_replies)))
             continue
         text = f"{body.get('command', 'prompt')} {_short(eid)}{module}: "
         closing = next((r for r in mine_replies if _closing(r["body"])), None)
@@ -539,18 +564,7 @@ def _robot_lines(dev: str, msgs: list) -> list:
         if notifies[id(m)]:
             n = notifies[id(m)]
             text += f"; {n} notify report{'' if n == 1 else 's'}"
-        acts = [a for r in mine_replies for a in _actions(r["body"])]
-        if acts:
-            last = next(r for r in reversed(mine_replies) if _actions(r["body"]))
-            nxt = next((x for x, kk in kinds if x["mono"] > last["mono"] and kk != "notify"),
-                       None)
-            if nxt is None:
-                where = "no request after it"
-            else:
-                where = (f"next request {_gap(last['mono'], nxt['mono'])} in module "
-                         f"{nxt['body'].get('module_id') or '(none)'}")
-            text += f"; actions {', '.join(dict.fromkeys(acts))}; {where}"
-        out.append((m["mono"], "turn", text))
+        out.append((m["mono"], "turn", text + acted(mine_replies)))
 
     # A reply nobody asked for: whether the cloud may speak first is open (§4.7).
     asked_ids = {m["body"].get("event_id") for m in requests}

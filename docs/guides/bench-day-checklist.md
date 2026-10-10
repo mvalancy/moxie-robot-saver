@@ -83,7 +83,7 @@ docker compose exec -T supervisor cat /data/wire/bench.jsonl | python3 sim/tools
 |---|---|---|---|
 | The robot streams its microphone after the `ProtoSubscribe` ask ([plug point B](../architecture/ai-seam.md#this-repos-implementation-plug-point-b); [`voice.py`](../../mqtt/supervisor/moxie_runtime/voice.py) `_subscribe_stt`). | Say a sentence. | `ears ProtoSubscribe zmqSTTRequest; first audio frame +… s`, then `utterance` lines. `no audio after it` means it never streamed. | "No physical Moxie has streamed audio to this appliance yet." |
 | The honest ears' levels suit Moxie's far-field microphone ([what the ears refuse to hear](../architecture/ai-seam.md#what-the-ears-refuse-to-hear); [`stt.py`](../../mqtt/moxie_sdk/stt.py) `ROOM_TONE_RMS`; [`config.py`](../../mqtt/config.py) `STT_ROOM_TONE_RMS`). | Say "bye" and "yes" close by and from across the room, then stay silent for a minute. | Each `utterance` line's length in ms and its `rms`; `FINAL empty (heard nothing)` for a dropped clip. | "The thresholds are unverified on a robot": write the levels you measured, then set `MOXIE_STT_ROOM_TONE_RMS` and `MOXIE_STT_MIN_SPEECH_MS` from them. |
-| Moxie still hears after a sleep and a wake (C4 in [community signals](../architecture/backlog/community-signals.md#2-findings)). | Put Moxie to sleep, wake it, and speak. | A new `ears ProtoSubscribe` after the wake, and audio frames after it. | C4's status. |
+| Moxie still hears after a sleep and a wake (C4 in [community signals](../architecture/backlog/community-signals.md#2-findings)). | Put Moxie to sleep, wake it with **Wake up** on the robot card, and speak. Then do it again, waking it with a touch. | After **Wake up**: a new `ears ProtoSubscribe`, then audio frames. After a touch there is no new ask unless a connect line came first: a sleeping robot keeps its connection while `touch_wake_enabled` is on ([§3.6](../architecture/mqtt-and-conversation.md#36-the-robot-config-pushed-on-connect)), so audio frames after the wake are the answer. | C4's status. |
 
 ### Turns
 
@@ -119,7 +119,7 @@ docker compose exec -T supervisor cat /data/wire/bench.jsonl | python3 sim/tools
 | The robot pulls its day plan at the start of a session and waits for the answer ([how a schedule becomes the day](../architecture/content-module-contract.md#how-a-schedules-entry-becomes-the-day-the-robot-runs)). | Nothing extra. | `activity query schedule; answered +… s`, then requests in the plan's modules. | "Unsettled without hardware" in [the routes](../architecture/content-module-contract.md#the-routes). |
 | A real robot sends telemetry packets ([insights §0](../architecture/backlog/insights.md#0-the-ceiling)). | Nothing extra. | `telemetry`, `analytics` or `packet` counts in the robot's traffic line. | §0's first bullet. |
 | Telehealth puts the robot in puppet mode and it speaks the operator's line ([telehealth §6](../architecture/backlog/telehealth.md#6-what-only-a-physical-robot-can-settle)). | Start a session from the console and send one line. | `telehealth` in the cloud-to-robot traffic, then `activity subtopic telehealth`. Listen for the line. | B1 to B5 there. |
-| A real robot works within the broker's per-robot rules (R6 in [broker auth §6](../architecture/backlog/security-broker-auth.md#6-what-only-a-physical-robot-can-answer)). | Nothing extra. | "Topics the recovered map does not name" lists any unrecovered topic. A denied message never reaches the recorder: count `Denied` lines in `docker compose logs broker`. | §6 item 5. |
+| A real robot works within the broker's per-robot rules (R6 in [broker auth §6](../architecture/backlog/security-broker-auth.md#6-what-only-a-physical-robot-can-answer)). | Nothing extra. | Each topic the robot subscribes to, as a broker line under its id (`d_robot-1 0 /devices/d_robot-1/config`), and each event name it sends, in its traffic line. A denied publish never reaches the recorder: the broker logs it only to its own output, so count `Denied PUBLISH` lines in `docker compose logs broker`. | §6 item 5. |
 
 ### Resilience
 
@@ -156,8 +156,8 @@ docker compose run --rm --no-deps supervisor python -m moxie_sdk.wire_record --o
 2. **Make the shareable copy** if anyone else needs the recording:
    `docker compose exec -T supervisor cat /data/wire/bench.jsonl | python3 sim/tools/wire_timeline.py - --share bench.share.jsonl`.
    It replaces every robot id with `d_robot-1`, `d_robot-2` and drops every address, hostname,
-   username and word. It refuses, naming the kind, if anything identifying survives. Read it before
-   you paste it.
+   username, word and clock time. It refuses, naming the kind, if any of them survives. Read it
+   before you paste it.
 3. **Replay it** against today's code: `python3 sim/tools/wire_replay.py bench.share.jsonl`. It
    feeds the robot's side of the session through a fresh supervisor with a scripted brain and
    reports every reply whose shape differs from what was recorded
@@ -181,6 +181,12 @@ never leaves the machine.
   shapes against a fresh runtime.
 - **SIL.** The same test records the virtual robot's echo turn through a real broker and the real
   supervisor: `/state`, config, the request and the reply, in order.
+- **A real broker's lines.** Measured 2026-10-10 on `eclipse-mosquitto:2.0.20`, the stack's pinned
+  image, with the stack's log settings. Every `$SYS/broker/log` line starts with the broker's own
+  clock (`<epoch seconds>: `), which the `--share` copy drops. Each SUBSCRIBE arrives as a
+  `log/M/subscribe` line, `<client id> <qos> <filter>`. A `Denied PUBLISH` goes only to the broker's
+  own output, never to `$SYS`. A SIL test in `test_wire_record.py` checks the first two on every CI
+  run, against the `mosquitto` binary CI installs.
 - **Not yet seen.** No physical Moxie has connected to this appliance
   ([live notes](../debugging/live-hardware-debug.md#the-wall-we-hit)). Every claim in the tables is
   unverified on a robot until a recording answers it.

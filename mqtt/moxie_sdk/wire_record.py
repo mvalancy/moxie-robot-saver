@@ -12,7 +12,8 @@ id, so the supervisor's `CONNECT_RE` never takes it for a robot) connects the wa
 supervisor connects: `config.MQTT_HOST` / `MQTT_PORT`, plain MQTT on the compose network (the
 supervisor's own client uses no TLS), and `config.broker_credentials()`. It subscribes to two
 filters, `FILTERS`, and nothing else: `/devices/#` (both directions of every robot's traffic)
-and `$SYS/broker/log/#` (the broker's connect and disconnect lines). **It never publishes**:
+and `$SYS/broker/log/#` (the broker's own lines: connects, disconnects, each SUBSCRIBE; never
+a denied publish, which mosquitto logs to its stdout only). **It never publishes**:
 nothing in this module calls `publish` (`sim/tests/test_wire_record.py` pins that in the
 source and over a whole session). It is its own process, so the supervisor's turn path is
 untouched. It sees what the broker delivered at QoS 0, not a publish the supervisor dropped

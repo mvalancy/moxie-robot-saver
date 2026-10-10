@@ -12,15 +12,18 @@ with fixed clocks (this file reads no clock):
 * a full queue drops messages, says how many where the gap is, and the writer keeps going; the
   size cap and a failed write each stop the recording with one line;
 * the `--share` copy of the session holds none of its d_ ids, addresses, ports, MAC, hostname,
-  username, Wi-Fi name, or the child's words or name, and each robot keeps one placeholder on
-  every line; identity that survived the scrub makes the tool refuse;
+  username, Wi-Fi name, wall clock (the broker's own stamp included), or the child's words or
+  name, and each robot keeps one placeholder on every line; identity or a stamp that survived
+  the scrub makes the tool refuse;
 * the committed fixtures under `sim/tests/data/wire/` are exactly the --share output of this
   session and pass the same greps; the timeline of the fixture is the committed golden (the
   re-prompt gap, the notify count, the chunk sequence); the replay reproduces the fixture's
   reply shapes against a fresh runtime with a scripted brain, and reports a tampered one.
 
 `test_sil_*` (SIL group, real mosquitto): the recorder hears the virtual robot's echo turn in
-order. Regenerate the fixtures after a deliberate change with
+order; with the stack's log settings, a real broker's connect, subscribe and disconnect lines
+arrive stamped with its clock, and the --share copy keeps their shape without the stamp, the
+address or the id. Regenerate the fixtures after a deliberate change with
 `python3 sim/tests/test_wire_record.py --write-fixtures`.
 """
 from __future__ import annotations
@@ -78,6 +81,10 @@ MOXIE_WORDS = ("Robin, Sprout has excellent taste.", "Turtles love strawberries.
 GOODBYE = "bye moxie see you tomorrow"
 BROKER_HOST = "wire-broker.invalid"  # where the recorder connects: never in the file
 SECRET = "not-a-real-password"
+#: The session's wall clock (epoch seconds at mono 0): the recorder's `t` stamps and the
+#: broker's own stamp at the head of each `$SYS/broker/log` line both start with it.
+WALL0 = 1760000000
+WALL_CLOCK = str(WALL0)[:8]
 
 E1 = "7f3a1c2e-0b4d-4e5f-8a9b-0c1d2e3f4a5b"     # unanswered: the robot asks again
 E2 = "9b2d4e6f-1a3c-4b5d-8e7f-a0b1c2d3e4f5"     # the re-prompt, answered in three chunks
@@ -90,10 +97,11 @@ UTT_1 = "2f1c9a7e-5b3d-4c8e-9f0a-1b2c3d4e5f60"
 UTT_2 = "3a2b1c0d-6e5f-4a7b-8c9d-0e1f2a3b4c5d"
 END_OF_SESSION = 57.0
 
-#: The child's words and name, the robot's identity: what a --share copy must not hold.
+#: The child's words and name, the robot's identity, the session's wall clock: what a --share
+#: copy must not hold.
 FORBIDDEN = (ROBOT_A, ROBOT_B, ROBOT_A[2:], ADDRESS, f":{PORT}", PORT, IPV6, MAC, HOSTNAME,
              USERNAME, WIFI_NAME, CHILD_NAME, CHILD_WORDS, "Sprout", "strawberr", GOODBYE,
-             *MOXIE_WORDS, BROKER_HOST, SECRET)
+             *MOXIE_WORDS, BROKER_HOST, SECRET, WALL_CLOCK)
 GENERIC = {
     "a d_ followed by a hex uuid": re.compile(r"d_[0-9a-f]{8}-[0-9a-f]{4}-", re.I),
     "an IPv4 literal": re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])"),
@@ -106,7 +114,8 @@ GENERIC = {
 
 
 def _sys(t, level, line):
-    return (t, ("msg", f"$SYS/broker/log/{level}", line.encode()))
+    """A broker log line as mosquitto 2.0.20 publishes it: its own clock first."""
+    return (t, ("msg", f"$SYS/broker/log/{level}", f"{int(WALL0 + t)}: {line}".encode()))
 
 
 def _dev(t, device, rest, payload):
@@ -130,6 +139,9 @@ def bench_session() -> list:
     s.append(_sys(0.40, "N", f"New connection from {ADDRESS}:{PORT} on port 8883."))
     s.append(_sys(0.41, "N", f"New client connected from {ADDRESS}:{PORT} as {a} "
                              f"(p2, c1, k30, u'{USERNAME}')."))
+    # mosquitto logs each SUBSCRIBE as `<client id> <qos> <filter>`.
+    s.append(_sys(0.42, "M/subscribe", f"{a} 0 /devices/{a}/config"))
+    s.append(_sys(0.43, "M/subscribe", f"{a} 0 /devices/{a}/commands/#"))
     s.append(_dev(0.61, a, "state", {
         "software_version": "24.10.803", "state": "config", "battery_level": 0.82,
         "mac": MAC, "wifi_ssid": WIFI_NAME, "embodied_robot_id": a[2:],
@@ -272,7 +284,7 @@ class _Clock:
         self.now = 0.0
 
     def wall(self):
-        return 1760000000.0 + self.now
+        return WALL0 + self.now
 
     def mono(self):
         return self.now
@@ -412,9 +424,13 @@ def test_each_message_gets_its_direction_and_its_decoded_body(recorded):
     assert voice["body"]["event_id"] == E2 and voice["body"]["chunk_num"] == 0
 
     log = [m for m in _msgs(lines, direction="broker")]
-    assert all(m["name"] in ("log/N", "log/E") and m["as"] == "log" for m in log)
+    assert all(m["name"] in ("log/N", "log/E", "log/M/subscribe") and m["as"] == "log"
+               for m in log)
     connect = log[1]
     assert connect["device"] == ROBOT_A and USERNAME in connect["body"]["text"]
+    assert connect["body"]["text"].startswith(f"{WALL0}: New client connected from")
+    subscribed = [m for m in log if m["name"] == "log/M/subscribe"]
+    assert [m["device"] for m in subscribed] == [ROBOT_A, ROBOT_A]
     assert lines[-1]["kind"] == "stop" and lines[-1]["reason"] == "stopped by hand (Ctrl-C)"
 
 
@@ -549,7 +565,7 @@ def _leaks(text: str) -> list:
 def test_the_share_copy_holds_no_identity_and_no_words(recorded, tmp_path):
     raw = recorded["text"]
     assert all(v in raw for v in (ROBOT_A, ROBOT_B, ADDRESS, IPV6, MAC, HOSTNAME, USERNAME,
-                                  WIFI_NAME, CHILD_NAME, CHILD_WORDS)), \
+                                  WIFI_NAME, CHILD_NAME, CHILD_WORDS, f"{WALL0}: ")), \
         "the raw recording must hold every value, or the greps below prove nothing"
     out = tmp_path / "bench.share.jsonl"
     assert T.main([recorded["path"], "--share", str(out)]) == 0
@@ -577,10 +593,12 @@ def test_each_robot_keeps_one_placeholder_on_every_line(recorded):
         "New client connected from [address] as d_robot-1 (p2, c1, k30)."]
 
 
-#: Broker lines in shapes the session does not use: a username outside a connect line, an
-#: IPv4-mapped IPv6 peer, a host with its port, a zoned IPv6, both MAC spellings, a public
-#: hostname, and a connect line whose username holds a comma.
+#: Broker lines in shapes the session does not use: a date-and-time stamp (a broker with
+#: `log_timestamp_format` set), a username outside a connect line, an IPv4-mapped IPv6 peer, a
+#: host with its port, a zoned IPv6, both MAC spellings, a public hostname, and a connect line
+#: whose username holds a comma.
 ODD_LOG_LINES = (
+    f"2026-10-10T09:15:02: Client {ROBOT_A} closed its connection.",
     f"Client {ROBOT_A} (u'{USERNAME}') was refused.",
     f"New connection from ::ffff:{ADDRESS}:{PORT} on port 1883.",
     f"Error resolving {HOSTNAME}:{PORT}.",
@@ -607,8 +625,9 @@ def test_the_scrub_handles_identity_in_any_broker_line_and_any_body():
     text = "".join(T.dump(r) for r in shared)
     for value in (ADDRESS, PORT, USERNAME, HOSTNAME, "fe80", "eth0", "00-00-5e-00-53-2a",
                   "0000.5e00.532a", "bench-gateway", CHILD_NAME, WIFI_NAME, SECRET, ROBOT_A,
-                  "p9"):
+                  "p9", "2026-10-10", "09:15"):
         assert value not in text, value
+    assert shared[0]["body"]["text"] == "Client d_robot-1 closed its connection."
     assert T.share_problems(shared) == []
     out = shared[-1]["body"]
     assert (out["speech"], out["extra_lines"][0]["text"]) == ("[text]", "[text]"), \
@@ -639,6 +658,26 @@ def test_a_result_spelled_as_a_name_is_read_as_its_code():
         ["REPLY_PENDING", "SUCCESS"]
 
 
+def test_a_vision_events_actions_and_next_module_show_as_a_turns_do():
+    """A printed launch card arrives as `eb-qr-event` and is answered with `launch`: its line
+    names the action and the module the robot asked from next (the checklist's card row)."""
+    def msg(t, direction, name, body):
+        side = "events" if direction == "robot>cloud" else "commands"
+        return {"kind": "msg", "mono": t, "dir": direction, "device": ROBOT_A,
+                "topic": f"/devices/{ROBOT_A}/{side}/{name}", "name": name, "bytes": 1,
+                "as": "json", "body": body}
+    card = _prompt(E4, "eb-qr-event", module_id="HUB", content_id="default",
+                   input_vars={"$eb_qr_value": "a printed card"})
+    launch = build_chat_response(E4, "Story time!", actions=[
+        Action(type=ActionType.LAUNCH, module_id="STORYTIME", content_id="default")])
+    then = _prompt(E5, "", module_id="STORYTIME", content_id="default")
+    text = T.timeline([msg(10.0, "robot>cloud", "remote-chat", card),
+                       msg(10.05, "cloud>robot", "remote_chat", launch),
+                       msg(11.05, "robot>cloud", "remote-chat", then)])
+    assert ("vision     eb-qr-event (module HUB): done +0.05 s; actions launch; "
+            "next request +1.00 s in module STORYTIME") in text
+
+
 def test_the_share_copy_is_its_own_share_copy(recorded):
     once = T.share_records(recorded["lines"])
     assert T.share_records(once) == once
@@ -651,8 +690,9 @@ def test_identity_left_after_the_scrub_makes_the_tool_refuse(recorded, tmp_path,
     assert T.main([recorded["path"], "--share", str(out)]) == 1
     assert not out.exists(), "a refused copy must not be written at all"
     err = capsys.readouterr().err
-    assert "refused" in err and "a username" in err
+    assert "refused" in err and "a username" in err and "a wall-clock time" in err
     assert ADDRESS not in err and USERNAME not in err, "the refusal names kinds, not values"
+    assert WALL_CLOCK not in err
 
 
 # --------------------------------------------------------------------------- #
@@ -816,6 +856,86 @@ def test_sil_the_recorder_hears_the_virtual_robots_echo_turn_in_order(tmp_path):
     assert T._closing(replies[-1])
     assert replies[-1]["output"]["text"] == f"You said: {SMOKE_PROMPT}"
     assert lines[-1]["kind"] == "stop" and lines[-1]["reason"] == "the SIL turn is over"
+
+
+#: The stack broker's log settings (mqtt/broker/compose-mosquitto.conf), on a loopback port.
+REAL_BROKER_CONF = ("listener {port} 127.0.0.1\nallow_anonymous true\nlog_dest topic\n"
+                    "log_type all\nconnection_messages true\n")
+
+
+def test_sil_a_real_brokers_lines_are_recorded_stamped_and_shared_without_stamp_or_id(tmp_path):
+    """A real mosquitto with the stack's log settings: a robot's connect, subscribe and
+    disconnect lines reach the recorder with the broker's clock first and its address in
+    them, and the --share copy keeps their shape without the stamp, the address or the id
+    (the synthetic session's broker lines are built the same way)."""
+    pytest.importorskip("paho.mqtt.client", reason="the recorder is a paho client")
+    import shutil
+    import subprocess
+    import uuid
+
+    import helpers_stack as S
+    import paho.mqtt.client as mqtt
+    if not shutil.which("mosquitto"):
+        pytest.skip("no mosquitto binary: this check needs the broker's own log settings")
+    port = S.free_port()
+    conf = tmp_path / "mosquitto.conf"
+    conf.write_text(REAL_BROKER_CONF.format(port=port))
+    broker = subprocess.Popen(["mosquitto", "-c", str(conf)], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL)
+    device = f"d_{uuid.uuid4()}"
+    seen, cond = [], threading.Condition()
+
+    def on_record(rec):
+        with cond:
+            seen.append(rec)
+            cond.notify_all()
+
+    def said(words):
+        return any(r.get("dir") == "broker" and r.get("device") == device
+                   and words in r["body"]["text"] for r in seen)
+
+    out = tmp_path / "wire" / "real-broker.jsonl"
+    rec = W.WireRecorder(str(out), on_record=on_record, say=lambda line: None)
+    rec.open()
+    rec.start()
+    robot = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=device)
+    try:
+        rec.connect("127.0.0.1", port)
+        assert rec.subscribed.wait(30), "the recorder never got its SUBACK"
+        robot.connect("127.0.0.1", port, 30)
+        robot.loop_start()
+        robot.subscribe(f"/devices/{device}/config")
+        robot.publish(f"/devices/{device}/state", json.dumps({"software_version": "sil"}))
+        with cond:
+            assert cond.wait_for(lambda: said(f"{device} 0 /devices/{device}/config")
+                                 and any(r.get("name") == "state" for r in seen), timeout=15)
+        robot.disconnect()
+        with cond:
+            assert cond.wait_for(lambda: said(f"Client {device} disconnected"), timeout=15)
+    finally:
+        robot.loop_stop()
+        rec.close_client()
+        rec.stop("the SIL check is over")
+        broker.terminate()
+        try:
+            broker.wait(5)
+        except subprocess.TimeoutExpired:
+            broker.kill()
+    lines = lines_of(out)
+    texts = [ln["body"]["text"] for ln in lines if ln.get("kind") == "msg"
+             and ln["dir"] == "broker" and ln["device"] == device]
+    assert len(texts) >= 3 and all(re.match(r"\d{9,11}: ", t) for t in texts), texts
+    assert any("New client connected from 127.0.0.1:" in t and f" as {device} (" in t
+               for t in texts), texts
+    shared = T.share_records(lines)
+    assert T.share_problems(shared) == []
+    mine = [r["body"]["text"] for r in shared if r.get("kind") == "msg"
+            and r["dir"] == "broker" and r["device"] == "d_robot-1"]
+    assert "New client connected from [address] as d_robot-1 (p2, c1, k30)." in mine, mine
+    assert "d_robot-1 0 /devices/d_robot-1/config" in mine, mine
+    assert "Client d_robot-1 disconnected." in mine, mine
+    text = "".join(T.dump(r) for r in shared)
+    assert device not in text and "127.0.0.1" not in text and f"port {port}" not in text
 
 
 if __name__ == "__main__":
