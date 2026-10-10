@@ -262,10 +262,15 @@ A house rule (`?scope=fleet`) cannot carry a child: that is a `400`.
 
 **One name rule**, shared with the Try it card (`cloud_config.check_name`):
 
-1. **Its shape.** The name is NFC-normalized first, so a decomposed `José` is the same name and is
-   kept composed. Then it is up to 40 letters, digits, spaces, periods, apostrophes or hyphens on
-   one line. A letter may carry combining marks (an accent, a Devanagari vowel sign), so names in
-   scripts that write vowels as marks work; a mark anywhere else is refused.
+1. **Its shape.** The name is first spelled as it is kept. A phone's apostrophe (`’` or `ʼ`) is
+   `'`, so "O’Neil" typed on an iPhone is saved as `O'Neil`. Code points a screen shows as nothing
+   (Unicode's default-ignorable set: variation selectors, zero-width spaces and joiners, bidi
+   controls, the Hangul fillers) are dropped, so "Mia" with an emoji variation selector is `Mia`
+   and a name of such code points alone is empty. Then it is NFC-normalized, so a decomposed `José`
+   is the same name and is kept composed. On that spelling it is up to 40 letters, digits, spaces,
+   periods, apostrophes or hyphens on one line. A letter may carry combining marks (an accent, a
+   Devanagari vowel sign), so names in scripts that write vowels as marks work; a mark anywhere
+   else is refused. The console saves the account's record in the same spelling.
 2. **Moxie's safety rules.** The name goes through the same classifier and table the runtime uses
    for every turn ([`safety.py`](../../mqtt/moxie_sdk/safety.py) over
    [`safety_rules.json`](../../mqtt/moxie_sdk/safety_rules.json), or `MOXIE_SAFETY_RULES`), on the
@@ -312,18 +317,22 @@ key (`config updated: child`), never a value. Every activity-feed line is masked
 it, and so are the supervisor's log lines that carry something said or heard: the hello, an
 exchange (both what the child said and what Moxie answered), a queued hello, a content pack's
 answer, a rehearsal and a stale answer (in the feed also what the ears heard, a voice test and a
-telehealth line). `[child]` stands where the name was. The masked names are every name Moxie calls
-a child on this appliance: each robot's record, connected or away, `MOXIE_CHILD_NICKNAME` (the
-generic `friend` is a word, not a name, and stays), and any name renamed or cleared away since the
-supervisor started, because a conversation's history can bring one back (that list is kept in RAM
-only, so a restart forgets it). Each is matched in any case, with or without its accents, whole or
-by part (`Mary-Kate` is also `Mary` and `Kate`). The name is masked before a feed line is cut
-short, so a cut never leaves its first letters behind. The robot still hears the real name: only
-these copies are masked. A name the supervisor has not been told yet (the child says it before the
-parent saves it) cannot be masked then: saving the name masks the feed's lines again, but the
-supervisor's log has already printed that line. The console's brain, Try it and Today's
-plan cards show the robot's child to anyone who can open the console on your network, as every
-console card shows the child's data today.
+telehealth line). `[child]` stands where the name was, and is never masked again, so a child named
+Child stays `[child]`. The masked names are every name Moxie calls a child on this appliance: each
+robot's record, connected or away, `MOXIE_CHILD_NICKNAME` (the generic `friend` is a word, not a
+name, and stays), any name renamed or cleared away since the supervisor started, and any saved
+name the supervisor dropped when it loaded the settings (one the rule now refuses, every saved
+name while the safety rules cannot be read, or one a clear is owed for, below), because a
+conversation's history can bring one back (that list is kept in RAM only, so a restart forgets a
+renamed one). Each is matched in any case, with or without its accents, whole or by part
+(`Mary-Kate` is also `Mary` and `Kate`), with either apostrophe a phone types. The name is masked
+before a feed line is cut short, so a cut never leaves its first letters behind. The robot still
+hears the real name: only these copies are masked. A name the supervisor has not been told yet (the
+child says it before the parent saves it) cannot be masked then: saving the name masks the feed's
+lines again, but the supervisor's log has already printed that line. One kind of log line is not
+masked: a content extension's own notes (`[ext] …`), which the content brain prints, as a pack
+wrote them. The console's brain, Try it and Today's plan cards show the robot's child to anyone who
+can open the console on your network, as every console card shows the child's data today.
 
 **The remaining exposure, plainly.** `.env.example`'s `MOXIE_BIND_HOST=0.0.0.0` puts three ports
 on your network by design: the robot's TLS port (`8883`), the broker's browser port (`9001`) and the
@@ -344,10 +353,22 @@ longer lets in keeps no child's name (`POST /permits` with `permitted: false` dr
 `robots/<id>/config.json`, and its answer says `child_cleared`). So when only the clear is lost,
 the unpair's own revoke takes the name off. When neither reaches the supervisor, the answer says
 so (`child_cleared: false`) and how to try again: **Revoke** in Robot access, which takes the name
-off then. A change the supervisor applies but cannot save (its answer says `saved: false`) is not
-reported as done either: a clear or a revoke is then not `child_cleared`, because the name is still
-in the robot's saved settings and a restart brings it back, and a name sent on a claim or a rename
-is not `child_pushed`, with the reason. A write for a
+off then. A record that failed closed (its data-sharing choice could not be read) is kept as found
+until a parent saves, except that a revoke takes its `child` out, and nothing else.
+
+**A clear that cannot be saved is owed.** When the supervisor took the name off but could not write
+the robot's record (its store refused, or a record that failed closed cannot be read at all), the
+robot stops using the name at once, and the answer is not `child_cleared` (a clear's answer says
+`saved: false`). The supervisor keeps the clear owed: a
+note beside the record (`robots/<id>/child_clear.json`, which holds no name). While it is owed, a
+restart loads no name from that record, and that name stays masked in the log and feed. Every
+`/config` push tries again, so the robot's next connect takes the name out of the record, and so
+does the next save of that robot's settings; either removes the note. An owed clear only ever
+removes a name: a name the parent saved since is kept. The unpair's answer and Robot access say the
+clear is owed rather than "revoke" (a revoked robot waits under Waiting for you, with no Revoke
+button). When even the note cannot be written, a restart brings the name back, and the feed says
+so. A name sent on a claim or a rename that cannot be saved is not `child_pushed`, with the reason.
+A write for a
 robot that is away is kept: a robot on the permit list or in the roster has it saved (`online: false,
 pushed: false`: no connected robot heard it) and the settle pushes it when the robot connects
 (OpenMoxie keeps an offline robot's edit the same way: `site/hive/mqtt/moxie_server.py:284-290`).
