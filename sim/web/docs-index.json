@@ -82,7 +82,7 @@
    "path": "architecture/revival-path.md",
    "title": "The revival path",
    "section": "architecture",
-   "bytes": 4617,
+   "bytes": 4870,
    "mermaid": 2,
    "headings": [
     "1. Check the firmware gate first",
@@ -1118,7 +1118,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 1558,
+   "bytes": 1597,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -1127,15 +1127,16 @@
    "path": "guides/revive-your-moxie.md",
    "title": "Revive your Moxie",
    "section": "guides",
-   "bytes": 6682,
+   "bytes": 8927,
    "mermaid": 1,
    "headings": [
     "Which path are you on?",
     "1. Stand up the backend",
     "Path A: no robot, run the simulator",
     "Path B: re-home an 801 or 803 robot with a QR",
+    "When Moxie does not connect",
     "Path C: flash an older robot first",
-    "Going further"
+    "Your own software, motion and content"
    ],
    "kind": "md"
   },
@@ -1198,9 +1199,9 @@
   },
   {
    "path": "guides/find-moxie-on-lan.md",
-   "title": "Guide: find your Moxie on the LAN",
+   "title": "Find your Moxie on the LAN",
    "section": "guides",
-   "bytes": 1219,
+   "bytes": 1430,
    "mermaid": 0,
    "headings": [
     "Quick method — ARP scan by vendor",
@@ -1211,14 +1212,15 @@
   },
   {
    "path": "guides/factory-reset-a-paired-moxie.md",
-   "title": "Guide: factory-reset (or unpair) a paired Moxie",
+   "title": "Factory-reset (or unpair) a paired Moxie",
    "section": "guides",
-   "bytes": 3697,
+   "bytes": 4462,
    "mermaid": 0,
    "headings": [
-    "Unpair vs. factory reset",
-    "Doing it from our local server",
+    "Unpair or reset from the web app",
     "The reset code",
+    "The same calls from a terminal",
+    "Why there is no reset button on the robot",
     "Restore from backup instead of wiping",
     "Reference"
    ],
@@ -1244,16 +1246,17 @@
    "path": "guides/permitting-a-robot.md",
    "title": "Letting a robot in — \"pending\" and how to permit it",
    "section": "guides",
-   "bytes": 7280,
+   "bytes": 7473,
    "mermaid": 0,
    "headings": [
-    "The one-paragraph version",
-    "Will I ever see this?",
+    "What pending means",
+    "When you will see a pending robot",
     "Permitting a robot",
-    "What a pending robot actually gets",
+    "What a pending robot gets",
     "The \"let any robot in\" switch",
     "Where the list is kept",
-    "If something is not working"
+    "If something is not working",
+    "The protocol behind it"
    ],
    "kind": "md"
   },
@@ -1261,7 +1264,7 @@
    "path": "guides/what-moxie-remembers.md",
    "title": "What Moxie remembers — and how to erase it",
    "section": "guides",
-   "bytes": 5834,
+   "bytes": 5778,
    "mermaid": 0,
    "headings": [
     "What is written down",
@@ -1277,15 +1280,15 @@
    "path": "guides/moxies-look.md",
    "title": "Moxie's look — letting your child style the face",
    "section": "guides",
-   "bytes": 7423,
+   "bytes": 7226,
    "mermaid": 0,
    "headings": [
     "What you can change today",
-    "Where these choices come from — and why it matters",
+    "Where these choices come from",
     "Two warnings that come with the artwork",
     "One robot, or all of them",
-    "What actually happens when you press Save",
-    "An honest caveat"
+    "What happens when you press Save",
+    "What has not been tested on a robot"
    ],
    "kind": "md"
   },
@@ -1293,7 +1296,7 @@
    "path": "guides/gateway-voice-and-ears.md",
    "title": "Voice and ears through a gateway",
    "section": "guides",
-   "bytes": 6920,
+   "bytes": 7140,
    "mermaid": 0,
    "headings": [
     "Which to use",

@@ -4,9 +4,9 @@
 > [`content-module-contract.md` → Memory](../architecture/content-module-contract.md).
 
 Moxie is nicer to talk to when it remembers your child. So at the end of a conversation it
-writes down **a few short facts** and reads them back the next time. That is genuinely a
-memory about your child, living on your machine — so you get to see all of it, and delete
-any of it, without a terminal.
+writes down **a few short facts** and reads them back the next time. That is a memory about
+your child, living on your machine — so you get to see all of it, and delete any of it,
+without a terminal.
 
 Open the **🤖 Moxie** tab in the console. Under your robot there is a card called
 **🧠 What Moxie remembers**.
@@ -43,8 +43,8 @@ left assuming it wrote down everything.
 - **Anything at all, if you have turned it off.** Set **data sharing** to *no data* in
   ⚙️ Settings and nothing new is remembered. The card says so plainly. Reading and erasing
   keep working, so switching it off never traps what was stored before.
-- **The conversation itself.** This is not a transcript. It is at most a couple of dozen
-  short sentences per activity, capped at 64 KB in total, in plain JSON under your data
+- **The conversation itself.** This is not a transcript. It is short sentences, at most 25 of
+  each kind per activity and 64 KB in total, in plain JSON under your data
   directory (`MOXIE_DATA_DIR`, default `mqtt/data/robots/<robot>/memory.json`) — a file you
   can open, back up or delete yourself.
 
@@ -91,9 +91,8 @@ it off entirely.)
 
 ## Summaries can be wrong
 
-This is the part worth reading twice. The facts are written by an AI model, and a model
-invents details. In our own testing "the puppy sleeps on my bed" came back as "Puppy sleeps
-on **his** bed" — a pronoun nobody said.
+The facts are written by an AI model, and a model invents details. In our own testing "the
+puppy sleeps on my bed" came back as "Puppy sleeps on **his** bed" — a pronoun nobody said.
 
 A wrong fact is also **sticky**: it goes back into every later conversation until someone
 fixes it, so Moxie can sound confidently wrong about your child for weeks. That is the whole

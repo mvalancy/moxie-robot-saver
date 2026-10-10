@@ -1,4 +1,4 @@
-# Guides
+# 🧭 Guides
 
 How-tos for Moxie owners and anyone running the backend.
 
@@ -21,7 +21,7 @@ How-tos for Moxie owners and anyone running the backend.
   how to erase it.
 - [`moxies-look.md`](moxies-look.md) — letting your child style Moxie's face.
 
-**Operators**
+**Running the backend or the hosted demo**
 
 - [`gateway-voice-and-ears.md`](gateway-voice-and-ears.md) — speech and listening through an
   OpenAI-compatible gateway, or locally.
@@ -29,4 +29,4 @@ How-tos for Moxie owners and anyone running the backend.
   live.
 
 ---
-[Docs index](../README.md) · [Project README](../../README.md)
+📖 [Docs index](../README.md) · [Project README](../../README.md)
