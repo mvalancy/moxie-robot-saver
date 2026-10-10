@@ -9,16 +9,20 @@ Why each assertion exists:
   · a `wav` reply's own header must beat the configured rate, and a `pcm` reply has only
     the configured rate to go on;
   · a JSON error, a login page, an empty body or silence is not a clip, and must not
-    become one that passes every size check downstream.
+    become one that passes every size check downstream;
+  · ffmpeg must leave the caller's stdin alone: a loop that feeds lines to the tool on
+    stdin otherwise loses the first letter of its next line, and renders that.
 
 Every test reads what the stub RECEIVED and what the tool handed its transcoder. ffmpeg is
 never spawned (it is not a declared binary, see test_speech_guard.py): the fake writes the
-ID3 frame ffmpeg 6.1 writes for `-metadata moxie_voice=...` (measured, see fake_mp3).
+ID3 frame ffmpeg 6.1 writes for `-metadata moxie_voice=...` (measured, see fake_mp3). The
+one test of transcode() itself puts a fake `ffmpeg` first on PATH instead.
 
 The last test reads the SHIPPED clips: every Moxie clip (the moxie and ambient groups) is in
 the one voice the tool names as shipped, and the child's clips are not: another speaker.
 
 Red on the tool before `--engine` existed: `main()` took no argv and `voice_tag` did not exist.
+Red before transcode() passed `-nostdin`: the stdin test (one byte eaten).
 """
 import hashlib
 import importlib.util
@@ -455,6 +459,63 @@ def test_the_child_is_never_rendered_in_moxies_voice(
                      "--out", tmp_path / "fresh")
     assert code != 0 and "child" in said
     assert gateway.requests == []
+
+
+# --------------------------------------------------------------------------- #
+# ffmpeg leaves the caller's stdin alone
+# --------------------------------------------------------------------------- #
+
+#: ffmpeg's stdin habit and nothing else: unless told -nostdin, it polls the stdin it
+#: inherited for keyboard commands and reads what is waiting there (measured on ffmpeg
+#: 6.1.1 through transcode(): one byte per clip, 20 of 20 runs). Records each run.
+FAKE_FFMPEG = """#!{python}
+import os, select, sys
+with open(os.environ["FAKE_FFMPEG_RAN"], "a") as fh:
+    fh.write(" ".join(sys.argv[1:]) + "\\n")
+if "-nostdin" not in sys.argv and select.select([0], [], [], 0)[0]:
+    os.read(0, 1)
+with open(sys.argv[-1], "wb") as fh:
+    fh.write(b"ID3")
+"""
+
+
+def test_ffmpeg_leaves_the_stdin_of_a_loop_around_the_tool_alone(tmp_path, monkeypatch):
+    """A wrapper that feeds lines to a loop around this tool (`while read line; do
+    prerender_audio.py ...; done < lines`) shares its stdin with every ffmpeg the tool runs.
+    Without -nostdin each clip ate the first letter of the NEXT line, and the tool rendered
+    and keyed the shortened text with no error: nine gateway calls in #340."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "ffmpeg"
+    fake.write_text(FAKE_FFMPEG.format(python=sys.executable))
+    fake.chmod(0o755)
+    ran = tmp_path / "ran.txt"
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("FAKE_FFMPEG_RAN", str(ran))
+    # The real transcode(), not the `tool` fixture's recorder.
+    spec = importlib.util.spec_from_file_location("prerender_audio_stdin", TOOL)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    wav = tmp_path / "clip.wav"
+    wav.write_bytes(wav_bytes(tone()))
+    lines = b"I wave at you in infrared every morning.\nThe toaster says it has no plans.\n"
+
+    read_end, write_end = os.pipe()
+    os.write(write_end, lines)
+    os.close(write_end)
+    saved = os.dup(0)
+    try:
+        os.dup2(read_end, 0)              # fd 0 is the loop's `done < lines`
+        mod.transcode(str(wav), str(tmp_path / "clip.mp3"), {"moxie_voice": KRISTIN})
+        left = os.read(0, 4096)
+    finally:
+        os.dup2(saved, 0)
+        os.close(saved)
+        os.close(read_end)
+    assert ran.read_text().count("\n") == 1, "transcode() must have run the fake ffmpeg, once"
+    eaten = lines[:len(lines) - len(left)]
+    assert left == lines, \
+        f"ffmpeg ate {len(eaten)} byte(s) of the caller's stdin ({eaten!r}): pass it -nostdin"
 
 
 # --------------------------------------------------------------------------- #

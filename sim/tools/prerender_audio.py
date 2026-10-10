@@ -282,9 +282,14 @@ def gateway_engine(args):
 
 
 def transcode(wav, dest, tags):
-    """WAV -> web-friendly MP3 (mono 64k; keeps the repo small). `tags` become ID3 frames."""
+    """WAV -> web-friendly MP3 (mono 64k; keeps the repo small). `tags` become ID3 frames.
+
+    -nostdin: otherwise ffmpeg reads the stdin it inherits, looking for keyboard commands,
+    and eats a byte of it per clip. A wrapper that feeds lines to a loop around this tool
+    (`while read line; do ...; done < lines`) then hands the next run its line minus the
+    first letter, with no error: nine gateway calls rendered and keyed shortened lines so."""
     meta = [arg for k, v in tags.items() for arg in ("-metadata", f"{k}={v}")]
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", wav, "-ac", "1",
+    subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", wav, "-ac", "1",
                     "-c:a", "libmp3lame", "-b:a", "64k", *meta, "-f", "mp3", dest],
                    check=True)
 
