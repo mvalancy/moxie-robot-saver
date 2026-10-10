@@ -466,22 +466,30 @@ function sentencesOf(text) {
   return String(text || "").split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
 }
 
-/* NOT A REFERRAL: A SENTENCE THAT POINTS THE CHILD AWAY (rounds 4 and 5). "Don't tell a grown-up,
+/* NOT A REFERRAL: A REPLY THAT POINTS THE CHILD AWAY (rounds 4, 5 and 6). "Don't tell a grown-up,
  * just tell me", "Do not, under any circumstances, tell your mom", "You could tell your mom, but you
  * don't have to", "Telling your mom won't help", "Instead of telling a grown-up, you can tell me" and
  * "You can tell your mom later" name the right adult and point the child AWAY from them. Round 4 read
  * only the clause before the matched form, back to the nearest comma or conjunction, and still credited
- * all but the first. Now the WHOLE SENTENCE decides: a negation anywhere in it, an opt-out ("instead of
- * telling", "rather than", "without telling", "avoid", "you don't have to", "no need", "up to you", "or
- * not", "only if you want"), a deferral ("later", "another time", "someday", "not yet", "when you're
- * older", "wait") or a discouragement ("would only make it worse", "a bad idea", "might get you in
- * trouble", "she might be upset") un-credits every form in it, with its list. A negation that governs
- * something else is not one (`NOT_A_NEGATION_RE`), so these still point there: "don't be afraid to
- * tell", "don't wait", "you won't get in trouble", "it's never too late", "no matter what", "oh no",
- * "it's not your fault", "that's not okay", "you're not alone", "nobody should hurt you", "if you don't
- * feel safe", "even if he said not to", "don't keep it a secret", "I'm not the right one to help with
- * this", "not just me". Un-crediting is the safe error — the floor then appends its own sentence;
- * crediting one of these would leave a hurt child told to keep it from a grown-up. */
+ * all but the first. Round 5 made the WHOLE SENTENCE decide: a negation anywhere in it, an opt-out
+ * ("instead of telling", "rather than", "without telling", "avoid", "you don't have to", "no need", "up
+ * to you", "or not", "only if you want", "keep it to yourself", "better to just tell me"), a deferral
+ * ("later", "another time", "someday", "not yet", "when you're older", "once you feel braver", "at some
+ * point", "eventually", "if it happens again", "wait") or a discouragement ("would only make it worse",
+ * "a bad idea", "might get you in trouble", "she might be upset", "could make your uncle sad", "cause a
+ * big fuss") un-credits every form in it, with its list. Round 6: a model writes a period where a comma
+ * would be — "You could tell your mom. But you don't have to.", "Some kids tell a grown-up. You don't
+ * have to, though." — so an opt-out, a deferral or a discouragement in ANY sentence of the reply
+ * un-credits the WHOLE reply; a negation is still read in its own sentence, because "It's not your
+ * fault. Please tell a grown-up you trust." must stay a referral and the whitelist below is a
+ * sentence's. A negation that governs something else is not one (`NOT_A_NEGATION_RE`), so these still
+ * point there: "don't be afraid to tell", "don't wait", "you won't get in trouble", "it's never too
+ * late", "no matter what", "oh no", "it's not your fault", "that's not okay", "you're not alone",
+ * "nobody should hurt you", "if you don't feel safe", "even if he said not to", "don't keep it a
+ * secret", "I'm not the right one to help with this", "not just me". Un-crediting is the safe error —
+ * the floor then appends its own sentence; crediting one of these would leave a hurt child told to
+ * keep it from a grown-up. The check reads words, not intent: a real referral that also says "later"
+ * or "if you want" in another sentence gets the sentence too. */
 const NEGATION_RE = /\b(?:don'?t|do\s+not|doesn'?t|does\s+not|didn'?t|did\s+not|never|not|no|shouldn'?t|should\s+not|won'?t|will\s+not|wouldn'?t|would\s+not|mustn'?t|must\s+not|can'?t|cannot|can\s+not|couldn'?t|could\s+not|isn'?t|aren'?t|wasn'?t|weren'?t|ain'?t|needn'?t|nobody|no\s+one)\b/i;
 const NOT_A_NEGATION_RE = new RegExp([
   // interjections and fixed phrases
@@ -524,22 +532,34 @@ const OPT_OUT_RE = new RegExp([
   "\\b(?:if|when|whenever|once)\\s+you\\s+(?:\\w+\\s+){0,2}?(?:want|wanna|feel\\s+like|would\\s+like|'d\\s+like|choose|decide|are\\s+ready|'re\\s+ready|feel\\s+ready)\\b",
   "\\bonly\\s+(?:if|when)\\b", "\\bunless\\s+you\\b", "\\bchoose\\s+not\\s+to\\b", "\\byou\\s+(?:could|can|may|might)\\s+(?:also\\s+)?(?:just\\s+)?not\\b",
   "\\bor\\s+(?:you\\s+can\\s+|you\\s+could\\s+)?(?:just\\s+)?(?:talk|tell|come)\\s+(?:to\\s+)?me\\b", "\\b(?:tell|talk\\s+to)\\s+me\\s+instead\\b",
+  // Round 6: the shapes a period split from their direction — "Or you can keep it to yourself", "Then again,
+  // maybe it's better to just tell me", "Talking to me is another", "Telling your mom is one idea", "only the happy parts".
+  // ("keep it a secret" is NOT here: "don't keep this a secret" and "even if someone told you to keep it secret" are real referrals.)
+  "\\bkeep\\s+(?:it|this|that|things)\\s+(?:to\\s+yourself|between\\s+(?:us|you\\s+and\\s+me|me\\s+and\\s+you|the\\s+two\\s+of\\s+us)|just\\s+(?:for|to)\\s+you(?:rself)?)\\b",
+  "\\b(?:better|easier|best|simpler|nicer|safer)\\s+to\\s+(?:just\\s+)?(?:tell|talk\\s+to|come\\s+to)\\s+(?:just\\s+)?me\\b", "\\b(?:just|only)\\s+(?:tell|talk\\s+to|come\\s+to)\\s+me\\b",
+  "\\b(?:talking|telling)\\s+(?:to\\s+)?me\\s+is\\s+(?:another|an?\\s+(?:other|better|easier|good|great|fine)\\s+(?:idea|option|choice|way))\\b",
+  "\\b(?:is|would\\s+be)\\s+(?:just\\s+)?one\\s+(?:idea|option|choice|way)\\b", "\\bonly\\s+the\\s+(?:happy|good|fun|nice|easy)\\s+parts?\\b",
 ].join("|"), "i");
-/** A deferral anywhere in the sentence: "later", "another time", "when you're older", "let's wait". */
-const DEFER_RE = /\b(?:some\s?day|some\s+time|sometime|one\s+day|another\s+time|some\s+other\s+time|not\s+(?:yet|today|now|right\s+now|just\s+yet|for\s+now)|just\s+yet|later|tomorrow|next\s+(?:week|month|year|time)|after\s+the\s+(?:holidays?|weekend|break|summer|vacation)|(?:when|until|till)\s+you(?:'re|\s+are)\s+(?:older|bigger|ready)|wait\s+(?:a\s+(?:few|couple(?:\s+of)?|little)\s+(?:days|weeks|while)|a\s+while|until|till|before|for\s+(?:a\s+)?(?:while|bit|few))|(?:can|could)\s+wait|let'?s\s+wait|in\s+a\s+(?:few|couple(?:\s+of)?)\s+(?:days|weeks))\b/i;
-/** A discouragement anywhere in the sentence: telling would not help, would make it worse, would upset someone. */
-const DISCOURAGE_RE = /\b(?:make|makes|making|made)\s+(?:it|things|this|everything|stuff|them)\s+(?:even\s+)?worse\b|(?<!\bnot\s(?:a\s)?)\bbad\s+idea\b|\bnot\s+a\s+good\s+idea\b|\bpointless\b|\bno\s+(?:point|use)\b|\buseless\b|\bwaste\s+of\s+(?:time|energy)\b|\b(?:get|gets|getting|got)\s+(?:you|yourself|them|him|her|everyone|your\s+\w+)\s+in(?:to)?\s+trouble\b|\b(?:she|he|they|your\s+(?:mom|dad|mum|parents?|teacher|grandma|grandpa))\s+(?:might|will|would|could|may)\s+(?:\w+\s+){0,2}?(?:be\s+(?:upset|mad|angry|sad|cross|disappointed)|get\s+(?:upset|mad|angry|cross)|yell|punish|not\s+believe)\b|\bbother(?:ing)?\s+(?:a|your|the|any)\b/i;
+/** A deferral anywhere in the reply: "later", "another time", "when you're older", "once you feel braver", "at some point",
+ *  "eventually", "if it happens again", "let's wait". */
+const DEFER_RE = /\b(?:some\s?day|some\s+time|sometime|one\s+day|another\s+time|some\s+other\s+(?:time|day)|not\s+(?:yet|today|now|right\s+now|just\s+yet|for\s+now)|just\s+yet|later|tomorrow|next\s+(?:week|month|year|time)|after\s+the\s+(?:holidays?|weekend|break|summer|vacation)|(?:when|until|till|once|after)\s+you(?:'re|\s+are|\s+feel|\s+get)\s+(?:a\s+(?:bit|little)\s+)?(?:older|bigger|ready|braver|better|calmer|stronger|sure|less\s+(?:scared|afraid|upset))|wait\s+(?:a\s+(?:few|couple(?:\s+of)?|little)\s+(?:days|weeks|while)|a\s+while|until|till|before|for\s+(?:a\s+)?(?:while|bit|few))|(?:can|could)\s+wait|let'?s\s+wait|in\s+a\s+(?:few|couple(?:\s+of)?)\s+(?:days|weeks)|at\s+some\s+point|eventually|(?:one|some)\s+of\s+these\s+days|down\s+the\s+(?:road|line)|when\s+(?:the\s+time|it)\s+(?:is|feels)\s+right|in\s+your\s+own\s+time|if\s+(?:it|this|that)\s+(?:happens\s+again|keeps\s+happening|happens\s+(?:a\s+lot|more)|gets\s+worse|doesn'?t\s+stop|does\s+not\s+stop|continues)|(?:the\s+)?next\s+time\s+(?:it|this|that|he|she|they)\b|when\s+(?:school|class)\s+starts)\b/i;
+/** A discouragement anywhere in the reply: telling would not help, would make it worse, would upset someone, would cause a fuss. */
+const DISCOURAGE_RE = /\b(?:make|makes|making|made)\s+(?:it|things|this|everything|stuff|them)\s+(?:even\s+)?worse\b|(?<!\bnot\s(?:a\s)?)\bbad\s+idea\b|\bnot\s+a\s+good\s+idea\b|\bpointless\b|\bno\s+(?:point|use)\b|\buseless\b|\bwaste\s+of\s+(?:time|energy)\b|\b(?:get|gets|getting|got)\s+(?:you|yourself|them|him|her|everyone|your\s+\w+)\s+in(?:to)?\s+trouble\b|\b(?:she|he|they|your\s+(?:mom|dad|mum|parents?|teacher|grandma|grandpa|uncle|aunt|brother|sister|cousin|coach|babysitter))\s+(?:might|will|would|could|may)\s+(?:\w+\s+){0,2}?(?:be\s+(?:upset|mad|angry|sad|cross|disappointed)|get\s+(?:upset|mad|angry|cross|in(?:to)?\s+trouble|arrested|taken\s+away|fired)|go\s+to\s+(?:jail|prison)|yell|punish|not\s+believe|leave)\b|\bbother(?:ing)?\s+(?:a|your|the|any)\b|\b(?:make|makes|making|made)\s+(?:your\s+\w+|him|her|them|everyone|people)\s+(?:sad|upset|mad|angry|cry|worried|disappointed)\b|\bcause\s+(?:a\s+)?(?:big\s+|huge\s+)?(?:fuss|drama|trouble|problems?|scene|mess)\b|\b(?:ruin|spoil|wreck)\s+(?:everything|things|the\s+\w+)\b|\bnobody\s+(?:will|would)\s+believe\s+you\b/i;
 
+/** An opt-out, a deferral or a discouragement: read over EVERY sentence of the reply (round 6). */
+function pointsAway(sentence) {
+  return OPT_OUT_RE.test(sentence) || DEFER_RE.test(sentence) || DISCOURAGE_RE.test(sentence);
+}
+
+/** A negation that governs the telling, in this sentence. The whitelist only where a negation word is:
+ *  most sentences have none. */
 function negated(sentence) {
-  if (OPT_OUT_RE.test(sentence) || DEFER_RE.test(sentence) || DISCOURAGE_RE.test(sentence)) return true;
-  // The whitelist only where a negation word is: most sentences have none.
   return NEGATION_RE.test(sentence) && NEGATION_RE.test(sentence.replace(NOT_A_NEGATION_RE, " "));
 }
 
 function pointsToAdult(sentence, named) {
   // A sentence that points away points nowhere, every form and list in it: "don't tell your mom or a
-  // teacher". Read only where a form points somewhere, so a sentence with no grown-up in it never
-  // runs (nor compiles) the negation patterns.
+  // teacher".
   return pointsSomewhere(sentence, named) && !negated(sentence);
 }
 
@@ -573,7 +593,14 @@ export function hasReferral(reply, childText) {
   const named = namedAsHurting(childText);
   // Curly apostrophes onto "'" first, as `normalize` does: a model's "Don’t tell a grown-up" is the
   // same negation (round 5; before, the typographic apostrophe hid it and the reply was credited).
-  return sentencesOf(String(reply || "").replace(/[’‘ʼ]/g, "'")).some((s) => pointsToAdult(s, named));
+  const ss = sentencesOf(String(reply || "").replace(/[’‘ʼ]/g, "'"));
+  // Read only where some sentence points somewhere, so a reply with no grown-up in it never runs (nor
+  // compiles) the negation patterns.
+  if (!ss.some((s) => pointsSomewhere(s, named))) return false;
+  // Round 6: an opt-out, a deferral or a discouragement in ANY sentence un-credits the whole reply —
+  // "You could tell your mom. But you don't have to." is one reply, however the model punctuates it.
+  if (ss.some(pointsAway)) return false;
+  return ss.some((s) => pointsToAdult(s, named));
 }
 
 /**
