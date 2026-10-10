@@ -8,7 +8,7 @@ into this tree; if any is ever vendored, its MIT license and copyright notice go
 
 **[jbeghtol/openmoxie](https://github.com/jbeghtol/openmoxie)** · MIT · © 2025 Justin Beghtol
 
-OpenMoxie is the original local replacement for Moxie's MQTT cloud, written so the robot keeps working
+OpenMoxie is the canonical local replacement for Moxie's MQTT cloud, written so the robot keeps working
 after the shutdown. [Its README](https://github.com/jbeghtol/openmoxie#readme) calls itself the
 official repository and warns that openmoxie.org and "OpenMoxie 2.0" are unaffiliated. Its author
 is reported to be a former Embodied engineer, and Embodied's CEO is reported to have endorsed it as

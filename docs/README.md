@@ -14,7 +14,7 @@ docs the hosted site's explorer serves.
 | A parent | [Child safety](guides/child-safety.md), [what Moxie remembers](guides/what-moxie-remembers.md), [permitting a robot](guides/permitting-a-robot.md) |
 | Reviving a robot | [Revive your Moxie](guides/revive-your-moxie.md) |
 | Running the backend at home | [One-command stack](guides/one-command-stack.md) |
-| Trying Moxie with no robot | [The simulator](../sim/README.md): hosted, or on your own machine with one Docker command |
+| Trying Moxie with no robot | [The simulator](../sim/README.md): [hosted by the maintainer](https://moxie.mattvalancy.com), or on your own machine with one Docker command |
 | Deploying your own hosted simulator | [Deploy on Cloudflare](guides/deploy-cloudflare.md) |
 | Building or changing the backend | [Architecture and contracts](architecture/README.md) |
 | Contributing | [How we write docs, and the guards](../CONTRIBUTING.md); [branches, CI and releases](../RELEASING.md) |
@@ -62,11 +62,12 @@ Three rules, and the guards that enforce them:
   index for readers. A finding that changes the story is fixed on every page that states the old
   belief, in the same change.
 - Robot-side reverse-engineering pages carry the firmware stamp `v24.10.803`.
-- Before committing, run the guards and commit the rebuilt bundle with the doc:
-  `python3 sim/tools/build_docs_bundle.py && python3 sim/tools/check_bundle_fresh.py &&
-  node sim/test_docs.mjs && python3 scripts/check-doc-links.py &&
-  python3 scripts/check-doc-consistency.py &&
-  python3 -m pytest -q sim/tests/test_hosted_docs_truth.py sim/tests/test_no_offsite_images.py`
+- Rebuild the bundle and run the guards, then commit the doc and its rebuilt bundle together:
+  `python3 sim/tools/build_docs_bundle.py && node sim/test_docs.mjs &&
+  python3 scripts/check-doc-links.py && python3 scripts/check-doc-consistency.py &&
+  python3 -m pytest -q sim/tests/test_hosted_docs_truth.py sim/tests/test_no_offsite_images.py`.
+  After that commit, `python3 sim/tools/check_bundle_fresh.py`: it compares a rebuild against
+  git, so it passes only once the doc and its bundle are committed.
 
 The full Style Card and procedure: [`CONTRIBUTING.md`](../CONTRIBUTING.md). Research method:
 [`reverse-engineering/PLAYBOOK.md`](reverse-engineering/PLAYBOOK.md).

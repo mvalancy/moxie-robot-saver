@@ -62,9 +62,9 @@ MOXIE_APP=echo docker compose -f docker-compose.images.yml up
 
 `MOXIE_APP=echo` runs the stack without a brain: Moxie echoes you, but every other part works. For a
 real brain, set `MOXIE_LLM_BASE_URL` in a `.env` beside that file instead; with neither, only the
-broker starts. Or `docker compose up` from a clone to build locally. Then open
-`http://<this-computer's-ip>:8080` on your phone. Next steps: [one-command stack](docs/guides/one-command-stack.md)
-and [first-time setup](docs/guides/first-time-setup.md).
+broker starts. The same two choices apply to `docker compose up` from a clone, which builds the
+images locally. Then open `http://<this-computer's-ip>:8080` on your phone. Next steps:
+[one-command stack](docs/guides/one-command-stack.md) and [first-time setup](docs/guides/first-time-setup.md).
 
 ## How it fits together
 

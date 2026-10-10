@@ -27,8 +27,8 @@ and one `.env`, and each runs on its own ([how it fits together](README.md#how-i
 
 ## Conventions
 
-Every folder has a `README.md`, including every generated-protobuf package folder. The rest of the
-rules, the firmware stamp and the doc guards are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Every folder except `.github/` has a `README.md`, including every generated-protobuf package folder.
+The rest of the rules, the firmware stamp and the doc guards are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 [Docs index](docs/README.md) · [Contributing](CONTRIBUTING.md) · [Field guide](docs/reverse-engineering/FIELD-GUIDE.md)
