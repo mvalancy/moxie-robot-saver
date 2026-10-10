@@ -18,7 +18,7 @@ import base64
 import re
 import threading
 import time
-from typing import Optional
+from typing import NamedTuple, Optional
 
 _MARK_RE = re.compile(r"<mark\b[^>]*/?>", re.I)     # <mark name="cmd:..."/> behavior tags
 _TAG_RE = re.compile(r"<[^>]+>")                    # any residual angle-bracket tag
@@ -49,6 +49,13 @@ def strip_markup(markup: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+class AudioClip(NamedTuple):
+    """One rendered line with the shape it was rendered in (`Synthesizer.render`)."""
+    pcm: bytes
+    sample_rate: int
+    channels: int
+
+
 class Synthesizer:
     """Any text-to-speech engine. Override `synthesize`."""
     name = "synthesizer"
@@ -58,6 +65,14 @@ class Synthesizer:
     def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
         raise NotImplementedError
 
+    def render(self, text: str, voice: Optional[str] = None) -> AudioClip:
+        """The line's PCM with the rate and channels it was rendered at. This default
+        calls `synthesize()` and reads the engine's own attributes; an engine that speaks
+        through more than one voice overrides it (`FallbackSynthesizer`), so a line is
+        never labelled with another line's shape."""
+        pcm = self.synthesize(text, voice=voice)
+        return AudioClip(pcm, int(self.sample_rate), int(self.channels))
+
     def describe(self) -> str:
         """One line for a startup log — which voice is this, really."""
         return self.name
@@ -65,6 +80,15 @@ class Synthesizer:
     @classmethod
     def available(cls) -> bool:
         return True
+
+
+def _render(engine, text: str, voice: Optional[str] = None) -> AudioClip:
+    """`engine.render()`, or the same default for a voice that has only `synthesize()`
+    (one that does not subclass `Synthesizer`), so `render()` stays additive."""
+    render = getattr(engine, "render", None)
+    if callable(render):
+        return render(text, voice=voice)
+    return Synthesizer.render(engine, text, voice=voice)
 
 
 class VoiceServerError(RuntimeError):
@@ -283,27 +307,34 @@ class FallbackSynthesizer(Synthesizer):
     endpoint does not cost every later turn its timeout — but not for the rest of the
     run: after `retry_s` (config: MOXIE_ENGINE_RETRY_S) the next line tries the primary
     again, and an answer clears the latch with one recovery line. `failed` /
-    `voice_name` say which voice is talking.
+    `voice_name` say which voice is talking. The two voices may render at different
+    rates, so `render()` hands back each line with the shape of the voice that spoke it.
     """
     name = "fallback"
 
     #: Seconds a latched standby holds before the next line tries the primary again.
-    #: 0 = try the primary on every line (no latch). Chosen, not measured.
+    #: 0 = try the primary on every line (no latch); at most a day. Chosen, not measured.
     RETRY_S = 60.0
 
     def __init__(self, primary: Synthesizer, standby: Synthesizer, *, log=None,
-                 retry_s: Optional[float] = None, clock=time.time):
+                 retry_s: Optional[float] = None, clock=time.monotonic, wall=time.time):
+        from .chat import retry_seconds
         self._primary, self._standby = primary, standby
         self._log = log if log is not None else _warn
-        self._retry_s = max(0.0, float(self.RETRY_S if retry_s is None else retry_s))
-        self._clock = clock                     # wall clock: `describe()` names the time
-        # The latch is `failed_at`: the instant it (last) closed, None while healthy;
-        # `failed` is the public flag beside it. Both move under `_lock`, and every
-        # reader takes ONE snapshot of `failed_at` — `synthesize()` runs on turn workers
-        # and filler timers at once, `describe()` on the status thread.
+        # None = `RETRY_S`; NaN, inf and anything over a day are refused here.
+        self._retry_s = retry_seconds(retry_s, default=self.RETRY_S)
+        # The window runs on `clock` (monotonic), so a wall clock stepped mid-outage can
+        # neither stretch nor end it; `wall` only names the times `describe()` prints.
+        self._clock, self._wall = clock, wall
+        # The latch is `_latched_at`: the `clock` instant it (last) closed or a retry was
+        # claimed, None while healthy; `failed` is the public flag beside it. Both move
+        # under `_lock`, and every reader takes ONE snapshot of `_latched_at` — `render()`
+        # runs on turn workers and filler timers at once, `describe()` on the status thread.
         self._lock = threading.Lock()
         self.failed = False
-        self.failed_at: Optional[float] = None
+        self._latched_at: Optional[float] = None
+        # The last line's shape, for a reader that wants the voice right now. A line's own
+        # label comes from `render()`, never from here: another thread moves these.
         self.sample_rate, self.channels = primary.sample_rate, primary.channels
 
     @property
@@ -311,23 +342,33 @@ class FallbackSynthesizer(Synthesizer):
         """Which backend is speaking right now."""
         return (self._standby if self.failed else self._primary).name
 
+    def _on_the_wall(self, instant: float) -> float:
+        """A `clock` instant as wall-clock time: the wall's now plus how far away it is."""
+        return self._wall() + (instant - self._clock())
+
+    @property
+    def failed_at(self) -> Optional[float]:
+        """When the latch (last) closed, on the wall clock, or None while healthy."""
+        at = self._latched_at
+        return None if at is None else self._on_the_wall(at)
+
     def retry_at(self) -> Optional[float]:
         """When the primary is tried again (wall clock), or None while it is healthy."""
-        at = self.failed_at
-        return None if at is None else at + self._retry_s
+        at = self._latched_at
+        return None if at is None else self._on_the_wall(at + self._retry_s)
 
     def describe(self) -> str:
-        at = self.failed_at
+        at = self._latched_at
         if at is None:
             return f"{self._primary.name} (standby: {self._standby.name})"
         # Past the window the time has gone by: say what happens instead of when it was.
         when = ("on the next line" if self._clock() >= at + self._retry_s
-                else f"at {_hhmm(at + self._retry_s)}")
-        return (f"{self._standby.name} (standby since {_hhmm(at)} — "
+                else f"at {_hhmm(self._on_the_wall(at + self._retry_s))}")
+        return (f"{self._standby.name} (standby since {_hhmm(self._on_the_wall(at))} — "
                 f"{self._primary.name} failed; retrying the primary {when})")
 
-    def _adopt(self, engine: Synthesizer) -> None:
-        self.sample_rate, self.channels = engine.sample_rate, engine.channels
+    def _adopt(self, clip: AudioClip) -> None:
+        self.sample_rate, self.channels = clip.sample_rate, clip.channels
 
     def _try_primary(self) -> bool:
         """Whether THIS line goes to the primary: always while healthy; once the window
@@ -335,18 +376,18 @@ class FallbackSynthesizer(Synthesizer):
         once, so a line racing it on another thread (a filler timer beside a turn
         worker) stays on the standby instead of spending a second timeout."""
         with self._lock:
-            at = self.failed_at
+            at = self._latched_at
             if at is None:
                 return True
             if self._clock() >= at + self._retry_s:
-                self.failed_at = self._clock()
+                self._latched_at = self._clock()
                 return True
             return False
 
     def _latch(self, exc: Exception) -> None:
         with self._lock:
-            first = self.failed_at is None
-            self.failed_at = self._clock()
+            first = self._latched_at is None
+            self._latched_at = self._clock()
             self.failed = True
         if first:
             self._log(f"[voice] {self._primary.name} failed ({type(exc).__name__}: "
@@ -359,24 +400,30 @@ class FallbackSynthesizer(Synthesizer):
 
     def _release(self) -> None:
         with self._lock:
-            was_latched = self.failed_at is not None
-            self.failed, self.failed_at = False, None
+            was_latched = self._latched_at is not None
+            self.failed, self._latched_at = False, None
         if was_latched:
             self._log(f"[voice] {self._primary.name} is back; speaking with it again")
 
-    def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
+    def render(self, text: str, voice: Optional[str] = None) -> AudioClip:
+        """The line from whichever voice speaks it, labelled with THAT voice's rate and
+        channels: its own `render()`, never this object's attributes, which a line on
+        another thread (a filler timer beside a turn worker) may have just moved."""
         if self._try_primary():
             try:
-                audio = self._primary.synthesize(text, voice=voice)
+                clip = _render(self._primary, text, voice=voice)
             except Exception as exc:                # noqa: BLE001 — any failure downgrades
                 self._latch(exc)
             else:
                 self._release()
-                self._adopt(self._primary)
-                return audio
-        audio = self._standby.synthesize(text, voice=voice)
-        self._adopt(self._standby)
-        return audio
+                self._adopt(clip)
+                return clip
+        clip = _render(self._standby, text, voice=voice)
+        self._adopt(clip)
+        return clip
+
+    def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
+        return self.render(text, voice=voice).pcm
 
 
 def _hhmm(t: Optional[float]) -> str:
@@ -428,11 +475,15 @@ def decode_cloud_tts_response(resp: dict) -> dict:
 
 def synthesize_cloud_tts(synth: Synthesizer, markup: str, *, event_id: str = "",
                          voice: Optional[str] = None, chunk_num: int = 0) -> dict:
-    """CloudTTSRequest(markup) → CloudTTSResponse: strip markup → synthesize → wrap.
-    `chunk_num` rides through so a client plays a multi-chunk turn in order."""
+    """CloudTTSRequest(markup) → CloudTTSResponse: strip markup → render → wrap.
+    `chunk_num` rides through so a client plays a multi-chunk turn in order. The rate and
+    channels come with the audio (`render`), so a line keeps the shape it was rendered in
+    while another line on another thread switches voices; a line with nothing to say has
+    no audio, and its empty buffer carries the voice's current shape."""
     text = strip_markup(markup)
-    audio = synth.synthesize(text, voice=voice) if text else b""
-    return build_cloud_tts_response(audio, event_id=event_id,
-                                    channels=synth.channels,
-                                    sample_rate=synth.sample_rate,
-                                    chunk_num=chunk_num)
+    if not text:
+        return build_cloud_tts_response(b"", event_id=event_id, channels=synth.channels,
+                                        sample_rate=synth.sample_rate, chunk_num=chunk_num)
+    clip = _render(synth, text, voice=voice)
+    return build_cloud_tts_response(clip.pcm, event_id=event_id, channels=clip.channels,
+                                    sample_rate=clip.sample_rate, chunk_num=chunk_num)

@@ -301,8 +301,16 @@ del _knob, _seconds
 # turn before the next call tries the gateway again; an answer clears the latch. Before
 # this knob the first failure latched the standby for the rest of the run, and with no
 # local whisper installed that standby hears nothing. 0 = try the gateway on every call
-# (a negative value counts as 0).
+# (a negative value counts as 0). NaN, inf and anything over a day (the SDK's
+# `chat.MAX_RETRY_S`) are REFUSED at startup, below: a window that never ends is that
+# same latch, and the console's Voice card raised printing a retry time past the
+# platform's range.
 ENGINE_RETRY_S = _env_float("MOXIE_ENGINE_RETRY_S", 60.0)
+if not -float("inf") < ENGINE_RETRY_S <= 86400:       # NaN, inf, -inf, over a day
+    raise ValueError(
+        f"MOXIE_ENGINE_RETRY_S ({ENGINE_RETRY_S:g}s) must be a number of seconds from 0 "
+        f"(try the gateway on every call) to 86400 (a day): a window that never ends is "
+        f"a standby for the rest of the run. Unset it for the default, 60 s.")
 
 # --- streaming replies ---
 # Publish each finished sentence as its own REPLY_PENDING chunk (first sentence at

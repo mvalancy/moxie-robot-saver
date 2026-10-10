@@ -377,3 +377,118 @@ def test_fallback_is_a_passthrough_while_the_primary_works():
     assert base64.b64decode(resp["audio"]["buffer"]) == pcm
     assert resp["audio"]["sample_rate"] == 16000      # the wav header's rate rode through
     assert fake.calls[0]["input"] == "Hello there" and not fb.failed
+
+
+# --- each line is labelled with the rate of the voice that rendered it -------
+
+class _GatewayFailsSecond(Synthesizer):
+    """A 22050 Hz gateway voice that answers its first line and fails its second."""
+    name = "gateway"
+    sample_rate = 22050
+
+    def __init__(self):
+        self.calls = 0
+
+    def synthesize(self, text, voice=None):
+        self.calls += 1
+        if self.calls == 2:
+            raise RuntimeError("gateway said no")
+        return b"\x22\x05" * 10
+
+
+class _Piper16k(Synthesizer):
+    name = "piper-16k"
+    sample_rate = 16000
+
+    def synthesize(self, text, voice=None):
+        return b"\x16\x00" * 8
+
+
+def test_a_line_keeps_the_rate_of_the_voice_that_rendered_it_while_another_switches():
+    """Two lines at once on one `FallbackSynthesizer`, as a turn worker and a filler timer
+    run: line A renders on the 22050 Hz gateway voice; line B finds the gateway failing
+    and renders on the 16000 Hz standby. Held on Events so that B's whole line, its switch
+    of the shared `sample_rate` included, lands between A's render and A's label. Each
+    response must carry its own voice's rate: on origin/dev A was labelled from the
+    attribute B had just moved, 22050 Hz audio sent as 16000 (played slow and low)."""
+    import threading
+    from moxie_sdk.tts import FallbackSynthesizer
+    fb = FallbackSynthesizer(_GatewayFailsSecond(), _Piper16k(), log=lambda m: None)
+    a_rendered, b_done = threading.Event(), threading.Event()
+    adopt = fb._adopt                     # the one step between a render and its label
+
+    def _hold_line_a(*args):
+        adopt(*args)
+        if threading.current_thread().name == "line-a":
+            a_rendered.set()
+            assert b_done.wait(10), "line B never finished"
+
+    fb._adopt = _hold_line_a
+    out = {}
+    line_a = threading.Thread(name="line-a", daemon=True, target=lambda: out.setdefault(
+        "a", synthesize_cloud_tts(fb, "Line A, from the gateway", event_id="a")))
+    line_a.start()
+    assert a_rendered.wait(10), "line A never rendered"
+    out["b"] = synthesize_cloud_tts(fb, "Line B, from the standby", event_id="b")
+    b_done.set()
+    line_a.join(10)
+    a, b = decode_cloud_tts_response(out["a"]), decode_cloud_tts_response(out["b"])
+    assert (a["audio"], a["sample_rate"]) == (b"\x22\x05" * 10, 22050), "A took B's rate"
+    assert (b["audio"], b["sample_rate"]) == (b"\x16\x00" * 8, 16000)
+    assert fb.failed and fb.voice_name == "piper-16k"
+
+
+def test_synthesize_still_returns_bytes_on_every_voice_the_sdk_ships():
+    """`render()` came in beside `synthesize()`, which keeps its type, raw PCM `bytes`,
+    on every `Synthesizer` the SDK ships: the supervisor, the prerender tool, the
+    toolkit and the live suites call it. `render()` hands back the same bytes with the
+    rate and channels they were rendered at."""
+    from moxie_sdk import tts
+    shipped = sorted(c.__name__ for c in tts.Synthesizer.__subclasses__()
+                     if c.__module__ == tts.__name__)
+    assert shipped == ["FallbackSynthesizer", "OpenAIVoiceSynthesizer", "PiperSynthesizer",
+                       "ToneSynthesizer"]
+    gateway, _ = _voice_synth(_wav(b"\x02\x03" * 8, rate=16000), model="piper-amy",
+                              response_format="wav", sample_rate=22050)
+    voices = {
+        "ToneSynthesizer": tts.ToneSynthesizer(sample_rate=22050),
+        "PiperSynthesizer": tts.PiperSynthesizer("v.onnx", voice_fn=lambda t: b"\x00\x01" * 8,
+                                                 sample_rate=22050),
+        "OpenAIVoiceSynthesizer": gateway,
+        "FallbackSynthesizer": tts.FallbackSynthesizer(
+            _Boom(), tts.ToneSynthesizer(sample_rate=16000), log=lambda m: None),
+    }
+    assert sorted(voices) == shipped
+    for name, voice in voices.items():
+        pcm = voice.synthesize("Hi Sam")
+        assert type(pcm) is bytes and pcm, name
+        clip = voice.render("Hi Sam")
+        assert isinstance(clip, tts.AudioClip) and type(clip.pcm) is bytes, name
+        assert clip.pcm == pcm, name
+        assert (clip.sample_rate, clip.channels) == (voice.sample_rate, voice.channels), name
+    assert voices["OpenAIVoiceSynthesizer"].render("hi").sample_rate == 16000   # the header's
+    assert voices["FallbackSynthesizer"].render("hi").sample_rate == 16000      # the standby's
+
+
+def test_a_voice_with_only_synthesize_still_speaks():
+    """`render()` is additive: a voice that subclasses nothing and has only `synthesize()`,
+    `sample_rate` and `channels` (the console tests' fake voice is one) is rendered by
+    the same default, called directly or as a fallback's primary or standby."""
+    from moxie_sdk.tts import FallbackSynthesizer, ToneSynthesizer
+
+    class _Bare:
+        name, sample_rate, channels = "bare", 16000, 1
+
+        def synthesize(self, text, voice=None):
+            return b"\x05\x06" * 4
+
+    resp = decode_cloud_tts_response(synthesize_cloud_tts(_Bare(), "Hello there"))
+    assert (resp["audio"], resp["sample_rate"]) == (b"\x05\x06" * 4, 16000)
+    first = FallbackSynthesizer(_Bare(), ToneSynthesizer(sample_rate=22050),
+                                log=lambda m: None)
+    resp = decode_cloud_tts_response(synthesize_cloud_tts(first, "Hello there"))
+    assert (resp["audio"], resp["sample_rate"]) == (b"\x05\x06" * 4, 16000)
+    assert not first.failed, "a primary with no render() was taken for a failing one"
+    behind = FallbackSynthesizer(_Boom(), _Bare(), log=lambda m: None)
+    resp = decode_cloud_tts_response(synthesize_cloud_tts(behind, "Hello there"))
+    assert (resp["audio"], resp["sample_rate"]) == (b"\x05\x06" * 4, 16000)

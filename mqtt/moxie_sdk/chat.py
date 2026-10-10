@@ -172,6 +172,32 @@ def client_timeout(seconds, *, connect: float = CONNECT_TIMEOUT_S):
     return httpx.Timeout(seconds, connect=min(float(connect), seconds))
 
 
+#: The longest standby window a fallback engine accepts (config: MOXIE_ENGINE_RETRY_S),
+#: a day. A window that never ends is the "standby for the rest of the run" latch the
+#: window replaced, and one past the platform's time range made `describe()` raise.
+MAX_RETRY_S = 86400.0
+
+
+def retry_seconds(retry_s, *, default: float) -> float:
+    """The standby window a fallback engine is built with (`stt.FallbackTranscriber`,
+    `tts.FallbackSynthesizer`), validated once for both: `None` is `default`; a number of
+    seconds up to `MAX_RETRY_S` is kept, a negative one counts as 0 (try the primary on
+    every call). NaN, inf, -inf and anything over a day raise `ValueError` here, at
+    construction (config.py refuses MOXIE_ENGINE_RETRY_S the same way at startup)."""
+    if retry_s is None:
+        return float(default)
+    try:
+        seconds = float(retry_s)
+    except (TypeError, ValueError):
+        seconds = float("nan")
+    if not -float("inf") < seconds <= MAX_RETRY_S:     # NaN fails both comparisons too
+        raise ValueError(
+            f"retry_s must be a number of seconds from 0 (try the primary on every call) "
+            f"to {MAX_RETRY_S:g} (a day), not {retry_s!r}: a window that never ends is a "
+            f"standby for the rest of the run (None = the default {default:g} s)")
+    return max(0.0, seconds)
+
+
 def _status_code(e: Exception):
     return (getattr(e, "status_code", None)
             or getattr(getattr(e, "response", None), "status_code", None))

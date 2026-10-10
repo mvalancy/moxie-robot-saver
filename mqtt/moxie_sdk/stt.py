@@ -474,22 +474,26 @@ class FallbackTranscriber(Transcriber):
     name = "fallback"
 
     #: Seconds a latched standby holds before the next call tries the primary again.
-    #: 0 = try the primary on every call (no latch). Chosen, not measured.
+    #: 0 = try the primary on every call (no latch); at most a day. Chosen, not measured.
     RETRY_S = 60.0
 
     def __init__(self, primary: Transcriber, standby: Transcriber, *, log=None,
-                 retry_s: Optional[float] = None, clock=time.time):
+                 retry_s: Optional[float] = None, clock=time.monotonic, wall=time.time):
+        from .chat import retry_seconds
         self._primary, self._standby = primary, standby
         self._log = log if log is not None else _warn
-        self._retry_s = max(0.0, float(self.RETRY_S if retry_s is None else retry_s))
-        self._clock = clock                     # wall clock: `describe()` names the time
-        # The latch is `failed_at`: the instant it (last) closed, None while healthy;
-        # `failed` is the public flag beside it. Both move under `_lock`, and every
-        # reader takes ONE snapshot of `failed_at` — the status page's `describe()` runs
-        # on another thread than the utterance that clears the latch.
+        # None = `RETRY_S`; NaN, inf and anything over a day are refused here.
+        self._retry_s = retry_seconds(retry_s, default=self.RETRY_S)
+        # The window runs on `clock` (monotonic), so a wall clock stepped mid-outage can
+        # neither stretch nor end it; `wall` only names the times `describe()` prints.
+        self._clock, self._wall = clock, wall
+        # The latch is `_latched_at`: the `clock` instant it (last) closed or a retry was
+        # claimed, None while healthy; `failed` is the public flag beside it. Both move
+        # under `_lock`, and every reader takes ONE snapshot of `_latched_at` — the status
+        # page's `describe()` runs on another thread than the utterance that clears it.
         self._lock = threading.Lock()
         self.failed = False
-        self.failed_at: Optional[float] = None
+        self._latched_at: Optional[float] = None
 
     @property
     def engine(self) -> Transcriber:
@@ -500,20 +504,30 @@ class FallbackTranscriber(Transcriber):
     def engine_name(self) -> str:
         return self.engine.name
 
+    def _on_the_wall(self, instant: float) -> float:
+        """A `clock` instant as wall-clock time: the wall's now plus how far away it is."""
+        return self._wall() + (instant - self._clock())
+
+    @property
+    def failed_at(self) -> Optional[float]:
+        """When the latch (last) closed, on the wall clock, or None while healthy."""
+        at = self._latched_at
+        return None if at is None else self._on_the_wall(at)
+
     def retry_at(self) -> Optional[float]:
         """When the primary is tried again (wall clock), or None while it is healthy."""
-        at = self.failed_at
-        return None if at is None else at + self._retry_s
+        at = self._latched_at
+        return None if at is None else self._on_the_wall(at + self._retry_s)
 
     def describe(self) -> str:
-        at = self.failed_at
+        at = self._latched_at
         if at is None:
             return f"{self._primary.describe()} (standby: {self._standby.describe()})"
         # Past the window the time has gone by: say what happens instead of when it was.
         when = ("on the next utterance" if self._clock() >= at + self._retry_s
-                else f"at {_hhmm(at + self._retry_s)}")
-        return (f"{self._standby.describe()} (standby since {_hhmm(at)} — "
-                f"{self._primary.name} failed; retrying the primary {when})")
+                else f"at {_hhmm(self._on_the_wall(at + self._retry_s))}")
+        return (f"{self._standby.describe()} (standby since {_hhmm(self._on_the_wall(at))}"
+                f" — {self._primary.name} failed; retrying the primary {when})")
 
     def _try_primary(self) -> bool:
         """Whether THIS utterance goes to the primary: always while healthy; once the
@@ -521,18 +535,18 @@ class FallbackTranscriber(Transcriber):
         at once, so a caller racing it on another thread stays on the standby instead
         of spending a second timeout on the same dead gateway."""
         with self._lock:
-            at = self.failed_at
+            at = self._latched_at
             if at is None:
                 return True
             if self._clock() >= at + self._retry_s:
-                self.failed_at = self._clock()
+                self._latched_at = self._clock()
                 return True
             return False
 
     def _latch(self, exc: Exception) -> None:
         with self._lock:
-            first = self.failed_at is None
-            self.failed_at = self._clock()
+            first = self._latched_at is None
+            self._latched_at = self._clock()
             self.failed = True
         if first:
             self._log(f"[stt] {self._primary.name} failed ({type(exc).__name__}: {exc}); "
@@ -544,8 +558,8 @@ class FallbackTranscriber(Transcriber):
 
     def _release(self) -> None:
         with self._lock:
-            was_latched = self.failed_at is not None
-            self.failed, self.failed_at = False, None
+            was_latched = self._latched_at is not None
+            self.failed, self._latched_at = False, None
         if was_latched:
             self._log(f"[stt] {self._primary.name} is back; hearing with it again")
 
