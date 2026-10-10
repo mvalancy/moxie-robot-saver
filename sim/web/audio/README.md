@@ -13,7 +13,7 @@ which falls back to a live TTS service, then silent text, when a line has no cli
 
 ## One voice
 
-Every Moxie clip (the `moxie` and `ambient` groups, 132 files) is **`tts-piper-kristin`**, rendered through the
+Every Moxie clip (the `moxie` and `ambient` groups, 138 files) is **`tts-piper-kristin`**, rendered through the
 voice gateway: the voice the live demo answers in, so a pre-rendered line and a live reply sound like the
 same robot. The two `child` clips are a different Piper voice on purpose: the child is another speaker, and
 a demo conversation in one voice is what `sim/test_fallback_coverage.mjs` §2 refuses.
@@ -49,7 +49,7 @@ Offline, local Piper is still a first-class engine (`--engine piper`, the defaul
 (`--rerender moxie --rerender ambient`). Otherwise the page speaks in two voices. Child lines are rendered
 only by `--engine piper`.
 
-Size: 4.84 MB for 134 clips (the first 96 were 3.13 MB in this voice, 3.21 MB in Piper amy). Served with `max-age=86400` (`/audio/*` in
+Size: 5.13 MB for 140 clips (the first 96 were 3.13 MB in this voice, 3.21 MB in Piper amy). Served with `max-age=86400` (`/audio/*` in
 [`../_headers`](../_headers)). Not to be confused with [`../voice/`](../voice/README.md), the player code.
 
 📖 [sim/web](../README.md) · [Back to top](../../../README.md)
