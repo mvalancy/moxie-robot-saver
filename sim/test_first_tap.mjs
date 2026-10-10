@@ -22,6 +22,7 @@
  *      loaded, so an ambient tick inside that load waits, a stub answer takes over cleanly and
  *      the mic opening stops it, and the greeting it drops never falls back to the browser
  *      voice; a line she cannot say at all lets the speakers go; I4, the same on the Piper path;
+ *      I5, a live answer's server voice inside that load takes over cleanly too;
  *   J. a page whose brain is out: the first tap says no hello over ambient's degraded line,
  *      and still gets a face (no gateway, a dead one, the hour's cap), even while that line
  *      is still loading;
@@ -627,6 +628,46 @@ try {
     deep(clipsOf(s).map((p) => p.bytes), [STUB_BYTES], "I4: the newer line is the one voice heard");
     deep(s.speech, [], "I4: …and the line it dropped never falls back to the browser voice");
     eq(notable(errs, aborted).length, 0, `I4: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+  /* I5. HER LIVE VOICE inside the same window: the line the visitor sends is answered by the
+   * live brain, and the answer's server voice (voice/cloud.js) starts while the greeting is
+   * still loading, as on a network where a clip takes longer than a turn. That voice cuts the
+   * local voice holding the speakers, the greeting's claim included, so the greeting, released
+   * once the answer has begun, never starts under it. I2 is the scripted answer; this is the
+   * path a live page takes. */
+  {
+    const net = greetingNet();
+    const { page, g, errs, aborted } = await open("I5", {
+      route: (r, u) => {
+        if (net.route(r, u)) return true;
+        if (/\/api\/chat\b/.test(u)) { json(r, FX.chat); return true; }
+        if (/\/api\/speech\b/.test(u)) { json(r, FX.speech); return true; }
+        return false;
+      },
+    });
+    await unlockWithAMiss(page, g, "I5");
+    ok(await g.until("!window.moxieAudio.isMoxieBusy(1700)", 15000), "I5: precondition — she is quiet");
+    const t1 = await g.read("Math.round(performance.now())");
+    net.stall = true;
+    const at = await her(g);
+    await fingerTap(page, at.x, at.y);
+    ok(await recorded(g, 2), "I5: the tap on her is recorded");
+    ok(await waitFor(() => net.held.length >= 1), "I5: precondition — the greeting is still loading (its fetch is held)");
+    await g.read("(() => { window.moxieTypedTurn.send('tell me about rockets'); return 1; })()");
+    ok(await g.until(`window.__audio.plays.some((p) => p.src === 'pcm' && p.t >= ${t1})`, 15000),
+       "I5: her live answer's voice starts while the greeting is still loading");
+    net.free();
+    await sleep(1500);                                  // the released greeting decodes here
+    ok(await g.until("!window.moxieAudio.isMoxieBusy(300)", 15000), "I5: …and she falls quiet");
+    const s = await state(g, t1);
+    const pcm = s.plays.filter((p) => p.src === "pcm");
+    eq(overlapMs(s), 0, `I5: one voice at a time — the live answer and the greeting never overlap (${JSON.stringify(s.plays)})`);
+    eq(pcm.length, 1, "I5: her live answer is heard, once");
+    eq(clipsOf(s).length, 0, "I5: …and the greeting, dropped by it, never starts under it");
+    eq(pcm.filter((p) => cutsOf(s, p).length).length, 0, "I5: …the answer whole");
+    deep(s.speech, [], "I5: …nor does the greeting fall back to the browser voice");
+    eq(notable(errs, aborted).length, 0, `I5: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
     await page.close();
   }
 
