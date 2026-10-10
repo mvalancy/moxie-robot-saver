@@ -610,12 +610,14 @@ compares words only; the recovered `RemoteChatRequest` also carries `source_even
 `response_chunks` (27) and `notify_source` (35, a `ResponseSource`: `LOCAL_RESPONSE` or
 `REMOTE_RESPONSE`, `ChatResponse.proto:49-52`), which a robot's notify may fill to tie a report to
 its own turn and to mark the robot's own local lines. Whether an 803 robot sets them is for a
-capture to say. One ambiguity words alone cannot settle: a chunk reported with no child line that
-fits both the unsaid tail of a turn the child cut off and the start of the next turn's answer is
-taken as the older turn's continuation (a late report of a chunk the robot had already begun), so
-that cut is undone; with the child's line on the report, as the virtual robot sends it, the named
-turn takes the words. The rule holds for either cadence, and `sim/virtual_moxie.py --notify
-[event|chunk]` plays both. Tests: `sim/tests/test_notify_history.py`; the SIL smoke
+capture to say. One ambiguity words alone cannot settle: a report with no child line whose words fit
+both the unsaid words of an older turn (the tail the child cut off, or a reply the robot never
+reported) and the start of the next turn's answer is taken as the older turn's, a late report of a
+chunk the robot had already begun: that turn's entry is left whole (its cut undone) or cut to those
+words (a cut Moxie never made), while the next turn's answer is still whole and nothing is dropped
+or written twice. With the child's line on the report, as the virtual robot sends it on the first
+chunk and as a robot may send it on every chunk, the named turn takes the words. The rule holds for
+either cadence, and `sim/virtual_moxie.py --notify [event|chunk]` plays both. Tests: `sim/tests/test_notify_history.py`; the SIL smoke
 (`sim/run_smoke.sh`) runs the virtual robot with `--notify` and `sim/tests/test_sil.py` asserts the
 supervisor's transcript holds the turn once.
 

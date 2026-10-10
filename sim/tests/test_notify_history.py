@@ -448,15 +448,16 @@ def test_a_notify_never_brings_back_a_line_the_safety_gate_kept_out(tmp_path):
 
 
 class _GatedStream(MoxieApp):
-    """`PROMPT`: streams its first sentence, then waits for the test before the rest. Any
-    other line: a plain answer (`answers`, else "Okay!"), held back until `release` when
-    one is given."""
+    """`PROMPT` (or the line in `stream`): streams its first sentence, then waits for the
+    test before the second. Any other line: a plain answer (`answers`, else "Okay!"), held
+    back until `release` when one is given."""
     name = "gated"
 
-    def __init__(self, answers=None, release=None):
+    def __init__(self, answers=None, release=None, stream=(PROMPT, SENTENCES[:2])):
         self.gate = threading.Event()
         self.answers = dict(answers or {})
         self.release = release
+        self.stream_line, self.stream_chunks = stream
 
     def respond(self, turn):
         if self.release is not None:
@@ -464,13 +465,13 @@ class _GatedStream(MoxieApp):
         return Reply(text=self.answers.get(turn.speech, "Okay!"))
 
     def respond_stream(self, turn):
-        if turn.speech != PROMPT:
+        if turn.speech != self.stream_line:
             return None
 
         def chunks():
-            yield ReplyChunk(text=SENTENCES[0])
+            yield ReplyChunk(text=self.stream_chunks[0])
             assert self.gate.wait(PATIENCE), "the test never opened the gate"
-            yield ReplyChunk(text=SENTENCES[1], final=True)
+            yield ReplyChunk(text=self.stream_chunks[1], final=True)
         return chunks()
 
 
@@ -960,6 +961,49 @@ def test_a_cut_off_turn_keeps_its_cut_when_the_next_turns_first_chunk_fits_its_u
     _notify(rt, did, "Yes!", said="tell me about the moon")        # the child cut in
     _ask(rt, did, "and the stars?")
     _notify(rt, did, "What do you think?", said="and the stars?")
+    _notify(rt, did, "I think stars.")
+    assert _lines(rt, did) == [("user", "tell me about the moon"), ("assistant", "Yes!"),
+                               ("user", "and the stars?"),
+                               ("assistant", "What do you think? I think stars.")]
+
+
+def test_a_robot_that_carries_the_childs_line_on_every_chunk_keeps_the_cut_the_same_way(
+        tmp_path):
+    """The same two turns from a robot that repeats the child's line on every chunk's
+    report (the other cadence a real Moxie may use; which one is not captured): each
+    report names the stars turn, so the question and the sentence after it are its, and
+    the moon turn keeps its cut. (Red on the round-2 head, whose run pass tried the turns
+    oldest first whatever the child's line named.)"""
+    rt, did = _runtime(tmp_path, _Brain(answers={
+        "tell me about the moon": ("Yes!", "What do you think?"),
+        "and the stars?": ("What do you think?", "I think stars.")}))
+    _ask(rt, did, "tell me about the moon")
+    _notify(rt, did, "Yes!", said="tell me about the moon")        # the child cut in
+    _ask(rt, did, "and the stars?")
+    _notify(rt, did, "What do you think?", said="and the stars?")
+    _notify(rt, did, "I think stars.", said="and the stars?")
+    assert _lines(rt, did) == [("user", "tell me about the moon"), ("assistant", "Yes!"),
+                               ("user", "and the stars?"),
+                               ("assistant", "What do you think? I think stars.")]
+
+
+def test_a_cut_reported_after_the_childs_next_prompt_still_keeps_its_cut(tmp_path):
+    """The child cuts the moon answer at "Yes!" and asks about the stars before the robot
+    reports the cut: that report lands while the stars turn is open and is held, with the
+    stars turn's first chunk behind it, until the turn is remembered; both then replay in
+    order and each names its own turn. The moon turn keeps "Yes!", and the stars answer,
+    which opens with the moon answer's unsaid question, is whole. (Red on the round-2
+    head: the question fit the moon turn's unsaid tail first and undid the cut.)"""
+    app = _GatedStream(answers={"tell me about the moon": "Yes! What do you think?"},
+                       stream=("and the stars?", ("What do you think?", "I think stars.")))
+    rt, did = _runtime(tmp_path, app)
+    _ask(rt, did, "tell me about the moon")
+    _push(rt, did, "and the stars?")                                # open after chunk 0
+    _published(rt, did, 1)
+    _notify(rt, did, "Yes!", said="tell me about the moon")        # the cut, reported late
+    _notify(rt, did, "What do you think?", said="and the stars?")  # held behind it
+    app.gate.set()
+    rt._pool.shutdown(wait=True)
     _notify(rt, did, "I think stars.")
     assert _lines(rt, did) == [("user", "tell me about the moon"), ("assistant", "Yes!"),
                                ("user", "and the stars?"),
