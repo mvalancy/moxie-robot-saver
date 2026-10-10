@@ -571,8 +571,10 @@ EMOJI_VS, ZERO_WIDTH_SPACE, ZERO_WIDTH_JOINER, HANGUL_FILLER = (
 def test_the_cap_counts_the_name_as_it_is_kept():
     """W9. The 40 are counted on the name as it is kept, after NFC: a decomposed name of 41
     code points is 40 composed, so it is taken (and kept composed), and so is one padded
-    with a code point a screen shows as nothing. 41 composed is refused. A cap counted on
-    what was typed would refuse the first two."""
+    with a code point a screen shows as nothing; 41 composed is refused. A cap counted on
+    what was typed would refuse the first two. Both callers of the one rule: the child's
+    name, and the Try it card, which hands `check_name` the name as typed."""
+    from moxie_runtime import tryit
     name = "Sam " * 9 + "José"
     nfd = unicodedata.normalize("NFD", name)
     assert (len(name), len(nfd)) == (40, 41)
@@ -580,8 +582,10 @@ def test_the_cap_counts_the_name_as_it_is_kept():
         assert cloud_config.clean_child_name(typed) == name, ascii(typed)
         assert sanitize_config_overrides({"child": {"nickname": typed}}) == {
             "child": {"nickname": name}}
-    with pytest.raises(ValueError, match="40 letters"):
-        cloud_config.clean_child_name(name + "s")
+        assert tryit._try_name(typed) == name, ascii(typed)
+    for check in (cloud_config.clean_child_name, tryit._try_name):
+        with pytest.raises(ValueError, match="40 letters"):
+            check(name + "s")
 
 
 def test_no_hello_when_the_rules_block_the_named_and_the_generic_hello(tmp_path):
@@ -631,8 +635,13 @@ def test_a_code_point_a_screen_shows_as_nothing_is_no_part_of_a_name(tmp_path):
     the plain 'Mia' a line says was not masked. A name is now kept without the code points a
     screen shows as nothing (Unicode's default-ignorable set): 'Mia', and so masked. A
     zero-width space or joiner inside goes the same way, and a name of such code points
-    alone is no name (a Hangul filler alone was taken: an invisible name)."""
+    alone is no name (a Hangul filler alone was taken: an invisible name). An enclosing
+    mark (a keycap, a circle) is visible but no script writes a letter with one, and a name
+    kept with it went unmasked the same way: it is refused."""
     assert cloud_config.clean_child_name("Mia" + EMOJI_VS) == "Mia"
+    for decorated in ("Mia" + chr(0x20E3), "Mia" + chr(0x0489)):    # a keycap, an enclosing sign
+        with pytest.raises(ValueError, match="40 letters"):
+            cloud_config.clean_child_name(decorated)
     assert cloud_config.clean_child_name("M" + ZERO_WIDTH_SPACE + "ia") == "Mia"
     assert cloud_config.clean_child_name(f"Sam {ZERO_WIDTH_JOINER} Zoë") == "Sam Zoë"
     for blank in (HANGUL_FILLER, EMOJI_VS, ZERO_WIDTH_SPACE + ZERO_WIDTH_JOINER,
@@ -789,6 +798,8 @@ def test_a_clear_that_cannot_be_saved_is_owed_and_made_on_the_next_connect(tmp_p
     assert json.loads(_record(tmp_path).read_text())["child"] == {"nickname": "Zoë"}
     assert _owed(tmp_path).exists() and rt.child_clear_owed("d_one")
     assert any("not saved yet" in n["text"] for n in rt.recent if n["kind"] == "permit")
+    # The revoke's own push tried again, quietly: the parent reads one "NOT saved", not two.
+    assert sum("NOT saved" in n["text"] for n in rt.recent if n["kind"] == "error") == 1
 
     reborn = _runtime(tmp_path, devices=("d_seed",), allow_unverified_bots=False)
     assert reborn.child_clear_owed("d_one") and reborn.child_for("d_one").nickname == "friend"
@@ -799,6 +810,42 @@ def test_a_clear_that_cannot_be_saved_is_owed_and_made_on_the_next_connect(tmp_p
     assert not _owed(tmp_path).exists() and not reborn.child_clear_owed("d_one")
     for _topic, payload in reborn.client.published:
         assert "Zoë" not in json.dumps(payload, ensure_ascii=False), payload
+
+
+def test_a_revoke_after_a_restart_makes_an_owed_clear(tmp_path, monkeypatch):
+    """After a restart the robot owed a clear has no name in RAM and its record reads fine,
+    so a revoke must not take "no name here" for "nothing to do": it writes the record
+    without the name, settles the note, and only then says `child_cleared`."""
+    rt = _runtime(tmp_path, allow_unverified_bots=False)
+    rt.set_permit("d_one", True)
+    _name(rt, "d_one", "Zoë")
+    _refusing_settings(rt, monkeypatch)
+    rt.set_permit("d_one", False)
+    reborn = _runtime(tmp_path, devices=("d_seed",), allow_unverified_bots=False)
+    assert reborn.child_clear_owed("d_one") and reborn.settings_saved("d_one")
+    assert reborn.set_permit("d_one", False)["child_cleared"] is True
+    assert "child" not in json.loads(_record(tmp_path).read_text())
+    assert not _owed(tmp_path).exists()
+
+
+def test_a_revokes_own_push_can_make_the_clear_and_says_so(tmp_path, monkeypatch):
+    """The store refuses the revoke's first write and takes the next: the clear is owed,
+    the revoke's own push makes it, and the answer then says `child_cleared: true`."""
+    rt = _runtime(tmp_path, allow_unverified_bots=False)
+    rt.set_permit("d_one", True)
+    _name(rt, "d_one", "Zoë")
+    write, refused = rt.store.write, []
+
+    def refuse_once(device_id, collection, value):
+        if collection == rt.ROBOT_CONFIG_COLLECTION and not refused:
+            refused.append(collection)
+            return False
+        return write(device_id, collection, value)
+
+    monkeypatch.setattr(rt.store, "write", refuse_once)
+    assert rt.set_permit("d_one", False)["child_cleared"] is True
+    assert refused and "child" not in json.loads(_record(tmp_path).read_text())
+    assert not rt.child_clear_owed("d_one") and not _owed(tmp_path).exists()
 
 
 def test_an_owed_clear_only_removes_a_name_and_never_sends_one(tmp_path, monkeypatch):

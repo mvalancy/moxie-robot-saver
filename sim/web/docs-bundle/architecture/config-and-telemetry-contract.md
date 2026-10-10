@@ -270,7 +270,8 @@ A house rule (`?scope=fleet`) cannot carry a child: that is a `400`.
    is the same name and is kept composed. On that spelling it is up to 40 letters, digits, spaces,
    periods, apostrophes or hyphens on one line. A letter may carry combining marks (an accent, a
    Devanagari vowel sign), so names in scripts that write vowels as marks work; a mark anywhere
-   else is refused. The console saves the account's record in the same spelling.
+   else is refused, and so is an enclosing mark (a keycap, a circle) even after a letter. The
+   console saves the account's record in the same spelling.
 2. **Moxie's safety rules.** The name goes through the same classifier and table the runtime uses
    for every turn ([`safety.py`](../../mqtt/moxie_sdk/safety.py) over
    [`safety_rules.json`](../../mqtt/moxie_sdk/safety_rules.json), or `MOXIE_SAFETY_RULES`), on the

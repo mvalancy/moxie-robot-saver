@@ -443,16 +443,18 @@ def _name_shape_ok(name: str) -> bool:
     A mark (`\p{M}`: an accent left decomposed, a Devanagari vowel sign or virama, a Thai
     tone mark) is allowed after a letter, or after another mark that follows one, so the
     scripts that write vowels as marks pass. A mark that starts the name, or follows a
-    digit, a space or punctuation, refuses it."""
+    digit, a space or punctuation, refuses it. So does an enclosing mark (`Me`: a keycap,
+    a circle), which no script writes a letter with: a name kept with one is a spelling no
+    line says, so the plain name would go unmasked."""
     import unicodedata
     base, after_letter = [], False
     for ch in name:
-        kind = unicodedata.category(ch)[0]
-        if kind == "M":
-            if not after_letter:
+        kind = unicodedata.category(ch)
+        if kind[0] == "M":
+            if not after_letter or kind == "Me":
                 return False
             continue
-        after_letter = kind == "L"
+        after_letter = kind[0] == "L"
         base.append(ch)
     return NAME_RE.fullmatch("".join(base)) is not None
 

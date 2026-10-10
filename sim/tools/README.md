@@ -39,6 +39,7 @@ python3 sim/tools/ext_mutation_check.py
 python3 sim/tools/hardening_mutation_check.py
 python3 sim/tools/hardening_p1_mutation_check.py
 python3 sim/tools/launch_card_mutation_check.py
+python3 sim/tools/name_safety_mutation_check.py
 python3 sim/tools/performance_mutation_check.py
 python3 sim/tools/subscribe_mutation_check.py
 python3 sim/tools/telemetry_rollup_mutation_check.py
@@ -55,6 +56,7 @@ python3 sim/tools/unit_budget_mutation_check.py
 | `hardening` | P0: store lock, connection region | `moxie_sdk/store.py`, `moxie_runtime/` connection code |
 | `hardening_p1` | P1: roster, conn telemetry, shutdown | `moxie_sdk/{roster,conn_telemetry}.py`, `fleet/activity.py` |
 | `launch_card` | launch-card QR allowlist | `moxie_sdk/launch_cards.py` |
+| `name_safety` | the child's name: the spelling it is kept in, the mask's edges, a clear owed when the robot's record cannot take it, the console's child writes off its event loop, and K7.1's two survivors (W9, S7); bytecode is purged before every run, with a clean-tree control after the last row | `moxie_sdk/cloud_config.py` (the name rule, the mask), `moxie_runtime/fleet.py` (child names, the clear), `moxie_runtime/presence.py` (the hello), `server/moxie_server/{child_profile,routes/account,routes/robots}.py` |
 | `performance` | behavior planner | `moxie_sdk/performance.py` |
 | `subscribe` | `subscribe` capability | `moxie_runtime/` subscription merge, `ext.SUBSCRIBE_EVENTS` |
 | `telemetry_rollup` | ring vs. daily roll-up | `moxie_sdk/telemetry.py`, `moxie_runtime/telemetry.py` |

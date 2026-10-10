@@ -23,6 +23,9 @@
  *      sentence) is said to the parent, word for word, and no code is made
  *   N11 names compare as the robot keeps them (NFC): a record saved decomposed is the
  *      same name, never "not sent yet"
+ *   N12 Robot access's Revoke, when the supervisor could not save the clear that takes the
+ *      child's name off (`child_cleared: false`, K14b): the card says the name is not out
+ *      of the robot's saved settings yet and when it goes, never a bare "Revoked"
  *
  * No FastAPI: `serveStatic` serves server/static and every `/local/*` and `/api/*` call is
  * answered at the browser. The fleet views come from the REAL `moxie_server.fleet`
@@ -32,9 +35,9 @@
  * click; no name row; the mismatch never said; the rename's reason dropped; the fleet or the
  * monitor read without the token; the placeholder taken for a name; the active child renamed
  * instead of the robot's; the record's name drawn as markup; a refused name not said, or
- * the code made anyway; names compared undecomposed) must each redden the scenario
- * that guards it. A child's name is personal data: only 'Zoë', 'José' and 'Sam' (once
- * wrapped in a tag the name rule refuses).
+ * the code made anyway; names compared undecomposed; a revoke's owed clear not said)
+ * must each redden the scenario that guards it. A child's name is personal data: only
+ * 'Zoë', 'José' and 'Sam' (once wrapped in a tag the name rule refuses).
  *
  *   node sim/test_console_child_name.mjs
  */
@@ -98,6 +101,7 @@ const RECORD = { id: RID, "embodied-robot-id": RID, serial: DEV, name: "Moxie", 
 const kid = (name) => ({ id: CID, "child-first-name": name });
 const WIFI = "POST /local/wifi/payload", PUT = `PUT /api/children/${CID}`;
 const POST_CHILD = "POST /api/children";
+const PERMIT = `POST /local/robots/${DEV}/permit`;
 /* 1x1 transparent PNG: every QR image the console asks for. */
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -119,7 +123,8 @@ const until = async (done, ms) => { for (let t = 0; t < ms && !done(); t += 100)
  *  in `st.reads`. `mutate` serves a changed js/core.js. */
 async function drive({ mutate = null, tab = "moxie", children = [kid("Zoë")],
                        robots = [RECORD], live = "zoe",
-                       put = { child_pushed: true, reason: null }, refuse = null } = {}) {
+                       put = { child_pushed: true, reason: null }, refuse = null,
+                       permit = null } = {}) {
   const st = { calls: [], auth: {}, bodies: {}, reads: [], children: [...children],
                dialogs: [] };
   const page = await browser.newPage();
@@ -140,6 +145,9 @@ async function drive({ mutate = null, tab = "moxie", children = [kid("Zoë")],
     if (m !== "GET") { st.calls.push(call); st.auth[call] = auth; st.bodies[call] = r.postData(); }
     if (/\.png$/.test(p)) return r.respond({ status: 200, contentType: "image/png", body: PNG });
     if (call === WIFI) return J({ qr_payload: "WIFI-ONLY", wifi_only: true });
+    if (permit && call === PERMIT)              /* the supervisor's revoke answer */
+      return J({ ok: true, allow_unverified_bots: false, permits: [], pending: [DEV],
+                 connected: [DEV], ...permit });
     if (refuse && (call === PUT || call === POST_CHILD)) {
       aborted.refused++;                  /* a 400 served on purpose: its console line */
       return J({ detail: refuse }, 400);
@@ -369,6 +377,28 @@ const SCENARIOS = {
       C.eq(notable(errs, aborted).length, 0, `N11: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
     } finally { await page.close(); }
   },
+
+  async N12(C, o) {
+    /* Revoke under Allowed; the supervisor's answer says whether the robot's saved settings
+     * still hold the child's name (`child_cleared: false`: the clear is owed, made on its
+     * next connect or settings save). */
+    for (const [cleared, owed] of [[false, true], [true, false]]) {
+      const { page, st, errs, aborted } = await drive({ ...o, permit: { child_cleared: cleared } });
+      try {
+        const revoke = '#permits-box .permit-btn[data-permit="0"]';
+        await page.waitForSelector(revoke, { visible: true, timeout: 8000 });
+        await page.click(revoke);
+        await page.waitForFunction(() => /Revoked/.test(document.querySelector("#permit-status")
+                                     .textContent), { timeout: 8000 }).catch(() => {});
+        const said = await page.$eval("#permit-status", (e) => e.textContent);
+        C.eq(calls(st, PERMIT), 1, `N12: child_cleared ${cleared}: one revoke is sent`);
+        C.ok(/Revoked/.test(said), `N12: child_cleared ${cleared}: the card says Revoked — got ${JSON.stringify(said)}`);
+        C.eq(/name out of its saved settings yet/.test(said) && /next time the robot connects/.test(said),
+             owed, `N12: child_cleared ${cleared}: ${owed ? "the owed clear is said" : "no warning"} — got ${JSON.stringify(said)}`);
+        C.eq(notable(errs, aborted).length, 0, `N12: no page errors — ${notable(errs, aborted).slice(0, 3)}`);
+      } finally { await page.close(); }
+    }
+  },
 };
 
 async function run(C, name, o = {}) {
@@ -418,6 +448,9 @@ const TEETH = [
                     "catch(e){ alert(oops(e,'The name could not be saved.')); }")],
   ["names compared undecomposed", "N11",
    (s) => s.replace(".join(' ').normalize('NFC');", ".join(' ');")],
+  ["a revoke's owed clear not said", "N12",
+   (s) => s.replace("const owed = !permitted && r.child_cleared===false",
+                    "const owed = false && r.child_cleared===false")],
 ];
 for (const [what, scenario, mutate] of TEETH) {
   ok(mutate(SRC) !== SRC, `teeth: the "${what}" mutation must actually change js/core.js`);
