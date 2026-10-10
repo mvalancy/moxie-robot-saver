@@ -5,10 +5,11 @@ from one attempt to revive a real Moxie in August 2026, kept so nobody has to re
 robot turned out to be older than firmware 24.10.801, and that gate decides everything below.
 **Bold = load-bearing fact.**
 
-> **Bench session, 2026-08: what it established.** Our Wi-Fi code and our server code work on real
-> hardware, and the first code must be Wi-Fi-only. A pre-801 robot reads the server code and opens no
-> connection: it talks only to Google Cloud IoT Core and validates that server's certificate, so no
-> network trick re-homes it. Each thread now has a home. The owner path is
+> **Bench session, 2026-08: what it established.** Our Wi-Fi code works on real hardware: the robot
+> scanned it and joined Wi-Fi, and the first code must be Wi-Fi-only. Our server (`om`) code is
+> byte-identical to OpenMoxie's, but this pre-801 robot read it and did not act on it, so it is
+> unverified on a physical robot. A pre-801 robot talks only to Google Cloud IoT Core and validates that
+> server's certificate, so no network trick re-homes it. Each thread now has a home. The owner path is
 > [Revive your Moxie](../guides/revive-your-moxie.md) (Path C for a pre-801 unit); the QR grammar is
 > [QR commands](../reverse-engineering/protocol/qr-commands.md); the TLS reasoning is
 > [network trust](../reverse-engineering/protocol/network-trust.md#why-pre-801-is-stuck-precisely); the
@@ -39,7 +40,7 @@ Each of these cost real time; do not re-derive them.
   address on `:8883`. This eliminates every router, subnet and AP-isolation variable; strongly
   recommended for debugging.
 
-## The wall: the robot reads the `om` code and never connects
+## The wall we hit
 
 - Shown the endpoint (`om`) QR, the robot **beeps (reads it) then returns to the QR screen asking for
   another code. It NEVER opens a socket to the broker**: zero SYN/TLS at the broker, confirmed by
@@ -81,8 +82,8 @@ self-signed cert with `CN=mqtt.googleapis.com` could let a **pre-801** robot con
 robots OpenMoxie can't. The question under test: does the robot validate the Google server cert?
 
 Method: a mosquitto listener with a `CN=mqtt.googleapis.com` cert, an iptables DNAT of the robot's
-:443 to the broker, and a DNS spoof of `mqtt.googleapis.com`; then watch the broker for a TLS
-ClientHello from the robot.
+`:443` to the broker's `:8883`, and a DNS spoof of `mqtt.googleapis.com`; then watch the broker for a
+TLS ClientHello from the robot.
 
 Result: the robot **DOES reach our broker** (DNAT works) but **rejects the cert: `tlsv1 alert unknown
 ca`**. So this firmware **validates the server cert against its bundled Google roots**; a self-signed
@@ -112,8 +113,9 @@ Software-only revival is blocked by TLS: the robot validates `mqtt.googleapis.co
 bundled Google roots, we can't forge that, and there's no network way onto the device to change its
 trust or endpoint. **Definitive check = the on-device badge** (the triage table above). A pre-801 unit
 needs new firmware: the flash path, or a paid reflash service. Once on 803, our stack (broker +
-supervisor + SDK + local LLM) is proven and ready. This is purely a firmware-gap problem on this
-specific unit, not a problem with the server side.
+supervisor + SDK + local LLM) is built and tested against the simulator; no physical robot has connected
+to it yet ([architecture overview](../architecture/overview.md#two-independent-channels)). This unit was
+stopped by its firmware before it ever reached the server side.
 
 ## The QR command surface
 

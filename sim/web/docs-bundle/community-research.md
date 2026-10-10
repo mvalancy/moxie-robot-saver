@@ -16,7 +16,7 @@ duplicating. For a feature-by-feature comparison with OpenMoxie, see the
   schedules, content prefs, and "insights"/analytics. That REST service is what our repo maps
   and reimplements.
 
-## Moxie died twice
+## The relaunch and the second shutdown
 
 Embodied, Inc. shut down in December 2024; OpenMoxie (below) is the revival that followed. Moxie Robots, Inc.
 relaunched the product on 2025-12-06 as a paid subscription, and its servers closed on 2026-06-30
@@ -62,8 +62,9 @@ that already contains an `OPEN_MOXIE` value. The QR's `iot-endpoint` integer sel
 ### Firmware compatibility & recovery
 - 803 → plug-and-play OpenMoxie. 801 → needs a publicly-signed broker cert; the maintainer's 801→803
   OTA is no longer offered (issue #57, 2026-08-29). Older than 801 → no over-the-air route, but not a
-  dead end: the boot chain drops to `rockusb`/`fastboot` and the mainboard's `LOAD` button enters
-  Rockchip download mode, so an unsigned flash to 803 is possible
+  dead end: the boot chain drops to `rockusb`/`fastboot`, and the mainboard's `LOAD` button (seen in the
+  FCC photos) should enter Rockchip download mode, so an unsigned flash to 803 looks possible. That route
+  is unconfirmed on a bench unit here
   ([Revive your Moxie, Path C](guides/revive-your-moxie.md#path-c-flash-an-older-robot-first),
   [flashing runbook](reverse-engineering/firmware/flashing-runbook.md)); paid third-party reflash
   services exist via r/MoxieRobot.
@@ -76,8 +77,9 @@ that already contains an `OPEN_MOXIE` value. The QR's `iot-endpoint` integer sel
   native cloud layer is `embodied::logging::cloud::RightPoint`.
 - **ADB is locked on retail units** (`ro.adb.secure=1`, `ro.debuggable=0`; a port scan of a real robot
   found nothing listening: [live hardware debug](debugging/live-hardware-debug.md),
-  [firmware and older robots](../hardware/firmware-and-older-robots.md)). OpenMoxie's porting notes name
-  the robot's MQTT identity files (Google-IoT style JWT/RS256):
+  [firmware and older robots](../hardware/firmware-and-older-robots.md)). OpenMoxie's
+  `site/hive/mqtt/robot_credentials.py` (`bootstrap_keys`) pulls the robot's MQTT identity files
+  (Google-IoT style JWT/RS256):
   `adb pull /sdcard/EmbodiedStaticData/PERSISTENT_DATA/uuid.txt` and `.../rightpoint/RS256.key`,
   device id `d_<uuid>`; reading them needs on-device access first (recovery sideload or a flashed
   image, [hardware access](reverse-engineering/hardware/hardware-access.md)). Only needed to

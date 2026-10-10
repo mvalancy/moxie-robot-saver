@@ -1,14 +1,17 @@
 # Design language — the static site
 
-For anyone styling a page under [`sim/web/`](../../sim/web/): the hub, the simulator, the setup page and
-the docs explorer. **North star: the hub** ([`index.html`](../../sim/web/index.html)): a dark, engineered
-**robot-telemetry / control-room** look, so the site's pages read as one product. The tokens live
-in-repo ([`css/hud.css`](../../sim/web/css/hud.css)), so the guide stands on its own.
+For anyone styling a page under [`sim/web/`](../../sim/web/): the hub, the simulator, the setup page,
+the docs explorer and the cloud-console example (`cloud.html`). **North star: the hub**
+([`index.html`](../../sim/web/index.html)): a dark, engineered **robot-telemetry / control-room** look, so
+the site's pages read as one product. The tokens live in-repo ([`css/hud.css`](../../sim/web/css/hud.css)),
+so the guide stands on its own.
 
 **Scope.** This language is the static site's. The parent console ([`server/static/`](../../server/static/))
 keeps a deliberate exception: a light, rounded phone-app theme (`--bg: #f4f5fb`, `--card: #fff`,
 `--radius: 16px` in [`style.css`](../../server/static/style.css)) with a dark variant from
-`prefers-color-scheme`, because it is a parent's phone app, not a control room.
+`prefers-color-scheme`, because it is a parent's phone app, not a control room. The static site's
+[`cloud.html`](../../sim/web/cloud.html) is a read-only example of that console drawn in this dark
+language from a fixture; it is not the console itself.
 
 ## Mood
 Dark, precise, **engineering-grade**. Think a mission-control HUD for an autonomous machine: a near-black
@@ -97,7 +100,8 @@ use. Pick one the next time either page is touched.
   a little robot"): the 3D Moxie in the void, with the HUD rail behind it (Motors as telemetry gauges,
   Live-bus as a connection console, Transcript as a comms log, Session as record/replay controls). See
   the [SIL doc](../architecture/sil-and-cicd.md).
-- **Hub, setup page, docs explorer** ([`sim/web/`](../../sim/web/)) — the same tokens and fonts.
+- **Hub, setup page, docs explorer, cloud-console example** ([`sim/web/`](../../sim/web/)) — the same
+  tokens and fonts.
 - **Parent console** ([`server/`](../../server/)) — the exception above; it does not use this language.
 
 ## Provenance

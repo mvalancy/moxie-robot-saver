@@ -11,13 +11,15 @@ the search closed. The raw tables are in
 > `reset_network`, `bluetooth_pair`) with a literal `else → QRDiagnostic` for everything else. **There is
 > no undocumented factory command the setup app acts on** — the set is provably these four.
 >
-> **The "reactors" below are dwell timers, not hidden handlers.** The gaps this rig measured map onto the
+> **The "reactors" the rig flagged are dwell timers, not hidden handlers.** The gaps this rig measured map onto the
 > app's own state waits: unknown command → 2 s diagnostic screen (`QR_DIAGNOSTIC_WAIT_DURATION=2f`); a
 > Wi-Fi/`reset_network` path → 20 s connect wait (`CONNECTION_WAIT_DURATION=20f`); serial display → 30 s.
 > The uniform ~20 s "consistent reactors" are the *known* Wi-Fi-connect state, not new commands. The rig
-> has served its purpose and is **retired**; the only remaining open edge is the *native* consumer of the
-> string-keyed `QRCommand` bus message (the managed brain has zero references to it). See the source of
-> truth: [`../reverse-engineering/protocol/qr-commands.md`](../reverse-engineering/protocol/qr-commands.md).
+> has served its purpose and is **retired**. The *native* consumer of the string-keyed `QRCommand` bus
+> message (the managed brain has zero references to it) has since been read too: `RightPoint::on_QRCommand`
+> acts on exactly three codes, `report`, `endpoint_update` and `om`
+> ([native dispatch](../reverse-engineering/protocol/qr-commands.md#the-effective-command-set-native-dispatch-rightpointon_qrcommand)).
+> See the source of truth: [`../reverse-engineering/protocol/qr-commands.md`](../reverse-engineering/protocol/qr-commands.md).
 
 ## Method
 

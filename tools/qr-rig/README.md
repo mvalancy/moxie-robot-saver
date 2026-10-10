@@ -43,10 +43,13 @@ that caused it and kills false positives.
 
 ## What is written where
 
-- `qr_rig.py` writes its config and timeline outside the repo, and `rig.log` beside itself (git-ignored).
-- `overnight.py` writes `tools/qr-rig/findings.md` beside itself (untracked). Only with `--commit` does
-  it also commit that file and push the current branch, every `--commit-every` seconds. By default
-  nothing here is committed at runtime.
+- `qr_rig.py` writes only its config and timeline files, both outside the repo; it writes no log of
+  its own.
+- `overnight.py` writes `tools/qr-rig/findings.md` beside itself (untracked) and captures the rig's
+  output in `rig.log` beside it (git-ignored). Only with `--commit` does it also commit that file and
+  push the current branch, every `--commit-every` seconds; a failing git step is printed and the run
+  carries on, and "committed" is printed only when every step succeeded. By default nothing here is
+  committed at runtime.
 - `validated_codes.py` writes PNGs to `--out` (default `./deck`).
 
 ## Retired: the brute-force sweep
@@ -61,7 +64,8 @@ modes stay in `qr_rig.py` because the closed-loop camera-plus-beep-timing method
   single-frame sub-commands. Switch live via the UI or `POST {"mode":"focus"}`.
 - `/stats` ranks commands by reaction rate; needs >=3 scans and >=50%.
 - `MOXIE_BROKER_HOST=<broker-ip> python3 overnight.py --moxie-ip <robot-ip>` keeps the sweep running
-  headless until `--until HH:MM` (default `07:00`).
+  headless until `--until HH:MM` (default `07:00`); `--no-manage` only snapshots a rig you run yourself
+  and needs neither value.
 
 ---
 📖 [tools](../README.md) · [Back to top](../../README.md)
