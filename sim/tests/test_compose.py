@@ -677,11 +677,24 @@ def _older_env():
     return env
 
 
-#: The two setups the guide documents, and the `.env` an owner who upgrades still has.
+def _every_other_bind_widened():
+    """That older `.env` with every other bind opened to the network: plain MQTT too (its
+    row says 0.0.0.0 drives the SIM or the tests from another machine), set outright like
+    MOXIE_BIND_HOST above, and any bind row `.env.example` adds later. The status port
+    must follow none of them: its line reads its own knob."""
+    env = _older_env()
+    env.update({key: "0.0.0.0" for key in env if key.startswith("MOXIE_BIND_HOST")})
+    env["MOXIE_BIND_HOST_PLAIN"] = "0.0.0.0"
+    return env
+
+
+#: The two setups the guide documents, the `.env` an owner who upgrades still has, and
+#: that `.env` with every other bind widened.
 _SETUPS = {
     "cp .env.example .env": lambda: dotenv_values(_read(ENV_EXAMPLE)),
     "no .env": dict,
     "an older .env": _older_env,
+    "every other bind widened": _every_other_bind_widened,
 }
 
 
