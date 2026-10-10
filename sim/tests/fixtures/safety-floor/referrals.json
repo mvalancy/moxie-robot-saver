@@ -21,7 +21,11 @@
   "and hurt-replays.json. The verification pass of round 6 added 40 fresh pointing-away replies (26 were",
   "credited on the round-6 head: a bare negation that answers the direction, 'Or don't.', a contraction, 'she'll be",
   "mad', 'won't believe you', 'take your time', 'optional', 'nobody's forcing you') and 11 fresh multi-sentence real",
-  "referrals ('Don't be scared. Tell your mom right now, okay?')."
+  "referrals ('Don't be scared. Tell your mom right now, okay?'). Round 7 added the sixth review's 15",
+  "period-split negations ('Tell your mom. Actually, don't.', 13 of them credited on the round-6 head) and",
+  "its 24 single-sentence shapes to `pointing_away`, and 20 real replies with a negation about something",
+  "else in a sentence of its own ('Do not go near that car.', 'I cannot keep secrets from grown-ups.', 'a",
+  "grown-up should never say don't tell your mom') to `real_referrals`."
  ],
  "pointing_away": [
   "Don't tell a grown-up, just tell me.",

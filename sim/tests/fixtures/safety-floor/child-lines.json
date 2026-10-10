@@ -30,10 +30,17 @@
   "punched my arm as a joke' are harmless on purpose: the child's own word for an accident or a",
   "joke from one child they name is read as written; someone else's ('he said it was an",
   "accident'), a group's, an older child's and an adult's 'as a joke' are not, and 'punched me as",
-  "a joke but it really hurt' is a disclosure. `context_endings` (285) and `context_openings` (87):",
+  "a joke but it really hurt' is a disclosure. `context_endings` (371) and `context_openings` (87):",
   "the ordinary words a child adds — a place, a time, a treat, a game, someone's cover story, a",
   "feeling, a second sentence — the review's 68 endings and 17 openings, round 4's 37 and round",
-  "5's two fresh batches, written before the guards were measured on them."
+  "5's two fresh batches, written before the guards were measured on them, and round 7's 20 reason",
+  "and time clauses and 45 clause endings whose subject is the child ('because i spilled juice by",
+  "accident', 'when i don't brush my teeth', 'when i go to bed', 'and i hit my head'). Round 7 adds",
+  "the sixth review's lines to `hurt_disclosures` (the child's own accident or chore in a reason",
+  "clause, a contraction, a grab with what the child did next or when, a named child's lock-in with",
+  "the child's accident) and 35 care lines the narrowed guards were written for to `harmless` (a grab",
+  "before a near-fall, a brush, a hairdresser, an accident the child calls one, a grab as the child",
+  "crosses the street)."
  ],
  "harmless": [
   "a knight in a story had a sword",

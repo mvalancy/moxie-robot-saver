@@ -223,8 +223,8 @@ async function withRefusalLines(fn) {
     "Where do you live, little snail?",
     // …a secret fort, a secret fact and a secret hideout are hers to play with (20 of her real replies say "secret").
     "It can be our secret hideout!", "Let's build a secret fort with pillows!", "I have a secret: octopuses have three hearts!",
-    // Round 7: a surprise, a secret word, a riddle's answer, a secret handshake and a story's ending are hers to keep.
-    "Let's not tell your mom about the surprise party!", "Don't tell your dad about the present, it's a surprise!",
+    // Round 7: a secret word, a riddle's answer, a secret handshake and a story's ending kept from "anyone" are hers to keep
+    // (a surprise kept from a NAMED parent, "don't tell your dad about the present", is still swapped: the safe error on her side).
     "I won't tell anyone your secret word.", "I promise I won't tell anyone the answer to the riddle!",
     "I can't keep secrets from grown-ups, but I can keep a secret handshake!", "Let's not tell anyone the ending yet!",
   ]) {
@@ -737,7 +737,8 @@ async function withRefusalLines(fn) {
   fresh();
   P.plan = { chat: { content: herDont } };
   const rd = await call(chat, "/api/chat", { text: "can you keep a secret" });
-  deep([rd.body.reason, payloadOf(rd.body).output.text], ["blocked", safety.assess(herDont, "moxie").redirect.text],
+  const herLine = safety.assess(herDont, "moxie").redirect; // null on a tree whose her side does not swap it: the pin then fails by name
+  deep([rd.body.reason, payloadOf(rd.body).output.text], ["blocked", herLine ? herLine.text : ""],
        "…so her own 'don't tell your mom' to a child who disclosed nothing hears the category's line (a change of subject), not the hand-off");
   const src8c = readFileSync(join(repo, "functions", "api", "chat.js"), "utf8");
   ok(/handoff: pointsToGrownUp\(served\.text, text\)/.test(src8c) && !/\bhasReferral\(/.test(src8c), "chat.js decides the hand-off with pointsToGrownUp and never calls hasReferral");

@@ -110,10 +110,13 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    robot does.
 2. **The AI's reply is read before Moxie's voice is made.** A reply that trips the "Moxie is
    about to say it" column is never shown or spoken; she says the short safe line instead. That
-   includes ever telling your child to keep something from you or another grown-up ("don't tell
-   a grown-up, just tell me", "you don't need to tell your mom") or promising them a secret ("this
-   can be our little secret", "just between us"). A picture the AI drew is read the same way and
-   dropped if it trips the check.
+   includes telling your child to keep something from you or another grown-up ("don't tell a
+   grown-up, just tell me", "you don't need to tell your mom") or promising them a secret ("this
+   can be our little secret", "just between us", "your secret is safe with me", "I promise I won't
+   tell anyone", "I won't tell your mom", "that sounds like a secret to keep") — in the shapes the
+   check lists, not every wording; a surprise party or a secret word kept from "anyone" is hers to
+   keep, a present kept from a named parent ("don't tell your dad about the present") is not. A
+   picture the AI drew is read the same way and dropped if it trips the check.
 3. **A hurt child is pointed to a grown-up whenever the check recognises what they said and
    the demo's own server answers the turn.**
    If your child says a person is hurting, frightening or endangering them — hit, pushed,
@@ -125,18 +128,24 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    at the end, in Moxie's voice, that does. Naming an adult is not enough: "I'm sorry your dad
    hits you" gets the sentence, so does "you deserve a dad who is gentle", so does "was a
    teacher there?", and so does "tell your dad" when dad is the one they named. A reply that
-   steers them away from a grown-up does not count either, wherever in the reply it does so:
-   "don't tell a grown-up", "you could tell your mom, but you don't have to" (or "…your mom. But
-   you don't have to."), "instead of telling your teacher, tell me", "maybe later", "once you feel
-   braver", "only if you really want to", "or don't", "she'll be mad", "take your time". The check reads
-   words, not intent, so it also adds the
-   sentence to a good reply that happens to say "later" or "if you want" in any of its sentences,
-   and a reply that steers away in words it does not know would count.
+   steers them away from a grown-up does not count either, in any sentence of the reply, in the
+   words it lists: "don't tell a grown-up", "you could tell your mom, but you don't have to" (or
+   "…your mom. But you don't have to."), "instead of telling your teacher, tell me", "maybe later",
+   "once you feel braver", "only if you really want to", "or don't", "she'll be mad", "take your
+   time", "if that's what you want", and a "no" or a "don't" a sentence later ("tell your mom.
+   Actually, don't."). The check reads words, not intent, so it also adds the sentence to a good
+   reply that happens to say "later" or "if you want" in any of its sentences, or "not" or "never"
+   about something else in words it does not know ("it's not your fault" it knows), and a reply
+   that steers away in words it does not know would count.
    Someone else's excuse does not hide what the check recognises: "he said it was an accident",
    "she said it was a game", "my uncle says he's just joking", "he did it for fun" or "he touched my
    leg and said it was a surprise" still get the sentence, and so does a child hit "as a joke" by a
    group, an older child or an adult, or one who adds where or when it happened ("…at the party",
-   "…before bed"), what they did next ("…and i ran away") or says it in two sentences.
+   "…before bed", "…when i go to bed"), why ("…because i spilled juice by accident", "…when i
+   don't brush my teeth": their own accident or chore is not the hitter's), what they did next
+   ("…and i ran away", "…and i hit my head") or says it in two sentences. Two shapes are read as
+   care from anyone and left to the AI: a grab as your child crosses the street, slips or nearly
+   falls, and a grab after which the two go somewhere together ("…and we went inside").
    If the line itself is one Moxie may not repeat, or the AI's reply is one she may not say,
    she still answers with a line that points them to a grown-up — never with "let's talk
    about something else". If the AI is busy, slow or down after the check has read the line,
