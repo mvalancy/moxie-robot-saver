@@ -247,7 +247,8 @@ installStageFraming(camera, renderer);
  *     brain is out, and when it was, the degraded line the answer brought cut the greeting a
  *     second in;
  *   · on a page whose brain is out: ambient.js's one degraded line is her hello there, said on
- *     this same unlock (it would stop a hello, or, said after it, she would greet twice);
+ *     this same unlock (it would stop a hello, or, said after it, she would greet twice), and
+ *     from the answer on, before that line has even loaded;
  *   · with ALIVE off (the visitor asked to drive her by hand: no wave).
  * A tap refused for one of these does not spend it. */
 const GREETINGS = [
@@ -281,8 +282,13 @@ function talking() {
 function booting() {
   try { const m = window.moxieMode; return !!(m && m.state && m.state() === 'boot'); } catch { return false; }
 }
+/** Her brain is out: mode.js says `degraded`, from the answer on, while ambient.js may still
+ *  be loading the line it will say about it (ambient.json, asked for only then); or that line
+ *  is armed, or was said. */
 function brainOut() {
   try {
+    const m = window.moxieMode;
+    if (m && m.state && m.state() === 'degraded') return true;
     const s = window.moxieAmbient && window.moxieAmbient.degradedState && window.moxieAmbient.degradedState();
     return !!(s && s.text && (s.pending || s.said));
   } catch { return false; }

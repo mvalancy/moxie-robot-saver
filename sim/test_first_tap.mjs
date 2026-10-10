@@ -22,7 +22,8 @@
  *      loaded, so an ambient tick inside that load waits, a stub answer takes over cleanly and
  *      the mic opening stops it; a line she cannot say at all lets the speakers go;
  *   J. a page whose brain is out: the first tap says no hello over ambient's degraded line,
- *      and still gets a face (no gateway, a dead one, the hour's cap);
+ *      and still gets a face (no gateway, a dead one, the hour's cap), even while that line
+ *      is still loading;
  *   K. a tap before /api/health has answered: a face, and the hello waits for the next tap.
  * No gateway and no network: `/api/*` is answered at the browser (openSim).
  *
@@ -625,6 +626,50 @@ try {
     eq(s.plays.length, 0, `J1b: a tap after her degraded line says no second hello (${JSON.stringify(s.plays)})`);
     deep(s.stats && [s.stats.hellos, s.stats.faces, s.stats.last], [0, 1, "brain-out"], "J1b: …it is a face");
     eq(notable(errs, aborted).length, 0, `J1b: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+  /* J4. THE ANSWER IS IN, HER LINE IS NOT. On a page nobody has touched, ambient.js asks for
+   * ambient.json (where her degraded line lives) only once mode.js says `degraded`, and it is
+   * served no-cache, so that is one more round trip on every visit. A first tap inside it saw
+   * no boot and no armed line, said hello, and the line, once loaded, took the speakers from
+   * the greeting. The page already knows her brain is out (mode.js): that is the refusal.
+   * ambient.json is HELD until the tap is recorded. */
+  {
+    const hold = { on: true, held: [] };
+    const { page, g, errs, aborted } = await open("J4", {
+      health: FX.bareHealth, ready: "window.moxieMode.state() === 'degraded'",
+      route: (r, u) => {
+        if (!hold.on || !/\/ambient\.json\b/.test(u)) return false;
+        hold.held.push(r);
+        return true;
+      },
+    });
+    ok(await waitFor(() => hold.held.length >= 1, 10000), "J4: precondition — ambient.json was asked for, and is held");
+    deep(await g.json("[window.moxieMode.state(), window.moxieAmbient.degradedState().text, window.moxieAudio.isUnlocked()]"),
+         ["degraded", null, false], "J4: precondition — the answer says her brain is out, her line has not loaded, audio is locked");
+    await spyOnHer(g);
+    const t1 = await g.read("Math.round(performance.now())");
+    const at = await her(g);
+    await fingerTap(page, at.x, at.y);
+    ok(await recorded(g, 1), "J4: the tap on her is recorded");
+    const tapped = await g.json("window.moxie.tapStats()");
+    deep(tapped && [tapped.taps, tapped.hellos, tapped.faces, tapped.last], [1, 0, 1, "brain-out"],
+         "J4: a tap once the answer says her brain is out, her line still loading, is refused for that: no hello, a face");
+    await sleep(1200);                                  // a hello it let through would load and start here
+    hold.on = false;
+    for (const r of hold.held.splice(0)) { try { r.continue(); } catch (e) {} }
+    ok(await g.until(`window.__audio.plays.some((p) => p.bytes === ${DEGRADED_BYTES})`, 8000),
+       "J4: her degraded line plays once it has loaded");
+    await quipsOff(g);
+    ok(await g.until("!window.moxieAudio.isMoxieBusy(300)", 15000), "J4: …and she falls quiet");
+    const s = await state(g, t1);
+    const seen = await g.json("({ trees: window.__trees, faces: window.__faces })");
+    ok(seen.faces.includes("blink"), `J4: …the face-only response (setFace recorded ${JSON.stringify(seen.faces)})`);
+    ok(!seen.trees.includes("Bht_Gesture_Greet"), `J4: …and no wave (played ${JSON.stringify(seen.trees)})`);
+    deep(clipsOf(s).map((p) => p.bytes), [DEGRADED_BYTES], "J4: her degraded line is the one voice heard: no greeting before it");
+    eq(clipsOf(s).filter((p) => cutsOf(s, p).length).length, 0, `J4: …whole (${JSON.stringify(s.stops)})`);
+    eq(overlapMs(s), 0, `J4: …with nothing over it (${JSON.stringify(s.plays)})`);
+    eq(notable(errs, aborted).length, 0, `J4: no unexplained console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
     await page.close();
   }
 
