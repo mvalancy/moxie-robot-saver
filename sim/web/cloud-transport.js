@@ -41,8 +41,8 @@
  * yet heard) first waits for that microphone to open, `TAP_HOLD_MAX_MS` at most (W4-S7). The
  * line the page composes when the ears fail (`sendScriptedTurn`) waits for what she has in
  * hand and for her voice, so nothing the tap kept starts under it, and is dropped, its row
- * kept, if the child sends a line meanwhile, so a newer line's answer is never under it
- * either (W4-S7). A
+ * kept, if the child sends a line meanwhile, or is still owed a stub answer, so no line's
+ * answer is ever under it (W4-S7). A
  * turn in flight is settled by `TURN_MAX_MS` at the latest, and the ears' hold ends at its
  * bound (the record cap plus mic.js's 30 s upload valve, told to `earsOpen`;
  * `EARS_HOLD_MAX_MS` when nothing is told) even if nothing ever closes it, so the queue can
@@ -211,14 +211,18 @@
   }
 
   /** The degraded answer for ONE turn: `stub.js` after the bridge's 450 ms beat. The turn
-   *  is already echoed, so not via `inner.sendUserTurn`. `unless` as `localReply`'s. */
+   *  is already echoed, so not via `inner.sendUserTurn`. `unless` as `localReply`'s; with
+   *  none the answer is OWED: counted from here until it is said (`stubsDue`, `stubsSaid`),
+   *  and the pretend line yields to it (W4-S7). */
   function fallbackReply(text, seq, unless) {
     stats.fallbacks++;
     if (!window.moxieStub || !window.moxieStub.enabled) return Promise.resolve();
     var r = window.moxieStub.reply(text);
-    return new Promise(function (resolve) {
+    var p = new Promise(function (resolve) {
       setTimeout(function () { localReply(r.text, r.markup, seq, unless).then(resolve); }, FALLBACK_MS);
     });
+    if (!unless) { stubsDue++; p.then(function () { stubsDue--; stubsSaid++; }); }
+    return p;
   }
 
   /* ---- one line at a time from the controls, and the ears first (W3-S16) ------ *
@@ -297,6 +301,9 @@
    * sentence or, its voice refused, its stand-in. A reply already heard is ended as any; a
    * line sent with nothing in flight, as before. */
   var waiting = [];        // {text, resolve}: control lines waiting for the turn in flight
+  var taken = 0;           // lines drain() has sent on, POSTed or answered from stub.js: the pretend line yields to one sent on since it was composed (W4-S7)
+  var stubsDue = 0;        // stub answers the child is owed and not yet said (`fallbackReply` with no `unless`), and
+  var stubsSaid = 0;       // ...those said: the pretend line yields while one is owed, and to one said since it was composed (W4-S7)
   var inflight = 0;        // live turns POSTed and not yet settled
   var awaitingChat = 0;    // …of those, the ones whose reply is not back yet: a waiting line waits for these
   var openTurns = [];      // the live turns in flight, in POST order (what an early line's reply is held behind)
@@ -405,6 +412,7 @@
   function drain() {
     while (waiting.length && !awaitingChat && !earsBusy) {
       var w = waiting.shift(), p;
+      taken++;
       if (inner.isLive()) p = delegate(w.text);               // a broker connected meanwhile
       else if (canSpendLiveTurn()) p = liveTurn(w.text, w.echoed, inflight > 0);
       else {
@@ -1088,18 +1096,24 @@
      *  and the clip and the answer follow every reply in hand (`heldBehind`: the turns
      *  POSTed before it, then her server voice), the ears, and any voice of hers still on
      *  the speakers (`whenSilent`: a kept reply's stand-in, a redirect the ears held). And
-     *  they are said only if it is then still the NEWEST line — none sent, and no turn
-     *  POSTed, since it was composed — the answer only if none was sent during the clip
-     *  either: the Ask box stays open while the Listen button is held, and a line typed
-     *  while the kept answer played found the pretend exchange waiting as the newest line,
-     *  which it no longer was — its answer ended every open pipeline (the typed line's
-     *  answer, a served grown-up referral among them, lost), its stop cut a redirect, and
-     *  the clip and the answer started over a reply that began during the clip's fetch,
-     *  where origin/dev, saying the exchange at once, heard every one whole (the W4-S7
-     *  review, round 4). Dropped, the pretend line keeps its row, its clip and answer unsaid
-     *  (`scriptedDropped`). So when its answer does speak, nothing of hers is open for it to
-     *  end; and nothing of hers can start while its clip is fetched, bar the answer to a line
-     *  typed inside that fetch (voice/local.js's `speakClipOnly` looks only before it). */
+     *  they are said only if it is then still the NEWEST line — none sent, none sent on,
+     *  since it was composed, and no stub answer of the child's owed or said since — the
+     *  answer only if that still holds after the clip: the Ask box stays open while the
+     *  Listen button is held, and a line typed while the kept answer played found the
+     *  pretend exchange waiting as the newest line, which it no longer was — its answer
+     *  ended every open pipeline (the typed line's answer, a served grown-up referral among
+     *  them, lost), its stop cut a redirect, and the clip and the answer started over a
+     *  reply that began during the clip's fetch, where origin/dev, saying the exchange at
+     *  once, heard every one whole (the W4-S7 review, round 4). A line typed while the ears
+     *  were busy, or just before the microphone opened, and answered from stub.js with no
+     *  POST while the brain rested, was counted before the pretend line was composed and
+     *  POSTed nothing, so the exchange still took itself for the newest line: its stub
+     *  answer cut that line's answer 70 ms in, or played over it (round 5). Dropped, the
+     *  pretend line keeps its row, its clip and answer unsaid (`scriptedDropped`). So when
+     *  its answer does speak, nothing of hers is open for it to end and no answer of the
+     *  child's is on its way; and nothing of hers can start while its clip is fetched, bar
+     *  the answer to a line typed inside that fetch (voice/local.js's `speakClipOnly` looks
+     *  only before it). */
     sendScriptedTurn: function (text) {
       var t = String(text == null ? "" : text).trim();
       if (!t) return Promise.resolve();
@@ -1120,10 +1134,15 @@
         log.scrollTop = log.scrollHeight;
       }
       // The newest line only until another is sent (`stats.turns`: every line from a control
-      // or `sendUserTurn`) or POSTed (`turnSeq`: a line that waited for the ears, or for the
-      // words of a turn in hand, goes out after this line was composed): then it yields.
-      var inHand = inflight > 0, sent = stats.turns, posted = turnSeq;
-      function overtaken() { return stats.turns !== sent || turnSeq !== posted; }
+      // or `sendUserTurn`) or sent on (`taken`: a line that waited for the ears, or for the
+      // words of a turn in hand, is POSTed or answered from stub.js after this line was
+      // composed), and only while no stub answer of the child's is owed (`stubsDue`: a line
+      // taken BEFORE this line was composed and answered after, its answer held for the ears
+      // or behind a reply in hand) or was said since (`stubsSaid`: a refused turn's, said the
+      // moment the ears are done, its clip fetched only once it is routed, where `whenSilent`
+      // cannot see it): then it yields.
+      var inHand = inflight > 0, sent = stats.turns, took = taken, said = stubsSaid;
+      function overtaken() { return stats.turns !== sent || taken !== took || stubsDue > 0 || stubsSaid !== said; }
       return heldBehind(null, true).then(whenEarsIdle).then(function () {
         return overtaken() ? null : whenSilent();      // its turn, if it is still the newest line
       }).then(function (spoke) {
