@@ -42,7 +42,8 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
   `test_content*.py` and `test_ext*.py` suites.
 - [`helpers_audio.py`](helpers_audio.py) — PCM maths, spectral flatness (numpy and stdlib twins),
   word overlap, `zmqSTTRequest` framing; numpy is optional here on purpose.
-- [`helpers_compose.py`](helpers_compose.py) — parity helpers for the two compose files.
+- [`helpers_compose.py`](helpers_compose.py) — parity helpers for the two compose files, and readers that
+  resolve a file as `docker compose up` would (where each published port listens).
 - [`helpers_qr_matrix.py`](helpers_qr_matrix.py) — decode a payload back out of a QR module matrix.
 - [`helpers_web.py`](helpers_web.py) — `script_group("bridge"|"voice")`, the pytest twin of
   `sim/bridge_harness.mjs::scriptGroup`.
@@ -79,7 +80,7 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 | `test_tts`, `test_stt*`, `test_voice_*`, `test_sim_tts_playback`, `test_speech_guard` | Voice engines, gateway STT, the tone-vs-speech guard |
 | `test_honest_ears` | What the ears refuse to hear: digital silence and sub-120 ms clips reach no engine, a sound label alone is silence, Whisper's "Bye." on room tone is dropped, local whisper's `vad_filter`, the kill switch |
 | `test_config_*`, `test_assemble`, `test_dotenv_cannot_perturb_the_suite`, `test_env_hygiene_live_suites`, `test_no_deployment_defaults` | Config precedence and the dotenv fence |
-| `test_compose`, `test_broker_acl`, `test_package_contents`, `test_render_container_deps` | Compose parity, broker ACL, what the wheel ships |
+| `test_compose`, `test_broker_acl`, `test_package_contents`, `test_render_container_deps` | Compose parity and what each port is published on, broker ACL, what the wheel ships |
 | `test_ci_*`, `test_clock_dependence`, `test_mutation_tables`, `test_readiness_guards_are_checked`, `test_harness_readiness`, `test_node_global_stubs`, `test_page_teeth_slow_mode`, `test_promotion_guard` | Guards on CI itself: workflows mirror `sim/ci/`, every `sim/test_*.mjs` is run by a tier, reviewed wall-clock reads |
 | `test_csp_hashes`, `test_no_offsite_images`, `test_shared_ceilings`, `test_sim_client_parity`, `test_safety`, `test_sdk` | Static-site CSP, images, shared rate-limit tier, SDK and safety floor |
 | `test_hosted_docs_truth` | The hosted demo's docs say what its code does: no retired claim made as a live statement (a global spend ceiling, the kill switch as the fastest response), the deploy guide's modes are `modeOf`'s, nothing cites a deleted file, every default a doc states for a per-visitor window (chat, speech, transcribe) is `env.js`'s |

@@ -204,7 +204,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config and telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 42807,
+   "bytes": 43771,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -1143,7 +1143,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 11376,
+   "bytes": 13876,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -1151,6 +1151,7 @@
     "Install",
     "Configure",
     "Ports",
+    "What is on your network",
     "Broker security",
     "Your data",
     "Optional profiles (Option B only)",
@@ -1166,7 +1167,7 @@
    "path": "guides/first-time-setup.md",
    "title": "First-time setup",
    "section": "guides",
-   "bytes": 4904,
+   "bytes": 5341,
    "mermaid": 0,
    "headings": [
     "1. Start the server",

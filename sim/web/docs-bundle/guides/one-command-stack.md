@@ -25,7 +25,8 @@ flowchart LR
 
 ## Requirements
 
-- Docker Engine 24+ with the Compose plugin. Nothing else.
+- Docker Engine 24+ with the Compose plugin. Nothing else. A current Engine (28 or later) keeps the
+  ports meant for this machine alone on this machine ([what is on your network](#what-is-on-your-network)).
 - About 1 GB of disk, and free ports `1883`, `8080`, `8883`, `8931`, `9001` (all remappable).
 - `amd64` or `arm64` (a Raspberry Pi 4/5 on a 64-bit OS works). For 32-bit ARM, build from a clone.
 
@@ -58,7 +59,8 @@ docker compose up          # first run builds images (~2 minutes)
 ```
 
 Both options use the compose project `moxie` and the same volumes, so you can switch between them.
-Open `http://<this-machine's-ip>:8080` from a phone on the same network. From a terminal:
+Open `http://<this-machine's-ip>:8080` from a phone on the same network. From a terminal on this
+machine (the supervisor's status port answers only here):
 
 ```sh
 curl -s http://127.0.0.1:8931/status | head -c 200       # supervisor
@@ -76,8 +78,9 @@ documents every one. Never commit a key. The important ones:
 | `MOXIE_APP` | `content` | The brain: `content` (data-driven modules), `llm` (free chat), `echo` (no LLM), `webhook` (your own service). |
 | `MOXIE_CHILD_NICKNAME` | `friend` | The name Moxie says to a robot that no account names a child for. The name a parent types in the web app's Wi-Fi tab wins for that parent's robot ([where it goes](../architecture/config-and-telemetry-contract.md#the-childs-name-the-parents-record-per-robot)). |
 | `MOXIE_BROKER_HOST` | `127.0.0.1` | The address a **real robot** uses to reach the broker. It goes into the endpoint QR and the broker certificate, so set it to this machine's LAN IP before the first `up`. |
-| `MOXIE_BIND_HOST` | `0.0.0.0` | Interface the public ports bind to. |
+| `MOXIE_BIND_HOST` | `0.0.0.0` | Interface for the ports other devices need: the robot's TLS port (`8883`), the browser UI (`9001`) and the console (`8080`). |
 | `MOXIE_BIND_HOST_PLAIN` | `127.0.0.1` | Interface for plain MQTT (`1883`). Robots never use it; open it only to drive the Sim from another machine. |
+| `MOXIE_BIND_HOST_STATUS` | `127.0.0.1` | Interface for the supervisor's status port (`8931`); `MOXIE_BIND_HOST` does not widen it. Set `0.0.0.0` only to read the status page from another machine: it then serves your child's name, Moxie's memory and the safety review to anyone on your network, with no sign-in, and takes their settings changes. |
 | `MOXIE_TTS` | `tone` | Server voice. `tone` is a placeholder; see the `voice` profile or [gateway voice](gateway-voice-and-ears.md). |
 | `MOXIE_STT` | `auto` | Speech-to-text; see the `stt` profile or [gateway ears](gateway-voice-and-ears.md). |
 
@@ -91,7 +94,24 @@ Option A also reads `MOXIE_IMAGE_REGISTRY`, `MOXIE_IMAGE_TAG` and `MOXIE_IMAGE_P
 | `MOXIE_PORT_MQTT` | `1883` | The Sim, `sim/virtual_moxie.py`, tests (loopback only by default) |
 | `MOXIE_PORT_WS` | `9001` | The browser UI (MQTT over WebSocket) |
 | `MOXIE_PORT_CONSOLE` | `8080` | Your phone or browser |
-| `MOXIE_PORT_STATUS` | `8931` | The supervisor's `/status`, `/telemetry`, `/config`. Unauthenticated. Compose binds it to `MOXIE_BIND_HOST`: `127.0.0.1` when that is unset, but `.env.example` sets `0.0.0.0`, which puts it on your network, where anyone can read the child's name there and change settings (owner question OQ3). It is a small forwarder ([`status_proxy.py`](../../mqtt/status_proxy.py)) to the runtime's loopback-only port, so the console container can reach it. |
+| `MOXIE_PORT_STATUS` | `8931` | The supervisor's `/status`, `/telemetry`, `/config`, `/memory`, `/safety` and the rest, with no sign-in. It listens on `127.0.0.1` (`MOXIE_BIND_HOST_STATUS`: the default, and `.env.example`'s value), so only this machine reaches it, on Docker Engine 28 or later ([why](#what-is-on-your-network)). It is a small forwarder ([`status_proxy.py`](../../mqtt/status_proxy.py)) to the runtime's loopback-only port; the console reads it over the compose network, not through this port. |
+
+### What is on your network
+
+With `.env.example`'s values, three ports listen on every interface, because other devices need them:
+
+| Port | For | What any device on your network can do with it |
+|---|---|---|
+| `8883` | The robot (MQTT over TLS) | Connect anonymously, as a robot does. The broker confines each client to its own device id, but cannot tell a robot from a device that copies its id ([broker security](#broker-security)). |
+| `9001` | The browser Sim and UI (MQTT over WebSocket) | Read every robot's MQTT traffic as it passes, including the settings sent to a robot, your child's name among them ([why](../architecture/backlog/security-broker-auth.md#25-the-browser-sim-option-a-shipped-option-b-closes-the-residual)). As on `8883`, a device that copies a robot's id is treated as that robot: it can post that robot's state and events, though never a command to it. |
+| `8080` | You, from your phone (the console) | Use the console. Its sign-in is an email address alone, and most of it asks for none: reading and erasing what Moxie remembers, reading the safety review, changing settings, permitting a robot, speaking as Moxie. Whether it should require a real sign-in is an open owner question (OQ3). |
+
+Plain MQTT (`1883`) and the supervisor's status port (`8931`) listen on this machine only. One caveat
+from Docker's own documentation: before Docker Engine 28.0, a device on the same network segment (for
+example, plugged into the same switch) can still reach a port Docker publishes to `127.0.0.1`
+([moby/moby#45610](https://github.com/moby/moby/issues/45610)). On an older engine, update Docker to
+keep these two ports on this machine. Keeping the status port here closes a door that needed no console
+at all; it does not lock the console. Do not expose any of these ports to the internet.
 
 ## Broker security
 
