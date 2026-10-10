@@ -297,6 +297,18 @@ body[data-env="hosted"][data-mode="live"] #env-banner {
   opacity: 0;
   pointer-events: none;
 }
+/* …so what she keeps is said under the composer instead (sim.html #memory-hint, revealed by
+   env.js): a quiet caption in the dock's own type, not a warning. No `display` here, so the
+   `hidden` attribute stays its off switch. */
+#memory-hint {
+  margin: 0 4px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.35;
+  letter-spacing: 0;
+  color: var(--muted);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);   /* legible over the 3-D, like #chat-cue */
+}
 @media (max-width: 640px) {
   /* On phones: a wider, evenly-centered card (10px margins each side) with a big,
      easy-to-hit corner X instead of the tiny inline one.
