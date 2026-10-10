@@ -13,6 +13,8 @@ class ScheduleMixin:
         The recommender (`moxie_sdk/schedule/`) is pure; this gathers its live inputs:
         the content module's `schedules[]`, stored mentor behaviors, the effective config
         (parent requests, bedtime) and buffered telemetry (context only, not a score).
+        Planned on the house's clock (`house_now`: the day, the slots, bedtime) unless a
+        `now` is given.
         """
         from moxie_sdk.schedule import plan
         schedules = None
@@ -32,7 +34,8 @@ class ScheduleMixin:
         return plan(device_id, content_schedules=schedules,
                     mentor_behaviors=self.mentor_behaviors(device_id),
                     effective_config=config, telemetry_packets=packets,
-                    child_name=child, now=now)
+                    child_name=child,
+                    now=self.house_now(device_id, cfg=config) if now is None else now)
 
     def build_schedule_for(self, device_id) -> dict:
         """The ContentSchedule served as `CloudQueryResponse.schedule`. The "why this

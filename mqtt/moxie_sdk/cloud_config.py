@@ -76,9 +76,14 @@ def build_unpaired_cloud_config() -> dict:
     }
 
 
+#: The zone a robot is told while no one has chosen one, and so the zone this appliance keeps
+#: the house's time in until a parent picks one (§ the house's clock, below).
+DEFAULT_TIMEZONE_ID = "America/Los_Angeles"
+
+
 def build_robot_cloud_config(child, *, audio_volume: float = 0.6,
                              screen_brightness: float = 1.0,
-                             timezone_id: str = "America/Los_Angeles",
+                             timezone_id: str = DEFAULT_TIMEZONE_ID,
                              logging_policy: LoggingPolicy = LoggingPolicy.NO_DATA,
                              moxie_mode: MoxieMode = MoxieMode.DEFAULT_MODE,
                              privacy_mode_enabled: bool = False,
@@ -184,7 +189,8 @@ WAKE_DAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday",
 def in_bedtime(cfg, now_local) -> bool:
     """Is this *effective* config inside its bedtime window at this local wall-clock time?
 
-    Pure: `cfg` is the override stack, `now_local` a naive local `datetime`. Uses
+    Pure: `cfg` is the override stack, `now_local` a wall-clock `datetime` in the house's
+    zone (the runtime passes `house_now`; naive or aware, only its date and time count). Uses
     `weekday_bedtime` / `weekend_bedtime`; wraps midnight; `start == end` means no window.
     Shared by the greeting rule (stays quiet) and the telehealth card (warns).
     """
@@ -598,8 +604,6 @@ def sanitize_config_overrides(raw: dict) -> dict:
             if v > 1:                               # accept a 0–100 percent slider
                 v = v / 100.0
             out[key] = max(0.0, min(1.0, v))
-    if raw.get("timezone_id"):
-        out["timezone_id"] = str(raw["timezone_id"])
     if "logging_policy" in raw:
         lp = raw["logging_policy"]
         out["logging_policy"] = int(LoggingPolicy[lp] if isinstance(lp, str)
@@ -639,6 +643,10 @@ def sanitize_config_overrides(raw: dict) -> dict:
     if "child" in raw:                                   # ChildDecrypted.nickname (3)
         # The parent's record for this robot's child (`child_profile_for`); `null` clears it.
         out["child"] = _child(raw["child"])
+    if raw.get("timezone_id"):                           # RobotCloudConfig.timezone_id
+        # The house's clock: a name this server's tz database knows (`check_timezone`),
+        # so a typo is refused (400), never pushed to a robot or judged in. Empty: ignored.
+        out["timezone_id"] = check_timezone(raw["timezone_id"])
     return out
 
 
@@ -654,6 +662,102 @@ def robot_config_kwargs(cfg) -> dict:
     if not isinstance(cfg, dict):
         return {}
     return {k: v for k, v in cfg.items() if k not in SERVER_ONLY_KEYS}
+
+
+# --- the house's clock: the family's own time zone ------------------------------------
+#
+# A parent picks the house's zone in the console (Settings → Time zone, for one robot or as
+# a house rule): an IANA name, `timezone_id`. Every config push tells the robot, which
+# resolves its own wake alarms and bedtime against it (`TimeZoneInfo` → `UserAlarmRequest`:
+# recovered from the protos, not yet observed on a robot). This appliance keeps time in the
+# same zone (bedtime's quiet hello, the day plan, "what time is it"), never in its own
+# container's clock, which sets no TZ and so runs on UTC. Until a zone is chosen that is
+# `MOXIE_TIMEZONE`, else `DEFAULT_TIMEZONE_ID`: the zone the robot is told.
+
+import collections as _collections
+
+#: `MOXIE_TIMEZONE`: the house's zone for a headless install, the bottom layer of every
+#: robot's effective config (`env_timezone_layer`), under any zone chosen in the console.
+TIMEZONE_ENV = "MOXIE_TIMEZONE"
+#: The shape of an IANA name ("Area/Location[/Sub]", "UTC", "Etc/GMT+5"), all that can be
+#: checked on a server with no tz database to look a name up in.
+_ZONE_NAME = _re.compile(r"^[A-Za-z][A-Za-z0-9_+\-]{0,63}(?:/[A-Za-z0-9_+\-]{1,63}){0,2}$")
+#: The clock a house keeps: `tz` (a tzinfo), `name` (the IANA name, or "UTC" when the zone
+#: could not be resolved) and `resolved` (False for that UTC fallback, so it can be labelled).
+HouseZone = _collections.namedtuple("HouseZone", "tz name resolved")
+
+
+@_functools.lru_cache(maxsize=1)
+def known_timezones() -> frozenset:
+    """Every IANA name this server's tz database holds (the system's, else the `tzdata`
+    package's: mqtt/requirements.txt pins it for the slim image); empty with neither."""
+    try:
+        import zoneinfo
+        return frozenset(zoneinfo.available_timezones())
+    except Exception:                        # noqa: BLE001 — no database is an answer too
+        return frozenset()
+
+
+@_functools.lru_cache(maxsize=1)
+def _known_folded() -> dict:
+    return {name.lower(): name for name in known_timezones()}
+
+
+def check_timezone(raw) -> str:
+    """A parent's time zone → the IANA name to store and push, or ValueError (→ 400).
+
+    The name must be one this server's tz database knows, so a typo ("Mars/Olympus",
+    "America/NewYork") is refused rather than pushed to a robot and judged in. Case is
+    forgiven ("america/new_york" → "America/New_York"). With no tz database here, only
+    the shape of a name can be checked."""
+    name = str("" if raw is None else raw).strip()
+    if known_timezones():
+        if name in known_timezones():
+            return name
+        if _known_folded().get(name.lower()):
+            return _known_folded()[name.lower()]
+    elif _ZONE_NAME.match(name):
+        return name
+    raise ValueError(f"{name[:64]!r} is not a time zone this server knows: use a name like "
+                     f"America/New_York or Europe/Berlin.")
+
+
+def resolve_zone(name) -> HouseZone:
+    """The clock for an IANA name. Never raises: a name this server cannot resolve (unknown
+    to its tz database, or no database at all) is UTC with `resolved=False`, so a caller
+    labels it rather than passing the container's clock off as the house's."""
+    import datetime as _dt
+    if isinstance(name, str) and name.strip():
+        try:
+            from zoneinfo import ZoneInfo
+            return HouseZone(ZoneInfo(name.strip()), name.strip(), True)
+        except Exception:                    # noqa: BLE001 — unknown key, no database, …
+            pass
+    return HouseZone(_dt.timezone.utc, "UTC", False)
+
+
+_ENV_ZONE_REFUSED: set = set()
+
+
+def env_timezone_layer() -> dict:
+    """`{"timezone_id": …}` from `MOXIE_TIMEZONE`, else `{}`. A name `check_timezone`
+    refuses is ignored, said once on stdout: a typo never reaches a robot."""
+    import os
+    raw = os.environ.get(TIMEZONE_ENV, "").strip()
+    if not raw:
+        return {}
+    try:
+        return {"timezone_id": check_timezone(raw)}
+    except ValueError as e:
+        if raw not in _ENV_ZONE_REFUSED:
+            _ENV_ZONE_REFUSED.add(raw)
+            print(f"[config] {TIMEZONE_ENV} ignored: {e}", flush=True)
+        return {}
+
+
+def default_timezone_id() -> str:
+    """The zone no one chose in the console: `MOXIE_TIMEZONE`, else `DEFAULT_TIMEZONE_ID`."""
+    return env_timezone_layer().get("timezone_id") or DEFAULT_TIMEZONE_ID
 
 
 # RobotStatus (/state) fields we surface (embodied/logging/Cloud.proto message RobotStatus)
