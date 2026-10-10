@@ -1554,7 +1554,7 @@
    "path": "reverse-engineering/protocol/recovered-proto/README.md",
    "title": "Recovered protobuf schemas",
    "section": "reverse-engineering",
-   "bytes": 5822,
+   "bytes": 5807,
    "mermaid": 0,
    "headings": [
     "Where they come from",

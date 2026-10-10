@@ -1,7 +1,7 @@
 # 📦 Recovered protobuf schemas
 
 **120 `.proto` files** reconstructed from Moxie's on-robot binaries (firmware `v24.10.803`), for anyone
-writing a client, a server or replacement firmware that speaks the robot's protocol. They are the
+writing a client, server or custom firmware that speaks its protocol. They are the
 message contract between the robot's modules and much of the cloud protocol. Field numbers, enum
 values, packages and nesting are exact, so bindings generated from these files are wire-compatible
 with stock firmware. Read the [message catalog](../proto-catalog.md) for a browsable listing and
