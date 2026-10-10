@@ -1,7 +1,7 @@
 # Voice and ears through a gateway
 
-Moxie can speak (text-to-speech) and listen (speech-to-text) through the **same OpenAI-compatible
-gateway, key and rate limits** as its brain — for example a [LiteLLM](https://github.com/BerriAI/litellm)
+For anyone running the backend. Moxie can speak (text-to-speech) and listen (speech-to-text) through
+the **same OpenAI-compatible gateway, key and rate limits** as its brain — for example a [LiteLLM](https://github.com/BerriAI/litellm)
 proxy. That avoids installing voice models on the box, which matters for hosted deployments. Local
 Piper and Whisper remain first-class options; pick per deployment.
 
@@ -10,10 +10,10 @@ Piper and Whisper remain first-class options; pick per deployment.
 | Deployment | Voice | Ears | Why |
 |---|---|---|---|
 | **Home appliance, offline** | local Piper (`MOXIE_TTS=piper`, `MOXIE_PIPER_MODEL=…`) | local Whisper (`MOXIE_STT=whisper`) | A child's voice never leaves the house. About 200 MB of models and some CPU. Stays local even if a gateway URL is configured. |
-| **Cloud-hosted** (Cloudflare demo, a VPS, a slim container) | gateway (`MOXIE_VOICE_BASE_URL=…`) | gateway (`MOXIE_STT=gateway`) | No room for model wheels. One key covers brain, voice and ears. Costs about 1.5–3 s of network per leg. |
+| **Cloud-hosted** (Cloudflare demo, a VPS, a slim container) | gateway (`MOXIE_VOICE_BASE_URL=…`) | gateway (`MOXIE_STT=gateway`) | No room for model wheels. One key covers brain, voice and ears. Each leg adds a network round trip. |
 | **Default** | `auto` | `auto` | Uses the gateway when a URL and a key are present, local engines otherwise. |
 
-Local engines are roughly 2–5× faster once loaded; the gateway saves disk and setup.
+Local engines are typically faster once loaded; the gateway saves disk and setup.
 
 ## Configuration
 
@@ -56,11 +56,13 @@ voice, Piper if installed, else the tone; for the ears, local Whisper if install
 that hears nothing. On the first failure one line is logged, for example
 
 ```
-[voice] openai-voice failed (BadRequestError: …); speaking with tone for the rest of this run
+[voice] openai-voice failed (BadRequestError: …); speaking with tone until it answers again (next try in 60s)
 ```
 
-and the standby is used for the rest of the run, so a dead endpoint costs one timeout, not one per
-turn. `/status` and the startup log show which engine is really active.
+The standby then keeps the job for `MOXIE_ENGINE_RETRY_S` seconds (60 by default), so a dead endpoint
+costs one timeout per window, not one per turn. After the window the next call tries the gateway
+again, and when it answers one line says it is back. Setting the window to `0` tries the gateway on
+every call. `/status` and the startup log show which engine is really active.
 
 ## Quirks the client handles
 

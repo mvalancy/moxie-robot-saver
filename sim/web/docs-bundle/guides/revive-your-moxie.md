@@ -1,10 +1,14 @@
 # Revive your Moxie
 
-Get a Moxie that died with the cloud **talking again** on hardware you own — or, with no robot, run the
+For Moxie owners, and for anyone who wants to meet Moxie without one. Get a Moxie that died with
+the cloud **talking again** on hardware you own — or, with no robot, run the
 [simulator](../../sim/README.md) and get the same experience in a browser. Robot details refer to
 firmware v3.6.4-Zephyr / OTA v24.10.803 ([reference](../reverse-engineering/firmware/firmware-803-reference.md)).
 
-This is an unofficial fan project, not affiliated with Embodied, Inc.; "Moxie" is their trademark.
+This is an unofficial fan project. It is not affiliated with Embodied, Inc. or Moxie Robots, Inc.
+It is also not [OpenMoxie](https://github.com/jbeghtol/openmoxie), the community server whose README
+warns that other projects using its name are unaffiliated ([OpenMoxie #58](https://github.com/jbeghtol/openmoxie/pull/58)).
+You run this one yourself, with no online account and no payment. "Moxie" is Embodied's trademark.
 
 ## Which path are you on?
 
@@ -18,7 +22,8 @@ flowchart TD
   flash --> qr
 ```
 
-All three paths use the same backend, so set that up first.
+Paths B and C use the backend below. Path A's command starts its own broker and supervisor, so run
+one stack at a time: both use ports `8080`, `1883` and `9001`.
 
 ## 1. Stand up the backend
 
@@ -27,12 +32,20 @@ supervisor and the parent console. Set `MOXIE_LLM_BASE_URL` in `.env` to give Mo
 OpenAI-compatible endpoint. Fully offline with Ollama:
 
 ```sh
-ollama pull llama3.1 && ollama serve
+OLLAMA_HOST=0.0.0.0 ollama serve   # leave it running; by default Ollama listens on 127.0.0.1 only
+ollama pull llama3.1               # in a second terminal
 # .env
-MOXIE_LLM_BASE_URL=http://host.docker.internal:11434/v1
+MOXIE_LLM_BASE_URL=http://<this machine's LAN IP>:11434/v1
 MOXIE_LLM_API_KEY=ollama
 MOXIE_LLM_MODEL=llama3.1
 ```
+
+Inside the supervisor's container, `127.0.0.1` is the container itself. So the URL uses the host's
+LAN IP, and Ollama must listen beyond loopback (for a system service, set `OLLAMA_HOST` in the
+service's environment). Docker Desktop (Mac, Windows) also resolves
+`http://host.docker.internal:11434/v1`. The compose files do not map that name on Linux; adding
+`extra_hosts: ["host.docker.internal:host-gateway"]` to the supervisor service does, and Ollama
+must still listen beyond loopback.
 
 The brain speaks as Moxie and emits [behavior markup](../reverse-engineering/runtime/behavior-markup.md),
 so Moxie gestures and emotes while it talks. For a real voice and ears, use the compose `voice` and
@@ -41,12 +54,13 @@ so Moxie gestures and emotes while it talks. For a real voice and ears, use the 
 ## Path A: no robot, run the simulator
 
 ```sh
-docker compose -f sim/docker-compose.yml up     # then open http://localhost:8080/sim.html
+docker compose -f sim/docker-compose.yml up
 ```
 
-You get the 3D Moxie, driven by the same protocol a real robot speaks. Click **Connect** for the live
-bus, **Listen** to talk, or **Play demo** for a canned conversation with nothing running. The simulator
-and a real robot are interchangeable clients of the backend ([why](../architecture/sim-as-a-client.md)).
+Then open <http://localhost:8080/sim.html> (the `/sim` path serves the same page). You get the 3D
+Moxie, driven by the same protocol a real robot speaks. Click **Connect** for the live bus, **Listen** to
+talk, or **Play demo** for a canned conversation with nothing running. The simulator and a real robot
+are interchangeable clients of the backend ([why](../architecture/sim-as-a-client.md)).
 
 ## Path B: re-home an 801 or 803 robot with a QR
 
@@ -57,7 +71,9 @@ line means.
 1. **Get the robot on Wi-Fi with the Wi-Fi-only code:** the console's **📶 Wi-Fi** tab makes it by
    default ([first-time setup](first-time-setup.md)), and so do Moxie Direct and the setup page below.
    Not a pairing-key code: a pairing key sends the robot looking for the original cloud
-   ([live notes](../debugging/live-hardware-debug.md)).
+   ([live notes](../debugging/live-hardware-debug.md), "Confirmed facts"). The Wi-Fi-only code
+   carries `hide_pair` (the robot reads it as `wifi_only`) and no `secret_key`
+   ([QR format](../reverse-engineering/phone/qr-format.md#wire-format)).
 2. **Point it at your backend**: generate an endpoint QR and show it to Moxie's camera.
 
    **From a phone, nothing installed:** open the [setup page](../../sim/web/setup.html) and make the
@@ -69,8 +85,8 @@ line means.
    ```
    Both produce identical payloads. `OPEN_MOXIE` (=11) and `EMBODIED_LOCAL` (=8) are built into the
    shipped firmware, so the robot already knows how to use a self-hosted server
-   ([QR commands](../reverse-engineering/protocol/qr-commands.md)). The parent console's **Server
-   Pairing** tab and `tools/pairing/moxie_endpoint_qr.py` make the same code for your broker.
+   ([QR commands](../reverse-engineering/protocol/qr-commands.md)). The parent console's **🔗 Server**
+   tab and `tools/pairing/moxie_endpoint_qr.py` make the same code for your broker.
 3. **TLS.** Firmware 803 honors `disable_verify` in the endpoint QR, so the stack's self-signed
    certificate works. Firmware 801 needs a publicly trusted certificate (a real domain and Let's
    Encrypt); the robot does no certificate pinning
@@ -84,6 +100,19 @@ line means.
 802.1X, and captive portals do not** — use a normal WPA2 network or a phone hotspot. 5 GHz works but the
 robot is only certified on the **lower U-NII-1 channels (36–48)**
 ([`fcc-teardown.md`](../reverse-engineering/hardware/fcc-teardown.md)).
+
+### When Moxie does not connect
+
+Owners of real robots report these two signs. This project has not seen either screen itself.
+
+- **No label under the QR box.** On 801 and 803, Moxie's code screen shows a small text label under
+  the QR box, such as `EmbodiedProduction` or `OpenMoxie`. No label, only a Wi-Fi icon, means
+  firmware older than 801: take [Path C](#path-c-flash-an-older-robot-first). The label may appear
+  only once Moxie is on Wi-Fi, so look after the Wi-Fi code. Reported in OpenMoxie issues
+  [#43](https://github.com/jbeghtol/openmoxie/issues/43) and [#57](https://github.com/jbeghtol/openmoxie/issues/57).
+- **A spinning "e" for minutes.** The first boot into a new server can stay on the spinning "e" for
+  up to about 10 minutes, and later boots for about 5. Wait before you try again. Reported in
+  OpenMoxie issue [#43](https://github.com/jbeghtol/openmoxie/issues/43).
 
 ## Path C: flash an older robot first
 
@@ -104,7 +133,7 @@ TLS, so **no QR or DNS trick can relocate them** — they need new firmware.
 > opening the shell — that would make pre-801 revival no-disassembly too. Tracked in
 > [`EXPLORATION-MAP.md`](../reverse-engineering/EXPLORATION-MAP.md#open-items-need-a-bench-unit-or-an-external-artifact).
 
-## Going further
+## Your own software, motion and content
 - **Custom software on the robot** — a debug-signed APK in `/system/priv-app` inherits full privileges;
   the only gate is writing the system image ([`firmware-image.md`](../reverse-engineering/firmware/firmware-image.md)).
 - **Drive the body directly** — the ZMQ bus + motor protos ([`robot-ipc-protocol.md`](../reverse-engineering/protocol/robot-ipc-protocol.md),
@@ -113,4 +142,4 @@ TLS, so **no QR or DNS trick can relocate them** — they need new firmware.
   [file-sync protocol](../reverse-engineering/protocol/cloud-protocol.md#file-sync-how-a-server-delivers-content-voice-chatscript).
 
 ---
-📖 [Field guide](../reverse-engineering/FIELD-GUIDE.md) · [Architecture overview](../architecture/overview.md) · [Simulator](../../sim/README.md) · [Docs index](../README.md)
+📖 [Guides index](README.md) · [Field guide](../reverse-engineering/FIELD-GUIDE.md) · [Architecture overview](../architecture/overview.md) · [Simulator](../../sim/README.md) · [Docs index](../README.md)

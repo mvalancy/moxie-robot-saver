@@ -1,12 +1,10 @@
 # Letting a robot in — "pending" and how to permit it
 
-Your Moxie server does **not** hand your child's details to just anything that connects to
-it. A robot has to be on its list first. This guide is the whole story: what *pending*
-means, where the button is, and when you will never see any of it.
+For owners connecting a robot to their own server. Your Moxie server does **not** hand your child's
+details to just anything that connects to it: a robot has to be on its list first. Below is what
+*pending* means, where the button is, and when you will never see any of it.
 
----
-
-## The one-paragraph version
+## What pending means
 
 Moxie talks to your server over a home-network message broker, and that broker — like the
 one Embodied ran — lets any device on the network connect. So the server does its own
@@ -15,11 +13,9 @@ stub of a configuration with *no* child information in it, is not answered by Mo
 brain, and gets none of your settings or schedule. It sits in the console until you say
 yes. One click, and it is your Moxie.
 
----
+## When you will see a pending robot
 
-## Will I ever see this?
-
-**Yes, once, for a real robot.** A robot coming to your server scans two codes, the Wi-Fi
+**Once, for a real robot.** A robot coming to your server scans two codes, the Wi-Fi
 code and then the server (endpoint) code, and reaches the broker on its own. Nothing in
 those codes tells the server whose robot it is, so it arrives **pending**. Only the
 console's *Simulate robot scan* test permits a robot as part of pairing, because there the
@@ -38,15 +34,14 @@ tested against the simulator and a stand-in robot; no physical Moxie has been th
 
 ## Permitting a robot
 
-1. Open the parent console (`http://localhost:8080` by default) and go to **Moxie**.
+1. Open the parent console and go to **Moxie**: `http://localhost:8080` on the machine that runs
+   it, or `http://<that machine's LAN address>:8080` from a phone.
 2. Find the **🔐 Robot access** card. A robot waiting for you is listed under
    *"Waiting for you"* with its device id (`d_` followed by a long code).
 3. For **your** robot, click **Add to my account** (it is also on the *No Moxie paired yet*
    card). That permits it and puts it on your account, so its robot card appears: settings,
    insights, safety, what Moxie remembers, Wake up, Unpair and Factory reset. For a robot that
-   is not yours to manage, click **Permit**: it is let in, with no robot card. (**Add to my
-   account** is built to the documented flow and not yet done with a physical Moxie: see the
-   [bench runbook](bench-runbook.md).)
+   is not yours to manage, click **Permit**: it is let in, with no robot card.
 
 That is it — no restart, no unplugging the robot. The server immediately sends that robot
 its real configuration, and Moxie starts behaving normally within a few seconds.
@@ -60,7 +55,7 @@ codes to. An account holds one robot; to add another, unpair the current one fir
 Under *"Allowed"* you can **Revoke** any robot you no longer want served. The next
 configuration it receives has your child's details stripped out of it.
 
-## What a pending robot actually gets
+## What a pending robot gets
 
 Deliberately, almost nothing:
 
@@ -91,8 +86,11 @@ opened by the environment variable can never *look* closed.
 
 ## Where the list is kept
 
-`fleet/permits.json` in the server's data directory (`MOXIE_DATA_DIR`, the `/data` volume
-in the compose stack), beside the house-rules config. It survives restarts and upgrades. A
+`fleet/permits.json` in the supervisor's data directory (`MOXIE_DATA_DIR`: `mqtt/data/` by
+default, `/data` on the `moxie-supervisor-data` volume in the compose stack), beside the
+house-rules config (`fleet/config.json`). The supervisor owns the list
+(`mqtt/supervisor/moxie_runtime/fleet.py`, `FLEET_PERMITS_COLLECTION`); the console reads and
+changes it through the supervisor's `/permits`. The file survives restarts and upgrades. A
 damaged or missing file means "nobody is permitted" — it fails safe, never open.
 
 ## If something is not working
@@ -117,11 +115,10 @@ damaged or missing file means "nobody is permitted" — it fails safe, never ope
   the configuration immediately, but the robot applies it on its own schedule. If it still
   will not settle, power-cycle the robot.
 
----
+## The protocol behind it
 
-For the protocol details behind this — what exactly is pushed, and the one assumption we
-are carrying about the "not paired" value — see
-[mqtt-and-conversation.md §3.7](../architecture/mqtt-and-conversation.md) and
+What exactly is pushed, and the one assumption we are carrying about the "not paired" value:
+[mqtt-and-conversation.md §3.7](../architecture/mqtt-and-conversation.md#37-the-pairing-gate) and
 [config-and-telemetry-contract.md](../architecture/config-and-telemetry-contract.md).
 
 ---
