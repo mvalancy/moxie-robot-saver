@@ -15,7 +15,9 @@ up refusing to pair.
 
 Every function here takes already-parsed data and returns a list of human-readable
 problems (empty == in sync), so the guards in `test_compose.py` can be pointed at the
-real files *and* at tiny in-memory fixtures that prove they still bite.
+real files *and* at tiny in-memory fixtures that prove they still bite. The exceptions
+are the three readers under "where a published port listens", which resolve a file the
+way `docker compose up` would, so a guard can assert where a port really listens.
 """
 from __future__ import annotations
 
@@ -222,6 +224,64 @@ def shape_parity(a: dict, b: dict, services, *, a_name: str, b_name: str) -> lis
                     f"{service}: {_SHAPE_LABEL[field]} differ — {a_name} has "
                     f"{sa[field]!r} but {b_name} has {sb[field]!r}")
     return problems
+
+
+# ---- where a published port listens ------------------------------------------------
+
+#: The interpolation forms these files use: `${VAR:-default}` (the default when VAR is
+#: unset OR empty), `${VAR-default}` (only when unset) and `${VAR}`.
+_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?-)([^}$]*))?\}")
+
+
+def dotenv_values(text: str) -> dict:
+    """`{KEY: value}` of a dotenv-style file, read the way compose reads `.env`: one
+    `KEY=value` per line, blank and `#` lines skipped, one pair of surrounding quotes
+    stripped. (No trailing-comment rule: `.env.example` has none, and
+    `test_env_example_has_no_trailing_comments` keeps it that way.)"""
+    values = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def interpolate(value: str, env: dict) -> str:
+    """`value` as compose resolves it against `env` (the shell plus `.env`). A `$` form
+    other than the three above is refused, not guessed at: a guard built on this must not
+    pass by misreading a file."""
+    def resolve(m):
+        name, op, default = m.groups()
+        if op is None:
+            return env.get(name, "")
+        if op == ":-":
+            return env.get(name) or default
+        return env[name] if name in env else default
+
+    out = _REF.sub(resolve, value.replace("$$", "\0"))
+    if "$" in out:
+        raise ValueError(f"cannot resolve {value!r}: a `$` form this reader does not know")
+    return out.replace("\0", "$")
+
+
+def published_binds(compose: dict, service: str, env: dict) -> dict:
+    """`{container port: host interface}` for one service's published ports, resolved the
+    way `docker compose up` resolves them against `env`. A port with no interface, or one
+    that resolves empty, listens on every interface: reported as `0.0.0.0`."""
+    svc = (compose.get("services") or {}).get(service) or {}
+    binds = {}
+    for entry in svc.get("ports") or []:
+        if not isinstance(entry, str):
+            raise ValueError(f"{service}: {entry!r} is the long port syntax, which this "
+                             f"reader does not parse; teach it before trusting the guard")
+        parts = interpolate(entry, env).split("/", 1)[0].rsplit(":", 2)
+        interface = parts[0].strip("[]") if len(parts) == 3 else ""
+        binds[parts[-1]] = interface or "0.0.0.0"
+    return binds
 
 
 def unescaped_dollars(compose: dict, config_name: str = "mosquitto-conf") -> list:
