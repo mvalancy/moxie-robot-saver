@@ -123,6 +123,8 @@ Ordered by priority.
   See [`docs/architecture/vision.md`](docs/architecture/vision.md).
 - **Older robots.** Pre-801 firmware pins the cloud address and cannot be moved by QR. The known
   route is a reflash ([Path C of the owner guide](docs/guides/revive-your-moxie.md#path-c-flash-an-older-robot-first));
+  the firmware tiers and what each needs are summarized in
+  [`hardware/firmware-and-older-robots.md`](hardware/firmware-and-older-robots.md), and the
   bootloader and verified-boot details are in the reverse-engineering
   [hardware](docs/reverse-engineering/hardware/README.md) and
   [firmware](docs/reverse-engineering/firmware/README.md) pages.
