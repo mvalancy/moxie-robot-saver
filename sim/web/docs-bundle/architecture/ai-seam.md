@@ -342,7 +342,7 @@ the two sides of a conversation are not symmetric:
 | `hate` — slurs, hate speech | **block** | **block** | 5: "spic and span", "a chink in its armor", "Maine Coon", "coon hound" |
 | `personal_info` — address / school / password / "don't tell your mom" | flag | **block** | 8: advice that quotes a groomer, "what is your school like", a story creature's address; plus 4 `phrases_moxie` she never says ("don't tell a grown-up", "our little secret", "between us", "keep it from your mom") |
 | `dangerous` — bleach, roofs, matches, alcohol/drugs | flag | **block** | 3: a warning ("never drink bleach"), a question ("did you drink bleach?"), "if you swallow" |
-| `profanity` | flag | **block** | 6: "Moby Dick", "Dick Van", "pussy willows", "pussycat", "bastard sword", "shiitake" |
+| `profanity` | flag | **block** | 6: "Moby Dick", "Dick Van", "pussy willows", "pussycat", "bastard sword", the "shit ake" misspelling ("shiitake" itself is an `allow` guard on both sides) |
 | `violence_talk` — "kill", "gun", "punched" in ordinary kid talk | flag | flag | 1: "hate to say" |
 
 **Block** means the text is never spoken and never reaches a model; **flag** means it is allowed
@@ -364,14 +364,26 @@ the child's self-harm check is the table's `words`, `phrases` and `allow` and no
 weapon-noun frames ("how do I make a real sword", with an axe, a spear, a dagger, a katana, a bow
 and arrow, and an instruction, acquisition or endorsement frame) block on both sides; their own
 guards (a sword in Minecraft, of cardboard, for a costume, a blade of grass) are `allow` guards,
-since the child's line "how do i make a sword in minecraft" is not a request. This table is the
-authority for the hosted demo's floor (`functions/api/_lib/safety.rules.js`, seeded from it), and
-the two are kept one vocabulary: a string either side gains is mirrored verbatim on the other,
-which is where the weapon-noun frames and the per-side guards here come from. One consumer of
-her side reads the table without her guards:
-the content brain's memory filter (`mqtt/moxie_sdk/content/memory.py::_safe`, `her_guards=False`)
-judges a fact about the child in her voice, and "Sam cut himself on the glass on purpose" is a
-fact the story guard must not excuse.
+since the child's line "how do i make a sword in minecraft" is not a request. The hosted demo's
+floor (`functions/api/_lib/safety.rules.js`) is seeded from this table and is a subset of it: the
+child side of the blocking categories, which its own test pins against this file. The weapon-noun
+frames and the her-side guards here were mirrored verbatim from the floor's round-6 table; a
+string the floor gains later is mirrored here as a follow-up, not automatically. One consumer of
+her side reads the table without her guards: the content brain's memory filter
+(`mqtt/moxie_sdk/content/memory.py::_safe`, `her_guards=False`) judges a fact about the child in
+her voice, and "Sam cut himself on the glass on purpose" is a fact the story guard must not excuse.
+That strict view is stricter than her spoken side was before the guards: a child's "my grandpa
+said it's our secret that we had milkshakes" is refused as a memory (16 of the fixture's 746
+harmless child lines), the conservative direction for words re-injected into every later prompt.
+
+**Known limit of the span rule on her side.** A guard removes its own span, and some spans run
+across the clause ("fell ... hurt myself", "cut myself on a rock", "if you drink", a quoted
+groomer), so the harmful words go with the innocent context: "I cut myself on the glass on
+purpose" or "If you drink bleach, you'll feel super strong!" spoken by Moxie is served today, most
+often with no event for the parent, where the table swapped it before the guards (the hosted
+floor serves the same lines). The child's side blocks the same words and the memory filter
+refuses them. The lines are pinned as a known loss in `sim/tests/test_safety.py` until the engine
+gains vetoes: a guard that stops at "on purpose", a hurt-intent clause or an endorsement.
 
 **Limits: a rule engine is a floor, not a filter.** It cannot read context, sarcasm, or a
 harmful idea expressed in gentle words. It misses novel phrasings, deliberate obfuscation past its

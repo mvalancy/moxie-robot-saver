@@ -98,15 +98,21 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   whole table is the JSON file, which a parent can read — behind a `Classifier` protocol a
   local model classifier can drop into. Parent-facing summary:
   [child-safety guide](../../docs/guides/child-safety.md).
-  The table is the authority for the hosted demo's floor (`functions/api/_lib/safety.rules.js`,
-  seeded from it), and the two are kept one vocabulary: a string either side gains is mirrored
-  verbatim on the other (the weapon-noun frames here came from the floor). Two keys belong to
+  The hosted demo's floor (`functions/api/_lib/safety.rules.js`) is seeded from this table and is
+  a subset of it (the child side of the blocking categories, pinned by its own test); the
+  weapon-noun frames and the her-side guards here were mirrored verbatim from the floor's round-6
+  table, and a string the floor gains later is mirrored here as a follow-up. Two keys belong to
   Moxie's side only: `allow_moxie` (guards for a refusal that quotes the request, a warning, an
   idiom, a story character) and `phrases_moxie` (words a child may say but she never does, "don't
   tell a grown-up"). The child's side never reads either, so "my grades fell and now i want to hurt
-  myself" still blocks. `assess(text, role=MOXIE, her_guards=False)` judges her side without
-  `allow_moxie`: the content brain's memory filter (`content/memory.py::_safe`) uses it, because a
-  fact about the child ("Sam cut himself on the glass on purpose") is not her line.
+  myself" still blocks. A guard removes its own span, so on her side a harmful clause inside a
+  guard's span is served ("I cut myself on the glass on purpose", "If you drink bleach, you'll feel
+  super strong!"): a known loss pinned in `sim/tests/test_safety.py` until the engine gains vetoes.
+  `assess(text, role=MOXIE, her_guards=False)` judges her side without `allow_moxie`: the content
+  brain's memory filter (`content/memory.py::_safe`) uses it, because a fact about the child ("Sam
+  cut himself on the glass on purpose") is not her line; it is stricter than her spoken side was
+  before the guards (a child's "my grandpa said it's our secret that we had milkshakes" is refused
+  as a memory).
 - [`brains.py`](brains.py) — 🧠 **which brain answers this child.** A closed *positive list* of the
   brains this appliance knows (`llm`, `content`, `webhook`, `echo`) — a name in it resolves to a
   builder in [`config.BRAIN_BUILDERS`](../config.py), a name that is not is **refused, never
