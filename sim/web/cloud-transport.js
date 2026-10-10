@@ -38,7 +38,9 @@
  * the microphone OPENING until the ears are done with the clip nothing of hers (a reply
  * landing, a stub line, a queued line) starts; what the tap itself RELEASES or KEEPS (a reply
  * held behind the one it ended, a safety line waiting for her sentence, an early reply not
- * yet heard) first waits for that microphone to open, `TAP_HOLD_MAX_MS` at most (W4-S7). A
+ * yet heard) first waits for that microphone to open, `TAP_HOLD_MAX_MS` at most (W4-S7). The
+ * line the page composes when the ears fail (`sendScriptedTurn`) waits for what she has in
+ * hand and for her voice, so nothing the tap kept starts under it (W4-S7). A
  * turn in flight is settled by `TURN_MAX_MS` at the latest, and the ears' hold ends at its
  * bound (the record cap plus mic.js's 30 s upload valve, told to `earsOpen`;
  * `EARS_HOLD_MAX_MS` when nothing is told) even if nothing ever closes it, so the queue can
@@ -76,6 +78,7 @@
     turns: 0, live: 0, delegated: 0, fallbacks: 0,
     scripted: 0,             // consolation lines the PAGE chose (mic.js's degraded turn)
     scriptedFree: 0,         // ...of those, the ones a live page answered for FREE
+    scriptedWaited: 0,       // ...and those that found a reply in hand or her voice on, and followed it (W4-S7)
     chatOk: 0, diagrams: 0, cited: 0, chatRefused: 0, chatErrors: 0,
     speechOk: 0, speechRefused: 0, speechErrors: 0,
     voiceFirst: 0,           // the TTS message was routed BEFORE the chat message
@@ -427,9 +430,11 @@
   }
 
   /* ---- the hold an early line's reply takes, and the safety line's way past it (W4-S7) */
-  /** How often a held line asks whether her sentence is over, and the longest it asks: a
+  /** How often a held line asks whether her voice is over, and the longest it asks: a
    *  speaking predicate stuck true delays a line, never holds it. A sentence is bounded by
-   *  the speech route's character cap; 20 s is past it. */
+   *  the speech route's character cap, and voice/ reports the end of her last queued
+   *  sentence itself (`moxie-tts-end`), so 20 s is reached only by a reply that still has
+   *  more than that to say: past it the line goes into voice/'s queue behind her, as before. */
   var QUIET_POLL_MS = 100;
   var QUIET_MAX_MS = 20000;
   /** The longest what a Listen tap released waits for the microphone the tap asked for: past
@@ -463,6 +468,31 @@
         if (!speaking() || waited >= QUIET_MAX_MS) return quiet();
         waited += QUIET_POLL_MS;
         setTimeout(poll, QUIET_POLL_MS);
+      })();
+    });
+  }
+
+  /** Resolves once NO voice of hers is on the speakers — a server sentence, a clip, a
+   *  stand-in, the browser voice (the BROAD predicate: what a line the page composes must not
+   *  start over) — asked after one poll beat, never at once: a voice released by the same
+   *  moment as the caller (the ears going idle frees a kept reply's stand-in and the
+   *  pretend line together) is on the speakers only a few tasks later. QUIET_MAX_MS at most,
+   *  as `whenQuiet`. A clip of hers still loading past that beat is not seen (the third seam,
+   *  voice/core.js, is ambient's own guard). Resolves with whether it waited at all. */
+  function whenSilent() {
+    return new Promise(function (resolve) {
+      var waited = 0, spoke = false;
+      function speaking() {
+        var a = window.moxieAudio;
+        try { return !!(a && a.isMoxieSpeaking && a.isMoxieSpeaking()); } catch (e) { return false; }
+      }
+      (function poll() {
+        waited += QUIET_POLL_MS;
+        setTimeout(function () {
+          if (!speaking() || waited >= QUIET_MAX_MS) return resolve(spoke);
+          spoke = true;
+          poll();
+        }, QUIET_POLL_MS);
       })();
     });
   }
@@ -1041,7 +1071,15 @@
      *  (one read "YOU: Guess what, it's my birthday today!" on production). It is logged as
      *  a "Pretend line", played from its child clip as a child turn is, and answered from
      *  `stub.js` after the same beat, live page or not. A connected MQTT broker is a
-     *  self-hoster's own backend and still gets it through `inner.sendUserTurn`. */
+     *  self-hoster's own backend and still gets it through `inner.sendUserTurn`.
+     *  IT WAITS ITS TURN, like any line (W4-S7). mic.js composes it before it says the ears
+     *  are done, and a reply the ears held or the Listen tap kept (`park`) starts the moment
+     *  they are: the child clip then began over her first sentence, and the stub answer's
+     *  stop missed her (voice/ had the clip as the current voice) — two voices at once, at
+     *  every tap that kept an answer (the W4-S7 review, round 3). So the row shows at once,
+     *  and the clip and the answer follow every reply in hand (`heldBehind`: the turns
+     *  POSTed before it, then her server voice), the ears, and any voice of hers still on
+     *  the speakers (`whenSilent`: a kept reply's stand-in, a redirect the ears held). */
     sendScriptedTurn: function (text) {
       var t = String(text == null ? "" : text).trim();
       if (!t) return Promise.resolve();
@@ -1061,11 +1099,15 @@
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
       }
-      if (window.moxieAudio) {
-        window.moxieAudio.sfx("listen");
-        if (window.moxieAudio.speakClipOnly) window.moxieAudio.speakClipOnly(t, "child");
-      }
-      return fallbackReply(t);
+      var inHand = inflight > 0;
+      return heldBehind(null, true).then(whenEarsIdle).then(whenSilent).then(function (spoke) {
+        if (inHand || spoke) stats.scriptedWaited++;
+        if (window.moxieAudio) {
+          window.moxieAudio.sfx("listen");
+          if (window.moxieAudio.speakClipOnly) window.moxieAudio.speakClipOnly(t, "child");
+        }
+        return fallbackReply(t);
+      });
     },
 
     /** Live means "a brain will answer this turn", from either transport (§3.5). */

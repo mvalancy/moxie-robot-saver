@@ -16,8 +16,9 @@
  * (§4i–4k, §11d).
  */
 import {
-  advance, boot, deep, envelope, eq, live, now, ok, said, tickets, voicedChunk,
+  MANIFEST, advance, boot, clipBytes, deep, envelope, eq, live, now, ok, said, tickets, voicedChunk,
 } from "./harness.mjs";
+import { bootPage } from "../ears/harness.mjs";     // §13w: the whole page, with the real mic.js
 import { api, post as routeRequest, GATEWAY } from "../common.mjs";
 import { REASONS } from "../../../../functions/api/_lib/envelope.js";
 
@@ -840,6 +841,98 @@ for (const [line, eid, answer] of [[GAME, "sim-game", game], [DAD, "sim-dad", re
        `${label}: the one cut is the tap's own; its words go in the log with its voice; kept by the tap`);
 }
 
+/* 13t (iv). …AND AFTER ITS WORDS WENT OUT CHAT-FIRST: with a first sentence slower than the
+ *      2.5 s word wait (3.0 s synthesis: the file's own measurement puts chunk 0's median
+ *      near 2.5 s, so this branch is common), the early reply's words go out at 13.3 s still
+ *      expecting their voice; a tap at 13.5 s, before that voice lands (13.8 s), keeps it:
+ *      the sentence is played after the recording (16.5 s), not into it. (Without the
+ *      chat-first branch's `ready` the voice landing at 13.8 s went straight to voice/ — into
+ *      the recording — the round-3 review's surviving mutant.) */
+{
+  const world = await boot({ realVoice: true, answer: scenario(() => game(), { speechDelay: 3000 }) });
+  const t0 = now();
+  const b = globalThis.window.moxieBridge;
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(5000);
+  globalThis.window.moxieTypedTurn.send(GAME);         // out early; its reply (6.2 s) held behind her day (handed over 10.8 s)
+  await advance(8400);                                 // t+13.4 s: the word wait elapsed at 13.3 s
+  deep([T().chatFirst, world.spy.transcript.slice(-1), heard(world, t0), speeches(world)], [2, [PLAY], ["day0@4800", "day1@7800", "day2@10800"], ["day0", "day1", "day2", "game0"]],
+       "13t (iv): at 13.4 s the early reply's WORDS are out (chat-first, at 13.3 s; her day's went out chat-first too, its first sentence as slow), its first sentence still being bought (since 10.8 s), her last sentence over (13.3 s)");
+  await advance(100);                                  // t+13.5 s
+  b.interruptVoice();                                  // the tap, before the voice lands
+  await advance(200);
+  b.earsOpen(45000);                                   // t+13.7 s
+  await advance(2790);                                 // t+16.49 s: the voice landed at 13.8 s, into the recording
+  deep([heard(world, t0), T().parked, T().lateSpeechPlayed], [["day0@4800", "day1@7800", "day2@10800"], 1, 1],
+       "13t (iv): THE VOICE LANDING AT 13.8 s IS KEPT, not played into the recording (the mutant played it at 13.8 s; the one late voice played so far is her day's first sentence)");
+  await advance(10);
+  b.earsIdle();                                        // t+16.5 s
+  await advance(15000);
+  deep(heard(world, t0), ["day0@4800", "day1@7800", "day2@10800", "game0@16500", "game1@19500"],
+       "13t (iv): THE EARLY REPLY IS HEARD WHOLE ONCE THE EARS ARE DONE (16.5 s), its first sentence from hand, its second bought then");
+  deep([T().chatFirst, T().lateSpeechPlayed, T().parked, T().heldAtTap, T().heldForEars, T().lateSpeechDropped, cutsAt(world, t0)], [2, 2, 1, 1, 1, 0, []],
+       "13t (iv): recorded: words first twice (her day's and the early reply's), both late voices played; kept by the tap, held for the microphone and the ears; nothing dropped, nothing cut (she was silent at the tap)");
+}
+
+/* 13t (vi). …BUT AN EARLY REPLY ALREADY AUDIBLE AT THE TAP IS ENDED AS ANY (the child's
+ *      deliberate interruption, honest gap 9): its first sentence stops, its second, still
+ *      being synthesised (a slow 6.0 s for that chunk alone), is dropped when it lands into
+ *      the recording, nothing kept. (Parking a reply whose voice has started would route that
+ *      second sentence into the recording when it lands: the round-3 review's third surviving
+ *      mutant.) Production-like timings: the early answer starts at 14.6 s, as her last
+ *      sentence ends; the tap at 15.0 s. */
+{
+  const slowSecond = live((path, body) => {
+    if (path === "/api/chat") {
+      if (body.text === DAY) return Object.assign(said(THREE, "sim-day", { speech: tix("sim-day", 3), context: "CTX-day" }), { delayMs: 1800 });
+      return Object.assign(game(), { delayMs: 1800 });
+    }
+    if (path === "/api/speech") { const [, eid, k] = ticketOf(body); return voicedChunk(eid, Number(k), { delayMs: eid === "sim-game" && Number(k) === 1 ? 6000 : 2000, seconds: PROD[eid][Number(k)] }); }
+    return { status: 404, text: "" };
+  });
+  const world = await boot({ realVoice: true, answer: slowSecond });
+  const t0 = now();
+  const b = globalThis.window.moxieBridge;
+  globalThis.window.moxieTypedTurn.send(DAY);
+  await advance(5000);
+  globalThis.window.moxieTypedTurn.send(GAME);
+  await advance(10000);                                // t+15.0 s: game0 plays from 14.6 s; game1, bought at 9.8 s, lands at 15.8 s
+  deep([heard(world, t0, PROD), speeches(world)], [["day0@3800", "day1@6900", "day2@10500", "game0@14600"], ["day0", "day1", "day2", "game0", "game1"]],
+       "13t (vi): at 15.0 s the early answer's first sentence is playing and its second is still being synthesised (since 9.8 s)");
+  b.interruptVoice();
+  await advance(200);
+  b.earsOpen(45000);
+  await advance(2800);
+  b.earsIdle();                                        // t+18.0 s
+  await advance(10000);
+  deep([heard(world, t0, PROD), cutsAt(world, t0)], [["day0@3800", "day1@6900", "day2@10500", "game0@14600"], ["cloud@15000"]],
+       "13t (vi): THE TAP ENDS AN ANSWER ALREADY AUDIBLE: its first sentence cut at the tap, its second — landing at 15.8 s, into the recording — dropped, never heard, nothing after the recording");
+  deep([T().parked, T().chunksDropped, T().chunksSuperseded, T().interrupted], [0, 1, 1, 1],
+       "13t (vi): recorded: nothing kept; the second sentence superseded at the tap and dropped on landing; one interruption");
+}
+
+/* 13t (v). A REPLY THAT IS NOT EARLY IS ENDED BY THE TAP AS BEFORE (the spec: a line sent with
+ *      nothing in flight behaves exactly as today): its first sentence in flight at the tap is
+ *      dropped when it lands, nothing of it kept — exactly what origin/dev does. (Parking every
+ *      reply would keep it: the round-3 review's surviving mutant.) */
+{
+  const world = await boot({ realVoice: true, answer: scenario(() => game()) });
+  const t0 = now();
+  const b = globalThis.window.moxieBridge;
+  globalThis.window.moxieTypedTurn.send(DAY);          // nothing in flight: not early
+  await advance(3000);                                 // t+3.0 s: its first sentence is in flight (bought 1.8 s, landing 4.1 s)
+  b.interruptVoice();
+  await advance(200);
+  b.earsOpen(45000);
+  await advance(2800);
+  b.earsIdle();                                        // t+6.0 s
+  await advance(10000);
+  deep([heard(world, t0), speeches(world), world.spy.transcript], [[], ["day0"], [DAY, THREE]],
+       "13t (v): A REPLY NOT EARLY IS NOT KEPT: its first sentence, landing at 4.1 s, is dropped; nothing of it heard after the recording; its words in the log (as on origin/dev)");
+  deep([T().parked, T().lateSpeechDropped, T().chunksSuperseded, T().interrupted, T().early], [0, 1, 3, 1, 0],
+       "13t (v): recorded: nothing parked; chunk 0 dropped on landing, three sentences superseded; one interruption; no early line");
+}
+
 /* =========================================================================== *
  * 13u. AN EARLY REPLY'S STAND-IN IS KEPT BY THE TAP TOO: its voice refused (a 429 after
  *      1.5 s, §13 timings), its words are said locally — after the recording, when the tap
@@ -930,4 +1023,181 @@ for (const [line, eid, answer] of [[GAME, "sim-game", game], [DAD, "sim-dad", re
   deep(world.spy.sounds.map((s) => name(s, OFF) + "@" + Math.round(s.t - t0)), ["day0@4100", "day1@6400", "day2@8800", "game0@11250", "game1@13300"],
        "13v (ii): THE ANSWER FOLLOWS HER LAST SENTENCE (ending 11.25 s) WITH NO GAP — the moment voice/ says she is quiet");
   deep([world.spy.cuts.length, overlaps(world.spy.sounds)], [0, 0], "13v (ii): nothing cut, nothing overlapping");
+}
+
+/* =========================================================================== *
+ * 13w. THE WHOLE PAGE, WITH THE REAL mic.js, WHEN THE EARS FAIL AFTER A TAP THAT KEPT AN
+ *      ANSWER (the W4-S7 review, round 3). The child taps Listen while an early answer is in
+ *      hand, talks 1.2 s, falls silent; the auto-stop uploads the clip and /api/transcribe
+ *      refuses it (503 / 429). mic.js then composes its PRETEND LINE (`sendScriptedTurn`:
+ *      the child clip, and a stub answer 450 ms on) BEFORE it says the ears are done, and the
+ *      kept answer starts the moment they are: on the head before this, the child clip began
+ *      over her first sentence (its fetch lands a tick later) and the stub answer's stop
+ *      missed her — TWO VOICES AT ONCE, at every tap that kept an answer (origin/dev: the
+ *      answer lost outright, its words in the log). Now the pretend line waits its turn: the
+ *      kept answer is heard whole, then the child clip, then the stub answer. Production-like
+ *      timings (chat 1.8 s, synthesis 2.0 s, the clip's fetch 30 virtual ms: a browser fetch
+ *      is never same-tick); the tap at 8.5 s, her second sentence playing; the ears done at
+ *      12.35 s. (i) An ordinary answer (503); (ii) a served grown-up referral (429) whose
+ *      second sentence lands 500 ms AFTER its first has ended, so her voice is quiet in
+ *      between (the pretend line waits for the whole reply, not for the first silence);
+ *      (iii) an answer whose own voice is refused: its stand-in, a LOCAL voice; (iv) a hurt
+ *      line's redirect held for the ears (the tap at 6.0 s, before it lands), which on
+ *      origin/dev too was spoken under the pretend clip.
+ * =========================================================================== */
+{
+  const CHILD_LINES = Object.keys(MANIFEST.child || {});
+  const hosted = (other) => (path, body, spy) => (path === "/api/health" ? { status: 200, json: envelope({ ears: true }) } : other(path, body, spy));
+  /** Production-like timings; `refuse` the voice of one event (a 429 after 1.5 s); `slow`
+   *  one chunk's synthesis; `stt` what /api/transcribe answers after 1.5 s. */
+  const degraded = (o) => hosted((path, body) => {
+    if (path === "/api/chat") {
+      if (body.text === DAY) return Object.assign(said(THREE, "sim-day", { speech: tix("sim-day", 3), context: "CTX-day" }), { delayMs: 1800 });
+      if (body.text === GAME) return Object.assign(game(), { delayMs: 1800 });
+      if (body.text === DAD) return Object.assign(referral(), { delayMs: 1800 });
+      return Object.assign(blocked(), { delayMs: 1800 });
+    }
+    if (path === "/api/speech") {
+      const [, eid, k] = ticketOf(body);
+      if (eid === o.refuse) return { status: 429, json: envelope({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "live" }), delayMs: 1500 };
+      return voicedChunk(eid, Number(k), { delayMs: o.slow && o.slow[0] === eid && o.slow[1] === Number(k) ? o.slow[2] : 2000, seconds: PROD[eid][Number(k)] });
+    }
+    if (path === "/api/transcribe") return o.stt === 429
+      ? { status: 429, json: envelope({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "live" }), delayMs: 1500 }
+      : { status: 503, json: envelope({ ok: false, degraded: true, reason: "upstream_down", mode: "live" }), delayMs: 1500 };
+    return { status: 404, text: "" };
+  });
+  /** The page, with a clip fetch that lands 30 virtual ms later (a browser fetch is never same-tick). */
+  const pageWith = async (o) => {
+    const p = await bootPage({ answer: degraded(o) });
+    const real = globalThis.fetch;
+    globalThis.fetch = (url, init) => (/audio\/(?!index\.json)/.test(String(url)) ? new Promise((r) => globalThis.setTimeout(() => r(real(url, init)), 30)) : real(url, init));
+    return p;
+  };
+  /** Tap Listen, talk 1.2 s, fall silent: the auto-stop sends the clip 1.1 s on, refused 1.5 s later (the ears done 3.85 s after the tap). */
+  const talk = async (p) => {
+    p.mic.toggle();
+    await advance(50);
+    for (let i = 0; i < 4; i++) { p.level(0.09); await advance(300); }
+    p.level(0.001);
+  };
+  /** Every sound as [name, start, end], the end where it was cut if it was: her sentences by
+   *  length, the stand-in and the redirect by text, the pretend line's child clip and the stub
+   *  answer's clip by their shipped bytes. */
+  const lenOf = (s) => (s.kind === "browser" ? 70 * s.text.length : s.kind === "clip" ? Math.round((s.bytes * 8) / 64) : s.dur);
+  const played = (w, t0, pretend, answer) => w.spy.sounds.map((s) => {
+    const c = w.spy.cuts.find((x) => (s.kind === "browser" ? x.text === s.text : x.id === s.id) && x.t >= s.t);
+    const n = s.kind === "browser" ? (s.text === REDIRECT ? "redirect" : s.text === PLAY ? "stand-in" : "browser")
+      : s.kind === "clip" ? (s.bytes === clipBytes(pretend, "child") ? "child-clip" : s.bytes === clipBytes(answer, "moxie") ? "stub-clip" : "clip") : name(s, PROD);
+    return [n, s.t - t0, Math.min(s.t + lenOf(s), c ? c.t : Infinity) - t0];
+  });
+  const overlapping = (rows) => { let n = 0; for (let i = 0; i < rows.length; i++) for (let j = 0; j < i; j++) if (rows[j][2] > rows[i][1]) n++; return n; };
+  const pretendOf = (w) => w.spy.transcript.find((t) => CHILD_LINES.includes(t)) || "";
+
+  // (i) An ordinary answer, kept by the tap; the ears refuse the clip (503).
+  {
+    const p = await pageWith({ stt: 503 });
+    const w = p.world, t0 = now();
+    globalThis.window.moxieTypedTurn.send(DAY);
+    await advance(5000);
+    globalThis.window.moxieTypedTurn.send(GAME);       // out early; its reply (6.8 s) held, then released at the hand-over (7.8 s), its first sentence being bought
+    await advance(3500);                               // t+8.5 s
+    await talk(p);                                     // the tap keeps it; the clip is sent at 10.85 s and refused at 12.35 s
+    await advance(3850 - 1250 - 10);                   // t+12.34 s
+    const pretend = pretendOf(w);
+    deep([T().parked, p.mic.stats().fallbacks, pretend.length > 0, heard(w, t0, PROD)], [1, 0, false, ["day0@3800", "day1@6900"]],
+         "13w (i): just before the ears are done the answer is kept (parked), nothing of it heard, no pretend line yet");
+    await advance(20);                                 // t+12.36 s: the ears are done; mic.js composed its pretend line
+    const line = pretendOf(w), answer = globalThis.window.moxieStub.reply(line).text;
+    ok(CHILD_LINES.includes(line) && clipBytes(line, "child") > 0 && clipBytes(answer, "moxie") > 0,
+       `13w (i): mic.js consoled with a scripted child line that has a shipped clip, and stub.js answers it with a line that has one (${JSON.stringify(line)})`);
+    deep([p.mic.stats().fallbacks, T().scripted, heard(w, t0, PROD)], [1, 1, ["day0@3800", "day1@6900", "game0@12350"]],
+         "13w (i): THE KEPT ANSWER STARTS THE MOMENT THE EARS ARE DONE (12.35 s) — and the pretend line, composed in the same moment, has NOT started over it");
+    await advance(640);                                // t+13.0 s: a tap while she says it
+    await p.mic.toggle();
+    deep([p.mic.stats().ignoredTaps, p.mic.isRecording(), /one at a time/.test(p.micStatus())], [1, false, true],
+         "13w (i): a Listen tap while the kept answer plays is refused as one at a time (mic.js holds its button until the pretend line's answer, as it does until a spoken line's)");
+    await advance(15000);
+    deep(played(w, t0, line, answer),
+         [["day0", 3800, 6900], ["day1", 6900, 8500], ["game0", 12350, 14850], ["game1", 14850, 17650], ["child-clip", 17780, 18200], ["stub-clip", 18230, 22108]],
+         "13w (i): HEARD, ONE AT A TIME: her day to the tap, then the kept answer WHOLE (12.35-17.65 s), then the pretend line's child clip (17.78 s, 100 ms after her last sentence and its fetch), then the stub answer cutting the child clip at the 450 ms beat as a child turn's always has (the head before this: child clip 12.38 s and stub 12.83 s, both over game0)");
+    deep([overlapping(played(w, t0, line, answer)), w.spy.cuts.length], [0, 2], "13w (i): NO TWO SOUNDS OVERLAP; the two cuts are the tap's own and the stub's beat on the child clip");
+    deep(w.spy.transcript, [DAY, THREE, GAME, line, PLAY, answer], "13w (i): the log: her day, the game line, the pretend line (shown at once), her kept answer, the stub answer");
+    deep([T().scriptedWaited, T().scriptedFree, T().parked, T().heldForEars, T().chunksSuperseded, T().lateSpeechDropped], [1, 1, 1, 1, 0, 0],
+         "13w (i): recorded: the pretend line waited for a reply in hand; free; one reply kept; nothing superseded or dropped");
+  }
+
+  // (ii) A served grown-up referral, kept by the tap; the ears refuse the clip (429); its
+  //      second sentence lands 500 ms after its first has ended.
+  {
+    const p = await pageWith({ stt: 429, slow: ["sim-dad", 1, 3400] });
+    const w = p.world, t0 = now();
+    globalThis.window.moxieTypedTurn.send(DAY);
+    await advance(5000);
+    globalThis.window.moxieTypedTurn.send(DAD);
+    await advance(3500);
+    await talk(p);
+    await advance(3850 - 1250 + 10);                   // t+12.36 s
+    const line = pretendOf(w), answer = globalThis.window.moxieStub.reply(line).text;
+    deep([p.mic.stats().fallbacks, T().parked, heard(w, t0, PROD)], [1, 1, ["day0@3800", "day1@6900", "dad0@12350"]],
+         "13w (ii): the kept referral starts the moment the ears are done (12.35 s); the pretend line has not started over it");
+    await advance(3200);                               // t+15.56 s: dad0 ended at 15.25 s; dad1 lands at 15.75 s
+    deep([heard(w, t0, PROD), w.spy.sounds.filter((s) => s.kind === "clip").length], [["day0@3800", "day1@6900", "dad0@12350"], 0],
+         "13w (ii): IN THE 500 ms GAP BETWEEN HER SENTENCES NOTHING STARTS: the pretend line waits for the whole reply, not for the first silence");
+    await advance(15000);
+    deep(played(w, t0, line, answer),
+         [["day0", 3800, 6900], ["day1", 6900, 8500], ["dad0", 12350, 15250], ["dad1", 15750, 19050], ["child-clip", 19180, 19600], ["stub-clip", 19630, 23508]],
+         "13w (ii): THE REFERRAL IS HEARD WHOLE (12.35-19.05 s, a gap between its sentences), then the child clip (19.18 s), then the stub answer");
+    deep([overlapping(played(w, t0, line, answer)), w.spy.transcript], [0, [DAY, THREE, DAD, line, REFER, answer]],
+         "13w (ii): no two sounds overlap; the log in order, the referral's words with its voice");
+    deep([T().scriptedWaited, T().parked, T().chunksSuperseded, T().lateSpeechDropped], [1, 1, 0, 0], "13w (ii): recorded: the pretend line waited; one reply kept; nothing superseded or dropped");
+  }
+
+  // (iii) An answer whose own voice is refused (a 429 after 1.5 s, landing during the
+  //       recording): its stand-in, a LOCAL voice said when the ears are done, is a voice of
+  //       hers too — the pretend line waits for it (on the head before this: the child clip and
+  //       the stub answer over the stand-in).
+  {
+    const p = await pageWith({ stt: 503, refuse: "sim-game" });
+    const w = p.world, t0 = now();
+    globalThis.window.moxieTypedTurn.send(DAY);
+    await advance(5000);
+    globalThis.window.moxieTypedTurn.send(GAME);
+    await advance(3500);
+    await talk(p);
+    await advance(3850 - 1250 + 10);                   // t+12.36 s
+    const line = pretendOf(w), answer = globalThis.window.moxieStub.reply(line).text;
+    deep([T().voiceFallbacks, T().parked, w.spy.said.filter((s) => s.text === PLAY).map((s) => s.t - t0)], [1, 1, [12350]],
+         "13w (iii): the kept answer's voice was refused during the recording; its STAND-IN is said the moment the ears are done (12.35 s)");
+    await advance(15000);
+    deep(played(w, t0, line, answer),
+         [["day0", 3800, 6900], ["day1", 6900, 8500], ["stand-in", 12350, 15220], ["child-clip", 15280, 15700], ["stub-clip", 15730, 19608]],
+         "13w (iii): THE STAND-IN IS HEARD WHOLE (12.35-15.22 s), then the child clip (15.28 s: the beat after it ended, and its fetch), then the stub answer");
+    deep([overlapping(played(w, t0, line, answer)), T().scriptedWaited, w.spy.transcript], [0, 1, [DAY, THREE, GAME, line, PLAY, answer]],
+         "13w (iii): no two sounds overlap; the pretend line waited for her voice; the log in order");
+  }
+
+  // (iv) A hurt line's redirect held for the ears: the tap at 6.0 s, before it lands (6.8 s).
+  //      It is said the moment the ears are done (9.85 s) — and on origin/dev too the pretend
+  //      line's clip and stub answer then played over it (the review's "pre-existing race");
+  //      the same wait ends that.
+  {
+    const p = await pageWith({ stt: 503 });
+    const w = p.world, t0 = now();
+    globalThis.window.moxieTypedTurn.send(DAY);
+    await advance(5000);
+    globalThis.window.moxieTypedTurn.send(HURT);
+    await advance(1000);                               // t+6.0 s
+    await talk(p);                                     // the ears done at 9.85 s
+    await advance(3850 - 1250 + 10);                   // t+9.86 s
+    const line = pretendOf(w), answer = globalThis.window.moxieStub.reply(line).text;
+    deep([T().safetyFirst, T().heldForEars, w.spy.sounds.filter((s) => s.kind !== "cloud").map((s) => [s.kind, s.t - t0])], [1, 1, [["browser", 9850]]],
+         "13w (iv): the redirect, landed into the open microphone (6.8 s) and held, is said the moment the ears are done (9.85 s)");
+    await advance(15000);
+    deep(played(w, t0, line, answer),
+         [["day0", 3800, 6000], ["redirect", 9850, 17550], ["child-clip", 17580, 18000], ["stub-clip", 18030, 21908]],
+         "13w (iv): THE REDIRECT IS HEARD WHOLE (9.85-17.55 s), then the child clip (17.58 s), then the stub answer (origin/dev and the head before this: the clip at 9.88 s and the stub at 10.33 s, over it)");
+    deep([overlapping(played(w, t0, line, answer)), T().scriptedWaited, w.spy.transcript], [0, 1, [DAY, THREE, HURT, line, REDIRECT, answer]],
+         "13w (iv): no two sounds overlap; the pretend line waited for a reply in hand; the log in order");
+  }
 }
