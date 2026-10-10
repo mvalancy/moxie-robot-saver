@@ -143,9 +143,12 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    group, an older child or an adult, or one who adds where or when it happened ("…at the party",
    "…before bed", "…when i go to bed"), why ("…because i spilled juice by accident", "…when i
    don't brush my teeth": their own accident or chore is not the hitter's), what they did next
-   ("…and i ran away", "…and i hit my head") or says it in two sentences. Two shapes are read as
-   care from anyone and left to the AI: a grab as your child crosses the street, slips or nearly
-   falls, and a grab after which the two go somewhere together ("…and we went inside").
+   ("…and i ran away", "…and i hit my head") or says it in two sentences. Three shapes are read as
+   play or care and left to the AI: a hit, a kick or a push from another child, or from "someone",
+   at a sport or a game ("my brother hit me at the soccer field", "somebody pushed me in the hockey
+   game": the game, not a place, unless your child adds that it hurt, was on purpose or happens
+   every day), a grab as your child crosses the street, slips or nearly falls, and a grab after
+   which the two go somewhere together ("…and we went inside").
    If the line itself is one Moxie may not repeat, or the AI's reply is one she may not say,
    she still answers with a line that points them to a grown-up — never with "let's talk
    about something else". If the AI is busy, slow or down after the check has read the line,
