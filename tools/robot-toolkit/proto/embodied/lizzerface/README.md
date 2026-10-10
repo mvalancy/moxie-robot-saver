@@ -2,7 +2,7 @@
 
 The [`embodied.lizzerface`](../../../../../docs/reverse-engineering/protocol/proto-catalog.md#embodiedlizzerface) package: commands to and events from the body microcontroller, the Lizard MCU.
 Commands drive motors, power rails, sensors and LEDs; events report touch, switches, light, IMU, battery, servos and errors.
-The [hardware map](../../../../../docs/reverse-engineering/hardware/hardware-map.md) explains each one.
+The [hardware map](../../../../../docs/reverse-engineering/hardware/hardware-map.md) explains every message except `LizardWakeupEventPB`, which reports what woke the MCU; [behavior input events](../../../../../docs/reverse-engineering/runtime/behavior-input-events.md) lists it.
 
 | File | Defines |
 |---|---|
