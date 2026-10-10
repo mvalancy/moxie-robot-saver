@@ -42,8 +42,9 @@ MOXIE_LLM_MODEL=llama3.1
 
 Inside the supervisor's container, `127.0.0.1` is the container itself. So the URL uses the host's
 LAN IP, and Ollama must listen beyond loopback (for a system service, set `OLLAMA_HOST` in the
-service's environment). Docker Desktop (Mac, Windows) also resolves
-`http://host.docker.internal:11434/v1`. The compose files do not map that name on Linux; adding
+service's environment). Ollama has no sign-in, so other devices on your network can then use it
+too. Docker Desktop (Mac, Windows) also resolves `http://host.docker.internal:11434/v1`. The
+compose files do not map that name on Linux; adding
 `extra_hosts: ["host.docker.internal:host-gateway"]` to the supervisor service does, and Ollama
 must still listen beyond loopback.
 
@@ -106,7 +107,7 @@ robot is only certified on the **lower U-NII-1 channels (36–48)**
 Owners of real robots report these two signs. This project has not seen either screen itself.
 
 - **No label under the QR box.** On 801 and 803, Moxie's code screen shows a small text label under
-  the QR box, such as `EmbodiedProduction` or `OpenMoxie`. No label, only a Wi-Fi icon, means
+  the QR box, such as `EmbodiedProduction` or `OpenMoxie`. No label, just an icon, means
   firmware older than 801: take [Path C](#path-c-flash-an-older-robot-first). The label may appear
   only once Moxie is on Wi-Fi, so look after the Wi-Fi code. Reported in OpenMoxie issues
   [#43](https://github.com/jbeghtol/openmoxie/issues/43) and [#57](https://github.com/jbeghtol/openmoxie/issues/57).

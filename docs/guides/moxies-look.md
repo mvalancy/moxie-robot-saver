@@ -31,9 +31,9 @@ the card offers them by name.
 | **Hair** | — | Black bob · Black, centre part · Pink shag · Red shag |
 | **Glasses** | — | Blue hearts · Gold half-round · Red cat-eye · Round, white dots · Small round |
 
-The other three layers — stickers, extras and misc — are still empty: neither source names a
-single piece for them, and we would rather show you an empty shelf than make names up and have
-Moxie draw nothing.
+The other three layers, stickers, extras and misc, are still empty. Neither source (below) names a
+single piece for them, and we would rather show you an empty shelf than make up names that Moxie
+would not draw.
 
 Where a name appears in both columns of the same row (eye colour, face colour), they are
 two different ways of asking for the same idea and the card marks the artwork one

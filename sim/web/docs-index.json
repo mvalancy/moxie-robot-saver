@@ -1118,7 +1118,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 1597,
+   "bytes": 1558,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -1127,7 +1127,7 @@
    "path": "guides/revive-your-moxie.md",
    "title": "Revive your Moxie",
    "section": "guides",
-   "bytes": 8964,
+   "bytes": 9036,
    "mermaid": 1,
    "headings": [
     "Which path are you on?",
@@ -1214,7 +1214,7 @@
    "path": "guides/factory-reset-a-paired-moxie.md",
    "title": "Factory-reset (or unpair) a paired Moxie",
    "section": "guides",
-   "bytes": 4462,
+   "bytes": 4470,
    "mermaid": 0,
    "headings": [
     "Unpair or reset from the web app",
@@ -1246,7 +1246,7 @@
    "path": "guides/permitting-a-robot.md",
    "title": "Letting a robot in — \"pending\" and how to permit it",
    "section": "guides",
-   "bytes": 7473,
+   "bytes": 7493,
    "mermaid": 0,
    "headings": [
     "What pending means",

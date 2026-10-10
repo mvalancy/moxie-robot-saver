@@ -86,9 +86,9 @@ opened by the environment variable can never *look* closed.
 
 ## Where the list is kept
 
-`fleet/permits.json` in the supervisor's data directory (`MOXIE_DATA_DIR`: `mqtt/data/` by
-default, `/data` on the `moxie-supervisor-data` volume in the compose stack), beside the
-house-rules config (`fleet/config.json`). The supervisor owns the list
+`fleet/permits.json` in the supervisor's data directory, beside the house-rules config
+(`fleet/config.json`). That directory is `MOXIE_DATA_DIR`: `mqtt/data/` by default, or `/data`
+on the `moxie-supervisor-data` volume in the compose stack. The supervisor owns the list
 (`mqtt/supervisor/moxie_runtime/fleet.py`, `FLEET_PERMITS_COLLECTION`); the console reads and
 changes it through the supervisor's `/permits`. The file survives restarts and upgrades. A
 damaged or missing file means "nobody is permitted" — it fails safe, never open.

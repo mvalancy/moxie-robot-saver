@@ -48,7 +48,7 @@ Both use the **same endpoint**, differing only by one flag:
 | Action | Request | Effect |
 |--------|---------|--------|
 | **Unpair** | `DELETE /api/robots/{id}` | removes the robot from the account |
-| **Factory reset** | `DELETE /api/robots/{id}?rfs=1` | unpair **+ restore factory settings** (`rfs` = restore-factory-settings) |
+| **Factory reset** | `DELETE /api/robots/{id}?rfs=1` | unpair, and the answer carries the reset code (`rfs` = restore-factory-settings) |
 
 Both send `Authorization: Bearer <token>` and an empty body. In the original app this is the
 `BaseActivity.unpairMoxie()` bottom-sheet: a plain **Unpair** button vs. a red **Restore Factory
