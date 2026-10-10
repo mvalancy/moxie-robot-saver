@@ -124,14 +124,17 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    at the end, in Moxie's voice, that does. Naming an adult is not enough: "I'm sorry your dad
    hits you" gets the sentence, so does "you deserve a dad who is gentle", so does "was a
    teacher there?", and so does "tell your dad" when dad is the one they named. A reply that
-   steers them away from a grown-up does not count either: "don't tell a grown-up", "you could
-   tell your mom, but you don't have to", "instead of telling your teacher, tell me", "maybe
-   later". The check reads words, not intent, so it also adds the sentence to a good reply that
-   happens to say "later", and a reply that steers away in words it does not know would count.
+   steers them away from a grown-up does not count either, wherever in the reply it does so:
+   "don't tell a grown-up", "you could tell your mom, but you don't have to" (or "…your mom. But
+   you don't have to."), "instead of telling your teacher, tell me", "maybe later", "once you feel
+   braver", "only if you really want to". The check reads words, not intent, so it also adds the
+   sentence to a good reply that happens to say "later" or "if you want" in any of its sentences,
+   and a reply that steers away in words it does not know would count.
    Someone else's excuse does not hide what the check recognises: "he said it was an accident",
-   "she said it was a game", "my uncle says he's just joking" or "he did it for fun" still get the
-   sentence, and so does a child hit "as a joke" by a group, an older child or an adult, or one who
-   adds where or when it happened ("…at the party", "…before bed") or says it in two sentences.
+   "she said it was a game", "my uncle says he's just joking", "he did it for fun" or "he touched my
+   leg and said it was a surprise" still get the sentence, and so does a child hit "as a joke" by a
+   group, an older child or an adult, or one who adds where or when it happened ("…at the party",
+   "…before bed"), what they did next ("…and i ran away") or says it in two sentences.
    If the line itself is one Moxie may not repeat, or the AI's reply is one she may not say,
    she still answers with a line that points them to a grown-up — never with "let's talk
    about something else". If the AI is busy, slow or down after the check has read the line,
@@ -144,8 +147,14 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    not an accident, an outing or ordinary family life. The same words from an uncle, a cousin, a coach,
    a babysitter or a stranger ("asked me to take off my pants", "made me kiss him before bed") do
    get it, and so do they from a parent when your child adds that they did not like it or it was
-   a secret. When the check is unsure it leans toward the extra sentence: "my brother pushed me on
-   the swing so high i was scared" gets one too. This is a word-and-phrase check like the rest,
+   a secret. A surprise or a treat kept secret from you is ordinary family life from a parent, a
+   grandparent, a brother or sister, a friend, a teacher or the babysitter ("don't tell mom about
+   her present", "don't tell mom we had ice cream"); the same words from a stranger, a coach, a
+   neighbour, a parent's partner, an uncle or an aunt, a present the grown-up gave your child
+   ("the present he gave me"), or a "treat" that is really something done ("he let me see his
+   thing", "we played doctor", "he got me drunk") get the sentence. When the check is unsure it
+   leans toward the extra sentence: "my brother pushed me on the swing so high i was scared" gets
+   one too. This is a word-and-phrase check like the rest,
    so it recognises the shapes it lists, not every way a child can say it; a disclosure in other
    words reaches the AI, which points the child to a grown-up on its own about nine times in ten.
    What it cannot cover: a turn refused before the line is read (too long, a stale session), a
