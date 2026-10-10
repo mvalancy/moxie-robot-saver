@@ -4,6 +4,10 @@ openai>=1.0
 # Shipped here, NOT in pyproject.toml base deps: the container runs the documented form,
 # while the SDK still imports and unit-tests with no heavy dependencies (extra: `content`).
 jinja2>=3.0
+# The house's clock (cloud_config § the house's clock) resolves the family's time zone with
+# zoneinfo, which reads the system tz database first. This is the insurance for an image or
+# host without one; without either, every zone reads as UTC, and the activity feed says so.
+tzdata>=2024.1
 # STT (Phase: voice) — uncomment when wiring faster-whisper:
 # faster-whisper>=1.0
 # numpy>=1.24

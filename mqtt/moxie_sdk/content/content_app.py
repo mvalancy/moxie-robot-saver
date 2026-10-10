@@ -416,11 +416,12 @@ class ContentApp(MoxieApp):
                           grants=grants,
                           presence=turn.presence or _presence_vars(turn.robot))
         now = self._clock()
+        zone = (getattr(turn.robot, "extra", None) or {}).get("timezone_id")  # its push's
         seed = int.from_bytes(hashlib.sha256(
             f"{device_id}|{turn.speech}|{ext_id}|{int(now)}".encode()).digest()[:4], "big")
         result = ext.evaluate(block, facts, grants=grants,
                               now_ms=int(now * 1000),
-                              clock_local=_clock_local(now), seed=seed,
+                              clock_local=_clock_local(now, zone), seed=seed,
                               monotonic=self._monotonic,
                               limits=self._ext_limits_now())
         if not result.ok:
