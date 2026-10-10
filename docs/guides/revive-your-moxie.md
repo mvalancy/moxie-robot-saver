@@ -104,13 +104,14 @@ robot is only certified on the **lower U-NII-1 channels (36–48)**
 
 ### When Moxie does not connect
 
-Owners of real robots report these two signs. This project has not seen either screen itself.
+These two signs come from owners of real robots, not from this project's own robot.
 
 - **No label under the QR box.** On 801 and 803, Moxie's code screen shows a small text label under
-  the QR box, such as `EmbodiedProduction` or `OpenMoxie`. No label, just an icon, means
-  firmware older than 801: take [Path C](#path-c-flash-an-older-robot-first). The label may appear
-  only once Moxie is on Wi-Fi, so look after the Wi-Fi code. Reported in OpenMoxie issues
-  [#43](https://github.com/jbeghtol/openmoxie/issues/43) and [#57](https://github.com/jbeghtol/openmoxie/issues/57).
+  the QR box, such as `EmbodiedProduction` or `OpenMoxie`. No label, only a Wi-Fi icon, means
+  firmware older than 801: take [Path C](#path-c-flash-an-older-robot-first). Reported in OpenMoxie
+  issues [#43](https://github.com/jbeghtol/openmoxie/issues/43) and [#57](https://github.com/jbeghtol/openmoxie/issues/57).
+  Our [live notes](../debugging/live-hardware-debug.md) add that the label may show only once Moxie
+  has joined Wi-Fi, so look again after the Wi-Fi code.
 - **A spinning "e" for minutes.** The first boot into a new server can stay on the spinning "e" for
   up to about 10 minutes, and later boots for about 5. Wait before you try again. Reported in
   OpenMoxie issue [#43](https://github.com/jbeghtol/openmoxie/issues/43).
