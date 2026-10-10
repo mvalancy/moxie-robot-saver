@@ -25,6 +25,7 @@ Robot details refer to firmware v3.6.4-Zephyr / OTA v24.10.803
   ([live notes](../debugging/live-hardware-debug.md)).
 - **Pick the simplest network.** A normal WPA2 network on 2.4 GHz, or **🚀 Moxie Direct** (this
   computer's own access point), which removes every router setting from the question.
+- **Record the session.** Start the recorder before the robot connects: [bench-day checklist](bench-day-checklist.md).
 
 ## 1. The Wi-Fi code (Wi-Fi only)
 

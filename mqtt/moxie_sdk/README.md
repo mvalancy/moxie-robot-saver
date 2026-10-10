@@ -18,6 +18,7 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   list stays the one place that says which robots are ours. Pure, stdlib only, byte-stable;
   `python3 -m moxie_sdk.broker_acl <permits.json>` prints it.
   ([`security-broker-auth.md`](../../docs/architecture/backlog/security-broker-auth.md) §2.3)
+- [`wire_record.py`](wire_record.py) — 🎙️ the bench recorder: `python -m moxie_sdk.wire_record --out /data/wire/bench.jsonl` copies the robot bus to a private JSONL file (read-only, it never publishes); read it with [`sim/tools/wire_timeline.py`](../../sim/tools/wire_timeline.py), and see the [bench-day checklist](../../docs/guides/bench-day-checklist.md).
 - [`memory_items.py`](memory_items.py) — the long-term memory item model (limits, ids,
   provenance, decay) that `memory_store.MemoryStore` persists.
 - [`memory_store.py`](memory_store.py) — `MemoryStore`: namespaced, bounded, policy-gated
