@@ -49,13 +49,18 @@ def test_no_bench_address_is_hard_coded(tmp_path):
     quads = set(re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", src))
     assert quads <= {"127.0.0.1"}, f"dotted-quad literals in overnight.py: {sorted(quads)}"
 
+    # An empty PATH: a runner that got past its own checks could find no pkill, chrome
+    # or rig to launch, and the timeout bounds a mutant that would otherwise sleep.
+    nobin = tmp_path / "nobin"
+    nobin.mkdir()
     env = {k: v for k, v in os.environ.items() if k != "MOXIE_BROKER_HOST"}
+    env["PATH"] = str(nobin)
     r = subprocess.run([sys.executable, OVERNIGHT], capture_output=True, text=True,
-                       env=env, cwd=str(tmp_path))
+                       env=env, cwd=str(tmp_path), timeout=30)
     assert r.returncode == 2 and "--moxie-ip" in r.stderr, r.stderr
 
     r = subprocess.run([sys.executable, OVERNIGHT, "--moxie-ip", "moxie.test"],
-                       capture_output=True, text=True, env=env, cwd=str(tmp_path))
+                       capture_output=True, text=True, env=env, cwd=str(tmp_path), timeout=30)
     assert r.returncode != 0 and "MOXIE_BROKER_HOST" in r.stderr, (r.returncode, r.stderr)
 
 
