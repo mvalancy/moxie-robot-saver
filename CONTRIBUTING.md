@@ -29,9 +29,9 @@ The Style Card. Every page in the tree is held to it, and a reviewer may quote a
 ## Doc guards
 
 This is the one copy of the command list. Run it from the repo root after any change under
-`docs/`, to `README.md` or to `ROADMAP.md`, and commit the regenerated bundle
-(`sim/web/docs-bundle/**`, `sim/web/docs-index.json`, `sim/web/docs-search.json`) in the same
-commit as the doc. Never hand-edit or hand-merge those three; on a conflict, regenerate.
+`docs/`, to `README.md` or to `ROADMAP.md`. Commit the regenerated bundle (`sim/web/docs-bundle/**`,
+`sim/web/docs-index.json`, `sim/web/docs-search.json`) in the same commit as the doc. Never
+hand-edit or hand-merge those three; on a conflict, regenerate.
 
 ```sh
 python3 sim/tools/build_docs_bundle.py

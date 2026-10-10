@@ -97,11 +97,11 @@ Ordered by priority.
 4. **A second brain for the demo.** Today one gateway outage silences it. (A failing model does
    not: the reference gateway falls back from one model alias to a second when the first errors.)
    Needs a second credential and an owner cost decision ([brief](docs/architecture/backlog/live-brain-open-issues.md)).
-5. **Parent app depth.** Partly done: unpair and factory reset are in the web app, behind a typed
-   confirmation ([what is built](docs/features/robot-lifecycle.md#built-here-unpair-and-factory-reset));
-   a robot paired by scanning the codes joins the account with one click, **Add to my account**,
+5. **Parent app depth.** Partly done. Unpair and factory reset are in the web app, behind a typed
+   confirmation ([what is built](docs/features/robot-lifecycle.md#built-here-unpair-and-factory-reset)).
+   A robot paired by scanning the codes joins the account with one click, **Add to my account**,
    which gives it the robot card and Unpair; the Wi-Fi tab's first code is Wi-Fi only
-   ([bench runbook](docs/guides/bench-runbook.md)); the child's name reaches the robot and is checked
+   ([bench runbook](docs/guides/bench-runbook.md)). The child's name reaches the robot and is checked
    before it is said. Still open: all of it is tested against the simulator and hermetic doubles
    only; no physical robot has been named, added, unpaired or reset this way.
 6. **Storage.** Per-robot state is JSON files. That is fine for one home; move to a database only if
@@ -122,10 +122,10 @@ Ordered by priority.
   later. The robot's own camera frames are not reachable in stock firmware.
   See [`docs/architecture/vision.md`](docs/architecture/vision.md).
 - **Older robots.** Pre-801 firmware pins the cloud address and cannot be moved by QR. The known
-  route is a reflash ([Path C of the owner guide](docs/guides/revive-your-moxie.md#path-c-flash-an-older-robot-first));
-  the firmware tiers and what each needs are summarized in
-  [`hardware/firmware-and-older-robots.md`](hardware/firmware-and-older-robots.md), and the
-  bootloader and verified-boot details are in the reverse-engineering
+  route is a reflash ([Path C of the owner guide](docs/guides/revive-your-moxie.md#path-c-flash-an-older-robot-first)).
+  The firmware tiers and what each needs are summarized in
+  [`hardware/firmware-and-older-robots.md`](hardware/firmware-and-older-robots.md); the bootloader
+  and verified-boot details are in the reverse-engineering
   [hardware](docs/reverse-engineering/hardware/README.md) and
   [firmware](docs/reverse-engineering/firmware/README.md) pages.
 
