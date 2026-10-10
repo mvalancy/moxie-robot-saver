@@ -101,8 +101,8 @@ use. Pick one the next time either page is touched.
 - **Parent console** ([`server/`](../../server/)) — the exception above; it does not use this language.
 
 ## Provenance
-The tokens were first sampled from an external personal site, [`valpatel.com`](https://valpatel.com), in
-August 2026 and captured here so the guide stands even if that site changes; the hub is the reference now.
+The tokens were first sampled from an external personal site, [`valpatel.com`](https://valpatel.com) (August
+2026), and captured here so the guide stands even if that site changes; the hub is the reference now.
 
 ---
 📖 [SIL simulator](../architecture/sil-and-cicd.md) · [Docs index](../README.md)

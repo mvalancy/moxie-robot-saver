@@ -37,9 +37,11 @@ def test_the_findings_file_lives_beside_the_rig_not_under_docs():
     mod = _load()
     rel = os.path.relpath(mod.FINDINGS, REPO).replace(os.sep, "/")
     assert rel == "tools/qr-rig/findings.md"
+    # The only files it opens for writing are the findings file and the rig's log, both
+    # beside the script; the docs page is linked from the template, never written.
     src = open(OVERNIGHT, encoding="utf-8").read()
-    assert "qr-command-findings.md" not in src.split('"""', 2)[2], \
-        "the runner must not write the docs page; that page is the record"
+    writes = set(re.findall(r'open\(([^,]+),\s*"[wa]"\)', src))
+    assert writes == {"FINDINGS", 'os.path.join(RIG_DIR,"rig.log")'}, writes
 
 
 def test_no_bench_address_is_hard_coded(tmp_path):
