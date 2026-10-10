@@ -40,9 +40,10 @@ Your child's profile stays on your account until you delete it.
 This server has no real sign-in yet: an account is just its email, so someone on your network
 who opens the console with your email can see the name. Whether the console should require a real
 sign-in is an open question for the owner (OQ3). The broker's browser port (`9001`) lets whoever
-reaches it read the name as it goes to the robot, along with what your child says and Moxie's replies;
-the one-command stack keeps it on this machine unless you open it to link the simulator from another
-device (`MOXIE_BIND_HOST_WS`, [what is on your network](one-command-stack.md#what-is-on-your-network)). The supervisor's
+reaches it read the name as it goes to the robot, along with what your child says and Moxie's
+replies. The one-command stack keeps that port on this machine unless you set
+`MOXIE_BIND_HOST_WS=0.0.0.0` to link the simulator from another device
+([what is on your network](one-command-stack.md#what-is-on-your-network)). The supervisor's
 status port has no sign-in either, but it listens on this machine only: the one-command stack
 publishes it to `127.0.0.1` (`MOXIE_BIND_HOST_STATUS`, the default and `.env.example`'s value; use
 Docker Engine 28 or later, [why](one-command-stack.md#what-is-on-your-network)), and a supervisor

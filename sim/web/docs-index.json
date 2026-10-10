@@ -533,7 +533,7 @@
    "path": "architecture/backlog/security-broker-auth.md",
    "title": "Broker authentication: containment now, device identity later",
    "section": "architecture",
-   "bytes": 19927,
+   "bytes": 20001,
    "mermaid": 0,
    "headings": [
     "0. What our corpus establishes",
@@ -1168,7 +1168,7 @@
    "path": "guides/first-time-setup.md",
    "title": "First-time setup",
    "section": "guides",
-   "bytes": 5471,
+   "bytes": 5481,
    "mermaid": 0,
    "headings": [
     "1. Start the server",

@@ -168,7 +168,7 @@ still reach a port published to `127.0.0.1`
   address in its host box; change the box to `127.0.0.1`.
 
 The bare-metal `mosquitto.conf` binds `1883` to `127.0.0.1` itself; its `9001` listener still binds
-every interface.
+every interface. Changing that line to `listener 9001 127.0.0.1` keeps it on this machine.
 
 ### 2.5 The browser SIM: option (a) shipped, option (b) closes the residual
 
