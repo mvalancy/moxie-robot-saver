@@ -581,7 +581,7 @@ and a notify is reconciled against it (`memory.py`, "the robot's notify"):
 | the notify carries | and history |
 |---|---|
 | the child line the turn answered (case and punctuation aside) | already holds it: nothing added |
-| a filler, or the hello the runtime spoke as chunk 0 | never history (it was not before either) |
+| a filler, or the hello the runtime spoke as chunk 0 | never history (it was not before either); an answer that happens to say a filler's words is the turn's text and is matched as such |
 | the turn's text, or a run inside it (one streamed chunk; `Rock and` after the child cut in) | marks those words as said; the entry becomes what Moxie got through only on a clean cut (a prefix and nothing after it), so per-chunk notifies in any order re-assemble the text and a tail piece alone never drops the head |
 | a line the runtime never sent (a module's own line, a child line the turn never heard) | appended; consecutive same-role reports are joined as OpenMoxie's `add_history` joins them (`conversations.py:29-39`), never into the turn's own entry |
 

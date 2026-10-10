@@ -338,7 +338,8 @@ class MemoryMixin:
     # runs, what Moxie was told to say. A notify is reconciled against it:
     #  * a child line equal to the turn's (case and punctuation aside) is already held;
     #  * fillers, and a hello the runtime spoke as chunk 0, are never history (they were
-    #    not before either);
+    #    not before either); an answer that happens to say a filler's words is the turn's
+    #    text and is matched as such;
     #  * a report that is the turn's text, or a run inside it (one streamed chunk, "Rock
     #    and" after the child cut in), marks those words reported; the entry becomes what
     #    the robot says it got through only on a clean cut (a prefix, nothing after it),
@@ -459,18 +460,21 @@ class MemoryMixin:
             rec.covered.update(range(len(rec.keys)))
             changed |= self._apply_coverage(rec)
             for run in (toks[:at], toks[at + len(rec.keys):]):
+                run = self._without_extras(run, rec, beside_text=True)
                 if run:
                     changed |= self._append_reported(device_id, h, "assistant", _words(run))
             return changed
         return self._append_reported(device_id, h, "assistant", _words(toks)) or changed
 
     @staticmethod
-    def _without_extras(toks, rec):
-        """`toks` minus every run that is a filler, or the turn's queued hello, unless that
-        hello opens the turn's own text (the streamed path), where it is matched as text."""
-        extras = list(_FILLER_KEYS)
-        if rec is not None:
-            extras += [e for e in rec.extras if _find(rec.keys, e) < 0]
+    def _without_extras(toks, rec, beside_text=False):
+        """`toks` minus every run that is a filler or the turn's queued hello. A run the
+        turn's own text holds (the hello opening a streamed answer; an answer that happens
+        to say a filler's words) is kept and matched as text, unless `beside_text`: the
+        words around a matched text are outside it, so a filler there is the runtime's."""
+        extras = list(_FILLER_KEYS) + (list(rec.extras) if rec is not None else [])
+        if rec is not None and not beside_text:
+            extras = [e for e in extras if _find(rec.keys, e) < 0]
         out, i = [], 0
         while i < len(toks):
             hit = next((len(e) for e in extras

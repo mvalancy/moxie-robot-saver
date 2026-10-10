@@ -300,6 +300,23 @@ def test_a_streamed_hello_reported_alone_never_becomes_the_turns_only_line(tmp_p
     assert _lines(rt, did) == remembered
 
 
+@pytest.mark.parametrize("spoken_first", [None, FILLER_TEXTS[1], FILLER_TEXTS[0]],
+                         ids=["answer-alone", "after-another-filler", "after-the-same-filler"])
+def test_an_answer_that_says_a_fillers_words_is_still_one_line(tmp_path, spoken_first):
+    """The brain's own answer holds a filler's words mid-sentence and the robot reports
+    it word for word: those words are the turn's text, not a filler, so the report is the
+    turn's line. (Stripped of them, the report was no longer a run in the text and went in
+    as a second Moxie line.) A filler the robot really spoke before the answer, reported
+    in the same notify, is still never history, even when it is the one the answer says."""
+    answer = f"The moon? {FILLER_TEXTS[0]} It is mostly rock."
+    rt, did = _runtime(tmp_path, _Brain(answers={"tell me": answer}))
+    _ask(rt, did, "tell me")
+    want = [("user", "tell me"), ("assistant", answer)]
+    assert _lines(rt, did) == want
+    _notify(rt, did, f"{spoken_first} {answer}" if spoken_first else answer, said="tell me")
+    assert _lines(rt, did) == want
+
+
 # --------------------------------------------------------------------------- #
 # Moxie is authoritative about what it said
 # --------------------------------------------------------------------------- #
