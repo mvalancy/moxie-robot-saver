@@ -8,9 +8,13 @@ into this tree; if any is ever vendored, its MIT license and copyright notice go
 
 **[jbeghtol/openmoxie](https://github.com/jbeghtol/openmoxie)** · MIT · © 2025 Justin Beghtol
 
-Written by a former Embodied engineer and endorsed by Embodied's CEO as the official open-source
-off-ramp, OpenMoxie is the canonical LAN replacement for Moxie's MQTT cloud. Paths below are in their
-repository (commit `c8c2d380efd37d2e83761957587f5d08f73b3a63` where pinned).
+OpenMoxie is the original local replacement for Moxie's MQTT cloud, written so the robot keeps working
+after the shutdown; [its README](https://github.com/jbeghtol/openmoxie#readme) calls itself the
+official repository and warns that openmoxie.org and "OpenMoxie 2.0" are unaffiliated. It is widely
+reported that its author is a former Embodied engineer and that Embodied's CEO endorsed it as the
+official open-source off-ramp; this repo holds no source for that, so treat it as reported, not
+verified. Paths below are in their repository (commit `c8c2d380efd37d2e83761957587f5d08f73b3a63`
+where pinned).
 
 | What we took | Where it comes from in OpenMoxie | Our implementation, and what differs |
 |---|---|---|
@@ -64,5 +68,7 @@ The wider landscape: [`docs/community-research.md`](docs/community-research.md).
 - One self-hosted box for parent app, robot cloud and AI, with any OpenAI-compatible model as the brain.
 - A browser simulator that speaks the real protocol.
 
----
 *If we have used your work and got the credit wrong, please open an issue.*
+
+---
+[Project README](README.md) · [Community research](docs/community-research.md) · [License](LICENSE)

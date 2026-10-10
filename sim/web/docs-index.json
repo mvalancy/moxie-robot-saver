@@ -5,7 +5,7 @@
    "path": "_root/README.md",
    "title": "Moxie Robot Saver",
    "section": "_root",
-   "bytes": 5327,
+   "bytes": 6126,
    "mermaid": 1,
    "headings": [
     "What works today",
@@ -13,6 +13,7 @@
     "Quick start",
     "How it fits together",
     "Repository map",
+    "Contributing",
     "Credits",
     "Legal",
     "License"
@@ -23,7 +24,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap",
    "section": "_root",
-   "bytes": 9424,
+   "bytes": 9007,
    "mermaid": 0,
    "headings": [
     "Definition of done",
@@ -959,12 +960,12 @@
    "path": "README.md",
    "title": "Documentation",
    "section": "docs",
-   "bytes": 3569,
+   "bytes": 4574,
    "mermaid": 0,
    "headings": [
     "Start here",
     "Sections",
-    "Reverse-engineering highlights",
+    "The reverse-engineering study",
     "Maintaining these docs"
    ],
    "kind": "md"
