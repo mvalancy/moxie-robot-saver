@@ -49,7 +49,7 @@ Offline, local Piper is still a first-class engine (`--engine piper`, the defaul
 (`--rerender moxie --rerender ambient`). Otherwise the page speaks in two voices. Child lines are rendered
 only by `--engine piper`.
 
-Size: 5.13 MB for 140 clips (the first 96 were 3.13 MB in this voice, 3.21 MB in Piper amy). Served with `max-age=86400` (`/audio/*` in
+Size: 5.12 MB for 140 clips (the first 96 were 3.13 MB in this voice, 3.21 MB in Piper amy). Served with `max-age=86400` (`/audio/*` in
 [`../_headers`](../_headers)). Not to be confused with [`../voice/`](../voice/README.md), the player code.
 
 📖 [sim/web](../README.md) · [Back to top](../../../README.md)
