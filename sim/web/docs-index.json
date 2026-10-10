@@ -1118,7 +1118,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 1558,
+   "bytes": 1690,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -1183,7 +1183,7 @@
    "path": "guides/bench-runbook.md",
    "title": "Bench runbook: bring a real Moxie onto your server",
    "section": "guides",
-   "bytes": 12067,
+   "bytes": 12186,
    "mermaid": 0,
    "headings": [
     "Before you start",
@@ -1193,6 +1193,32 @@
     "4. Add it to your account",
     "Afterwards",
     "Code reference"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/bench-day-checklist.md",
+   "title": "Bench-day checklist: record the first session with a real Moxie",
+   "section": "guides",
+   "bytes": 19113,
+   "mermaid": 0,
+   "headings": [
+    "Before you start",
+    "Start the recorder",
+    "What the recording cannot see",
+    "The session, in order",
+    "Connect",
+    "Claim and config",
+    "Ears",
+    "Turns",
+    "Actions",
+    "Presence",
+    "Other traffic",
+    "Resilience",
+    "Lifecycle, last",
+    "Not on your only robot",
+    "After the session",
+    "Evidence"
    ],
    "kind": "md"
   },

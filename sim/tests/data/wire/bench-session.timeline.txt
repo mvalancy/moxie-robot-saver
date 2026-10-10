@@ -1,0 +1,39 @@
+Wire timeline: 48 messages over 57.00 s, 2 robot(s). Shareable view: no identity, no words.
+Recorder (no raw audio):
+  0.05 s connected to the broker
+  0.06 s subscribed to /devices/# and $SYS/broker/log/#
+  44.00 s lost the broker (connection lost); reconnecting
+  46.10 s reconnected to the broker
+  46.11 s subscribed to /devices/# and $SYS/broker/log/#
+  57.00 s stopped: stopped by hand (Ctrl-C)
+Broker lines naming no robot:
+  0.40 s New connection from [address] on port [port].
+  56.00 s OpenSSL Error[0]: error:0A000418:SSL routines::tlsv1 alert unknown ca
+
+d_robot-1
+     0.41 s  broker     New client connected from [address] as d_robot-1 (p2, c1, k30).
+     0.61 s  state      first /state: software_version 24.10.803, battery_level 0.82 (2 in all)
+     1.62 s  config     pushed (pairing_status paired); next /state +0.81 s
+     1.63 s  ears       ProtoSubscribe zmqSTTRequest; first audio frame +0.85 s
+     2.48 s  utterance  2f1c9a7e: 1100 ms, rms 0.0300; FINAL with words +0.62 s after END_OF_SPEECH
+     4.40 s  turn       prompt 7f3a1c2e (module FREE_CHAT): no reply; the robot asked again 20.20 s later (reprompt 9b2d4e6f) before this turn closed
+     9.00 s  utterance  3a2b1c0d: 240 ms, rms 0.0040; FINAL empty (heard nothing) +0.15 s after END_OF_SPEECH
+    24.60 s  turn       reprompt 9b2d4e6f (module FREE_CHAT): chunk 0 pending +1.10 s · chunk 1 pending +1.70 s · chunk 2 done +2.40 s; 3 notify reports
+    30.00 s  activity   query schedule; answered +0.05 s
+    31.00 s  turn       prompt 3c4d5e6f (module FREE_CHAT): done +0.90 s; actions exit_module; next request +2.00 s in module HUB
+    33.90 s  vision     eb-found-face (module HUB): result 6 NOREPLY_ACK +0.03 s
+    34.50 s  data       data query 5a6b7c8d: done +0.05 s (1 module)
+    52.00 s  broker     New client connected from [address] as d_robot-1 (p2, c1, k30).
+    52.10 s  broker     Client d_robot-1 already connected, closing old connection.
+    53.00 s  broker     Socket error on client d_robot-1 [address] ([mac]), disconnecting.
+    55.00 s  broker     Client d_robot-1 closed its connection.
+             traffic    robot>cloud: client-service-activity-log x1, device-logs x1, remote-chat x8, state x2, telemetry x1, zmq x10
+             traffic    cloud>robot: config x1, query_result x1, remote_chat x6, tts x3, zmq x3
+
+d_robot-2
+    40.00 s  broker     New client connected from [address] as d_robot-2 (p2, c1, k60).
+    40.30 s  state      first /state: software_version 24.10.801 (1 in all)
+    41.31 s  config     pushed (pairing_status paired); no /state after it
+    50.00 s  broker     Client d_robot-2 closed its connection.
+             traffic    robot>cloud: state x1
+             traffic    cloud>robot: config x1
