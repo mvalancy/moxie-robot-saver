@@ -44,7 +44,7 @@
  */
 import { readConfig, modeOf, publicLimits, publicTurnstile, upstreamHeaders } from "./_lib/env.js";
 import { logRefusal, respond } from "./_lib/envelope.js";
-import { assess, disclosesHurt, handoffRedirectFor, hasReferral, hurtRedirectFor, MOXIE, withReferral } from "./_lib/safety.js";
+import { assess, disclosesHurt, handoffRedirectFor, hurtRedirectFor, MOXIE, pointsToGrownUp, withReferral } from "./_lib/safety.js";
 import { admit, coloOf, hostRefused, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
 import { mintContext, mintTickets, verifyContext } from "./_lib/hmac.js";
 import { TOKEN_FIELD, verify as verifyTurnstile } from "./_lib/turnstile.js";
@@ -216,14 +216,17 @@ export async function onRequestPost(context) {
     //     BEFORE a ticket is minted or the context is signed. A hard block swaps in the
     //     rule's redirect line — or the referral line for a child who disclosed hurt (step
     //     6's verdict), or the hand-off line for a completion that had itself pointed the
-    //     child to a grown-up — spoken from tickets of its own, and marks the turn the way
-    //     an input block is marked. The upstream call was really made, so the units stay
-    //     charged. A soft flag changes nothing. The diagram is rendered on the page, so it
-    //     is read too: one that trips the table is dropped and the spoken reply kept.
+    //     child to a grown-up in any of its sentences (`pointsToGrownUp`, read sentence by
+    //     sentence: the whole-reply rules of `hasReferral` are for the appending decision,
+    //     where the credit is the unsafe error; here the hand-off line is the safe one) —
+    //     spoken from tickets of its own, and marks the turn the way an input block is
+    //     marked. The upstream call was really made, so the units stay charged. A soft flag
+    //     changes nothing. The diagram is rendered on the page, so it is read too: one that
+    //     trips the table is dropped and the spoken reply kept.
     const own = assess(served.text, MOXIE);
     if (own.blocked) {
       return await blocked(cfg, slot, own, {
-        speak: true, text, refer: !!hurt, handoff: hasReferral(served.text, text),
+        speak: true, text, refer: !!hurt, handoff: pointsToGrownUp(served.text, text),
       });
     }
     if (served.diagram && assess(served.diagram, MOXIE).blocked) served.diagram = "";
@@ -383,10 +386,10 @@ async function callGateway(cfg, body, timeoutMs) {
  *
  * `refer` (with `text`, the child's line): the child disclosed hurt, so the line spoken is
  * the referral (`hurtRedirectFor`), never a change of subject. `handoff`: the swapped
- * reply had itself pointed the child to a grown-up, so the line spoken points there too
- * (`handoffRedirectFor`) — without thanking a child who disclosed nothing for telling.
- * `refer` wins when both hold; the self-harm lines already refer and keep precedence over
- * either.
+ * reply had itself pointed the child to a grown-up in some sentence, so the line spoken
+ * points there too (`handoffRedirectFor`) — without thanking a child who disclosed nothing
+ * for telling. `refer` wins when both hold; the self-harm lines already refer and keep
+ * precedence over either.
  *
  * ONE LOG LINE PER BLOCKED TURN (`envelope.js::logRefusal`, as every refusal writes one):
  * route, the closed reason `blocked`, the status and the colo — never the child's line,

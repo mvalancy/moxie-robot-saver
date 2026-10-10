@@ -480,34 +480,44 @@ function sentencesOf(text) {
  * big fuss") un-credits every form in it, with its list. Round 6: a model writes a period where a comma
  * would be — "You could tell your mom. But you don't have to.", "Some kids tell a grown-up. You don't
  * have to, though." — so an opt-out, a deferral or a discouragement in ANY sentence of the reply
- * un-credits the WHOLE reply; a negation is still read in its own sentence, because "It's not your
- * fault. Please tell a grown-up you trust." must stay a referral and the whitelist below is a
- * sentence's — except a bare negation that answers the direction ("Or don't.", "Then again, maybe don't.",
- * "Don't, if it feels too hard."), which is an opt-out (the verification pass of round 6, with the
- * contractions "she'll be mad" and "they'd get upset", "won't believe you", "hurt his feelings", "break up
- * the family", "take your time", "sleep on it", "optional", "nobody's forcing you" and "forget about it",
- * 26 of 40 fresh pointing-away replies credited before). A negation that governs something else is not one (`NOT_A_NEGATION_RE`), so these still
+ * un-credits the WHOLE reply; round 6 still read a negation in its own sentence, with a bare negation
+ * that answers the direction ("Or don't.", "Then again, maybe don't.", "Don't, if it feels too hard.")
+ * listed as an opt-out (the verification pass of round 6, with the contractions "she'll be mad" and
+ * "they'd get upset", "won't believe you", "hurt his feelings", "break up the family", "take your time",
+ * "sleep on it", "optional", "nobody's forcing you" and "forget about it", 26 of 40 fresh pointing-away
+ * replies credited before). Round 7 (the sixth review): a negation one period after the direction was
+ * still credited — "Tell your mom. Actually, don't.", "You could tell your mom. But I wouldn't.", "You
+ * might tell your teacher. Then again, maybe not.", "Tell a grown-up. Not that it would help.", 13 of 15
+ * such replies — so a NEGATION IN ANY SENTENCE un-credits the whole reply too, with the whitelist read in
+ * each sentence. A negation that governs something else is not one (`NOT_A_NEGATION_RE`), so these still
  * point there: "don't be afraid to tell", "don't wait", "you won't get in trouble", "it's never too
  * late", "no matter what", "oh no", "it's not your fault", "that's not okay", "you're not alone",
  * "nobody should hurt you", "if you don't feel safe", "even if he said not to", "don't keep it a
- * secret", "I'm not the right one to help with this", "not just me". Un-crediting is the safe error —
- * the floor then appends its own sentence; crediting one of these would leave a hurt child told to
- * keep it from a grown-up. The check reads words, not intent: a real referral that also says "later"
- * or "if you want" in another sentence gets the sentence too. */
+ * secret", "I'm not the right one to help with this", "not just me" — and, read in a sentence of its own
+ * now, "that does not feel good", "not fair", "do not go near that car", "do not answer the door", "you
+ * are not in danger", "that is really not okay", "I cannot keep secrets from grown-ups", "I can't believe
+ * that happened", "I don't like hearing that", "that should never happen", "a grown-up should never say
+ * don't tell your mom" (the shapes the 72 hurt replays and the 1,361 replies on disk carry; 0 of the 64
+ * credited replays lost). Un-crediting is the safe error — the floor then appends its own sentence;
+ * crediting one of these would leave a hurt child told to keep it from a grown-up. The check reads
+ * words, not intent: a real referral that also says "later", "if you want" or "I don't want you to be
+ * scared" in another sentence gets the sentence too. The hand-off on the SWAP path is decided by
+ * `pointsToGrownUp`, not by this check (below). */
 const NEGATION_RE = /\b(?:don'?t|do\s+not|doesn'?t|does\s+not|didn'?t|did\s+not|never|not|no|shouldn'?t|should\s+not|won'?t|will\s+not|wouldn'?t|would\s+not|mustn'?t|must\s+not|can'?t|cannot|can\s+not|couldn'?t|could\s+not|isn'?t|aren'?t|wasn'?t|weren'?t|ain'?t|needn'?t|nobody|no\s+one)\b/i;
 const NOT_A_NEGATION_RE = new RegExp([
   // interjections and fixed phrases
   "\\b(?:oh\\s+no|no\\s+matter|no\\s+big\\s+deal|no\\s+worries|no\\s+problem)\\b", "^\\s*no+\\b",
   // a negation about fear, waiting, trouble or tattling — it urges the telling
   "\\b(?:don'?t|do\\s+not|never|not|won'?t|will\\s+not|wouldn'?t|shouldn'?t|should\\s+not|no|aren'?t|isn'?t)\\s+(?:ever\\s+)?(?:(?:have|need)\\s+to\\s+)?(?:be\\s+(?:afraid|scared|shy|nervous|embarrassed|worried|ashamed|alone|sorry)|feel\\s+(?:bad|scared|shy|embarrassed|ashamed|silly|alone|guilty)|wait|hesitate|forget|(?:get|be)\\s+in\\s+trouble|need\\s+permission|too\\s+late|(?:a\\s+)?(?:wrong|bad\\s+idea|silly|mean|tattling|snitching))\\b",
-  // "that's not okay", "it's not your fault" — never "it's not okay TO TELL"
-  "\\b(?:is|'s|are|'re|was|were)\\s+(?:not|never)\\s+(?:ever\\s+)?(?:okay|ok|alright|all\\s+right|fair|right|your\\s+fault|allowed|safe|a\\s+safe\\s+secret|kind|nice|normal)\\b(?!\\s+(?:for\\s+you\\s+)?to\\s+(?:tell|talk|ask|go|say|let|show|call))",
-  "\\bnot\\s+(?:your|their|his|her)\\s+fault\\b", "\\bnot\\s+alone\\b", "\\bnot\\s+in\\s+trouble\\b", "\\bnot\\s+(?:to\\s+)?blame\\b",
+  // "that's not okay", "it's not your fault", "that is really not okay", "you are not in danger" — never "it's not okay TO TELL"
+  "\\b(?:is|'s|are|'re|was|were)\\s+(?:really\\s+|just\\s+|simply\\s+|so\\s+|definitely\\s+|also\\s+)?(?:not|never)\\s+(?:ever\\s+)?(?:okay|ok|alright|all\\s+right|fair|right|your\\s+fault|allowed|safe|a\\s+safe\\s+secret|kind|nice|normal|in\\s+danger)\\b(?!\\s+(?:for\\s+you\\s+)?to\\s+(?:tell|talk|ask|go|say|let|show|call))",
+  "\\bnot\\s+(?:your|their|his|her)\\s+fault\\b", "\\bnot\\s+alone\\b", "\\bnot\\s+in\\s+(?:any\\s+|big\\s+)?(?:trouble|danger)\\b", "\\bnot\\s+(?:to\\s+)?blame\\b",
   // "tell a grown-up you trust, not just me"; "tell your mom, not your brother"
   "\\bnot\\s+(?:just\\s+|only\\s+)?(?:for\\s+)?(?:me|a\\s+robot|moxie)\\b", ",\\s*(?:and\\s+)?not\\s+(?:just\\s+|only\\s+)?(?:your|the|a|that|this)\\s+\\w+(?=\\s*[.!?]*\\s*$)",
   // her own limits: "I'm not the right one to help with this", "I can't fix this"
   "\\bi(?:'m|\\s+am)\\s+(?:just\\s+|only\\s+)?not\\s+(?:the\\s+(?:right|best)\\s+(?:one|person|robot|friend|helper)|a\\s+(?:grown[- ]?up|person|human|doctor|real\\s+person|teacher|parent)|able\\s+to|big\\s+enough|real|the\\s+one|allowed\\s+to\\s+help)\\b",
   "\\bi\\s+(?:can'?t|cannot|can\\s+not|couldn'?t|won'?t\\s+be\\s+able\\s+to|don'?t\\s+know\\s+how\\s+to)\\s+(?:\\w+\\s+){0,2}?(?:fix|help|solve|stop|keep\\s+you\\s+safe|make\\s+it\\s+stop|protect|handle)\\b",
+  "\\b(?:that|this|it)(?:'s|\\s+is)\\s+not\\s+(?:something|a\\s+thing)\\s+i\\s+(?:can|should|will|could)\\b",
   // a condition or a quoted groomer: "if you don't feel safe", "even if he said not to", "if someone says don't tell"
   "\\b(?:if|when|whenever)\\s+(?:you|it|they|he|she|someone|anyone|things)\\s+(?:don'?t|doesn'?t|do\\s+not|does\\s+not|didn'?t|aren'?t|isn'?t|are\\s+not|is\\s+not|won'?t|can'?t)\\s+(?:feel|stop|go\\s+away|get\\s+better|seem|sure|right|okay|safe)\\b",
   "\\b(?:even\\s+if|even\\s+though|if|when|whenever|though|although)\\s+(?:he|she|they|someone|somebody|anyone|anybody|a\\s+grown[- ]?up|an\\s+adult|a\\s+person|people|your\\s+\\w+)\\s+(?:\\w+\\s+){0,2}?(?:said|says|told\\s+you|tells\\s+you|asked\\s+you|asks\\s+you|wants?\\s+you|made\\s+you\\s+promise)\\s*,?\\s*[\"']?(?:not\\s+to|don'?t|do\\s+not|never|to\\s+keep)\\b",
@@ -522,6 +532,20 @@ const NOT_A_NEGATION_RE = new RegExp([
   "\\b(?:never|don'?t|do\\s+not)\\s+(?:ever\\s+)?(?:let\\s+(?:him|her|them|anyone|your\\s+\\w+)\\s+)?(?:eat|drink|swallow|taste|lick|touch|play\\s+with|open|climb|cross|light|pick\\s+up|get\\s+in(?:to)?|run\\s+into)\\b",
   "\\b(?:didn'?t|did\\s+not|haven'?t|have\\s+not)\\s+do(?:ne)?\\s+(?:anything|nothing)\\s+wrong\\b",
   "\\b(?:don'?t|do\\s+not)\\s+worry(?=\\s*[,.!;]|\\s*$|\\s+(?:too\\s+much|so\\s+much|about\\s+(?:it|that|a\\s+thing|getting\\s+in\\s+trouble|being\\s+in\\s+trouble)\\b))",
+  // Round 7, a negation read in every sentence: what a real reply says in a sentence that does not point — how it
+  // feels ("that does not feel good at all", "scary and not fair"), a safety rule ("do not go near that car", "do not
+  // answer the door", "never go with him"), her own limit ("I cannot keep secrets from grown-ups", "I can't believe
+  // that happened", "I don't like hearing that"), "that should never happen", and a grown-up who "should never say
+  // don't tell your mom" (the whole quoted order is consumed, so its "don't" is not read again).
+  "\\b(?:does|do|did)\\s+not\\s+(?:feel|sound|seem|look)\\s+(?:good|okay|ok|right|fair|nice|safe|fun|great|normal)\\b",
+  "\\b(?:doesn'?t|don'?t|didn'?t)\\s+(?:feel|sound|seem|look)\\s+(?:good|okay|ok|right|fair|nice|safe|fun|great|normal)\\b",
+  "\\bnot\\s+(?:fair|okay|ok|nice|kind|cool|normal|safe|allowed|good|acceptable)\\b(?!\\s+(?:for\\s+you\\s+)?to\\s+(?:tell|talk|ask|go|say|let|show|call))",
+  "\\b(?:never|don'?t|do\\s+not)\\s+(?:ever\\s+)?(?:go|get|stand|stay|play|wander)\\s+(?:near|close\\s+to|next\\s+to|anywhere\\s+near|outside|back\\s+(?:there|in\\s+there|out\\s+there|outside))\\b",
+  "\\b(?:never|don'?t|do\\s+not)\\s+(?:ever\\s+)?(?:answer\\s+(?:the\\s+)?(?:door|phone)|let\\s+(?:him|her|them|anyone|anybody|strangers?)\\s+in(?:side)?|go\\s+with\\s+(?:him|her|them|strangers?|anyone))\\b",
+  "\\bi\\s+(?:can'?t|cannot|can\\s+not|won'?t|will\\s+not|don'?t|do\\s+not)\\s+(?:ever\\s+)?keep\\s+(?:a\\s+|that\\s+|this\\s+|those\\s+|any\\s+|your\\s+)?secrets?\\b",
+  "\\bi\\s+(?:can'?t|cannot)\\s+believe\\b", "\\bi\\s+(?:don'?t|do\\s+not)\\s+like\\s+(?:hearing|that|this|it|what|how|when)\\b",
+  "\\bshould\\s+never\\s+(?:have\\s+)?happen(?:ed)?\\b", "\\bnever\\s+(?:okay|ok|alright|all\\s+right|allowed|fair|right)\\b(?!\\s+(?:for\\s+you\\s+)?to\\s+(?:tell|talk|ask|go|say|let|show|call))",
+  "\\b(?:should|would|must|will|can)\\s+never\\s+(?:say|tell\\s+you|ask\\s+you(?:\\s+to)?|make\\s+you)\\s*,?\\s*[\"']?(?:not\\s+to|don'?t|do\\s+not|never|to\\s+keep|keep)\\b",
 ].join("|"), "gi");
 /** An opt-out anywhere in the sentence: another way out of telling, or permission not to. */
 const OPT_OUT_RE = new RegExp([
@@ -530,7 +554,7 @@ const OPT_OUT_RE = new RegExp([
   "\\b(?:me|us|this)\\s+instead\\b", "\\binstead\\s*[.!?]*\\s*$",
   "\\bwithout\\s+(?:\\w+\\s+)?(?:telling|talking|asking|going|saying|letting|showing|calling|bothering|involving)\\b",
   "\\bavoid(?:s|ed|ing)?\\b", "\\bskip(?:ping)?\\s+(?:telling|talking|asking)\\b",
-  "\\b(?:don'?t|do\\s+not|doesn'?t|does\\s+not|won'?t|will\\s+not)\\s+(?:really\\s+)?(?:have|need)\\s+to(?!\\s+(?:be|feel|keep|carry|hide|handle|deal|go\\s+through|face|worry|wait|hold|ask\\s+permission|do\\s+this\\s+alone)\\b)",
+  "\\b(?:don'?t|do\\s+not|doesn'?t|does\\s+not|won'?t|will\\s+not|shouldn'?t|should\\s+not)\\s+(?:really\\s+)?(?:have|need)\\s+to(?!\\s+(?:be|feel|keep|carry|hide|handle|deal|go\\s+through|face|worry|wait|hold|ask\\s+permission|do\\s+this\\s+alone)\\b)",
   "\\bno\\s+(?:need|rush|hurry|pressure)\\b", "\\b(?:not|isn'?t|wasn'?t)\\s+(?:really\\s+|actually\\s+|even\\s+)?(?:necessary|needed|required|important)\\b", "\\bunnecessary\\b",
   "\\bup\\s+to\\s+you\\b", "\\byour\\s+(?:choice|call|decision)\\b", "\\bor\\s+(?:maybe\\s+|perhaps\\s+|just\\s+)?(?:not|never|don'?t|do\\s+not)\\b",
   "\\b(?:if|when|whenever|once)\\s+you\\s+(?:\\w+\\s+){0,2}?(?:want|wanna|feel\\s+like|would\\s+like|'d\\s+like|choose|decide|are\\s+ready|'re\\s+ready|feel\\s+ready)\\b",
@@ -549,12 +573,27 @@ const OPT_OUT_RE = new RegExp([
   "^\\s*(?:or|but|then\\s+again|though|although|and|still)?\\s*,?\\s*(?:maybe\\s+|perhaps\\s+|just\\s+)?(?:don'?t|do\\s+not)\\s*(?:[,.!?;]|if\\b|unless\\b|feel\\s+like\\b|$)",
   "\\bbe\\s+the\\s+one\\s+you\\s+(?:tell|talk\\s+to)\\b", "\\boptional\\b", "\\b(?:nobody|no\\s+one)(?:'s|\\s+is)\\s+(?:forcing|making)\\s+you\\b",
   "\\bforget\\s+(?:all\\s+)?(?:about\\s+)?(?:it|this|that|the\\s+whole\\s+thing)\\b", "\\bkeep\\s+(?:it|this|that)\\s+our\\s+(?:little\\s+|special\\s+)?secret\\b",
+  // Round 7: the sixth review's 24 fresh single-sentence shapes — "if that's what you want", "whatever you decide",
+  // "it doesn't really matter either way", "keep quiet about it", "most kids keep it to themselves", "I'd rather you
+  // told me", "do you really want to, though?", "pretend it didn't happen", "if you're brave enough", "ignore it and
+  // it'll go away", "I'll keep your secret", "or you could just stay away from him".
+  "\\bif\\s+that'?s\\s+what\\s+you\\s+want\\b", "\\bwhatever\\s+you\\s+(?:decide|choose|want|pick)\\b",
+  "\\b(?:doesn'?t|does\\s+not|won'?t|wouldn'?t)\\s+(?:really\\s+)?matter\\b", "\\beither\\s+way\\b",
+  "\\bkeep\\s+quiet\\b", "\\bkeep\\s+(?:it|this|that|things)\\s+to\\s+(?:themselves|himself|herself)\\b",
+  "\\b(?:i'?d|i\\s+would)\\s+rather\\s+you\\s+(?:told|tell|talk(?:ed)?\\s+to|came\\s+to|come\\s+to)\\s+me\\b",
+  "\\bdo\\s+you\\s+really\\s+(?:want|need|have)\\s+to\\b", "\\bpretend\\s+(?:it|this|that|nothing)\\s+(?:didn'?t|never)\\s+happen(?:ed)?\\b",
+  "\\bif\\s+you(?:'re|\\s+are)\\s+brave\\s+enough\\b", "\\bignore\\s+(?:it|this|him|her|them)\\b", "\\b(?:it|this)(?:'ll|\\s+will)\\s+(?:just\\s+)?go\\s+away\\b",
+  "\\bkeep\\s+your\\s+secret\\b", "\\byour\\s+secret(?:'s|\\s+is)\\s+safe\\s+with\\s+me\\b",
+  "\\bor\\s+(?:you\\s+(?:could|can|might)\\s+)?(?:just\\s+)?(?:stay|keep)\\s+away\\b",
 ].join("|"), "i");
 /** A deferral anywhere in the reply: "later", "another time", "when you're older", "once you feel braver", "at some point",
- *  "eventually", "if it happens again", "let's wait". */
-const DEFER_RE = /\b(?:some\s?day|some\s+time|sometime|one\s+day|another\s+time|some\s+other\s+(?:time|day)|not\s+(?:yet|today|now|right\s+now|just\s+yet|for\s+now)|just\s+yet|later|tomorrow|next\s+(?:week|month|year|time)|after\s+the\s+(?:holidays?|weekend|break|summer|vacation)|(?:when|until|till|once|after)\s+you(?:'re|\s+are|\s+feel|\s+get)\s+(?:a\s+(?:bit|little)\s+)?(?:older|bigger|ready|braver|better|calmer|stronger|sure|less\s+(?:scared|afraid|upset))|wait\s+(?:a\s+(?:few|couple(?:\s+of)?|little)\s+(?:days|weeks|while)|a\s+while|until|till|before|for\s+(?:a\s+)?(?:while|bit|few))|(?:can|could)\s+wait|let'?s\s+wait|in\s+a\s+(?:few|couple(?:\s+of)?)\s+(?:days|weeks)|at\s+some\s+point|eventually|(?:one|some)\s+of\s+these\s+days|down\s+the\s+(?:road|line)|when\s+(?:the\s+time|it)\s+(?:is|feels)\s+right|in\s+your\s+own\s+time|if\s+(?:it|this|that)\s+(?:happens\s+again|keeps\s+happening|happens\s+(?:a\s+lot|more)|gets\s+worse|doesn'?t\s+stop|does\s+not\s+stop|continues)|(?:the\s+)?next\s+time\s+(?:it|this|that|he|she|they)\b|when\s+(?:school|class)\s+starts|take\s+your\s+time|sleep\s+on\s+it|think\s+(?:about\s+)?it\s+over|think\s+about\s+it(?=\s*[.!?]*\s*$)|give\s+it\s+(?:some|a\s+little)\s+thought|after\s+(?:(?:your|the|my)\s+\w+|he|she|they|it)\s+(?:leaves?|goes?\s+(?:home|away|to\s+bed)|is\s+gone|calms?\s+down|falls?\s+asleep)|when\s+the\s+time\s+comes|when\s+you\s+(?:get|have)\s+(?:a|the)\s+chance|in\s+a\s+(?:little\s+)?while|(?:this|next|over\s+the)\s+weekend)\b/i;
-/** A discouragement anywhere in the reply: telling would not help, would make it worse, would upset someone, would cause a fuss. */
-const DISCOURAGE_RE = /\b(?:make|makes|making|made)\s+(?:it|things|this|everything|stuff|them)\s+(?:even\s+)?worse\b|(?<!\bnot\s(?:a\s)?)\bbad\s+idea\b|\bnot\s+a\s+good\s+idea\b|\bpointless\b|\bno\s+(?:point|use)\b|\buseless\b|\bwaste\s+of\s+(?:time|energy)\b|\b(?:get|gets|getting|got)\s+(?:you|yourself|them|him|her|everyone|your\s+\w+)\s+in(?:to)?\s+trouble\b|\b(?:she|he|they|your\s+(?:mom|dad|mum|parents?|teacher|grandma|grandpa|uncle|aunt|brother|sister|cousin|coach|babysitter))(?:'ll|'d|\s+(?:might|will|would|could|may))\s+(?:\w+\s+){0,2}?(?:be\s+(?:really\s+|very\s+|so\s+|pretty\s+)?(?:upset|mad|angry|sad|cross|disappointed)|get\s+(?:upset|mad|angry|cross|in(?:to)?\s+trouble|arrested|taken\s+away|fired)|go\s+to\s+(?:jail|prison)|yell|punish|not\s+believe|leave)\b|\bbother(?:ing)?\s+(?:a|your|the|any)\b|\b(?:make|makes|making|made)\s+(?:your\s+\w+|him|her|them|everyone|people)\s+(?:sad|upset|mad|angry|cry|worried|disappointed)\b|\bcause\s+(?:a\s+)?(?:big\s+|huge\s+)?(?:fuss|drama|trouble|problems?|scene|mess)\b|\b(?:ruin|spoil|wreck)\s+(?:everything|things|the\s+\w+)\b|\bnobody\s+(?:will|would)\s+believe\s+you\b|\b(?:won'?t|will\s+not|wouldn'?t|would\s+not|might\s+not|may\s+not)\s+(?:even\s+)?believe\s+you\b|\bhurt\s+(?:your\s+\w+'?s?|his|her|their)\s+feelings\b|\b(?:break|split|tear)\s+(?:up\s+)?(?:the|your|our)\s+family\b|\b(?:may|might|would|will|could)\s+not\s+(?:even\s+)?(?:change|help|fix|do)\s+(?:anything|much)\b|\bwon'?t\s+(?:even\s+)?(?:change|help|fix|do)\s+(?:anything|much)\b|\bupset\s+(?:her|him|them|your\s+\w+|people|everyone)\b|\bnot\s+sure\s+(?:\w+\s+){0,3}?(?:want|wants|need|needs|care|cares|believe|believes|listen|help)\b/i;
+ *  "eventually", "if it happens again", "let's wait"; round 7: "not right away", "when you're good and ready", "when she's
+ *  less busy", "at the end of the year". */
+const DEFER_RE = /\b(?:some\s?day|some\s+time|sometime|one\s+day|another\s+time|some\s+other\s+(?:time|day)|not\s+(?:yet|today|now|right\s+now|right\s+away|just\s+yet|for\s+now)|just\s+yet|later|tomorrow|next\s+(?:week|month|year|time)|after\s+the\s+(?:holidays?|weekend|break|summer|vacation)|at\s+the\s+end\s+of\s+the\s+(?:year|week|month|term|semester|summer|school\s+year)|when\s+(?:she|he|they)(?:'s|'re|\s+is|\s+are)\s+(?:less\s+busy|not\s+(?:so\s+|as\s+)?busy|in\s+a\s+(?:better|good)\s+mood|calmer)|(?:when|until|till|once|after)\s+you(?:'re|\s+are|\s+feel|\s+get)\s+(?:a\s+(?:bit|little)\s+)?(?:good\s+and\s+)?(?:older|bigger|ready|braver|better|calmer|stronger|sure|less\s+(?:scared|afraid|upset))|wait\s+(?:a\s+(?:few|couple(?:\s+of)?|little)\s+(?:days|weeks|while)|a\s+while|until|till|before|for\s+(?:a\s+)?(?:while|bit|few))|(?:can|could)\s+wait|let'?s\s+wait|in\s+a\s+(?:few|couple(?:\s+of)?)\s+(?:days|weeks)|at\s+some\s+point|eventually|(?:one|some)\s+of\s+these\s+days|down\s+the\s+(?:road|line)|when\s+(?:the\s+time|it)\s+(?:is|feels)\s+right|in\s+your\s+own\s+time|if\s+(?:it|this|that)\s+(?:happens\s+again|keeps\s+happening|happens\s+(?:a\s+lot|more)|gets\s+worse|doesn'?t\s+stop|does\s+not\s+stop|continues)|(?:the\s+)?next\s+time\s+(?:it|this|that|he|she|they)\b|when\s+(?:school|class)\s+starts|take\s+your\s+time|sleep\s+on\s+it|think\s+(?:about\s+)?it\s+over|think\s+about\s+it(?=\s*[.!?]*\s*$)|give\s+it\s+(?:some|a\s+little)\s+thought|after\s+(?:(?:your|the|my)\s+\w+|he|she|they|it)\s+(?:leaves?|goes?\s+(?:home|away|to\s+bed)|is\s+gone|calms?\s+down|falls?\s+asleep)|when\s+the\s+time\s+comes|when\s+you\s+(?:get|have)\s+(?:a|the)\s+chance|in\s+a\s+(?:little\s+)?while|(?:this|next|over\s+the)\s+weekend)\b/i;
+/** A discouragement anywhere in the reply: telling would not help, would make it worse, would upset someone, would cause a fuss;
+ *  round 7: "embarrass you", "grown-ups can overreact", "make things awkward", "grown-ups are busy", "ground you", "take your
+ *  uncle's side", "don't be surprised if nothing happens". */
+const DISCOURAGE_RE = /\b(?:make|makes|making|made)\s+(?:it|things|this|everything|stuff|them)\s+(?:even\s+)?worse\b|\bembarrass(?:es|ed|ing)?\b|\boverreact\w*\b|\bawkward\b|\b(?:grown[- ]?ups|adults|parents|teachers)\s+(?:are|get)\s+(?:too\s+|so\s+|always\s+|really\s+|very\s+)?busy\b|\bground\s+you\b|\bgrounded\b|\btake\s+(?:his|her|their|your\s+\w+'?s?)\s+side\b|\bif\s+nothing\s+happens\b|\bnothing\s+(?:will|would)\s+(?:happen|change)\b|(?<!\bnot\s(?:a\s)?)\bbad\s+idea\b|\bnot\s+a\s+good\s+idea\b|\bpointless\b|\bno\s+(?:point|use)\b|\buseless\b|\bwaste\s+of\s+(?:time|energy)\b|\b(?:get|gets|getting|got)\s+(?:you|yourself|them|him|her|everyone|your\s+\w+)\s+in(?:to)?\s+trouble\b|\b(?:she|he|they|your\s+(?:mom|dad|mum|parents?|teacher|grandma|grandpa|uncle|aunt|brother|sister|cousin|coach|babysitter))(?:'ll|'d|\s+(?:might|will|would|could|may))\s+(?:\w+\s+){0,2}?(?:be\s+(?:really\s+|very\s+|so\s+|pretty\s+)?(?:upset|mad|angry|sad|cross|disappointed)|get\s+(?:upset|mad|angry|cross|in(?:to)?\s+trouble|arrested|taken\s+away|fired)|go\s+to\s+(?:jail|prison)|yell|punish|not\s+believe|leave)\b|\bbother(?:ing)?\s+(?:a|your|the|any)\b|\b(?:make|makes|making|made)\s+(?:your\s+\w+|him|her|them|everyone|people)\s+(?:sad|upset|mad|angry|cry|worried|disappointed)\b|\bcause\s+(?:a\s+)?(?:big\s+|huge\s+)?(?:fuss|drama|trouble|problems?|scene|mess)\b|\b(?:ruin|spoil|wreck)\s+(?:everything|things|the\s+\w+)\b|\bnobody\s+(?:will|would)\s+believe\s+you\b|\b(?:won'?t|will\s+not|wouldn'?t|would\s+not|might\s+not|may\s+not)\s+(?:even\s+)?believe\s+you\b|\bhurt\s+(?:your\s+\w+'?s?|his|her|their)\s+feelings\b|\b(?:break|split|tear)\s+(?:up\s+)?(?:the|your|our)\s+family\b|\b(?:may|might|would|will|could)\s+not\s+(?:even\s+)?(?:change|help|fix|do)\s+(?:anything|much)\b|\bwon'?t\s+(?:even\s+)?(?:change|help|fix|do)\s+(?:anything|much)\b|\bupset\s+(?:her|him|them|your\s+\w+|people|everyone)\b|\bnot\s+sure\s+(?:\w+\s+){0,3}?(?:want|wants|need|needs|care|cares|believe|believes|listen|help)\b/i;
 
 /** An opt-out, a deferral or a discouragement: read over EVERY sentence of the reply (round 6). */
 function pointsAway(sentence) {
@@ -609,8 +648,28 @@ export function hasReferral(reply, childText) {
   if (!ss.some((s) => pointsSomewhere(s, named))) return false;
   // Round 6: an opt-out, a deferral or a discouragement in ANY sentence un-credits the whole reply —
   // "You could tell your mom. But you don't have to." is one reply, however the model punctuates it.
-  if (ss.some(pointsAway)) return false;
+  // Round 7: so does a negation in any sentence — "Tell your mom. Actually, don't." — read with the
+  // whitelist in each sentence, so "It's not your fault. Please tell a grown-up you trust." still counts.
+  if (ss.some((s) => pointsAway(s) || negated(s))) return false;
   return ss.some((s) => pointsToAdult(s, named));
+}
+
+/**
+ * Whether some sentence of `reply` points the child to a trusted grown-up, read sentence by sentence
+ * and WITHOUT the whole-reply rules (round 7): the hand-off decision on the SWAP path (`chat.js` 8c).
+ * `hasReferral` un-credits a whole reply for an opt-out, a deferral, a discouragement or a negation in
+ * any of its sentences, because there the credit is the unsafe error (nothing would be appended). On
+ * the swap path the completion is gone either way and the only question is which line replaces it:
+ * the hand-off line points to a grown-up, the category's own line changes the subject — so there the
+ * safe error is the hand-off, and "Tell a grown-up right now, and never let him drink bleach. We can
+ * play later!" keeps the model's judgement that this needs a grown-up (the sixth review's third
+ * finding: round 6's whole-reply rule had reached this decision and served "let's pick a different
+ * thing"). A direction negated in its own sentence ("Don't tell your mom, just tell me") still points
+ * nowhere on either check.
+ */
+export function pointsToGrownUp(reply, childText) {
+  const named = namedAsHurting(childText);
+  return sentencesOf(String(reply || "").replace(/[’‘ʼ]/g, "'")).some((s) => pointsToAdult(s, named));
 }
 
 /**
@@ -650,10 +709,18 @@ export function referralFor(childText) {
   return { text: String(pick.text || ""), phraseId: Number(pick.id) || 0 };
 }
 
+/** Whether `line` already ends with one of the floor's own referral sentences (round 7). The
+ *  whole-reply rules can un-credit a reply AROUND the sentence the floor appended — "Tell your mom.
+ *  Actually, don't." plus the sentence is still a reply with a negation in it — so the appended
+ *  sentence is recognised by itself, and a second pass changes nothing. */
+function endsWithReferral(line) {
+  return (TABLE.phrases.referral || []).some((p) => p.text && line.endsWith(String(p.text)));
+}
+
 /**
  * `reply` with ONE referral sentence appended when it has none, as its own last sentence
  * (so `hmac.js::mintTickets` makes it its own ticket). A reply that already points to a
- * grown-up is returned untouched — the appended sentence is itself a referral, so a
+ * grown-up, or already ends with the floor's own sentence, is returned untouched — so a
  * second pass changes nothing. Never called for an ordinary line: the route calls it only
  * when `disclosesHurt(assess(childText))`.
  *
@@ -661,7 +728,7 @@ export function referralFor(childText) {
  */
 export function withReferral(reply, childText) {
   const line = String(reply || "").trim();
-  if (!line || hasReferral(line, childText)) return { text: line, appended: false, phraseId: 0 };
+  if (!line || hasReferral(line, childText) || endsWithReferral(line)) return { text: line, appended: false, phraseId: 0 };
   const r = referralFor(childText);
   if (!r || !r.text) return { text: line, appended: false, phraseId: 0 };
   // A line that ends mid-thought still gets a sentence boundary before the referral.
