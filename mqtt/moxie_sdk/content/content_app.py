@@ -48,8 +48,9 @@ from . import ext
 from .. import presence as _presence
 from .ext_host import (_action_key, apply_ext_effects, _clock_local, _ext_digest,
     EXT_EVENTS_CAP, EXT_EVENTS_COLLECTION, ext_facts, ext_namespace, execution_actions_of,
-    full_key_of, literal_actions, REFUSED_TAG_REASON, REFUSED_TAG_WORDS,
-    SHIPPED_EXTRA_GRANTS, shipped_ext_digests, subscriptions_of)
+    full_key_of, literal_actions, pack_spoken, refused_command_reason, refused_command_words,
+    REFUSED_TAG_REASON, REFUSED_TAG_WORDS, SHIPPED_EXTRA_GRANTS, shipped_ext_digests,
+    subscriptions_of)
 from .ext_host import robot_events, robot_functions  # noqa: F401  (re-exported surface)
 
 
@@ -223,6 +224,10 @@ class ContentApp(MoxieApp):
         #: name, taken out (`ext_host.apply_ext_effects`). Counted apart from breaches: a
         #: refusal never quarantines.
         self._ext_refusals: dict = {}
+        #: `{(device_id, item_id): marks cut}`: catalogue commands pack content may not send
+        #: (a system verb first among them), cut from a line, an opener or a markup by the
+        #: pack gate (`ext_host.pack_line`, `pack_spoken`, `pack_markup`). Never quarantines.
+        self._ext_commands_refused: dict = {}
         #: Already-reported `(device_id, extension_id, reason)`: one event per problem.
         self._ext_reported: set = set()
         #: `{digest: literal_actions(program)}`, the tags each rule of a program wrote whole,
@@ -348,6 +353,23 @@ class ContentApp(MoxieApp):
                               f"no such thing; the line was said without them",
                          quarantined=self._ext_quarantined(device_id, ext_id))
 
+    def _ext_commands(self, device_id: str, ext_id: str, verbs: list, *, hook: str) -> None:
+        """A line, an opener or a markup carried a catalogue command pack content may not
+        send (the system verbs first among them), so the pack gate cut it: count it and
+        tell the parent once per robot, item and verb (`reason` is `command:<verb>`), as a
+        breach is told. Not a breach: the line was said without the mark and the turn went
+        on, so it never counts towards quarantine. The verb is the catalogue's own, never
+        author text (`ext_host._reported_verb`)."""
+        key = (device_id, ext_id)
+        self._ext_commands_refused[key] = self._ext_commands_refused.get(key, 0) + len(verbs)
+        what = "says first" if hook == "opener" else "said"
+        for verb in dict.fromkeys(verbs):
+            self._ext_report(device_id, ext_id, hook=hook, reason=refused_command_reason(verb),
+                             sentence=refused_command_words(verb),
+                             line=f"took the robot command {verb} out of what it {what}: pack "
+                                  f"content may not send it; said without it",
+                             quarantined=self._ext_quarantined(device_id, ext_id))
+
     def _ext_report(self, device_id: str, ext_id: str, *, hook: str, reason: str,
                     sentence: str, line: str, quarantined: bool) -> None:
         """Tell the parent once per (device, extension, reason), never the child: one log
@@ -438,6 +460,8 @@ class ContentApp(MoxieApp):
                                   allowed=self._ext_allowed(digest, block, result.rule))
         if stats["refused"]:
             self._ext_refused(device_id, ext_id, stats["refused"], hook=hook)
+        if stats["commands"]:
+            self._ext_commands(device_id, ext_id, stats["commands"], hook=hook)
         for line in result.notes:
             print(f"[ext] {ext_id}: {line}", flush=True)
         return result
@@ -451,8 +475,14 @@ class ContentApp(MoxieApp):
         hears the first alternative first (`pick_opener`). `<opener>` is stripped, and
         `<exit>`, `<sleep>` or `<launch:…>` become actions only when written whole in the
         alternative said, as its pack review names them; no tag of ours is said
-        (`said_opener`). The same for every opener, shipped or imported: the shipped ones
-        write no tag."""
+        (`said_opener`). A catalogue mark in the line, written or formed as the template
+        rendered (the child's name included), reaches the robot only if pack content may
+        send it (`ext_host.pack_spoken`: a mark this appliance could have minted itself, an
+        expressive verb with catalogue ids the catalogue's pattern reads whole; a system
+        verb never), and the parent is told of each verb cut. The same for
+        every opener, shipped or imported: the shipped ones write no tag and no mark. An
+        opener that was only a mark is still the reply, said as nothing, as one that was
+        only a tag of ours is: the model is not asked."""
         if conv is None or not conv.opener:
             return None
         context = {"volley": volley or self._volley(Turn(robot=robot, speech="")),
@@ -464,6 +494,12 @@ class ContentApp(MoxieApp):
         alternative, line = picked
         self._last_opener[device_id] = line
         text, actions = said_opener(alternative, line)
+        text, refused = pack_spoken(text)
+        text = tidy_spoken_text(text)
+        if refused:
+            self._ext_commands(device_id, full_key_of("conversation",
+                                                      f"{conv.module_id}/{conv.content_id}"),
+                               refused, hook="opener")
         return Reply(text=text, actions=actions)
 
     # ---- MoxieApp ----

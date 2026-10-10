@@ -185,6 +185,17 @@ REVIEWED: dict = {
         "took 2.1-3.7 s a turn on the nests. Without round 10's mark rule (round 9's code) "
         "the review's shape took 0.33-0.48 s, under the bound; the test fails that on what "
         "it sends."),
+    "sim/tests/test_pack_markup_gate.py::test_a_line_of_pieces_nested_past_the_gates_rounds_is_not_spoken": (
+        ("time.perf_counter",), "RELATIVE — 0.5 s for two passes over a nest a dozen levels "
+        "deep, measured in microseconds, also enforced by a hard 5 s alarm: each round is "
+        "linear and the rounds are capped at PACK_GATE_ROUNDS, while a gate that read a nest "
+        "once per level would grow with the nest."),
+    "sim/tests/test_pack_markup_gate.py::test_validate_markup_is_linear_in_its_text": (
+        ("time.perf_counter",), "RELATIVE — 0.25 s for 256 KB measured in a few ms, and a "
+        "ratio of 40x between 32 and 256 KB where linear is 8x, both also enforced by a hard "
+        "5 s alarm: load multiplies a linear read, while every shape that was super-linear "
+        "took 119 ms or more at 32 KB on origin/dev (7.6 s or more at 256 KB; the cubic one "
+        "20 s at 32 KB), measured on the build host."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}
