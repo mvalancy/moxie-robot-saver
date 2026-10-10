@@ -578,21 +578,23 @@ answers (`memory.py::_remember`), because the browser SIM and every double in th
 every exchange was held twice: the brain's window held half the real conversation, the transcript cap
 kept half the exchanges, and the goodbye summary read a doubled transcript. Now each turn has a
 record (the child's line, the hello queued for it, and, once answered, what Moxie was told to say),
-the records of the turns the robot has not reported yet are kept (oldest first, eight at most), and a
+the records from the last turn the robot reported onward are kept (oldest first, eight at most), and a
 notify is reconciled against them (`memory.py`, "the robot's notify"):
 
 | the notify carries | and history |
 |---|---|
-| a child line one of those turns answered (case and punctuation aside) | already holds it: nothing added, whether that turn is the current one or an earlier speech window answered as a turn of its own and reported together with this one |
+| a child line one of those turns answered (case and punctuation aside) | already holds it: nothing added, whether that turn is the current one or an earlier speech window answered as a turn of its own and reported together with this one; when the line names several turns (the child said "no" twice), the report is the turn whose text holds Moxie's reported words all unreported (a cut-off answer said again whole starts over inside words already reported: the next such turn, not the cut one), among equals the oldest not reported in full, since reports arrive in order |
 | a child line no turn of ours answered (the earlier of several windows in one prompt, which the runtime answers by its last) | joins the child's line of the turn it was reported with, in the order reported, as OpenMoxie's `add_history` joins consecutive child lines (`conversations.py:29-39`); listed again by a later report, it joins nothing twice; with no such turn (a module's own conversation) it is appended as reported |
 | a filler, or the hello the runtime spoke as chunk 0 | never history (it was not before either); an answer that happens to say a filler's words is the turn's text and is matched as such |
-| a turn's text, or a run inside it (one streamed chunk; `Rock and` after the child cut in) | marks those words as said, words not yet reported first; the entry becomes what Moxie got through only on a clean cut (a prefix and nothing after it), so per-chunk notifies in any order re-assemble the text and a tail piece alone never drops the head; a report holding a turn's whole text with words around it marks the text and reconciles the rest the same way (the previous turn's answer spoken in the same breath is matched; a line of the robot's own is appended) |
+| a turn's text, or a run inside it (one streamed chunk; `Rock and` after the child cut in) | marks those words as said, on the turn they fit best (the oldest holding them all unreported, else the oldest holding some of them, else a repeat); the entry becomes what Moxie got through only on a clean cut (a prefix and nothing after it), so per-chunk notifies in any order re-assemble the text and a tail piece alone never drops the head; a report holding a turn's whole text with words around it marks the text (on the turn least reported) and reconciles the rest the same way (the previous turn's answer spoken in the same breath is matched; a line of the robot's own is appended) |
 | a line the runtime never sent (a module's own line) | appended, word by word as compared (markup tags out, whitespace collapsed); consecutive same-role reports are joined as `add_history` joins them, never into a turn's own entry |
 
-A report that names a turn means the robot has reported past the older turns it accounted for
-(named by that report, or fully reported before), which are dropped: each turn's own report consumes
-its record, so a line the child really says twice is two lines, and a turn the robot has reported
-past never absorbs a later line that happens to repeat its words. A notify that arrives while the
+The robot speaks in order, so a report that names a turn (by the child's line or by Moxie's words)
+means every older turn is over, whether the robot reported it in full, in part (the child cut in) or
+never (a reply it skipped): all of them are dropped. A turn is matched only until the robot reports
+the next one; a line the child really says twice is two lines; a cut-off turn keeps its cut whatever
+is said later, and the child repeating its question is a new line, not one already held. A robot
+that never notifies retires nothing and keeps the eight newest records. A notify that arrives while the
 turn is still open (the robot speaks chunk 0 before the stream closes) is held and reconciled when
 the turn is remembered; a report of a completed turn that lands after the child's next prompt is held
 the same way and then matched to the turn it names. If the open turn never closes (superseded, its
