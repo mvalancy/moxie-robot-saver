@@ -35,6 +35,8 @@ const HURT = "i fell off my bike and my arm is bleeding";
 const GAME = "and what is your favorite game?";
 const FOOD = "and your favorite food?";
 const DAD = "my dad hits me";
+/** A disclosure typed LATER, answered with a served two-sentence referral (reason null), §13x. */
+const UNCLE = "my uncle hurts me";
 const THREE = "I chased a sunbeam. Then I counted dust. Then I had a nap.";
 const PLAY = "Hide and seek, in the dark. I always win.";
 const BOLTS = "Sparkly bolts, crunchy ones.";
@@ -43,10 +45,11 @@ const REDIRECT = "Ouch, that sounds like it really hurts. Please go and tell a g
 /** A SERVED reply ending on a grown-up referral: reason null, voiced like any reply (#327's
  *  shape for a soft hurt disclosure, the PR's honest gap: held like any reply). */
 const REFER = "I am so sorry that happened to you. Please tell a grown-up you trust, like a teacher, today.";
+const REFER2 = "That is not okay, and it is not your fault. Please tell a grown-up you trust right away.";
 /** Each sentence's length, which names its sound (a cloud chunk is recorded by its duration). */
 const DUR = { "sim-day": [2.3, 2.4, 2.5], "sim-game": [1.5, 1.6], "sim-food": [1.7], "sim-dad": [2.1, 2.2] };
-/** Production-like sentence lengths (§13t). */
-const PROD = { "sim-day": [3.1, 3.6, 4.1], "sim-game": [2.5, 2.8], "sim-dad": [2.9, 3.3] };
+/** Production-like sentence lengths (§13t; the food and uncle answers are §13x's). */
+const PROD = { "sim-day": [3.1, 3.6, 4.1], "sim-game": [2.5, 2.8], "sim-dad": [2.9, 3.3], "sim-food": [1.7], "sim-ref": [2.6, 3.0] };
 const name = (s, dur = DUR) => {
   for (const [eid, ds] of Object.entries(dur)) { const k = ds.findIndex((d) => Math.round(d * 1000) === s.dur); if (k >= 0) return eid.slice(4) + k; }
   return s.kind;
@@ -76,8 +79,9 @@ const blocked = (over) => said(REDIRECT, "sim-safe", Object.assign({ ok: true, d
 /** A served two-sentence answer to the game line, and a one-sentence one to the food line. */
 const game = (over) => said(PLAY, "sim-game", Object.assign({ speech: tix("sim-game", 2), context: "CTX-game" }, over || {}));
 const food = () => said(BOLTS, "sim-food", { speech: tix("sim-food", 1), context: "CTX-food" });
-/** The served two-sentence referral to the dad line. */
+/** The served two-sentence referral to the dad line, and the one to the uncle line (§13x). */
 const referral = () => said(REFER, "sim-dad", { speech: tix("sim-dad", 2), context: "CTX-dad" });
+const referral2 = () => said(REFER2, "sim-ref", { speech: tix("sim-ref", 2), context: "CTX-ref" });
 /** What was cut, and when: her cloud voice, or the browser voice. */
 const cutsAt = (w, t0) => w.spy.cuts.map((c) => (c.text ? "browser" : "cloud") + "@" + (c.t - t0));
 
@@ -1045,55 +1049,58 @@ for (const [line, eid, answer] of [[GAME, "sim-game", game], [DAD, "sim-dad", re
  *      line's redirect held for the ears (the tap at 6.0 s, before it lands), which on
  *      origin/dev too was spoken under the pretend clip.
  * =========================================================================== */
+const CHILD_LINES = Object.keys(MANIFEST.child || {});
+const hosted = (other) => (path, body, spy) => (path === "/api/health" ? { status: 200, json: envelope({ ears: true }) } : other(path, body, spy));
+/** Production-like timings; `refuse` the voice of one event (a 429 after 1.5 s); `slow` one
+ *  chunk's synthesis; `stt` what /api/transcribe answers after 1.5 s; `block` how long the
+ *  route takes to block the hurt line (1.8 s as a model call; 0.2 s as the model-free input
+ *  block, §13x). The food and uncle answers are §13x's later lines. */
+const degraded = (o) => hosted((path, body) => {
+  if (path === "/api/chat") {
+    if (body.text === DAY) return Object.assign(said(THREE, "sim-day", { speech: tix("sim-day", 3), context: "CTX-day" }), { delayMs: 1800 });
+    if (body.text === GAME) return Object.assign(game(), { delayMs: 1800 });
+    if (body.text === DAD) return Object.assign(referral(), { delayMs: 1800 });
+    if (body.text === FOOD) return Object.assign(food(), { delayMs: 1800 });
+    if (body.text === UNCLE) return Object.assign(referral2(), { delayMs: 1800 });
+    return Object.assign(blocked(), { delayMs: o.block || 1800 });
+  }
+  if (path === "/api/speech") {
+    const [, eid, k] = ticketOf(body);
+    if (eid === o.refuse) return { status: 429, json: envelope({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "live" }), delayMs: 1500 };
+    return voicedChunk(eid, Number(k), { delayMs: o.slow && o.slow[0] === eid && o.slow[1] === Number(k) ? o.slow[2] : 2000, seconds: PROD[eid][Number(k)] });
+  }
+  if (path === "/api/transcribe") return o.stt === 429
+    ? { status: 429, json: envelope({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "live" }), delayMs: 1500 }
+    : { status: 503, json: envelope({ ok: false, degraded: true, reason: "upstream_down", mode: "live" }), delayMs: 1500 };
+  return { status: 404, text: "" };
+});
+/** The page, with a clip fetch that lands `o.clip` virtual ms later (30 by default: a browser fetch is never same-tick). */
+const pageWith = async (o) => {
+  const p = await bootPage({ answer: degraded(o) });
+  const real = globalThis.fetch;
+  globalThis.fetch = (url, init) => (/audio\/(?!index\.json)/.test(String(url)) ? new Promise((r) => globalThis.setTimeout(() => r(real(url, init)), o.clip || 30)) : real(url, init));
+  return p;
+};
+/** Tap Listen, talk 1.2 s, fall silent: the auto-stop sends the clip 1.1 s on, refused 1.5 s later (the ears done 3.85 s after the tap). */
+const talk = async (p) => {
+  p.mic.toggle();
+  await advance(50);
+  for (let i = 0; i < 4; i++) { p.level(0.09); await advance(300); }
+  p.level(0.001);
+};
+/** Every sound as [name, start, end], the end where it was cut if it was: her sentences by
+ *  length, the stand-in and the redirect by text, the pretend line's child clip and the stub
+ *  answer's clip by their shipped bytes. */
+const lenOf = (s) => (s.kind === "browser" ? 70 * s.text.length : s.kind === "clip" ? Math.round((s.bytes * 8) / 64) : s.dur);
+const played = (w, t0, pretend, answer) => w.spy.sounds.map((s) => {
+  const c = w.spy.cuts.find((x) => (s.kind === "browser" ? x.text === s.text : x.id === s.id) && x.t >= s.t);
+  const n = s.kind === "browser" ? (s.text === REDIRECT ? "redirect" : s.text === PLAY ? "stand-in" : "browser")
+    : s.kind === "clip" ? (s.bytes === clipBytes(pretend, "child") ? "child-clip" : s.bytes === clipBytes(answer, "moxie") ? "stub-clip" : "clip") : name(s, PROD);
+  return [n, s.t - t0, Math.min(s.t + lenOf(s), c ? c.t : Infinity) - t0];
+});
+const overlapping = (rows) => { let n = 0; for (let i = 0; i < rows.length; i++) for (let j = 0; j < i; j++) if (rows[j][2] > rows[i][1]) n++; return n; };
+const pretendOf = (w) => w.spy.transcript.find((t) => CHILD_LINES.includes(t)) || "";
 {
-  const CHILD_LINES = Object.keys(MANIFEST.child || {});
-  const hosted = (other) => (path, body, spy) => (path === "/api/health" ? { status: 200, json: envelope({ ears: true }) } : other(path, body, spy));
-  /** Production-like timings; `refuse` the voice of one event (a 429 after 1.5 s); `slow`
-   *  one chunk's synthesis; `stt` what /api/transcribe answers after 1.5 s. */
-  const degraded = (o) => hosted((path, body) => {
-    if (path === "/api/chat") {
-      if (body.text === DAY) return Object.assign(said(THREE, "sim-day", { speech: tix("sim-day", 3), context: "CTX-day" }), { delayMs: 1800 });
-      if (body.text === GAME) return Object.assign(game(), { delayMs: 1800 });
-      if (body.text === DAD) return Object.assign(referral(), { delayMs: 1800 });
-      return Object.assign(blocked(), { delayMs: 1800 });
-    }
-    if (path === "/api/speech") {
-      const [, eid, k] = ticketOf(body);
-      if (eid === o.refuse) return { status: 429, json: envelope({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "live" }), delayMs: 1500 };
-      return voicedChunk(eid, Number(k), { delayMs: o.slow && o.slow[0] === eid && o.slow[1] === Number(k) ? o.slow[2] : 2000, seconds: PROD[eid][Number(k)] });
-    }
-    if (path === "/api/transcribe") return o.stt === 429
-      ? { status: 429, json: envelope({ ok: false, degraded: true, reason: "rate_limited", retry_after_s: 20, mode: "live" }), delayMs: 1500 }
-      : { status: 503, json: envelope({ ok: false, degraded: true, reason: "upstream_down", mode: "live" }), delayMs: 1500 };
-    return { status: 404, text: "" };
-  });
-  /** The page, with a clip fetch that lands 30 virtual ms later (a browser fetch is never same-tick). */
-  const pageWith = async (o) => {
-    const p = await bootPage({ answer: degraded(o) });
-    const real = globalThis.fetch;
-    globalThis.fetch = (url, init) => (/audio\/(?!index\.json)/.test(String(url)) ? new Promise((r) => globalThis.setTimeout(() => r(real(url, init)), 30)) : real(url, init));
-    return p;
-  };
-  /** Tap Listen, talk 1.2 s, fall silent: the auto-stop sends the clip 1.1 s on, refused 1.5 s later (the ears done 3.85 s after the tap). */
-  const talk = async (p) => {
-    p.mic.toggle();
-    await advance(50);
-    for (let i = 0; i < 4; i++) { p.level(0.09); await advance(300); }
-    p.level(0.001);
-  };
-  /** Every sound as [name, start, end], the end where it was cut if it was: her sentences by
-   *  length, the stand-in and the redirect by text, the pretend line's child clip and the stub
-   *  answer's clip by their shipped bytes. */
-  const lenOf = (s) => (s.kind === "browser" ? 70 * s.text.length : s.kind === "clip" ? Math.round((s.bytes * 8) / 64) : s.dur);
-  const played = (w, t0, pretend, answer) => w.spy.sounds.map((s) => {
-    const c = w.spy.cuts.find((x) => (s.kind === "browser" ? x.text === s.text : x.id === s.id) && x.t >= s.t);
-    const n = s.kind === "browser" ? (s.text === REDIRECT ? "redirect" : s.text === PLAY ? "stand-in" : "browser")
-      : s.kind === "clip" ? (s.bytes === clipBytes(pretend, "child") ? "child-clip" : s.bytes === clipBytes(answer, "moxie") ? "stub-clip" : "clip") : name(s, PROD);
-    return [n, s.t - t0, Math.min(s.t + lenOf(s), c ? c.t : Infinity) - t0];
-  });
-  const overlapping = (rows) => { let n = 0; for (let i = 0; i < rows.length; i++) for (let j = 0; j < i; j++) if (rows[j][2] > rows[i][1]) n++; return n; };
-  const pretendOf = (w) => w.spy.transcript.find((t) => CHILD_LINES.includes(t)) || "";
-
   // (i) An ordinary answer, kept by the tap; the ears refuse the clip (503).
   {
     const p = await pageWith({ stt: 503 });
@@ -1199,5 +1206,200 @@ for (const [line, eid, answer] of [[GAME, "sim-game", game], [DAD, "sim-dad", re
          "13w (iv): THE REDIRECT IS HEARD WHOLE (9.85-17.55 s), then the child clip (17.58 s), then the stub answer (origin/dev and the head before this: the clip at 9.88 s and the stub at 10.33 s, over it)");
     deep([overlapping(played(w, t0, line, answer)), T().scriptedWaited, w.spy.transcript], [0, 1, [DAY, THREE, HURT, line, REDIRECT, answer]],
          "13w (iv): no two sounds overlap; the pretend line waited for a reply in hand; the log in order");
+  }
+}
+
+/* =========================================================================== *
+ * 13x. …AND THE PRETEND LINE YIELDS TO A LINE THE CHILD SENDS AFTER IT (the W4-S7 review,
+ *      round 4). The Ask box stays open while the Listen button is held, and a line typed
+ *      while the kept answer played found the pretend exchange waiting its turn as the
+ *      newest line, which it no longer was: its stub answer ended every open pipeline (the
+ *      typed line's answer lost, a served grown-up referral among them: 120 of 882 runs),
+ *      its stop cut a redirect (46), and the clip and the stub started over a reply that
+ *      began during the clip's fetch (25) — where origin/dev, saying the exchange at once,
+ *      heard every one whole. Now the pretend line is said only if, when its turn comes, it
+ *      is still the newest line (none sent, no turn POSTed, since it was composed), and its
+ *      stub answer only if none was sent during the clip; dropped, its row stays
+ *      (`scriptedDropped`). The whole page with the real mic.js, as §13w: the tap at 8.5 s
+ *      keeps the answer, the ears refuse the clip, the clip fetch 30 or 300 virtual ms.
+ * =========================================================================== */
+{
+  /** §13w's setup: her day, the early line at 5.0 s, the tap at 8.5 s, the child talking
+   *  1.2 s; then the clip refused and the pretend line composed (12.35 s). Returns it. */
+  const kept = async (p, line) => {
+    globalThis.window.moxieTypedTurn.send(DAY);
+    await advance(5000);
+    globalThis.window.moxieTypedTurn.send(line);
+    await advance(3500);
+    await talk(p);
+    await advance(3850 - 1250 + 10);                   // t+12.36 s: the ears are done; the pretend line is composed
+    return pretendOf(p.world);
+  };
+  const clips = (w) => w.spy.sounds.filter((s) => s.kind === "clip").length;   // the child clip and the stub answer's clip
+
+  // (i) The review's own example: an ordinary answer kept (503); "my uncle hurts me" typed
+  //     at 15.0 s, while she says it. Its served referral is heard whole, at origin/dev's
+  //     time (18.8 s), and the pretend exchange is dropped the moment its turn comes (17.65 s,
+  //     her last sentence over). Before: the stub answer at 18.23 s superseded the referral's
+  //     pipeline, its first sentence (landing 18.8 s) dropped, its words only in the log.
+  {
+    const p = await pageWith({ stt: 503, clip: 30 });
+    const w = p.world, t0 = now();
+    const line = await kept(p, GAME);
+    await advance(2640);                               // t+15.0 s
+    globalThis.window.moxieTypedTurn.send(UNCLE);
+    await advance(2640);                               // t+17.64 s
+    deep([T().scriptedDropped, heard(w, t0, PROD)], [0, ["day0@3800", "day1@6900", "game0@12350", "game1@14850"]],
+         "13x (i): at 17.64 s the kept answer's last sentence plays and the pretend line still waits its turn");
+    await advance(20);                                 // t+17.66 s
+    eq(T().scriptedDropped, 1, "13x (i): THE PRETEND LINE IS DROPPED THE MOMENT ITS TURN COMES (17.65 s, her last sentence over): a line was sent since it was composed");
+    await advance(15000);
+    deep(played(w, t0, line, ""),
+         [["day0", 3800, 6900], ["day1", 6900, 8500], ["game0", 12350, 14850], ["game1", 14850, 17650], ["ref0", 18800, 21400], ["ref1", 21400, 24400]],
+         "13x (i): THE REFERRAL IS HEARD WHOLE (18.8-24.4 s, as on origin/dev), and the pretend line's child clip and stub answer are never said (before: no referral at all; the clip at 17.78 s and the stub at 18.23 s)");
+    deep([overlapping(played(w, t0, line, "")), w.spy.cuts.length, clips(w)], [0, 1, 0], "13x (i): no two sounds overlap; the one cut is the tap's own; nothing of the pretend exchange played");
+    deep(w.spy.transcript, [DAY, THREE, GAME, line, PLAY, UNCLE, REFER2], "13x (i): the log: the pretend row stays (shown at once), then her kept answer, the uncle line, its referral");
+    deep([T().scriptedDropped, T().scriptedWaited, T().fallbacks, T().chunksSuperseded, T().lateSpeechDropped, T().parked], [1, 1, 0, 0, 0, 1],
+         "13x (i): recorded: one pretend line dropped (it had waited for a reply in hand); no stub answer composed; nothing superseded or dropped; the answer kept by the tap");
+  }
+
+  // (ii) A hurt line typed at 16.0 s, her last sentence playing and nothing in flight: its
+  //      redirect is said when it lands (17.8 s) and heard whole; the pretend line is dropped
+  //      at its turn (17.65 s: the hurt turn was POSTed since). Before: the stub answer cut the
+  //      redirect at 18.23 s, 0.4 s in.
+  {
+    const p = await pageWith({ stt: 503, clip: 30 });
+    const w = p.world, t0 = now();
+    const line = await kept(p, GAME);
+    await advance(3640);                               // t+16.0 s
+    globalThis.window.moxieTypedTurn.send(HURT);
+    await advance(15000);
+    deep(played(w, t0, line, ""),
+         [["day0", 3800, 6900], ["day1", 6900, 8500], ["game0", 12350, 14850], ["game1", 14850, 17650], ["redirect", 17800, 25500]],
+         "13x (ii): THE REDIRECT IS HEARD WHOLE (17.8-25.5 s), nothing of the pretend exchange before, under or after it (before: cut at 18.23 s by the stub answer)");
+    deep([overlapping(played(w, t0, line, "")), w.spy.cuts.length, clips(w), T().scriptedDropped, T().fallbacks, w.spy.transcript],
+         [0, 1, 0, 1, 0, [DAY, THREE, GAME, line, PLAY, HURT, REDIRECT]],
+         "13x (ii): no two sounds overlap; the one cut is the tap's own; nothing of the pretend exchange played; one pretend line dropped, no stub answer composed; the log in order");
+  }
+
+  // (iii) …and typed at 15.0 s, her last sentence playing: the redirect cuts that sentence at
+  //       16.8 s (a line sent with nothing in flight, as today: honest gap 1) and the pretend
+  //       line, whose turn comes as she falls quiet, is dropped there — a line was sent since
+  //       it was composed, though its turn is already settled (the clip fetch 300 ms). Before:
+  //       the child clip and the stub answer followed the redirect (24.9 s).
+  {
+    const p = await pageWith({ stt: 503, clip: 300 });
+    const w = p.world, t0 = now();
+    const line = await kept(p, GAME);
+    await advance(2640);                               // t+15.0 s
+    globalThis.window.moxieTypedTurn.send(HURT);
+    await advance(1790);                               // t+16.79 s
+    deep([T().scriptedDropped, cutsAt(w, t0)], [0, ["cloud@8500"]], "13x (iii): at 16.79 s her last sentence still plays and the pretend line still waits");
+    await advance(20);                                 // t+16.81 s: the redirect landed at 16.8 s and cut her
+    deep([T().scriptedDropped, cutsAt(w, t0)], [1, ["cloud@8500", "cloud@16800"]],
+         "13x (iii): THE REDIRECT CUTS HER LAST SENTENCE AT 16.8 s (a line sent with nothing in flight, as today) AND THE PRETEND LINE, ITS TURN COME, IS DROPPED THERE: a line was sent since it was composed, though its turn is already settled");
+    await advance(15000);
+    deep(played(w, t0, line, ""),
+         [["day0", 3800, 6900], ["day1", 6900, 8500], ["game0", 12350, 14850], ["game1", 14850, 16800], ["redirect", 16800, 24500]],
+         "13x (iii): the redirect heard whole (16.8-24.5 s), nothing of the pretend exchange after it (before: the child clip at 24.9 s, then the stub answer)");
+    deep([overlapping(played(w, t0, line, "")), clips(w), T().fallbacks], [0, 0, 0], "13x (iii): no two sounds overlap; nothing of the pretend exchange played; no stub answer composed");
+  }
+
+  // (iv) A served referral kept (429), the clip fetch 300 ms; an ordinary line typed at
+  //      15.0 s: its answer, landing as she falls quiet, is heard whole (18.8 s) and the
+  //      pretend line is dropped at its turn (18.55 s). Before: the child clip, asked at
+  //      18.65 s and landing at 18.95 s, and the stub answer at 19.1 s both played over it.
+  {
+    const p = await pageWith({ stt: 429, clip: 300 });
+    const w = p.world, t0 = now();
+    const line = await kept(p, DAD);
+    await advance(2640);                               // t+15.0 s
+    globalThis.window.moxieTypedTurn.send(FOOD);
+    await advance(3540);                               // t+18.54 s
+    deep([T().scriptedDropped, heard(w, t0, PROD)], [0, ["day0@3800", "day1@6900", "dad0@12350", "dad1@15250"]], "13x (iv): at 18.54 s the kept referral's last sentence plays and the pretend line still waits");
+    await advance(20);                                 // t+18.56 s
+    eq(T().scriptedDropped, 1, "13x (iv): the pretend line is dropped the moment its turn comes (18.55 s)");
+    await advance(15000);
+    deep(played(w, t0, line, ""),
+         [["day0", 3800, 6900], ["day1", 6900, 8500], ["dad0", 12350, 15250], ["dad1", 15250, 18550], ["food0", 18800, 20500]],
+         "13x (iv): THE KEPT REFERRAL (12.35-18.55 s) AND THEN THE FOOD ANSWER (18.8-20.5 s) ARE HEARD WHOLE, nothing of the pretend exchange over or after either (before: the clip at 18.95 s and the stub at 19.1 s over the food answer)");
+    deep([overlapping(played(w, t0, line, "")), w.spy.cuts.length, clips(w), w.spy.transcript], [0, 1, 0, [DAY, THREE, DAD, line, REFER, FOOD, BOLTS]],
+         "13x (iv): no two sounds overlap; the one cut is the tap's own; nothing of the pretend exchange played; the log in order");
+  }
+
+  // (v) THE STUB ANSWER YIELDS TOO. Nothing newer at 17.65 s, so the child clip is said
+  //     (17.78 s); a hurt line typed at 17.9 s, during it, is blocked in 0.2 s (the model-free
+  //     input block) and its redirect cuts the clip at 18.1 s (the child yields to her, as
+  //     always); the stub answer, due at 18.2 s, is dropped: the redirect is heard whole.
+  //     Before: the stub answer's stop cut the redirect at 18.2 s, 0.1 s in.
+  {
+    const p = await pageWith({ stt: 503, clip: 30, block: 200 });
+    const w = p.world, t0 = now();
+    const line = await kept(p, GAME);
+    await advance(5540);                               // t+17.9 s: the child clip plays (from 17.78 s)
+    deep([clips(w), T().scriptedDropped, T().fallbacks], [1, 0, 1], "13x (v): with nothing newer at 17.65 s the child clip is said (17.78 s) and the stub answer composed, due at 18.2 s");
+    globalThis.window.moxieTypedTurn.send(HURT);
+    await advance(15000);
+    deep(played(w, t0, line, ""),
+         [["day0", 3800, 6900], ["day1", 6900, 8500], ["game0", 12350, 14850], ["game1", 14850, 17650], ["child-clip", 17780, 18100], ["redirect", 18100, 25800]],
+         "13x (v): THE REDIRECT (18.1 s) CUTS THE CHILD CLIP AND IS HEARD WHOLE: the stub answer due at 18.2 s is dropped (before: it cut the redirect at 18.2 s)");
+    deep([overlapping(played(w, t0, line, "")), cutsAt(w, t0), T().scriptedDropped, T().fallbacks, T().scriptedWaited, w.spy.transcript],
+         [0, ["cloud@8500", "cloud@18100"], 1, 1, 1, [DAY, THREE, GAME, line, PLAY, HURT, REDIRECT]],
+         "13x (v): no two sounds overlap; the cuts are the tap's (8.5 s) and the redirect's on the child clip (18.1 s; a clip's cut is recorded as a buffer's, like a chunk's); the stub answer composed (fallbacks) and dropped unsaid; the log in order");
+  }
+
+  // (vi) A LINE TYPED DURING THE RECORDING (10.0 s): sent before the pretend line was composed,
+  //      it is POSTed only when the ears are done, so the exchange could not have waited for it
+  //      — it is newer all the same, and the exchange is dropped at its turn (17.65 s): the
+  //      kept answer, then the typed line's answer with no gap, nothing else. Before: the
+  //      child clip and the stub answer followed the typed line's answer.
+  {
+    const p = await pageWith({ stt: 503, clip: 30 });
+    const w = p.world, t0 = now();
+    globalThis.window.moxieTypedTurn.send(DAY);
+    await advance(5000);
+    globalThis.window.moxieTypedTurn.send(GAME);
+    await advance(3500);
+    await talk(p);                                     // t+8.5 s: the tap; the recorder runs
+    await advance(250);                                // t+10.0 s: the ears are busy
+    globalThis.window.moxieTypedTurn.send(FOOD);
+    await advance(3850 - 1250 - 250 + 10);             // t+12.36 s
+    const line = pretendOf(w);
+    deep([T().queued, chats(w).map((c) => c.text)], [1, [DAY, GAME, FOOD]], "13x (vi): the food line waited for the ears and went out the moment they were done (12.35 s), after the pretend line was composed");
+    await advance(17660 - 12360);                      // t+17.66 s
+    eq(T().scriptedDropped, 1, "13x (vi): THE PRETEND LINE IS DROPPED AT ITS TURN (17.65 s): a turn was POSTed since it was composed, one it could not have waited for");
+    await advance(15000);
+    deep(played(w, t0, line, ""),
+         [["day0", 3800, 6900], ["day1", 6900, 8500], ["game0", 12350, 14850], ["game1", 14850, 17650], ["food0", 17650, 19350]],
+         "13x (vi): THE KEPT ANSWER, THEN THE FOOD ANSWER (17.65 s, no gap), both whole, nothing of the pretend exchange (before: the child clip at 19.38 s and the stub answer after the food answer)");
+    deep([overlapping(played(w, t0, line, "")), w.spy.cuts.length, clips(w), T().early, T().heldReplies, T().parked, w.spy.transcript],
+         [0, 1, 0, 2, 2, 1, [DAY, THREE, GAME, FOOD, line, PLAY, BOLTS]],
+         "13x (vi): no two sounds overlap; the one cut is the tap's own; nothing of the pretend exchange played; two early lines, two replies held, one kept; the log in order");
+  }
+
+  // (vii) A LINE ANSWERED WITH NO POST IS NEWER TOO: the brain resting (a 429's window) when
+  //       the child types at 17.7 s, after the pretend line's turn came (17.65 s) and before
+  //       its clip (17.75 s), the line is answered from stub.js at the 450 ms beat; the
+  //       exchange, asked again as its clip is due, is dropped, and the typed line's stub
+  //       answer is heard whole (18.18 s). Before: the child clip at 17.78 s, cut by that stub
+  //       answer, whose clip the pretend line's own stub answer then cut at 18.2 s.
+  {
+    const p = await pageWith({ stt: 503, clip: 30 });
+    const w = p.world, t0 = now();
+    const line = await kept(p, GAME);
+    await advance(1640);                               // t+14.0 s
+    globalThis.window.moxieMode.note({ reason: "rate_limited", retry_after_s: 20 });   // the brain rests: nothing live is spent
+    eq(globalThis.window.moxieMode.canSpendLiveTurn(), false, "13x (vii): the brain is resting from 14.0 s");
+    await advance(3700);                               // t+17.7 s
+    globalThis.window.moxieTypedTurn.send(FOOD);
+    await advance(15000);
+    const stubLine = w.spy.transcript[w.spy.transcript.length - 1];
+    deep([chats(w).map((c) => c.text), T().fallbacks, T().scriptedDropped, clips(w)], [[DAY, GAME], 1, 1, 1],
+         "13x (vii): the food line is answered from stub.js with no POST; the pretend line, its clip due at 17.75 s, is dropped: a line was sent since its turn came; one clip played");
+    deep(played(w, t0, line, stubLine),
+         [["day0", 3800, 6900], ["day1", 6900, 8500], ["game0", 12350, 14850], ["game1", 14850, 17650], ["stub-clip", 18180, 18180 + Math.round((clipBytes(stubLine, "moxie") * 8) / 64)]],
+         "13x (vii): THE TYPED LINE'S STUB ANSWER IS HEARD WHOLE (18.18 s), nothing of the pretend exchange before or after it (before: the child clip at 17.78 s, and the pretend line's stub answer cutting the typed line's at 18.2 s)");
+    deep([overlapping(played(w, t0, line, stubLine)), w.spy.cuts.length, w.spy.transcript], [0, 1, [DAY, THREE, GAME, line, PLAY, FOOD, stubLine]],
+         "13x (vii): no two sounds overlap; the one cut is the tap's own; the log in order");
   }
 }

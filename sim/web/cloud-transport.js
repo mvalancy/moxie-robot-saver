@@ -40,7 +40,9 @@
  * held behind the one it ended, a safety line waiting for her sentence, an early reply not
  * yet heard) first waits for that microphone to open, `TAP_HOLD_MAX_MS` at most (W4-S7). The
  * line the page composes when the ears fail (`sendScriptedTurn`) waits for what she has in
- * hand and for her voice, so nothing the tap kept starts under it (W4-S7). A
+ * hand and for her voice, so nothing the tap kept starts under it, and is dropped, its row
+ * kept, if the child sends a line meanwhile, so a newer line's answer is never under it
+ * either (W4-S7). A
  * turn in flight is settled by `TURN_MAX_MS` at the latest, and the ears' hold ends at its
  * bound (the record cap plus mic.js's 30 s upload valve, told to `earsOpen`;
  * `EARS_HOLD_MAX_MS` when nothing is told) even if nothing ever closes it, so the queue can
@@ -79,6 +81,7 @@
     scripted: 0,             // consolation lines the PAGE chose (mic.js's degraded turn)
     scriptedFree: 0,         // ...of those, the ones a live page answered for FREE
     scriptedWaited: 0,       // ...and those that found a reply in hand or her voice on, and followed it (W4-S7)
+    scriptedDropped: 0,      // ...and those dropped unsaid, their row kept: the child sent a line, or had one answered, before their turn came (W4-S7)
     chatOk: 0, diagrams: 0, cited: 0, chatRefused: 0, chatErrors: 0,
     speechOk: 0, speechRefused: 0, speechErrors: 0,
     voiceFirst: 0,           // the TTS message was routed BEFORE the chat message
@@ -191,26 +194,30 @@
 
   /** A reply composed on the page, through the same `route()` a real one takes. It speaks
    *  as soon as the ears are idle: the voice of turn `seq` (or of the newest, with none) is
-   *  starting. Resolves once it is routed. */
-  function localReply(text, markup, seq) {
+   *  starting — unless `unless()` says, by then, that it is no longer wanted (the pretend
+   *  line's answer, overtaken by a line of the child's: W4-S7). Resolves once it is routed,
+   *  with whether it was. */
+  function localReply(text, markup, seq, unless) {
     return whenEarsIdle().then(function () {
+      if (unless && unless()) return false;
       supersedeVoices(seq);
       stats.order.push("stub");
       inner.route("/devices/d_sim/commands/remote_chat", JSON.stringify({
         command: "remote_chat", result: "OK", backend: "router",
         output: { text: text, markup: markup },
       }));
+      return true;
     });
   }
 
   /** The degraded answer for ONE turn: `stub.js` after the bridge's 450 ms beat. The turn
-   *  is already echoed, so not via `inner.sendUserTurn`. */
-  function fallbackReply(text, seq) {
+   *  is already echoed, so not via `inner.sendUserTurn`. `unless` as `localReply`'s. */
+  function fallbackReply(text, seq, unless) {
     stats.fallbacks++;
     if (!window.moxieStub || !window.moxieStub.enabled) return Promise.resolve();
     var r = window.moxieStub.reply(text);
     return new Promise(function (resolve) {
-      setTimeout(function () { localReply(r.text, r.markup, seq).then(resolve); }, FALLBACK_MS);
+      setTimeout(function () { localReply(r.text, r.markup, seq, unless).then(resolve); }, FALLBACK_MS);
     });
   }
 
@@ -589,7 +596,8 @@
   var turnSeq = 0;
 
   /** The voice of turn `seq` is starting: every open pipeline of an earlier turn is over.
-   *  A line with no turn of its own (the scripted consolation, the bot line) is the newest.
+   *  A line with no turn of its own (the bot line; the pretend line's answer, said only once
+   *  nothing of hers is open: `sendScriptedTurn`) is the newest.
    *  Counted (`voiceStarts`): a stand-in waiting its turn is said only if none started since.
    *  The Listen TAP (`tap`: every pipeline) starts no voice of hers: an early reply not yet
    *  heard is kept rather than ended (`park`), and a stand-in waiting for her sentence waits
@@ -1072,14 +1080,26 @@
      *  a "Pretend line", played from its child clip as a child turn is, and answered from
      *  `stub.js` after the same beat, live page or not. A connected MQTT broker is a
      *  self-hoster's own backend and still gets it through `inner.sendUserTurn`.
-     *  IT WAITS ITS TURN, like any line (W4-S7). mic.js composes it before it says the ears
-     *  are done, and a reply the ears held or the Listen tap kept (`park`) starts the moment
+     *  IT WAITS ITS TURN, AND YIELDS (W4-S7). mic.js composes it before it says the ears are
+     *  done, and a reply the ears held or the Listen tap kept (`park`) starts the moment
      *  they are: the child clip then began over her first sentence, and the stub answer's
      *  stop missed her (voice/ had the clip as the current voice) — two voices at once, at
      *  every tap that kept an answer (the W4-S7 review, round 3). So the row shows at once,
      *  and the clip and the answer follow every reply in hand (`heldBehind`: the turns
      *  POSTed before it, then her server voice), the ears, and any voice of hers still on
-     *  the speakers (`whenSilent`: a kept reply's stand-in, a redirect the ears held). */
+     *  the speakers (`whenSilent`: a kept reply's stand-in, a redirect the ears held). And
+     *  they are said only if it is then still the NEWEST line — none sent, and no turn
+     *  POSTed, since it was composed — the answer only if none was sent during the clip
+     *  either: the Ask box stays open while the Listen button is held, and a line typed
+     *  while the kept answer played found the pretend exchange waiting as the newest line,
+     *  which it no longer was — its answer ended every open pipeline (the typed line's
+     *  answer, a served grown-up referral among them, lost), its stop cut a redirect, and
+     *  the clip and the answer started over a reply that began during the clip's fetch,
+     *  where origin/dev, saying the exchange at once, heard every one whole (the W4-S7
+     *  review, round 4). Dropped, the pretend line keeps its row, its clip and answer unsaid
+     *  (`scriptedDropped`). So when its answer does speak, nothing of hers is open for it to
+     *  end; and nothing of hers can start while its clip is fetched, bar the answer to a line
+     *  typed inside that fetch (voice/local.js's `speakClipOnly` looks only before it). */
     sendScriptedTurn: function (text) {
       var t = String(text == null ? "" : text).trim();
       if (!t) return Promise.resolve();
@@ -1099,14 +1119,21 @@
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
       }
-      var inHand = inflight > 0;
-      return heldBehind(null, true).then(whenEarsIdle).then(whenSilent).then(function (spoke) {
+      // The newest line only until another is sent (`stats.turns`: every line from a control
+      // or `sendUserTurn`) or POSTed (`turnSeq`: a line that waited for the ears, or for the
+      // words of a turn in hand, goes out after this line was composed): then it yields.
+      var inHand = inflight > 0, sent = stats.turns, posted = turnSeq;
+      function overtaken() { return stats.turns !== sent || turnSeq !== posted; }
+      return heldBehind(null, true).then(whenEarsIdle).then(function () {
+        return overtaken() ? null : whenSilent();      // its turn, if it is still the newest line
+      }).then(function (spoke) {
         if (inHand || spoke) stats.scriptedWaited++;
+        if (spoke === null || overtaken()) { stats.scriptedDropped++; return; }
         if (window.moxieAudio) {
           window.moxieAudio.sfx("listen");
           if (window.moxieAudio.speakClipOnly) window.moxieAudio.speakClipOnly(t, "child");
         }
-        return fallbackReply(t);
+        return fallbackReply(t, null, overtaken).then(function (said) { if (said === false) stats.scriptedDropped++; });
       });
     },
 
