@@ -63,6 +63,29 @@ async function open(o) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/* THE AUTOPLAY UNLOCK: a click on the stage CLEAR OF HER. A first tap on Moxie herself says
+ * hello (moxie.js, A TAP ON HER, W4-S6), and `page.click("body")` lands on her, at the centre
+ * of the viewport: the greeting it started was the clip 1a counted as an ambient quip, and
+ * the voice block 5's tick found her busy with. These blocks need a gesture, not a hello. */
+async function unlockAudio(page) {
+  await page.waitForFunction("typeof window.__moxieProject === 'function'", { timeout: 15000 });
+  const at = await page.evaluate(() => {
+    const me = window.__moxieProject(0, 1.15, 0);
+    const st = document.getElementById("stage").getBoundingClientRect();
+    for (const [x, y] of [[st.left + 16, st.top + 16], [st.right - 16, st.top + 16],
+                          [st.left + 16, st.top + st.height / 2], [st.right - 16, st.top + st.height / 2]]) {
+      const el = document.elementFromPoint(x, y);
+      if (el && el.tagName === "CANVAS" && Math.hypot(x - me.x, y - me.y) > 120)
+        return { x: Math.round(x), y: Math.round(y) };
+    }
+    return null;
+  });
+  if (!at) throw new Error("no point on the stage clear of her for the autoplay unlock");
+  await page.mouse.click(at.x, at.y);
+  eq(await page.evaluate(() => (window.moxie.tapStats ? window.moxie.tapStats().hellos : 0)), 0,
+     "the autoplay unlock was not a tap on her: no hello in what this block measures");
+}
 const starts = (A, src) => A.plays.filter((e) => !src || e.src === src);
 const timeline = (page) => page.evaluate(() => window.__audio);
 /** `stop()` calls that cut `node` more than 50 ms before its audio ran out. */
@@ -111,7 +134,7 @@ try {
 
     /* --- 1a. AMBIENT STILL FIRES WHEN SHE IS IDLE (a fix that kills ambient is worse than the
      * bug). Also warms ambient.json and the manifest so later ticks are not cold fetches. */
-    await page.click("body");                    // browser autoplay unlock
+    await unlockAudio(page);                     // browser autoplay unlock
     const idle = await tickAmbient(page);
     await page.waitForFunction(
       `window.__audio.plays.some(e => e.src === "clip")`, { timeout: 15000 })
@@ -225,7 +248,7 @@ try {
    * ===================================================================== */
   {
     const { page } = await open(LIVE);
-    await page.click("body");
+    await unlockAudio(page);
     await type(page, "hello moxie");
     await page.waitForFunction(
       `window.__audio.plays.some(e => e.src === "pcm")`, { timeout: 20000 });
@@ -254,7 +277,7 @@ try {
     const { page, errs, aborted } = await open({ health: FX.bareHealth });
     /* A degraded page first speaks its own ~5 s `degraded` line (live-sim-demo.md §6.2); it
      * must play out or it would be measured as the reply. */
-    await page.click("body");
+    await unlockAudio(page);
     await settleDegradedLine(page);
 
     const mark = (await timeline(page)).plays.length;
@@ -317,7 +340,7 @@ try {
    * ===================================================================== */
   {
     const { page, errs, aborted, clipNet } = await open(LIVE);
-    await page.click("body");
+    await unlockAudio(page);
     await page.evaluate(() => window.moxieAmbient.stop());   // drive tick() explicitly
     await page.waitForFunction("!window.moxieAudio.isMoxieBusy(1600)", { timeout: 25000 });
 
