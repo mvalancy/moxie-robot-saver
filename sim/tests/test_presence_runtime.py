@@ -8,6 +8,7 @@ A subscribed perception event arrives as the `speech` of an ordinary `RemoteChat
 Hermetic: no sleeps, broker or model. Elapsed time is expressed by seeding the presence
 record, never by waiting.
 """
+import json
 import time
 
 import pytest
@@ -17,8 +18,11 @@ from helpers_runtime import (CountingSynth, drive_turn,   # noqa: E402
                              make_runtime)
 
 from moxie_sdk import presence as P                                    # noqa: E402
+from moxie_sdk import safety as S                                      # noqa: E402
+from moxie_sdk import vocab                                            # noqa: E402
 from moxie_sdk.app import MoxieApp                                     # noqa: E402
-from moxie_sdk.types import Reply, ResultCode                          # noqa: E402
+from moxie_sdk.store import JsonStore                                  # noqa: E402
+from moxie_sdk.types import Action, ActionType, Reply, ResultCode      # noqa: E402
 
 FOUND, LOST = P.FOUND_FACE, P.LOST_TARGET
 TTS_TOPIC = "/devices/{}/commands/tts"
@@ -518,3 +522,148 @@ def test_no_presence_lock_block_calls_something_that_retakes_it():
                         f"loop:\n    {stripped}")
             j += 1
     assert blocks >= 5, f"only {blocks} presence-lock blocks found — has the lock moved?"
+
+
+# --------------------------------------------------------------------------- #
+# 6. A pack's answer to the robot's eye passes the output check
+# --------------------------------------------------------------------------- #
+# The plain turn, each streamed chunk and the hello are checked on Moxie's side before they
+# are staged, and so is the line a pack answers a subscribed event with
+# (`_wake_subscribed_pack`). A blocked one goes the way a blocked answer goes on the plain
+# turn (`_handle_turn`): the category's redirect is said instead, and the line's actions,
+# end_turn and subscribe go with the line.
+
+#: Blocked on Moxie's side and only flagged on the child's: Moxie never asks a child for an
+#: address (personal_info, whose redirects are the `privacy` set).
+ASKS_ADDRESS = "Found you! Now tell me your home address."
+#: Flagged on Moxie's side (a word on violence_talk's list) and harmless.
+PUNCH_THE_AIR = "Found you! Let's punch the air, hooray!"
+#: Matches nothing in the table.
+BIG_SMILE = "Found you! I spy a big smile."
+#: What the pack does along with its line: re-arm the QR scanner.
+ARM_QR = Action(type=ActionType.EXECUTE, function="eb_enable_qr", args=["true"])
+
+
+class _EyePack(MoxieApp):
+    """Asks for faces on an ordinary turn, then answers one with a scripted `Reply`
+    carrying every field the runtime reads from a woken app: a line, the pack's markup for
+    it or none, an act, a renewed `subscribe` and `end_turn` (`ContentApp.perceive` returns
+    this shape for a matched `turn.before` rule)."""
+    name = "eye-pack"
+
+    def __init__(self, text, markup=None):
+        self.text, self.markup = text, markup
+        self.perceived = []
+
+    def respond(self, turn):
+        return Reply(text="ok", subscribe=[FOUND])
+
+    def perceive(self, turn):
+        self.perceived.append(turn.speech)
+        return Reply(text=self.text, markup=self.markup, actions=[ARM_QR],
+                     subscribe=[P.QR_EVENT], end_turn=True)
+
+
+def _eye_line(tmp_path, text, markup=None):
+    """One ordinary turn (the pack asks for faces), then one `eb-found-face` that it
+    answers with `text`. Returns `(rt, dev, response, synth, handed)`: `handed` is what
+    `_publish_chat` was given for the answer, read there because `end_turn` has no wire
+    field."""
+    rt, dev = _runtime(_EyePack(text, markup), store=JsonStore(str(tmp_path)))
+    synth = CountingSynth()
+    rt.set_synthesizer(synth)
+    drive_turn(rt, dev, "hello", event_id="e-arm")
+    fresh_pool(rt)
+    handed = []
+    publish = rt._publish_chat
+
+    def recording(*args, **kw):
+        handed.append(kw)
+        return publish(*args, **kw)
+
+    rt._publish_chat = recording
+    resp = _vision(rt, dev, FOUND, event_id="e-eye")
+    assert rt.app.perceived == [FOUND], "sanity: the face woke the pack that asked for it"
+    return rt, dev, resp, synth, handed[-1]
+
+
+def test_a_packs_line_to_the_robots_eye_passes_the_output_check(tmp_path, capsys):
+    """A line the table blocks on Moxie's side does not reach the robot from a pack: the
+    category's redirect goes out instead, journaled for the parent, and the act, the
+    renewed subscription and end_turn go with the line, as a blocked answer's do. The
+    pack's own markup holds the words too, and the robot speaks its markup, so the swap
+    replaces both."""
+    assert S.assess(ASKS_ADDRESS, role=S.MOXIE).action == S.BLOCK, "premise: Moxie's side"
+    assert S.assess(ASKS_ADDRESS, role=S.CHILD).action == S.FLAG, \
+        "premise: a child's side check would let it through"
+    rt, dev, resp, synth, handed = _eye_line(tmp_path, ASKS_ADDRESS,
+                                             markup=vocab.mood_mark(2) + ASKS_ADDRESS)
+
+    privacy = {ln["id"]: ln["text"] for ln in S.default_classifier().phrase_sets["privacy"]}
+    assert resp["result"] == ResultCode.SUCCESS and resp["event_id"] == "e-eye", resp
+    assert resp["output"]["text"] in privacy.values(), resp["output"]
+    assert "address" not in json.dumps(resp), "the blocked line reached the robot"
+    assert resp["response_actions"] == [{"output_type": "GLOBAL_RESPONSE"}], \
+        "the blocked line's act or subscription went out without it"
+    assert (handed["actions"], handed["subscribe"], handed["end_turn"]) == (None, None, False)
+    assert P.QR_EVENT not in rt._pack_subscribed.get(dev, {}), \
+        "a pack whose words are blocked earns no wake from that line"
+    assert "input" not in resp, "an output-side block has no wire field, as on the plain turn"
+    assert synth.spoken[-1] == resp["output"]["text"]
+    assert not any("address" in line for line in synth.spoken), synth.spoken
+
+    view = rt.safety_view(dev)
+    assert view["unreviewed"] == 1, view
+    row = view["events"][0]
+    assert (row["side"], row["action"], row["categories"]) == \
+        ("moxie", "block", ["personal_info"]), row
+    assert privacy[row["phrase_id"]] == resp["output"]["text"], \
+        "journaled by `_safety_redirect`: the row names the line Moxie said instead"
+    assert "address" not in row["excerpt"], row
+
+    feed = [r["text"] for r in rt.recent]
+    assert not any("address" in line for line in feed), feed
+    assert any(r["kind"] == "vision" and "blocked" in r["text"] for r in rt.recent), feed
+    assert "address" not in capsys.readouterr().out, "the log printed the blocked line"
+
+
+def test_a_flagged_line_to_the_robots_eye_is_said_and_recorded(tmp_path):
+    """A flag asks the parent to look; it is not a verdict. The line is said with its act,
+    its subscription and end_turn, and it is in the review queue."""
+    verdict = S.assess(PUNCH_THE_AIR, role=S.MOXIE)
+    assert (verdict.action, verdict.categories) == (S.FLAG, ["violence_talk"]), "premise"
+    rt, dev, resp, synth, handed = _eye_line(tmp_path, PUNCH_THE_AIR)
+
+    assert resp["result"] == ResultCode.SUCCESS and resp["output"]["text"] == PUNCH_THE_AIR
+    assert "<mark" in resp["output"]["markup"], "performed like any other line"
+    action = resp["response_actions"][0]
+    assert action["function_id"] == "eb_enable_qr", resp
+    assert action["event_subscription"]["active"] == [P.QR_EVENT], resp
+    assert handed["end_turn"] is True
+    assert synth.spoken[-1] == PUNCH_THE_AIR
+
+    view = rt.safety_view(dev)
+    assert view["unreviewed"] == 1, view
+    row = view["events"][0]
+    assert (row["side"], row["action"], row["categories"]) == \
+        ("moxie", "flag", ["violence_talk"]), row
+
+
+def test_a_clean_line_to_the_robots_eye_goes_out_as_it_came(tmp_path):
+    """Nothing matched: the line, the pack's own markup, the act, the subscription and
+    end_turn are handed over exactly as before the check existed, and nothing is
+    journaled."""
+    assert not S.assess(BIG_SMILE, role=S.MOXIE), "premise: nothing in the table matches"
+    markup = vocab.mood_mark(2) + BIG_SMILE
+    rt, dev, resp, synth, handed = _eye_line(tmp_path, BIG_SMILE, markup=markup)
+
+    assert resp["result"] == ResultCode.SUCCESS and resp["output"]["text"] == BIG_SMILE
+    assert resp["output"]["markup"] == markup, "the pack's markup is spoken as written"
+    assert resp["response_actions"] == [{
+        "output_type": "GLOBAL_RESPONSE", "action": "execute", "function_id": "eb_enable_qr",
+        "function_args": ["true"],
+        "event_subscription": {"active": [P.QR_EVENT], "clear": False}}], resp
+    assert handed["end_turn"] is True
+    assert synth.spoken[-1] == BIG_SMILE
+    assert rt.safety_view(dev)["counts"] == {}
+    assert f"🧬 a pack answered {FOUND}: '{BIG_SMILE}'" in [r["text"] for r in rt.recent]

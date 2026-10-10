@@ -2,7 +2,7 @@
 from __future__ import annotations
 import time
 
-from moxie_sdk.types import Turn, ResultCode
+from moxie_sdk.types import Turn, Reply, ResultCode
 from moxie_sdk import presence as presence_seam
 from moxie_sdk import launch_cards as cards_seam
 from moxie_sdk import safety as safety_seam
@@ -104,6 +104,11 @@ class PresenceMixin:
         the pack asked for this event under the robot's *current* module (recorded by
         `_merge_subscriptions`); MOXIE_VISION is on; the robot is permitted; the app
         implements `perceive`. A `perceive` that raises is logged and ignored.
+
+        The answer's line passes the output check every line Moxie says passes (`_assess`,
+        Moxie's side) and is handled as the plain turn handles an answer: a blocked line
+        becomes the category's redirect and loses its actions, end_turn and subscribe; a
+        flagged one is recorded and said.
         """
         # Separate `if`s so each gate can be mutated independently (subscribe_mutation_check.py).
         if not self.vision:
@@ -136,11 +141,27 @@ class PresenceMixin:
         subscribe = list(getattr(reply, "subscribe", None) or [])
         if not text and not actions and not subscribe:
             return False                          # answered with nothing: not an answer
+        # As on the plain turn (`_handle_turn`): a blocked line is swapped for the category's
+        # redirect (journaled by `_safety_redirect`) and its actions, end_turn and subscribe
+        # go with it, so blocked words earn a pack no act and no wake.
+        verdict = self._assess(text, safety_seam.MOXIE)
+        blocked = bool(verdict) and verdict.action == safety_seam.BLOCK
+        if blocked:
+            red = self._safety_redirect(device_id, verdict)
+            reply = Reply(text=red.text, markup=red.markup,
+                          result_code=getattr(reply, "result_code", ResultCode.SUCCESS))
+            text, actions, subscribe = reply.text, [], []
+        elif verdict:
+            self._record_safety(device_id, verdict)
         markup, scored = (getattr(reply, "markup", None), None)
         if text:
             markup, scored = self._stage(text, reply, turn_key=rcr.get("event_id"),
                                          chunk_index=0, markup=reply.markup)
-        self._note("vision", f"🧬 a pack answered {name}: '{self._masked(text, 40)}'")
+        if blocked:
+            self._note("vision", f"🧬 a pack answered {name}, and the safety rules blocked "
+                                 f"its line: Moxie said a safe one instead")
+        else:
+            self._note("vision", f"🧬 a pack answered {name}: '{self._masked(text, 40)}'")
         print(f"[runtime] 🧬 {device_id}: {name} woke a content pack -> "
               f"'{self._masked(text, 60)}'", flush=True)
         self._publish_chat(device_id, rcr.get("event_id"),
