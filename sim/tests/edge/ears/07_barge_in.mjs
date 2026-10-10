@@ -107,13 +107,13 @@ const foldTransportFails = () => { for (const f of page.fails.splice(0)) fails.p
   await advance(2000);                                 // t+6.25 s: the reply landed at 1.5 s, the clip is uploading
   deep([speeches(w), w.spy.sounds, w.spy.setSpeech, T().heldForEars, T().interrupted], [[], [], [], 1, 0],
        "B12: THE REPLY THAT LANDED AT 1.5 s IS HELD: no synthesis bought, nothing sounded, no bubble, while the ears work (recorded as held; nothing was interrupted)");
-  await advance(8500);                                 // ears done at 7.85 s; its voice lands at 10.15 s; then the spoken line's at 14.25 s
-  deep(w.spy.sounds.map((s) => [s.kind, s.t - t0]), [["cloud", 10150], ["cloud", 14250]],
-       "B12: once the ears are done the held reply plays whole (10.15 s), then the answer to the spoken line (14.25 s), nothing cut");
+  await advance(8500);                                 // ears done at 7.85 s; its voice lands at 10.15 s (to 12.15 s); then the spoken line's at 12.45 s
+  deep(w.spy.sounds.map((s) => [s.kind, s.t - t0]), [["cloud", 10150], ["cloud", 12450]],
+       "B12: once the ears are done the held reply plays whole (10.15 s), then the answer to the spoken line (12.45 s: its line went out at 7.85 s, W4-S7; 14.25 s when it waited for the held reply's voice), nothing cut");
   deep(w.spy.cuts, [], "B12: nothing was cut");
   deep(w.spy.transcript, ["slow one", "hi", "Held until you are done.", "Hi back."],
        "B12: the log reads in order: both lines, the held reply, then the spoken line's answer");
-  deep(w.spy.fetches.filter(([pth]) => pth === "/api/chat").map(([, b]) => b.text), ["slow one", "hi"], "B12: the spoken line went to the brain after the held reply was handed over");
+  deep(w.spy.fetches.filter(([pth]) => pth === "/api/chat").map(([, b]) => b.text), ["slow one", "hi"], "B12: the spoken line went to the brain after the held reply's words were back (W4-S7), its answer heard after that reply");
   foldTransportFails();
 }
 
