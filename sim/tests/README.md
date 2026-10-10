@@ -59,6 +59,7 @@ skip cleanly. Add `not test_live` locally: a key in `mqtt/.env` makes the live s
 - [`data/`](data/README.md) — `ext_conformance.json`, the sandboxed-extension goldens.
 - [`goldens/`](goldens/README.md) — recorded wire/markup goldens and one real-voice WAV.
 - [`edge/`](edge/README.md) — sections of the Pages Functions node suites (`sim/test_demo_proxy.mjs` etc.); `.mjs`, never collected by pytest.
+- [`fixtures/`](fixtures/README.md) — data the node suites replay: the safety floor's false-positive corpus (real replies, child lines, hurt replays).
 - [`hosted_mic/`](hosted_mic/README.md) — modules behind `node sim/check_hosted_mic.mjs`.
 
 ## Test groups

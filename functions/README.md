@@ -31,7 +31,7 @@ an `onRequest` handler):
 | `ttscache.js` | Cache of synthesized audio. A hit makes no upstream call. Per-colo, fails open, off with `DEMO_TTS_CACHE=0`. |
 | `wav.js` | WAV parser that keeps the file's own sample rate. |
 | `turnstile.js` | The bot check (below). |
-| `safety.js`, `safety.rules.js` | A pre-inference safety floor. A blocked message never reaches the gateway. |
+| `safety.js`, `safety.rules.js` | The safety floor, both sides of a turn. A blocked child line never reaches the gateway, and the child side of every category that blocks carries the robot's own table's words, phrases and guards (its story, accident and idiom guards are her side only; the one normalization difference, the German sharp S, is the robot's stricter side); an unsafe completion never reaches a voice ticket (the rule's redirect line is served in its place; a diagram that trips the table is dropped); a hurt child's reply that does not point them to a trusted grown-up gets one referral sentence appended (a reply that steers them away in the shapes the check lists — "don't tell a grown-up", "you don't have to", "maybe later", a "don't" a sentence later — in the sentence that points or in any other — never counts, and she never says those or promises a secret in the shapes it lists), a swapped reply that had itself pointed the child to a grown-up in any sentence is replaced by a hand-off line that points there too, and a hurt child whose turn is blocked, whose reply is swapped, or whose gateway call fails after the check hears a referral line, never a change of subject (the refusal keeps its reason and status and carries the line in `messages`). |
 
 ## Rules
 
