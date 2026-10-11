@@ -96,7 +96,10 @@ presence record.
 3. The literal prefix `GO`, case-sensitive and un-normalized — `go<`, fullwidth or Cyrillic look-alikes are
    refused.
 4. The remainder is parsed by the existing tag grammar, `actions.parse_action_tags`, so a card and a brain
-   agree on `<launch:DRAW>` by construction.
+   agree on `<launch:DRAW>` by construction. That parse stays one-pass on purpose: rule 6's empty residue
+   is what refuses a nested card (`GO<launch:<launch:DM>>`, `GO<la<launch:DM>unch:DRAW>`: both leave a
+   residue in one pass and would launch DM under a fixpoint), and a brain's line lifts nests only from what
+   is spoken, never from what acts (`ext_host.model_line`), so the two keep agreeing.
 5. The recognized tag **names** must be exactly `{"launch"}` (`actions.tag_names`). This is needed because
    `launch_if_confirmed` collapses to the same `ActionType.LAUNCH`, so a type check alone would let
    `GO<launch_if_confirmed:DM>` launch.

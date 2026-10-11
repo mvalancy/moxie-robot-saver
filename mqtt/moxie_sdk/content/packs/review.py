@@ -111,11 +111,13 @@ def review_pack(pack: dict, installed, *, digest: str = "ok", catalog=None) -> l
             row["escalation"] = sorted(now - was)
         row["label"] = _label(row)
         row["commands"], unknown = command_verbs(data)
-        row["system_commands"] = [v for v in row["commands"] if v in vocab.SYSTEM_VERBS]
+        trees = command_trees(data)
+        row["system_commands"] = [v for v in row["commands"] if v in vocab.SYSTEM_VERBS] + trees
         row["warnings"] = _warnings(kind, data, catalog=catalog) + command_warnings(
-            row["commands"], unknown)
-        # A system command un-ticks the item whatever its state, as an escalation does: the
-        # gate never sends it, and a parent should still not install it unawares.
+            row["commands"], unknown, trees)
+        # A system command (a system verb, or a system or test tree named in a mark) un-ticks
+        # the item whatever its state, as an escalation does: the gate never sends it, and a
+        # parent should still not install it unawares.
         row["default"] = bool(trusted and row["state"] in DEFAULT_ACCEPT
                               and not row["escalation"] and not row["system_commands"])
         if row["escalation"]:
@@ -221,9 +223,10 @@ def opener_warnings(data: dict) -> list:
 def command_verbs(data: dict) -> tuple:
     """`(known, unknown)`: the verbs every `<mark` written anywhere in an item's data (its
     opener, prompt, a program's lines, any string at all) names, read however it is written
-    (`vocab.mark_verbs`): the catalogue's, as it spells them, a system verb lower-cased in
-    whatever case it was written, sorted and once each; and how many name no catalogue verb
-    (author text, counted and never quoted)."""
+    (`vocab.mark_verbs`: every `name=` in a mark's span, so a system verb behind a decoy or
+    in a second `name=` is read too): the catalogue's, as it spells them, a system verb
+    lower-cased in whatever case it was written, sorted and once each; and how many name no
+    catalogue verb (author text, counted and never quoted)."""
     known: set = set()
     unknown = 0
     for text in _strings_in(data or {}, []):
@@ -237,22 +240,39 @@ def command_verbs(data: dict) -> tuple:
     return sorted(known), unknown
 
 
-def command_warnings(verbs, unknown: int = 0) -> list:
+def command_trees(data: dict) -> list:
+    """The system or test behaviour trees a `<mark` written anywhere in an item's data names
+    (`vocab.system_trees_in`: any `Bht_*` in a mark's span that is one of
+    `vocab.SYSTEM_TREES`, in any case), in the catalogue's spelling, sorted and once each.
+    The gate cuts such a mark on every channel and names the tree to the parent
+    (`ext_host._reported_commands`); a tree the catalogue does not have is an id the gate
+    drops unnamed, as before."""
+    found: set = set()
+    for text in _strings_in(data or {}, []):
+        found.update(vocab.system_trees_in(text))
+    return sorted(found)
+
+
+def command_warnings(verbs, unknown: int = 0, trees=()) -> list:
     """What a parent is told about the robot commands an item's text writes
-    (`command_verbs`): one row naming each catalogue verb, and one more when some are never
-    sent from an activity (`vocab.EXPRESSIVE_VERBS` is what may be; the system verbs among
-    the rest un-tick the item, `review_pack`). Fixed words around the catalogue's own verbs;
-    a verb the catalogue does not have is counted, never quoted."""
+    (`command_verbs`, `command_trees`): one row naming each catalogue verb, one more when
+    some are never sent from an activity (`vocab.EXPRESSIVE_VERBS` is what may be; the
+    system verbs among the rest un-tick the item, `review_pack`), and one more naming each
+    system or test tree a mark asks for (never sent either, and un-ticking too). Fixed words
+    around the catalogue's own verbs and tree ids; a verb or a tree the catalogue does not
+    have is counted or dropped, never quoted."""
     verbs = list(verbs or [])
-    if not verbs and not unknown:
+    trees = list(trees or [])
+    if not verbs and not unknown and not trees:
         return []
+    rows = []
     if verbs:
         named = ", ".join(f"cmd:{v}" for v in verbs)
         tail = f", and {unknown} it does not know" if unknown else ""
-        rows = [f"writes robot commands in its text: {named}{tail}."]
-    else:
-        rows = [f"writes {unknown} robot command{'s' if unknown != 1 else ''} in its text "
-                f"this appliance does not know."]
+        rows.append(f"writes robot commands in its text: {named}{tail}.")
+    elif unknown:
+        rows.append(f"writes {unknown} robot command{'s' if unknown != 1 else ''} in its text "
+                    f"this appliance does not know.")
     refused = [v for v in verbs if v not in vocab.EXPRESSIVE_VERBS]
     if refused:
         # True of every way pack content reaches the robot through the content brain: a
@@ -267,6 +287,12 @@ def command_warnings(verbs, unknown: int = 0) -> list:
                     + (" is a system command" if len(system) == 1 else " are system commands")
                     + ": it would unpair or suspend Moxie)")
         rows.append(row + "; Moxie says the line without them.")
+    if trees:
+        rows.append("this appliance never sends the system behaviour tree"
+                    + ("s " if len(trees) > 1 else " ") + ", ".join(trees)
+                    + " from an activity, whether its opener, a line or the AI's reply to "
+                    "its prompt writes it (a system or test flow, not a performance); Moxie "
+                    "says the line without " + ("them" if len(trees) > 1 else "it") + ".")
     return rows
 
 

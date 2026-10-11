@@ -31,6 +31,15 @@ Tolerance policy (decided here, tested in sim/tests/test_action_tags.py)
 * Any other `<...>` is left alone (`<mark/>` markup and `<opener>` are live syntax).
 * Extra fields make a launch malformed (`<launch:A:B:C>` → no action) rather than
   truncated — a wrong module is worse than none.
+* What a line *does* is read in ONE pass, here, on every brain, a printed card and a pack's
+  line alike: a tag that forms only once another is lifted (`<ex<sleep>it>` sleeps; the exit
+  that forms never acts) is not an action, and `launch_cards.decode`'s residue guard relies
+  on that to refuse a nested card. What a brain's line *says* is then held to a fixpoint by
+  the model-line policy (`content/ext_host.py::model_line`, which every brain calls after
+  this parse): no tag of ours however nested and no catalogue mark this appliance could not
+  have minted however assembled is spoken, and nothing lifted there ever acts. A pack's
+  line keeps its own one-pass rule for what acts (`ext_host.literal_actions`) and the same
+  gate for what it says (`ext_host.pack_line`).
 
 Contract caveat — `launch_if_confirmed`
 ---------------------------------------
@@ -109,7 +118,10 @@ def parse_action_tags(text: str) -> Tuple[str, List[Action]]:
     Returns `(clean_text, actions)`. `actions` is in the order the tags appeared.
     Every tag we recognise by name is removed from `clean_text` (malformed ones
     included — they just yield no action); tags we do not own are left in place.
-    Pure and side-effect free: safe to call on any text, tagged or not.
+    Pure and side-effect free: safe to call on any text, tagged or not. One pass: a tag
+    that forms once another is lifted (`<ex<sleep>it>` leaves `<exit>`) is neither acted on
+    nor lifted here; a brain's spoken line loses it in `ext_host.model_line`, and a card's
+    residue refuses it (`launch_cards.decode`).
     """
     if not text:
         return "", []

@@ -13,9 +13,10 @@ review names them, and none is said (`said_opener`).
 
 **The pack gate.** A catalogue mark in an opener or in the model's line, which the
 conversation's prompt (a pack's) or the child's words can steer the model into writing, reaches
-the robot only if this appliance could have minted it; a system verb never does, and the parent
-is told in the conversation's own `ext_events` row (`ext_host.pack_spoken`, `_ext_commands`;
-hook `opener` or `model`). A registered Python handler's line is ours and is not gated.
+the robot only if this appliance could have minted it; a system verb or a system tree never
+does, and the parent is told in the conversation's own `ext_events` row (`ext_host.pack_spoken`,
+`ext_host.model_line`, `_ext_commands`; hook `opener` or `model`). A registered Python handler's
+line is ours and is not gated.
 
 Global handlers are registered Python callables or sandboxed extensions (`ext/`); a
 module's `code` string is never executed.
@@ -52,11 +53,11 @@ from .memory import default_classifier, note_used, provenance, wrap_facts
 from .render import render_prompt
 from . import ext
 from .. import presence as _presence
-from .ext_host import (_action_key, apply_ext_effects, _clock_local, _ext_digest,
-    EXT_EVENTS_CAP, EXT_EVENTS_COLLECTION, ext_facts, ext_namespace, execution_actions_of,
-    full_key_of, literal_actions, pack_spoken, refused_command_reason, refused_command_words,
-    REFUSED_TAG_REASON, REFUSED_TAG_WORDS, SHIPPED_EXTRA_GRANTS, shipped_ext_digests,
-    subscriptions_of)
+from .ext_host import (_action_key, apply_ext_effects, _clock_local, command_label,
+    _ext_digest, EXT_EVENTS_CAP, EXT_EVENTS_COLLECTION, ext_facts, ext_namespace,
+    execution_actions_of, full_key_of, literal_actions, model_line, pack_spoken,
+    refused_command_reason, refused_command_words, REFUSED_TAG_REASON, REFUSED_TAG_WORDS,
+    SHIPPED_EXTRA_GRANTS, shipped_ext_digests, subscriptions_of)
 from .ext_host import robot_events, robot_functions  # noqa: F401  (re-exported surface)
 
 
@@ -361,20 +362,22 @@ class ContentApp(MoxieApp):
 
     def _ext_commands(self, device_id: str, ext_id: str, verbs: list, *, hook: str) -> None:
         """A line, an opener, a markup or the model's line under a conversation (hook
-        `model`) carried a catalogue command pack content may not send (the system verbs
-        first among them), so the pack gate cut it: count it and tell the parent once per
-        robot, item and verb (`reason` is `command:<verb>`), as a breach is told. Not a
-        breach: the line was said without the mark and the turn went on, so it never
-        counts towards quarantine. The verb is the catalogue's own, never author text
-        (`ext_host._reported_verb`)."""
+        `model`) carried a catalogue command pack content may not send (a system verb first
+        among them, another catalogue verb, or a system or test tree in a `behaviour-tree`
+        mark), so the pack gate cut it: count it and tell the parent once per robot, item
+        and name (`reason` is `command:<name>`), as a breach is told, in words that say who
+        wrote it (the item's own text, or the AI's reply under it: `hook`). Not a breach:
+        the line was said without the mark and the turn went on, so it never counts towards
+        quarantine. The name is the catalogue's own, never author text
+        (`ext_host._reported_commands`)."""
         key = (device_id, ext_id)
         self._ext_commands_refused[key] = self._ext_commands_refused.get(key, 0) + len(verbs)
-        what = {"opener": "says first", "model": "the model said for it"}.get(hook, "said")
+        where = {"opener": "its opener", "model": "the AI's reply under it"}.get(hook, "its line")
         for verb in dict.fromkeys(verbs):
             self._ext_report(device_id, ext_id, hook=hook, reason=refused_command_reason(verb),
-                             sentence=refused_command_words(verb),
-                             line=f"took the robot command {verb} out of what it {what}: pack "
-                                  f"content may not send it; said without it",
+                             sentence=refused_command_words(verb, hook=hook),
+                             line=f"took {command_label(verb)} out of {where}: pack content "
+                                  f"may not send it; said without it",
                              quarantined=self._ext_quarantined(device_id, ext_id))
 
     def _ext_report(self, device_id: str, ext_id: str, *, hook: str, reason: str,
@@ -502,7 +505,7 @@ class ContentApp(MoxieApp):
         alternative, line = picked
         self._last_opener[device_id] = line
         text, actions = said_opener(alternative, line)
-        text, refused = pack_spoken(text)
+        text, refused = pack_spoken(text, what="an opener")
         text = tidy_spoken_text(text)
         if refused:
             self._ext_commands(device_id, full_key_of("conversation",
@@ -594,18 +597,17 @@ class ContentApp(MoxieApp):
             if is_rate_limit_error(e):
                 return Reply(text="Give me one tiny second to think... okay, what were you saying?")
             return Reply(text="Hmm, my brain got fuzzy — say that again?")
-        # Lift action tags out of the model's line (actions.py); speak the remainder.
-        text, actions = parse_action_tags(text)
-        # The model's line is held to the pack gate as an opener is: the conversation's
-        # prompt (a pack's), or the child's words, can steer the model into writing a mark,
-        # so a mark stays only when this appliance could have minted it, a system verb never
-        # reaches the robot, a tag of ours that forms as a mark is cut is lifted and never
-        # acted on, and the parent is told in the conversation's own row (hook `model`;
-        # `ext_host.pack_spoken`). A line with no such mark is exactly what it was: the gate
-        # returns it unchanged and it is not tidied again.
-        clean, refused = pack_spoken(text)
-        if clean != text:
-            text = tidy_spoken_text(clean)
+        # The model's line is held to the policy every brain's own line is under
+        # (`ext_host.model_line`): the tags written whole act (its one-pass parse,
+        # actions.py), and what is spoken holds no tag of ours however nested and no mark
+        # this appliance could not have minted however assembled. The conversation's prompt
+        # (a pack's), or the child's words, can steer the model into writing a mark, so a
+        # mark stays only when this appliance could have minted it, a system verb or a
+        # system tree never reaches the robot, a tag of ours that forms as a mark is cut is
+        # lifted and never acted on, and the parent is told in the conversation's own row
+        # (hook `model`). A line with no mark and no tag of ours that forms is byte for byte
+        # what its parse speaks: the gate returns it unchanged and it is not tidied again.
+        text, actions, refused = model_line(text, what="the model's line")
         if refused:
             self._ext_commands(turn.robot.device_id or "",
                                full_key_of("conversation", f"{conv.module_id}/{conv.content_id}"),

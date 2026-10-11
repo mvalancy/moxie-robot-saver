@@ -18,11 +18,21 @@ in `vocab.EXPRESSIVE_VERBS` (a face, a gesture, a sound, the screen icons) and e
 it is in the catalogue; every other `<mark` opening is cut, never spoken, and a catalogue
 verb among them is told to the parent once per robot, item and verb through the
 `ext_events` ring. The system verbs (`vocab.SYSTEM_VERBS`, enumerated from the catalogue by
-name) are never sent. The review names every command a pack's text writes in its own row
-and un-ticks an item that carries a system verb. Shipped content and the trusted Python
-handlers are unchanged, walked here. Every reader of pack text is linear in it: the
-catalogue's check (`vocab.validate_markup`) on a run of openings and on one tag holding a
-run, and the verb reader (`vocab.mark_verbs`) on a long gap after `<mark name=` (section G).
+name) are never sent, and neither are the catalogue's system and test behaviour trees
+(`vocab.SYSTEM_TREES`, enumerated the same way) through the expressive `behaviour-tree`
+verb: a mark naming one is cut on every channel and the tree is named like a system verb.
+Every `name=` in a mark's span is read, so a system verb behind a decoy verb or in a second
+`name=` attribute is cut AND named (before, it was cut and the parent and the review were
+not told). The review names every command a pack's text writes in its own row and un-ticks
+an item that carries a system verb or a system tree. Shipped content and the trusted Python
+handlers are unchanged, walked here. Every reader of pack text is linear in it, but one:
+the catalogue's check (`vocab.validate_markup`) on a run of openings and on one tag holding a
+run, the verb reader (`vocab.mark_verbs`) on a long gap after `<mark name=`, and the text
+gate on a run of `<mark` openings (section G); the exception is `actions.drop_action_tags`
+on a `say` line, quadratic in the worst case and bounded by `MAX_SAY_CHARS` (its docstring).
+
+The model's own line on every brain shares this gate (`ext_host.model_line`; the llm and
+webhook brains are pinned in test_action_tags.py); here the content brain's model line.
 
 Hermetic: the real `ContentApp` over fake brains, the real `MoxieRuntime` over a fake
 transport for what reaches the wire, a tmp store for the `ext_events` ring.
@@ -59,9 +69,16 @@ SCRIPTED = '<mark name="cmd:scripted"/>'
 MOOD = '<mark name="cmd:playback-mood,data:{+mood+:1,+intensity+:1}"/>'
 #: A gesture, the other mark the floor mints on every line.
 GESTURE = vocab.tree_mark("Gesture_None")
+#: The expressive tree verb naming a system tree: a catalogue id the catalogue's check
+#: accepts, cut by the gate since K18a and named like a system verb.
+SYSTEM_TREE = vocab.tree_mark("Gesture_None", "Bht_System_Suspend")
+#: A system verb hidden behind a decoy verb in one cut span, and in a second `name=`: cut
+#: before K18a too, but neither the parent nor (for the second) the review was told.
+DECOY = '<mark name="cmd:zzz" <mark name="cmd:start-systemunpair"/>'
+TWO_NAMES = '<mark name="cmd:playback-mood" name="cmd:start-systemunpair"/>'
 SYSTEM = ("start-systemunpair", "start-systemsuspend")
-#: Anything the robot could read as the unpair or suspend verb, in any case.
-_SYSTEM_RE = re.compile(r"start-system", re.I)
+#: Anything the robot could read as the unpair or suspend verb or a system tree, in any case.
+_SYSTEM_RE = re.compile(r"start-system|Bht_System|Bht_Motor_Test|Bht_TestState", re.I)
 
 
 def _module(program, name="Probe"):
@@ -82,9 +99,9 @@ def _rows(store, device="robot-1"):
 
 
 def _clean(text) -> bool:
-    """No system verb, in any case, and no `<mark` opening left that is not a mark this
-    appliance could have minted: read whole by the catalogue's own pattern, an expressive
-    verb, every id in the catalogue."""
+    """No system verb or tree, in any case, and no `<mark` opening left that is not a mark
+    this appliance could have minted: read whole by the catalogue's own pattern, an
+    expressive verb, every id in the catalogue, no system tree."""
     if _SYSTEM_RE.search(text or ""):
         return False
     for m in re.finditer(r"<mark\b[^>]*>?", text or "", re.I):
@@ -150,6 +167,62 @@ def test_a_marks_verb_is_read_however_it_is_written():
     assert vocab.mark_verbs("<mark name=" + " " * 100 + "'cmd:scripted'/>") == ["scripted"]
     assert vocab.mark_verbs("<mark name=" + " " * 100) == []
     assert vocab.mark_verbs('<mark name="" cmd:scripted') == []
+    # Every `name=` in a mark's span is read, so a system verb behind a decoy verb (two
+    # openings in one cut span) or in a second `name=` attribute is named: reading only the
+    # first `name=` of a span let both go unnamed to the parent, and the second one past
+    # the review, pre-ticked.
+    assert vocab.mark_verbs(DECOY) == ["zzz", "start-systemunpair"]
+    assert vocab.mark_verbs(TWO_NAMES) == ["playback-mood", "start-systemunpair"]
+    assert vocab.mark_verbs("<mark name='cmd:a' NAME = \"cmd:B\" name=cmd:c/>") == ["a", "B", "c"]
+    assert H._reported_commands(DECOY) == ["start-systemunpair"]
+    assert H._reported_commands(TWO_NAMES) == ["start-systemunpair"]
+    assert H._reported_commands(UNPAIR + SUSPEND) == ["start-systemunpair", "start-systemsuspend"]
+    assert H._reported_commands(UNPAIR + UNPAIR) == ["start-systemunpair"], "once each"
+    assert H._reported_commands(MOOD) == [] and H._reported_commands('<mark name="cmd:zzz"/>') == []
+
+
+def test_the_system_trees_are_enumerated_from_the_catalogue_and_never_expressive():
+    """The deny set is read off `vocab.TREES` by name (a tree holding `system` or `test`),
+    so one added to the catalogue later lands in it on its own; today it is exactly the six
+    in the catalogue's system and test groups. Every tree the floor and the planner choose
+    from is expressive. `system_trees_in` names a system tree a mark's span holds in any
+    field and any case, in the catalogue's spelling, and nothing outside a mark."""
+    assert vocab.SYSTEM_TREES == frozenset({
+        "Bht_System_Resume", "Bht_System_Suspend", "Bht_System_Suspend_Zero",
+        "Bht_System_WifiRecover", "Bht_Motor_Test", "Bht_TestState"})
+    assert vocab.SYSTEM_TREES <= vocab.TREE_SET
+    assert vocab.EXPRESSIVE_TREES == vocab.TREE_SET - vocab.SYSTEM_TREES
+    for tree in ("Bht_System_Suspend", "bht_system_suspend", "Bht_Motor_Test", "Bht_TestState",
+                 "Bht_System_Shutdown", "Bht_Factory_Test"):
+        assert vocab.is_system_tree(tree), tree
+    for tree in ("Bht_Sleep_Anim", "Bht_Demo_Wake_Up", "Bht_Idle_Curious", "Bht_Gesture_Greet",
+                 "Bht_Active_Thinking", "Bht_Search", "Bht_Sign_off", "Bht_Robot_Pickup"):
+        assert not vocab.is_system_tree(tree), tree
+    assert {"Bht_Gesture_Greet", "Bht_Sign_off", "Bht_Active_Thinking", "Bht_Search"} <= vocab.EXPRESSIVE_TREES
+    assert set(vocab.GAZE_TREES) <= vocab.EXPRESSIVE_TREES
+    assert vocab.system_trees_in(SYSTEM_TREE + " and " + MOOD) == ["Bht_System_Suspend"]
+    assert vocab.system_trees_in("<mark name='cmd:behaviour-tree,data:{+eventName+:+BHT_MOTOR_TEST+}'") == ["Bht_Motor_Test"]
+    assert vocab.system_trees_in("<MARK Bht_TestState") == ["Bht_TestState"]
+    assert vocab.system_trees_in("Bht_System_Suspend outside a mark") == []
+    assert vocab.system_trees_in('<usel genre="question">Bht_System_Suspend</usel>') == []
+    assert vocab.system_trees_in(vocab.tree_mark("Gesture_None", "Bht_Sleep_Anim")) == []
+    assert vocab.system_trees_in("") == [] and vocab.system_trees_in(None) == []
+    # The gate's own read of a kept mark: its `behaviour` field.
+    assert H._pack_tree_refused(SYSTEM_TREE) == "Bht_System_Suspend"
+    assert H._pack_tree_refused(vocab.tree_mark("Gesture_Talk", "Bht_Sign_off")) is None
+    assert H._pack_tree_refused(MOOD) is None and H._pack_tree_refused(UNPAIR) is None
+    assert H._reported_commands(SYSTEM_TREE) == ["Bht_System_Suspend"]
+    # Nothing shipped names one, and neither the floor nor the planner mints one: every
+    # tree they choose is expressive, so the gate leaves every performed line as it is.
+    import importlib
+    perform = importlib.import_module("markup").perform
+    for where, text in _shipped_texts():
+        assert vocab.system_trees_in(text) == [] and H._reported_commands(text) == [], where
+    for line in ("Hi Sam! What do you want to talk about?", "Goodbye! Sleep well.", "Wow! You did it!",
+                 "Let me think about that.", "Can we test the system and suspend the motor?"):
+        for markup in (automarkup.annotate(line, turn_key="k"), perform(line, turn_key="k").markup):
+            assert vocab.system_trees_in(markup) == [], (line, markup)
+            assert H.pack_markup(markup) == (markup, 0, []), (line, markup)
 
 
 # --------------------------------------------------------------------------- #
@@ -206,6 +279,13 @@ SAYS = {
     "a mark holding a kept exit is cut around it, and the exit acts": (
         '<mark na<exit>me="cmd:start-systemunpair"/>Bye', "Bye", [ActionType.EXIT],
         ["start-systemunpair"], False),
+    # K18a: a system tree in the expressive tree verb, and a system verb hidden in a span.
+    "a system tree in the expressive tree verb is cut and named": (
+        SYSTEM_TREE + "Okay!", "Okay!", [], ["Bht_System_Suspend"], False),
+    "a system verb behind a decoy verb in one span is cut and named": (
+        DECOY + "Okay!", "Okay!", [], ["start-systemunpair"], False),
+    "a system verb in a second name= attribute is cut and named": (
+        TWO_NAMES + "Okay!", "Okay!", [], ["start-systemunpair"], False),
 }
 
 
@@ -248,7 +328,12 @@ def test_a_packs_say_line_cannot_send_a_system_command(shape, tmp_path):
         verb = row["reason"].split(":", 1)[1]
         assert row["sentence"] == H.refused_command_words(verb), row
         assert "unpair" in row["sentence"] if verb == "start-systemunpair" else True, row
-        assert "system command" in row["sentence"] if verb in SYSTEM else "may not" in row["sentence"]
+        if verb in SYSTEM:
+            assert "system command" in row["sentence"], row
+        elif verb in vocab.SYSTEM_TREES:
+            assert "system behaviour tree" in row["sentence"], row
+        else:
+            assert "may not" in row["sentence"], row
     # Three more turns: still one row per verb (told once), the program still runs.
     for _ in range(3):
         again = app.respond(Turn(robot=ext_robot(), speech=speech))
@@ -301,6 +386,11 @@ OPENERS = {
     "a verb an activity may not send goes, named": (SCRIPTED + "Hi", "Hi", ["scripted"]),
     # Two alternatives: the second prompt must say the other one, so the mark is met.
     "in the second of two alternatives": ("Hi|" + SUSPEND + "Hey", "Hi", ["start-systemsuspend"]),
+    # K18a
+    "a system tree in the expressive tree verb goes, named": (SYSTEM_TREE + "Hi", "Hi",
+                                                              ["Bht_System_Suspend"]),
+    "a system verb in a second name= attribute goes, named": (TWO_NAMES + "Hi", "Hi",
+                                                              ["start-systemunpair"]),
 }
 
 
@@ -362,6 +452,18 @@ MARKUPS = {
         '<ma<exit>rk name="cmd:start-systemsuspend"/>Hi', "Hi", 1, ["start-systemsuspend"]),
     "in upper case the catalogue refuses the verb, a catalogue drop": (
         '<MARK NAME="CMD:START-SYSTEMUNPAIR"/>Hi', "Hi", 1, ["start-systemunpair"]),
+    # K18a: the tree mark is dropped tag by tag and the tree named; a decoy is one tag
+    # holding another `<`, dropped for its form, and the verb behind it is named.
+    "a system tree in the expressive tree verb is dropped, named": (
+        SYSTEM_TREE + "Hi", "Hi", 1, ["Bht_System_Suspend"]),
+    # The last pass: every id in the formed mark is in the catalogue, so only the tree
+    # check sees it (the one mutant of this change's run that the tag-by-tag shapes missed).
+    "a system tree mark that forms once a dropped tag's pieces meet drops the markup whole": (
+        '<ma<mark name="cmd:zzz"/>' + SYSTEM_TREE[3:] + "Hi", "", 2, ["Bht_System_Suspend"]),
+    "a system verb behind a decoy verb is dropped with it, named": (
+        DECOY + "Hi", "Hi", 1, ["start-systemunpair"]),
+    "a system verb in a second name= attribute is dropped, named": (
+        TWO_NAMES + "Hi", "Hi", 1, ["start-systemunpair"]),
 }
 
 
@@ -419,6 +521,16 @@ MODEL_LINES = {
     "an expressive mark in the minted form stays, as before": (MOOD + "Hi", MOOD + "Hi", [], []),
     "the mark alone: the model said nothing, so the usual nudge": (
         UNPAIR, "Tell me more!", [], ["start-systemunpair"]),
+    # K18a: the model's own line on every brain (`ext_host.model_line`): a system mark
+    # assembled around a nested exit (the one-pass parse spoke `<ma<exit>rk …/>Bye!` as a
+    # broken string; a fixpoint lift alone would have assembled the working mark), a system
+    # tree, and a system verb hidden in a span.
+    "a system mark assembled around a nested exit: the exit acts, the mark is cut and named": (
+        '<ma<ex<exit>it>rk name="cmd:start-systemunpair"/>Bye!', "Bye!", [ActionType.EXIT],
+        ["start-systemunpair"]),
+    "a system tree in the expressive tree verb": (SYSTEM_TREE + "Hi", "Hi", [], ["Bht_System_Suspend"]),
+    "a system verb behind a decoy verb in one span": (DECOY + "Hi", "Hi", [], ["start-systemunpair"]),
+    "a system verb in a second name= attribute": (TWO_NAMES + "Hi", "Hi", [], ["start-systemunpair"]),
 }
 
 
@@ -448,7 +560,10 @@ def test_the_models_line_under_a_conversation_cannot_send_a_system_command(shape
     for row in rows:
         assert (row["extension"], row["hook"], row["quarantined"]) == ("conversation:CHAT/default", "model", False), row
         verb = row["reason"].split(":", 1)[1]
-        assert row["sentence"] == H.refused_command_words(verb), row
+        # The row says the AI's reply carried it: the model, steered by the prompt or the
+        # child, wrote the mark, not the item's own text.
+        assert row["sentence"].startswith("the AI's reply under it carried"), row
+        assert row["sentence"] == H.refused_command_words(verb, hook="model"), row
     for _ in range(3):
         again = app.respond(Turn(robot=ext_robot(module_id="CHAT"), speech="hello"))
         assert again.text == said, (shape, again.text)
@@ -569,6 +684,82 @@ def test_the_review_names_the_commands_a_packs_text_writes_and_unticks_a_system_
     assert item["default"] is True and item["commands"] == [] and item["system_commands"] == []
     assert not any("command" in w for w in item["warnings"]), item["warnings"]
     assert P.command_warnings([]) == []
+
+
+def test_the_review_names_a_system_tree_and_a_hidden_system_verb_and_unticks_both():
+    """A `behaviour-tree` mark naming a system or test tree is named in the item's row in
+    the catalogue's spelling (in any field, in any case, in the opener or the prompt) and
+    un-ticks the item; an expressive tree is named only as the verb it is and ticks. A
+    system verb behind a decoy, or in a second `name=` attribute, is named and un-ticks
+    (the second was named as its first verb only and pre-ticked before)."""
+    item, = P.review_pack(free_chat_pack("You are Moxie.", opener=SYSTEM_TREE + "Hi!"), {})
+    assert item["default"] is False and item["commands"] == ["behaviour-tree"], item
+    assert item["system_commands"] == ["Bht_System_Suspend"]
+    rows = [w for w in item["warnings"] if "command" in w or "behaviour tree" in w]
+    assert rows == P.command_warnings(["behaviour-tree"], 0, ["Bht_System_Suspend"]), rows
+    assert len(rows) == 2 and "cmd:behaviour-tree" in rows[0], rows
+    assert ("never sends the system behaviour tree Bht_System_Suspend" in rows[1]
+            and "without it" in rows[1]), rows
+    for prompt, tree in (("Say <mark name='cmd:behaviour-tree,data:{+behaviour+:+bht_system_suspend+}'/>",
+                          "Bht_System_Suspend"),
+                         ('<mark name="cmd:behaviour-tree,data:{+eventName+:+Bht_Motor_Test+}"/>',
+                          "Bht_Motor_Test")):
+        item, = P.review_pack(free_chat_pack(prompt), {})
+        assert item["default"] is False and item["system_commands"] == [tree], (prompt, item)
+    item, = P.review_pack(free_chat_pack("You are Moxie.", opener=GESTURE + "Hi!"), {})
+    assert item["default"] is True and item["system_commands"] == []
+    assert not any("behaviour tree" in w for w in item["warnings"]), item["warnings"]
+    for opener in (DECOY + "Hi!", TWO_NAMES + "Hi!"):
+        item, = P.review_pack(free_chat_pack("You are Moxie.", opener=opener), {})
+        assert item["default"] is False and item["system_commands"] == ["start-systemunpair"], opener
+        assert "start-systemunpair" in item["commands"], item["commands"]
+        assert any("never sends cmd:start-systemunpair" in w for w in item["warnings"]), item["warnings"]
+    assert P.command_trees({"opener": SYSTEM_TREE, "prompt": "x " + SYSTEM_TREE
+                            + vocab.tree_mark("Gesture_None", "Bht_TestState")}) == [
+        "Bht_System_Suspend", "Bht_TestState"]
+    assert P.command_trees({"opener": "Bht_System_Suspend outside a mark"}) == []
+    two = P.command_warnings(["behaviour-tree"], 0, ["Bht_Motor_Test", "Bht_System_Suspend"])
+    assert "system behaviour trees Bht_Motor_Test, Bht_System_Suspend" in two[1] and two[1].endswith("without them.")
+
+
+def test_the_parents_sentence_says_what_a_system_command_would_do():
+    """The `ext_events` row's words, pinned literally: what the command would do (its
+    effect, not just its name), that no activity may send it, and who wrote it: the item's
+    own text (a line, a markup, an opener), the AI's reply under the conversation (hook
+    `model`), or a brain's own line (hook `brain`, the supervisor log)."""
+    assert H.refused_command_words("start-systemunpair") == (
+        "it tried to send Moxie the system command start-systemunpair, which would unpair "
+        "Moxie from this home; no activity may, so Moxie said its line without it")
+    assert H.refused_command_words("start-systemsuspend") == (
+        "it tried to send Moxie the system command start-systemsuspend, which would put Moxie "
+        "into system suspend; no activity may, so Moxie said its line without it")
+    assert H.refused_command_words("scripted") == (
+        "it tried to send Moxie the robot command scripted, which an activity may not; Moxie "
+        "said its line without it")
+    assert H.refused_command_words("Bht_System_Suspend") == (
+        "it tried to send Moxie the system behaviour tree Bht_System_Suspend, which would run a "
+        "system or test flow on Moxie, not a performance; no activity may, so Moxie said its "
+        "line without it")
+    assert H.refused_command_words("start-systemunpair", hook="model") == (
+        "the AI's reply under it carried the system command start-systemunpair, which would "
+        "unpair Moxie from this home; no activity may send it, so Moxie said the line without it")
+    assert H.refused_command_words("scripted", hook="model") == (
+        "the AI's reply under it carried the robot command scripted, which an activity may not "
+        "send; Moxie said the line without it")
+    assert H.refused_command_words("start-systemsuspend", hook="brain") == (
+        "the brain wrote the system command start-systemsuspend, which would put Moxie into "
+        "system suspend; Moxie said its line without it")
+    assert H.refused_command_words("scripted", hook="brain") == (
+        "the brain wrote the robot command scripted, which a brain may not send; Moxie said its "
+        "line without it")
+    assert H.refused_command_words("Bht_Motor_Test", hook="brain") == (
+        "the brain wrote the system behaviour tree Bht_Motor_Test, which would run a system or "
+        "test flow on Moxie, not a performance; Moxie said its line without it")
+    for hook in ("", "opener", "global", "turn.before"):
+        assert H.refused_command_words("start-systemunpair", hook=hook) == H.refused_command_words("start-systemunpair")
+    assert H.command_label("start-systemunpair") == "the system command start-systemunpair"
+    assert H.command_label("Bht_TestState") == "the system behaviour tree Bht_TestState"
+    assert H.command_label("scripted") == "the robot command scripted"
 
 
 # --------------------------------------------------------------------------- #
@@ -883,3 +1074,80 @@ def test_a_long_gap_after_a_mark_opening_is_read_once(gap):
         pytest.fail(f"still reading a gap of {gap} after 5 s")
     assert took[262144] < 2.0, f"{gap}: 256 KB took {took[262144]:.2f} s"
     assert took[262144] < 40 * max(took[65536], 0.01), f"{gap}: {took}"
+
+
+#: A run of `<mark` openings with no `>` after any of them: the shape on which the text
+#: gate read the rest of the line once per opening when its search resumed at each
+#: opening's end rather than at the cut's end (the K5.2 review's surviving N15 mutant:
+#: 5.0-5.7 s at 64 KB on the build host against 3-14 ms; nothing pinned it). Each is a
+#: builder at a size: bare openings, upper case with spaces, and `name=` with no `>`.
+_RUNS = {
+    "<mark over and over": lambda n: "<mark" * (n // 5),
+    "<MARK with spaces": lambda n: "<MARK  " * (n // 7),
+    "<mark name= with no >": lambda n: "<mark name=" * (n // 11),
+}
+
+
+@pytest.mark.parametrize("run", sorted(_RUNS))
+def test_a_run_of_mark_openings_is_read_once(run):
+    """`pack_spoken`, `pack_line` and an installed opener through the real `ContentApp` read
+    a run of openings once: the first opening has no `>` after it, so the cut runs to the
+    end of the line and the search goes on from there, never from inside the cut
+    (`_pack_mark_cuts`). Four times the text, about four times the time, and never the
+    alarm; the mutant that resumed at each opening's end took 5.0-5.7 s at 64 KB, where
+    the bound is 1.0 s, and four times longer per doubling, where the alarm is 5 s. The run
+    is left open, so nothing is spoken and nothing is named."""
+    build = _RUNS[run]
+    took = {}
+    try:
+        with _hard_limit(5.0):
+            for size in (65536, 262144):
+                text = build(size) + "Hi"
+                started = time.perf_counter()
+                assert H.pack_spoken(text) == ("", [])
+                assert H.pack_line(text, lambda a: False) == ("", [], [])
+                brain = Brain()
+                app = app_with(_opener_module(text), chat=brain)
+                reply = app.respond(Turn(robot=ext_robot(module_id="CHAT"), speech="", command="prompt"))
+                assert reply.text == "" and reply.actions == [] and brain.turns == []
+                took[size] = time.perf_counter() - started
+    except _Stalled:
+        pytest.fail(f"still reading {run} after 5 s")
+    assert took[65536] < 1.0, f"{run}: 64 KB took {took[65536]:.2f} s"
+    assert took[262144] < 2.0, f"{run}: 256 KB took {took[262144]:.2f} s"
+    assert took[262144] < 40 * max(took[65536], 0.01), f"{run}: {took}"
+
+
+# --------------------------------------------------------------------------- #
+# H. A pack line her side blocks gets the category's redirect
+# --------------------------------------------------------------------------- #
+
+def test_a_pack_line_her_side_blocks_gets_the_categorys_redirect_not_the_stock_line(tmp_path):
+    """The host runs a pack's `say` line through the output-side classifier; a blocked line
+    becomes the category's redirect, text and markup both ours (`safety.Redirect`, performed
+    already), as a blocked model line does. Before this the host read `.line` off the
+    Redirect, which has none, so the turn raised and the robot heard the turn guard's stock
+    line instead of the redirect (the unsafe line was never spoken either way). Through the
+    real app, then the real runtime."""
+    from moxie_sdk import safety as S
+    from moxie_runtime.turns import STOCK_REPLY
+    unsafe = "That is fucking great, Sam."
+    program = _imported({"do": [{"say": unsafe}, {"handled": True}]})
+    store = MemoryStore(JsonStore(str(tmp_path / "store")))
+    brain = Brain()
+    app = app_with(_module(program), chat=brain, memory=store, safety_classifier=None,
+                   clock=lambda: 1_700_000_000)
+    verdict = app.classifier.assess(unsafe, role=S.MOXIE)
+    assert verdict.is_unsafe, "her side blocks the line"
+    lines = {ln["text"] for ln in app.classifier.phrase_sets[verdict.phrase_set]}
+    reply = app.respond(Turn(robot=ext_robot(), speech="hi"))
+    assert reply.text in lines and "fucking" not in reply.text, reply
+    assert reply.markup and reply.markup.endswith(reply.text) and "<mark" in reply.markup, reply
+    assert vocab.validate_markup(reply.markup) == [] and _clean(reply.markup)
+    assert reply.actions == [] and brain.turns == [] and not app._ext_breaches
+    assert _rows(store) == [], "a redirect is neither a breach nor a refusal"
+    out = _wire(app_with(_module(program), chat=Brain(), safety_classifier=None), "hi",
+                tmp_path=tmp_path / "wire")
+    assert out["text"] in lines and out["text"] != STOCK_REPLY, out
+    assert "fucking" not in out["text"] and "fucking" not in out["markup"], out
+    assert out["markup"].strip() and _clean(out["markup"])
