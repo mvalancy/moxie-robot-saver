@@ -101,8 +101,8 @@ first few characters) if you want to watch it change.
 ## What has not been tested on a robot
 
 **No physical Moxie has ever rendered any of this** — not one option in the table above,
-colours included. This project's one robot runs firmware older than 801 and has never reached
-the server ([live notes](../debugging/live-hardware-debug.md)). The plumbing — the picker, the
+colours included. This project's one robot runs firmware older than 801 and has never connected
+to the server ([live notes](../debugging/live-hardware-debug.md)). The plumbing — the picker, the
 layering, the texture key, the config push — is tested end to end against a simulated robot
 and is correct as far as our documents go. The 60 artwork names came from a project whose
 authors *did* have a robot, which is a much better position than guessing, but it is still

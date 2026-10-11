@@ -84,7 +84,7 @@ crash loop. Details and community links: [`../community-research.md`](../communi
 ## No teardown required
 For 801 and 803 robots this whole path is camera QR codes only. ADB is locked on normal boot
 (`ro.adb.secure=1`, [firmware reference](../reverse-engineering/firmware/firmware-803-reference.md#platform))
-and reachable only through the flashing modes
+and reachable only through recovery or the flashing modes
 ([flashing runbook](../reverse-engineering/firmware/flashing-runbook.md#a-enter-a-flashing-mode-usb)).
 Revival needs neither ADB nor the robot's identity keys. Older robots need a reflash, which does open
 the shell ([Revive your Moxie, Path C](../guides/revive-your-moxie.md#path-c-flash-an-older-robot-first)). Robot-side facts: [`../../hardware/README.md`](../../hardware/README.md).

@@ -82,7 +82,7 @@
    "path": "architecture/revival-path.md",
    "title": "The revival path",
    "section": "architecture",
-   "bytes": 4870,
+   "bytes": 4882,
    "mermaid": 2,
    "headings": [
     "1. Check the firmware gate first",
@@ -1128,7 +1128,7 @@
    "path": "guides/revive-your-moxie.md",
    "title": "Revive your Moxie",
    "section": "guides",
-   "bytes": 9105,
+   "bytes": 9135,
    "mermaid": 1,
    "headings": [
     "Which path are you on?",
@@ -1221,7 +1221,7 @@
     "Unpair or reset from the web app",
     "The reset code",
     "The same calls from a terminal",
-    "Why there is no reset button on the robot",
+    "Why reset goes through a server or a code",
     "Restore from backup instead of wiping",
     "Reference"
    ],
@@ -1281,7 +1281,7 @@
    "path": "guides/moxies-look.md",
    "title": "Moxie's look — letting your child style the face",
    "section": "guides",
-   "bytes": 7226,
+   "bytes": 7231,
    "mermaid": 0,
    "headings": [
     "What you can change today",

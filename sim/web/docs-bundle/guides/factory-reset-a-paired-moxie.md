@@ -55,7 +55,7 @@ Both send `Authorization: Bearer <token>` and an empty body. In the original app
 Settings** button. On success the app clears the robot, resets the crypto manager, re-fetches the
 account, and the robot returns to `UNPAIRED` / the pairing screen.
 
-## Why there is no reset button on the robot
+## Why reset goes through a server or a code
 In the original app, reset is **server-relayed**: the app tells the *cloud* to tell the *robot* to
 reset. There is **no button combo on the robot itself**; the decompiled app contains no on-device or
 hardware reset path ([robot lifecycle §1.4](../features/robot-lifecycle.md#14-on-device-hardware-reset)).
