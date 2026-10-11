@@ -736,6 +736,22 @@ def test_no_childs_name_in_what_the_eye_check_keeps(tmp_path, capsys, line, acti
     assert eye.said == ([] if action == S.BLOCK else [line]), eye.said
 
 
+def test_a_pack_that_raises_is_logged_without_the_childs_name(tmp_path, capsys):
+    """A pack that raises is logged and ignored, and the event falls through to presence.
+    Its error can quote anything, the child's name included: the log masks it."""
+    class _Raises(_EyePack):
+        def perceive(self, turn):
+            raise ValueError(f"no rule matched for {turn.robot.child.nickname}")
+
+    rt, dev, synth = _armed(tmp_path, _Raises(ASKS_ADDRESS))
+    capsys.readouterr()
+    resp = _vision(rt, dev, FOUND, event_id="e-eye")
+    out = capsys.readouterr().out
+    assert resp["result"] == ResultCode.NOREPLY_ACK, resp
+    assert f"[runtime] app.perceive error: no rule matched for {CHILD_MASK}" in out, out
+    assert not re.search(r"(?<!\w)sam(?!\w)", out, re.IGNORECASE), out
+
+
 def _eye_clock(monkeypatch, at=1_000_000.0):
     """presence.py's clock (`presence.time`: what an event is stamped with on the way in,
     and what the journal's window reads), stopped at `at` and moved by hand, so a blink

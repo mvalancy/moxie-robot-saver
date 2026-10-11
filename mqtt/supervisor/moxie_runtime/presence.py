@@ -143,7 +143,7 @@ class PresenceMixin:
         try:
             reply = perceive(turn)
         except Exception as e:                    # a broken pack must not cost the hello
-            print(f"[runtime] app.perceive error: {e}", flush=True)
+            print(f"[runtime] app.perceive error: {self._masked(str(e))}", flush=True)
             return False
         if reply is None:
             return False
@@ -168,8 +168,8 @@ class PresenceMixin:
                 print(f"[runtime] 🧬 {device_id}: {name} woke a content pack "
                       f"({self._masked(source)}); the safety check stopped its line, so "
                       f"Moxie said nothing", flush=True)
-                self._publish_chat(device_id, rcr.get("event_id"),
-                                   rcr.get("backend", "router"), "", markup="",
+                backend = rcr.get("backend", "router")
+                self._publish_chat(device_id, rcr.get("event_id"), backend, "", markup="",
                                    result=ResultCode.NOREPLY_ACK)
                 return True
         markup, scored = (getattr(reply, "markup", None), None)
