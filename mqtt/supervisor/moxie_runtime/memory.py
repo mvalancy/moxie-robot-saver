@@ -106,10 +106,12 @@ def _notify_report(rcr) -> tuple:
 class _TurnRecord:
     """One turn as the notify reconcile sees it (`MemoryMixin`, "the robot's notify").
     Open from the prompt until `_remember` completes it with what Moxie was told to say; a
-    notify that arrives while it is open is held for that moment. Completed, it is kept
-    until the robot reports a later turn, or `UNREPORTED_TURNS` newer turns exist."""
+    notify that arrives while it is open is held for that moment. A turn superseded while
+    its stream was open is completed instead with the chunks the runtime had sent (`void`:
+    nothing of it is in history until the robot reports it). Completed, it is kept until
+    the robot reports a later turn, or `UNREPORTED_TURNS` newer turns exist."""
     __slots__ = ("child", "extras", "text", "words", "keys", "lead", "covered", "said",
-                 "entry", "windows", "held")
+                 "entry", "windows", "held", "spoken", "void", "named")
 
     def __init__(self, child: str, extras=()):
         self.child = _keys(child)                 # the child's line, as compared
@@ -121,8 +123,11 @@ class _TurnRecord:
         self.covered: set = set()                 # key indices the robot has reported
         self.said = None                          # the history dict holding the child's line
         self.entry = None                         # the history dict holding `text`
-        self.windows: list = []                   # the child's other windows joined into `said`
+        self.windows: list = []                   # child lines the robot listed with this turn
         self.held: list = []                      # reports that arrived while open
+        self.spoken: list = []                    # the answer chunks sent while open
+        self.void = False                         # superseded mid-stream: in history as reported
+        self.named = False                        # a report has named it (by line or words)
 
     @property
     def open(self) -> bool:
@@ -384,15 +389,22 @@ class MemoryMixin:
     # line, the hello queued for it and, once `_remember` runs, what Moxie was told to say.
     # The records from the last turn the robot reported onward are kept, oldest first
     # (`UNREPORTED_TURNS` at most), and a notify is reconciled against them:
-    #  * a child line equal to one of those turns' (case and punctuation aside) is already
-    #    held; it names the turn whose text the report's words fit best (`_best_run`: a
-    #    cut-off answer said again whole for the same line starts over inside words
-    #    already reported, so it names the next such turn, where none are), among equals
-    #    the oldest the robot has not reported in full (reports arrive in order);
+    #  * a child line equal to one of those turns' (case and punctuation aside) names
+    #    the turn whose text the report's words fit best (`_best_run`: a cut-off answer
+    #    said again whole for the same line starts over inside words already reported,
+    #    so it names the next such turn, where none are), a turn superseded mid-stream
+    #    before an older one, among equals the oldest the robot has not reported in full
+    #    (reports arrive in order). The line is already held, with one exception: listed
+    #    before the line of a newer turn the report also names, after an earlier report
+    #    already named its own turn, it is a new utterance (the robot does not re-list a
+    #    window it has reported: OpenMoxie appends every input line of every notify,
+    #    conversations.py:63-65), joined like a window;
     #  * a child line no turn of ours answered (the earlier of several speech windows:
     #    `_on_remote_chat` answers the last) is joined into the child's line of the turn
     #    it was reported with, in the order reported, as OpenMoxie's `add_history` joins
-    #    consecutive child lines (conversations.py:29-39); with no such turn, appended;
+    #    consecutive child lines (conversations.py:29-39), unless that turn's reports
+    #    listed it already (per-chunk reports re-list the windows); with no such turn,
+    #    appended;
     #  * fillers, and a hello the runtime spoke as chunk 0, are never history (they were
     #    not before either); an answer that happens to say a filler's words is the turn's
     #    text and is matched as such;
@@ -400,13 +412,15 @@ class MemoryMixin:
     #    and" after the child cut in), marks those words reported, on the turn it fits
     #    best (holding them all unreported, else some, else a repeat), the turn the
     #    report's child line names before any other (the robot's own tie between the line
-    #    and the words), then the oldest; the entry becomes what the robot says it got
-    #    through only on a clean cut (a prefix, nothing after it), never on a tail piece
-    #    alone or a report with a hole, so a line the robot may still report is never
-    #    dropped and per-chunk reports in any order re-assemble the text; a report holding
-    #    a turn's whole text with words around it marks the text (on the turn least
-    #    reported, the named one among equals) and treats the rest the same way (another
-    #    turn's answer is matched, a line of the robot's own is appended);
+    #    and the words), then the oldest; a turn the report does not name takes only
+    #    words it has not reported when the report names another (a repeat there is the
+    #    named turn's, or a line of the robot's own); the entry becomes what the robot
+    #    says it got through only on a clean cut (a prefix, nothing after it), never on a
+    #    tail piece alone or a report with a hole, so a line the robot may still report is
+    #    never dropped and per-chunk reports in any order re-assemble the text; a report
+    #    holding a turn's whole text with words around it marks the text (on the turn
+    #    least reported, the named one among equals) and treats the rest the same way
+    #    (another turn's answer is matched, a line of the robot's own is appended);
     #  * anything else (a module's own line) is appended, consecutive same-role reports
     #    joined as `add_history` joins them, never into a turn's own entry.
     # The robot speaks in order, so a report that names a turn (by the child's line or by
@@ -415,9 +429,13 @@ class MemoryMixin:
     # matched only until the robot reports the next one, a line the child really says
     # twice is two lines, and a cut-off turn keeps its cut whatever is said later. A
     # notify that arrives while the turn is open (the robot speaks chunk 0 before the
-    # stream closes) is held and reconciled when `_remember` runs; if that turn never
-    # closes (superseded, its worker died) nothing of it reached history, so what the
-    # robot reported is kept as reported when the next turn starts.
+    # stream closes) is held and reconciled when `_remember` runs. A turn superseded while
+    # its stream is open (the child spoke again before it closed) never reaches
+    # `_remember`: its record is completed with the chunks the runtime had sent (`_spoke`)
+    # and marked void, so a report naming it (the child's line, or those words) writes
+    # its lines then, as reported, cut as the robot reports them, never on an older turn;
+    # one that sent nothing is dropped, since no report can be its. A turn whose worker
+    # died the same way is handled the same way.
     # A report the proto cannot carry is dropped on arrival (`_notify_report`), one the
     # reconcile cannot handle is dropped alone (`_reconcile_reports`): the turn's own lines
     # are written whatever the robot sent. Which cadence an 803 robot uses, one notify per
@@ -439,24 +457,40 @@ class MemoryMixin:
     def _start_turn_record(self, device_id, speech):
         """A turn starts (`_on_remote_chat`): open its record, with the hello queued to ride
         out as its chunk 0 (`_speak_opener`; one dict read, so no `_presence_lock`). A
-        previous turn still open with held reports never reached history: what the robot
-        reported about it is kept as reported (its own hello aside), before this turn's
-        lines, each report on its own."""
+        previous turn still open never reached history (superseded; its worker died): if
+        the runtime sent chunks of its answer it stays, void, as the turn those words
+        belong to, and what the robot reported about it so far is written now, as
+        reported (its own hello aside), before this turn's lines, each report on its own;
+        if it sent nothing, no report can be its and it goes."""
         with _NOTIFY_LOCK:
             recs = self._turn_records().setdefault(device_id, [])
             hello = self._pending_opener.get(device_id)
             old = recs[-1] if recs and recs[-1].open else None
             changed = False
             if old is not None:
-                old.complete("")                  # void: nothing of it is in history
-                if old.held:
+                if old.spoken:
+                    old.complete(" ".join(old.spoken))
+                    old.void = True               # in history only as the robot reports it
+                else:
+                    recs.remove(old)
+                held, old.held = old.held, []
+                if held:
                     h = self.history.setdefault(device_id, [])
-                    changed = self._reconcile_reports(device_id, old.held, h, recs)
-                recs.remove(old)
+                    changed = self._reconcile_reports(device_id, held, h, recs)
             recs.append(_TurnRecord(speech, [hello] if hello else ()))
             del recs[:-UNREPORTED_TURNS]
             if changed:
                 self._save_memory(device_id)
+
+    def _spoke(self, device_id, speech, text):
+        """A chunk of the open turn's answer went onto the wire (`_handle_stream_turn`):
+        noted on its record, so a turn superseded before its stream closes keeps the words
+        the robot may have said and reported (`_start_turn_record`)."""
+        with _NOTIFY_LOCK:
+            recs = self._turn_records().get(device_id) or []
+            rec = recs[-1] if recs and recs[-1].open else None
+            if rec is not None and text and rec.child == _keys(speech):
+                rec.spoken.append(text)
 
     def _remember(self, device_id, speech, text):
         """Fold one finished turn into the robot's conversation history, completing its
@@ -468,12 +502,17 @@ class MemoryMixin:
         remembers its redirect with no child line: that is this turn too). A record for a
         newer turn, which a superseded worker meets when the child's next prompt lands
         between its stale check and this call, is left open for that turn: this turn gets
-        a completed record before it, and the newer turn's reports stay held for it."""
+        a completed record before it (its own void record, if nothing of it was written
+        yet, is replaced), and the newer turn's reports stay held for it."""
         with _NOTIFY_LOCK:
             h = self.history.setdefault(device_id, [])
             recs = self._turn_records().setdefault(device_id, [])
             rec = recs[-1] if recs and recs[-1].open else None
             if rec is not None and speech and _keys(speech) != rec.child:
+                child = _keys(speech)
+                for void in [r for r in recs if r.void and r.child == child
+                             and r.said is None and r.entry is None]:
+                    recs.remove(void)
                 rec = _TurnRecord(speech)         # a newer turn's: ours goes before it
                 recs.insert(len(recs) - 1, rec)
             elif rec is None:
@@ -531,19 +570,29 @@ class MemoryMixin:
         done = [r for r in recs if not r.open]
         toks = _tokens(said)
         extras = self._extras_of(done)
+        # Which turn each child line names (None: a window no turn of ours answered); the
+        # last one named is the turn this report is about, its windows file with it.
+        lines = [(text, self._turn_of(_keys(text), done, toks, extras)) for text in inputs]
+        anchor = next((rec for _text, rec in reversed(lines) if rec is not None), None)
         matched: list = []                        # the turns this report names
         changed = False
-        windows: list = []                        # child lines no turn of ours answered
-        anchor = None                             # the turn the last child line named
-        for text in inputs:
+        windows: list = []                        # child lines to join, in order
+        for text, rec in lines:
             keys = _keys(text)
-            rec = self._turn_of(keys, done, toks, extras)
-            if rec is None:
-                if not any(keys in r.windows for r in done):
-                    windows.append(text)          # else already joined (reported again)
+            # A line of another turn the robot already reported on its own, listed before
+            # the line of the turn this report is about: said again, not re-listed.
+            again = rec is not None and rec is not anchor and rec.named
+            if rec is None or again:
+                if anchor is None or keys not in anchor.windows:
+                    windows.append(text)          # else listed again (per-chunk reports)
                 continue
-            matched.append(rec)
-            anchor = rec
+            if rec not in matched:
+                matched.append(rec)
+            if rec.void and rec.said is None:     # its first report: the line, as reported
+                rec.said = self._void_line(h, rec, "user", text)
+                changed = True
+            if rec is not anchor and keys not in anchor.windows:
+                anchor.windows.append(keys)       # held by `rec`; listed with `anchor`
             if windows:                           # said before the line that names `rec`
                 changed |= self._join_windows(device_id, h, rec, windows, before=True)
                 windows = []
@@ -551,22 +600,26 @@ class MemoryMixin:
             changed |= self._join_windows(device_id, h, anchor, windows, before=False)
         if toks:
             changed |= self._reconcile_speech(device_id, h, toks, done, matched)
+        for rec in matched:
+            rec.named = True
         if matched:                               # the robot speaks in order: every turn
             del recs[:max(recs.index(r) for r in matched)]     # older than the one it
         return changed                            # names is over, however much it reported
 
     @staticmethod
     def _turn_of(keys, done, toks, extras):
-        """The turn that answered this child line. Of the records with that line (only
-        turns whose lines reached history: never a superseded turn, whose record is void),
-        the one the report's words fit best (`_fit`): a cut-off answer said again whole for
-        the same line starts over inside words already reported, so it names the next such
-        turn, where none are, not the cut one. Among equals, the oldest the robot has not
-        reported in full (reports arrive in order), else the oldest."""
-        hits = [r for r in done if r.entry is not None and keys == r.child]
+        """The turn that answered this child line. Of the records with that line, the one
+        the report's words fit best (`_fit`): a cut-off answer said again whole for the
+        same line starts over inside words already reported, so it names the next such
+        turn, where none are, not the cut one. Among equals, a turn superseded mid-stream
+        (void: the robot's report is all it will ever have in history) before an older
+        turn, then the oldest the robot has not reported in full (reports arrive in
+        order), else the oldest."""
+        hits = [r for r in done if keys == r.child]
         if len(hits) > 1 and toks:
             fits = [MemoryMixin._fit(r, toks, extras)[0] for r in hits]
             hits = [r for r, fit in zip(hits, fits) if fit == max(fits)]
+        hits = [r for r in hits if r.void] + [r for r in hits if not r.void]
         return next((r for r in hits if not r.reported), hits[0] if hits else None)
 
     def _join_windows(self, device_id, h, rec, windows, before) -> bool:
@@ -592,12 +645,13 @@ class MemoryMixin:
         turns this report names by the child's line first (the robot's own tie between
         the line and the words it spoke for it), then the rest, oldest first."""
         extras = self._extras_of(done)
-        done = [r for r in done if r in matched] + [r for r in done if r not in matched]
+        named = [r for r in done if r in matched]
+        done = named + [r for r in done if r not in matched]
         # The text of one turn, or a run inside it (a streamed chunk; the child cut in).
-        rec = self._cover_run(toks, extras, done)
+        rec = self._cover_run(toks, extras, done, named)
         if rec is not None:
             matched.append(rec)
-            return self._apply_coverage(rec)
+            return self._apply_coverage(h, rec)
         if not self._without_extras(toks, extras):
             return False                          # a filler, a hello: never history
         # One turn's whole text with words around it: the text is marked, the rest is
@@ -605,15 +659,15 @@ class MemoryMixin:
         # The turn least reported first (as `_fit` ranks a run), the named one among
         # equals: a report that starts over is the next turn's, not a cut-off one's.
         for rec in sorted(done, key=lambda r: 2 if r.reported else 1 if r.covered else 0):
-            if not rec.keys:
-                continue
+            if not rec.keys or (named and rec not in named and rec.covered):
+                continue                          # a turn the robot spoke past: no repeat
             kept = self._without_extras(toks, extras, rec.keys)
             at = _find([key for _word, key in kept], rec.keys)
             if at < 0:
                 continue
             rec.covered.update(range(len(rec.keys)))
             matched.append(rec)
-            changed = self._apply_coverage(rec)
+            changed = self._apply_coverage(h, rec)
             rest = [r for r in done if r is not rec]
             for piece in (kept[:at], kept[at + len(rec.keys):]):
                 piece = self._without_extras(piece, extras)
@@ -625,17 +679,21 @@ class MemoryMixin:
                                      _words(self._without_extras(toks, extras)))
 
     @staticmethod
-    def _cover_run(toks, extras, done):
+    def _cover_run(toks, extras, done, named=()):
         """The turn whose text holds the report (minus fillers and that turn's hello) as
         a contiguous run, the one it fits best (`_fit`): the first in `done` with a run
         no word of which the robot has reported, else the first with a run it has
         reported part of, else the first with any run (a repeat report). `done` comes
-        named turns first, then oldest first. Marks the run reported; None if no turn
-        holds it."""
+        named turns first, then oldest first; when the report names a turn, one it does
+        not name takes only a run it has not reported (the robot speaks in order: a
+        repeat there is the named turn's words, or a line of the robot's own). Marks the
+        run reported; None if no turn holds it."""
         best = None
         for rec in done:
             fit, run = MemoryMixin._fit(rec, toks, extras)
-            if run is not None and (best is None or fit > best[0]):
+            if run is None or (named and rec not in named and fit < 2):
+                continue
+            if best is None or fit > best[0]:
                 best = (fit, rec, run)
                 if fit == 2:
                     break
@@ -696,11 +754,24 @@ class MemoryMixin:
         return True
 
     @staticmethod
-    def _apply_coverage(rec) -> bool:
+    def _void_line(h, rec, role, text) -> dict:
+        """A void turn's own line, written as the robot reports it: its own entry (never
+        joined to a reported line, as a turn's lines never are), the child's line before
+        Moxie's when that is already there."""
+        line = {"role": role, "content": text}
+        at = next((i for i, d in enumerate(h) if d is rec.entry), None)
+        if role == "user" and at is not None:
+            h.insert(at, line)
+        else:
+            h.append(line)
+        return line
+
+    def _apply_coverage(self, h, rec) -> bool:
         """Make the turn's entry what the robot reports having said: the whole text, or,
         on a clean cut (its reports cover a prefix and nothing after it, past any hello),
-        that prefix. A tail piece alone or a report with a hole keeps the whole text."""
-        if rec.entry is None:
+        that prefix. A tail piece alone or a report with a hole keeps the whole text. A
+        void turn's entry is written here, by the first report of its words."""
+        if rec.entry is None and not rec.void:
             return False
         n, p = len(rec.keys), 0
         while p < n and p in rec.covered:
@@ -709,6 +780,9 @@ class MemoryMixin:
             want = " ".join(rec.words[:p])
         else:
             want = rec.text
+        if rec.entry is None:
+            rec.entry = self._void_line(h, rec, "assistant", want)
+            return True
         if rec.entry["content"] == want:
             return False
         rec.entry["content"] = want

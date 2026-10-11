@@ -583,10 +583,10 @@ notify is reconciled against them (`memory.py`, "the robot's notify"):
 
 | the notify carries | and history |
 |---|---|
-| a child line one of those turns answered (case and punctuation aside) | already holds it: nothing added, whether that turn is the current one or an earlier speech window answered as a turn of its own and reported together with this one; when the line names several turns (the child said "no" twice), the report is the turn whose text holds Moxie's reported words all unreported (a cut-off answer said again whole starts over inside words already reported: the next such turn, not the cut one), among equals the oldest not reported in full, since reports arrive in order |
-| a child line no turn of ours answered (the earlier of several windows in one prompt, which the runtime answers by its last) | joins the child's line of the turn it was reported with, in the order reported, as OpenMoxie's `add_history` joins consecutive child lines (`conversations.py:29-39`); listed again by a later report, it joins nothing twice; with no such turn (a module's own conversation) it is appended as reported |
+| a child line one of those turns answered (case and punctuation aside) | already holds it: nothing added, whether that turn is the current one or an earlier speech window answered as a turn of its own and reported together with this one; when the line names several turns (the child said "no" twice), the report is the turn whose text holds Moxie's reported words all unreported (a cut-off answer said again whole starts over inside words already reported: the next such turn, not the cut one), a turn superseded mid-stream (below) before an older one, among equals the oldest not reported in full, since reports arrive in order. One exception: the line of an older turn the robot already reported on its own, listed before the line of a newer turn, is the child saying it again (a robot does not re-list a window it has reported: OpenMoxie appends every input line of every notify, `conversations.py:63-65`), and it joins the newer turn's line like a window |
+| a child line no turn of ours answered (the earlier of several windows in one prompt, which the runtime answers by its last) | joins the child's line of the turn it was reported with, in the order reported, as OpenMoxie's `add_history` joins consecutive child lines (`conversations.py:29-39`); listed again by a later report of that turn (per-chunk reports re-list the windows), it joins nothing twice; with no such turn (a module's own conversation) it is appended as reported |
 | a filler, or the hello the runtime spoke as chunk 0 | never history (it was not before either); an answer that happens to say a filler's words is the turn's text and is matched as such |
-| a turn's text, or a run inside it (one streamed chunk; `Rock and` after the child cut in) | marks those words as said, on the turn they fit best (holding them all unreported, else some of them, else a repeat), the turn this report's child line names before any other (the robot's own tie between the line and the words it spoke for it), then the oldest; the entry becomes what Moxie got through only on a clean cut (a prefix and nothing after it), so per-chunk notifies in any order re-assemble the text and a tail piece alone never drops the head; a report holding a turn's whole text with words around it marks the text (on the turn least reported, the named one among equals) and reconciles the rest the same way (the previous turn's answer spoken in the same breath is matched; a line of the robot's own is appended) |
+| a turn's text, or a run inside it (one streamed chunk; `Rock and` after the child cut in) | marks those words as said, on the turn they fit best (holding them all unreported, else some of them, else a repeat), the turn this report's child line names before any other (the robot's own tie between the line and the words it spoke for it), then the oldest, and a turn the report does not name only when none of those words are reported yet, if the report names another (the robot speaks in order: a repeat there is the named turn's words, or a line of the robot's own); the entry becomes what Moxie got through only on a clean cut (a prefix and nothing after it), so per-chunk notifies in any order re-assemble the text and a tail piece alone never drops the head; a report holding a turn's whole text with words around it marks the text (on the turn least reported, the named one among equals) and reconciles the rest the same way (the previous turn's answer spoken in the same breath is matched; a line of the robot's own is appended) |
 | a line the runtime never sent (a module's own line) | appended, word by word as compared (markup tags out, whitespace collapsed); consecutive same-role reports are joined as `add_history` joins them, never into a turn's own entry |
 
 The robot speaks in order, so a report that names a turn (by the child's line or by Moxie's words)
@@ -597,9 +597,13 @@ is said later, and the child repeating its question is a new line, not one alrea
 that never notifies retires nothing and keeps the eight newest records. A notify that arrives while the
 turn is still open (the robot speaks chunk 0 before the stream closes) is held and reconciled when
 the turn is remembered; a report of a completed turn that lands after the child's next prompt is held
-the same way and then matched to the turn it names. If the open turn never closes (superseded, its
-worker died), nothing of it reached history and the report is kept as reported when the next turn
-starts. A report the proto cannot carry (`speech` not a string, `extra_lines` not a list of contexts
+the same way and then matched to the turn it names. A turn superseded while its stream is open (the
+child spoke again before it closed; streaming is on by default) is never remembered by the runtime: the
+chunks it had sent stay as that turn's record, and its lines are written only as the robot reports them,
+the child's line and the words it got through, cut as reported, before the next turn's lines and never on
+an older turn, which that report retires like any other; a superseded turn that sent nothing keeps no
+record, since no report can be its. A turn whose worker died is handled the same way. A report the
+proto cannot carry (`speech` not a string, `extra_lines` not a list of contexts
 whose `text` is a string) is dropped on arrival with one log line, and a report the reconcile itself
 cannot handle is dropped alone: the turn's own lines are written whatever the robot sent, as one bad
 message fails alone at the transport. A robot that never notifies keeps today's history byte for byte.
@@ -616,7 +620,11 @@ reported) and the start of the next turn's answer is taken as the older turn's, 
 chunk the robot had already begun: that turn's entry is left whole (its cut undone) or cut to those
 words (a cut Moxie never made), while the next turn's answer is still whole and nothing is dropped
 or written twice. With the child's line on the report, as the virtual robot sends it on the first
-chunk and as a robot may send it on every chunk, the named turn takes the words. The rule holds for
+chunk and as a robot may send it on every chunk, the named turn takes the words. The same line twice has a sibling: a turn superseded mid-stream whose
+first chunk the robot received but never spoke, followed by a turn with the same child line whose answer
+opens with those words, reported a chunk at a time: the report of that opening is taken as the superseded
+turn's (its line names both; it is the newer turn whose only record is the robot's), so Moxie's opening
+is written once for each turn and the brain reads it twice. The rule holds for
 either cadence, and `sim/virtual_moxie.py --notify [event|chunk]` plays both. Tests: `sim/tests/test_notify_history.py`; the SIL smoke
 (`sim/run_smoke.sh`) runs the virtual robot with `--notify` and `sim/tests/test_sil.py` asserts the
 supervisor's transcript holds the turn once.

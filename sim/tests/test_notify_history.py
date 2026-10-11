@@ -620,6 +620,65 @@ def test_the_earlier_window_of_one_prompt_is_joined_before_the_childs_line(tmp_p
         assert _lines(rt, did) == [("user", "P one P two"), ("assistant", "A two.")]
 
 
+def test_the_windows_of_turns_already_answered_listed_on_every_chunk_add_nothing(tmp_path):
+    """"P one" answered as its own turn and not reported; "P two" answered in two chunks,
+    each reported with both windows. The first report holds "P one" already and retires
+    that turn; the second lists it again, and it was listed with the turn it names, so it
+    is not joined as a new window. (Red on the round-3 head: its turn retired, the
+    re-listed "P one" joined "P two" on the second chunk.)"""
+    rt, did = _runtime(tmp_path, _Brain(answers={"P one": "A one.",
+                                                 "P two": ("A two.", "And more.")}))
+    _ask(rt, did, "P one")
+    _ask(rt, did, "P two")
+    windows = [_in("P one"), _in("P two")]
+    _notify_raw(rt, did, speech="A two.", extra_lines=windows)
+    _notify_raw(rt, did, speech="And more.", extra_lines=windows)
+    assert _lines(rt, did) == [("user", "P one"), ("assistant", "A one."),
+                               ("user", "P two"), ("assistant", "A two. And more.")]
+
+
+def test_a_window_said_again_with_the_next_prompt_is_a_new_line(tmp_path):
+    """The child opens each question with "um", a window of its own: two prompts in a row
+    carry ["um", question], each reported by its own notify. The second "um" joins the
+    second turn's line as the first did the first's. (Red on the round-3 head: a window
+    joined to ANY turn not yet retired counted as listed again, and the first turn is
+    retired only by the report that names the second.)"""
+    answers = {"what is a star?": "A ball of hot gas.", "and the sun?": "The sun is a star!"}
+    rt, did = _runtime(tmp_path, _Brain(answers=answers))
+    for question, answer in answers.items():
+        windows = [_in("um"), _in(question)]
+        _ask(rt, did, question, extra_lines=windows)
+        _notify_raw(rt, did, speech=answer, extra_lines=windows)
+    assert _lines(rt, did) == [("user", "um what is a star?"), ("assistant", "A ball of hot gas."),
+                               ("user", "um and the sun?"), ("assistant", "The sun is a star!")]
+
+
+def test_the_previous_turns_line_said_again_as_a_window_is_a_new_line_joined_once(tmp_path):
+    """"Moxie?" is answered and reported on its own; the child says "Moxie?" again before
+    the next question, both windows reported with each chunk of that answer. The robot
+    reported the first turn already, so its line listed again before the new turn's is
+    the child saying it again (OpenMoxie appends every input line of every notify,
+    conversations.py:63-65), joined before "tell me a joke", and once: the second chunk
+    lists it a third time. When the first turn was answered but NOT yet reported, the
+    same report adds nothing (`..._windows_of_turns_already_answered_adds_no_line`).
+    (Red on the round-3 head: the second "Moxie?" was dropped as the first turn's line,
+    that turn being retired only by this report.)"""
+    rt, did = _runtime(tmp_path, _Brain(answers={
+        "Moxie?": "Yes? I am here.",
+        "tell me a joke": ("Why did the cow cross?", "To get to the other side.")}))
+    _ask(rt, did, "Moxie?")
+    _notify(rt, did, "Yes? I am here.", said="Moxie?")
+    windows = [_in("Moxie?"), _in("tell me a joke")]
+    _ask(rt, did, "tell me a joke", extra_lines=windows)
+    first = [("user", "Moxie?"), ("assistant", "Yes? I am here.")]
+    _notify_raw(rt, did, speech="Why did the cow cross?", extra_lines=windows)
+    assert _lines(rt, did) == first + [("user", "Moxie? tell me a joke"),
+                                       ("assistant", "Why did the cow cross?")]
+    _notify_raw(rt, did, speech="To get to the other side.", extra_lines=windows)
+    assert _lines(rt, did) == first + [("user", "Moxie? tell me a joke"),
+                                       ("assistant", "Why did the cow cross? To get to the other side.")]
+
+
 def test_a_completed_turns_report_landing_after_the_next_prompt_adds_nothing(tmp_path):
     """The robot reports the first turn only after the child's next prompt has opened the
     second (a slow report; a child who barges in): held for the open turn, then matched to
@@ -796,6 +855,20 @@ def test_a_turn_the_robot_never_reported_is_retired_by_a_later_report_too(tmp_pa
     _notify_raw(rt, did, speech="Why did the cow cross?", extra_lines=windows)
     assert _lines(rt, did)[-2:] == [("user", "Moxie? tell me a joke"),
                                     ("assistant", "Why did the cow cross?")]
+
+
+def test_a_report_naming_two_turns_retires_every_turn_older_than_the_newer_one(tmp_path):
+    """"hello" is answered and never reported; "P one" and "P two" are answered as turns
+    of their own and reported together. The report names both, so every turn older than
+    the newer one goes, "hello" and "P one" alike (not only the turns older than the
+    oldest it names), and neither can take a later line."""
+    rt, did = _runtime(tmp_path, _Brain(answers=WINDOWS))
+    _ask(rt, did, "hello")
+    _ask(rt, did, "P one")
+    _ask(rt, did, "P two")
+    _notify_raw(rt, did, speech="A one. A two.", extra_lines=[_in("P one"), _in("P two")])
+    assert [" ".join(r.child) for r in rt._turn_records()[did]] == ["p two"]
+    assert _lines(rt, did) == [("user", "hello"), ("assistant", "Okay!")] + BOTH
 
 
 def test_an_unanswered_window_joins_the_turn_it_was_reported_with_never_an_older_one(
@@ -1041,6 +1114,40 @@ def test_a_report_with_words_around_a_named_turns_text_marks_that_turn_not_an_ol
                                ("assistant", "Ready?")]
 
 
+def test_a_repeat_of_an_older_turns_words_reported_for_another_turn_is_a_line_of_its_own(
+        tmp_path):
+    """"no" is answered "Okay!" and reported; "yes" is answered "Sure!" and the robot
+    reports "Okay!" for it. The report names the "yes" turn, so the "no" turn, which the
+    robot has spoken past, takes no repeat of its words: the line is kept as the robot's
+    own, after the "yes" turn's answer. (Red on the round-3 head: taken as a repeat report
+    of the "no" turn, so the line was dropped.)"""
+    rt, did = _runtime(tmp_path, _Brain(answers={"yes": "Sure!"}))
+    _ask(rt, did, "no")
+    _notify(rt, did, "Okay!", said="no")
+    _ask(rt, did, "yes")
+    _notify(rt, did, "Okay!", said="yes")
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay!"),
+                               ("user", "yes"), ("assistant", "Sure!"),
+                               ("assistant", "Okay!")]
+
+
+def test_a_cut_off_turn_takes_no_restart_of_its_words_reported_for_another_turn(tmp_path):
+    """"no" is answered "Okay! Let's play a game." and cut at "Okay!"; "yes" is answered
+    "Sure!" and the robot reports the game line whole for it. Those words start over
+    inside words the cut-off turn has reported, and the report names the "yes" turn: the
+    cut stays and the line is the robot's own, after the "yes" turn's answer. (Red on the
+    round-3 head: the cut-off turn took the run as a partly reported one, undoing the
+    cut.)"""
+    rt, did = _runtime(tmp_path, _Brain(answers={"no": " ".join(GAME), "yes": "Sure!"}))
+    _ask(rt, did, "no")
+    _notify(rt, did, GAME[0], said="no")                           # the child cut in
+    _ask(rt, did, "yes")
+    _notify(rt, did, " ".join(GAME), said="yes")
+    assert _lines(rt, did) == [("user", "no"), ("assistant", GAME[0]),
+                               ("user", "yes"), ("assistant", "Sure!"),
+                               ("assistant", " ".join(GAME))]
+
+
 def test_a_cut_off_answer_said_again_whole_with_no_child_line_names_the_new_turn(tmp_path):
     """"no" is answered "Okay! Let's play a game." and cut at "Okay!"; "yes" gets the same
     scripted answer, which the robot reports whole with no child line. With no line to
@@ -1055,6 +1162,262 @@ def test_a_cut_off_answer_said_again_whole_with_no_child_line_names_the_new_turn
     _notify(rt, did, " ".join(GAME))
     assert _lines(rt, did) == [("user", "no"), ("assistant", GAME[0]),
                                ("user", "yes"), ("assistant", " ".join(GAME))]
+
+
+# --------------------------------------------------------------------------- #
+# A turn superseded while its stream was open
+# --------------------------------------------------------------------------- #
+#: The child speaks again before a streamed answer closes (`MOXIE_STREAMING` is on by
+#: default: a long answer, a barge-in after the first sentence): the stream is cancelled
+#: and the turn is never remembered. The robot spoke the chunk it got and reports it with
+#: the child's line, while the turn is open (held) or after the next prompt. The chunks
+#: the runtime sent are that turn's record (`_spoke`), and its lines are written as the
+#: robot reports them, never on an older turn. (Red on the round-3 head, which voided the
+#: record and matched its reports against the older turns: the child's repeated "no" and
+#: Moxie's chunk were dropped or moved there, and an older cut was undone.)
+
+
+class _Scripted(MoxieApp):
+    """Answers turns in order from `script`, `[(child line, chunks, gated), …]`: one
+    chunk is a plain answer (held until `release` when gated), several a stream, one chunk
+    per sentence, waiting on `gate` before the second when gated."""
+    name = "scripted"
+
+    def __init__(self, script, gate_at=1):
+        self.script = list(script)
+        self.gate = threading.Event()
+        self.gate_at = gate_at                    # the chunk a gated stream waits before
+        self.release = threading.Event()
+        self.seen = []
+
+    def respond_stream(self, turn):
+        speech, chunks, gated = self.script[0]
+        if len(chunks) < 2:
+            return None
+        self.script.pop(0)
+        assert speech == turn.speech, (speech, turn.speech)
+        self.seen.append(list(turn.history))
+        gate, gate_at = self.gate, self.gate_at
+
+        def chunks_of():
+            for i, text in enumerate(chunks):
+                if i == gate_at and gated:
+                    assert gate.wait(PATIENCE), "the test never opened the gate"
+                yield ReplyChunk(text=text, final=i == len(chunks) - 1)
+        return chunks_of()
+
+    def respond(self, turn):
+        speech, chunks, gated = self.script.pop(0)
+        assert speech == turn.speech, (speech, turn.speech)
+        if gated:
+            assert self.release.wait(PATIENCE), "the test never released the answer"
+        self.seen.append(list(turn.history))
+        return Reply(text=" ".join(chunks))
+
+
+def _barge_in(rt, did, app, before, reported, said, then):
+    """The open streamed turn spoke its first chunk (`before` replies were published
+    ahead of it); the robot reports it with the child's line, held; the child barges in
+    with `then`, answered plainly, and the stream is let run into its cancel."""
+    _published(rt, did, before)
+    _notify(rt, did, reported, said=said)
+    _push(rt, did, then)
+    app.gate.set()
+    rt._pool.shutdown(wait=True)
+    fresh_pool(rt)
+
+
+def test_a_superseded_turns_report_keeps_the_childs_repeated_line(tmp_path):
+    """"no" is answered "Okay!" and reported; the child says "no" again, the answer
+    streams "Sure thing." and the child barges in with "stop". The second "no" and "Sure
+    thing." are the superseded turn's lines, written as reported, and the brain reads
+    them so at the next prompt. (Red on the round-3 head: the second "no" was dropped as a
+    line the first turn held, and "Sure thing." appended bare.)"""
+    app = _Scripted([("no", ["Okay!"], False), ("no", ["Sure thing.", "Let's go."], True),
+                     ("stop", ["Fine."], False), ("bye", ["Bye!"], False)])
+    rt, did = _runtime(tmp_path, app)
+    _ask(rt, did, "no")
+    _notify(rt, did, "Okay!", said="no")
+    _push(rt, did, "no")
+    _barge_in(rt, did, app, 1, "Sure thing.", "no", "stop")
+    want = [("user", "no"), ("assistant", "Okay!"), ("user", "no"), ("assistant", "Sure thing."),
+            ("user", "stop"), ("assistant", "Fine.")]
+    assert _lines(rt, did) == want
+    _notify(rt, did, "Fine.", said="stop")
+    _ask(rt, did, "bye")
+    assert [(m["role"], m["content"]) for m in app.seen[-1]] == want
+
+
+def test_a_superseded_turn_answered_as_the_previous_one_was_keeps_both_exchanges(tmp_path):
+    """The same, the second answer opening with the first one's words. (Red on the round-3
+    head: Moxie's second "Okay!" was a repeat report of the first turn, and the second
+    "no" went with it: the whole exchange vanished.)"""
+    app = _Scripted([("no", ["Okay!"], False), ("no", ["Okay!", "Let's play a game."], True),
+                     ("stop", ["Fine."], False)])
+    rt, did = _runtime(tmp_path, app)
+    _ask(rt, did, "no")
+    _notify(rt, did, "Okay!", said="no")
+    _push(rt, did, "no")
+    _barge_in(rt, did, app, 1, "Okay!", "no", "stop")
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay!"),
+                               ("user", "no"), ("assistant", "Okay!"),
+                               ("user", "stop"), ("assistant", "Fine.")]
+
+
+def test_a_superseded_turns_report_never_undoes_an_older_cut(tmp_path):
+    """The moon answer is cut at "Yes!"; the stars answer streams the moon answer's unsaid
+    question first and the child barges in. The question is the stars turn's, named by the
+    child's line, and the moon turn keeps its cut. (Red on the round-3 head: the question
+    landed on the moon turn's unsaid tail, undoing the cut, and the stars turn had no
+    Moxie line.)"""
+    app = _Scripted([("tell me about the moon", ["Yes! What do you think?"], False),
+                     ("and the stars?", ["What do you think?", "I think stars."], True),
+                     ("wait", ["Okay."], False)])
+    rt, did = _runtime(tmp_path, app)
+    _ask(rt, did, "tell me about the moon")
+    _notify(rt, did, "Yes!", said="tell me about the moon")        # the child cut in
+    _push(rt, did, "and the stars?")
+    _barge_in(rt, did, app, 1, "What do you think?", "and the stars?", "wait")
+    assert _lines(rt, did) == [("user", "tell me about the moon"), ("assistant", "Yes!"),
+                               ("user", "and the stars?"), ("assistant", "What do you think?"),
+                               ("user", "wait"), ("assistant", "Okay.")]
+
+
+def test_a_superseded_turns_opener_is_not_a_repeat_of_the_previous_turns(tmp_path):
+    """"no" is answered "Okay! Let's play." and reported whole; "yes" streams "Okay!" and
+    the child barges in. "Okay!" is the "yes" turn's, not a repeat report of the "no"
+    turn's. (Red on the round-3 head: swallowed as a repeat, so "yes" stood alone.)"""
+    app = _Scripted([("no", ["Okay! Let's play."], False), ("yes", ["Okay!", "Here we go."], True),
+                     ("stop", ["Fine."], False)])
+    rt, did = _runtime(tmp_path, app)
+    _ask(rt, did, "no")
+    _notify(rt, did, "Okay! Let's play.", said="no")
+    _push(rt, did, "yes")
+    _barge_in(rt, did, app, 1, "Okay!", "yes", "stop")
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay! Let's play."),
+                               ("user", "yes"), ("assistant", "Okay!"),
+                               ("user", "stop"), ("assistant", "Fine.")]
+
+
+def test_a_superseded_turn_is_named_before_an_older_turn_holding_the_same_words_unsaid(
+        tmp_path):
+    """"no" is answered "Okay! Let's play." and never reported (the robot skipped it);
+    "no" again streams "Okay!" and the child barges in. The report names both turns and
+    both hold "Okay!" unreported; the superseded turn is the newer one and the robot's
+    report is all it will ever have in history, so it takes the report, and the skipped
+    answer is left whole. (Red on the round-3 head: the older turn was cut to "Okay!" and
+    the second "no" dropped.)"""
+    app = _Scripted([("no", ["Okay! Let's play."], False), ("no", ["Okay!", "Here we go."], True),
+                     ("stop", ["Fine."], False)])
+    rt, did = _runtime(tmp_path, app)
+    _ask(rt, did, "no")
+    _push(rt, did, "no")
+    _barge_in(rt, did, app, 1, "Okay!", "no", "stop")
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay! Let's play."),
+                               ("user", "no"), ("assistant", "Okay!"),
+                               ("user", "stop"), ("assistant", "Fine.")]
+
+
+def test_a_superseded_turns_chunks_reported_one_by_one_with_the_line_on_each_are_one_turn(
+        tmp_path):
+    """Two sentences of the answer are spoken and reported, each with the child's line, as
+    a robot may do on every chunk, before the child barges in ahead of the third. The
+    reports write the child's line once and Moxie's words as the robot got through them,
+    one entry re-assembled chunk by chunk. (Red on the round-3 head: the line dropped as
+    the first turn's, "Okay!" swallowed as its repeat, "Let's play." appended bare.)"""
+    app = _Scripted([("no", ["Okay!"], False), ("no", ["Okay!", "Let's play.", "Ready?"], True),
+                     ("stop", ["Fine."], False)], gate_at=2)
+    rt, did = _runtime(tmp_path, app)
+    _ask(rt, did, "no")
+    _notify(rt, did, "Okay!", said="no")
+    _push(rt, did, "no")
+    _published(rt, did, 1, how_many=2)
+    _notify(rt, did, "Okay!", said="no")
+    _notify(rt, did, "Let's play.", said="no")
+    _push(rt, did, "stop")
+    app.gate.set()
+    rt._pool.shutdown(wait=True)
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay!"),
+                               ("user", "no"), ("assistant", "Okay! Let's play."),
+                               ("user", "stop"), ("assistant", "Fine.")]
+
+
+def test_a_superseded_turns_report_landing_after_the_next_prompt_is_still_its_own(tmp_path):
+    """The child says "no, a joke" while the story's first chunk ("Okay!") is being
+    spoken; the robot reports that chunk after the new prompt, so it is held by the joke
+    turn, whose answer opens with the same word. Replayed as the joke turn is remembered,
+    the report names the story turn by the child's line and its words are written as its
+    own, before the joke turn's lines. (Red on the round-3 head: credited to the joke
+    turn's text, so the story's "Okay!" vanished and "tell me a story" was appended
+    bare.)"""
+    app = _Scripted([("tell me a story", ["Okay!", "Once upon a time."], True),
+                     ("no, a joke", ["Okay! Why did the cow cross the road?"], True)])
+    rt, did = _runtime(tmp_path, app)
+    _push(rt, did, "tell me a story")
+    _published(rt, did, 0)
+    _push(rt, did, "no, a joke")                           # superseded; the joke waits
+    _notify(rt, did, "Okay!", said="tell me a story")     # the story's chunk, reported late
+    app.release.set()
+    app.gate.set()
+    rt._pool.shutdown(wait=True)
+    _notify(rt, did, "Okay! Why did the cow cross the road?", said="no, a joke")
+    assert _lines(rt, did) == [("user", "tell me a story"), ("assistant", "Okay!"),
+                               ("user", "no, a joke"),
+                               ("assistant", "Okay! Why did the cow cross the road?")]
+
+
+def test_a_superseded_turn_that_sent_nothing_never_takes_the_next_turns_report(tmp_path):
+    """The child says "no" twice before the brain answers: the first turn is superseded
+    before any chunk went out, the second is answered "Okay!" and reported with the
+    child's line. The first turn has no words the robot could have said, so it keeps no
+    record and the report is the second turn's: the exchange is held once. (A superseded
+    turn nameable by its line alone would take that report and write Moxie's line
+    twice.)"""
+    app = _GatedStream(release=threading.Event())
+    rt, did = _runtime(tmp_path, app)
+    rt.brain_budget_s = 0
+    _push(rt, did, "no")
+    _push(rt, did, "no")
+    app.release.set()
+    rt._pool.shutdown(wait=True)
+    fresh_pool(rt)
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay!")]
+    assert len(rt._turn_records()[did]) == 1, "the answered turn's record, and no other"
+    _notify(rt, did, "Okay!", said="no")
+    assert _lines(rt, did) == [("user", "no"), ("assistant", "Okay!")]
+
+
+def test_a_superseded_worker_past_its_stale_check_replaces_its_own_void_record(tmp_path):
+    """The stream of "first" sent its sentence; the child's "second" lands, which keeps
+    "first" as a void record; the old worker, past its stale check, remembers "first"
+    whole all the same. Nothing of the void record was written, so the remembered record
+    replaces it, and the robot's report of the sentence names one turn: the exchange is
+    held once."""
+    rt, did = _runtime(tmp_path, _Brain())
+    rt._start_turn_record(did, "first")
+    rt._spoke(did, "first", "One.")
+    rt._start_turn_record(did, "second")                  # "first" void, holding "One."
+    rt._remember(did, "first", "One.")                    # the old worker, past its check
+    rt._remember(did, "second", "Two.")
+    _notify(rt, did, "One.", said="first")
+    _notify(rt, did, "Two.", said="second")
+    assert _lines(rt, did) == [("user", "first"), ("assistant", "One."),
+                               ("user", "second"), ("assistant", "Two.")]
+
+
+def test_a_superseded_turns_line_reported_after_its_words_goes_before_them(tmp_path):
+    """A robot that reports the superseded turn's words first and the child's line in a
+    later notify (a shape no captured robot sends): the line is written before Moxie's
+    words, as a turn's lines always are."""
+    rt, did = _runtime(tmp_path, _Brain())
+    rt._start_turn_record(did, "no")
+    rt._spoke(did, "no", "Okay!")
+    rt._start_turn_record(did, "stop")
+    rt._remember(did, "stop", "Fine.")
+    _notify(rt, did, "Okay!")
+    _notify(rt, did, said="no")
+    assert _lines(rt, did) == [("user", "stop"), ("assistant", "Fine."),
+                               ("user", "no"), ("assistant", "Okay!")]
 
 
 # --------------------------------------------------------------------------- #

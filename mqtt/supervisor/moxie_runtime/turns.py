@@ -340,6 +340,9 @@ class TurnsMixin:
                         state["chunk"] = n + 1
                         a = state["ans"]
                         state["ans"] = a + 1
+                        # Noted on the turn's record before it goes out (memory.py): a
+                        # turn superseded mid-stream keeps the words the robot may say.
+                        self._spoke(device_id, speech, red.text if blocked else chunk.text)
                         if blocked:
                             safe = ReplyChunk(text=red.text, markup=red.markup, final=True)
                             self._publish_stream_chunk(device_id, event_id, safe, n, True,
