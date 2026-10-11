@@ -33,5 +33,11 @@ All three are in scope; the first is simply cheapest for an owner. Details:
 - [`firmware-and-older-robots.md`](firmware-and-older-robots.md) — how robots older than firmware
   24.10.801 might be revived.
 
+To find a robot on your network once it has joined Wi-Fi:
+[find Moxie on the LAN](../docs/guides/find-moxie-on-lan.md).
+
 FCC filings, teardown videos and other outside sources are catalogued in
 [`external-sources.md`](../docs/reverse-engineering/external-sources.md).
+
+---
+📖 [Project README](../README.md) · [Revive your Moxie](../docs/guides/revive-your-moxie.md) · [Reverse-engineering: hardware](../docs/reverse-engineering/hardware/README.md)
