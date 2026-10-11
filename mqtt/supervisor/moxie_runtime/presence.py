@@ -155,8 +155,8 @@ class PresenceMixin:
         verdict = self._assess(text, safety_seam.MOXIE)
         if verdict:
             # The pack and the item the robot is in (the console lists it as module/content).
-            source = "/".join(p for p in (getattr(app, "name", "") or type(app).__name__,
-                                          module, getattr(robot, "content_id", "") or "")
+            source = "/".join(str(p) for p in (getattr(app, "name", "") or type(app).__name__,
+                                               module, getattr(robot, "content_id", "") or "")
                               if p)
             verdict.excerpt = self._masked(verdict.excerpt)   # the queue keeps no name
             self._journal_eye_line(device_id, robot, source, text, verdict)
@@ -203,7 +203,7 @@ class PresenceMixin:
         newest rows, so a repeat is not a row: it raises the `count` of the row it repeats
         (a row with no `count` stands for one event).
 
-        The episode is the presence run an `arrived` opened (`present_since`, `faces_seen`).
+        The episode is the presence run an `arrived` opened, known by its `present_since`.
         It lasts through every flicker, a `left` the face came straight back from included
         (twenty blinks make one `arrived` and one `left`), and ends once the face has been
         gone `FLICKER_S`: the next found is a new arrival. Outside an episode (no one has
@@ -215,7 +215,7 @@ class PresenceMixin:
         in_run = since is not None and (
             state.get("face_present") is True
             or (gone is not None and now - gone < presence_seam.FLICKER_S))
-        episode = (since, state.get("faces_seen")) if in_run else None
+        episode = since if in_run else None
         key = (source, text, verdict.action, tuple(verdict.categories))
         with self._presence_lock:
             seen = self.__dict__.setdefault("_eye_journaled", {}).setdefault(device_id, {})
