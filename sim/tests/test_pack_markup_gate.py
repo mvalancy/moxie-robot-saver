@@ -1094,9 +1094,10 @@ def test_a_run_of_mark_openings_is_read_once(run):
     a run of openings once: the first opening has no `>` after it, so the cut runs to the
     end of the line and the search goes on from there, never from inside the cut
     (`_pack_mark_cuts`). Four times the text, about four times the time, and never the
-    alarm; the mutant that resumed at each opening's end took 5.0-5.7 s at 64 KB, where
-    the bound is 1.0 s, and four times longer per doubling, where the alarm is 5 s. The run
-    is left open, so nothing is spoken and nothing is named."""
+    alarm; the mutant that resumed at each opening's end took 5.0-5.7 s at 64 KB on K5.2's
+    code (its review's measurement) and 21-69 s on this one, where each cut span is also
+    read for its names, against a bound of 1.0 s and an alarm of 5 s. The run is left open,
+    so nothing is spoken and nothing is named."""
     build = _RUNS[run]
     took = {}
     try:

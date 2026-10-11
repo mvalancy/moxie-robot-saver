@@ -214,7 +214,8 @@ REVIEWED: dict = {
         "of ms, and a ratio of 40x between 64 and 256 KB where linear is 4x, all also "
         "enforced by a hard 5 s alarm: load multiplies a linear read, while a cut that "
         "resumed inside its own span (the K5.2 review's surviving N15 mutant) took 5.0-5.7 s "
-        "at 64 KB on the build host and four times longer per doubling."),
+        "at 64 KB on K5.2's code and 21-69 s on this one, measured on the build host, and "
+        "trips the alarm on every shape."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}

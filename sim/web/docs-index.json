@@ -231,7 +231,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 93939,
+   "bytes": 94012,
    "mermaid": 1,
    "headings": [
     "Where this fits",

@@ -1094,7 +1094,8 @@ holding a run of `genre=`, the verb reader (`vocab.mark_verbs`) on a long gap af
 holding it 15-18 s and an installed opener of ideographic spaces 16-29 s per empty prompt, with
 the GIL held, so every robot's turn waited; milliseconds now), the text gate on a run of `<mark`
 openings (the cut's search resumes after the cut, never inside it: 13-28 ms at 64 KB through
-`pack_spoken`, where a search that resumed inside its own cut took 5.0-5.7 s), and the gate
+`pack_spoken`, where a search that resumed inside its own cut took 5.0-5.7 s on K5.2's code and
+21-69 s once each cut span is also read for its names), and the gate
 itself, whose rounds are capped (all measured on the build host). The one exception is
 `actions.drop_action_tags` on a `say` line, quadratic in the worst case and bounded by
 `MAX_SAY_CHARS` (its docstring: 8-16 ms on the worst 1,000-character line).
