@@ -19,6 +19,8 @@ Hand-run and CI-run tools for the static site, the SIL stack and the test suites
 - [`measure_voice_latency.mjs`](measure_voice_latency.mjs) — send-to-first-audio of typed turns in real Chrome against a real deployment of the hosted Sim (a local `wrangler pages dev` or the site): per turn the chat round trip, each voice chunk's round trip, the gaps between chunks and the reply length, then the medians, and where chunk 0's time after its headers went (download, hand-off, decode, schedule), with the cold first turn on its own. Spends one chat and up to three speech calls a turn; `--yes --base=URL [--turns=10] [--out=FILE] [--label=arm]`.
 - [`probe_prefix_cache.mjs`](probe_prefix_cache.mjs) — does the backend's prompt cache survive the per-turn shape cue? One seven-turn conversation per cue placement (`dev`, `tail`, `user`) through the real `chat.js` in-process against the real gateway, `prompt_tokens` / `cached_tokens` and the backend's prompt-read time per turn beside the cue; `--yes [--orders=dev,tail,user] [--turns=7] [--max-calls=24] [--out=FILE]`, `--dry-run` spends nothing.
 - [`prove_broker_acl.py`](prove_broker_acl.py) — delivery-based assertions that a real mosquitto enforces the P0 ACL; driven by [`../run_acl_proof.sh`](../run_acl_proof.sh).
+- [`wire_timeline.py`](wire_timeline.py) — reads a `moxie_sdk.wire_record` recording: a per-robot timeline safe to paste (connects, config, ears, turns, re-prompts, notifies, actions), and `--share`, the copy with no robot id, address, hostname, username or words ([bench-day checklist](../../docs/guides/bench-day-checklist.md)).
+- [`wire_replay.py`](wire_replay.py) — replays a recording's robot side through a fresh supervisor with a brain scripted from it, and reports each reply whose shape (result, chunk, actions) differs.
 - [`assert_no_secret_in_log.py`](assert_no_secret_in_log.py) — fails if a log contains a gateway credential, without ever printing it; used by `sim/run_smoke.sh --live-brain`.
 - [`probe_demo_gateway.mjs`](probe_demo_gateway.mjs) — POSTs the bodies the Pages Functions build to the real gateway and reports response shapes (hand-run, reads `mqtt/.env` or `MOXIE_ENV_FILE`; `--dry-run`, `--only=`).
 - [`grounding_probe.mjs`](grounding_probe.mjs) / [`grounding_score.mjs`](grounding_score.mjs) — paid A/B of the model's answer with and without the retrieved passage, and its pure scoring seam. Requires `--yes --max-attempts 4..6 --timeout-ms 1000..60000`.
@@ -38,6 +40,7 @@ python3 sim/tools/ears_mutation_check.py
 python3 sim/tools/ext_mutation_check.py
 python3 sim/tools/hardening_mutation_check.py
 python3 sim/tools/hardening_p1_mutation_check.py
+python3 sim/tools/house_clock_mutation_check.py
 python3 sim/tools/launch_card_mutation_check.py
 python3 sim/tools/performance_mutation_check.py
 python3 sim/tools/subscribe_mutation_check.py
@@ -54,6 +57,7 @@ python3 sim/tools/unit_budget_mutation_check.py
 | `ext` | extension sandbox | `ext/`, `render.py`, `ext_host.py`, `packs/` pattern cap |
 | `hardening` | P0: store lock, connection region | `moxie_sdk/store.py`, `moxie_runtime/` connection code |
 | `hardening_p1` | P1: roster, conn telemetry, shutdown | `moxie_sdk/{roster,conn_telemetry}.py`, `fleet/activity.py` |
+| `house_clock` | the house's clock: bedtime, `clock.local`, the day plan and the Insights days in the family's `timezone_id`; the whitelist's zone check and its labelled-UTC fallback | `cloud_config.py` (the house's clock), `moxie_runtime/{presence,schedule,telemetry}.py`, `ext_host._clock_local`, `schedule/signals.py` |
 | `launch_card` | launch-card QR allowlist | `moxie_sdk/launch_cards.py` |
 | `performance` | behavior planner | `moxie_sdk/performance.py` |
 | `subscribe` | `subscribe` capability | `moxie_runtime/` subscription merge, `ext.SUBSCRIBE_EVENTS` |

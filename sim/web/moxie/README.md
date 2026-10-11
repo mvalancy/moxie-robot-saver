@@ -4,7 +4,9 @@ ES modules imported by [`../moxie.js`](../moxie.js) (the entry point `sim.html` 
 keeps only the public `window.moxie` API and the per-frame loop). Bare
 `three` resolves through `sim.html`'s importmap; nothing here is loaded directly by a page.
 
-- **`scene.js`** — renderer, camera + orbit controls, lights, floor, the scene-light dimmer.
+- **`scene.js`** — renderer, camera + orbit controls, lights, floor, the scene-light dimmer,
+  and what a tap on the stage hits (`onStageTap`: one pointer, no drag; `hitsAt`: a ray
+  through the framed camera). `../moxie.js` turns a first tap on her into a hello.
 - **`rig.js`** — materials and the jointed robot (body split at the lean joint, head, face
   screen, arms, heart LED, decals) plus the debug axis overlay.
 - **`config.js`** — the motor table (`MOTOR_DEFS`), rest pose, `motorAngle`, spring-elbow curve.

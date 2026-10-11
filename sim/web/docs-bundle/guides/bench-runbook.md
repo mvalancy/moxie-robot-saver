@@ -25,6 +25,7 @@ Robot details refer to firmware v3.6.4-Zephyr / OTA v24.10.803
   ([live notes](../debugging/live-hardware-debug.md)).
 - **Pick the simplest network.** A normal WPA2 network on 2.4 GHz, or **🚀 Moxie Direct** (this
   computer's own access point), which removes every router setting from the question.
+- **Record the session.** Start the recorder before the robot connects: [bench-day checklist](bench-day-checklist.md).
 
 ## 1. The Wi-Fi code (Wi-Fi only)
 
@@ -93,6 +94,13 @@ shows the robot's id on this server (`d_…`): the robot never sends its hardwar
 your account", or "⚠️ Added to your account, but this server could not let it in yet (…)". The
 second means the robot is on your account but still pending, so it gets no child settings yet: press
 **Permit** beside it in Robot access.
+
+**Set the time zone before the first bedtime.** With none set, Moxie keeps Los Angeles time; if your
+phone is in another zone, a line above **⚙️ Settings** offers your phone's zone in one click (a
+house rule for every robot), or pick one in **⚙️ Settings → Time zone** (**Use this phone's zone**
+fills in your phone's), then **Save settings**. Bedtime, the day plan and "what time is it" follow
+it ([the house's clock](../architecture/config-and-telemetry-contract.md#the-houses-clock-timezone_id));
+that the robot's own wake alarms do is recovered, not yet observed, so check one on the bench.
 
 **Permit** on its own lets a robot in without putting it on your account, so it gets no robot card.
 Nothing is ever added to an account without the click.
