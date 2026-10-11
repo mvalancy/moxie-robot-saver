@@ -580,9 +580,10 @@ class _EyePack(MoxieApp):
                      subscribe=[P.QR_EVENT], end_turn=True)
 
 
-def _armed(tmp_path, pack):
-    """A runtime whose pack asked for its events on one ordinary turn: `(rt, dev, synth)`."""
-    rt, dev = _runtime(pack, store=JsonStore(str(tmp_path)))
+def _armed(tmp_path, pack, **kw):
+    """A runtime whose pack asked for its events on one ordinary turn: `(rt, dev, synth)`.
+    `kw` goes to `make_runtime` (a child's `nickname`, say)."""
+    rt, dev = _runtime(pack, store=JsonStore(str(tmp_path)), **kw)
     synth = CountingSynth()
     rt.set_synthesizer(synth)
     drive_turn(rt, dev, "hello", event_id="e-arm")
@@ -734,6 +735,25 @@ def test_no_childs_name_in_what_the_eye_check_keeps(tmp_path, capsys, line, acti
     assert not any(named.search(text) for text in eye.feed), eye.feed
     assert not named.search(eye.out), eye.out
     assert eye.said == ([] if action == S.BLOCK else [line]), eye.said
+
+
+@pytest.mark.parametrize("line, kept", [
+    ("punch" + "-" * 86 + "Samantha-x", "***" + "-" * 86 + "…"),
+    ("Found you! " + "la " * 26 + "Samantha, let's punch the air, hooray!", None),
+], ids=["no-space-cut-inside-the-name", "cut-between-words"])
+def test_a_name_split_by_the_excerpts_cut_is_not_kept(tmp_path, line, kept):
+    """The classifier cuts an excerpt at 96 characters, between words when it can. A line
+    with no space that long is cut inside a word, and the cut can split the child's name
+    where the mask cannot see it ("Samanth…"): that cut-off end is dropped. An excerpt cut
+    between words is kept exactly as the classifier made it."""
+    verdict = S.assess(line, role=S.MOXIE)
+    assert verdict.action == S.FLAG and verdict.excerpt.endswith("…"), "premise: cut"
+    rt, dev, synth = _armed(tmp_path, _EyePack(line, line_only=True), nickname="Samantha")
+    _vision(rt, dev, FOUND, event_id="e-eye")
+    rows = rt.safety_view(dev)["events"]
+    assert len(rows) == 1, rows
+    assert rows[0]["excerpt"] == (kept or verdict.excerpt), rows[0]
+    assert "Saman" not in rows[0]["excerpt"], rows[0]
 
 
 def test_a_pack_that_raises_is_logged_without_the_childs_name(tmp_path, capsys):

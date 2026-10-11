@@ -1,5 +1,6 @@
 """Presence from the robot's own vision events: greetings, openers, event subscriptions."""
 from __future__ import annotations
+import re
 import time
 
 from moxie_sdk.types import Turn, ResultCode
@@ -158,7 +159,12 @@ class PresenceMixin:
             source = "/".join(str(p) for p in (getattr(app, "name", "") or type(app).__name__,
                                                module, getattr(robot, "content_id", "") or "")
                               if p)
-            verdict.excerpt = self._masked(verdict.excerpt)   # the queue keeps no name
+            # The queue keeps no name. A run with no space is cut inside a word, and its
+            # cut-off end could be part of one the mask cannot see ("Samanth…").
+            excerpt = self._masked(verdict.excerpt)
+            if excerpt.endswith("…") and " " not in excerpt:
+                excerpt = re.sub(r"\w+…$", "…", excerpt)
+            verdict.excerpt = excerpt
             self._journal_eye_line(device_id, robot, source, text, verdict)
             if verdict.action == safety_seam.BLOCK:
                 # Words the child never asked for: nothing is said in their place, and no
