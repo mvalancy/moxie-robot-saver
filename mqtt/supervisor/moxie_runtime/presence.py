@@ -256,17 +256,48 @@ class PresenceMixin:
 
     def _in_bedtime(self, device_id, now=None) -> bool:
         """True inside the robot's bedtime window from the effective config
-        (`weekday_bedtime`/`weekend_bedtime` "HH:MM", midnight wrap handled). No window ->
-        never bedtime."""
-        import datetime
+        (`weekday_bedtime`/`weekend_bedtime` "HH:MM", midnight wrap handled), judged on the
+        house's clock (`house_now`), never the server's. No window -> never bedtime."""
         from moxie_sdk.cloud_config import in_bedtime
-        dt = (datetime.datetime.fromtimestamp(now) if now is not None
-              else datetime.datetime.now())
         try:
             cfg = self.effective_config(device_id)
         except Exception:
             return False
-        return in_bedtime(cfg, dt)
+        return in_bedtime(cfg, self.house_now(device_id, now, cfg=cfg))
+
+    # ---- the house's clock (cloud_config § the house's clock) ----
+    def house_zone(self, device_id, cfg=None):
+        """This robot's house clock, `HouseZone(tz, name, resolved)`: the `timezone_id` of
+        its effective config (its own, else the house rule, else `MOXIE_TIMEZONE`), else
+        `DEFAULT_TIMEZONE_ID`: the zone its config push names. Never raises. A zone this
+        server cannot resolve is UTC, said once per robot and name in the feed, so a missing
+        tz database or an old typo shows instead of quietly moving bedtime."""
+        from moxie_sdk.cloud_config import DEFAULT_TIMEZONE_ID, known_timezones, resolve_zone
+        if cfg is None:
+            try:
+                cfg = self.effective_config(device_id)
+            except Exception:
+                cfg = {}
+        name = (cfg if isinstance(cfg, dict) else {}).get("timezone_id") or DEFAULT_TIMEZONE_ID
+        zone = resolve_zone(name)
+        if not zone.resolved:
+            noted = self.__dict__.setdefault("_zone_noted", set())
+            if (device_id, str(name)) not in noted:
+                noted.add((device_id, str(name)))
+                why = ("this server has no time zone database (the tzdata package)"
+                       if not known_timezones() else "this server does not know that zone")
+                self._note("error", f"🕰️ {device_id or 'house rule'}: time zone "
+                                    f"{str(name)[:64]!r} cannot be read ({why}), so bedtime, "
+                                    f"the day plan and the clock run on UTC until a parent "
+                                    f"picks the zone in Settings")
+        return zone
+
+    def house_now(self, device_id, at=None, *, cfg=None):
+        """`at` (epoch seconds; now when None) on this robot's house clock (`house_zone`):
+        an aware `datetime`, so the house's wall clock and the epoch stay one instant."""
+        import datetime
+        return datetime.datetime.fromtimestamp(time.time() if at is None else float(at),
+                                               self.house_zone(device_id, cfg).tz)
 
     def _vision_subscription(self, device_id, robot=None):
         """The `EventSubscription.active[]` list to attach to this response, or None.

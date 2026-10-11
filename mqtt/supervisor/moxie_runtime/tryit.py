@@ -399,7 +399,8 @@ class TryItMixin:
         # -- the turn, assembled as `_on_remote_chat` assembles one --
         robot = RobotContext(device_id="", child=child,
                              module_id=conv["module_id"] if conv else None,
-                             content_id=conv["content_id"] if conv else None)
+                             content_id=conv["content_id"] if conv else None,
+                             extra={"timezone_id": self.house_zone(device_id).name})
         turn = Turn(robot=robot, speech=speech, history=list(history), command="prompt",
                     input_vars={},
                     presence=presence_seam.snapshot(self._presence_state(robot)))
