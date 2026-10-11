@@ -124,7 +124,7 @@ class FleetMixin:
     #: parent's clear took the child's name off but its record could not be written, so the
     #: next start loads no name from that record and the next connect or save writes the
     #: record without it. It holds no name, only that one is owed; any write of the record
-    #: settles it (RAM never holds the name it is owed for).
+    #: settles it once the note is gone (RAM never holds the name it is owed for).
     CHILD_CLEAR_COLLECTION = "child_clear"
 
     def child_clear_owed(self, device_id) -> bool:
@@ -143,13 +143,18 @@ class FleetMixin:
             return False
 
     def _child_clear_paid(self, device_id) -> None:
-        """This robot's record was just written without the name a clear is owed for."""
-        if self.child_clear_owed(device_id):
+        """This robot's record was just written without the name a clear is owed for, so
+        its note goes. The clear stays owed until the note is gone: a note the store would
+        not delete is read at the next start, and would drop a name the parent saved since.
+        The next write of the record tries again."""
+        if not self.child_clear_owed(device_id):
+            return
+        try:
+            self.store.delete(device_id, self.CHILD_CLEAR_COLLECTION)
+        except Exception:
+            pass
+        if not os.path.exists(self.store.path(device_id, self.CHILD_CLEAR_COLLECTION)):
             self._child_clears_owed.discard(device_id)
-            try:
-                self.store.delete(device_id, self.CHILD_CLEAR_COLLECTION)
-            except Exception:
-                pass
 
     def _save_child_clear(self, device_id, held: bool = True, *, quiet: bool = False) -> bool:
         """Write this robot's record without a child's name, inside `_settings_record`: the
