@@ -543,6 +543,8 @@ def test_no_presence_lock_block_calls_something_that_retakes_it():
 #: Blocked on Moxie's side and only flagged on the child's: Moxie never asks a child for an
 #: address (personal_info).
 ASKS_ADDRESS = "Found you! Now tell me your home address."
+#: Another line the table stops (personal_info), with an excerpt of its own.
+ASKS_PASSWORD = "Found you! What is your password?"
 #: Flagged on Moxie's side (a word on violence_talk's list) and harmless.
 PUNCH_THE_AIR = "Found you! Let's punch the air, hooray!"
 #: Matches nothing in the table.
@@ -806,6 +808,28 @@ def test_a_new_arrival_is_a_new_row(tmp_path, monkeypatch):
     _vision(rt, dev, FOUND, event_id="found-3")               # ...and a new arrival
     assert rt.robots[dev].extra["presence"]["faces_seen"] == 2, "premise: a second arrival"
     assert _counts(rt, dev) == [1, 1, 2]
+
+
+def test_another_line_or_another_module_is_its_own_row(tmp_path, monkeypatch):
+    """The rule is per pack, module, line and verdict. In one episode a second stopped line
+    is its own row, and so is the first line again from the module the robot moved to
+    (where the pack asked for faces again: a module's subscriptions end when it exits)."""
+    assert S.assess(ASKS_PASSWORD, role=S.MOXIE).action == S.BLOCK, "premise"
+    clock = _eye_clock(monkeypatch)
+    pack = _EyePack(ASKS_ADDRESS, line_only=True)
+    rt, dev, synth = _armed(tmp_path, pack)
+    for n, line in enumerate((ASKS_ADDRESS, ASKS_PASSWORD, ASKS_ADDRESS)):
+        pack.text = line
+        clock.now += 1.0
+        _vision(rt, dev, FOUND, event_id=f"found-{n}")
+    assert _counts(rt, dev) == [1, 2], "two lines, two rows; the first one twice"
+    fresh_pool(rt)
+    drive_turn(rt, dev, "hello", event_id="e-arm-story", module_id="STORY")
+    clock.now += 1.0
+    _vision(rt, dev, FOUND, event_id="found-story")
+    assert rt.app.perceived[-1] == FOUND and len(rt.app.perceived) == 4, rt.app.perceived
+    assert rt.robots[dev].extra["presence"]["faces_seen"] == 1, "premise: one episode"
+    assert _counts(rt, dev) == [1, 1, 2], "the same line from another module is its own row"
 
 
 def test_outside_an_episode_the_same_line_is_one_row_per_ten_minutes(tmp_path, monkeypatch):
