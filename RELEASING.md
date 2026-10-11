@@ -42,7 +42,10 @@ still behind `main` more than 30 minutes after a promotion.
 | Deep, live voice | same, with `-f voice=true` | manual | Adds `test_live_talk_e2e`: real Piper speech into real Whisper. |
 | Release | `release.yml` | tag `v*` | Builds and publishes the package and images (below) |
 | Deployed | `deployed.yml` | schedule | Checks the hosted site in a real phone-sized browser 4× a day and spends one chat turn a day on a canary; not a merge gate. |
+| Promotion | `promotion.yml` | hourly | Checks that the last `dev` → `main` promotion was reconciled (`dev` is not behind `main`); not a merge gate. |
 | Cleanup | `cleanup.yml` | PR closed | Deletes that PR's build cache. |
+
+Per-file detail, including how each workflow is dispatched by hand: [`sim/ci/README.md`](sim/ci/README.md).
 
 CI keeps no durable artifacts (the repository's retention window is 7 days). The only durable outputs are a
 tagged Release and its images.
@@ -96,10 +99,14 @@ for a routine promotion or a version bump.
 2. Check the PR already carries the `__version__` you will tag (bumped on `dev` first; see Versions);
    if not, bump on `dev` first and re-cut the `promote/*` snapshot. Then merge.
 3. With the owner's approval: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-4. Check `docker pull ghcr.io/mvalancy/moxie-robot-saver/supervisor:X.Y.Z` works.
-5. Reconcile `dev` (above).
+4. Mark the GitHub Release as a pre-release while the version is below 1.0. The release workflow's
+   `softprops/action-gh-release` step sets no `prerelease` flag, so every `v0.x` release so far was
+   flagged by hand. The image tags are not affected: a `v0.x` tag still receives `latest`, because
+   `latest=auto` skips only `-rc`-style pre-release tags (see the tag policy above).
+5. Check `docker pull ghcr.io/mvalancy/moxie-robot-saver/supervisor:X.Y.Z` works.
+6. Reconcile `dev` (above).
 
 To build the package locally: `cd mqtt && python -m build`.
 
 ---
-[Repo structure](STRUCTURE.md) · [Roadmap](ROADMAP.md) · [Agent workflow](docs/architecture/agent-workflow.md)
+[Repo structure](STRUCTURE.md) · [Contributing](CONTRIBUTING.md) · [Roadmap](ROADMAP.md) · [Agent workflow](docs/architecture/agent-workflow.md)
