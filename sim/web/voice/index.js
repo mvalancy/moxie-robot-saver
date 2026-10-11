@@ -20,6 +20,8 @@
     hasCloudVoice: function () { return V.cloudVoice; },   // a CloudTTSResponse has arrived
     setTtsHint: V.setTtsHint,         // resting text of #tts-status (never clobbers speaking)
     ttsPending: V.ttsPending,
+    // Drop the chunks queued behind the one playing, which plays out (cloud-transport.js).
+    dropQueuedTTS: V.dropQueuedTTS,
     // Peak mouth-open of the current/last cloud-TTS utterance (0..1); survives playback.
     lastMouthPeak: function () { return V.mouthPeak; },
     // {event_id, chunks_played, order:[chunk_num…] (ascending by construction),

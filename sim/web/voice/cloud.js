@@ -358,4 +358,12 @@
     while (ttsQueue.length) ttsQueue.shift().resolve({ played: false, reason: "stopped" });
     if (ttsPlaying) { try { V.current && V.current.stop && V.current.stop(); } catch (e) {} }
   };
+
+  /* Every chunk still WAITING is dropped, never the one playing: a line that must follow
+   * the sentence now playing, not the rest of a reply already queued behind it (the
+   * transport's safety line, W4-S7). `stopCloudTTS` stops both. */
+  V.dropQueuedTTS = function dropQueuedTTS() {
+    clearGap(); gapFilled = false;
+    while (ttsQueue.length) ttsQueue.shift().resolve({ played: false, reason: "superseded" });
+  };
 })();
