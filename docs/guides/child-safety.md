@@ -114,9 +114,15 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    grown-up, just tell me", "you don't need to tell your mom") or promising them a secret ("this
    can be our little secret", "just between us", "your secret is safe with me", "I promise I won't
    tell anyone", "I won't tell your mom", "that sounds like a secret to keep") — in the shapes the
-   check lists, not every wording; a surprise party or a secret word kept from "anyone" is hers to
-   keep, a present kept from a named parent ("don't tell your dad about the present") is not. A
-   picture the AI drew is read the same way and dropped if it trips the check.
+   check lists, not every wording. A promise that names the surprise, the present, the gift, the
+   party or the birthday is hers to keep ("I won't tell anyone about the surprise party!", "Ooh, a
+   surprise party! Your secret is safe with me!", "you can keep it a secret until her birthday"),
+   and so are a secret word, a riddle's answer or a story's ending kept from "anyone"; a bare
+   promise with none of those words in it ("Shh, I won't tell anyone! What kind of cake are you
+   making?") is swapped even when your child meant a surprise, and so is her telling your child to
+   keep one from a named parent ("let's not tell your mom about the surprise party", "don't tell
+   your dad about the present"). A picture the AI drew is read the same way and dropped if it trips
+   the check.
 3. **A hurt child is pointed to a grown-up whenever the check recognises what they said and
    the demo's own server answers the turn.**
    If your child says a person is hurting, frightening or endangering them — hit, pushed,
@@ -132,33 +138,44 @@ code (`functions/api/_lib/safety.js`), with the same categories and the same two
    words it lists: "don't tell a grown-up", "you could tell your mom, but you don't have to" (or
    "…your mom. But you don't have to."), "instead of telling your teacher, tell me", "maybe later",
    "once you feel braver", "only if you really want to", "or don't", "she'll be mad", "take your
-   time", "if that's what you want", and a "no" or a "don't" a sentence later ("tell your mom.
-   Actually, don't."). The check reads words, not intent, so it also adds the sentence to a good
-   reply that happens to say "later" or "if you want" in any of its sentences, or "not" or "never"
-   about something else in words it does not know ("it's not your fault" it knows), and a reply
-   that steers away in words it does not know would count.
+   time", "if that's what you want", a "no" or a "don't" a sentence later ("tell your mom.
+   Actually, don't."), and a reply that says the telling itself is wrong ("telling your mom is not
+   okay", "I can't believe you would tell your mom", "it's not okay to ever tell your mom") — while
+   the same words about what happened ("I can't believe you had to go through that", "it's not
+   your fault") still count. The check reads words, not intent, so it also adds the sentence to a
+   good reply that happens to say "later" or "if you want" in any of its sentences, or "not" or
+   "never" about something else in words it does not know ("it's not your fault" it knows), and a
+   reply that steers away in words it does not know would count.
    Someone else's excuse does not hide what the check recognises: "he said it was an accident",
    "she said it was a game", "my uncle says he's just joking", "he did it for fun" or "he touched my
    leg and said it was a surprise" still get the sentence, and so does a child hit "as a joke" by a
    group, an older child or an adult, or one who adds where or when it happened ("…at the party",
-   "…before bed", "…when i go to bed"), why ("…because i spilled juice by accident", "…when i
-   don't brush my teeth": their own accident or chore is not the hitter's), what they did next
-   ("…and i ran away", "…and i hit my head") or says it in two sentences. Three shapes are read as
-   play or care and left to the AI: a hit, a kick or a push from another child, or from "someone",
-   at a sport or a game ("my brother hit me at the soccer field", "somebody pushed me in the hockey
-   game": the game, not a place, unless your child adds that it hurt, was on purpose or happens
-   every day), a grab as your child crosses the street, slips or nearly falls, and a grab after
-   which the two go somewhere together ("…and we went inside").
+   "…before bed", "…when i go to bed", "…every time i spill something by accident"), why, in any
+   words ("…because i spilled juice by accident", "…for spilling juice by accident", "…coz i
+   spilled juice", "…but i didn't mean to spill the juice", "…when i don't brush my teeth",
+   "…because my brother spilled juice by accident": their own accident or chore, or a brother's or
+   the dog's, is never the hitter's), what they did next ("…and i ran away", "…and i hit my head")
+   or says it in two sentences. Three shapes are read as play or care and left to the AI: a hit, a
+   kick or a push from another child, or from "someone", at a sport or a game ("my brother hit me at
+   the soccer field", "somebody pushed me in the hockey game": the game, not a place, unless your
+   child adds that it hurt, was on purpose or happens every day), a grab as your child crosses the
+   street, slips or nearly falls, and a grab by a parent, a step-parent, a grandparent, a brother or
+   sister or a friend after which the two go somewhere together ("my dad grabbed me and we went
+   inside"); the same grab from anyone else ("my coach grabbed me and we went to the locker room")
+   gets the sentence.
    If the line itself is one Moxie may not repeat, or the AI's reply is one she may not say,
    she still answers with a line that points them to a grown-up — never with "let's talk
    about something else". If the AI is busy, slow or down after the check has read the line,
    the server still sends that pointing line and the page speaks it. A scraped knee, a sad
    film, a day out ("my dad took me to the zoo"), a hug, a hand held, a bath ("my mom told me
    to take off my wet clothes"), a goodnight kiss from a parent, a drawing shown to grandpa, a
-   picture of it sent to grandma, a treat kept secret from mom, a push into the pool, and an
-   accident, or a joke from one other child, that your child calls one themselves ("my friend
+   picture of it sent to grandma, a treat kept secret from mom, a push into the pool, an accident
+   your child calls one in the same breath ("my friend hit me by accident", "my brother hit me with
+   his elbow by accident"), and a joke from one other child that your child calls one ("my friend
    punched my arm as a joke") are left to the AI: the added sentence is for a person hurting them,
-   not an accident, an outing or ordinary family life. The same words from an uncle, a cousin, a coach,
+   not an accident, an outing or ordinary family life. "But it was an accident" or "she didn't mean
+   to" a clause after the hit does get the sentence (the check leans toward it), and so does "my
+   mom pulled my hair at the hairdresser" with no brushing or cutting named. The same words from an uncle, a cousin, a coach,
    a babysitter or a stranger ("asked me to take off my pants", "made me kiss him before bed") do
    get it, and so do they from a parent when your child adds that they did not like it or it was
    a secret. A surprise or a treat kept secret from you is ordinary family life from a parent, a
