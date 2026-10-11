@@ -2,12 +2,20 @@
 from __future__ import annotations
 import time
 
-from moxie_sdk.types import Turn, Reply, ResultCode
+from moxie_sdk.types import Turn, ResultCode
 from moxie_sdk import presence as presence_seam
 from moxie_sdk import launch_cards as cards_seam
 from moxie_sdk import safety as safety_seam
 from moxie_sdk.cloud_config import GENERIC_CHILD_NAME, mask_child_names
 from markup import make_markup
+
+#: A pack's eye line the safety check stopped or flagged goes in the review queue once per
+#: presence episode; outside an episode (no one has arrived yet, or they are gone), once
+#: per this many seconds per pack, module, line and verdict (`_journal_eye_line`).
+EYE_REPEAT_WINDOW_S = 600.0
+#: How many such lines each robot remembers for that rule: a bound, not a policy (the
+#: oldest is forgotten first).
+EYE_REPEAT_MAX = 64
 
 
 class PresenceMixin:
@@ -106,9 +114,12 @@ class PresenceMixin:
         implements `perceive`. A `perceive` that raises is logged and ignored.
 
         The answer's line passes the output check every line Moxie says passes (`_assess`,
-        Moxie's side) and is handled as the plain turn handles an answer: a blocked line
-        becomes the category's redirect and loses its actions, end_turn and subscribe; a
-        flagged one is recorded and said.
+        Moxie's side). The child did not prompt it, so a line the check stops is not swapped
+        for a redirect: the event is answered `NOREPLY_ACK`, as when no presence line is
+        due, and the line's actions, end_turn and subscribe go with it. A flagged line is
+        said. Either way the parent's review queue gets the verdict once per presence
+        episode (`_journal_eye_line`) with the child's name masked in its excerpt, and the
+        feed and the log name the pack and module. A clean line goes out as it came.
         """
         # Separate `if`s so each gate can be mutated independently (subscribe_mutation_check.py).
         if not self.vision:
@@ -141,29 +152,40 @@ class PresenceMixin:
         subscribe = list(getattr(reply, "subscribe", None) or [])
         if not text and not actions and not subscribe:
             return False                          # answered with nothing: not an answer
-        # As on the plain turn (`_handle_turn`): a blocked line is swapped for the category's
-        # redirect (journaled by `_safety_redirect`) and its actions, end_turn and subscribe
-        # go with it, so blocked words earn a pack no act and no wake.
         verdict = self._assess(text, safety_seam.MOXIE)
-        blocked = bool(verdict) and verdict.action == safety_seam.BLOCK
-        if blocked:
-            red = self._safety_redirect(device_id, verdict)
-            reply = Reply(text=red.text, markup=red.markup,
-                          result_code=getattr(reply, "result_code", ResultCode.SUCCESS))
-            text, actions, subscribe = reply.text, [], []
-        elif verdict:
-            self._record_safety(device_id, verdict)
+        if verdict:
+            # The pack and the item the robot is in (the console lists it as module/content).
+            source = "/".join(p for p in (getattr(app, "name", "") or type(app).__name__,
+                                          module, getattr(robot, "content_id", "") or "")
+                              if p)
+            verdict.excerpt = self._masked(verdict.excerpt)   # the queue keeps no name
+            self._journal_eye_line(device_id, robot, source, text, verdict)
+            if verdict.action == safety_seam.BLOCK:
+                # Words the child never asked for: nothing is said in their place, and no
+                # act or wake rides on them.
+                self._note("vision", f"🧬 a content pack ({source}) answered {name} with a "
+                                     f"line the safety check stopped: Moxie said nothing")
+                print(f"[runtime] 🧬 {device_id}: {name} woke a content pack "
+                      f"({self._masked(source)}); the safety check stopped its line, so "
+                      f"Moxie said nothing", flush=True)
+                self._publish_chat(device_id, rcr.get("event_id"),
+                                   rcr.get("backend", "router"), "", markup="",
+                                   result=ResultCode.NOREPLY_ACK)
+                return True
         markup, scored = (getattr(reply, "markup", None), None)
         if text:
             markup, scored = self._stage(text, reply, turn_key=rcr.get("event_id"),
                                          chunk_index=0, markup=reply.markup)
-        if blocked:
-            self._note("vision", f"🧬 a pack answered {name}, and the safety rules blocked "
-                                 f"its line: Moxie said a safe one instead")
+        if verdict:
+            self._note("vision", f"🧬 a content pack ({source}) answered {name} with a line "
+                                 f"the safety check flagged: '{self._masked(text, 40)}'")
+            print(f"[runtime] 🧬 {device_id}: {name} woke a content pack "
+                  f"({self._masked(source)}) -> '{self._masked(text, 60)}' (flagged)",
+                  flush=True)
         else:
             self._note("vision", f"🧬 a pack answered {name}: '{self._masked(text, 40)}'")
-        print(f"[runtime] 🧬 {device_id}: {name} woke a content pack -> "
-              f"'{self._masked(text, 60)}'", flush=True)
+            print(f"[runtime] 🧬 {device_id}: {name} woke a content pack -> "
+                  f"'{self._masked(text, 60)}'", flush=True)
         self._publish_chat(device_id, rcr.get("event_id"),
                            rcr.get("backend", "router"), text, markup or "",
                            actions=actions or None,
@@ -173,6 +195,65 @@ class PresenceMixin:
         if text:
             self._maybe_synthesize(device_id, markup, rcr.get("event_id"), chunk_num=0)
         return True
+
+    def _journal_eye_line(self, device_id, robot, source, text, verdict) -> None:
+        """Put a pack's stopped or flagged eye line in the parent's review queue once per
+        presence episode, per pack and module (`source`), line and verdict. A face at the
+        frame edge sends an event per blink (vision.md §7.2) and the queue keeps only its
+        newest rows, so a repeat is not a row: it raises the `count` of the row it repeats
+        (a row with no `count` stands for one event).
+
+        The episode is the presence run an `arrived` opened (`present_since`, `faces_seen`).
+        It lasts through every flicker, a `left` the face came straight back from included
+        (twenty blinks make one `arrived` and one `left`), and ends once the face has been
+        gone `FLICKER_S`: the next found is a new arrival. Outside an episode (no one has
+        arrived yet, or they are gone) a repeat counts on its row for
+        `EYE_REPEAT_WINDOW_S` instead."""
+        now = time.time()
+        state = self._presence_state(robot)
+        since, gone = state.get("present_since"), state.get("absent_since")
+        in_run = since is not None and (
+            state.get("face_present") is True
+            or (gone is not None and now - gone < presence_seam.FLICKER_S))
+        episode = (since, state.get("faces_seen")) if in_run else None
+        key = (source, text, verdict.action, tuple(verdict.categories))
+        with self._presence_lock:
+            seen = self.__dict__.setdefault("_eye_journaled", {}).setdefault(device_id, {})
+            last = seen.get(key)
+            if last is None:
+                repeat = False
+            elif episode is not None:
+                repeat = last["episode"] == episode
+            else:
+                repeat = (last["episode"] is None
+                          and now - last["at"] < EYE_REPEAT_WINDOW_S)
+            if repeat:
+                last["count"] += 1
+                row_id, count = last["row"], last["count"]
+        if not repeat:
+            row = self._record_safety(device_id, verdict)
+            with self._presence_lock:
+                seen.pop(key, None)
+                seen[key] = {"episode": episode, "at": now, "count": 1,
+                             "row": (row or {}).get("id")}
+                while len(seen) > EYE_REPEAT_MAX:
+                    del seen[next(iter(seen))]
+            return
+        if not row_id:
+            return                                # counts only (NO_DATA): no row to raise
+        events = safety_seam.EVENTS_COLLECTION
+        try:
+            # Read, raise and write as one transaction: a row appended meanwhile (a child's
+            # turn) must not be lost to this write.
+            with self.store.transaction(device_id, events):
+                rows = self.store.read(device_id, events, [])
+                for row in rows if isinstance(rows, list) else []:
+                    if isinstance(row, dict) and row.get("id") == row_id:
+                        row["count"] = count
+                        self.store.write(device_id, events, rows)
+                        break
+        except Exception as e:
+            print(f"[runtime] safety journal write failed: {e}", flush=True)
 
     def _greeting_for(self, device_id, robot, signals):
         """`(text, markup)` if this robot has earned an unprompted hello, else None.
