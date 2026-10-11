@@ -72,7 +72,8 @@ Each of these cost real time; do not re-derive them.
   801 relocation feature: independent confirmation that the firmware is old.
 - **No DNS query was seen for it**: the robot uses a cached/hardcoded Google IP.
 - Google IoT Core uses the same `/devices/{id}/config|events|state` topics our supervisor already
-  speaks, so a robot that reached our broker would be understood.
+  speaks. That match is the premise of the fake-Google test below; no pre-801 robot has reached our
+  broker, so nothing past the topic names has been seen.
 
 ## The fake-Google-IoT-Core test and its result
 

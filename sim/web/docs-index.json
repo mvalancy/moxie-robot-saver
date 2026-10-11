@@ -902,7 +902,7 @@
    "path": "debugging/live-hardware-debug.md",
    "title": "Live hardware debugging log — reviving a real Moxie",
    "section": "debugging",
-   "bytes": 9209,
+   "bytes": 9300,
    "mermaid": 0,
    "headings": [
     "Setup",
@@ -974,7 +974,7 @@
    "path": "community-research.md",
    "title": "The Moxie revival community",
    "section": "docs",
-   "bytes": 8111,
+   "bytes": 8276,
    "mermaid": 0,
    "headings": [
     "Summary",

@@ -106,7 +106,9 @@ No firmware-image repos, no APK-mod repos, **no parent-app repo**, no independen
 
 1. A clean-room spec and server for the parent-app REST API (`client-service-api.embodied.com`), which
    exists nowhere else.
-2. Clean-room pairing-QR tooling, verified on a real robot (`tools/pairing/`).
+2. Clean-room pairing-QR tooling (`tools/pairing/`). Its Wi-Fi code is verified on a real robot; its
+   endpoint code matches OpenMoxie's byte for byte and is unverified on a physical robot
+   ([bench notes](debugging/live-hardware-debug.md)).
 3. Its own robot cloud (broker, supervisor, SDK) that adopts OpenMoxie's best behaviors behind
    documented contracts, runs any OpenAI-compatible brain, and ships a browser simulator.
 
