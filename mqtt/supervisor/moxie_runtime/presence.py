@@ -117,10 +117,10 @@ class PresenceMixin:
         The answer's line passes the output check every line Moxie says passes (`_assess`,
         Moxie's side). The child did not prompt it, so a line the check stops is not swapped
         for a redirect: the event is answered `NOREPLY_ACK`, as when no presence line is
-        due, and the line's actions, end_turn and subscribe go with it. A flagged line is
-        said. Either way the parent's review queue gets the verdict once per presence
-        episode (`_journal_eye_line`) with the child's name masked in its excerpt, and the
-        feed and the log name the pack and module. A clean line goes out as it came.
+        due, and the line's actions, end_turn and subscribe are dropped with it. A flagged
+        line is said. Either way the parent's review queue gets the verdict once per
+        presence episode (`_journal_eye_line`) with the child's name masked in its excerpt,
+        and the feed and the log name the pack and module. A clean line goes out as it came.
         """
         # Separate `if`s so each gate can be mutated independently (subscribe_mutation_check.py).
         if not self.vision:

@@ -529,7 +529,6 @@ def test_no_presence_lock_block_calls_something_that_retakes_it():
     assert blocks >= 5, f"only {blocks} presence-lock blocks found — has the lock moved?"
 
 
-
 # --------------------------------------------------------------------------- #
 # 6. A pack's answer to the robot's eye passes the output check
 # --------------------------------------------------------------------------- #
@@ -537,8 +536,8 @@ def test_no_presence_lock_block_calls_something_that_retakes_it():
 # are staged, and so is the line a pack answers a subscribed event with
 # (`_wake_subscribed_pack`). The child did not prompt that line, so one the check stops is
 # not swapped for a redirect: the event is answered NOREPLY_ACK and the line's act,
-# end_turn and subscribe go with it. A flagged line is said. Either verdict reaches the
-# parent's review queue once per presence episode, with no child's name in it.
+# end_turn and subscribe are dropped with it. A flagged line is said. Either verdict
+# reaches the parent's review queue once per presence episode, with no child's name in it.
 
 #: Blocked on Moxie's side and only flagged on the child's: Moxie never asks a child for an
 #: address (personal_info).
