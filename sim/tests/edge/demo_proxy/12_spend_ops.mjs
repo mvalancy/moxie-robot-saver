@@ -340,7 +340,9 @@ const admitAt = (cfg, request, route, nowS) => limits.admit({ request, cfg, rout
     }, null],
     ["a served voice", () => speech.onRequestPost({ request: at(ORIGIN, "/api/speech", { ticket }), env: E }), null],
     ["a served transcription", () => { P.plan = { speech: HEARD }; return transcribe.onRequestPost({ request: upload(), env: E }); }, null],
-    ["a blocked turn", () => chat.onRequestPost({ request: at(ORIGIN, "/api/chat", { text: "i want to kill myself " + CANARY }), env: E }), null],
+    // An input block is a 200 with `reason: "blocked"`; W3-S17 (§4.12) made it write one line
+    // like every other refusal reason, so the floor's rate is visible too (never the words).
+    ["a blocked turn", () => chat.onRequestPost({ request: at(ORIGIN, "/api/chat", { text: "i want to kill myself " + CANARY }), env: E }), ["chat", "blocked", 200]],
     ["/api/health", () => health.onRequestGet({ request: new Request(ORIGIN + "/api/health"), env: E }), null],
     ["too_long", () => chat.onRequestPost({ request: at(ORIGIN, "/api/chat", { text: CANARY.repeat(40) }), env: E }), ["chat", "too_long", 400]],
     ["too_short", () => chat.onRequestPost({ request: at(ORIGIN, "/api/chat", { text: "   " }), env: E }), ["chat", "too_short", 400]],

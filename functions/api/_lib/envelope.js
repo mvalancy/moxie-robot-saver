@@ -325,8 +325,9 @@ const LOG_ROUTES = Object.freeze(["chat", "speech", "transcribe"]);
  * rate-limit key, a header, a ticket or a context blob — a log line is a copy nobody agreed
  * to. `reason` is coerced into `REASONS` exactly as `envelope()` coerces it, `colo` must look
  * like a Cloudflare colo code, and a logging failure is swallowed (it may not cost the
- * visitor their answer). Called once per refusal envelope by `upstream.js::refusal`; a
- * served turn, a `blocked` turn and `/api/health` write nothing.
+ * visitor their answer). Called once per refusal envelope by `upstream.js::refusal`, and
+ * once per `blocked` turn — an input block or an output swap, both `reason: "blocked"` at
+ * 200 — by `chat.js::blocked` (spec §4.12); a served turn and `/api/health` write nothing.
  */
 export function logRefusal(route, reason, status, colo) {
   const line = {
