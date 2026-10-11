@@ -24,8 +24,9 @@ connect line; a body keeps numbers, booleans and the strings named in `KEEP_STRI
 module ids, commands, result shapes, proto names), and every other string, which is where
 speech, transcripts, names, markup and log text live, becomes `"[text]"` (an empty one stays
 empty). The child's record (`child_pii`) is withheld whole, audio and public keys are removed,
-and wall-clock times are dropped, including the broker's own stamp at the head of each log line
-(`mono`, seconds since the recorder started, stays). Before anything is written the copy is
+and wall-clock times are dropped (a body's `timestamp`, `*_at` and `*_ts` fields, `_TIME_KEY`),
+including the broker's own stamp at the head of each log line (`mono`, seconds since the
+recorder started, stays). Before anything is written the copy is
 checked again for a `d_` id, an address, a MAC, a hostname, a username (`identity_problems`) or
 a broker stamp; if one is left the tool refuses and names the kind, never the value. Only this
 copy may be committed (`sim/tests/data/wire/`) or pasted into an issue.
@@ -166,8 +167,10 @@ DROP_KEYS = frozenset({"audio_b64", "b64", "buffer", "audio_content", "public_ke
                        "user_id_encrypted", "rsa_pub"})
 #: Withheld whole: the child's record.
 PRIVATE_KEYS = frozenset({"child_pii", "child"})
-#: Wall-clock fields inside a body (a number becomes 0, a string "[text]").
-_TIME_KEY = re.compile(r"(?:^|_)timestamp$|_at$")
+#: Wall-clock fields inside a body (a number becomes 0, a string "[text]"): `timestamp` and
+#: `*_timestamp`, `*_at`, and `*_ts` (a finished activity's `started_at_ts` / `ended_at_ts`,
+#: `ActivityUpdate` in Cloud.proto, on the activity log).
+_TIME_KEY = re.compile(r"(?:^|_)(?:timestamp|ts)$|_at$")
 #: Where people's words live: never kept, whatever they look like (a child's "yes" or "6").
 FREE_TEXT_KEYS = frozenset({"speech", "text", "markup", "message", "nickname", "name",
                             "transcript", "error_message", "value", "line", "alternatives",

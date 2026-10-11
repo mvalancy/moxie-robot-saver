@@ -12,9 +12,10 @@ with fixed clocks (this file reads no clock):
 * a full queue drops messages, says how many where the gap is, and the writer keeps going; the
   size cap and a failed write each stop the recording with one line;
 * the `--share` copy of the session holds none of its d_ ids, addresses, ports, MAC, hostname,
-  username, Wi-Fi name, wall clock (the broker's own stamp included), or the child's words or
-  name, and each robot keeps one placeholder on every line; identity or a stamp that survived
-  the scrub makes the tool refuse;
+  username, Wi-Fi name, wall clock (the broker's own stamp included, and a `*_ts` field as a
+  number or a string), or the child's words or name, and each robot keeps one placeholder on
+  every line; the timeline of the raw file holds none of them either; identity or a stamp
+  that survived the scrub, in a broker line or in a body, makes the tool refuse;
 * the committed fixtures under `sim/tests/data/wire/` are exactly the --share output of this
   session and pass the same greps; the timeline of the fixture is the committed golden (the
   re-prompt gap, the notify count, the chunk sequence); the replay reproduces the fixture's
@@ -574,6 +575,13 @@ def test_the_share_copy_holds_no_identity_and_no_words(recorded, tmp_path):
     assert T.share_problems(T.load(str(out))) == []
 
 
+def test_the_timeline_of_the_raw_recording_is_safe_to_paste(recorded):
+    """The timeline is computed from the --share view, so even the raw file's timeline holds
+    no identity and no words (what the checklist tells a person to paste)."""
+    assert _leaks(recorded["text"]), "the raw recording must leak, or this proves nothing"
+    assert _leaks(T.timeline(recorded["lines"])) == []
+
+
 def test_each_robot_keeps_one_placeholder_on_every_line(recorded):
     raw = [ln for ln in recorded["lines"] if ln["kind"] != "banner"]
     shared = T.share_records(recorded["lines"])[1:]
@@ -639,6 +647,30 @@ def test_the_scrub_handles_identity_in_any_broker_line_and_any_body():
         "New client connected from [address] as weird-client (p2, c0, k15)."
 
 
+def test_a_clock_field_ending_in_ts_is_dropped_as_a_number_or_a_string():
+    """A finished-activity report (`ActivityUpdate`, Cloud.proto) carries `started_at_ts` and
+    `ended_at_ts` beside `started_at`, `ended_at` and `timestamp`. Each is a wall clock: a
+    numeric epoch becomes 0, a string epoch (proto3 JSON writes a uint64 as a string)
+    becomes "[text]", and neither reaches the timeline."""
+    started, ended = WALL0 + 120, WALL0 + 300
+    report = {"timestamp": ended * 1000, "started_at": "2025-10-09T08:55:20Z",
+              "ended_at": "2025-10-09T08:58:20Z", "started_at_ts": started,
+              "ended_at_ts": str(ended), "software_version": "24.10.803",
+              "mentor_behavior": {"module_id": "DRAW", "timestamp": ended * 1000}}
+    rec = {"kind": "msg", "mono": 12.0, "dir": "robot>cloud", "device": ROBOT_A,
+           "topic": f"/devices/{ROBOT_A}/events/client-service-activity-log",
+           "name": "client-service-activity-log", "bytes": 1, "as": "json", "body": report}
+    shared = T.share_records([rec])
+    body = shared[0]["body"]
+    assert (body["started_at_ts"], body["ended_at_ts"]) == (0, "[text]")
+    assert (body["started_at"], body["ended_at"], body["timestamp"]) == ("[text]", "[text]", 0)
+    assert body["mentor_behavior"] == {"module_id": "DRAW", "timestamp": 0}
+    text = T.dump(shared[0]) + T.timeline([rec])
+    for clock in (str(started), str(ended), "2025-10-09"):
+        assert clock not in text, clock
+    assert "a finished-activity report (mentor_behavior)" in text
+
+
 def test_a_result_spelled_as_a_name_is_read_as_its_code():
     """Older doubles send `result` as the enum's name; the timeline and the share copy read
     it as the code, never crash on it."""
@@ -693,6 +725,19 @@ def test_identity_left_after_the_scrub_makes_the_tool_refuse(recorded, tmp_path,
     assert "refused" in err and "a username" in err and "a wall-clock time" in err
     assert ADDRESS not in err and USERNAME not in err, "the refusal names kinds, not values"
     assert WALL_CLOCK not in err
+
+
+def test_identity_left_in_a_body_makes_the_tool_refuse(recorded, tmp_path, monkeypatch, capsys):
+    """The re-check reads every whole line (`identity_problems(dump(rec))` in
+    `share_problems`), not only the broker's: a robot's message the body scrub missed is
+    refused too."""
+    monkeypatch.setattr(T.Share, "value", lambda self, v, key="": v)    # scrub no body
+    out = tmp_path / "refused-body.jsonl"
+    assert T.main([recorded["path"], "--share", str(out)]) == 1
+    assert not out.exists(), "a refused copy must not be written at all"
+    err = capsys.readouterr().err
+    assert "refused" in err and "a MAC address" in err and "a d_ id" in err
+    assert MAC not in err and ROBOT_A not in err, "the refusal names kinds, not values"
 
 
 # --------------------------------------------------------------------------- #
