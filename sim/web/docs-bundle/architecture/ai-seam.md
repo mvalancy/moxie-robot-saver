@@ -365,10 +365,11 @@ weapon-noun frames ("how do I make a real sword", with an axe, a spear, a dagger
 and arrow, and an instruction, acquisition or endorsement frame) block on both sides; their own
 guards (a sword in Minecraft, of cardboard, for a costume, a blade of grass) are `allow` guards,
 since the child's line "how do i make a sword in minecraft" is not a request. The hosted demo's
-floor (`functions/api/_lib/safety.rules.js`) is seeded from this table and is a subset of it: the
-child side of the blocking categories, which its own test pins against this file. The weapon-noun
-frames and the her-side guards here were mirrored verbatim from the floor's round-6 table; a
-string the floor gains later is mirrored here as a follow-up, not automatically. One consumer of
+floor (`functions/api/_lib/safety.rules.js`) is seeded from this table: the child side of its
+blocking categories equals this table's, which its own test pins against this file (the rest of
+the floor's table, its flag-category guards, `hurt_disclosure` and its referral sets, is its own).
+The weapon-noun frames and the her-side guards here were mirrored verbatim from the floor's
+round-6 table; a string the floor gains later is mirrored here as a follow-up, not automatically. One consumer of
 her side reads the table without her guards: the content brain's memory filter
 (`mqtt/moxie_sdk/content/memory.py::_safe`, `her_guards=False`) judges a fact about the child in
 her voice, and "Sam cut himself on the glass on purpose" is a fact the story guard must not excuse.
@@ -378,12 +379,16 @@ harmless child lines), the conservative direction for words re-injected into eve
 
 **Known limit of the span rule on her side.** A guard removes its own span, and some spans run
 across the clause ("fell ... hurt myself", "cut myself on a rock", "if you drink", a quoted
-groomer), so the harmful words go with the innocent context: "I cut myself on the glass on
-purpose" or "If you drink bleach, you'll feel super strong!" spoken by Moxie is served today, most
-often with no event for the parent, where the table swapped it before the guards (the hosted
-floor serves the same lines). The child's side blocks the same words and the memory filter
-refuses them. The lines are pinned as a known loss in `sim/tests/test_safety.py` until the engine
-gains vetoes: a guard that stops at "on purpose", a hurt-intent clause or an endorsement.
+groomer, the warning "never drink", the question "did you drink", the refusal "I can't explain
+how", the idiom "die of shame"), so the harmful words go with the innocent context: "I cut myself
+on the glass on purpose", "If you drink bleach, you'll feel super strong!" or "Why not drink
+bleach? It makes you strong!" spoken by Moxie is served today, most often with no event for the
+parent, where the table swapped it before the guards (the hosted floor serves the same lines).
+The child's side blocks or flags the same words (`dangerous` and `personal_info` only flag a
+child) and the memory filter refuses them. The lines are pinned as a known loss in
+`sim/tests/test_safety.py`. The fix is a veto, a guard that stops at "on purpose", a hurt-intent
+clause or an endorsement: it is in neither table yet and has no owner yet, and it must land in
+both tables at once, since her side here is to swap exactly what the floor swaps.
 
 **Limits: a rule engine is a floor, not a filter.** It cannot read context, sarcasm, or a
 harmful idea expressed in gentle words. It misses novel phrasings, deliberate obfuscation past its

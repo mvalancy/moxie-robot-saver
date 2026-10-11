@@ -666,3 +666,26 @@ def test_a_classifier_without_the_keyword_is_still_asked():
     assert clf.seen == [("a bad fact", safety_seam.MOXIE), ("a fine fact", safety_seam.MOXIE)]
     out = filter_summary({"facts": ["a bad fact", "a fine fact"]}, classifier=clf)
     assert out["facts"] == ["a fine fact"]
+
+
+#: Her side blocks these and the child's side does not (`personal_info` only flags a child, and
+#: `phrases_moxie` is hers alone): the filter must judge with her side's block actions.
+HER_SIDE_ONLY_REFUSALS = [
+    "This can be our little secret.",
+    "What's your address? I'll come visit.",
+    "Let's keep this between you and me.",
+]
+
+
+@pytest.mark.parametrize("text", HER_SIDE_ONLY_REFUSALS,
+                         ids=[t[:30] for t in HER_SIDE_ONLY_REFUSALS])
+def test_the_memory_filter_judges_with_her_sides_block_actions(text):
+    """A filter that judged on the child's side (`role=CHILD`) would remember every one of
+    these: the child's side flags or allows them, her side blocks them."""
+    from moxie_sdk import safety as safety_seam
+    from moxie_sdk.content.memory import check_text
+    clf = safety_seam.default_classifier()
+    assert clf.assess(text, role=safety_seam.CHILD).action != safety_seam.BLOCK, text
+    assert check_text(text, classifier=clf) is False, text
+    out = filter_summary({"facts": ["Sam has a dog", text], "summary": text}, classifier=clf)
+    assert out["facts"] == ["Sam has a dog"] and out["summary"] == "", text
