@@ -11,7 +11,8 @@ real status HTTP. (`test_schedule_planner.py` has the recommender unit tests.)
 
 The binding claim: the ids the robot was served are exactly the ids the parent sees
 explained. Hermetic (loopback broker, tmp store). Bedtime is wall-clock by contract, so
-windows are relative to now and `served` reads the clock ONCE.
+windows are relative to now and `served` reads the clock ONCE, on the house's clock
+(`house_zone`: the zone the robot is told, which the day plan keeps), never this process's.
 """
 import datetime
 import json
@@ -91,12 +92,12 @@ def _request_offset(now, request_in=2 * SLOT_MINUTES) -> int:
         now, request_in + CLOCK_SLACK_MINUTES) else -request_in
 
 
-def _bedtime_body(minutes_ahead=60, request_in=2 * SLOT_MINUTES, module="STORYTELLING",
-                  now=None, request_at=None):
-    """`POST /config?scope=fleet` body relative to `now`: bedtime an hour out, one activity
-    requested a couple of slots away (`_request_offset`); `request_at` overrides. `now` is a
-    parameter so the caller can ask about the same instant twice."""
-    now = now or datetime.datetime.now()
+def _bedtime_body(now, minutes_ahead=60, request_in=2 * SLOT_MINUTES, module="STORYTELLING",
+                  request_at=None):
+    """`POST /config?scope=fleet` body relative to `now` (on the house's clock): bedtime an
+    hour out, one activity requested a couple of slots away (`_request_offset`);
+    `request_at` overrides. `now` is a parameter so the caller can ask about the same instant
+    twice, and reads no clock of its own."""
     start = now + datetime.timedelta(minutes=minutes_ahead)
     end = start + datetime.timedelta(hours=8)
     when = request_at if request_at is not None else now + datetime.timedelta(
@@ -124,8 +125,8 @@ def served(tmp_path):
     rt, vm, dev = _stack(tmp_path)
     base = status_server(rt)
     # ONE clock read, handed back: the posted config and "was it due today?" must be
-    # answered about the same instant.
-    now = datetime.datetime.now()
+    # answered about the same instant, on the house's clock.
+    now = datetime.datetime.now(rt.house_zone(dev).tz)
     applied = http_json(f"{base}/config?scope=fleet", method="POST",
                         body=_bedtime_body(now=now))
     assert applied["ok"] and applied["scope"] == "fleet", applied
@@ -222,7 +223,7 @@ def test_a_request_for_tomorrow_is_not_pinned_into_today(tmp_path):
     explains every entry — constructed, so it runs at any hour."""
     rt, vm, dev = _stack(tmp_path)
     base = status_server(rt)
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(rt.house_zone(dev).tz)
     applied = http_json(f"{base}/config?scope=fleet", method="POST", body=_bedtime_body(
         now=now, request_at=now + datetime.timedelta(days=1)))
     assert applied["ok"], applied
@@ -270,7 +271,8 @@ def test_the_history_the_planner_used_is_shown_to_the_parent(served):
 def test_a_reported_completion_reaches_the_store_and_the_next_plan(tmp_path):
     rt, vm, dev = _stack(tmp_path)
     base = status_server(rt)
-    http_json(f"{base}/config?scope=fleet", method="POST", body=_bedtime_body())
+    http_json(f"{base}/config?scope=fleet", method="POST",
+              body=_bedtime_body(datetime.datetime.now(rt.house_zone(dev).tz)))
     first = [e["module_id"] for e in vm.query("schedule", timeout=5.0)["provided_schedule"]]
     played = next(m for m in first if m not in ("DM", "FREE_CHAT", "STORYTELLING"))
 

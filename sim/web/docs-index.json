@@ -204,7 +204,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config and telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 43771,
+   "bytes": 47065,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -215,6 +215,7 @@
     "The pairing gate — permits, and what a *pending* robot is sent",
     "The child-PII encryption boundary — and the revival shortcut",
     "The child's name: the parent's record, per robot",
+    "The house's clock: `timezone_id`",
     "② `/state` up — `RobotStatus` (the robot's self-report)",
     "CloudStatus.UserState` — the pairing/OTA lifecycle the console shows",
     "③ Telemetry — `Packet` envelope + the privacy gate",
@@ -230,7 +231,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 83158,
+   "bytes": 89699,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -563,7 +564,7 @@
    "path": "architecture/backlog/content-packs.md",
    "title": "Content packs",
    "section": "architecture",
-   "bytes": 19153,
+   "bytes": 19563,
    "mermaid": 0,
    "headings": [
     "0. What the engine loads",
@@ -624,7 +625,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions",
    "section": "architecture",
-   "bytes": 43630,
+   "bytes": 46283,
    "mermaid": 0,
    "headings": [
     "0. The boundary: cloud-side only",
@@ -1144,7 +1145,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 13876,
+   "bytes": 14527,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -1184,7 +1185,7 @@
    "path": "guides/bench-runbook.md",
    "title": "Bench runbook: bring a real Moxie onto your server",
    "section": "guides",
-   "bytes": 12067,
+   "bytes": 12673,
    "mermaid": 0,
    "headings": [
     "Before you start",

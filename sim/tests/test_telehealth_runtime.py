@@ -454,8 +454,9 @@ def test_the_bedtime_warning_is_reported_and_the_line_is_still_sent(rt):
     runtime, device_id = rt
 
     # now±1h always contains now, wrap included. (["00:00", "23:59"] is false for the
-    # minute 23:59 because the helper compares `start <= cur < end`.)
-    now = datetime.datetime.now()
+    # minute 23:59 because the helper compares `start <= cur < end`.) Now on the house's
+    # clock (`house_zone`), the one bedtime is judged on.
+    now = datetime.datetime.now(runtime.house_zone(device_id).tz)
     start = (now - datetime.timedelta(hours=1)).strftime("%H:%M")
     end = (now + datetime.timedelta(hours=1)).strftime("%H:%M")
     runtime.update_config(device_id, weekday_bedtime=[start, end],

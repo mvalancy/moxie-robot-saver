@@ -41,8 +41,9 @@ from .items import (ALWAYS_KNOWN_MODULES, canonical, CONFLICT, DATACLASS,
     unknown_schedule_modules, UPGRADE, validate_item)  # noqa: F401
 from .wire import (dumps_pack, export_pack, pack_summary, parse_pack, sanitize_pack_id,
     scan_outgoing)  # noqa: F401
-from .review import (apply_pack, diff_item, extension_capabilities, extension_warnings,
-    is_local_edited, local_rev, mark_edited, opener_warnings, review_pack)  # noqa: F401
+from .review import (apply_pack, command_verbs, command_warnings, diff_item,
+    extension_capabilities, extension_warnings, is_local_edited, local_rev, mark_edited,
+    opener_warnings, review_pack)  # noqa: F401
 from .authoring import compile_phrases, phrases_of, shadow_check, source_version_of  # noqa: F401
 from .overlay import (build_module, dataclass_fields, inventory, items_from_module,
     merge_items, module_data, shipped_items)  # noqa: F401
