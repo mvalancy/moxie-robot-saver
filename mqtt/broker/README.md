@@ -64,6 +64,12 @@ MOXIE_MQTT_USER=supervisor
 MOXIE_MQTT_PASSWORD_FILE=/abs/path/to/mqtt/broker/keys/supervisor.pass
 ```
 
+**`9001` listens on every interface here.** `mosquitto.conf` keeps the plain `1883` on `127.0.0.1`, but
+whoever reaches the websockets port can read every robot's traffic with no sign-in, your child's name and
+words included ([what it carries](../../docs/architecture/backlog/security-broker-auth.md#25-the-browser-sim-option-a-shipped-option-b-closes-the-residual)).
+To keep it on this machine, as the compose stack does by default, change its line to
+`listener 9001 127.0.0.1`.
+
 **`mosquitto.conf` will not start without `keys/passwd`** — that is mosquitto's behaviour for a missing
 `password_file`, and it is the one manual step this slice adds to the bare-metal path. The compose path
 has none: the `certs` one-shot mints it. Leaving both variables unset makes the supervisor an anonymous

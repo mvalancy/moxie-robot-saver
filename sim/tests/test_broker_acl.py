@@ -174,7 +174,7 @@ def test_the_shipped_robot_acl_is_exactly_the_rendered_floor():
 def test_the_shipped_console_acl_is_the_floor_plus_a_named_observer():
     body = directives(read("acl"))
     assert body[:4] == list(PATTERN_FLOOR)
-    # The browser SIM is a LAN-visible observer, on purpose and only here.
+    # The browser SIM is an anonymous fleet-wide observer, on purpose and only here.
     assert "topic read  /devices/#" in body
     assert "topic write /devices/d_sim/events/#" in body
     assert "user supervisor" in body

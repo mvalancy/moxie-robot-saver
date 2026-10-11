@@ -301,6 +301,7 @@ said and recorded, as a flagged answer is.
 | The console's database | The account's child record (`moxie.db`). Kept on unpair ([robot lifecycle](../features/robot-lifecycle.md#built-here-unpair-and-factory-reset) §2) until the parent deletes the profile. |
 | The supervisor's disk | `robots/<id>/config.json` (the robot's saved settings), and the day plan's stored "why" lines (`robots/<id>/schedule_explain.json`), which are dropped when the name changes or is cleared. |
 | The robot | `child_pii.nickname` (and `birthday` when the record has one) in its `/config`, over your MQTT broker like every other setting. Pushed now if it is connected, else on its next connect. |
+| The MQTT bus | Every `/config` push, and every line Moxie says that names your child (its text, and its audio when this appliance renders the voice), crosses your broker. Any client on the broker's plain port (`1883`) or browser port (`9001`) can read all of it with no sign-in ([broker auth §2.5](backlog/security-broker-auth.md#25-the-browser-sim-option-a-shipped-option-b-closes-the-residual)). Compose publishes both on `127.0.0.1` by default and in `.env.example` (`MOXIE_BIND_HOST_PLAIN`, `MOXIE_BIND_HOST_WS`), and `MOXIE_BIND_HOST=0.0.0.0` widens neither. Another device on your network can read the name there only if the owner sets one of them to `0.0.0.0` (`MOXIE_BIND_HOST_WS=0.0.0.0` links a simulator on another device), or, on Docker Engine before 28.0, from the same network segment ([the guide](../guides/one-command-stack.md#what-is-on-your-network)). A broker run without Docker from `mqtt/broker/mosquitto.conf` keeps `1883` on `127.0.0.1` but listens on `9001` on every interface. |
 | The brain | Every brain prompt for that robot: the `llm` brain's system prompt ("You are talking to …"), the `content` brain's `volley.config.child_pii` (a module's prompt renders `nickname`), the `webhook` brain's request (its `child` object, with `birthday_iso` when the record has a birthday). **These requests go to the endpoint you configured (`MOXIE_LLM_BASE_URL`, `MOXIE_WEBHOOK_ENDPOINT`), which may be a cloud service.** |
 | The voice | Any line Moxie says that contains the name (the hello, the opener, an answer) is sent to the speech endpoint you configured when this appliance synthesizes speech. |
 | The supervisor's `/status` | The robot's `child` field, its config layers and its face cache id (`child_pii.id`, a UUIDv5 of the name and the look, so a list of first names recovers the name from it). The supervisor's own status server asks no one to sign in, so it stays on the appliance: compose publishes it (`MOXIE_PORT_STATUS`, `8931`) on `MOXIE_BIND_HOST_STATUS`, `127.0.0.1` by default and in `.env.example`, and `MOXIE_BIND_HOST=0.0.0.0` does not widen it. Anyone who can run a command on the appliance can read the name there; another device on your network can only if the owner sets `MOXIE_BIND_HOST_STATUS=0.0.0.0`, or, on Docker Engine before 28.0, from the same network segment ([the guide](../guides/one-command-stack.md#what-is-on-your-network)). |
@@ -325,13 +326,12 @@ supervisor's log has already printed that line. The console's brain, Try it and 
 plan cards show the robot's child to anyone who can open the console on your network, as every
 console card shows the child's data today.
 
-**The remaining exposure, plainly.** `.env.example`'s `MOXIE_BIND_HOST=0.0.0.0` puts three ports
-on your network by design: the robot's TLS port (`8883`), the broker's browser port (`9001`) and the
-console (`8080`). The console's sign-in is an email address alone, and `9001` lets any device read
-every robot's MQTT traffic as it passes, a config push with the name included
-([broker auth §2.5](backlog/security-broker-auth.md#25-the-browser-sim-option-a-shipped-option-b-closes-the-residual)).
-So anyone on your network can read the child's name, from the console or from `9001`. Whether the
-console should require a real sign-in is owner question OQ3. The supervisor's status port has no
+**The remaining exposure, plainly.** `.env.example`'s `MOXIE_BIND_HOST=0.0.0.0` puts two ports on
+your network by design: the robot's TLS port (`8883`) and the console (`8080`). The console's sign-in
+is an email address alone, so anyone on your network can read the child's name from the console.
+Whether the console should require a real sign-in is owner question OQ3. The broker's browser port
+(`9001`) would let any device read the name as it goes by (the MQTT bus, above), but compose keeps it
+on this machine unless the owner sets `MOXIE_BIND_HOST_WS=0.0.0.0`. The supervisor's status port has no
 sign-in either, but it is not on your network: compose publishes it on `MOXIE_BIND_HOST_STATUS`
 (`127.0.0.1`; Docker Engine before 28.0 lets a device on the same network segment past that,
 [the guide](../guides/one-command-stack.md#what-is-on-your-network)), and a supervisor run without

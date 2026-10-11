@@ -614,16 +614,15 @@ def test_the_password_is_never_a_compose_literal(raw, images_raw):
 
 def test_the_plain_listener_is_loopback_by_default(compose, images):
     """§2.4. 1883 is the one listener with a fleet-wide identity behind it, so it is not
-    a LAN door unless an owner says so. 8883 (the robot) and 9001 (the browser UI) keep
-    MOXIE_BIND_HOST — a robot and a phone are on the LAN by definition."""
+    a LAN door unless an owner says so. 8883 (the robot) keeps MOXIE_BIND_HOST: a robot is
+    on the LAN by definition. 9001 has its own knob (the browser port's guards below)."""
     for name, doc in _both(compose, images):
         ports = doc["services"]["broker"]["ports"]
         plain = [p for p in ports if p.endswith(":1883")]
         assert plain == ["${MOXIE_BIND_HOST_PLAIN:-127.0.0.1}:${MOXIE_PORT_MQTT:-1883}:1883"], \
             f"{name}: the plain listener is not loopback-bound by default"
-        for suffix in (":8883", ":9001"):
-            assert [p for p in ports if p.endswith(suffix)][0].startswith(
-                "${MOXIE_BIND_HOST:-0.0.0.0}"), f"{name}: {suffix} moved off MOXIE_BIND_HOST"
+        assert [p for p in ports if p.endswith(":8883")][0].startswith(
+            "${MOXIE_BIND_HOST:-0.0.0.0}"), f"{name}: :8883 moved off MOXIE_BIND_HOST"
 
 
 def test_the_certs_one_shot_still_owns_the_shared_volume(compose, images):
@@ -709,12 +708,12 @@ def test_the_status_port_stays_on_this_machine(name, path, setup):
         f"no one to sign in, so it must listen on 127.0.0.1 only (MOXIE_BIND_HOST_STATUS)")
 
 
-#: Where every published port listens with `cp .env.example .env`. The robot's TLS port,
-#: the browser UI's WebSocket and the console are on the LAN by design (the console's
-#: sign-in is an email alone: owner question OQ3); plain MQTT and the status port are not.
+#: Where every published port listens with `cp .env.example .env`. The robot's TLS port
+#: and the console are on the LAN by design (the console's sign-in is an email alone:
+#: owner question OQ3); plain MQTT, the browser UI's WebSocket and the status port are not.
 #: docs/guides/one-command-stack.md says the same in prose: change the two together.
 _DOCUMENTED_SURFACE = {
-    "broker": {"8883": "0.0.0.0", "1883": "127.0.0.1", "9001": "0.0.0.0"},
+    "broker": {"8883": "0.0.0.0", "1883": "127.0.0.1", "9001": "127.0.0.1"},
     "supervisor": {"8931": "127.0.0.1"},
     "console": {"8080": "0.0.0.0"},
 }
@@ -775,3 +774,75 @@ def test_published_binds_refuses_the_long_syntax():
 def test_dotenv_values_reads_a_file_as_compose_does():
     text = "# a comment\n\nA=1\nB=\"two\"\nC='3'\nD=\nE=x=y\n"
     assert dotenv_values(text) == {"A": "1", "B": "two", "C": "3", "D": "", "E": "x=y"}
+
+
+# ====================================================================================
+# THE BROKER'S BROWSER PORT STAYS ON THIS MACHINE. 9001 is an anonymous listener under
+# `acl`, whose observer grant lets any client read `/devices/#`: every robot's settings
+# (the child's name), what the child says (the words, a robot's microphone audio and its
+# transcript), and Moxie's replies and voice (security-broker-auth.md §2.5). Only the
+# browser Sim uses it; the console has no MQTT client. So it listens on 127.0.0.1 unless
+# the owner sets MOXIE_BIND_HOST_WS, and MOXIE_BIND_HOST (the robot's 8883, the console's
+# 8080) cannot carry it onto the LAN.
+# ====================================================================================
+
+def _env_before_the_ws_row():
+    """An `.env` copied before the browser port had its own knob: today's `.env.example`
+    without that row, MOXIE_BIND_HOST=0.0.0.0 set outright (as `_older_env` does)."""
+    env = dotenv_values(_read(ENV_EXAMPLE))
+    env.pop("MOXIE_BIND_HOST_WS", None)
+    env["MOXIE_BIND_HOST"] = "0.0.0.0"
+    return env
+
+
+def _every_bind_but_the_browser_port_widened():
+    """That `.env` with every other bind opened to the network: plain MQTT and the status
+    port set outright, and any bind row `.env.example` adds later. The browser port must
+    follow none of them: its line reads its own knob."""
+    env = _env_before_the_ws_row()
+    env.update({key: "0.0.0.0" for key in env if key.startswith("MOXIE_BIND_HOST")})
+    env.update(MOXIE_BIND_HOST_PLAIN="0.0.0.0", MOXIE_BIND_HOST_STATUS="0.0.0.0")
+    return env
+
+
+#: The two setups the guide documents, the `.env` an owner who upgrades still has, that
+#: `.env` with every other bind widened, and MOXIE_BIND_HOST naming one interface (a
+#: documentation address, RFC 5737), which tells "follows MOXIE_BIND_HOST" apart from
+#: "happens to be 0.0.0.0".
+_WS_SETUPS = {
+    "cp .env.example .env": lambda: dotenv_values(_read(ENV_EXAMPLE)),
+    "no .env": dict,
+    "an older .env": _env_before_the_ws_row,
+    "every other bind widened": _every_bind_but_the_browser_port_widened,
+    "MOXIE_BIND_HOST on one interface": lambda: {"MOXIE_BIND_HOST": "203.0.113.9"},
+}
+
+
+@pytest.mark.parametrize("setup", list(_WS_SETUPS))
+@pytest.mark.parametrize("name,path", _FILES)
+def test_the_browser_port_stays_on_this_machine(name, path, setup):
+    """9001 listens on 127.0.0.1 whatever the `.env` says about the other ports, while the
+    robot's 8883 and the console's 8080 stay on MOXIE_BIND_HOST, where a robot and a
+    parent's phone reach them."""
+    doc, env = yaml.safe_load(_read(path)), _WS_SETUPS[setup]()
+    broker = published_binds(doc, "broker", env)
+    console = published_binds(doc, "console", env)
+    assert broker["9001"] == "127.0.0.1", (
+        f"{name} with `{setup}` publishes the broker's browser port on {broker['9001']}: "
+        f"any client on it reads every robot's traffic (the child's name, words and "
+        f"microphone audio), so it must listen on 127.0.0.1 only (MOXIE_BIND_HOST_WS)")
+    lan = env.get("MOXIE_BIND_HOST") or "0.0.0.0"
+    assert (broker["8883"], console["8080"]) == (lan, lan), (
+        f"{name} with `{setup}`: the robot's port and the console listen on "
+        f"{broker['8883']} and {console['8080']}, not on MOXIE_BIND_HOST ({lan})")
+
+
+@pytest.mark.parametrize("name,path", _FILES)
+def test_one_setting_opens_the_browser_port_for_a_sim_on_another_device(name, path):
+    """MOXIE_BIND_HOST_WS=0.0.0.0 is the documented way to link the Sim from a phone or a
+    tablet. It opens 9001 and nothing else: the broker then publishes what it did before
+    the port had its own knob."""
+    env = dict(dotenv_values(_read(ENV_EXAMPLE)), MOXIE_BIND_HOST_WS="0.0.0.0")
+    binds = published_binds(yaml.safe_load(_read(path)), "broker", env)
+    assert binds == {"8883": "0.0.0.0", "1883": "127.0.0.1", "9001": "0.0.0.0"}, (
+        f"{name}: with MOXIE_BIND_HOST_WS=0.0.0.0 the broker publishes {binds}")
