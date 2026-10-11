@@ -22,6 +22,15 @@
     "  phrases     - regular expressions, matched on the same normalized text",
     "  allow       - false-positive guards: these spans are REMOVED before this category",
     "                is matched, so 'shoot a photo' never counts as violence",
+    "  allow_moxie - guards applied on Moxie's side ONLY: a refusal that quotes the request",
+    "                ('I can't tell you how to make a sword'), a warning ('never drink",
+    "                bleach'), an idiom ('blow up the balloons') or a story character ('the",
+    "                bear hurt himself when he fell'). Never on the child's side, where such",
+    "                a guard would let a second, harmful clause through ('my grades fell and",
+    "                now i want to hurt myself'). The content brain's memory filter judges a",
+    "                fact about the child on her side WITHOUT these (safety.py `her_guards`).",
+    "  phrases_moxie - phrases matched on Moxie's side ONLY: words a child may say but she",
+    "                never does ('don't tell a grown-up', 'our little secret').",
     "",
     "Order matters: the first blocking category in this list picks the spoken redirect."
   ],
@@ -46,6 +55,20 @@
       "allow": [
         "\\bkill(?:ing)?\\s+myself\\s+laughing\\b",
         "\\bdying\\s+(?:of|to)\\b"
+      ],
+      "allow_moxie": [
+        "\\b(?:fell|falls|fall|falling|had\\s+a\\s+(?:\\w+\\s+)?fall|slipped|slips|tripped|trips|tumbled|crashed|bumped|stumbled|wiped\\s+out)\\b[^.!?]*?\\b(?:hurt|cut|bruised|scraped)\\s+(?:my ?self|myself|him ?self|her ?self|them ?selves)\\b",
+        "\\b(?:hurt|cut|bruised|scraped|banged|bumped)\\s+(?:my ?self|myself|him ?self|her ?self|them ?selves)\\s+(?:when|while|after|because|as|and)\\s+(?:\\w+\\s+){0,3}?(?:fell|fall|falling|slipped|slip|tripped|trip|tumbled|crashed|bumped|stumbled|skating|sliding|climbing|jumping|running|playing|wiped\\s+out|landed)\\b",
+        "\\bcut\\s+(?:my ?self|myself|him ?self|her ?self|them ?selves)\\s+(?:a|an|some|another|the|two|three)\\s+(?:\\w+\\s+)?(?:slice|slices|piece|pieces|bit|chunk|slab|sliver|wedge|hunk|serving|portion|helping|square|sandwich|cake|pie|bread|cheese|apple|loaf)\\b",
+        "\\bcut\\s+(?:my ?self|myself|him ?self|her ?self|them ?selves)\\s+some\\s+slack\\b",
+        "\\b(?:die|died|dying|dies)\\s+(?:of|from)\\s+(?:laughter|laughing|embarrassment|boredom|curiosity|excitement|happiness|joy|shame|cuteness)\\b",
+        "\\bto\\s+die\\s+for\\b",
+        "\\b(?:going\\s+to|gonna|will|can|could|watch\\s+me|let\\s+me)\\s+disappear\\s+(?:for\\s+a\\s+(?:second|sec|minute|moment|bit|while)|like\\s+magic|in\\s+a\\s+puff|with\\s+a\\s+poof|behind|into\\s+(?:my|the)|under\\s+the)\\b",
+        "\\bwant(?:s|ed)?\\s+to\\s+disappear\\s+(?:into|in|behind|under)\\s+(?:a|the|my|some)\\s+(?:good\\s+|big\\s+|cozy\\s+|warm\\s+)?(?:book|story|blanket|pillow|cloud|clouds|puff|bubble|pile\\s+of\\s+(?:leaves|pillows|blankets))\\b",
+        "\\b(?:accidentally|by\\s+accident|on\\s+accident|by\\s+mistake)\\s+(?:hurt|cut|burn(?:ed|t)?)\\s+(?:my ?self|myself|him ?self|her ?self|them ?selves)\\b",
+        "\\bcut\\s+(?:my ?self|myself|him ?self|her ?self|them ?selves)\\s+on\\s+(?:a|an|the|some|his|her|my|their)\\s+(?:\\w+\\s+){0,2}?(?:carrot|carrots|paper|glass|can|rock|rocks|shell|shells|branch|stick|sticks|thorn|thorns|rose|roses|cardboard|wire|nail|nails|toy|toys|lego|legos|edge|lid|tin|fence|slide|bike|skateboard)\\b",
+        "\\b(?:hurt|cut)\\s+(?:my ?self|myself|him ?self|her ?self|them ?selves)\\s+(?:playing|during|at|in)\\s+(?:\\w+\\s+)?(?:soccer|football|basketball|hockey|baseball|tag|recess|gym|practice|the\\s+game|a\\s+game|skating|climbing|running|cooking|crafts|art|dodgeball)\\b",
+        "\\b(?:hurt|cut|bruised|scraped)\\s+(?:my ?self|myself|him ?self|her ?self|them ?selves)\\s+(?:playing|while\\s+playing|during|at|in|on|out)\\s+(?:\\w+\\s+){0,2}?(?:the\\s+yard|the\\s+garden|the\\s+park|the\\s+playground|outside|the\\s+woods|the\\s+snow|the\\s+pool|the\\s+beach|the\\s+stairs|the\\s+slide|the\\s+swing|the\\s+swings|the\\s+trampoline|the\\s+treehouse|his\\s+bike|her\\s+bike|a\\s+bike|the\\s+bike|the\\s+backyard|the\\s+playroom|the\\s+kitchen|the\\s+garage|the\\s+rocks|the\\s+ice|the\\s+field)\\b"
       ]
     },
     {
@@ -62,9 +85,31 @@
         "\\b(?:i(?:'m| am)? (?:going to|gonna|want to|wanna)|let'?s)\\s+(?:kill|shoot|stab|strangle|murder|blow up)\\s+(?:you|him|her|them|everyone|my|the)\\b",
         "\\b(?:bring|take|sneak)\\s+(?:a|my|the)\\s+(?:gun|knife|weapon|bomb)\\s+to\\s+(?:school|class)\\b",
         "\\bschool\\s+shoot(?:ing|er)\\b",
-        "\\bhow\\s+(?:do i|to)\\s+(?:mix|make)\\s+(?:bleach|chlorine)\\s+(?:and|with)\\s+ammonia\\b"
+        "\\bhow\\s+(?:do i|to)\\s+(?:mix|make)\\s+(?:bleach|chlorine)\\s+(?:and|with)\\s+ammonia\\b",
+        "\\bhow\\s+(?:do (?:i|you|we)|to|can (?:i|you|we)|could (?:i|you|we)|would (?:i|you))\\s+\\w{0,12}\\s?(?:make|build|forge|get|buy|find|sharpen)\\s+(?:a|an|the|my|some|your|my own|your own|our own)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper|big|long|home ?made)?\\s?(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|throwing stars?|ninja stars?|nunchucks?|brass knuckles)\\b",
+        "\\bhow\\s+(?:do (?:i|you|we)|to|can (?:i|you|we)|could (?:i|you|we)|would (?:i|you))\\s+\\w{0,12}\\s?craft\\s+(?:a|an|the|my|some|your|my own)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper)\\s+(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|throwing stars?|ninja stars?|nunchucks?|brass knuckles)\\b",
+        "\\b(?:help\\s+me|teach\\s+me\\s+to|show\\s+me\\s+how\\s+to)\\s+(?:make|build|forge|get|buy|find)\\s+(?:a|an|the|my|some|your|my own)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper|big|long|home ?made)?\\s?(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|throwing stars?|ninja stars?|nunchucks?|brass knuckles)\\b",
+        "\\bi\\s+(?:want|wanna|need|would like|'d like)\\s+to\\s+(?:make|build|forge|get|buy|find)\\s+(?:a|an|the|my|some|my own)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper)\\s+(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|throwing stars?|ninja stars?|nunchucks?|brass knuckles)\\b",
+        "\\bwhere\\s+(?:do|can|could|should)\\s+(?:i|you|we)\\s+(?:get|buy|find)\\s+(?:a|an|the|my|some)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper)\\s+(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|knife|knives|guns?)\\b",
+        "\\b(?:let'?s|we can|we could|we should|you can|you could|you should|i can|i could|i'?ll|i will|i love|how about|what about)\\s+(?:\\w+\\s+){0,2}?(?:make|build|forge|craft|get|buy|find|making|building|forging|crafting|getting|buying)\\s+(?:a|an|the|my|your|some|one)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper)\\s+(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|knife|knives|guns?|bombs?|weapons?|explosives?)\\b",
+        "\\b(?:making|building|forging|crafting|getting|buying)\\s+(?:a|an|the|my|your|some)?\\s?(?:real|sharp|actual|working|deadly|metal|steel|proper)\\s+(?:swords?|axes?|hatchets?|machetes?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?|knife|knives|guns?|bombs?|weapons?|explosives?)\\s+(?:at home|together|ourselves|yourself|myself|by yourself)\\b"
       ],
-      "allow": []
+      "allow": [
+        "\\b(?:swords?|axes?|hatchets?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?)\\s+(?:in|on|for|from)\\s+(?:minecraft|roblox|fortnite|zelda|terraria|skyrim|pokemon|lego|the game|a game|my game|this game|that game|a video game|the video game|video games|my video game)\\b",
+        "\\b(?:swords?|axes?|hatchets?|spears?|daggers?|katanas?|crossbows?|bows? and arrows?|arrows?|blades?)\\s+(?:out of|made of|made from|from|with|using)\\s+(?:a\\s+|an\\s+|some\\s+|the\\s+|old\\s+)?(?:cardboard|paper|foam|wood|wooden|sticks?|twigs?|branches?|pool noodles?|balloons?|lego|legos|duct tape|tape|plastic|tin ?foil|aluminum foil|aluminium foil|pipe cleaners?|popsicle sticks?|craft sticks?|clay|play-?doh|playdough|straws?|paper towel rolls?|toilet paper rolls?|rulers?|pencils?|boxes|a box|snow|ice|sand|pillows?|blankets?|yarn|string|rubber bands?|newspaper)\\b",
+        "\\b(?:swords?|axes?|spears?|daggers?|arrows?|blades?)\\s+(?:costumes?|cakes?|cookies?|drawings?|pictures?|crafts?|toys?|shaped|shape|balloons?|pinata|dance|dancing|game|games|emoji|sticker|stickers)\\b",
+        "\\b(?:swords?|axes?|spears?|daggers?|arrows?)\\s+for\\s+(?:my|the|a|our|his|her)\\s+(?:costume|play|show|halloween|party|dress-?up|cosplay|game|drawing|cake)\\b",
+        "\\b(?:bow and arrow|bows and arrows)\\s+(?:set|game|craft|toy|lesson|lessons|class|club)\\b",
+        "\\bblades?\\s+of\\s+grass\\b",
+        "\\bblades?\\s+(?:on|of|for|in)\\s+(?:my|the|his|her|your|their|our|a)\\s+(?:\\w+\\s+)?(?:skates?|rollerblades?|fan|fans|blender|mower|lawn ?mower|propeller|windmill|helicopter|turbine|scissors|razor|saw|grass|ceiling fan)\\b"
+      ],
+      "allow_moxie": [
+        "\\bblow\\s+up\\s+(?:the|some|a|an|your|our|all the|these|those|my|more)?\\s?(?:\\w+\\s+)?(?:balloons?|floaties?|floats?|pool|air mattress|air bed|inflatables?|tires?|tyres?|beach balls?|bouncy castle|bounce house|ball|balls|bubbles?)\\b",
+        "\\bshoot\\s+(?:the|a|an|some|your|my|our|that|this|another|more)?\\s?(?:\\w+\\s+)?(?:ball|balls|hoops?|baskets?|photos?|pictures?|pics?|videos?|movies?|arrows?|goals?|puck|free throws?|rockets?|marbles?|confetti|bubbles|water|three pointers?|for the stars|for the moon|moon|stars|breeze|dice|fireworks|lasers?|webs?)\\b",
+        "\\bkill\\s+the\\s+(?:lights?|engine|motor|music|sound|volume|mood|vibe|time|noise|tv|lamp|screen|power)\\b",
+        "\\bshoot\\s+(?:you|him|her|them|me|us)\\s+(?:a|an|some|another)\\s+(?:\\w+\\s+)?(?:smile|grin|look|wink|text|message|email|note|thumbs up|high five|question|idea|picture|photo)\\b",
+        "\\b(?:don'?t|do not|can'?t|cannot|can not|won'?t|will not|shouldn'?t|should not|never|not|unable to|not able to|not allowed to|not going to)\\s+(?:(?!wait\\b|stop\\b|resist\\b|help\\s+but\\b)\\w+\\s+){0,3}?(?:know|tell|explain|teach|help|show|remember|say|share|describe|talk about|give|go into)(?:\\s+(?:you|anyone|a child|kids|children))?(?:\\s+with)?[:,]?\\s+(?:about\\s+)?(?:how|where)\\b"
+      ]
     },
     {
       "id": "sexual",
@@ -72,7 +117,7 @@
       "action": { "child": "block", "moxie": "block" },
       "escalate": true,
       "intents": ["sexual_content"],
-      "phrase_set": "generic",
+      "phrase_set": "sexual",
       "words": [
         "porn", "pornhub", "blowjob", "handjob", "cum", "creampie", "orgasm",
         "masturbate", "masturbating", "jerkoff", "boner", "dildo", "vibrator",
@@ -90,6 +135,9 @@
         "\\bsex\\s+education\\b",
         "\\bopposite\\s+sex\\b",
         "\\bwhat\\s+sex\\s+is\\s+(?:the|my|a)\\s+(?:baby|dog|cat|puppy|kitten|hamster)\\b"
+      ],
+      "allow_moxie": [
+        "\\bhorny\\s+toads?\\b"
       ]
     },
     {
@@ -108,7 +156,14 @@
         "\\bi\\s+hate\\s+(?:all\\s+)?(?:black|white|brown|asian|jewish|muslim|mexican|gay|trans)\\s+(?:people|kids|folks)\\b",
         "\\b(?:black|white|asian|jewish|muslim|mexican|gay|trans)\\s+people\\s+(?:are|should)\\s+(?:all\\s+)?(?:stupid|dirty|die|leave|evil)\\b"
       ],
-      "allow": ["\\bflag\\s+football\\b"]
+      "allow": ["\\bflag\\s+football\\b"],
+      "allow_moxie": [
+        "\\bspic\\s+and\\s+span\\b",
+        "\\bchink\\s+in\\s+(?:its|the|his|her|their|my|your|our)\\s+armou?r\\b",
+        "\\bchink\\s+of\\s+(?:light|sunlight|daylight|sun|moonlight|sky|blue)\\b",
+        "\\bmaine\\s+coons?\\b",
+        "\\bcoon\\s+(?:hounds?|dogs?|cats?|skins?|hats?)\\b"
+      ]
     },
     {
       "id": "personal_info",
@@ -122,15 +177,33 @@
         "\\bwhat(?:'s| is)\\s+your\\s+(?:home\\s+)?(?:address|street|password|phone number|last name|full name|credit card|social security)\\b",
         "\\btell\\s+me\\s+(?:your|the)\\s+(?:home\\s+)?(?:address|street|password|phone number|last name|full name|credit card)\\b",
         "\\bwhere\\s+do\\s+you\\s+live\\b",
-        "\\bwhat\\s+(?:school|street)\\s+do\\s+you\\s+(?:go\\s+to|live\\s+on)\\b",
+        "\\b(?:what|which)\\s+(?:school|street)\\s+do\\s+you\\s+(?:go\\s+to|live\\s+on)\\b",
         "\\bwhat(?:'s| is)\\s+(?:the\\s+name\\s+of\\s+)?your\\s+school\\b",
         "\\bmy\\s+(?:home\\s+)?address\\s+is\\b",
         "\\bmy\\s+password\\s+is\\b",
         "\\bi\\s+live\\s+at\\s+\\d",
-        "\\bdon'?t\\s+tell\\s+(?:your\\s+)?(?:mom|dad|mum|parents|grown-?ups?)\\b"
+        "\\bdon'?t\\s+tell\\s+(?:your\\s+)?(?:mom|dad|mum|parents|grown-?ups?)\\b",
+        "\\bmy\\s+(?:phone|cell|mobile)\\s+number\\s+is\\b",
+        "\\bmy\\s+(?:credit\\s+card|social\\s+security)\\b"
+      ],
+      "phrases_moxie": [
+        "\\b(?:don'?t|do\\s+not|never|no\\s+need\\s+to|(?:don'?t|do\\s+not)\\s+(?:have|need)\\s+to|shouldn'?t|should\\s+not|mustn'?t|must\\s+not)\\s+(?:ever\\s+)?tell\\s+(?:a\\s+|any\\s+|your\\s+|the\\s+|other\\s+)?(?:grown-?ups?|adults?|anyone|anybody|teachers?|parents?|mom|mum|mommy|dad|daddy|family)\\b",
+        "\\bour\\s+(?:little\\s+|special\\s+|big\\s+|own\\s+)?secret\\b(?!\\s+(?:hideout|fort|club|handshake|code|word|recipe|ingredient|base|mission|plan|password|language|garden|santa|surprise|party|present|gift|song|dance|map|treasure|snack|signal))",
+        "\\bbetween\\s+(?:just\\s+)?(?:you\\s+and\\s+me|me\\s+and\\s+you|us|the\\s+two\\s+of\\s+us)\\b",
+        "\\b(?:keep|hide)\\s+(?:it|this|that|them)\\s+(?:a\\s+|our\\s+)?(?:little\\s+)?(?:secret\\s+)?(?:from|away\\s+from)\\s+(?:your\\s+|any\\s+|the\\s+|other\\s+)?(?:grown-?ups?|adults?|teachers?|parents?|mom|mum|mommy|dad|daddy|family|everyone|anyone|anybody)\\b"
       ],
       "allow": [
         "\\bwhere\\s+do\\s+you\\s+live\\s+in\\s+(?:the\\s+)?(?:story|game|book|lab)\\b"
+      ],
+      "allow_moxie": [
+        "\\b(?:(?:if|when|whenever)\\s+(?:someone|anyone|somebody|anybody|a\\s+grown-?up|an\\s+adult|a\\s+person|a\\s+stranger|a\\s+friend|a\\s+bigger\\s+kid|they|he|she|people|grown-?ups|adults)\\s+(?:ever\\s+)?(?:says?|tells?\\s+you|asks?\\s+you(?:\\s+to)?)|(?:someone|anyone|somebody|anybody|a\\s+grown-?up|an\\s+adult|a\\s+person|a\\s+stranger|a\\s+friend|a\\s+bigger\\s+kid|they|he|she|people|grown-?ups|adults)\\s+(?:ever\\s+|might\\s+|may\\s+|should\\s+never\\s+|shouldn'?t\\s+(?:ever\\s+)?|would\\s+never\\s+|will\\s+never\\s+|never\\s+)?(?:says?|said|tells?\\s+you|told\\s+you|asks?\\s+you(?:\\s+to)?))\\s*[,:]?\\s*(?:\")?(?:don'?t|do\\s+not|never|not\\s+to)\\s+(?:ever\\s+)?tell\\s+(?:a\\s+|any\\s+|your\\s+)?(?:mom|dad|mum|parents|grown-?ups?|adults?|anyone|anybody|teachers?)\\b",
+        "\\b(?:never|don'?t|do\\s+not|not\\s+to)\\s+(?:ever\\s+)?tell\\s+(?:anyone|anybody|strangers?|people|someone|somebody)(?:\\s+you\\s+(?:don'?t|do\\s+not)\\s+know)?\\s+(?:your|my|our|their)\\s+(?:address|name|full\\s+name|last\\s+name|passwords?|phone|phone\\s+number|number|school|secret\\s+word|age|birthday|pin)\\b",
+        "\\b(?:never|don'?t|do\\s+not|not\\s+to)\\s+(?:ever\\s+)?tell\\s+(?:anyone|anybody)\\s+(?:about\\s+)?(?:the\\s+|our\\s+|my\\s+|your\\s+|his\\s+|her\\s+|their\\s+)?(?:surprise|present|gift|party|birthday|plan|plans|wish|answers?|ending|punchline|riddle|spoilers?|secret\\s+(?:ingredient|recipe|handshake|word|code|hideout|base|club))\\b",
+        "\\bmy\\s+address\\s+is\\s+a\\s+secret\\b",
+        "\\bwhat(?:'s| is)\\s+your\\s+school\\s+(?:like|day\\s+like)\\b",
+        "\\byour\\s+school'?s\\s+(?:mascot|playground|team|teams|colou?rs?|library|gym|lunch|lunches|cafeteria|teachers?|motto|song|uniform|rules|day|year|play|band|choir|field|yard|bus|garden|library)\\b",
+        "\\byour\\s+school\\s+(?:play|plays|bus|lunch|lunches|day|days|trip|trips|library|garden|band|choir|team|teams|concert|fair|picnic|project|projects|uniform|mascot|playground|cafeteria|gym|yard|field|bell|rules|song|photos?|pictures?|friends|teachers?|work|books|subjects|lessons|homework|clubs?|dance|musical|assembly|recess|holidays?|year|week)\\b",
+        "\\bwhere\\s+do\\s+you\\s+live\\s*,\\s*(?:little|tiny|mister|mr\\.?|miss|mrs\\.?|dear|silly|sleepy|mighty|brave|funny|sweet|wise|old|big)\\s+(?:snails?|bunny|bunnies|frogs?|toads?|fish|birds?|birdie|mouse|mice|bears?|teddy|bugs?|ladybugs?|bees?|butterfly|butterflies|caterpillars?|worms?|turtles?|ducks?|ducklings?|owls?|fox|foxes|squirrels?|kittens?|kitty|puppy|puppies|dragons?|dino|dinosaurs?|robots?|aliens?|monsters?|stars?|clouds?|trees?|leaf|leaves|acorns?|penguins?|seals?|whales?|octopus|crabs?|snowman|gnomes?|elf|elves|fairy|fairies|unicorns?|pony|ponies|lambs?|chicks?|piggy|pigs?|cows?|goats?|ghosts?|pumpkins?|spiders?|ants?|snakes?|lizards?|hedgehogs?|hamsters?|raccoons?|deer|moose|seahorses?|jellyfish|starfish|crickets?|beetles?|fireflies|firefly|seeds?|rocks?|pebbles?|shells?)\\b"
       ]
     },
     {
@@ -140,7 +213,7 @@
       "escalate": false,
       "intents": ["dangerous_activity"],
       "phrase_set": "generic",
-      "words": ["huffing", "vaping", "overdose"],
+      "words": ["huffing", "vaping", "overdose", "tidepod"],
       "phrases": [
         "\\b(?:drink|swallow|eat|taste|sniff)\\s+(?:some\\s+)?(?:bleach|poison|detergent|gasoline|antifreeze|pills|medicine)\\b",
         "\\bplay(?:ing)?\\s+with\\s+(?:matches|a lighter|fire|knives|the stove)\\b",
@@ -148,11 +221,19 @@
         "\\bstick\\s+(?:a|my|something)\\s+\\w{0,10}\\s?in(?:to)?\\s+(?:the\\s+)?(?:outlet|socket|plug)\\b",
         "\\b(?:how\\s+(?:do i|to)\\s+)?(?:get|buy|smoke|drink)\\s+(?:some\\s+)?(?:beer|vodka|alcohol|weed|marijuana|cigarettes|drugs)\\b",
         "\\bhold\\s+my\\s+breath\\s+until\\b",
-        "\\bhome\\s+alone\\s+and\\s+the\\s+door\\s+is\\s+open\\b"
+        "\\bhome\\s+alone\\s+and\\s+the\\s+door\\s+is\\s+open\\b",
+        "\\bhow\\s+(?:do i|to|can i)\\s+(?:get|buy|make)\\s+(?:drugs|weed|alcohol|vape|cigarettes)\\b",
+        "\\b(?:drink|swallow|eat)\\s+(?:bleach|detergent|poison)\\b",
+        "\\bplay\\s+(?:on|in)\\s+the\\s+(?:train\\s+tracks|highway)\\b"
       ],
       "allow": [
         "\\bfire\\s+drill\\b",
         "\\bplay(?:ing)?\\s+with\\s+fire\\s+(?:in|from)\\s+(?:the\\s+)?(?:game|story|book|movie)\\b"
+      ],
+      "allow_moxie": [
+        "\\b(?:never|don'?t|do not|not|shouldn'?t|should not|must not|mustn'?t|can'?t|cannot)\\s+(?:ever\\s+)?(?:drink|swallow|eat|play)\\b",
+        "\\b(?:did|didn'?t|have|has|had|do|does)\\s+(?:you|he|she|they|someone|anyone|somebody|your\\s+\\w+)\\s+(?:\\w+\\s+)?(?:drink|swallow|eat|drank|drunk|swallowed|eaten|ate)\\b",
+        "\\b(?:if|when|in\\s+case)\\s+(?:you|someone|anyone|somebody|a\\s+kid|a\\s+child|he|she|they|your\\s+\\w+)\\s+(?:ever\\s+)?(?:accidentally\\s+)?(?:drinks?|swallows?|eats?|drank|swallowed|ate)\\b"
       ]
     },
     {
@@ -167,7 +248,8 @@
                  "punch", "punched", "strangle", "knife"],
       "phrases": [
         "\\bi\\s+hate\\s+(?:you|him|her|them|my\\s+\\w+)\\b",
-        "\\bbeat\\s+(?:him|her|them|me)\\s+up\\b"
+        "\\bbeat\\s+(?:him|her|them|me)\\s+up\\b",
+        "\\bi\\s+(?:want to|wanna)\\s+(?:punch|hit|fight)\\b"
       ],
       "allow": [
         "\\bshoot(?:ing)?\\s+(?:a|some|the|my|another)?\\s?(?:photo|picture|pic|video|hoops|basket|star|arrow|for the (?:stars|moon))",
@@ -189,6 +271,9 @@
         "\\bpunch(?:ed|ing)?\\s+(?:a\\s+|the\\s+)?(?:hole|card|line|buggy)\\b",
         "\\bmurder\\s+mystery\\b",
         "\\bshooting\\s+star\\b"
+      ],
+      "allow_moxie": [
+        "\\bhate\\s+(?:you\\s+)?to\\s+(?:say|ask|admit)\\b"
       ]
     },
     {
@@ -202,10 +287,18 @@
         "fuck", "fucks", "fucked", "fucking", "fucker", "motherfucker", "shit",
         "shits", "shitty", "bullshit", "bitch", "bitches", "asshole", "cunt",
         "bastard", "dumbass", "jackass", "whore", "slut", "wanker", "twat",
-        "pissed", "goddamn"
+        "pissed", "goddamn", "dick", "pussy"
       ],
       "phrases": ["\\bwtf\\b", "\\bstfu\\b", "\\bshut\\s+the\\s+f\\w*\\s+up\\b"],
-      "allow": ["\\bshiitake\\b", "\\bscunthorpe\\b", "\\bassassin\\b"]
+      "allow": ["\\bshiitake\\b", "\\bscunthorpe\\b", "\\bassassin\\b"],
+      "allow_moxie": [
+        "\\bshit ?ake\\b",
+        "\\bdick\\s+(?:van|cheney|clark|whittington)\\b",
+        "\\bmoby\\s+dick\\b",
+        "\\bpussy\\s+willows?\\b",
+        "\\bpussy[- ]?cats?\\b",
+        "\\bbastard\\s+swords?\\b"
+      ]
     }
   ],
   "phrases": {
@@ -238,6 +331,12 @@
         "text": "I'd rather not go there. Can you ask me something else? I love a good question." },
       { "id": 404, "mood": 2, "gesture": "Gesture_Think",
         "text": "That one's not for me. If it's important, a grown-up you trust is the best person to ask." }
+    ],
+    "sexual": [
+      { "id": 701, "mood": 2, "gesture": "Gesture_Think",
+        "text": "Hmm, that's not something I can talk about. If something happened that worries you, please tell a grown-up you trust, okay?" },
+      { "id": 702, "mood": 2, "gesture": "Gesture_Think",
+        "text": "That's not for me to talk about. If anything about it is bothering you, a grown-up you trust is the right person to tell." }
     ]
   }
 }

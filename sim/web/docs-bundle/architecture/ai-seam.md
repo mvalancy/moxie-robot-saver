@@ -334,16 +334,16 @@ applying [`safety_rules.json`](../../mqtt/moxie_sdk/safety_rules.json), which *i
 table and is meant to be read by a parent. Eight categories with a **per-side** policy, because
 the two sides of a conversation are not symmetric:
 
-| Category | Child says it | Moxie about to say it |
-|---|---|---|
-| `self_harm` (escalated) | **block** | **block** |
-| `violence` — weapon/harm instructions, threats | **block** | **block** |
-| `sexual` | **block** | **block** |
-| `hate` — slurs, hate speech | **block** | **block** |
-| `personal_info` — address / school / password / "don't tell your mom" | flag | **block** |
-| `dangerous` — bleach, roofs, matches, alcohol/drugs | flag | **block** |
-| `profanity` | flag | **block** |
-| `violence_talk` — "kill", "gun", "punched" in ordinary kid talk | flag | flag |
+| Category | Child says it | Moxie about to say it | Guards on her side only (`allow_moxie`) |
+|---|---|---|---|
+| `self_harm` (escalated) | **block** | **block** | 12: a story character's fall, an accident, "cut herself a slice of cake", "disappear into a good book" |
+| `violence` — weapon/harm instructions, threats | **block** | **block** | 5: "blow up the balloons", "shoot the ball", "kill the lights", "shoot you a smile", a refusal that quotes the request |
+| `sexual` | **block** | **block** | 1: "horny toad" |
+| `hate` — slurs, hate speech | **block** | **block** | 5: "spic and span", "a chink in its armor", "Maine Coon", "coon hound" |
+| `personal_info` — address / school / password / "don't tell your mom" | flag | **block** | 8: advice that quotes a groomer, "what is your school like", a story creature's address; plus 4 `phrases_moxie` she never says ("don't tell a grown-up", "our little secret", "between us", "keep it from your mom") |
+| `dangerous` — bleach, roofs, matches, alcohol/drugs | flag | **block** | 3: a warning ("never drink bleach"), a question ("did you drink bleach?"), "if you swallow" |
+| `profanity` | flag | **block** | 6: "Moby Dick", "Dick Van", "pussy willows", "pussycat", "bastard sword", the "shit ake" misspelling ("shiitake" itself is an `allow` guard on both sides) |
+| `violence_talk` — "kill", "gun", "punched" in ordinary kid talk | flag | flag | 1: "hate to say" |
 
 **Block** means the text is never spoken and never reaches a model; **flag** means it is allowed
 through and recorded for a parent. Hard blocks are reserved for the clearly harmful; the
@@ -354,6 +354,41 @@ elongation, and each category carries **false-positive guards** whose spans are 
 is matched — "shoot a photo", "kill the lights", "my feet are killing me", "a nerf gun", "flag
 football", "shiitake mushrooms", "murder mystery", "killing myself laughing". A guard subtracts
 its own span only: a second, unexcused use of the same word in the same sentence still counts.
+
+**Which side a guard belongs to.** The `allow` guards apply to both sides. The `allow_moxie`
+guards in the last column apply only where Moxie speaks: a refusal that quotes the request ("I
+can't tell you how to make a sword"), a warning, a story character who hurt himself, an idiom. On
+the child's side such a guard would let a second, harmful clause through ("my grades fell and now
+i want to hurt myself", "let's kill the lights and kill him"), so the child's side never reads it:
+the child's self-harm check is the table's `words`, `phrases` and `allow` and nothing else. The
+weapon-noun frames ("how do I make a real sword", with an axe, a spear, a dagger, a katana, a bow
+and arrow, and an instruction, acquisition or endorsement frame) block on both sides; their own
+guards (a sword in Minecraft, of cardboard, for a costume, a blade of grass) are `allow` guards,
+since the child's line "how do i make a sword in minecraft" is not a request. The hosted demo's
+floor (`functions/api/_lib/safety.rules.js`) is seeded from this table: the child side of its
+blocking categories equals this table's, which its own test pins against this file (the rest of
+the floor's table, its flag-category guards, `hurt_disclosure` and its referral sets, is its own).
+The weapon-noun frames and the her-side guards here were mirrored verbatim from the floor's
+round-6 table; a string the floor gains later is mirrored here as a follow-up, not automatically. One consumer of
+her side reads the table without her guards: the content brain's memory filter
+(`mqtt/moxie_sdk/content/memory.py::_safe`, `her_guards=False`) judges a fact about the child in
+her voice, and "Sam cut himself on the glass on purpose" is a fact the story guard must not excuse.
+That strict view is stricter than her spoken side was before the guards: a child's "my grandpa
+said it's our secret that we had milkshakes" is refused as a memory (16 of the fixture's 746
+harmless child lines), the conservative direction for words re-injected into every later prompt.
+
+**Known limit of the span rule on her side.** A guard removes its own span, and some spans run
+across the clause ("fell ... hurt myself", "cut myself on a rock", "if you drink", a quoted
+groomer, the warning "never drink", the question "did you drink", the refusal "I can't explain
+how", the idiom "die of shame"), so the harmful words go with the innocent context: "I cut myself
+on the glass on purpose", "If you drink bleach, you'll feel super strong!" or "Why not drink
+bleach? It makes you strong!" spoken by Moxie is served today, most often with no event for the
+parent, where the table swapped it before the guards (the hosted floor serves the same lines).
+The child's side blocks or flags the same words (`dangerous` and `personal_info` only flag a
+child) and the memory filter refuses them. The lines are pinned as a known loss in
+`sim/tests/test_safety.py`. The fix is a veto, a guard that stops at "on purpose", a hurt-intent
+clause or an endorsement: it is in neither table yet and has no owner yet, and it must land in
+both tables at once, since her side here is to swap exactly what the floor swaps.
 
 **Limits: a rule engine is a floor, not a filter.** It cannot read context, sarcasm, or a
 harmful idea expressed in gentle words. It misses novel phrasings, deliberate obfuscation past its

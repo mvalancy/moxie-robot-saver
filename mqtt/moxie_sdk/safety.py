@@ -234,7 +234,7 @@ class _Category:
     """One compiled category from the rules file."""
 
     __slots__ = ("id", "label", "action", "escalate", "intents", "phrase_set",
-                 "words", "phrases", "allow")
+                 "words", "phrases", "allow", "allow_moxie", "phrases_moxie")
 
     def __init__(self, raw: dict):
         self.id = str(raw["id"])
@@ -251,18 +251,32 @@ class _Category:
             if words else None)
         self.phrases = [re.compile(p) for p in (raw.get("phrases") or [])]
         self.allow = [re.compile(p) for p in (raw.get("allow") or [])]
+        # Her side only. A guard for a refusal that quotes the request, a warning, an
+        # idiom or a story character is right where SHE speaks and wrong on the child's
+        # side, where it would let a second, harmful clause through ("my grades fell and
+        # now i want to hurt myself"); and some words a child may say she never does.
+        self.allow_moxie = [re.compile(p) for p in (raw.get("allow_moxie") or [])]
+        self.phrases_moxie = [re.compile(p) for p in (raw.get("phrases_moxie") or [])]
 
-    def hits(self, variants: tuple) -> list:
+    def hits(self, variants: tuple, role: str = CHILD, *, her_guards: bool = True) -> list:
         """The matched trigger strings in `variants`, or [] — allow-guarded: each guard's
-        span is removed first (`shoot a photo` passes, `… then shoot him` still hits)."""
+        span is removed first (`shoot a photo` passes, `… then shoot him` still hits).
+
+        The child's side matches `words` + `phrases` under `allow`. Her side (`MOXIE`)
+        also matches `phrases_moxie`, under `allow` + `allow_moxie` — or under `allow`
+        alone when `her_guards` is false, for a caller judging a fact about the child in
+        her voice (the content brain's memory filter) rather than her own line."""
+        hers = role == MOXIE
+        guards = self.allow + self.allow_moxie if hers and her_guards else self.allow
+        phrases = self.phrases + self.phrases_moxie if hers else self.phrases
         found = []
         for text in variants:
             guarded = text
-            for a in self.allow:
+            for a in guards:
                 guarded = a.sub(" ", guarded)
             if self.words is not None:
                 found += [m.group(0) for m in self.words.finditer(guarded)]
-            for p in self.phrases:
+            for p in phrases:
                 found += [m.group(0) for m in p.finditer(guarded)]
             if found:
                 break                       # one variant matching is enough
@@ -283,6 +297,11 @@ class Classifier:
 
     Contract: **pure and local** (no network), fast enough per streamed chunk, and total
     (the runtime treats an exception as "allow" so a broken classifier cannot silence Moxie).
+
+    `her_guards=False` is an OPTIONAL keyword a classifier MAY take (`RuleClassifier`
+    does): judge `role=MOXIE` text without her-side-only guards, for a caller weighing a
+    fact about the child rather than her own line (the content brain's memory filter). A
+    caller that passes it falls back to the plain call on `TypeError`.
     """
 
     name = "classifier"
@@ -302,7 +321,10 @@ class RuleClassifier(Classifier):
         self.phrase_sets = {k: list(v) for k, v in (self.rules.get("phrases") or {}).items()}
 
     # -- the verdict --
-    def assess(self, text: str, *, role: str = CHILD) -> InputSafety:
+    def assess(self, text: str, *, role: str = CHILD,
+               her_guards: bool = True) -> InputSafety:
+        """The verdict for `text` on one side. `her_guards=False` (her side only) leaves
+        `allow_moxie` out, so a story or idiom guard excuses nothing: see `Classifier`."""
         role = MOXIE if role == MOXIE else CHILD
         verdict = InputSafety(role=role)
         variants = _variants(text)
@@ -313,7 +335,7 @@ class RuleClassifier(Classifier):
             action = cat.action.get(role, ALLOW)
             if action == ALLOW:
                 continue
-            hits = cat.hits(variants)
+            hits = cat.hits(variants, role, her_guards=her_guards)
             if not hits:
                 continue
             triggers += hits
