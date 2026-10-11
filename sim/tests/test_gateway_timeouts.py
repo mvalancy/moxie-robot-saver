@@ -705,6 +705,48 @@ def test_the_voice_card_answers_mid_outage_at_the_longest_window():
         assert f"— {primary} failed; retrying the primary at " in line, line
 
 
+def test_the_gateway_guide_quotes_what_the_voice_prints_and_the_card_shows():
+    """docs/guides/gateway-voice-and-ears.md ("When the gateway fails") quotes the voice's
+    failure and recovery log lines, the Voice card's line during an outage and the pair the
+    startup log names. Each is what the code prints for the guide's own example: the
+    gateway voice `openai-voice` refusing with a BadRequestError, the tone as its standby,
+    the default 60 s window. The card's times are compared as `HH:MM ZONE`, whatever zone
+    this box is in."""
+    import os
+    import re
+    from helpers_runtime import REPO
+    from moxie_sdk.tts import ToneSynthesizer
+    with open(os.path.join(REPO, "docs", "guides", "gateway-voice-and-ears.md"),
+              encoding="utf-8") as f:
+        section = f.read().split("## When the gateway fails\n", 1)[1].split("\n## ", 1)[0]
+
+    class BadRequestError(Exception):
+        pass
+
+    class _GatewayVoice(Synthesizer):
+        name, refusing = "openai-voice", True
+
+        def synthesize(self, text, voice=None):
+            if self.refusing:
+                raise BadRequestError("…")
+            return b"\x01\x02" * 8
+
+    clock, logged, gateway = _Clock(T0), [], _GatewayVoice()
+    fb = FallbackSynthesizer(gateway, ToneSynthesizer(), log=logged.append, clock=clock,
+                             wall=clock)
+    assert f"`[run] server voice enabled: {fb.describe()}`" in section, fb.describe()
+    fb.synthesize("hi")                                    # the gateway refuses: latched
+    assert f"```\n{logged[-1]}\n```" in section, logged[-1]
+    hhmm = re.compile(r"\d\d:\d\d [^ )]+")                 # `_hhmm`'s "HH:MM ZONE"
+    card = f"> Speaking with **{fb.describe()}**"         # voice-brain.js's note, in bold
+    assert hhmm.sub("HH:MM", card) in hhmm.sub("HH:MM", section), card
+    clock.advance(60)
+    gateway.refusing = False
+    fb.synthesize("hi")                                    # the window passed: it answers
+    assert not fb.failed
+    assert f"```\n{logged[-1]}\n```" in section, logged[-1]
+
+
 # ------------------------------------------------ one retry at a time, per engine --
 class _RetryInFlightEars(Transcriber):
     """Fails its first call; its second blocks until released (a retry in flight)."""

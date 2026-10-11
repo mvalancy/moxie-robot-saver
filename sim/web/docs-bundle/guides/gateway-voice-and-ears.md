@@ -59,10 +59,29 @@ that hears nothing. On the first failure one line is logged, for example
 [voice] openai-voice failed (BadRequestError: …); speaking with tone until it answers again (next try in 60s)
 ```
 
-The standby then keeps the job for `MOXIE_ENGINE_RETRY_S` seconds (60 by default), so a dead endpoint
-costs one timeout per window, not one per turn. After the window the next call tries the gateway
-again, and when it answers one line says it is back. Setting the window to `0` tries the gateway on
-every call. `/status` and the startup log show which engine is really active.
+The standby then keeps the job for `MOXIE_ENGINE_RETRY_S` seconds (60 by default). So a dead endpoint
+costs one timeout per window (`MOXIE_TTS_TIMEOUT_S`, 15 s; `MOXIE_STT_TIMEOUT_S`, 12 s), not one per
+turn. After the window the next call tries the gateway again. When it answers, one line says so:
+
+```
+[voice] openai-voice is back; speaking with it again
+```
+
+- **Range.** `0` tries the gateway on every call. The longest window is `86400` seconds (a day). NaN,
+  `inf` or more than a day stops the supervisor at startup, with a message naming the knob.
+- **Clock.** The window is timed on a monotonic clock, so a wall-clock correction mid-outage neither
+  stretches it nor ends it early.
+- **What counts as a failure.** Any error from the gateway: a refusal, a timeout, or a gateway still
+  busy after its retries. A timeout, even on connecting, is never retried, so the standby takes over
+  at once.
+
+The console's **Voice** card names the engines really in use. During an outage it names the standby,
+when it took over and when the gateway is tried next, for example:
+
+> Speaking with **tone (standby since 14:02 UTC — openai-voice failed; retrying the primary at 14:03 UTC)**
+
+The startup log names each gateway engine with its standby, for example
+`[run] server voice enabled: openai-voice (standby: tone)`.
 
 ## Quirks the client handles
 
