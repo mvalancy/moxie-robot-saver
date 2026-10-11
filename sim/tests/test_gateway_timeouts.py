@@ -402,6 +402,38 @@ def test_a_fast_failing_open_hands_the_fallback_the_rest_of_the_bound():
     assert "timeout" not in fake.whole_kw[1]
 
 
+# The open's failure skips the fallback on EITHER of two grounds, and each is pinned on
+# its own: the tests above end a hung open exactly at the bound (both grounds true) or
+# refuse it with time to spare (neither), so dropping one half of the condition
+# (`if is_timeout_error(e) or remaining <= 0:`) survived the whole hermetic suite.
+def test_a_connect_timeout_with_time_left_answers_offline_without_a_fallback():
+    """The connect bound (the SDK's 5 s) fires with 4 s of the 9 s bound left. A timeout
+    means the gateway is unreachable, so a second request would wait on it again: one
+    `ERROR_OFFLINE`, no fallback call, and nothing runs after the open."""
+    clock = _Clock()
+    fake = _StreamFails(clock, 5.0, APITimeoutError("Request timed out."))
+    app = LLMApp(URL, "k", model="m", client=fake, timeout_s=9.0, clock=clock)
+    chunks = list(app.respond_stream(_turn()))
+    assert [c.result_code for c in chunks] == [ResultCode.ERROR_OFFLINE]
+    assert chunks[0].final and chunks[0].text == ""
+    assert (fake.stream_calls, fake.whole_calls) == (1, 0), "a timed-out gateway was asked again"
+    assert clock() == 5.0
+
+
+@pytest.mark.parametrize("spent", [9.0, 9.5])
+def test_a_refusal_that_comes_back_with_no_bound_left_gets_no_fallback(spent):
+    """A 400 is no timeout, but it came back as the 9 s bound ran out (or after it: a slow
+    refusal). A fallback request now would start outside the turn's bound: one
+    `ERROR_OFFLINE`, no fallback call."""
+    clock = _Clock()
+    fake = _StreamFails(clock, spent, _Boom("streaming not supported"))
+    app = LLMApp(URL, "k", model="m", client=fake, timeout_s=9.0, clock=clock)
+    chunks = list(app.respond_stream(_turn()))
+    assert [c.result_code for c in chunks] == [ResultCode.ERROR_OFFLINE]
+    assert (fake.stream_calls, fake.whole_calls) == (1, 0), "a fallback started past the bound"
+    assert clock() == spent
+
+
 # ------------------------------------------------- the standby lets go again --
 class _FlakyEars(Transcriber):
     """Fails the first `failures` calls, then hears."""
@@ -461,6 +493,10 @@ from moxie_sdk.stt import _hhmm                                              # n
 
 T0 = 1_760_000_000.0            # a fixed wall-clock instant for the HH:MM strings
 
+# The window runs on `clock` and the times `describe()` names on `wall`. The latch tests
+# below pass ONE fake as both, so the window and the named times move together; the
+# wall-clock step test drives them apart.
+
 
 def test_a_standby_lets_go_of_a_recovered_primary():
     """Ears: the primary times out once and the standby hears; inside the retry window
@@ -469,7 +505,8 @@ def test_a_standby_lets_go_of_a_recovered_primary():
     line. origin/dev: every later call goes to the standby, for the rest of the run."""
     clock, logged = _Clock(T0), []
     primary, standby = _FlakyEars(), _LocalEars()
-    fb = FallbackTranscriber(primary, standby, log=logged.append, retry_s=60, clock=clock)
+    fb = FallbackTranscriber(primary, standby, log=logged.append, retry_s=60, clock=clock,
+                             wall=clock)
     assert fb.describe() == "cloud (standby: local-fake)"
 
     assert fb.transcribe(PCM_16K) == "heard locally"       # the timeout latches
@@ -496,7 +533,8 @@ def test_a_standby_lets_go_of_a_recovered_primary():
 def test_a_retry_that_fails_again_keeps_the_standby_and_moves_the_window():
     clock, logged = _Clock(T0), []
     primary, standby = _FlakyEars(failures=2), _LocalEars()
-    fb = FallbackTranscriber(primary, standby, log=logged.append, retry_s=60, clock=clock)
+    fb = FallbackTranscriber(primary, standby, log=logged.append, retry_s=60, clock=clock,
+                             wall=clock)
     fb.transcribe(PCM_16K)
     clock.advance(60)
     assert fb.transcribe(PCM_16K) == "heard locally"       # the retry fails: standby
@@ -514,7 +552,8 @@ def test_the_voices_standby_lets_go_the_same_way():
     follows whichever engine actually spoke."""
     clock, logged = _Clock(T0), []
     primary, standby = _FlakyVoice(), _LocalVoice()
-    fb = FallbackSynthesizer(primary, standby, log=logged.append, retry_s=60, clock=clock)
+    fb = FallbackSynthesizer(primary, standby, log=logged.append, retry_s=60, clock=clock,
+                             wall=clock)
     assert fb.describe() == "cloud-voice (standby: piper-fake)"
 
     assert fb.synthesize("hi") == b"\x03\x04" * 8 and fb.sample_rate == 16000
@@ -534,11 +573,178 @@ def test_the_voices_standby_lets_go_the_same_way():
 def test_a_zero_retry_window_tries_the_primary_on_every_call():
     clock = _Clock(T0)
     primary, standby = _FlakyEars(failures=3), _LocalEars()
-    fb = FallbackTranscriber(primary, standby, log=lambda m: None, retry_s=0, clock=clock)
+    fb = FallbackTranscriber(primary, standby, log=lambda m: None, retry_s=0, clock=clock,
+                             wall=clock)
     for _ in range(3):
         assert fb.transcribe(PCM_16K) == "heard locally"
     assert primary.calls == 3 and fb.failed
     assert fb.transcribe(PCM_16K) == "heard in the cloud" and not fb.failed
+
+
+# --------------------------------- the window runs on its own clock, not the wall's --
+def _latched(side, mono, wall):
+    """`(engine, primary, call)`: one fallback of `side` on the two injected clocks,
+    latched by its primary's first failure (at `mono()` / `wall()`)."""
+    if side == "ears":
+        primary = _FlakyEars()
+        fb = FallbackTranscriber(primary, _LocalEars(), log=lambda m: None, retry_s=60,
+                                 clock=mono, wall=wall)
+        call = lambda: fb.transcribe(PCM_16K)                       # noqa: E731
+    else:
+        primary = _FlakyVoice()
+        fb = FallbackSynthesizer(primary, _LocalVoice(), log=lambda m: None, retry_s=60,
+                                 clock=mono, wall=wall)
+        call = lambda: fb.synthesize("hi")                          # noqa: E731
+    call()
+    assert fb.failed and primary.calls == 1
+    return fb, primary, call
+
+
+@pytest.mark.parametrize("step", [-3600, 3600], ids=["back an hour", "forward an hour"])
+@pytest.mark.parametrize("side", ["ears", "voice"])
+def test_a_wall_clock_step_mid_outage_neither_stretches_nor_ends_the_window(side, step):
+    """The window is 60 s of a monotonic clock; the wall clock only names the times a
+    status line prints. A wall clock stepped mid-outage (an NTP correction on a box whose
+    clock was wrong) kept the standby an extra hour when stepped back, which with no
+    local whisper is an hour of deaf ears, and ended the window at once when stepped
+    forward. Now the primary is tried 60 s after the failure either way, and the times
+    `describe()` names move with the wall clock."""
+    mono, wall = _Clock(1000.0), _Clock(T0)
+    fb, primary, call = _latched(side, mono, wall)
+    wall.advance(step)                                    # the wall clock is stepped
+    mono.advance(59)
+    wall.advance(59)
+    call()
+    assert primary.calls == 1, "the window ended early on a wall-clock step"
+    assert fb.failed_at == T0 + step and fb.retry_at() == T0 + step + 60
+    assert f"standby since {_hhmm(T0 + step)} — " in fb.describe()
+    assert fb.describe().endswith(f"retrying the primary at {_hhmm(T0 + step + 60)})")
+    mono.advance(1)
+    wall.advance(1)
+    call()
+    assert primary.calls == 2 and not fb.failed, "the window outlived 60 s of real time"
+
+
+def test_the_window_runs_on_the_monotonic_clock_by_default():
+    """The defaults are the claim the step test makes: `clock` (the window) is
+    `time.monotonic` and `wall` (the times `describe()` names) is `time.time`."""
+    import inspect
+    import time
+    for engine in (FallbackTranscriber, FallbackSynthesizer):
+        params = inspect.signature(engine.__init__).parameters
+        assert params["clock"].default is time.monotonic, engine.__name__
+        assert params["wall"].default is time.time, engine.__name__
+
+
+# -------------------------------- the retry window: 0 to a day, never "forever" --
+@pytest.mark.parametrize("bad", ["inf", "nan", "-inf", "1e20", "86401"])
+def test_a_retry_window_that_never_ends_is_refused_at_startup(monkeypatch, bad):
+    """`MOXIE_ENGINE_RETRY_S=inf` loaded silently and meant a standby for the rest of
+    the run, the latch the window replaced; mid-outage `describe()` then raised
+    OverflowError formatting the retry time, so the console's Voice card read
+    'Supervisor unreachable'. Now NaN, inf, -inf and anything over a day refuse to
+    start with a sentence naming the knob, as the timeouts do."""
+    with pytest.raises(ValueError) as caught:
+        reload_config(monkeypatch, KNOBS, MOXIE_ENGINE_RETRY_S=bad)
+    assert "MOXIE_ENGINE_RETRY_S" in str(caught.value) and "a day" in str(caught.value)
+    c = reload_config(monkeypatch, KNOBS)                  # whole again, on the default
+    assert c.ENGINE_RETRY_S == 60.0
+
+
+@pytest.mark.parametrize("ok", ["0", "-5", "60", "86400"])
+def test_a_retry_window_from_0_to_a_day_loads(monkeypatch, ok):
+    """0 keeps its meaning (try the gateway on every call; a negative value counts as 0
+    in the engines), and a day is the longest window."""
+    c = reload_config(monkeypatch, KNOBS, MOXIE_ENGINE_RETRY_S=ok)
+    assert c.ENGINE_RETRY_S == float(ok)
+
+
+@pytest.mark.parametrize("engine", [FallbackTranscriber, FallbackSynthesizer])
+def test_each_fallback_refuses_a_window_that_never_ends(engine):
+    """The engines validate `retry_s` the same way at construction, so one built outside
+    config cannot carry a window `describe()` cannot print. None is the 60 s default,
+    0 tries the primary on every call, a negative counts as 0, a day is the most."""
+    from moxie_sdk.chat import MAX_RETRY_S
+    if engine is FallbackTranscriber:
+        primary, standby = _FlakyEars(), _LocalEars()
+    else:
+        primary, standby = _FlakyVoice(), _LocalVoice()
+    for bad in (float("inf"), float("nan"), float("-inf"), 1e20, "inf", MAX_RETRY_S + 1):
+        with pytest.raises(ValueError) as caught:
+            engine(primary, standby, retry_s=bad)
+        assert "retry_s" in str(caught.value) and "a day" in str(caught.value), bad
+    assert MAX_RETRY_S == 86400.0
+    for given, kept in ((None, 60.0), (0, 0.0), (-5, 0.0), (90, 90.0),
+                        (MAX_RETRY_S, MAX_RETRY_S)):
+        assert engine(primary, standby, retry_s=given)._retry_s == kept, given
+
+
+def test_the_voice_card_answers_mid_outage_at_the_longest_window():
+    """`GET /voice` (the console's Voice card, through the real status server) during an
+    outage of both gateway engines, with the window at the longest value config accepts:
+    the read that raised OverflowError at inf. Each engine names its standby and when the
+    gateway is tried again."""
+    from helpers_runtime import http_json, status_server
+    from moxie_sdk.app import MoxieApp
+    voice = FallbackSynthesizer(_FlakyVoice(), _LocalVoice(), log=lambda m: None,
+                                retry_s=86400)
+    ears = FallbackTranscriber(_FlakyEars(), _LocalEars(), log=lambda m: None,
+                               retry_s=86400)
+    voice.synthesize("hi")
+    ears.transcribe(PCM_16K)
+    assert voice.failed and ears.failed
+    rt, _ = make_runtime(MoxieApp())
+    rt.set_synthesizer(voice)
+    rt.set_transcriber(ears)
+    card = http_json(status_server(rt) + "/voice")
+    assert card["ok"] is True
+    for side, standby, primary in (("speech", "piper-fake", "cloud-voice"),
+                                   ("listening", "local-fake", "cloud")):
+        line = card["installed"][side]
+        assert line.startswith(f"{standby} (standby since "), line
+        assert f"— {primary} failed; retrying the primary at " in line, line
+
+
+def test_the_gateway_guide_quotes_what_the_voice_prints_and_the_card_shows():
+    """docs/guides/gateway-voice-and-ears.md ("When the gateway fails") quotes the voice's
+    failure and recovery log lines, the Voice card's line during an outage and the pair the
+    startup log names. Each is what the code prints for the guide's own example: the
+    gateway voice `openai-voice` refusing with a BadRequestError, the tone as its standby,
+    the default 60 s window. The card's times are compared as `HH:MM ZONE`, whatever zone
+    this box is in."""
+    import os
+    import re
+    from helpers_runtime import REPO
+    from moxie_sdk.tts import ToneSynthesizer
+    with open(os.path.join(REPO, "docs", "guides", "gateway-voice-and-ears.md"),
+              encoding="utf-8") as f:
+        section = f.read().split("## When the gateway fails\n", 1)[1].split("\n## ", 1)[0]
+
+    class BadRequestError(Exception):
+        pass
+
+    class _GatewayVoice(Synthesizer):
+        name, refusing = "openai-voice", True
+
+        def synthesize(self, text, voice=None):
+            if self.refusing:
+                raise BadRequestError("…")
+            return b"\x01\x02" * 8
+
+    clock, logged, gateway = _Clock(T0), [], _GatewayVoice()
+    fb = FallbackSynthesizer(gateway, ToneSynthesizer(), log=logged.append, clock=clock,
+                             wall=clock)
+    assert f"`[run] server voice enabled: {fb.describe()}`" in section, fb.describe()
+    fb.synthesize("hi")                                    # the gateway refuses: latched
+    assert f"```\n{logged[-1]}\n```" in section, logged[-1]
+    hhmm = re.compile(r"\d\d:\d\d [^ )]+")                 # `_hhmm`'s "HH:MM ZONE"
+    card = f"> Speaking with **{fb.describe()}**"         # voice-brain.js's note, in bold
+    assert hhmm.sub("HH:MM", card) in hhmm.sub("HH:MM", section), card
+    clock.advance(60)
+    gateway.refusing = False
+    fb.synthesize("hi")                                    # the window passed: it answers
+    assert not fb.failed
+    assert f"```\n{logged[-1]}\n```" in section, logged[-1]
 
 
 # ------------------------------------------------ one retry at a time, per engine --
@@ -584,7 +790,8 @@ def test_one_utterance_retries_the_primary_while_a_racing_one_stays_on_the_stand
     the retry as due tried the primary."""
     clock, logged = _Clock(T0), []
     primary, standby = _RetryInFlightEars(), _LocalEars()
-    fb = FallbackTranscriber(primary, standby, log=logged.append, retry_s=60, clock=clock)
+    fb = FallbackTranscriber(primary, standby, log=logged.append, retry_s=60, clock=clock,
+                             wall=clock)
     fb.transcribe(PCM_16K)                                 # latched at T0
     clock.advance(60)
     out = {}
@@ -607,7 +814,8 @@ def test_one_line_retries_the_voice_while_a_racing_filler_stays_on_the_standby()
     of the window; one retry, the other line on the standby at once."""
     clock = _Clock(T0)
     primary, standby = _RetryInFlightVoice(), _LocalVoice()
-    fb = FallbackSynthesizer(primary, standby, log=lambda m: None, retry_s=60, clock=clock)
+    fb = FallbackSynthesizer(primary, standby, log=lambda m: None, retry_s=60, clock=clock,
+                             wall=clock)
     fb.synthesize("hi")                                    # latched at T0
     clock.advance(60)
     out = {}
@@ -780,3 +988,44 @@ def test_the_streaming_brains_open_and_its_fallback_each_stop_inside_the_bound()
     assert fake.calls == 2, "the open or its fallback kept retrying past the bound"
     assert len(chunks) == 1 and chunks[0].final and "fuzzy" in chunks[0].text
     assert chunks[0].result_code is not ResultCode.ERROR_OFFLINE
+
+
+class _SlowBusyGateway:
+    """Every request answers 503 with `Retry-After: retry_after`; a stream open first
+    spends `spend` seconds of the injected clock (a busy gateway slow to say so)."""
+
+    def __init__(self, clock, spend, retry_after):
+        self.clock, self.spend = clock, spend
+        self.response = type("R", (), {"headers": {"retry-after": str(retry_after)}})()
+        self.stream_calls = self.whole_calls = 0
+        self.whole_kw = []
+        self.chat = self.completions = self
+
+    def create(self, **kw):
+        if kw.get("stream"):
+            self.stream_calls += 1
+            self.clock.advance(self.spend)
+        else:
+            self.whole_calls += 1
+            self.whole_kw.append(kw)
+        busy = _Busy("busy")
+        busy.response = self.response
+        raise busy
+
+
+def test_the_fallback_after_a_slow_busy_open_retries_only_inside_what_is_left():
+    """The open spends 0.8 s of a 0.9 s bound on a 503 whose `Retry-After` (0.15 s) would
+    start its retry past the bound, so the fallback gets the 0.1 s left, as its request
+    timeout AND as its backoff's deadline: a retry 0.15 s later would start outside it,
+    so it makes one attempt and the turn answers the fuzzy line. The 503 test above never
+    moves its clock, so the whole bound and what is left were the same number there, and
+    a fallback backing off on the whole bound (`deadline_s=self._timeout_s`) survived
+    the whole hermetic suite; it retries four more times, sleeping for real."""
+    clock = _Clock()
+    fake = _SlowBusyGateway(clock, spend=0.8, retry_after=0.15)
+    app = LLMApp(URL, "k", model="m", client=fake, timeout_s=0.9, clock=clock)
+    chunks = list(app.respond_stream(_turn()))
+    assert (fake.stream_calls, fake.whole_calls) == (1, 1), "the fallback retried past the bound"
+    assert fake.whole_kw[0]["timeout"] == pytest.approx(0.1)
+    assert len(chunks) == 1 and chunks[0].final and "fuzzy" in chunks[0].text
+    assert clock() == pytest.approx(0.8)
