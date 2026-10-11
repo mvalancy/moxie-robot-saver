@@ -4,14 +4,24 @@ LLMApp — the Moxie brain. Drives Moxie from any OpenAI-compatible chat endpoin
 
 Expressive: the model returns JSON choosing a mood + gesture with its line, which
 becomes the robot's behavior markup (runtime/behavior-markup.md) via the shared floor.
+
+The model's own line is held to the one policy every brain's line is under
+(`content/ext_host.py::model_line`, on each streamed sentence, the tail and a whole reply):
+the tags written whole act (the one-pass parse, actions.py), and what is spoken holds no tag
+of ours however nested (`<ex<sleep>it>` sleeps and says the words) and no catalogue mark this
+appliance could not have minted however assembled (a system verb or a system tree the model
+writes, at a child's bidding or its own, is cut, and the supervisor log names it once per
+robot and name: `_tell_refused`). The expressive markup is built from the gated text, so it
+carries nothing the text does not.
 """
 from __future__ import annotations
 import json
 import re
 
 from ..app import MoxieApp
-from ..actions import ACTION_TAG_PROMPT, EXIT_REQUIRED_RULE, parse_action_tags
+from ..actions import ACTION_TAG_PROMPT, EXIT_REQUIRED_RULE
 from ..automarkup import annotate, enabled as _automarkup_enabled
+from ..content.ext_host import model_line, tell_brain_commands
 from ..segment import SentenceSegmenter
 from ..types import Turn, Reply, ReplyChunk, RobotContext
 from ..chat import is_offline_error as _is_offline_error
@@ -245,6 +255,18 @@ class LLMApp(MoxieApp):
         self._temperature = temperature
         self._max_history = max_history
         self._expressive = expressive
+        #: `{(device_id, name): cuts}`: the system verbs, system trees and other catalogue
+        #: verbs the gate cut from this brain's own lines (`ext_host.model_line`), per robot;
+        #: the supervisor log names each once per robot and name (`_tell_refused`).
+        self._commands_refused: dict = {}
+
+    def _tell_refused(self, turn: Turn, refused: list) -> None:
+        """A command the gate cut from the model's own line: counted per robot and name, and
+        said in the log once per robot and name in the parent's words
+        (`ext_host.tell_brain_commands`). No `ext_events` row: no pack item wrote it."""
+        if refused:
+            device = getattr(getattr(turn, "robot", None), "device_id", "") or ""
+            tell_brain_commands(self._commands_refused, device, refused)
 
     # ---- prompt ----
     def _system(self, robot: RobotContext, turn: Turn | None = None) -> str:
@@ -365,7 +387,8 @@ class LLMApp(MoxieApp):
                 if not words:
                     continue
                 for sentence in seg.feed(words):
-                    text, actions = parse_action_tags(sentence)
+                    text, actions, refused = model_line(sentence, what="the brain's line")
+                    self._tell_refused(turn, refused)
                     actions = carry + actions
                     if not text:                 # a chunk that was only a tag: keep the
                         carry = actions          # action, wait for words to attach it to
@@ -406,7 +429,8 @@ class LLMApp(MoxieApp):
         say, mood, gesture = self._parse(says.raw)
         if not tail and spoken == 0:
             tail = say                           # model ignored the format entirely
-        text, actions = parse_action_tags(tail)
+        text, actions, refused = model_line(tail, what="the brain's line")
+        self._tell_refused(turn, refused)
         actions = carry + actions
         if not text and not actions and spoken == 0:
             text, mood, gesture = "Tell me more!", "happy", "question"
@@ -450,7 +474,8 @@ class LLMApp(MoxieApp):
             return Reply(text=text, markup=build_markup(text, "shy", "self"),
                          end_turn=False)
         text, mood, gesture = self._parse(raw)
-        text, actions = parse_action_tags(text)
+        text, actions, refused = model_line(text, what="the brain's line")
+        self._tell_refused(turn, refused)
         if not text and not actions:
             text = "Tell me more!"
             mood, gesture = "happy", "question"

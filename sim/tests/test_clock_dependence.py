@@ -208,6 +208,14 @@ REVIEWED: dict = {
         "linear is 4x, both also enforced by a hard 5 s alarm: load multiplies a linear read, "
         "while the ambiguous pattern took 16.6 s at 64 KB in mark_verbs alone (14.6 s in the "
         "review, 15.9 s in an opener), measured on the build host."),
+    "sim/tests/test_pack_markup_gate.py::test_a_run_of_mark_openings_is_read_once": (
+        ("time.perf_counter",), "RELATIVE — 1.0 s for 64 KB and 2.0 s for 256 KB of mark "
+        "openings through pack_spoken, pack_line and an installed opener, measured in tens "
+        "of ms, and a ratio of 40x between 64 and 256 KB where linear is 4x, all also "
+        "enforced by a hard 5 s alarm: load multiplies a linear read, while a cut that "
+        "resumed inside its own span (the K5.2 review's surviving N15 mutant) took 5.0-5.7 s "
+        "at 64 KB on K5.2's code and 21-69 s on this one, measured on the build host, and "
+        "trips the alarm on every shape."),
 }
 
 _TOMBSTONES = {k for k, (cons, _) in REVIEWED.items() if not cons}

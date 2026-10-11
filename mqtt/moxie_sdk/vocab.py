@@ -254,28 +254,76 @@ EXPRESSIVE_VERBS = frozenset({
     "behaviour-tree", "playback-mood", "vocal-gesture", "playaudio", "stopaudio", "icons-v2",
 })
 
-#: A `<mark` opening and the verb it names, read tolerantly (any quoting, any case, spaces
-#: around the `=`, data or none, a mark left open), for naming what a robot's reader might
-#: make of pack text; `_MARK_RE` below is the strict form every mark this appliance mints
-#: has. Reads from an opening to the next `<` or `>` at most, so a run of openings costs
-#: each its own gap, and no two neighbouring pieces of it can take the same character, so a
-#: gap is read once: the whitespace after the `=` is one run, then one optional quote with
-#: its own run, then `cmd:`. With two `\s*` around the optional quote (`\s*["']?\s*`) one
-#: run of whitespace could be split between them every way, and `<mark name=` followed by
-#: 64 KB of spaces cost `mark_verbs` 16-19 s (four times longer per doubling), the review of
-#: a conversation whose opener held it 14.6 s against 2 ms before, and an installed opener
-#: of ideographic spaces, which a line's tidying leaves, 15.9 s per empty prompt with the
-#: GIL held, measured on the build host; 5 ms at 64 KB now (sim/tests/test_pack_markup_gate.py
+#: Words that name a system or test flow among the behaviour trees: a catalogue tree holding
+#: one is a system tree, never sent from pack content or from a brain's own line through the
+#: expressive `behaviour-tree` verb (`is_system_tree`; content/ext_host.py's gate). Read off
+#: `TREES` by name, as the system verbs are off `VERBS`, so a tree added to the catalogue
+#: later is a system tree on its own; today exactly the six in the catalogue's system and
+#: test groups (behavior-tree-engine.md:164-165). Whether a robot acts on one from a chat
+#: line, or only animates, is unverified without hardware; the gate treats them as real.
+SYSTEM_TREE_WORDS: Tuple[str, ...] = ("system", "test")
+
+
+def is_system_tree(tree) -> bool:
+    """`tree` names a system or test flow: it holds one of `SYSTEM_TREE_WORDS`, in any case."""
+    t = str(tree or "").lower()
+    return any(word in t for word in SYSTEM_TREE_WORDS)
+
+
+SYSTEM_TREES = frozenset(t for t in TREES if is_system_tree(t))
+#: The trees pack content and a brain's own line may name in a `behaviour-tree` mark: every
+#: catalogue tree that is not a system tree (an expression, an idle, a gesture, a sleep
+#: animation; everything the floor and the planner choose from).
+EXPRESSIVE_TREES = TREE_SET - SYSTEM_TREES
+
+#: A `<mark` opening and what follows it to the next `<` or `>`: the span a robot's reader
+#: might read as one mark, however it is written (any quoting, any case, spaces around the
+#: `=`, data or none, a mark left open), for naming what a robot's reader might make of pack
+#: text or a brain's line; `_MARK_RE` below is the strict form every mark this appliance
+#: mints has. Every `name=` in the span is read (`_MARK_NAME_RE`), so a system verb written
+#: behind a decoy (`<mark name="cmd:zzz" <mark name="cmd:start-systemunpair"/>`, one cut
+#: span) or in a second `name=` attribute is named too; reading only the first `name=` of a
+#: span let both go unnamed. A run of openings costs each its own gap, and no two
+#: neighbouring pieces of the name pattern can take the same character, so a gap is read
+#: once: the whitespace after the `=` is one run, then one optional quote with its own run,
+#: then `cmd:`. With two `\s*` around the optional quote (`\s*["']?\s*`) one run of
+#: whitespace could be split between them every way, and `<mark name=` followed by 64 KB of
+#: spaces cost `mark_verbs` 16-19 s (four times longer per doubling), the review of a
+#: conversation whose opener held it 14.6 s against 2 ms before, and an installed opener of
+#: ideographic spaces, which a line's tidying leaves, 15.9 s per empty prompt with the GIL
+#: held, measured on the build host; 5 ms at 64 KB now (sim/tests/test_pack_markup_gate.py
 #: section G).
-_MARK_VERB_RE = re.compile(
-    r"<mark\b[^<>]*?\bname\s*=\s*(?:[\"']\s*)?cmd:\s*([A-Za-z0-9_-]+)", re.I)
+_MARK_SPAN_RE = re.compile(r"<mark\b[^<>]*", re.I)
+_MARK_NAME_RE = re.compile(r"\bname\s*=\s*(?:[\"']\s*)?cmd:\s*([A-Za-z0-9_-]+)", re.I)
+#: A `Bht_*` id in a mark's span, in any case, for `system_trees_in`.
+_TREE_ID_RE = re.compile(r"\bBht_[A-Za-z0-9_]+", re.I)
+_SYSTEM_TREE_BY_LOWER = {t.lower(): t for t in SYSTEM_TREES}
 
 
 def mark_verbs(text) -> List[str]:
-    """Every verb a `<mark` in `text` names, as written, in order (`_MARK_VERB_RE`). The
-    catalogue is case-sensitive, so a caller lower-cases only to ask whether a verb is a
-    system verb in any spelling. Linear in `text`, a long gap after `name=` included."""
-    return _MARK_VERB_RE.findall(str(text or ""))
+    """Every verb a `<mark` in `text` names, as written, in order: each `name=…cmd:VERB` in
+    each mark's span (`_MARK_SPAN_RE`, `_MARK_NAME_RE`). The catalogue is case-sensitive, so
+    a caller lower-cases only to ask whether a verb is a system verb in any spelling. Linear
+    in `text`, a long gap after `name=` included."""
+    out: List[str] = []
+    for span in _MARK_SPAN_RE.finditer(str(text or "")):
+        out.extend(_MARK_NAME_RE.findall(span.group(0)))
+    return out
+
+
+def system_trees_in(text) -> List[str]:
+    """Every system or test tree a `<mark` in `text` names, in the catalogue's spelling, in
+    order and once each: any `Bht_*` id in a mark's span (`_MARK_SPAN_RE`, to the next `<`
+    or `>`) that is one of `SYSTEM_TREES` in any case, in whatever field it was written.
+    For naming what a robot's reader might make of the mark; the gate's own check reads a
+    kept mark's `behaviour` field (content/ext_host.py). Linear in `text`."""
+    out: List[str] = []
+    for span in _MARK_SPAN_RE.finditer(str(text or "")):
+        for token in _TREE_ID_RE.findall(span.group(0)):
+            tree = _SYSTEM_TREE_BY_LOWER.get(token.lower())
+            if tree is not None and tree not in out:
+                out.append(tree)
+    return out
 
 
 #: `RemoteDialog.DialogAct` (22) — remote-chat-protocol.md:93.

@@ -16,11 +16,19 @@ Point `endpoint` at your service (e.g. a game server) and it *becomes* Moxie's b
 Actions may be declared in `actions` or written inline as tags in `text` (the
 `moxie_sdk/actions.py` grammar); inline tags are stripped so they are never spoken.
 Declared actions come first.
+
+The service's `text` is a brain's own line and is held to the one policy every brain's line
+is under (`content/ext_host.py::model_line`): the tags written whole act, and what is spoken
+holds no tag of ours however nested and no catalogue mark this appliance could not have
+minted however assembled. Its `markup` is a third party's authored markup and gets the gate
+a pack's markup gets (`ext_host.pack_markup`): an HTTP brain is no more trusted than a pack.
+A system verb or a system tree the service writes is cut and named in the supervisor log
+once per robot and name.
 """
 from __future__ import annotations
 import json
-from ..actions import parse_action_tags
 from ..app import MoxieApp
+from ..content.ext_host import model_line, pack_markup, tell_brain_commands
 from ..types import Turn, Reply, Action, ActionType, RobotContext
 
 
@@ -35,7 +43,9 @@ def _turn_to_json(turn: Turn) -> dict:
     }
 
 
-def _json_to_reply(d: dict) -> Reply:
+def _json_to_reply(d: dict, refused: list | None = None) -> Reply:
+    """The service's answer as a `Reply`. `refused`, when given, collects the names of the
+    commands the gate cut (for `WebhookApp._tell_refused`)."""
     actions = []
     for a in d.get("actions", []) or []:
         try:
@@ -45,13 +55,22 @@ def _json_to_reply(d: dict) -> Reply:
                                   function=a.get("function"), args=a.get("args", {})))
         except Exception:
             pass
-    # Strip inline tags from text (keeping their actions) and from markup (text only, so
-    # actions are not counted twice; `<mark/>` is untouched).
-    text, tag_actions = parse_action_tags(d.get("text", "") or "")
+    # The text is a brain's own line (`ext_host.model_line`): inline tags written whole act
+    # and are never spoken, nothing of ours however nested is spoken, and no mark this
+    # appliance could not have minted reaches the robot. The markup is a third party's
+    # authored markup and gets the gate a pack's markup gets (`ext_host.pack_markup`: our
+    # tags lifted once, text only, so actions are not counted twice; a mark this appliance
+    # could have minted is untouched; every other catalogue tag dropped, or the markup
+    # dropped whole and the runtime's floor performs the text).
+    text, tag_actions, cut = model_line(d.get("text", "") or "", what="the webhook's line")
     markup = d.get("markup")
-    return Reply(text=text,
-                 markup=parse_action_tags(markup)[0] if markup else markup,
-                 actions=actions + tag_actions,
+    if markup:
+        markup, _, names = pack_markup(markup)
+        cut = cut + names
+        markup = markup or None
+    if refused is not None:
+        refused.extend(cut)
+    return Reply(text=text, markup=markup, actions=actions + tag_actions,
                  end_turn=bool(d.get("end_turn", False)))
 
 
@@ -62,6 +81,10 @@ class WebhookApp(MoxieApp):
         self._endpoint = endpoint
         self._timeout = timeout
         self._headers = {"Content-Type": "application/json", **(headers or {})}
+        #: `{(device_id, name): cuts}`: the commands the gate cut from the service's lines
+        #: and markup, per robot (`ext_host.model_line`, `pack_markup`); the supervisor log
+        #: names each once per robot and name (`ext_host.tell_brain_commands`).
+        self._commands_refused: dict = {}
 
     def _post(self, path_hint: str, body: dict) -> dict | None:
         import urllib.request
@@ -78,7 +101,12 @@ class WebhookApp(MoxieApp):
         d = self._post("turn", _turn_to_json(turn))
         if not d:
             return Reply(text="One moment… I'm having trouble reaching my imagination.")
-        return _json_to_reply(d)
+        refused: list = []
+        reply = _json_to_reply(d, refused)
+        if refused:
+            tell_brain_commands(self._commands_refused,
+                                getattr(turn.robot, "device_id", "") or "", refused)
+        return reply
 
     def on_event(self, robot: RobotContext, name: str, payload: dict) -> None:
         # Fire-and-forget: let the external app react to vision/module events.

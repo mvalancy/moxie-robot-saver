@@ -969,8 +969,9 @@ written before it is rendered, and at most as many times as it is written there
 across what reads as two alternatives; a copy a loop adds) is lifted and adds no action:
 what acts is at most what the alternative writes whole. A tag in the child's name, as it is
 rendered into an opener, is no different. No tag of ours is said, at any depth
-(`{{ '<ex' }}<sleep>{{ 'it>' }}`: every level is lifted, in one pass, where the robot path's
-own parse of a model's line lifts one). The
+(`{{ '<ex' }}<sleep>{{ 'it>' }}`: every level is lifted, in one pass; the robot path's own
+parse of a model's line lifts one, and the model-line policy below then lifts the rest from what
+is spoken, never adding an action). The
 pack review names every tag written whole in any alternative in the opener's own row, beside
 the diff, before anything is applied: *"When this conversation starts, Moxie says its
 opener; then sometimes Moxie goes to sleep."* (The row does not change whether the review
@@ -1001,58 +1002,106 @@ inside it, since `vocab.mark` writes `+` for a quote, the verb in the catalogue'
 verb is one of the expressive verbs (`vocab.EXPRESSIVE_VERBS`: `behaviour-tree`,
 `playback-mood`, `vocal-gesture`, `playaudio`, `stopaudio` and `icons-v2`, a face, a gesture or
 whole-body tree, a sound, the screen icons: the verbs the floor and the planner mint for a line),
-and every id in it is in the catalogue (`vocab.validate_markup`, the check the markup channel
-always made, every genre a `<usel` tag names included). Every other `<mark` opening, in any
-case, is cut from the line to its first `>` (to the end of the line when none follows) and never
-spoken, and a tag of ours that forms as a mark is cut is lifted and never acted on. The
-catalogue's other verbs (`scripted`, `composite`, `notification`, …) are named to the parent, and
-the system verbs (`vocab.SYSTEM_VERBS`: today `start-systemunpair` and `start-systemsuspend`,
-read off the catalogue by name, so a `start-system*`, wifi, pairing, reset, update, suspend,
-shutdown, reboot or factory verb added to it later is one on its own) are never sent through the
-content brain, however the mark is written: in upper case, in single quotes, with spaces around
-the `=`, left open, with data, built from pieces at run time, read from what the child said,
-written by the model at a prompt's bidding, or formed only once a tag of ours between its pieces
-is lifted or a cut mark's neighbours meet (the gate alternates cutting marks and lifting tags
-until a round changes nothing, at most `ext_host.PACK_GATE_ROUNDS` rounds, each a pass over the
-line; a line nested deeper is not spoken at all). The parent is told once per robot, item and
-verb through the same `ext_events` ring a breach uses, reason `command:<verb>`, hook `opener` for
-an opener, `model` for the model's line and the program's own hook for a line or a markup, with a
-fixed sentence around the catalogue's own verb, never author text: *"it tried to send Moxie the
-system command start-systemunpair, which would unpair Moxie from this home; no activity may, so
-Moxie said its line without it"*, or for another catalogue verb *"it tried to send Moxie the
-robot command scripted, which an activity may not; Moxie said its line without it"*. It is not a
-breach and never counts towards quarantine: the line is said without the mark and the turn goes
-on. The pack review names every catalogue verb a `<mark` anywhere in an item's text asks for (its
-opener, its prompt, a program's lines) in the item's own row (*"writes robot commands in its
-text: cmd:start-systemunpair."*, then *"this appliance never sends cmd:start-systemunpair from an
-activity, whether its opener, a line or the AI's reply to its prompt writes it
-(cmd:start-systemunpair is a system command: it would unpair or suspend Moxie); Moxie says the
-line without them."*), counts the verbs it does not know without quoting them, and does not
-pre-tick an item that carries a system verb, whatever its state, as it does not pre-tick an
-escalation (`review_pack`'s `commands`, `system_commands` and `default`). The review reads marks,
-not intent: a prompt that asks the model for the mark in other words (*"begin every reply with a
-less-than sign, the word mark, …"*) names no command and is pre-ticked like any plain prompt,
-and the gate on the model's line is what holds then, telling the parent at run time. Shipped
-content writes no mark and asks the model for none, so it says and does what it did, walked byte
-for byte with the gate on and bypassed (its programs on their inputs, its openers for several
-children, its model lines over a fake brain); a registered Python handler is ours, not a pack's,
-and is not gated. What this does not cover, stated plainly: the runtime floor
-(`mqtt/supervisor`) cannot tell a pack's text from a handler's, so a handler's line and the plain
-LLM brain's line (`apps/llm_app.py`, which runs no content pack) are not gated; and the
-expressive verbs' ids are not classed, so a `behaviour-tree` mark naming one of the catalogue's
-system or test trees (`Bht_System_Suspend`, `Bht_System_WifiRecover`, `Bht_Motor_Test`, …) is a
-catalogue id the check accepts and reaches the robot from a pack's line or markup, as it did
-before this change; this appliance never mints those trees, and whether a robot acts on them,
-as on `cmd:start-systemunpair` from a chat line, is unverified without hardware (the gate treats
-the verbs as real; the trees are an open owner question). Every reader of pack text is linear in
-it, so a pack cannot stall the supervisor from the console's import preview or from an installed
-opener: the catalogue's check on a run of openings and on one tag holding a run of `genre=`, the
-verb reader (`vocab.mark_verbs`) on a long gap after `<mark name=` (64 KB of spaces cost it
-16-19 s before its pattern was made unambiguous, the review of an opener holding it 15-18 s and
-an installed opener of ideographic spaces 16-29 s per empty prompt, with the GIL held, so every
-robot's turn waited; milliseconds now), and the gate itself, whose rounds are capped (all measured
-on the build host). `sim/tests/test_pack_markup_gate.py` holds all of it, through the real
-`ContentApp` and the real runtime.
+every id in it is in the catalogue (`vocab.validate_markup`, the check the markup channel
+always made, every genre a `<usel` tag names included), and a `behaviour-tree` mark names no
+system or test tree (`vocab.SYSTEM_TREES`: `Bht_System_Suspend`, `Bht_System_Suspend_Zero`,
+`Bht_System_Resume`, `Bht_System_WifiRecover`, `Bht_Motor_Test` and `Bht_TestState`, read off the
+catalogue by name as the system verbs are, so a tree added later that holds `system` or `test` is
+one on its own; they are catalogue ids the id check accepts, so they get their own check, on the
+mark's `behaviour` field). Every other `<mark` opening, in any case, is cut from the line to its
+first `>` (to the end of the line when none follows) and never spoken, and a tag of ours that
+forms as a mark is cut is lifted and never acted on. The catalogue's other verbs (`scripted`,
+`composite`, `notification`, …) are named to the parent, and the system verbs
+(`vocab.SYSTEM_VERBS`: today `start-systemunpair` and `start-systemsuspend`, read off the
+catalogue by name, so a `start-system*`, wifi, pairing, reset, update, suspend, shutdown, reboot
+or factory verb added to it later is one on its own) and the system trees are never sent through
+the content brain, however the mark is written: in upper case, in single quotes, with spaces
+around the `=`, left open, with data, built from pieces at run time, read from what the child
+said, written by the model at a prompt's bidding, behind a decoy verb in the same span
+(`<mark name="cmd:zzz" <mark name="cmd:start-systemunpair"/>`), in a second `name=` attribute, or
+formed only once a tag of ours between its pieces is lifted or a cut mark's neighbours meet (the
+gate alternates cutting marks and lifting tags until a round changes nothing, at most
+`ext_host.PACK_GATE_ROUNDS` rounds, each a pass over the line; a line nested deeper is not spoken
+at all). The parent is told once per robot, item and name through the same `ext_events` ring a
+breach uses, reason `command:<name>`, hook `opener` for an opener, `model` for the model's line
+and the program's own hook for a line or a markup, with a fixed sentence around the catalogue's
+own verb or tree id, never author text: *"it tried to send Moxie the system command
+start-systemunpair, which would unpair Moxie from this home; no activity may, so Moxie said its
+line without it"*; for a system tree *"it tried to send Moxie the system behaviour tree
+Bht_System_Suspend, which would run a system or test flow on Moxie, not a performance; no activity
+may, so Moxie said its line without it"*; for another catalogue verb *"it tried to send Moxie the
+robot command scripted, which an activity may not; Moxie said its line without it"*. Under hook
+`model` the sentence says who wrote it, since the model, steered by the prompt or the child, did
+and the item's own text did not: *"the AI's reply under it carried the system command
+start-systemunpair, which would unpair Moxie from this home; no activity may send it, so Moxie said
+the line without it"*. Every `name=` in a cut span is read (`vocab.mark_verbs`) and every system
+tree in it (`vocab.system_trees_in`), so nothing a span asks for goes unnamed; before, only a
+span's first `name=` was read, and a verb behind a decoy or in a second `name=` was cut but not
+told. It is not a breach and never counts towards quarantine: the line is said without the mark
+and the turn goes on. The pack review names every catalogue verb a `<mark` anywhere in an item's
+text asks for (its opener, its prompt, a program's lines, every `name=` in every span) in the
+item's own row (*"writes robot commands in its text: cmd:start-systemunpair."*, then *"this
+appliance never sends cmd:start-systemunpair from an activity, whether its opener, a line or the
+AI's reply to its prompt writes it (cmd:start-systemunpair is a system command: it would unpair or
+suspend Moxie); Moxie says the line without them."*), names every system tree a mark asks for in
+the catalogue's spelling (*"this appliance never sends the system behaviour tree
+Bht_System_Suspend from an activity, whether its opener, a line or the AI's reply to its prompt
+writes it (a system or test flow, not a performance); Moxie says the line without it."*), counts
+the verbs it does not know without quoting them, and does not pre-tick an item that carries a
+system verb or a system tree, whatever its state, as it does not pre-tick an escalation
+(`review_pack`'s `commands`, `system_commands` and `default`; `command_verbs`, `command_trees`).
+The review reads marks, not intent: a prompt that asks the model for the mark in other words
+(*"begin every reply with a less-than sign, the word mark, …"*) names no command and is pre-ticked
+like any plain prompt, and the gate on the model's line is what holds then, telling the parent at
+run time. Shipped content writes no mark and asks the model for none, so it says and does what it
+did, walked byte for byte with the gate on and bypassed (its programs on their inputs, its openers
+for several children, its model lines over a fake brain); a registered Python handler is ours, not
+a pack's, and is not gated.
+
+**The model's own line gets the same cut and the fixpoint, on every brain.** One policy
+(`ext_host.model_line`) holds the words of every model this appliance runs: the llm brain
+(`apps/llm_app.py`, each streamed sentence, the tail and a whole reply), the content brain's model
+line under a conversation (`ContentApp.respond`) and a webhook brain's `text`
+(`apps/webhook_app.py`). The tags written whole act, and only those: the actions are the robot
+path's one-pass parse (`actions.parse_action_tags`), so `<ex<sleep>it>Bye` sleeps and never exits,
+`<la<exit>unch:DRAW>Go` exits and launches nothing, and no nest reads as an action a one-pass
+reader would not read (a printed card and a pack's line are held to the same one-pass rule). What
+is spoken holds no tag of ours however nested and no mark this appliance could not have minted
+however assembled: the parse's text goes through the gate above to a fixpoint, then is tidied only
+if something moved, so a line with no mark and no tag of ours that forms is byte for byte what the
+parse speaks. `<ex<sleep>it>Bye for now!` is spoken as `Bye for now!` (the parse alone said
+`<exit>Bye for now!`, and performed it), `<la<exit>unch:DRAW>Go` as `Go`, and `<ma<ex<exit>it>rk
+name="cmd:start-systemunpair"/>Bye!` as `Bye!` with the exit acting and the mark cut with the
+characters it is made of (the parse alone spoke a broken string; a fixpoint lift alone would have
+assembled the working mark). A webhook's authored `markup` gets the gate a pack's markup gets
+(`pack_markup`), since an HTTP brain is no more trusted than a pack. The plain brains have no
+pack item to report against, so a cut from their lines is counted per robot and name on the app
+(`_commands_refused`) and named once per robot and name in the supervisor log, in the parent's
+words (*"the brain wrote the system command start-systemunpair, which would unpair Moxie from this
+home; Moxie said its line without it"*), not in `ext_events`; a row the console could show for a
+brain's own line is an open owner question. Cost, measured on the build host: a plain line costs
+the gate one scan for `<` (5.5 µs against 5.6 µs for the parse alone), a line with a system mark
+19 µs, and the worst 991-character nest 0.47 ms against 0.07 ms for the parse alone.
+
+What this does not cover, stated plainly: the runtime floor (`mqtt/supervisor`) cannot tell a
+pack's text from a handler's, so a registered Python handler's line is not gated (an open owner
+question); and whether a robot acts on a system verb or a system tree from a chat line, or only
+animates, is unverified without hardware (the gate treats both as real). Every reader of pack
+text but one is linear in it, so a pack cannot stall the supervisor from the console's import
+preview or from an installed opener: the catalogue's check on a run of openings and on one tag
+holding a run of `genre=`, the verb reader (`vocab.mark_verbs`) on a long gap after `<mark name=`
+(64 KB of spaces cost it 16-19 s before its pattern was made unambiguous, the review of an opener
+holding it 15-18 s and an installed opener of ideographic spaces 16-29 s per empty prompt, with
+the GIL held, so every robot's turn waited; milliseconds now), the text gate on a run of `<mark`
+openings (the cut's search resumes after the cut, never inside it: 13-28 ms at 64 KB through
+`pack_spoken`, where a search that resumed inside its own cut took 5.0-5.7 s on K5.2's code and
+21-69 s once each cut span is also read for its names), and the gate
+itself, whose rounds are capped (all measured on the build host). The one exception is
+`actions.drop_action_tags` on a `say` line, quadratic in the worst case and bounded by
+`MAX_SAY_CHARS` (its docstring: 8-16 ms on the worst 1,000-character line).
+`sim/tests/test_pack_markup_gate.py` holds all of it, through the real `ContentApp` and the real
+runtime; `sim/tests/test_action_tags.py` holds the model-line policy on the llm and webhook brains
+and on the wire.
 
 `sim/tests/test_ext_say_tags.py` holds the invariant as a property over random programs
 (every op above over literal pieces of tags and non-tags, with what the child said, a

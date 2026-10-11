@@ -180,7 +180,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM, STT and TTS interface contract",
    "section": "architecture",
-   "bytes": 45315,
+   "bytes": 46101,
    "mermaid": 1,
    "headings": [
     "The three seams",
@@ -231,7 +231,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 89699,
+   "bytes": 94012,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -625,7 +625,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions",
    "section": "architecture",
-   "bytes": 46283,
+   "bytes": 47004,
    "mermaid": 0,
    "headings": [
     "0. The boundary: cloud-side only",
@@ -707,7 +707,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 17941,
+   "bytes": 18299,
    "mermaid": 0,
    "headings": [
     "0. Why the scope is what it is",

@@ -287,6 +287,15 @@ the spoken text and every other action on that reply still go out. The tag rules
 `<launch:NAME>`, so an id a model made up — or a webhook brain declared — never reaches the robot
 unchecked; a content pack launching its own module, and a printed card, pass as before.
 
+**The model-line policy.** Every brain's own line (the llm brain, the content brain's model line, a
+webhook's text) acts only on the tags written whole, by the one-pass parse, and is spoken with no tag
+of ours however nested and no catalogue mark this appliance could not have minted however assembled
+(`<ex<sleep>it>Bye` sleeps and says `Bye`; a system verb or a system behaviour tree the model writes is
+cut and named, in the conversation's `ext_events` row or, for the plain brains, the supervisor log):
+[`content/ext_host.py`](../../mqtt/moxie_sdk/content/ext_host.py) `model_line`, the policy the
+[content-module contract](content-module-contract.md) states under "What pack content may put on the
+robot". A registered Python handler's line is not gated (an open owner question).
+
 **(c) `RemoteChatInput` — the brain's read of the child (optional).** `emotion`/`dialog_act`/`sentiment`
 + **`InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}`** — the content-moderation verdict.
 This is the moderation hook; a kid-facing backend should populate it.

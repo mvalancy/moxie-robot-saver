@@ -12,14 +12,22 @@ touches the world on the evaluator's behalf. `ext/` is the pure evaluator; here:
   content writes, in a line, an opener or a markup, or steers the model into writing (the
   model's line under a conversation goes through `pack_spoken` too), reaches the robot only
   when it is one this appliance could have minted itself: the catalogue's own pattern reads
-  it whole, its verb is one the floor mints for a line (`vocab.EXPRESSIVE_VERBS`) and every
-  id in it is in the catalogue; every other `<mark` opening is cut, never spoken, and a
-  catalogue verb among them, the system verbs (`vocab.SYSTEM_VERBS`) first, is told to the
-  parent once per robot, item and verb (`ContentApp._ext_commands`).
+  it whole, its verb is one the floor mints for a line (`vocab.EXPRESSIVE_VERBS`), every id
+  in it is in the catalogue and no tree in it is a system or test tree
+  (`vocab.SYSTEM_TREES`); every other `<mark` opening is cut, never spoken, and every
+  catalogue verb an activity may not send, the system verbs (`vocab.SYSTEM_VERBS`) first,
+  and every system tree the cut span names are told to the parent once per robot, item and
+  name (`_reported_commands`, `ContentApp._ext_commands`).
+* The model-line policy (`model_line()`): a brain's own line on every brain (the llm brain,
+  the content brain's model line, a webhook's text): tags written whole act, by the one-pass
+  parse, and what is spoken holds no tag of ours however nested and no mark this appliance
+  could not have minted however assembled (`pack_spoken` to a fixpoint). A plain brain
+  tells the parent through the supervisor log only (`tell_brain_commands`).
 * `execution_actions_of()` / `subscriptions_of()` bound what a pack may put on the wire to
   the closed robot function / event tables.
 
-`ContentApp` (content_app.py) is the only caller.
+`ContentApp` (content_app.py) is the caller of everything but the model-line policy, which
+`apps/llm_app.py` and `apps/webhook_app.py` share (they import nothing else from here).
 """
 from __future__ import annotations
 import json
@@ -160,30 +168,55 @@ def _pack_verb_refused(tag: str) -> Optional[str]:
     return verb
 
 
-def _reported_verb(tag: str) -> Optional[str]:
-    """What the parent is told a cut or dropped mark asked for: its verb read however it
-    is written (`vocab.mark_verbs`), when it is a system verb in any case (lower-cased:
-    what a robot's reader makes of `<MARK NAME='CMD:START-SYSTEMUNPAIR'/>` is unverified,
-    so the attempt is named) or a catalogue verb an activity may not send, as the catalogue
-    has it. None for an expressive verb and for an id the catalogue does not have: that is
-    a catalogue drop, as before, and author text, never shown to the parent."""
-    verbs = vocab.mark_verbs(tag)
-    if not verbs:
+def _pack_tree_refused(tag: str) -> Optional[str]:
+    """The system or test tree a `behaviour-tree` mark pack content may not send, or None:
+    `vocab._MARK_RE` reads `tag` whole, its verb is `behaviour-tree` and its data's
+    `behaviour` is one of `vocab.SYSTEM_TREES` (a catalogue id, so `vocab.validate_markup`
+    passes it; `eventName` carries a gesture, which that check holds to `GESTURE_SET`).
+    Read once per mark the catalogue's check kept; a tree the catalogue does not have is
+    that check's to refuse."""
+    read = vocab._MARK_RE.fullmatch(tag)
+    if read is None or read.group(1) != "behaviour-tree" or not read.group(2):
         return None
-    verb = verbs[0]
-    if verb.lower() in vocab.SYSTEM_VERBS:
-        return verb.lower()
-    if verb in vocab.VERB_SET and verb not in vocab.EXPRESSIVE_VERBS:
-        return verb
-    return None
+    data = vocab._decode(read.group(2))
+    tree = data.get("behaviour") if isinstance(data, dict) else None
+    return tree if isinstance(tree, str) and tree in vocab.SYSTEM_TREES else None
+
+
+def _reported_commands(tag: str) -> list:
+    """What the parent is told a cut or dropped mark span asked for, in the order found and
+    once each: every verb the span names (`vocab.mark_verbs`, every `name=` in it, so a
+    system verb behind a decoy, `<mark name="cmd:zzz" <mark name="cmd:start-systemunpair"/>`,
+    or in a second `name=` attribute is named too) that is a system verb in any case
+    (lower-cased: what a robot's reader makes of `<MARK NAME='CMD:START-SYSTEMUNPAIR'/>` is
+    unverified, so the attempt is named) or a catalogue verb an activity may not send, as
+    the catalogue has it; then every system or test tree the span names
+    (`vocab.system_trees_in`, in any field, in any case, in the catalogue's spelling).
+    Nothing for an expressive verb or an id the catalogue does not have: that is a
+    catalogue drop, as before, and author text, never shown to the parent."""
+    out: list = []
+    for verb in vocab.mark_verbs(tag):
+        if verb.lower() in vocab.SYSTEM_VERBS:
+            name = verb.lower()
+        elif verb in vocab.VERB_SET and verb not in vocab.EXPRESSIVE_VERBS:
+            name = verb
+        else:
+            continue
+        if name not in out:
+            out.append(name)
+    for tree in vocab.system_trees_in(tag):
+        if tree not in out:
+            out.append(tree)
+    return out
 
 
 def _refused_tag(tag: str) -> bool:
     """A catalogue tag the gate drops: a malformed one (`_malformed_tag`), one with an id
-    outside the frozen catalogue (`vocab.validate_markup`), or a mark whose verb pack
-    content may not send (`_pack_verb_refused`)."""
+    outside the frozen catalogue (`vocab.validate_markup`), a mark whose verb pack content
+    may not send (`_pack_verb_refused`), or a tree mark naming a system or test tree
+    (`_pack_tree_refused`)."""
     return (_malformed_tag(tag) or bool(vocab.validate_markup(tag))
-            or _pack_verb_refused(tag) is not None)
+            or _pack_verb_refused(tag) is not None or _pack_tree_refused(tag) is not None)
 
 
 def _tags_in(markup: str):
@@ -195,8 +228,8 @@ def _tags_in(markup: str):
 
 
 def _gate(markup: str, refused: list) -> tuple:
-    """`ext_markup`, appending to `refused` the verb the parent is told for each dropped
-    tag that names one (`_reported_verb`)."""
+    """`ext_markup`, appending to `refused` the verbs and trees the parent is told for each
+    dropped tag that names any (`_reported_commands`)."""
     if not markup:
         return "", 0
     dropped = 0
@@ -209,9 +242,7 @@ def _gate(markup: str, refused: list) -> tuple:
         if _refused_tag(tag):
             dropped += 1
             _automarkup._drop("ext")          # the existing `dropped_ids()` counter
-            verb = _reported_verb(tag)
-            if verb is not None:
-                refused.append(verb)
+            refused.extend(_reported_commands(tag))
         else:
             out.append(tag)
     out.append(markup[pos:])
@@ -264,14 +295,19 @@ REFUSED_TAG_WORDS = "it tried to make Moxie do something its review did not name
 
 #: What the parent is told when a line, an opener, a markup or the model's line under a
 #: conversation carried a catalogue command pack content may not send
-#: (`ContentApp._ext_commands`): the `ext_events` row's `reason` is `command:<verb>`, so a
-#: robot is told once per item and verb. Fixed words, never author text: the verb is the
-#: catalogue's own (`_reported_verb`). Not a breach either: the line is said without the
-#: mark and the turn goes on.
+#: (`ContentApp._ext_commands`): the `ext_events` row's `reason` is `command:<name>`, the
+#: name a system verb, another catalogue verb or a system or test tree, so a robot is told
+#: once per item and name. Fixed words, never author text: the name is the catalogue's own
+#: (`_reported_commands`). Not a breach either: the line is said without the mark and the
+#: turn goes on.
 REFUSED_COMMAND_REASON = "command"
 #: What a system verb would do, in a parent's words (behavior-markup.md:75-76).
 _SYSTEM_VERB_EFFECTS = {"start-systemunpair": "unpair Moxie from this home",
                         "start-systemsuspend": "put Moxie into system suspend"}
+#: What a system or test tree would do, in a parent's words: whether a robot acts on one
+#: from a chat line or only animates is unverified (`vocab.SYSTEM_TREES`), so the words
+#: claim no more than the catalogue's own grouping.
+_SYSTEM_TREE_EFFECT = "run a system or test flow on Moxie, not a performance"
 #: How deep the pack gate follows tag pieces meeting around a cut mark and mark pieces
 #: meeting around a lifted tag before it gives up and speaks nothing of the line
 #: (`pack_line`, `pack_spoken`). Nothing legitimate nests at all; a pack may carry a
@@ -279,19 +315,63 @@ _SYSTEM_VERB_EFFECTS = {"start-systemunpair": "unpair Moxie from this home",
 PACK_GATE_ROUNDS = 8
 
 
-def refused_command_reason(verb: str) -> str:
-    return f"{REFUSED_COMMAND_REASON}:{verb}"
+def refused_command_reason(name: str) -> str:
+    return f"{REFUSED_COMMAND_REASON}:{name}"
 
 
-def refused_command_words(verb: str) -> str:
-    """The `ext_events` row's sentence for a cut command: what it would have done, that no
-    activity may send it, and that the line was said without it."""
-    if verb in vocab.SYSTEM_VERBS:
-        effect = _SYSTEM_VERB_EFFECTS.get(verb, "change how Moxie runs")
-        return (f"it tried to send Moxie the system command {verb}, which would {effect}; "
-                f"no activity may, so Moxie said its line without it")
-    return (f"it tried to send Moxie the robot command {verb}, which an activity may not; "
-            f"Moxie said its line without it")
+def command_label(name: str) -> str:
+    """`name` as the parent is told it: `the system command start-systemunpair`, `the system
+    behaviour tree Bht_System_Suspend` or `the robot command scripted`."""
+    if name in vocab.SYSTEM_VERBS:
+        return f"the system command {name}"
+    if name in vocab.SYSTEM_TREES:
+        return f"the system behaviour tree {name}"
+    return f"the robot command {name}"
+
+
+def refused_command_words(name: str, *, hook: str = "") -> str:
+    """The `ext_events` row's sentence for a cut command, `name` a system verb, a system or
+    test tree or another catalogue verb (`_reported_commands`): who wrote it, what it would
+    have done, that it may not be sent, and that the line was said without it. `hook`
+    chooses the words for who wrote it: an activity's own text (a line, a markup, an opener:
+    the default, `it` being the item), the AI's reply under a conversation (`model`: the
+    model, possibly steered by the child, wrote it, not the item), or a brain's own line
+    (`brain`: the supervisor log, `tell_brain_commands`)."""
+    label = command_label(name)
+    if name in vocab.SYSTEM_VERBS:
+        what = f"{label}, which would {_SYSTEM_VERB_EFFECTS.get(name, 'change how Moxie runs')}"
+    elif name in vocab.SYSTEM_TREES:
+        what = f"{label}, which would {_SYSTEM_TREE_EFFECT}"
+    else:
+        what = label
+    system = name in vocab.SYSTEM_VERBS or name in vocab.SYSTEM_TREES
+    if hook == "brain":
+        return (f"the brain wrote {what}; Moxie said its line without it" if system
+                else f"the brain wrote {what}, which a brain may not send; Moxie said its "
+                     f"line without it")
+    if hook == "model":
+        return (f"the AI's reply under it carried {what}; no activity may send it, so Moxie "
+                f"said the line without it" if system
+                else f"the AI's reply under it carried {what}, which an activity may not "
+                     f"send; Moxie said the line without it")
+    return (f"it tried to send Moxie {what}; no activity may, so Moxie said its line "
+            f"without it" if system
+            else f"it tried to send Moxie {what}, which an activity may not; Moxie said its "
+                 f"line without it")
+
+
+def tell_brain_commands(counts: dict, device_id: str, refused) -> None:
+    """A command the gate cut from a brain's own line (`model_line`): count it in `counts`
+    (the brain's own `{(device_id, name): cuts}`) and say so in the supervisor log once per
+    robot and name, in the parent's words (`refused_command_words`, hook `brain`). No
+    `ext_events` row: no pack item wrote it, and the plain brains keep no store; a row the
+    console could show for a brain's own line is an open owner question."""
+    for name in refused or ():
+        key = (device_id, name)
+        counts[key] = counts.get(key, 0) + 1
+        if counts[key] == 1:
+            print(f"[safety] {device_id or 'the robot'}: "
+                  f"{refused_command_words(name, hook='brain')}", flush=True)
 
 
 def _action_key(action: Action) -> tuple:
@@ -307,12 +387,14 @@ def robot_markup(markup) -> tuple:
     (`ContentApp._reply_from_volley` keeps the text of its parse and none of its actions),
     so what the robot is sent must hold no tag of ours and nothing the catalogue refuses.
     This is the channel of a `say`'s markup and a `markup` statement only: a mark written in
-    a line or in a conversation's opener reaches the robot's markup another way, unchecked
-    (the runtime's markup floor sends a line holding `<` as it is). `_reply_from_volley`
-    sends `actions.parse_action_tags(clean)[0]`: our tags lifted once, as from a line, then
-    `tidy_spoken_text`, which takes out the space before a comma and so can join a tag's
-    pieces (`<mark name="cmd:zzz ,data:{}"/>` would become a mark with the verb `zzz`; the
-    gate drops that one first, since the catalogue's mark pattern does not read it whole).
+    a line or in a conversation's opener reaches the robot's markup another way, as the
+    line's own markup (the runtime's markup floor sends a line holding `<` as it is), and is
+    held to the same rule before the line is kept (`pack_line`, `pack_spoken`).
+    `_reply_from_volley` sends `actions.parse_action_tags(clean)[0]`: our tags lifted once,
+    as from a line, then `tidy_spoken_text`, which takes out the space before a comma and
+    so can join a tag's pieces (`<mark name="cmd:zzz ,data:{}"/>` would become a mark with
+    the verb `zzz`; the gate drops that one first, since the catalogue's mark pattern does
+    not read it whole).
     So: every tag with one of our names is lifted as that parse lifts them
     (`actions.lift_action_tags`, one pass, malformed ones too); then the gate
     (`ext_markup`), which drops tag by tag, the rest kept, what `_refused_tag` refuses: an
@@ -353,17 +435,20 @@ def robot_markup(markup) -> tuple:
     fixpoint cost 0.6-1.0 s per 8 KB nest (2.1-3.7 s for four). `dropped` counts the tags
     the gate dropped, and one more for a markup dropped whole. No action tag in markup is
     acted on, so none is reported to the parent; a mark whose verb pack content may not
-    send is (`pack_markup`, the same answer with the verbs)."""
+    send, or that names a system tree, is (`pack_markup`, the same answer with the
+    names)."""
     clean, dropped, _ = pack_markup(markup)
     return clean, dropped
 
 
 def pack_markup(markup) -> tuple:
-    """`(clean, dropped, refused)`: `robot_markup`'s answer, and the catalogue verbs the
-    parent is told for the marks dropped on the way (`_reported_verb`): a mark whose verb
-    pack content may not send (`_pack_verb_refused`, the system verbs first among them),
-    dropped by the gate tag by tag, or found by the last pass once a dropped tag's pieces
-    met, which drops the markup whole, as any tag that pass finds does."""
+    """`(clean, dropped, refused)`: `robot_markup`'s answer, and the catalogue verbs and
+    system trees the parent is told for the marks dropped on the way
+    (`_reported_commands`): a mark whose verb pack content may not send
+    (`_pack_verb_refused`, the system verbs first among them) or that names a system or
+    test tree (`_pack_tree_refused`), dropped by the gate tag by tag, or found by the last
+    pass once a dropped tag's pieces met, which drops the markup whole, as any tag that
+    pass finds does."""
     refused: list = []
     lifted = lift_action_tags(str(markup or "")[:ext.MAX_MARKUP_CHARS])
     clean, dropped = _gate(lifted, refused)
@@ -372,11 +457,11 @@ def pack_markup(markup) -> tuple:
                or any(_malformed_tag(m.group(0)) for m in _tags_in(clean))
                or _EXT_OPEN.search(clean, clean.rfind(">") + 1) is not None
                or bool(vocab.validate_markup(clean))
-               or any(_pack_verb_refused(m.group(0)) is not None for m in _tags_in(clean)))
+               or any(_pack_verb_refused(m.group(0)) is not None
+                      or _pack_tree_refused(m.group(0)) is not None for m in _tags_in(clean)))
     if exposed:
         _automarkup._drop("ext")
-        refused += [v for v in (_reported_verb(m.group(0)) for m in _tags_in(clean))
-                    if v is not None]
+        refused += [v for m in _tags_in(clean) for v in _reported_commands(m.group(0))]
         return "", dropped + 1, refused
     return clean, dropped, refused
 
@@ -386,21 +471,27 @@ _PACK_MARK_OPEN = re.compile(r"<mark\b", re.I)
 
 
 def _pack_mark_cuts(spoken: str) -> list:
-    """`[(start, stop, verb)]`: every `<mark` opening in `spoken` that does not start a mark
-    pack content may send, with the span to cut and the verb the parent is told
-    (`_reported_verb`, or None). A mark stays only when it is one this appliance could have
-    minted itself: `vocab._MARK_RE` reads it whole, from the opening to the first `>` after
-    it, its verb is in `vocab.EXPRESSIVE_VERBS` (as the catalogue spells it) and every id in
-    it is in the catalogue (`vocab.validate_markup`, the check the markup channel makes).
-    So a system verb, a verb an activity may not send, an id the catalogue does not have
-    (`mood=42`, an invented sound), a form the catalogue's pattern does not read (single
-    quotes, spaces around the `=`, data never closed, a `>` inside the data), any case but
-    the catalogue's, or an opening with no `>` after it (cut to the end of the line: what a
+    """`[(start, stop, names)]`: every `<mark` opening in `spoken` that does not start a mark
+    pack content may send, with the span to cut and the names the parent is told
+    (`_reported_commands`: the system verbs, the catalogue verbs an activity may not send
+    and the system trees the span names, possibly none). A mark stays only when it is one
+    this appliance could have minted itself: `vocab._MARK_RE` reads it whole, from the
+    opening to the first `>` after it (the `<mark name="cmd:` letters in any case, since
+    what a robot's reader makes of case is unverified; the verb as the catalogue spells it),
+    its verb is in `vocab.EXPRESSIVE_VERBS`, every id in it is in the catalogue
+    (`vocab.validate_markup`, the check the markup channel makes) and its tree, if it names
+    one, is not a system or test tree (`_pack_tree_refused`). So a system verb, a verb an
+    activity may not send, a system tree, an id the catalogue does not have (`mood=42`, an
+    invented sound), a form the catalogue's pattern does not read (single quotes, spaces
+    around the `=`, data never closed, a `>` inside the data), a verb in any case but the
+    catalogue's, or an opening with no `>` after it (cut to the end of the line: what a
     robot's reader makes of a mark left open is unverified, and nothing legitimate follows
     one) is cut. One pass: each `>` is found once, since the cut runs to it and the search
-    goes on after it, a kept mark is read by the catalogue's check once, as itself, and a
-    cut mark's verb is read once (`vocab.mark_verbs`, linear in the tag, a long gap after
-    `name=` included: 64 KB of spaces after a `<mark name=` cost it 16-19 s before its
+    goes on after it (a `<mark` inside a cut span is never visited again: on a run of
+    openings with no `>`, visiting each would read the rest of the line once per opening),
+    a kept mark is read by the catalogue's check once, as itself, and a cut span's names are
+    read once (`vocab.mark_verbs`, `vocab.system_trees_in`, linear in the span, a long gap
+    after `name=` included: 64 KB of spaces after a `<mark name=` cost it 16-19 s before its
     pattern was made unambiguous, measured on the build host)."""
     cuts: list = []
     pos = 0
@@ -414,15 +505,15 @@ def _pack_mark_cuts(spoken: str) -> list:
         pos = stop
         read = vocab._MARK_RE.fullmatch(tag)
         if (read is not None and read.group(1) in vocab.EXPRESSIVE_VERBS
-                and not vocab.validate_markup(tag)):
+                and not vocab.validate_markup(tag) and _pack_tree_refused(tag) is None):
             continue
-        cuts.append((m.start(), stop, _reported_verb(tag)))
+        cuts.append((m.start(), stop, _reported_commands(tag)))
 
 
 def pack_text(text: str) -> tuple:
     """`(clean, refused)`: `text`, a pack's text holding no tag of ours (an opener as
     `content_app.said_opener` speaks it, a string a pack carries), with every mark pack
-    content may not send cut (`_pack_mark_cuts`), and the verbs the parent is told, in
+    content may not send cut (`_pack_mark_cuts`), and the names the parent is told, in
     order. Linear in `text`."""
     text = text or ""
     cuts = _pack_mark_cuts(text)
@@ -434,7 +525,7 @@ def pack_text(text: str) -> tuple:
         out.append(text[pos:start])
         pos = stop
     out.append(text[pos:])
-    return "".join(out), [v for _, _, v in cuts if v is not None]
+    return "".join(out), [v for _, _, names in cuts for v in names]
 
 
 def _cut_pack_marks(text: str) -> tuple:
@@ -453,7 +544,7 @@ def _cut_pack_marks(text: str) -> tuple:
     for start, stop, _ in cuts:
         gone.update(origin[start:stop])
     return ("".join(c for i, c in enumerate(text) if i not in gone),
-            [v for _, _, v in cuts if v is not None])
+            [v for _, _, names in cuts for v in names])
 
 
 def pack_line(text: str, keep) -> tuple:
@@ -482,28 +573,62 @@ def pack_line(text: str, keep) -> tuple:
     return "", taken, refused
 
 
-def pack_spoken(text: str) -> tuple:
-    """`(clean, refused)`: a pack's line whose actions are already decided and whose tags of
-    ours are already lifted (an opener, `content_app.said_opener`; the model's line under a
-    conversation after `actions.parse_action_tags`, `ContentApp.respond`), with every mark
-    pack content may not send cut (`_cut_pack_marks`) and every tag of ours that forms once
-    a mark is cut lifted, never acted on (`actions.lift_every_action_tag`: an opener acts
-    only on what its alternative writes whole, the model's line on what its own parse read,
-    and a tag that forms as the gate cuts is not that). The two alternate as in `pack_line`,
-    at most `PACK_GATE_ROUNDS` rounds, each a pass over the line; past them the line is not
-    spoken. A line with no mark to cut and no tag to lift comes back as it was, so a caller
-    can tell whether anything moved."""
+def pack_spoken(text: str, *, what: str = "a line") -> tuple:
+    """`(clean, refused)`: a line whose actions are already decided and whose tags of ours
+    are already lifted (an opener, `content_app.said_opener`; a brain's own line after
+    `actions.parse_action_tags`, `model_line`), with every mark pack content may not send
+    cut (`_cut_pack_marks`) and every tag of ours that forms once a mark is cut lifted,
+    never acted on (`actions.lift_every_action_tag`: an opener acts only on what its
+    alternative writes whole, a brain's line on what its own parse read, and a tag that
+    forms as the gate cuts is not that). The two alternate as in `pack_line`, at most
+    `PACK_GATE_ROUNDS` rounds, each a pass over the line; past them the line is not spoken,
+    and the log says so, naming `what` the line was (an opener, the model's line, …). A
+    line with no mark to cut and no tag to lift comes back as it was, so a caller can tell
+    whether anything moved; a line with no `<` at all (the common one) is returned on one
+    scan, since neither a mark nor a tag can open without one. `refused` names the system
+    verbs, the catalogue verbs an activity may not send and the system trees cut, in order."""
+    text = text or ""
+    if "<" not in text:
+        return text, []
     refused: list = []
     for _ in range(PACK_GATE_ROUNDS):
         before = text
-        text, verbs = _cut_pack_marks(text)
-        refused += verbs
+        text, names = _cut_pack_marks(text)
+        refused += names
         text = lift_every_action_tag(text)
         if text == before:
             return text, refused
-    print(f"[ext] an opener nested tag and mark pieces more than {PACK_GATE_ROUNDS} deep; "
+    print(f"[ext] {what} nested tag and mark pieces more than {PACK_GATE_ROUNDS} deep; "
           f"not spoken", flush=True)
     return "", refused
+
+
+def model_line(text: str, *, what: str = "the brain's line") -> tuple:
+    """`(spoken, actions, refused)`: a brain's own line as the robot path keeps it, the one
+    policy for a model's words on every brain: the llm brain (`apps/llm_app.py`, each
+    streamed sentence, the tail and a whole reply), the content brain's model line under a
+    conversation (`ContentApp.respond`) and a webhook brain's text (`apps/webhook_app.py`).
+
+    Tags written whole act, and only those: `actions` is the robot path's one-pass parse
+    (`actions.parse_action_tags`), so `<ex<sleep>it>` sleeps and never exits,
+    `<la<exit>unch:DRAW>` exits and launches nothing, and no nest reads as an action a
+    one-pass reader would not read: a printed card (`launch_cards.decode`), a pack's line
+    (`literal_actions`) and a brain agree on what a tag is. What is spoken holds no tag of
+    ours however nested and no mark this appliance could not have minted however assembled:
+    the parse's text goes through the pack gate (`pack_spoken`: every `<mark` opening cut
+    unless the catalogue's pattern reads it whole with an expressive verb, catalogue ids and
+    no system tree; every tag of ours that forms once a mark is cut lifted, never acted on;
+    until a round changes nothing, within `PACK_GATE_ROUNDS`), then tidied only if
+    something moved, so a line with no mark and no tag of ours that forms is byte for byte
+    what the parse speaks (`<ex<exit>it>Bye` is spoken as `Bye`, where the parse alone said
+    `<exit>Bye`). `refused` names, for the parent, each system verb, each catalogue verb a
+    brain may not send and each system tree cut (`_reported_commands`). Linear in the text:
+    the parse is one pass and each of the gate's rounds is one."""
+    spoken, actions = parse_action_tags(text or "")
+    clean, refused = pack_spoken(spoken, what=what)
+    if clean != spoken:
+        clean = tidy_spoken_text(clean)
+    return clean, actions, refused
 
 
 def _strings_in(node, out: list) -> list:
@@ -588,9 +713,15 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
                 except Exception:
                     verdict = None            # a broken classifier must not silence Moxie
                 if verdict is not None and verdict.is_unsafe:
+                    # Her side blocked the line: the category's redirect, its text and its
+                    # markup (performed already, `safety.Redirect`), replaces the line and
+                    # its markup whole, as a blocked model line is replaced (turns.py).
+                    # Nothing of the pack's line or markup is kept.
                     blocked = True
-                    text = _safety.redirect_for(verdict, classifier=classifier).line
-                    markup = None
+                    said = _safety.redirect_for(verdict, classifier=classifier)
+                    volley.set_output(said.text, said.markup or None)
+                    spoke += 1
+                    continue
             if markup:
                 markup, n, verbs = pack_markup(markup)
                 dropped += n
