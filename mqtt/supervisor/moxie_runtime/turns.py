@@ -189,6 +189,7 @@ class TurnsMixin:
         # §Event Handling): answered here, never sent to a brain, history or safety.
         if presence_seam.is_vision_event(speech):
             return self._on_vision_turn(device_id, robot, rcr, speech.strip())
+        self._start_turn_record(device_id, speech)   # the robot's notify reconciles against it (memory.py)
         turn = Turn(robot=robot, speech=speech, history=list(self.history.get(device_id, [])),
                     command=command, input_vars=rcr.get("input_vars", {}),
                     presence=presence_seam.snapshot(self._presence_state(robot)))
@@ -339,6 +340,9 @@ class TurnsMixin:
                         state["chunk"] = n + 1
                         a = state["ans"]
                         state["ans"] = a + 1
+                        # Noted on the turn's record before it goes out (memory.py): a
+                        # turn superseded mid-stream keeps the words the robot may say.
+                        self._spoke(device_id, speech, red.text if blocked else chunk.text)
                         if blocked:
                             safe = ReplyChunk(text=red.text, markup=red.markup, final=True)
                             self._publish_stream_chunk(device_id, event_id, safe, n, True,

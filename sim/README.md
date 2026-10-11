@@ -32,7 +32,7 @@ python3 sim/serve.py           # serve sim/web on 127.0.0.1:8080 with cache-bust
 | Path | What |
 |---|---|
 | [`web/`](web/README.md) | The static site: simulator (`sim.html`), hub (`index.html`), setup page, example parent console, docs explorer. Deployed to Cloudflare Pages. |
-| [`virtual_moxie.py`](virtual_moxie.py) | The virtual robot: speaks the real MQTT protocol; `--scenario` and `--loop-seconds` replay conversations. |
+| [`virtual_moxie.py`](virtual_moxie.py) | The virtual robot: speaks the real MQTT protocol; `--scenario` and `--loop-seconds` replay conversations; `--notify [event\|chunk]` reports what it said after each answer, as a real Moxie does (`run_smoke.sh` turns it on). |
 | [`broker/`](broker/README.md) | Mosquitto config with MQTT `:1883` and WebSocket `:9001`. |
 | [`scenarios/`](scenarios/README.md) | Scripted conversations (JSON) for the demo and tests. |
 | [`tts/`](tts/README.md), [`stt/`](stt/README.md) | Local Piper voice and faster-whisper ears services. |
