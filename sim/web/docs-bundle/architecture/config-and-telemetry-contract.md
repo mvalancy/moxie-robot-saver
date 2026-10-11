@@ -179,7 +179,9 @@ saves a setting for that robot again, and the console's activity feed says so in
 `NO_DATA` is not a parent's choice, so it erases nothing already stored
 ([below](#how-this-server-persists-telemetry)). Its other settings come from what can still be read,
 or from the layers underneath. A per-robot edit the store refuses still applies, but its answer says
-`saved: false` and the console says the change will be lost on a restart.
+`saved: false` and the console says the change will be lost on a restart. A cleared child's name is
+the one exception: the clear is kept owed and made later
+([below](#the-childs-name-the-parents-record-per-robot)).
 
 ### The pairing gate — permits, and what a *pending* robot is sent
 
