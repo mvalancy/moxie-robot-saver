@@ -371,7 +371,7 @@
    "path": "architecture/vision.md",
    "title": "13 — Camera & Vision: can we pipe Moxie's camera into a local CV/VLM stack?",
    "section": "architecture",
-   "bytes": 29871,
+   "bytes": 30763,
    "mermaid": 0,
    "headings": [
     "0. TL;DR / Verdict",

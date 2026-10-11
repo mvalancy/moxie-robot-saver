@@ -317,6 +317,16 @@ shows for QR). Two consequences shaped the whole design:
    (`moxie_sdk.chat.model_calls()`, the Python twin of the edge's `noteUpstreamCall`) rather than
    from a stub that stayed quiet, with a control turn in the same test that makes the counter move
    ([`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md) §8, G6).
+   **A pack's line passes Moxie's output check** (`_assess` on Moxie's side), as every line she
+   says does. As on the plain turn, the check reads the line's text, not a pack's own markup. The
+   child did not ask for that line, so one the check stops is not swapped for a redirect. The event
+   is answered `NOREPLY_ACK`, and the line's act, `end_turn` and `subscribe` are dropped with it.
+   A flagged line is said. Either verdict reaches the parent's review queue once per presence
+   episode, with the child's name masked in the excerpt. A repeat raises that row's `count`
+   instead of adding a row (`_journal_eye_line` in `mqtt/supervisor/moxie_runtime/presence.py`).
+   An episode lasts from an arrival through every flicker, until the face has been gone
+   `FLICKER_S`. With no one in view, the same line is one row per ten minutes. The feed and the
+   log name the pack and module.
    ⚠️ **What is still missing:** the *defensive* `events/<name>` subtopic path in `_on_event` does
    not wake a pack — there is no request to answer there, so a reply would have to be queued as
    `_greeting_for`'s is. That shape is not in the recovered corpus and nothing has ever arrived on
