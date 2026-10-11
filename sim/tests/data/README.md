@@ -17,5 +17,9 @@ The test reads the committed file, not the generator, so a generator bug cannot 
 goldens. Clean-room: re-authored programs, never upstream source (OpenMoxie is MIT, © Justin
 Beghtol; see [`ATTRIBUTION.md`](../../../ATTRIBUTION.md)).
 
+- [`wire/`](wire/README.md) — shareable wire recordings: a `--share` copy of one synthetic bench
+  session and its timeline golden, read by [`test_wire_record.py`](../test_wire_record.py), which
+  also regenerates them (`--write-fixtures`).
+
 ---
 📖 [Tests](../README.md) · [Back to top](../../../README.md)
