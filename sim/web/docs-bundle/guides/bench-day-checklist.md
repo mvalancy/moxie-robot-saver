@@ -15,7 +15,9 @@ replay and share.
   means firmware 801 or 803. No badge means older than 801: no code can move it, and the session
   waits on the [flash-first path](revive-your-moxie.md#path-c-flash-an-older-robot-first)
   ([live notes](../debugging/live-hardware-debug.md#the-wall-we-hit)).
-- **Bring the stack up** as the [runbook](bench-runbook.md#before-you-start) says.
+- **Bring the stack up** with `docker compose up -d --build`, and check the rest of the
+  [runbook's list](bench-runbook.md#before-you-start). `--build` matters: the recorder ships in
+  the supervisor image, and an image built before it was added has no `moxie_sdk.wire_record`.
 - **Plan about an hour.** Lifecycle comes last, and two of its steps are only for a robot you can
   set up again from scratch (see [Not on your only robot](#not-on-your-only-robot)).
 
@@ -33,6 +35,13 @@ says, the child's name, and the robot's address, id and Wi-Fi name. The file is 
 by its owner only, in the supervisor's data volume. Ctrl-C stops it; `--minutes N` stops it for
 you. Raw microphone audio is kept only with `--audio`; by default each clip keeps its length and
 loudness. How it works: [`wire_record.py`](../../mqtt/moxie_sdk/wire_record.py) `FILTERS`.
+
+Once it runs, the console's Connection monitor shows the recorder's own connect lines
+(`New client connected from … as wire-recorder-…`), so the log shows activity before any robot
+connects and the "Nothing at all" row of
+[runbook §3](bench-runbook.md#3-read-the-connection-monitor) ("No activity yet") no longer
+applies. The top line still reads "waiting for Moxie…" until a robot connects: read that line,
+not the log, to tell whether the robot reached the broker.
 
 Note the time you start it. The timeline counts seconds from that moment, and your notes about
 the face and the voice need the same clock.
@@ -176,9 +185,10 @@ never leaves the machine.
   session through the recorder on a fake client: it never publishes, subscribes to its two filters,
   writes each message's direction and decoded body, keeps no raw audio without `--audio`, never
   writes the broker host, and survives a full queue, its size cap and a full disk. The `--share`
-  copy of that session holds none of its ids, addresses, ports, MAC, hostname, username, Wi-Fi name
-  or words. The timeline of the committed copy is a golden, and the replay reproduces its reply
-  shapes against a fresh runtime.
+  copy of that session holds none of its ids, addresses, ports, MAC, hostname, username, Wi-Fi name,
+  words or clock times, and neither does the timeline of the raw file; a `*_ts` clock field (a
+  finished activity's `started_at_ts`) is dropped as a number or a string. The timeline of the
+  committed copy is a golden, and the replay reproduces its reply shapes against a fresh runtime.
 - **SIL.** The same test records the virtual robot's echo turn through a real broker and the real
   supervisor: `/state`, config, the request and the reply, in order.
 - **A real broker's lines.** Measured 2026-10-10 on `eclipse-mosquitto:2.0.20`, the stack's pinned
