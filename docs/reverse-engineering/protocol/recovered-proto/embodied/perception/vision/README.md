@@ -1,6 +1,9 @@
-# 📁 `vision`
+# 📁 vision
 
-Recovered `.proto` schemas for the **`embodied.perception.vision`** package — the wire contract this part of the robot speaks. Recovered by reverse-engineering, not vendor source; field numbers and names are what the binaries actually use.
+The [`embodied.perception.vision`](../../../../proto-catalog.md#embodiedperceptionvision) package: what the vision module reports from the camera.
+That is detected, tracked and recognized faces, face-ID enrollment, people, poses and QR strings.
+It also carries book and drawing IDs, occlusion, rapid motion, "show me" state and offline face analysis.
+[Perception pipeline](../../../../../runtime/perception-pipeline.md#vision-embodiedperceptionvision) explains each one.
 
 | File | Defines |
 |---|---|
@@ -22,4 +25,4 @@ Recovered `.proto` schemas for the **`embodied.perception.vision`** package — 
 | [`ShowState.proto`](ShowState.proto) | `ShowState`; enums `Type`, `State` |
 
 ---
-📖 [Docs index](../../../../../../../docs/README.md) · [Back to top](../../../../../../../README.md)
+📖 [perception](../README.md) · [Docs index](../../../../../../../docs/README.md) · [Back to top](../../../../../../../README.md)

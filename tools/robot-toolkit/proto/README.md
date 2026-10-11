@@ -3,6 +3,9 @@
 The `.proto` files the toolkit compiles into Python bindings: a copy of the canonical
 [recovered protos](../../../docs/reverse-engineering/protocol/recovered-proto/) (120 files,
 382 messages, 84 enums) from robot firmware v3.6.4-Zephyr / OTA v24.10.803.
+The two trees are byte-identical apart from their READMEs, and the docs copy is canonical, so change
+both together. From the repo root, this prints nothing:
+`diff -r -x README.md tools/robot-toolkit/proto/embodied docs/reverse-engineering/protocol/recovered-proto/embodied`.
 
 - [`embodied/`](embodied/README.md) — the proto packages, laid out as in the firmware.
 

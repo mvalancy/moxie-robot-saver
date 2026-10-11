@@ -1,6 +1,8 @@
-# 📁 `testing`
+# 📁 testing
 
-Recovered `.proto` schemas for the **`embodied.testing`** package — the wire contract this part of the robot speaks. Recovered by reverse-engineering, not vendor source; field numbers and names are what the binaries actually use.
+The [`embodied.testing`](../../../proto-catalog.md#embodiedtesting) package: test-harness messages for the fusion and vision modules.
+`InitialFusionState` is a starting state for the people model, and `FaceDescriptors` is one frame of face geometry and embedding vectors.
+[Perception pipeline](../../../../runtime/perception-pipeline.md#vision-embodiedperceptionvision) explains `FaceDescriptor` in its face-recognition section.
 
 | File | Defines |
 |---|---|
@@ -8,4 +10,4 @@ Recovered `.proto` schemas for the **`embodied.testing`** package — the wire c
 | [`Vision.proto`](Vision.proto) | `Point`, `FaceDescriptor`, `FaceDescriptors` |
 
 ---
-📖 [Docs index](../../../../../../docs/README.md) · [Back to top](../../../../../../README.md)
+📖 [embodied](../README.md) · [Docs index](../../../../../../docs/README.md) · [Back to top](../../../../../../README.md)

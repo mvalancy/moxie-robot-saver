@@ -1,10 +1,7 @@
-# 📁 `telehealth`
+# 📁 telehealth — Python bindings
 
-Generated protobuf bindings for the **`telehealth`** package. These are produced from the recovered `.proto` schemas — regenerate them rather than hand-editing.
-
-| File | Purpose |
-|---|---|
-| [`TeleHealth_pb2.py`](TeleHealth_pb2.py) | Generated protocol buffer code. |
+Generated `*_pb2.py` bindings, one per `.proto` in [`proto/embodied/telehealth/`](../../../proto/embodied/telehealth/README.md) with the same base name; that README lists what each file defines.
+Regenerate them with the `grpc_tools.protoc` command in the [toolkit README](../../../README.md); never edit them by hand.
 
 ---
-📖 [Docs index](../../../../../docs/README.md) · [Back to top](../../../../../README.md)
+📖 [embodied](../README.md) · [Docs index](../../../../../docs/README.md) · [Back to top](../../../../../README.md)
