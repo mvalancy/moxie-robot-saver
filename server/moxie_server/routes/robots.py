@@ -99,14 +99,16 @@ def delete_robot(rid: str, rfs: str = Query(None), u=Depends(current_user)):
     the record and the permit still stand. Then one transaction takes the record off the
     account (the app's UNPAIRED: no robot in `users/me`) and voids the account's unused
     pairing codes, and the robot's permit is revoked, which takes the name off too, so a
-    clear that never arrived is retried by the revoke, or later by Revoke in Robot access
-    (`child_cleared` is true when either took it off). The child's record is never touched
-    (§2): erasing it is the console's existing erase calls, made only when the parent
-    chooses. Server-side a reset is the same unpair (the doc's cleanup is identical); what
-    differs is reaching the robot, and with no recovered cloud-to-robot reset command the
-    answer carries the `restore_factory` setup code. Idempotent: a repeat, or another
-    account's robot id, changes nothing (`unpaired: false`). Any 2xx is success to the
-    original app, so the body is ours to use."""
+    clear that never arrived is retried by the revoke (`child_cleared` is true when either
+    took it off). When the revoke reached the supervisor but could not save the clear, the
+    supervisor keeps it owed and makes it on the robot's next connect or settings save;
+    when the revoke never reached it, Revoke in Robot access retries. The child's record
+    is never touched (§2): erasing it is the console's existing erase calls, made only when
+    the parent chooses. Server-side a reset is the same unpair (the doc's cleanup is
+    identical); what differs is reaching the robot, and with no recovered cloud-to-robot
+    reset command the answer carries the `restore_factory` setup code. Idempotent: a
+    repeat, or another account's robot id, changes nothing (`unpaired: false`). Any 2xx is
+    success to the original app, so the body is ours to use."""
     reset = str(rfs or "").strip().lower() in ("1", "true", "yes")
     mine = db.q1("SELECT * FROM robots WHERE id=? AND user_id=?", (rid, u["id"]))
     if mine is None:
@@ -127,6 +129,14 @@ def delete_robot(rid: str, rfs: str = Query(None), u=Depends(current_user)):
     if out["child_cleared"]:
         out["details"].append({"key": "name", "text": "The robot's settings on this server "
                                                       "no longer hold your child's name."})
+    elif access["revoked"]:
+        # The revoke reached the supervisor, so the robot is no longer under Allowed (no
+        # Revoke button to name), and the supervisor keeps the clear it could not save
+        # owed: the robot's next connect, or the next save of its settings, takes it out.
+        out["details"].append({"key": "name", "text": (
+            "The robot no longer uses your child's name, but this server could not take it "
+            "out of the robot's saved settings yet. It does that the next time the robot "
+            "connects or its settings are saved.")})
     elif db.device_id_of(row):
         why = str(cleared["reason"] or "").rstrip(". ")
         out["details"].append({"key": "name", "text": (

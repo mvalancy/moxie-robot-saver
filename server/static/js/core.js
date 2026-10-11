@@ -426,9 +426,14 @@ async function setPermit(deviceId, permitted){
   try{
     const r=await api(`/local/robots/${encodeURIComponent(deviceId)}/permit`,
                       {method:'POST',auth:false,body:{permitted}});
+    // A revoke whose clear the supervisor could not save (`child_cleared: false`): it keeps
+    // that clear owed and makes it later, so the parent is told so, not shown "done".
+    const owed = !permitted && r.child_cleared===false
+      ? ' ⚠️ This server could not take your child\u2019s name out of its saved settings '
+        + 'yet: it does that the next time the robot connects or its settings are saved.' : '';
     if(s) s.textContent = r.ok
       ? (permitted?'✅ Permitted — Moxie is paired and has its settings.'
-                  :'⛔ Revoked — that robot no longer receives your child\u2019s settings.')
+                  :'⛔ Revoked — that robot no longer receives your child\u2019s settings.'+owed)
       : `⚠️ ${r.error||'failed'}`;
   }catch(e){ if(s) s.textContent='⚠️ '+(e.message||'failed'); }
   refreshLive();

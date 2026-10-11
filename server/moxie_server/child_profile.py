@@ -9,14 +9,16 @@ module is the one place the console sends or clears it. Like the permit post it 
 best-effort: a supervisor that is down never fails the parent's call, and the answer says
 whether the name went and was saved (`child_pushed`, `child_cleared`) and why not
 (`reason`): a change the supervisor applies but cannot save (`saved: false`) is not done,
-since a restart undoes it. The supervisor is the one
-judge of a name (`moxie_sdk.cloud_config.check_name`: the shape and Moxie's safety table;
-this process has no `moxie_sdk`): the console asks it before saving a typed name
-(`refusal_for`, `POST /child-name`), and here only the pairing placeholder and a blank are
-held back, and both CLEAR the robot's copy instead (`child: null`): the robot then says
-the appliance's default, never a name an earlier record left on it (an unpair whose clear
-and revoke could not reach the supervisor, a console database that was reset under a kept
-supervisor).
+since a restart undoes a name it sent (a clear it could not save, the supervisor owes and
+makes later). The supervisor is the one judge of a name
+(`moxie_sdk.cloud_config.check_name`: the shape and Moxie's safety table; this process has
+no `moxie_sdk`): the console asks it before saving a typed name (`refusal_for`,
+`POST /child-name`), and keeps the record in the robot's spelling (`spelled_record`:
+"O’Neil" typed on a phone is saved as O'Neil). Here only the pairing placeholder and a
+blank are held back, and both CLEAR the robot's copy instead (`child: null`): the robot
+then says the appliance's default, never a name an earlier record left on it (an unpair
+whose clear and revoke could not reach the supervisor, a console database that was reset
+under a kept supervisor).
 
 The name is a child's, so nothing here logs it, and the console's two `/status` views hand
 it only to a caller with a token for the account that has the robot (`redact_status`). That
@@ -27,6 +29,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import Optional
 
 from . import db, supervisor
@@ -48,11 +51,43 @@ UNREACHABLE_CLEAR = "This server could not reach its robot side."
 #: (`saved: false`): the robot has it now, and a restart undoes it.
 NOT_SAVED = ("This server could not save the name in the robot's settings, so a restart "
              "undoes it. Save it again.")
-NOT_SAVED_CLEAR = ("The robot stopped using the name, but this server could not save that, "
-                   "so the name is still in the robot's saved settings and a restart would "
-                   "bring it back.")
+#: A clear it applied but could not save: the supervisor keeps that clear owed, so a
+#: restart does not bring the name back, and its next connect or save takes it out.
+NOT_SAVED_CLEAR = ("The robot stopped using the name, but this server could not take it out "
+                   "of the robot's saved settings yet. It does that the next time the robot "
+                   "connects or its settings are saved.")
 #: Where a name that is held back from a caller stands in the activity feed's lines.
 MASK = "[name]"
+#: A phone's apostrophes and the code points a screen shows as nothing: the supervisor's
+#: spelling of a name (`moxie_sdk.cloud_config._spelled`), kept here because this process
+#: has no `moxie_sdk`. `test_console_child_name.py` pins the two equal, so the account's
+#: record is spelled as the robot keeps it and the console never calls a name "not sent".
+_APOSTROPHES = str.maketrans({"\u2019": "'", "\u02bc": "'"})
+_DEFAULT_IGNORABLE = re.compile(
+    "[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e"
+    "\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3"
+    "\U0001d173-\U0001d17a\U000e0000-\U000e0fff]")
+#: The record's fields that hold the name (`name_in` reads the first one set). A record is
+#: saved with each in the robot's spelling (`spelled_record`).
+NAME_FIELDS = ("nickname", "child-first-name")
+
+
+def _spelled(name) -> str:
+    """`name` as the robot keeps it: a phone's apostrophe as `'`, invisible code points
+    dropped, whitespace runs collapsed and the ends trimmed, NFC. It judges nothing."""
+    text = _DEFAULT_IGNORABLE.sub("", str(name).translate(_APOSTROPHES))
+    return unicodedata.normalize("NFC", " ".join(text.split()))
+
+
+def spelled_record(attrs):
+    """A copy of a child record's attributes with the name in each of `NAME_FIELDS`
+    spelled as the robot keeps it (`_spelled`), so the record, the robot and the console
+    show one spelling: "O’Neil" typed on a phone is saved as O'Neil. Nothing else
+    changes; anything but an object is returned as it is."""
+    if not isinstance(attrs, dict):
+        return attrs
+    return {k: (_spelled(v) if k in NAME_FIELDS and isinstance(v, str) else v)
+            for k, v in attrs.items()}
 
 
 def name_in(attrs) -> str:

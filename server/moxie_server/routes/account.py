@@ -7,6 +7,7 @@ import json
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.concurrency import run_in_threadpool
 
 from .. import child_profile, db
 from ..auth import current_user, digits, mint_tokens, read_json
@@ -144,21 +145,24 @@ def create_child_row(user_id: str, attrs: dict) -> str:
     return cid
 
 
-def _refuse_unsayable(name: str) -> None:
+async def _refuse_unsayable(name: str) -> None:
     """A 400 carrying the supervisor's reason, in the parent's words, when it would refuse
     `name` (the name rule and Moxie's safety table, `child_profile.refusal_for`): the
-    record is then left as it was. A supervisor that cannot be asked refuses nothing."""
-    why = child_profile.refusal_for(name)
+    record is then left as it was. A supervisor that cannot be asked refuses nothing. The
+    call waits up to its timeout, so it runs off the event loop (`run_in_threadpool`): the
+    console answers every other request meanwhile."""
+    why = await run_in_threadpool(child_profile.refusal_for, name)
     if why:
         raise HTTPException(400, why)
 
 
 @router.post("/api/children")
 async def create_child(request: Request, u=Depends(current_user)):
-    """A new child record. A name Moxie would refuse to say is a 400 and nothing is made."""
+    """A new child record, its name in the robot's spelling (`spelled_record`). A name
+    Moxie would refuse to say is a 400 and nothing is made."""
     body = await read_json(request)
-    attrs = body.get("child", body)
-    _refuse_unsayable(child_profile.name_in(attrs))
+    attrs = child_profile.spelled_record(body.get("child", body))
+    await _refuse_unsayable(child_profile.name_in(attrs))
     cid = create_child_row(u["id"], attrs)
     return {"data": {"id": cid, "type": "children", "attributes": attrs}}
 
@@ -168,17 +172,18 @@ async def update_child(cid: str, request: Request, u=Depends(current_user)):
     """Update the record, then send its name to every robot of this account bound to this
     child (the Wi-Fi tab's name field is the rename). A NEW name Moxie would refuse to say
     is a 400 and the record is left as it was; otherwise `child_pushed` and `reason` say
-    whether the robots got it, and the record is saved either way."""
+    whether the robots got it, and the record is saved either way, its name in the robot's
+    spelling (`spelled_record`). Both supervisor calls run off the event loop."""
     row = _child(cid, u["id"])
     body = await read_json(request)
     before = json.loads(row["attributes"])
-    attrs = {**before, **body.get("child", body)}
+    attrs = child_profile.spelled_record({**before, **body.get("child", body)})
     name = child_profile.name_in(attrs)
     if name != child_profile.name_in(before):    # another setting never re-judges the name
-        _refuse_unsayable(name)
+        await _refuse_unsayable(name)
     db.ex("UPDATE children SET attributes=? WHERE id=?", (json.dumps(attrs), cid))
-    return {"data": {"id": cid, "type": "children", "attributes": attrs},
-            **child_profile.push_to_robots_of_child(u["id"], cid)}
+    pushed = await run_in_threadpool(child_profile.push_to_robots_of_child, u["id"], cid)
+    return {"data": {"id": cid, "type": "children", "attributes": attrs}, **pushed}
 
 
 @router.delete("/api/children/{cid}")

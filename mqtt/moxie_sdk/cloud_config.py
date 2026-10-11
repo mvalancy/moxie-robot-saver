@@ -399,7 +399,8 @@ def merge_config_layers(*layers) -> dict:
 # so it is checked by ONE rule, `check_name`, which the Try it card uses for a name typed
 # for a try as well (`tryit.py` imports it): the shape, then Moxie's safety table.
 
-#: The longest name, counted once whitespace runs are collapsed (NFC code points).
+#: The longest name, counted on the name as it is kept (`_spelled`: whitespace runs
+#: collapsed, invisible code points dropped, NFC code points).
 NAME_MAX_CHARS = 40
 #: Unicode letters and digits, spaces, periods, apostrophes, hyphens: no tags, no braces.
 #: The shape of a name once the combining marks its letters carry are set aside
@@ -416,6 +417,31 @@ NAME_RULE = (f"A child's name is one line of up to {NAME_MAX_CHARS} letters (wit
 NAME_UNCHECKED = ("Moxie's safety rules could not be read on this server, so no name can be "
                   "checked now and Moxie says its default name. Fix the rules file "
                   "(MOXIE_SAFETY_RULES), then save the name again.")
+#: What a phone keyboard types for an apostrophe inside a word: U+2019 (the "smart"
+#: punctuation of iOS and Android keyboards) and U+02BC (the modifier letter apostrophe).
+#: Both are kept as `'`, so "O’Neil" is the name "O'Neil".
+_APOSTROPHES = str.maketrans({"\u2019": "'", "\u02bc": "'"})
+#: Unicode's Default_Ignorable_Code_Point set (DerivedCoreProperties.txt, Unicode 15.0):
+#: code points a screen shows as nothing (variation selectors, zero-width spaces and joiners,
+#: bidi controls, the Hangul fillers, tag characters). A name is kept without them, so "Mia"
+#: with an emoji variation selector is "Mia", and a name of fillers alone is no name. The
+#: console keeps the same set (`server/moxie_server/child_profile.py`), so the account's
+#: record is spelled as the robot keeps it: `test_console_child_name.py` pins the two equal,
+#: and `test_child_name_safety.py` checks this one against Unicode's own derivation.
+_DEFAULT_IGNORABLE = _re.compile(
+    "[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e"
+    "\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3"
+    "\U0001d173-\U0001d17a\U000e0000-\U000e0fff]")
+
+
+def _spelled(name) -> str:
+    """`name` as it is kept and compared: a phone's apostrophe as `'`, the code points a
+    screen shows as nothing dropped (`_DEFAULT_IGNORABLE`), whitespace runs collapsed to
+    one space with the ends trimmed, then NFC (a decomposed `José` is the composed one).
+    Pure, and judges nothing: `check_name` does."""
+    import unicodedata
+    text = _DEFAULT_IGNORABLE.sub("", str(name).translate(_APOSTROPHES))
+    return unicodedata.normalize("NFC", " ".join(text.split()))
 
 
 def _name_shape_ok(name: str) -> bool:
@@ -424,16 +450,18 @@ def _name_shape_ok(name: str) -> bool:
     A mark (`\p{M}`: an accent left decomposed, a Devanagari vowel sign or virama, a Thai
     tone mark) is allowed after a letter, or after another mark that follows one, so the
     scripts that write vowels as marks pass. A mark that starts the name, or follows a
-    digit, a space or punctuation, refuses it."""
+    digit, a space or punctuation, refuses it. So does an enclosing mark (`Me`: a keycap,
+    a circle), which no script writes a letter with: a name kept with one is a spelling no
+    line says, so the plain name would go unmasked."""
     import unicodedata
     base, after_letter = [], False
     for ch in name:
-        kind = unicodedata.category(ch)[0]
-        if kind == "M":
-            if not after_letter:
+        kind = unicodedata.category(ch)
+        if kind[0] == "M":
+            if not after_letter or kind == "Me":
                 return False
             continue
-        after_letter = kind == "L"
+        after_letter = kind[0] == "L"
         base.append(ch)
     return NAME_RE.fullmatch("".join(base)) is not None
 
@@ -466,14 +494,15 @@ def check_name(name: str, *, refusal: str = NAME_RULE) -> str:
     """The one name rule, for a child's name (`clean_child_name`) and for a name typed on
     the Try it card (`tryit._try_name`) alike, so the two can never drift apart.
 
-    `name` is one line with its whitespace already collapsed. It is NFC-normalized first
-    (a decomposed `José` is the same name as a composed one, and is kept composed), then
-    it is at most `NAME_MAX_CHARS` characters of the shape `_name_shape_ok` checks, then
-    nothing Moxie's safety table blocks or flags (`_name_safety_refusal`). Returns the NFC
-    name, else ValueError: `refusal` for the shape, the table's sentence for safety;
-    neither repeats the name, since a refusal is echoed to the console."""
-    import unicodedata
-    name = unicodedata.normalize("NFC", name)
+    `name` is one line. It is spelled as it is kept first (`_spelled`: a phone's curly
+    apostrophe is `'`, a code point a screen shows as nothing is dropped, then NFC, so a
+    decomposed `José` is the same name as a composed one, and is kept composed), then it is
+    at most `NAME_MAX_CHARS` characters, counted on that spelling, of the shape
+    `_name_shape_ok` checks, then nothing Moxie's safety table blocks or flags
+    (`_name_safety_refusal`). Returns that spelling, else ValueError: `refusal` for the
+    shape, the table's sentence for safety; neither repeats the name, since a refusal is
+    echoed to the console."""
+    name = _spelled(name)
     if len(name) > NAME_MAX_CHARS or not _name_shape_ok(name):
         raise ValueError(refusal)
     why = _name_safety_refusal(name)
@@ -485,15 +514,17 @@ def check_name(name: str, *, refusal: str = NAME_RULE) -> str:
 def clean_child_name(raw) -> str:
     """The child's name as Moxie will say it, or ValueError (the console answers 400).
 
-    Whitespace runs collapse to one space and the ends are trimmed, then the one name rule
-    applies (`check_name`: NFC, the shape, Moxie's safety table). Stricter than a try twice
-    over: a name is required (a try may leave it blank), and a line break is refused rather
-    than folded into a space."""
+    The name is spelled as it is kept (`_spelled`: whitespace runs collapse to one space and
+    the ends are trimmed, a phone's apostrophe is `'`, invisible code points go), then the
+    one name rule applies (`check_name`: NFC, the shape, Moxie's safety table). Stricter
+    than a try twice over: a name is required (a try may leave it blank; a name of invisible
+    code points alone is none), and a line break is refused rather than folded into a
+    space."""
     if not isinstance(raw, str):
         raise ValueError(f"The child's nickname must be text. {NAME_RULE}")
     if _LINE_BREAK.search(raw):
         raise ValueError(f"The child's nickname has a line break. {NAME_RULE}")
-    name = " ".join(raw.split())
+    name = _spelled(raw)
     if not name:
         raise ValueError("The child's nickname is empty: send a name, or null to clear it.")
     return check_name(name)
@@ -511,17 +542,19 @@ _LATIN_ACCENTS = _re.compile("[\u0300-\u036f]")
 
 
 def _name_forms(name: str) -> set:
-    """The spellings of `name` a line may carry: the whole name, each part of it of two
+    """The spellings of `name` a line may carry: the whole name as it is kept (`_spelled`,
+    so a saved `Mia` + U+FE0F is `Mia` and `O’Neil` is `O'Neil`), each part of it of two
     characters or more (split at spaces, periods, apostrophes and hyphens: `Mary-Kate`
-    is also `Mary` and `Kate`), and each of those without its Latin accents (`José` is
-    also `Jose`). NFC; the generic `friend` is never one."""
+    is also `Mary` and `Kate`), each of those without its Latin accents (`José` is
+    also `Jose`), and each with a phone's apostrophe for `'` (`O'Neil` is also `O’Neil`).
+    NFC; the generic `friend` is never one."""
     import unicodedata
-    whole = unicodedata.normalize("NFC", " ".join(str(name).split()))
+    whole = _spelled(name)
     forms = {whole} | {p for p in _re.split(r"[ .'\-]+", whole) if len(p) >= 2}
-    bare = {unicodedata.normalize(
+    forms |= {unicodedata.normalize(
         "NFC", _LATIN_ACCENTS.sub("", unicodedata.normalize("NFD", f))) for f in forms}
-    return {f for f in forms | bare
-            if f.strip() and f.casefold() != GENERIC_CHILD_NAME}
+    forms |= {f.replace("'", mark) for f in forms if "'" in f for mark in "\u2019\u02bc"}
+    return {f for f in forms if f.strip() and f.casefold() != GENERIC_CHILD_NAME}
 
 
 import functools as _functools
@@ -534,15 +567,18 @@ def _mask_pattern(names: tuple):
         forms |= _name_forms(name)
     if not forms:
         return None
-    # Longest first, so `Mary-Kate` is masked whole before `Mary` could split it.
-    return _re.compile(r"(?<!\w)(?:%s)(?!\w)" % "|".join(
-        map(_re.escape, sorted(forms, key=lambda f: (-len(f), f)))), _re.IGNORECASE)
+    # `[child]` itself first, in its own case, and put back as it is: masking a masked line
+    # changes nothing, so a child named "Child" never becomes `[[child]]`. Then the names,
+    # longest first, so `Mary-Kate` is masked whole before `Mary` could split it.
+    return _re.compile(r"(?-i:%s)|(?<!\w)(?:%s)(?!\w)" % (_re.escape(CHILD_MASK), "|".join(
+        map(_re.escape, sorted(forms, key=lambda f: (-len(f), f))))), _re.IGNORECASE)
 
 
 def mask_child_names(text, names) -> str:
     """`text` as the supervisor's log and activity feed may keep it: every one of `names`
     (and every spelling `_name_forms` gives it), standing as a word in any case, replaced
-    by `CHILD_MASK`. The text is NFC-normalized first. Pure. Only for copies kept for
+    by `CHILD_MASK`, which is never masked again (the same text twice through this is the
+    text once through it). The text is NFC-normalized first. Pure. Only for copies kept for
     people to read: what a robot hears is never passed through this."""
     import unicodedata
     text = unicodedata.normalize("NFC", "" if text is None else str(text))

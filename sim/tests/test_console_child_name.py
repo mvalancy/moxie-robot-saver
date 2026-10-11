@@ -20,11 +20,16 @@ permit still stand. What each test pins:
   done: a restart would undo it;
 * the console's two `/status` views, and a config answer, name a robot's child only to
   the account that has the robot (nor give away the face cache id, from which a list of
-  first names recovers it); the activity feed masks the rest.
+  first names recovers it); the activity feed masks the rest;
+* (K14b) the record keeps a name in the robot's spelling (a phone's apostrophe as `'`), by
+  a copy of the supervisor's rule pinned equal to it; a child write's supervisor calls run
+  off the event loop; an unpair whose clear the supervisor could not save says the clear
+  is owed, not "revoke", and the robot's next connect makes it.
 
 The supervisor is `helpers_console_supervisor.FakeSupervisor` (the REAL sanitizer behind
-`/config`); one test points the console at a real `MoxieRuntime`'s status server instead.
-A child's name is personal data: only 'Sam', 'José', 'Zoë' and 'Moxie Kid' appear here.
+`/config`); some tests point the console at a real `MoxieRuntime`'s status server instead,
+and one at a stub that holds a call. A child's name is personal data: only 'Sam', 'José',
+'Zoë', 'Moxie Kid', and the K14b acceptance's "O'Neil" and 'Mia' appear here.
 """
 import hashlib
 import json
@@ -451,8 +456,8 @@ def test_a_change_the_supervisor_applies_but_cannot_save_is_never_called_done(
     held past its timeout), and a restart undoes such a change. So a rename or a claim
     whose name is not saved is not `child_pushed`, though the robot says the name now (a
     claim must not clear a name the robot took); and an unpair whose clear is not saved
-    never tells the parent the name is gone: it is still in the robot's saved settings, and
-    the supervisor's next start brings it back."""
+    never tells the parent the name is gone: it is still in the robot's saved settings,
+    until the clear the supervisor keeps owed takes it out (K14b)."""
     pytest.importorskip("paho.mqtt.client", reason="the runtime imports paho")
     from helpers_runtime import make_runtime, status_server
     from moxie_sdk.app import MoxieApp
@@ -482,7 +487,7 @@ def test_a_change_the_supervisor_applies_but_cannot_save_is_never_called_done(
 
     gone = client.delete(f"/api/robots/{claim['robot_id']}", headers=auth).json()
     assert gone["unpaired"] is True and gone["child_cleared"] is False, gone
-    assert "restart" in gone["child_clear_error"]
+    assert "next time the robot connects" in gone["child_clear_error"]
     assert not any("no longer hold" in d["text"] for d in gone["details"]), gone["details"]
     assert json.loads(record.read_text())["child"] == {"nickname": "Sam"}   # still there
 
@@ -607,3 +612,179 @@ def test_an_unpair_whose_clear_never_arrived_is_retried_by_a_revoke(client, tmp_
     assert any(d["key"] == "name" and "no longer hold" in d["text"] for d in gone["details"])
     assert "child" not in json.loads(record.read_text())
     assert rt.robots[DEVICE].child.nickname == "friend"
+
+
+# --------------------------------------------------------------------------- #
+# K14b: the robot's spelling, a child write that never holds up the console, a clear owed
+# --------------------------------------------------------------------------- #
+
+#: A phone's apostrophe and an emoji variation selector, written by number.
+RIGHT_QUOTE, EMOJI_VS = chr(0x2019), chr(0xFE0F)
+
+
+def test_the_console_keeps_a_name_in_the_robots_spelling(client, supervisor):
+    """'O’Neil' typed on a phone is saved, answered and sent as O'Neil, and 'Mia' with an
+    emoji variation selector as Mia: the account's record spells a name the way the robot
+    keeps it (`child_profile.spelled_record`), so the live box, which compares the two,
+    never calls the name "not sent yet" over an apostrophe."""
+    auth, _, cid = _claimed(client, "spelling@child.lan", "Sam")
+    posts = len(supervisor.config_posts)
+    for typed, kept in ((f"O{RIGHT_QUOTE}Neil", "O'Neil"), ("Mia" + EMOJI_VS, "Mia")):
+        r = client.put(f"/api/children/{cid}", headers=auth,
+                       json={"child": {"child-first-name": typed}})
+        assert r.status_code == 200, r.text
+        assert r.json()["data"]["attributes"]["child-first-name"] == kept
+        kids = client.get("/local/state", headers=auth).json()["children"]
+        assert [k["child-first-name"] for k in kids] == [kept]
+    assert _named(supervisor, posts) == [(DEVICE, {"child": {"nickname": "O'Neil"}}),
+                                         (DEVICE, {"child": {"nickname": "Mia"}})]
+    made = client.post("/api/children", headers=quicklogin(client, "spelling-new@child.lan"),
+                       json={"child": {"child-first-name": f" O{RIGHT_QUOTE}Neil "}})
+    assert made.json()["data"]["attributes"]["child-first-name"] == "O'Neil", made.text
+
+
+def test_the_consoles_spelling_of_a_name_is_the_supervisors():
+    """The console has no `moxie_sdk`, so it keeps its own copy of the supervisor's spelling
+    (`cloud_config._spelled`): the same apostrophes, the same invisible code points, and the
+    same result for each name here. A drifted copy would save a spelling the robot never
+    keeps, and the live box would say the name was never sent."""
+    import unicodedata
+    from moxie_sdk import cloud_config
+    from moxie_server import child_profile
+    assert child_profile._DEFAULT_IGNORABLE.pattern == cloud_config._DEFAULT_IGNORABLE.pattern
+    assert child_profile._APOSTROPHES == cloud_config._APOSTROPHES
+    invisible = "".join(chr(c) for c in (0x00AD, 0x200B, 0x200D, 0x2060, 0x3164, 0xFE0F,
+                                         0xFEFF, 0xE0041, 0xE0100))
+    for name in ("Sam", "  José  ", unicodedata.normalize("NFD", "Zoë"), "Mary-Kate",
+                 f"O{RIGHT_QUOTE}Neil", f"O{chr(0x02BC)}Neil", "Mia" + EMOJI_VS,
+                 f"Sam {invisible} Zoë", invisible, "Moxie   Kid", "सैम"):
+        assert child_profile._spelled(name) == cloud_config._spelled(name), ascii(name)
+
+
+class _HeldSupervisor:
+    """A stub supervisor that holds one path: asked there, it sets `asked`, waits for
+    `release`, then answers `answer`; if it is never released it answers plain `ok` (so a
+    console that went on without it is told apart). Every other path answers `ok` at once."""
+
+    def __init__(self, held_path, answer):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        self.asked, self.release = threading.Event(), threading.Event()
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                code, out = 200, {"ok": True, "saved": True}
+                if self.path.split("?")[0] == held_path:
+                    outer.asked.set()
+                    if outer.release.wait(30):
+                        code, out = answer
+                data = json.dumps(out).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self._srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.url = f"http://127.0.0.1:{self._srv.server_address[1]}/status"
+        threading.Thread(target=self._srv.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.release.set()
+        self._srv.shutdown()
+        self._srv.server_close()
+
+
+@pytest.mark.parametrize("write", ["create", "rename", "push"])
+def test_a_child_write_never_holds_up_the_console(client, monkeypatch, write):
+    """A child write asks the supervisor (`POST /child-name` before a typed name is saved,
+    `POST /config` to send a rename to the robots), and each call may wait up to its 3 s
+    timeout. The calls run off the event loop: while a stub supervisor holds one on an
+    Event, `/healthz` answers, and only then is the stub let go, so the write's answer is the
+    stub's own (a refusal, or the robot took the name). A call made ON the loop holds
+    `/healthz` behind it until the console gives up on the supervisor, and the write goes
+    on without the supervisor's answer: a name saved unjudged, a rename never sent."""
+    import threading
+    from moxie_server import db
+    held = "/config" if write == "push" else "/child-name"
+    answer = ((200, {"ok": True, "saved": True}) if held == "/config" else
+              (400, {"ok": False, "reason": "Moxie will not say that name: held, then judged."}))
+    auth = quicklogin(client, f"loop-{write}@child.lan")
+    cid = None
+    if write != "create":                     # a child the real fake judges, before the stub
+        cid = _child(client, auth, "Sam")
+    if write == "push":                       # a robot bound to that child, to send it to
+        uid = client.get("/local/state", headers=auth).json()["user"]["id"]
+        db.ex("INSERT INTO robots(id,user_id,child_id,attributes,robot_setting,created_at)"
+              " VALUES(?,?,?,?,?,?)", ("r-loop", uid, cid,
+                                       json.dumps({"mqtt-device-id": "d_loop"}), "{}",
+                                       db.now_s()))
+    stub = _HeldSupervisor(held, answer)
+    done = {}
+    try:
+        set_status_url(stub.url, monkeypatch)
+        if write == "create":
+            call = lambda: client.post("/api/children", headers=auth,  # noqa: E731
+                                       json={"child": {"child-first-name": "Zoë"}})
+        else:
+            call = lambda: client.put(f"/api/children/{cid}", headers=auth,  # noqa: E731
+                                      json={"child": {"child-first-name": "Zoë"}})
+        worker = threading.Thread(target=lambda: done.update(r=call()), daemon=True)
+        worker.start()
+        assert stub.asked.wait(10), "the console never asked the supervisor"
+        assert client.get("/healthz").json() == {"ok": True}
+        stub.release.set()
+        worker.join(10)
+        assert not worker.is_alive() and "r" in done, "the write never answered"
+    finally:
+        stub.close()
+        db.ex("DELETE FROM robots WHERE id=?", ("r-loop",))
+    r = done["r"]
+    if write == "push":
+        assert r.status_code == 200 and r.json()["child_pushed"] is True, r.text
+    else:
+        assert r.status_code == 400 and "held, then judged" in r.json()["detail"], r.text
+
+
+def test_an_unpair_whose_clear_cannot_be_saved_says_the_clear_is_owed(client, tmp_path,
+                                                                      monkeypatch):
+    """An unpair whose revoke reached the supervisor, but whose clear its store refused,
+    said "revoke the robot in Robot access". A revoked robot is listed under Waiting for
+    you, with Permit and no Revoke button. The supervisor now keeps that clear owed, and
+    the answer says so: the robot no longer uses the name, and its next connect or settings
+    save takes it out. Through a REAL runtime, the robot reconnects and its record then holds
+    no name."""
+    from helpers_runtime import LatchClient
+    rt = _real_runtime(tmp_path, monkeypatch)
+    record = tmp_path / "robots" / DEVICE / "config.json"
+    auth, claim, _ = _claimed(client, "owed@child.lan", "Zoë")
+    assert rt.robots[DEVICE].child.nickname == "Zoë"
+    write = rt.store.write
+
+    def refused(device_id, collection, value):
+        if collection == rt.ROBOT_CONFIG_COLLECTION:
+            return False                    # what the store answers when it cannot write
+        return write(device_id, collection, value)
+
+    monkeypatch.setattr(rt.store, "write", refused)
+    gone = client.delete(f"/api/robots/{claim['robot_id']}", headers=auth).json()
+    assert gone["unpaired"] is True and gone["child_cleared"] is False, gone
+    assert gone["access"]["revoked"] is True
+    named = [d["text"] for d in gone["details"] if d["key"] == "name"]
+    assert len(named) == 1 and "next time the robot connects" in named[0], named
+    assert "revoke" not in named[0].lower(), named
+    assert json.loads(record.read_text())["child"] == {"nickname": "Zoë"}       # owed
+    assert rt.robots[DEVICE].child.nickname == "friend"
+
+    monkeypatch.setattr(rt.store, "write", write)            # the store takes writes again
+    rt.client = LatchClient(rt)
+    rt._device_connect(DEVICE, fresh=True)
+    assert rt.client.wait_for(lambda pubs: any(t == f"/devices/{DEVICE}/config"
+                                               for t, _ in pubs))
+    assert "child" not in json.loads(record.read_text())
+    assert not rt.child_clear_owed(DEVICE)

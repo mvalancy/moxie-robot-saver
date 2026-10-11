@@ -54,9 +54,11 @@ class FleetMixin:
         """Every name Moxie may call a child on this appliance, for the log and feed mask
         (`_masked`): each connected robot's (`RobotContext.child`), each robot's saved
         record (`child` on its layer, connected or away), the appliance's own
-        (`MOXIE_CHILD_NICKNAME`), and any renamed or cleared away during this run (a
-        conversation's history can bring one back). Raw strings, unchecked: a name the
-        rule refuses is masked too. Safe while the constructor is still loading the layers."""
+        (`MOXIE_CHILD_NICKNAME`), any renamed or cleared away during this run, and any a
+        saved record held that the load dropped (one the rule now refuses, or one a clear is
+        owed for, `_load_config_overrides`): a conversation's history can bring one back.
+        Raw strings, unchecked: a name the rule refuses is masked too. Safe while the
+        constructor is still loading the layers."""
         names = {getattr(self.child, "nickname", None)}
         names.update(getattr(r.child, "nickname", None)
                      for r in list((getattr(self, "robots", None) or {}).values()))
@@ -65,6 +67,7 @@ class FleetMixin:
             if isinstance(record, dict):
                 names.add(record.get("nickname"))
         names.update(getattr(self, "_retired_child_names", None) or ())
+        names.update(getattr(self, "_child_names_dropped", None) or ())
         return {n for n in names if isinstance(n, str) and n.strip()}
 
     def _child_changed(self, device_id, before) -> None:
@@ -91,26 +94,101 @@ class FleetMixin:
 
     def _forget_child(self, device_id) -> bool:
         """A robot this appliance no longer lets in keeps no child's name: the `child`
-        record on its layer is dropped, in RAM and in its saved settings. An unpair or a
-        reset whose clear (`child: null`) never arrived is retried this way: Revoke in
-        Robot access. True when its saved settings hold no name now; False when they
-        could not be saved (the store refused, or the record failed closed), so a restart
-        could bring the name back."""
+        record on its layer is dropped, in RAM and in its saved settings
+        (`_save_child_clear`). An unpair or a reset whose clear (`child: null`) never
+        arrived is retried this way: Revoke in Robot access. True when its saved settings
+        hold no name now. False when that could not be written (the store refused, or a
+        record that failed closed cannot be read): the clear is then owed
+        (`_owe_child_clear`), so a restart does not bring the name back and the robot's next
+        connect, or the next save of its settings, takes it out of the record."""
         layer = self._config_overrides.get(device_id)
         had = isinstance(layer, dict) and "child" in layer
-        if not had and self.settings_saved(device_id):
+        if not had and self.settings_saved(device_id) and not self.child_clear_owed(device_id):
             return True                  # RAM and the saved record agree: no name
         before = self.child_for(device_id)
         with self._settings_record(device_id) as held:
             if isinstance(layer, dict):
                 layer.pop("child", None)
-            saved = self._save_config_overrides(device_id, held)
+            saved = self._save_child_clear(device_id, held)
+        kept_owed = saved or self._owe_child_clear(device_id)
         if had:
             self._child_changed(device_id, before)
             line = f"🧹 {device_id} is not let in, so its settings keep no child's name"
-            self._note("permit", line if saved else
-                       f"{line} (NOT saved: a restart brings the name back)")
+            self._note("permit", line if saved else (
+                f"{line} (not saved yet: its next connect or settings save takes it out)"
+                if kept_owed else f"{line} (NOT saved: a restart brings the name back)"))
         return saved
+
+    # ---- a clear owed: a name taken off a robot whose record could not be written ----
+    #: `robots/<id>/child_clear.json`: this robot is owed a clear. Written when a revoke or a
+    #: parent's clear took the child's name off but its record could not be written, so the
+    #: next start loads no name from that record and the next connect or save writes the
+    #: record without it. It holds no name, only that one is owed; any write of the record
+    #: settles it once the note is gone (RAM never holds the name it is owed for).
+    CHILD_CLEAR_COLLECTION = "child_clear"
+
+    def child_clear_owed(self, device_id) -> bool:
+        """Is this robot owed a clear (`CHILD_CLEAR_COLLECTION`)?"""
+        return device_id in (getattr(self, "_child_clears_owed", None) or ())
+
+    def _owe_child_clear(self, device_id) -> bool:
+        """Keep a clear this robot is owed, in RAM and as its note on disk, so a restart
+        owes it too. False when even the note cannot be written: then a restart brings the
+        name back (the caller says so)."""
+        self._child_clears_owed.add(device_id)
+        try:
+            return bool(self.store.write(device_id, self.CHILD_CLEAR_COLLECTION,
+                                         {"owed": True}))
+        except Exception:                        # persistence must never cost the clear
+            return False
+
+    def _child_clear_paid(self, device_id) -> None:
+        """This robot's record was just written without the name a clear is owed for, so
+        its note goes. The clear stays owed until the note is gone: a note the store would
+        not delete is read at the next start, and would drop a name the parent saved since.
+        The next write of the record tries again."""
+        if not self.child_clear_owed(device_id):
+            return
+        try:
+            self.store.delete(device_id, self.CHILD_CLEAR_COLLECTION)
+        except Exception:
+            pass
+        if not os.path.exists(self.store.path(device_id, self.CHILD_CLEAR_COLLECTION)):
+            self._child_clears_owed.discard(device_id)
+
+    def _save_child_clear(self, device_id, held: bool = True, *, quiet: bool = False) -> bool:
+        """Write this robot's record without a child's name, inside `_settings_record`: the
+        whole layer as usual (`_save_config_overrides`). A record that failed closed stays as
+        found until a parent's save (`_fail_closed`), except for the name: only its `child`
+        comes out, because taking the name off is the parent's own choice, and its
+        unreadable data-sharing choice still fails closed at the next start. False when
+        the record could not be written, or cannot be read to take the name out of."""
+        if not self.failed_closed(device_id):
+            return self._save_config_overrides(device_id, held, quiet=quiet)
+        if not held:
+            return False
+        missing = object()
+        raw = self.store.read(device_id, self.ROBOT_CONFIG_COLLECTION, missing)
+        if raw is missing and os.path.exists(
+                self.store.path(device_id, self.ROBOT_CONFIG_COLLECTION)):
+            return False                         # there, but not readable: no name to take
+        if isinstance(raw, dict) and "child" in raw:
+            raw.pop("child")
+            try:
+                if not self.store.write(device_id, self.ROBOT_CONFIG_COLLECTION, raw):
+                    return False
+            except Exception:
+                return False
+        elif raw is not missing and not isinstance(raw, dict):
+            return False
+        self._child_clear_paid(device_id)
+        return True
+
+    def _settle_child_clear(self, device_id) -> bool:
+        """Pay a clear this robot is owed: write its record without the name now, if the
+        store takes it. Quiet when it still cannot: the feed said so when it was owed."""
+        with self._settings_record(device_id) as held:
+            return self._save_child_clear(device_id, held, quiet=True)
 
     def configurable(self, device_id) -> bool:
         """May a parent's setting be saved for this robot now? A connected robot, or one
@@ -192,7 +270,7 @@ class FleetMixin:
         """Permit or revoke one device durably, and re-push its config now (full config
         on permit, the minimal un-paired document on revoke). A revoke also takes the
         child's name off the robot's settings (`_forget_child`), and its answer says
-        whether they hold none now (`child_cleared`)."""
+        whether they hold none now (`child_cleared`; false means the clear is owed)."""
         device_id = str(device_id or "").strip()
         if not device_id:
             raise ValueError("device_id is required")
@@ -215,7 +293,8 @@ class FleetMixin:
                 self._forget_stt_ask(device_id)          # pending: never "mic asked"
         out = self.permits_view()
         if cleared is not None:
-            out["child_cleared"] = cleared
+            # The push above retries a clear the first write could not make (`_push_config`).
+            out["child_cleared"] = cleared or not self.child_clear_owed(device_id)
         return out
 
     def _admit(self, device_id):
@@ -317,10 +396,14 @@ class FleetMixin:
 
     def _push_config(self, device_id):
         """Publish this robot's `/config`: the full RobotCloudConfig (paired + child_pii +
-        parent settings) when permitted, else `build_unpaired_cloud_config()`."""
+        parent settings) when permitted, else `build_unpaired_cloud_config()`. First, a
+        clear this robot is owed is tried again (`_settle_child_clear`): every connect's
+        settle, and the roster's re-push after a restart, pass here."""
         from moxie_sdk.cloud_config import (build_robot_cloud_config,
                                             build_unpaired_cloud_config,
                                             robot_config_kwargs)
+        if self.child_clear_owed(device_id):
+            self._settle_child_clear(device_id)
         if self.is_permitted(device_id):
             # `robot_config_kwargs` drops the keys that are no builder kwargs (`brain`,
             # `child`); the child rides in as `child_pii`, from the parent's record.
@@ -469,7 +552,9 @@ class FleetMixin:
                 self._settings_unreadable.discard(device_id)
             # Saved before the purge and the push: a crash after this line still boots
             # with the parent's choice, so a NO_DATA that was set is swept at the next start.
-            self._save_config_overrides(device_id, held)
+            saved = self._save_config_overrides(device_id, held)
+        if "child" in overrides and overrides["child"] is None and not saved:
+            self._owe_child_clear(device_id)     # a restart must not bring the name back
         if before is not None:
             # The new name at once; the day plan's "why" lines and a queued hello, which
             # name the child too, never linger with the old one (`_child_changed`).
@@ -537,10 +622,13 @@ class FleetMixin:
         with held:
             yield True
 
-    def _save_config_overrides(self, device_id, held: bool = True) -> bool:
+    def _save_config_overrides(self, device_id, held: bool = True, *,
+                               quiet: bool = False) -> bool:
         """Write this robot's saved settings (the store's locked, atomic write), inside
         `_settings_record`. A write that fails, or a record that could not be held, is said
-        aloud: the edit still applies now, but not after a restart."""
+        aloud (unless `quiet`: a retry of a clear already owed): the edit still applies now,
+        but not after a restart. A write that lands settles a clear this robot is owed
+        (`_child_clear_paid`): the record now holds the layer, with no stale name."""
         if device_id in self._settings_unreadable:
             return False                         # kept as found until a parent saves
         saved = False
@@ -554,11 +642,13 @@ class FleetMixin:
         if not saved:
             line = (f"⚠️  settings for {device_id} applied but NOT saved — they will not "
                     f"survive a restart")
-            self._note("error", line)
-            print(f"[runtime] {line}", flush=True)
+            if not quiet:
+                self._note("error", line)
+                print(f"[runtime] {line}", flush=True)
             self._settings_unsaved.add(device_id)
         else:
             self._settings_unsaved.discard(device_id)  # the record holds the whole layer
+            self._child_clear_paid(device_id)
         return saved
 
     def settings_saved(self, device_id) -> bool:
@@ -583,12 +673,18 @@ class FleetMixin:
         Runs in the constructor and never raises. A damaged or non-object record loads no
         settings (one line). A key the whitelist now refuses, or a brain the current
         `MOXIE_APP` pin refuses, is dropped (one line per robot) and never pushed. Either
-        way a data-sharing choice that cannot be read fails closed (`_fail_closed`).
+        way a data-sharing choice that cannot be read fails closed (`_fail_closed`). A
+        robot owed a clear (`CHILD_CLEAR_COLLECTION`) loads no child's name. A name the load
+        drops stays masked in the log and feed (`child_names`).
         Loading writes nothing: a record that failed closed stays as found until a parent
         saves this robot's settings, and any other record is rewritten by its next edit."""
         from moxie_sdk import brains as brain_seam
         pin = brain_seam.pin_for_env(os.environ.get(brain_seam.ENV_VAR, ""))
         loaded = {}
+        # Read by `child_names` and `child_clear_owed`; set here, before the constructor's
+        # other state, because this runs first.
+        self._child_names_dropped = set()
+        self._child_clears_owed = set()
         try:
             devices = self.store.devices()
         except Exception as e:
@@ -597,6 +693,8 @@ class FleetMixin:
         missing = object()
         restored = 0
         for device_id in devices:
+            if os.path.exists(self.store.path(device_id, self.CHILD_CLEAR_COLLECTION)):
+                self._child_clears_owed.add(device_id)
             path = self.store.path(device_id, self.ROBOT_CONFIG_COLLECTION)
             try:
                 raw = self.store.read(device_id, self.ROBOT_CONFIG_COLLECTION, missing)
@@ -616,6 +714,13 @@ class FleetMixin:
             if brain and not brain_seam.honours_pin(brain, pin):
                 del kept[brain_seam.CONFIG_KEY]
                 dropped.append(f"{brain_seam.CONFIG_KEY} ({brain_seam.ENV_VAR} pins {pin})")
+            if device_id in self._child_clears_owed and "child" in kept:
+                del kept["child"]                # taken off by a revoke or a clear
+                dropped.append("child (a clear is owed: the next save takes it out)")
+            record = raw.get("child")
+            if "child" not in kept and isinstance(record, dict) \
+                    and isinstance(record.get("nickname"), str):
+                self._child_names_dropped.add(record["nickname"])
             if dropped:
                 print(f"[runtime] ⚠️  {device_id}: saved settings dropped at load (not "
                       f"accepted here now): {', '.join(sorted(dropped))}", flush=True)

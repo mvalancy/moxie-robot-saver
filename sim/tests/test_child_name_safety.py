@@ -20,9 +20,21 @@ also wrote it to the supervisor's log and activity feed. What each test pins:
 * a revoke takes the name off the robot's settings (so an unpair or reset whose clear never
   arrived can be retried with Revoke in Robot access), and says when it could not save that.
 
+K14b, the leftovers of that review:
+
+* the name as it is kept: the 40 counted after NFC (W9), a phone's apostrophe kept as `'`,
+  and the code points a screen shows as nothing dropped (Unicode's default-ignorable set,
+  checked against its derivation);
+* no hello at all when the rules block the generic hello too, said once (S7);
+* the mask never masks its own mark, and a name the load drops stays masked;
+* a clear the robot's record could not take is owed: a restart loads no name from that
+  record, and the robot's next connect or settings save takes it out; a record that failed
+  closed gives up its `child` alone.
+
 The safety table's words are read from `safety_rules.json`, never written out here. A child's
-name is personal data: the only names are 'Sam', 'José', 'Zoë', 'Mary-Kate' and 'सैम' (Sam
-written in Devanagari). No broker: the transport is `helpers_runtime.FakeClient`.
+name is personal data: the only names are 'Sam', 'José', 'Zoë', 'Mary-Kate', 'सैम' (Sam
+written in Devanagari), and the acceptance's 'Mia', "O'Neil" and 'Child'. No broker: the
+transport is `helpers_runtime.FakeClient`.
 """
 import json
 import os
@@ -543,3 +555,321 @@ def test_the_mask_takes_every_spelling_of_a_name_and_nothing_else():
     assert mask("सैम आया", ["सैम"]) == "[child] आया"
     assert mask("hi friend", ["friend", "Friend"]) == "hi friend"
     assert mask("hi Sam", []) == "hi Sam" and mask(None, ["Sam"]) == ""
+
+
+# --------------------------------------------------------------------------- #
+# K14b: the name as it is kept, the hello no rule lets through, the mask's edges
+# --------------------------------------------------------------------------- #
+
+#: A phone's apostrophes, and code points a screen shows as nothing, written by number so
+#: this file shows what it tests.
+RIGHT_QUOTE, MODIFIER_APOSTROPHE = chr(0x2019), chr(0x02BC)
+EMOJI_VS, ZERO_WIDTH_SPACE, ZERO_WIDTH_JOINER, HANGUL_FILLER = (
+    chr(0xFE0F), chr(0x200B), chr(0x200D), chr(0x3164))
+
+
+def test_the_cap_counts_the_name_as_it_is_kept():
+    """W9. The 40 are counted on the name as it is kept, after NFC: a decomposed name of 41
+    code points is 40 composed, so it is taken (and kept composed), and so is one padded
+    with a code point a screen shows as nothing; 41 composed is refused. A cap counted on
+    what was typed would refuse the first two. Both callers of the one rule: the child's
+    name, and the Try it card, which hands `check_name` the name as typed."""
+    from moxie_runtime import tryit
+    name = "Sam " * 9 + "José"
+    nfd = unicodedata.normalize("NFD", name)
+    assert (len(name), len(nfd)) == (40, 41)
+    for typed in (nfd, name + ZERO_WIDTH_SPACE):
+        assert cloud_config.clean_child_name(typed) == name, ascii(typed)
+        assert sanitize_config_overrides({"child": {"nickname": typed}}) == {
+            "child": {"nickname": name}}
+        assert tryit._try_name(typed) == name, ascii(typed)
+    for check in (cloud_config.clean_child_name, tryit._try_name):
+        with pytest.raises(ValueError, match="40 letters"):
+            check(name + "s")
+
+
+def test_no_hello_when_the_rules_block_the_named_and_the_generic_hello(tmp_path):
+    """S7. A rules table can block anything, the generic hello too. Then Moxie says no hello
+    at all (the robot gets `NOREPLY_ACK` and nothing to say), and the parent hears of it
+    once: the named hello's block in the review queue (with its own `block` feed line) and
+    ONE feed line about the hello, saying there was none, never one claiming the generic
+    hello was said instead."""
+    from moxie_sdk import safety
+    from moxie_sdk.types import ResultCode
+    rt = _runtime(tmp_path)
+    _name(rt, "d_one", "Sam")
+    rt.safety = safety.RuleClassifier(rules={"categories": [{
+        "id": "both_names", "label": "Both names",
+        "action": {"child": "allow", "moxie": "block"}, "words": ["sam", "friend"]}]})
+    before = len(rt.recent)
+    resp = _hello(rt)
+    assert resp["result"] == ResultCode.NOREPLY_ACK, resp
+    assert not (resp.get("output") or {}).get("text"), resp
+    rows = rt.store.read("d_one", safety.EVENTS_COLLECTION, [])
+    assert [(r["side"], r["action"]) for r in rows] == [("moxie", "block")], rows
+    notes = [n["text"] for n in list(rt.recent)[before:] if n["kind"] == "safety"]
+    hello = [t for t in notes if "hello" in t]
+    assert len(hello) == 1 and "no hello" in hello[0], notes
+
+
+def test_a_phones_apostrophe_is_an_apostrophe(tmp_path):
+    """'O’Neil' from an iPhone keyboard (U+2019), or with the modifier letter apostrophe
+    (U+02BC), is the name O'Neil. The first was refused by a rule that says apostrophes are
+    allowed, and the second kept as typed, so a line saying O'Neil was not masked. Now both
+    are kept and sent as O'Neil, the Try it card takes them, and a line is masked whichever
+    apostrophe it uses."""
+    for typed in (f"O{RIGHT_QUOTE}Neil", f"O{MODIFIER_APOSTROPHE}Neil", "O'Neil"):
+        assert cloud_config.clean_child_name(typed) == "O'Neil", ascii(typed)
+    rt = _runtime(tmp_path)
+    _name(rt, "d_one", f"O{RIGHT_QUOTE}Neil")
+    assert json.loads(_record(tmp_path).read_text()) == {"child": {"nickname": "O'Neil"}}
+    assert _pushed(rt, "d_one")["child_pii"]["nickname"] == "O'Neil"
+    rt._note("chat", f"O'Neil, O{RIGHT_QUOTE}Neil and o{MODIFIER_APOSTROPHE}neil")
+    assert rt.recent[-1]["text"] == "[child], [child] and [child]"
+    out = rt.tryit_turn({"speech": "hello", "nickname": f"O{RIGHT_QUOTE}Neil"})
+    assert out["ok"] is True and out["child"]["nickname"] == "O'Neil", out
+
+
+def test_a_code_point_a_screen_shows_as_nothing_is_no_part_of_a_name(tmp_path):
+    """'Mia' with an emoji variation selector (U+FE0F) was taken and kept with it, and then
+    the plain 'Mia' a line says was not masked. A name is now kept without the code points a
+    screen shows as nothing (Unicode's default-ignorable set): 'Mia', and so masked. A
+    zero-width space or joiner inside goes the same way, and a name of such code points
+    alone is no name (a Hangul filler alone was taken: an invisible name). An enclosing
+    mark (a keycap, a circle) is visible but no script writes a letter with one, and a name
+    kept with it went unmasked the same way: it is refused."""
+    assert cloud_config.clean_child_name("Mia" + EMOJI_VS) == "Mia"
+    for decorated in ("Mia" + chr(0x20E3), "Mia" + chr(0x0489)):    # a keycap, an enclosing sign
+        with pytest.raises(ValueError, match="40 letters"):
+            cloud_config.clean_child_name(decorated)
+    assert cloud_config.clean_child_name("M" + ZERO_WIDTH_SPACE + "ia") == "Mia"
+    assert cloud_config.clean_child_name(f"Sam {ZERO_WIDTH_JOINER} Zoë") == "Sam Zoë"
+    for blank in (HANGUL_FILLER, EMOJI_VS, ZERO_WIDTH_SPACE + ZERO_WIDTH_JOINER,
+                  f"{HANGUL_FILLER} {HANGUL_FILLER}"):
+        with pytest.raises(ValueError, match="empty"):
+            cloud_config.clean_child_name(blank)
+    rt = _runtime(tmp_path)
+    _name(rt, "d_one", "Mia" + EMOJI_VS)
+    assert json.loads(_record(tmp_path).read_text()) == {"child": {"nickname": "Mia"}}
+    assert _pushed(rt, "d_one")["child_pii"]["nickname"] == "Mia"
+    rt._note("chat", f"Hi Mia! MIA{EMOJI_VS} waved")
+    assert rt.recent[-1]["text"] == f"Hi [child]! [child]{EMOJI_VS} waved"
+    # The appliance's own name, which no rule checks (OQ12), is masked by its kept spelling.
+    assert cloud_config.mask_child_names("hi Mia", ["Mia" + EMOJI_VS]) == "hi [child]"
+
+
+def test_the_set_a_name_drops_is_unicodes_default_ignorable_set():
+    """`cloud_config._DEFAULT_IGNORABLE` is written out by hand (the standard library has no
+    such property), so it is checked here against how Unicode derives it, over every code
+    point, with this Python's own character database: every format character (Cf) but the
+    few that stay visible, plus Other_Default_Ignorable_Code_Point and the variation
+    selectors, minus white space (DerivedCoreProperties.txt, PropList.txt)."""
+    other = {0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x2065, 0x3164, 0xFFA0,
+             *range(0xFFF0, 0xFFF9), 0xE0000, *range(0xE0002, 0xE0020),
+             *range(0xE0080, 0xE0100), *range(0xE01F0, 0xE1000)}
+    selectors = {*range(0x180B, 0x180E), 0x180F, *range(0xFE00, 0xFE10),
+                 *range(0xE0100, 0xE01F0)}
+    visible = {*range(0x0600, 0x0606), 0x06DD, 0x070F, 0x0890, 0x0891, 0x08E2, 0x110BD,
+               0x110CD, *range(0xFFF9, 0xFFFC), *range(0x13430, 0x13441)}
+    every = range(0x110000)
+    expected = ({c for c in every if unicodedata.category(chr(c)) == "Cf"} - visible
+                | other | selectors) - {c for c in every if chr(c).isspace()}
+    dropped = {c for c in every if cloud_config._DEFAULT_IGNORABLE.fullmatch(chr(c))}
+    assert dropped == expected, (sorted(map(hex, dropped - expected))[:5],
+                                 sorted(map(hex, expected - dropped))[:5])
+
+
+def test_masking_a_masked_line_changes_nothing(tmp_path):
+    """The mask's own mark is never masked again: a child named Child became '[[child]]'
+    the second time a line was masked (every rename masks the feed's lines in RAM again).
+    Any number of passes now gives the line of one pass."""
+    mask = cloud_config.mask_child_names
+    once = mask("Hi Child! CHILD, child.", ["Child"])
+    assert once == "Hi [child]! [child], [child]."
+    assert mask(once, ["Child"]) == once and mask(mask(once, ["Child"]), ["Child"]) == once
+    assert mask("[child] met Sam", ["Sam"]) == "[child] met [child]"
+    rt = _runtime(tmp_path)
+    _name(rt, "d_one", "Child")
+    rt._note("chat", "hi Child")
+    for name in ("Sam", "Child", "Zoë"):          # each rename masks the feed's lines again
+        _name(rt, "d_one", name)
+    feed = [n["text"] for n in rt.recent]
+    assert "hi [child]" in feed and not any("[[" in t for t in feed), feed
+
+
+@pytest.mark.parametrize("why", ["refused now", "rules unreadable"])
+def test_a_name_the_load_drops_stays_masked_in_the_log_and_the_feed(tmp_path, monkeypatch,
+                                                                     capsys, why):
+    """A saved name the rule now refuses is dropped when the settings are loaded, so it is
+    never pushed or said (`test_a_name_an_old_file_kept_is_never_said_after_a_restart`). It
+    also left the names the log and feed mask, so a turn where the child said it printed
+    it. It stays masked: a word the table now lists, and every saved name while the safety
+    rules cannot be read (the rule then refuses every name)."""
+    from helpers_runtime import drive_turn
+    from moxie_sdk import safety
+    from moxie_sdk.types import RobotContext
+    name = _word("profanity") if why == "refused now" else "Sam"
+    if why == "rules unreadable":
+        broken = tmp_path / "broken_rules.json"
+        broken.write_text("{ not json")
+        monkeypatch.setenv("MOXIE_SAFETY_RULES", str(broken))
+        monkeypatch.setattr(safety, "_DEFAULT", None)            # read the rules afresh
+    _record(tmp_path).parent.mkdir(parents=True)
+    _record(tmp_path).write_text(json.dumps({"child": {"nickname": name}}))
+    rt = _runtime(tmp_path, devices=("d_seed",), app=_app("Nice to meet you!"))
+    rt.robots["d_one"] = RobotContext(device_id="d_one", child=rt.child_for("d_one"))
+    assert rt.child_for("d_one").nickname == "friend"           # dropped at load
+    capsys.readouterr()
+    drive_turn(rt, "d_one", f"my name is {name}", event_id="evt-dropped")
+    out = capsys.readouterr()
+    feed = json.dumps(list(rt.recent), ensure_ascii=False)
+    for text in (out.out + out.err, feed):
+        assert not _named(text, name), [ln for ln in text.splitlines() if _named(ln, name)]
+    assert "my name is [child]" in feed
+
+
+# --------------------------------------------------------------------------- #
+# K14b: a clear the robot's record could not take is owed, and made later
+# --------------------------------------------------------------------------- #
+
+def _owed(tmp_path, device_id="d_one"):
+    """The note a robot owed a clear keeps beside its record (`CHILD_CLEAR_COLLECTION`)."""
+    return tmp_path / "robots" / device_id / "child_clear.json"
+
+
+def _refusing_settings(rt, monkeypatch):
+    """The store refuses the robots' settings records (a full disk, a lock another process
+    kept past its timeout) and takes every other write. Returns the real `write`."""
+    write = rt.store.write
+
+    def refused(device_id, collection, value):
+        if collection == rt.ROBOT_CONFIG_COLLECTION:
+            return False
+        return write(device_id, collection, value)
+
+    monkeypatch.setattr(rt.store, "write", refused)
+    return write
+
+
+def _connect(rt, device_id="d_one"):
+    """The robot connects again: `_device_connect` and its settle, waited for (its first
+    `/config` push), never slept for."""
+    from helpers_runtime import LatchClient
+    rt.client = LatchClient(rt)
+    rt._device_connect(device_id, fresh=True)
+    assert rt.client.wait_for(lambda pubs: any(t == CONFIG.format(device_id)
+                                               for t, _ in pubs))
+
+
+def test_a_revoke_takes_the_name_out_of_a_record_that_failed_closed(tmp_path):
+    """A record whose data-sharing choice cannot be read fails closed and is kept as found
+    until a parent saves (K4), so a revoke's clear was never saved: the name stayed on disk
+    and the answer was `child_cleared: false`. A revoke now takes out the `child` alone and
+    keeps every other value as found, so the record still fails closed at the next start,
+    with no name."""
+    found = {"child": {"nickname": "Zoë"}, "audio_volume": 0.4,
+             "logging_policy": "FROM_A_NEWER_BUILD"}
+    _record(tmp_path).parent.mkdir(parents=True)
+    _record(tmp_path).write_text(json.dumps(found))
+    rt = _runtime(tmp_path, allow_unverified_bots=False)
+    assert rt.failed_closed("d_one") and rt.child_for("d_one").nickname == "Zoë"
+    out = rt.set_permit("d_one", False)
+    assert out["child_cleared"] is True, out
+    assert json.loads(_record(tmp_path).read_text()) == {
+        "audio_volume": 0.4, "logging_policy": "FROM_A_NEWER_BUILD"}
+    assert rt.failed_closed("d_one") and not _owed(tmp_path).exists()
+    again = _runtime(tmp_path, devices=("d_seed",), allow_unverified_bots=False)
+    assert again.failed_closed("d_one") and again.child_for("d_one").nickname == "friend"
+
+
+def test_a_clear_that_cannot_be_saved_is_owed_and_made_on_the_next_connect(tmp_path,
+                                                                            monkeypatch):
+    """A revoke whose clear the store refuses says so (`child_cleared: false`), and the
+    supervisor keeps the clear owed: a note beside the record. A restart before the robot is
+    back loads no name from the old record (and masks it), and the robot's next connect
+    takes the name out of the record and the note away: one round trip through the real
+    store. No push in between carries the name."""
+    rt = _runtime(tmp_path, allow_unverified_bots=False)
+    rt.set_permit("d_one", True)
+    _name(rt, "d_one", "Zoë")
+    _refusing_settings(rt, monkeypatch)
+    out = rt.set_permit("d_one", False)
+    assert out["child_cleared"] is False, out
+    assert json.loads(_record(tmp_path).read_text())["child"] == {"nickname": "Zoë"}
+    assert _owed(tmp_path).exists() and rt.child_clear_owed("d_one")
+    assert any("not saved yet" in n["text"] for n in rt.recent if n["kind"] == "permit")
+    # The revoke's own push tried again, quietly: the parent reads one "NOT saved", not two.
+    assert sum("NOT saved" in n["text"] for n in rt.recent if n["kind"] == "error") == 1
+
+    reborn = _runtime(tmp_path, devices=("d_seed",), allow_unverified_bots=False)
+    assert reborn.child_clear_owed("d_one") and reborn.child_for("d_one").nickname == "friend"
+    reborn._note("chat", "hi zoe")
+    assert reborn.recent[-1]["text"] == "hi [child]"
+    _connect(reborn)
+    assert "child" not in json.loads(_record(tmp_path).read_text())
+    assert not _owed(tmp_path).exists() and not reborn.child_clear_owed("d_one")
+    for _topic, payload in reborn.client.published:
+        assert "Zoë" not in json.dumps(payload, ensure_ascii=False), payload
+
+
+def test_a_revoke_after_a_restart_makes_an_owed_clear(tmp_path, monkeypatch):
+    """After a restart the robot owed a clear has no name in RAM and its record reads fine,
+    so a revoke must not take "no name here" for "nothing to do": it writes the record
+    without the name, settles the note, and only then says `child_cleared`."""
+    rt = _runtime(tmp_path, allow_unverified_bots=False)
+    rt.set_permit("d_one", True)
+    _name(rt, "d_one", "Zoë")
+    _refusing_settings(rt, monkeypatch)
+    rt.set_permit("d_one", False)
+    reborn = _runtime(tmp_path, devices=("d_seed",), allow_unverified_bots=False)
+    assert reborn.child_clear_owed("d_one") and reborn.settings_saved("d_one")
+    assert reborn.set_permit("d_one", False)["child_cleared"] is True
+    assert "child" not in json.loads(_record(tmp_path).read_text())
+    assert not _owed(tmp_path).exists()
+
+
+def test_a_revokes_own_push_can_make_the_clear_and_says_so(tmp_path, monkeypatch):
+    """The store refuses the revoke's first write and takes the next: the clear is owed,
+    the revoke's own push makes it, and the answer then says `child_cleared: true`."""
+    rt = _runtime(tmp_path, allow_unverified_bots=False)
+    rt.set_permit("d_one", True)
+    _name(rt, "d_one", "Zoë")
+    write, refused = rt.store.write, []
+
+    def refuse_once(device_id, collection, value):
+        if collection == rt.ROBOT_CONFIG_COLLECTION and not refused:
+            refused.append(collection)
+            return False
+        return write(device_id, collection, value)
+
+    monkeypatch.setattr(rt.store, "write", refuse_once)
+    assert rt.set_permit("d_one", False)["child_cleared"] is True
+    assert refused and "child" not in json.loads(_record(tmp_path).read_text())
+    assert not rt.child_clear_owed("d_one") and not _owed(tmp_path).exists()
+
+
+def test_an_owed_clear_only_removes_a_name_and_never_sends_one(tmp_path, monkeypatch):
+    """An owed clear never brings the old name back and never takes a newer one: once the
+    parent names the child again, that save settles it, and the robot's next connect keeps
+    the new name. A parent's own clear (`child: null`) the store refuses is owed the same
+    way, so a restart does not bring that name back either."""
+    rt = _runtime(tmp_path, allow_unverified_bots=False)
+    rt.set_permit("d_one", True)
+    _name(rt, "d_one", "Zoë")
+    write = _refusing_settings(rt, monkeypatch)
+    rt.set_permit("d_one", False)
+    assert rt.child_clear_owed("d_one")
+    monkeypatch.setattr(rt.store, "write", write)            # the store takes writes again
+    rt.set_permit("d_one", True)
+    _name(rt, "d_one", "José")
+    assert not rt.child_clear_owed("d_one") and not _owed(tmp_path).exists()
+    _connect(rt)
+    assert json.loads(_record(tmp_path).read_text())["child"] == {"nickname": "José"}
+    assert _pushed(rt, "d_one")["child_pii"]["nickname"] == "José"
+    assert not any("Zoë" in json.dumps(p, ensure_ascii=False) for _, p in rt.client.published)
+
+    _refusing_settings(rt, monkeypatch)
+    _name(rt, "d_one", None)                                 # the parent's clear, not saved
+    assert rt.child_clear_owed("d_one") and _owed(tmp_path).exists()
+    reborn = _runtime(tmp_path, devices=("d_seed",), allow_unverified_bots=False)
+    assert reborn.child_for("d_one").nickname == "friend"
