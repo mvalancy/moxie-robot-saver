@@ -519,8 +519,16 @@ def full_key_of(kind: str, key: str) -> str:
     return f"{kind}:{key}"
 
 
-def _clock_local(now: float) -> dict:
-    """`clock.local` (§4.2), computed in the host so `ext/` imports no clock (X7)."""
-    t = time.localtime(now)
-    return {"hour": t.tm_hour, "minute": t.tm_min, "weekday": (t.tm_wday + 1) % 7,
-            "iso": time.strftime("%Y-%m-%dT%H:%M:%S", t)}
+def _clock_local(now: float, timezone_id=None) -> dict:
+    """`clock.local` (§4.2), computed in the host so `ext/` imports no clock (X7): the
+    house's wall clock, in the zone the robot's config push named (`timezone_id`, kept on
+    `robot.extra` by the supervisor), never this server's own (a container runs on UTC).
+    A name this server cannot resolve is UTC (`cloud_config.resolve_zone`); no zone yet (a
+    robot not pushed to, a try with no robot) is the zone no one chose
+    (`cloud_config.default_timezone_id`)."""
+    import datetime
+    from ..cloud_config import default_timezone_id, resolve_zone
+    t = datetime.datetime.fromtimestamp(
+        now, resolve_zone(timezone_id or default_timezone_id()).tz)
+    return {"hour": t.hour, "minute": t.minute, "weekday": (t.weekday() + 1) % 7,
+            "iso": t.strftime("%Y-%m-%dT%H:%M:%S")}
