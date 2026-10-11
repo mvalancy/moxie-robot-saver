@@ -501,8 +501,11 @@ function sentencesOf(text) {
  * credited replays lost). Un-crediting is the safe error — the floor then appends its own sentence;
  * crediting one of these would leave a hurt child told to keep it from a grown-up. The check reads
  * words, not intent: a real referral that also says "later", "if you want" or "I don't want you to be
- * scared" in another sentence gets the sentence too. The hand-off on the SWAP path is decided by
- * `pointsToGrownUp`, not by this check (below). */
+ * scared" in another sentence gets the sentence too. Round 8 (the seventh review): round 7's whitelist
+ * entries "not good", "not cool", "I can't believe" and "I don't like it when" had credited a reply that
+ * says the TELLING is wrong ("Telling your mom is not good", "I can't believe you would tell your mom"),
+ * so a negation whose subject or object is the telling is never whitelisted (`ABOUT_TELLING_RE`). The
+ * hand-off on the SWAP path is decided by `pointsToGrownUp`, not by this check (below). */
 const NEGATION_RE = /\b(?:don'?t|do\s+not|doesn'?t|does\s+not|didn'?t|did\s+not|never|not|no|shouldn'?t|should\s+not|won'?t|will\s+not|wouldn'?t|would\s+not|mustn'?t|must\s+not|can'?t|cannot|can\s+not|couldn'?t|could\s+not|isn'?t|aren'?t|wasn'?t|weren'?t|ain'?t|needn'?t|nobody|no\s+one)\b/i;
 const NOT_A_NEGATION_RE = new RegExp([
   // interjections and fixed phrases
@@ -600,23 +603,52 @@ function pointsAway(sentence) {
   return OPT_OUT_RE.test(sentence) || DEFER_RE.test(sentence) || DISCOURAGE_RE.test(sentence);
 }
 
+/** A negation about THE TELLING ITSELF is never whitelisted (round 8, the seventh review). The
+ *  whitelist's "not okay", "not good", "I can't believe" and "I don't like it when" are for what happened
+ *  to the child; read alone they let "Telling your mom is not good", "I can't believe you would tell your
+ *  mom", "I don't like it when you tell your teacher" and "It's not okay to ever tell your mom" through
+ *  (12 of 12 such shapes credited). The adult is required after the verb, so "I can't believe you had to
+ *  go through that" and "Telling a grown-up you trust is brave, and it's not your fault" still count. */
+const ABOUT_TELLING_RE = new RegExp([
+  "\\b(?:telling|talking\\s+(?:to|with)|asking|going\\s+to|calling)\\s+(?:" + DET + "\\s+)?(?:" + ADULT + ")\\b(?:\\s+you\\s+trust)?(?:\\s+about\\s+[\\w']+(?:\\s+[\\w']+){0,3}?)?(?:\\s+(?:right\\s+now|now|first|today|everything))?(?:\\s+(?:is|was|are|were|would\\s+be)|'s)\\s+(?:really\\s+|just\\s+|simply\\s+|so\\s+|definitely\\s+|also\\s+|probably\\s+)?(?:not|never)\\b",
+  "\\bi\\s+(?:can'?t|cannot|can\\s+not)\\s+believe\\s+(?:that\\s+)?you(?:'d|'re|'ll)?\\s+(?:[\\w']+\\s+){0,3}?(?:tell|told|telling|talk(?:ed|ing)?\\s+(?:to|with)|ask(?:ed|ing)?|call(?:ed|ing)?|go(?:ing)?\\s+to|went\\s+to|r(?:an|un)\\s+to)\\s+(?:" + DET + "\\s+)?(?:" + ADULT + ")\\b",
+  "\\bi\\s+(?:don'?t|do\\s+not)\\s+like\\s+(?:it\\s+)?(?:when|that|if|how)\\s+you(?:'d|'re|'ll)?\\s+(?:[\\w']+\\s+){0,3}?(?:tell|told|telling|talk(?:ed|ing)?\\s+(?:to|with)|ask(?:ed|ing)?|call(?:ed|ing)?|go(?:ing)?\\s+to|went\\s+to|r(?:an|un)\\s+to)\\s+(?:" + DET + "\\s+)?(?:" + ADULT + ")\\b",
+  "\\b(?:not|never)\\s+(?:okay|ok|alright|all\\s+right|allowed|safe|good|cool|right|fair|nice|kind|normal|acceptable|smart|wise)\\s+(?:for\\s+you\\s+)?to\\s+(?:\\w+\\s+){0,2}?(?:tell|talk|ask|go|say|let|show|call|get|find)\\b",
+].join("|"), "i");
+
 /** A negation that governs the telling, in this sentence. The whitelist only where a negation word is:
  *  most sentences have none. */
 function negated(sentence) {
-  return NEGATION_RE.test(sentence) && NEGATION_RE.test(sentence.replace(NOT_A_NEGATION_RE, " "));
+  if (!NEGATION_RE.test(sentence)) return false;
+  if (ABOUT_TELLING_RE.test(sentence)) return true;
+  return NEGATION_RE.test(sentence.replace(NOT_A_NEGATION_RE, " "));
 }
 
-function pointsToAdult(sentence, named) {
-  // A sentence that points away points nowhere, every form and list in it: "don't tell your mom or a
-  // teacher".
-  return pointsSomewhere(sentence, named) && !negated(sentence);
+/** A clause break: a form's own clause runs back to the nearest comma, semicolon, colon, dash or
+ *  coordinating word. */
+const CLAUSE_BREAK_RE = /[,;:—–]|\s-\s|\b(?:and|but|so|then|or)\b/i;
+
+/** Whether a negation GOVERNS the form at `index` of `sentence`: one in the form's own clause, before it
+ *  (round 8, the seventh review: "Get a grown-up right now, this isn't safe!" points, "Don't tell your mom,
+ *  just tell me" does not). The whitelist is read over the whole sentence first and blanked at the same
+ *  length, so an entry's lookahead still sees the words after the form: "it's not okay TO TELL your mom"
+ *  stays governed, "it's not your fault, tell your mom" is not. A negation about the telling itself
+ *  governs every form in its sentence, as on the appending check. */
+function governed(sentence, index) {
+  if (ABOUT_TELLING_RE.test(sentence)) return true;
+  const seen = sentence.replace(NOT_A_NEGATION_RE, (m) => " ".repeat(m.length));
+  return NEGATION_RE.test(seen.slice(0, index).split(CLAUSE_BREAK_RE).pop());
 }
 
-function pointsSomewhere(sentence, named) {
+/** Whether some form in `sentence` points to an adult who is not the one named; `counts(index)` may
+ *  refuse a form by its position (the hand-off's clause-governed negation). "tell your mom or a
+ *  teacher": the next adult in the list counts too, with the direction it follows. */
+function pointsSomewhere(sentence, named, counts = () => true) {
   for (const re of FORMS) {
     re.lastIndex = 0;
     let m;
     while ((m = re.exec(sentence))) {
+      if (!counts(m.index)) continue;
       if (!sendsBack(m[1], m[2], named)) return true;
       if (re !== DIRECT_RE) continue;
       // "tell your mom or a teacher": the next adult in the list.
@@ -651,7 +683,7 @@ export function hasReferral(reply, childText) {
   // Round 7: so does a negation in any sentence — "Tell your mom. Actually, don't." — read with the
   // whitelist in each sentence, so "It's not your fault. Please tell a grown-up you trust." still counts.
   if (ss.some((s) => pointsAway(s) || negated(s))) return false;
-  return ss.some((s) => pointsToAdult(s, named));
+  return ss.some((s) => pointsSomewhere(s, named));
 }
 
 /**
@@ -664,12 +696,17 @@ export function hasReferral(reply, childText) {
  * safe error is the hand-off, and "Tell a grown-up right now, and never let him drink bleach. We can
  * play later!" keeps the model's judgement that this needs a grown-up (the sixth review's third
  * finding: round 6's whole-reply rule had reached this decision and served "let's pick a different
- * thing"). A direction negated in its own sentence ("Don't tell your mom, just tell me") still points
+ * thing"). Round 8 (the seventh review): round 7 still un-pointed a direction for ANY negation in its
+ * sentence, so "Get a grown-up right now, this isn't safe!", "Go get your mom right now, he can't drink
+ * that!" and "Find a grown-up right now, it's not a toy!" (11 of 16 realistic emergency completions) were
+ * replaced by the change of subject, worse than `origin/dev`, which would have served them. Now only a
+ * negation that GOVERNS the form — in its own clause, before it (`governed`) — un-points it: "Don't tell
+ * your mom, just tell me", "Never tell your mom, okay?" and "You don't have to tell your mom" still point
  * nowhere on either check.
  */
 export function pointsToGrownUp(reply, childText) {
   const named = namedAsHurting(childText);
-  return sentencesOf(String(reply || "").replace(/[’‘ʼ]/g, "'")).some((s) => pointsToAdult(s, named));
+  return sentencesOf(String(reply || "").replace(/[’‘ʼ]/g, "'")).some((s) => pointsSomewhere(s, named, (i) => !governed(s, i)));
 }
 
 /**
