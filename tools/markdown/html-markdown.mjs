@@ -1,6 +1,7 @@
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
+import path from 'node:path';
 
 export function htmlToMarkdown(html, file, origin) {
   const { document } = parseHTML(html);
@@ -29,7 +30,14 @@ export function htmlToMarkdown(html, file, origin) {
   for (const node of document.querySelectorAll('[href], [src]')) {
     for (const attr of ['href', 'src']) {
       const value = node.getAttribute(attr);
-      if (value && !/^(?:javascript|data):/i.test(value)) node.setAttribute(attr, new URL(value, origin + '/' + file).href);
+      if (value && !/^(?:javascript|data):/i.test(value)) {
+        const url = new URL(value, origin + '/' + file);
+        // The docs explorer and local preview enforce img-src self. Keep local
+        // image references document-relative, including in the Markdown view.
+        const target = attr === 'src' && node.nodeName === 'IMG' && url.origin === origin
+          ? path.posix.relative(path.posix.dirname(file), url.pathname.slice(1)) + url.search + url.hash : url.href;
+        node.setAttribute(attr, target);
+      }
       else if (value) node.removeAttribute(attr);
     }
   }
