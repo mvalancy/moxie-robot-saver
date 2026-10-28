@@ -11,8 +11,6 @@ inside Moxie.
 
 [Talk to Moxie](https://moxie.mattvalancy.com/sim) [Revive a robot](https://moxie.mattvalancy.com/setup.html)
 
-Moxie remembers your chat only while her page is open.
-
 Embodied shut down and every Moxie went quiet. But the body — face, voice, gaze, motion — is just a _shell_ that performs whatever brain answers one documented seam. So this is more than a revival: it’s an open kit to put **any AI** inside that shell. Say hi to the 3D Moxie right now — she answers live, in her own voice — then re-home a real robot to a server you control, or read the full reverse-engineering docs, all in your browser.
 
 5
