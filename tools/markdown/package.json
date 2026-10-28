@@ -1,0 +1,1 @@
+{"name":"moxie-public-markdown","private":true,"type":"module","scripts":{"generate":"node generate.mjs","check":"node generate.mjs --check","test":"node --test test.mjs"},"devDependencies":{"linkedom":"0.18.14","turndown":"7.2.4","turndown-plugin-gfm":"1.0.2"}}
