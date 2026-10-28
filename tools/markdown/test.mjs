@@ -31,6 +31,8 @@ test('HTML content changes reach Markdown while scripts and hidden content stay 
   assert.ok(md.includes('# Current title') && md.includes('Fresh text & evidence.'));
   assert.ok(md.includes('(https://moxie.mattvalancy.com/asset.json)'));
   assert.ok(!md.includes('privateRuntime') && !md.includes('not published text'));
+  const picture = htmlToMarkdown('<html><head><title>Image</title></head><body><img src="img/local.png" alt="Local picture"></body></html>', 'index.html', 'https://moxie.mattvalancy.com');
+  assert.ok(picture.includes('![Local picture](img/local.png)'), 'local images must retain the same origin in previews and the docs explorer');
   assert.ok(htmlToMarkdown(html.replace('Fresh text', 'Changed text'), 'index.html', 'https://moxie.mattvalancy.com').includes('Changed text'));
 });
 

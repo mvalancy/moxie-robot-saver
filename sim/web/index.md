@@ -29,7 +29,7 @@ firmware mapped
 
 [
 
-SIM · LIVE   ![The 3D Moxie simulator — a friendly teal robot with a glowing projector face](https://moxie.mattvalancy.com/img/hero-moxie-cute.png) window.moxie · WebGL · runs offline Tap to talk to Moxie](https://moxie.mattvalancy.com/sim)
+SIM · LIVE   ![The 3D Moxie simulator — a friendly teal robot with a glowing projector face](img/hero-moxie-cute.png) window.moxie · WebGL · runs offline Tap to talk to Moxie](https://moxie.mattvalancy.com/sim)
 
 ## Explore
 
