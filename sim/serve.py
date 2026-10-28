@@ -18,6 +18,7 @@ def bust(html: str) -> str:
     return re.sub(r'\b(src|href)="((?!https?:|//)[\w./-]+\.(?:js|css))(?:\?[^"]*)?"', stamp, html)
 
 class H(http.server.SimpleHTTPRequestHandler):
+    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, ".md": "text/markdown; charset=utf-8"}
     def end_headers(self):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
@@ -40,5 +41,6 @@ class H(http.server.SimpleHTTPRequestHandler):
 class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True; daemon_threads = True
 
-print(f"[serve] sim/web on http://127.0.0.1:{PORT}  (no-cache + auto cache-bust)", flush=True)
-Server(("127.0.0.1", PORT), H).serve_forever()
+server = Server(("127.0.0.1", PORT), H)
+print(f"[serve] sim/web on http://127.0.0.1:{server.server_address[1]}  (no-cache + auto cache-bust)", flush=True)
+server.serve_forever()
